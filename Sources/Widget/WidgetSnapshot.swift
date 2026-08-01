@@ -1,0 +1,1 @@
+../ClaudeBar/Models/WidgetSnapshot.swift

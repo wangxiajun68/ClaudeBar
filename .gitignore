@@ -1,0 +1,16 @@
+# Build artifacts
+.build/
+build/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Xcode (not used, but ignore if opened)
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# Claude Code local settings
+.claude/settings.local.json
