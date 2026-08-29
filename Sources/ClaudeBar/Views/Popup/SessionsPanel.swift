@@ -13,8 +13,7 @@ struct SessionsPanelView: View {
                 cursorSessionsSection
                 HairlineDivider()
                 externalSessionsSection
-            }
-        }
+            }        }
     }
 
     /// Grid layout for session cards: two columns → a 2×N "four-grid".
@@ -88,16 +87,22 @@ struct SessionsPanelView: View {
         .padding(.vertical, Theme.Space.s6)
     }
 
-    // MARK: External tools (Codex / WorkBuddy / OpenClaw)
+    // MARK: External tools — one header per tool
 
     private var externalSessionsSection: some View {
-        let alive = providerStore.aliveExternalSessions
-        let activeCount = providerStore.activeExternalCount
+        ForEach([ExternalAgentKind.codex, .workbuddy, .openclaw], id: \.rawValue) { kind in
+            externalSessionsSection(kind: kind)
+        }
+    }
+
+    private func externalSessionsSection(kind: ExternalAgentKind) -> some View {
+        let alive = providerStore.externalSessions.filter { $0.kind == kind && $0.isAlive }
+        let activeCount = alive.filter(\.isActive).count
 
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
-                icon: "rectangle.stack.person.crop",
-                title: "CODEX · WORKBUDDY · OPENCLAW",
+                icon: kind.icon,
+                title: kind.displayName.uppercased(),
                 tint: Theme.external,
                 count: alive.count,
                 activeCount: activeCount,
@@ -106,7 +111,7 @@ struct SessionsPanelView: View {
             .padding(.horizontal, Theme.Space.s16)
 
             if alive.isEmpty {
-                StandbyEmptyState(label: "no external signals")
+                StandbyEmptyState(label: "no \(kind.displayName.lowercased()) signals")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {
