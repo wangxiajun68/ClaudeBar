@@ -258,10 +258,15 @@ struct UsageStats {
 
     // MARK: - Formatting
 
-    /// Compact token count: 38690638 → "38.7M", 317579 → "318K", 942 → "942".
+    /// Compact token count: 38690638 → "38.7M (3,869.1万)", 317579 → "318K",
+    /// 942 → "942". Metric units (K/M/B) for the number, plus a 中文 magnitude
+    /// annotation once the count reaches the 万 scale — both readings are
+    /// common, and the annotation makes large totals instantly graspable.
     static func formatTokens(_ n: Int) -> String {
-        if n >= 1_000_000 {
-            return String(format: "%.1fM", Double(n) / 1_000_000)
+        if n >= 1_000_000_000 {
+            return String(format: "%.2fB (%.1f亿)", Double(n) / 1_000_000_000, Double(n) / 100_000_000)
+        } else if n >= 1_000_000 {
+            return String(format: "%.1fM (%.1f万)", Double(n) / 1_000_000, Double(n) / 10_000)
         } else if n >= 1_000 {
             return String(format: "%dK", Int(round(Double(n) / 1_000)))
         } else {

@@ -312,7 +312,8 @@ struct WidgetEntryView: View {
     // MARK: - Helpers
 
     private func formatTokens(_ n: Int) -> String {
-        if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+        if n >= 1_000_000_000 { return String(format: "%.2fB (%.1f亿)", Double(n) / 1_000_000_000, Double(n) / 100_000_000) }
+        if n >= 1_000_000 { return String(format: "%.1fM (%.1f万)", Double(n) / 1_000_000, Double(n) / 10_000) }
         if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
         return "\(n)"
     }
