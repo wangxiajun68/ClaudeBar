@@ -25,12 +25,35 @@ private struct PulsingStatusDot: View {
         Circle()
             .fill(isOn ? color : Theme.statusIdle.opacity(0.55))
             .frame(width: big ? 8 : 6, height: big ? 8 : 6)
-            .overlay(
-                Circle().strokeBorder(isOn ? color.opacity(0.4) : Color.clear, lineWidth: big ? 4 : 3)
-                    .scaleEffect(isOn ? 1.7 : 1)
-                    .opacity(isOn ? 0.5 : 0)
-                    .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: isOn)
-            )
+            .overlay {
+                if isOn {
+                    // Pulsing ring while busy. The repeating animation lives
+                    // on a view that only exists while busy — an
+                    // always-attached repeatForever animation keeps the
+                    // render server ticking even when invisible, burning GPU
+                    // on every idle session dot.
+                    BusyPulseRing(color: color, big: big)
+                }
+            }
+    }
+}
+
+/// A stroke ring that breathes in and out for as long as it is on screen.
+/// Removed entirely (not merely faded) when the session goes idle.
+private struct BusyPulseRing: View {
+    let color: Color
+    var big: Bool = false
+    var compact: Bool = false
+    @State private var phase = false
+
+    var body: some View {
+        Circle()
+            .strokeBorder(color.opacity(0.4), lineWidth: compact ? 2 : (big ? 4 : 3))
+            .scaleEffect(phase ? (compact ? 1.8 : 1.7) : 1)
+            .opacity(phase ? 0.5 : 0.2)
+            .onAppear { phase = true }
+            .onDisappear { phase = false }
+            .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: phase)
     }
 }
 
@@ -156,13 +179,9 @@ private struct ActivityLine: View {
             Circle()
                 .fill(isBusy ? color : Theme.statusIdle.opacity(0.5))
                 .frame(width: 4, height: 4)
-                .overlay(
-                    Circle().strokeBorder(isBusy ? color.opacity(0.4) : Color.clear, lineWidth: 2)
-                        .scaleEffect(isBusy ? 1.8 : 1)
-                        .opacity(isBusy ? 0.5 : 0)
-                        .animation(Theme.Animation.pulse.repeatForever(autoreverses: true),
-                                   value: isBusy)
-                )
+                .overlay {
+                    if isBusy { BusyPulseRing(color: color, big: false, compact: true) }
+                }
             Text(activity)
                 .font(Theme.Font.captionMono)
                 .foregroundColor(isBusy ? .white.opacity(0.7) : .white.opacity(0.4))

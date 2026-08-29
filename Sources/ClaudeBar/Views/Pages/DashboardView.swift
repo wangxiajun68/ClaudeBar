@@ -246,14 +246,26 @@ private struct OverviewStatusDot: View {
             .fill(isBusy ? tint : tint.opacity(0.35))
             .frame(width: 6, height: 6)
             .overlay {
-                if isBusy {
-                    Circle()
-                        .strokeBorder(tint.opacity(0.4), lineWidth: 3)
-                        .scaleEffect(1.7)
-                        .opacity(0.5)
-                        .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: isBusy)
-                }
+                if isBusy { BusyPulseRing(color: tint) }
             }
+    }
+}
+
+/// A stroke ring that breathes in and out for as long as it is on screen.
+/// Removed entirely (not merely faded) when the session goes idle — mirrors
+/// SessionsView's BusyPulseRing.
+private struct BusyPulseRing: View {
+    let color: Color
+    @State private var phase = false
+
+    var body: some View {
+        Circle()
+            .strokeBorder(color.opacity(0.4), lineWidth: 3)
+            .scaleEffect(phase ? 1.7 : 1)
+            .opacity(phase ? 0.5 : 0.2)
+            .onAppear { phase = true }
+            .onDisappear { phase = false }
+            .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: phase)
     }
 }
 

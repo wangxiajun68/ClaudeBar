@@ -79,6 +79,12 @@ class ProviderStore: ObservableObject {
             let samples = Self.heartbeatSamples(from: enriched)
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                // Skip the publish when nothing changed. Equatable payloads +
+                // an unchanged-published-value check mean the 2.5s poll only
+                // invalidates SwiftUI when a session actually moved — the
+                // single biggest win for UI stutter, since an idle system
+                // otherwise re-renders every observing view every poll.
+                if self.sessions == enriched { return }
                 self.sessions = enriched
                 self.recordHeartbeats(samples)
                 self.detectIdleTransitions(enriched)
@@ -97,21 +103,26 @@ class ProviderStore: ObservableObject {
     }
 
     /// Append one sample per session to its ring buffer, dropping dead
-    /// sessions' trails and pruning to `heartbeatLength`.
+    /// sessions' trails and pruning to `heartbeatLength`. Returns early when
+    /// the map is unchanged, so idle sessions don't publish every poll.
     private func recordHeartbeats(_ samples: [Int: Bool]) {
         guard !samples.isEmpty else {
             if !heartbeats.isEmpty { heartbeats = [:] }
             return
         }
+        var changed = false
         for (pid, busy) in samples {
             var trail = heartbeats[pid] ?? []
             trail.append(busy)
             if trail.count > Self.heartbeatLength { trail.removeFirst(trail.count - Self.heartbeatLength) }
+            if trail != heartbeats[pid] { changed = true }
             heartbeats[pid] = trail
         }
         // Prune trails for sessions that have died.
         let live = Set(samples.keys)
-        heartbeats = heartbeats.filter { live.contains($0.key) }
+        let pruned = heartbeats.filter { live.contains($0.key) }
+        if pruned.count != heartbeats.count { changed = true }
+        if changed { heartbeats = pruned }
     }
 
     /// Diff this poll's busy states against the last poll's. A session that
@@ -190,6 +201,10 @@ class ProviderStore: ObservableObject {
             let result = CursorSessionMonitor.fetchActive()
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                // Same unchanged-publish skip as the Claude poll: Cursor
+                // sessions are Equatable, so an unchanged scan never touches
+                // the widget snapshot or SwiftUI.
+                if self.cursorSessions == result { return }
                 self.cursorSessions = result
                 self.detectIdleTransitionsCursor(result)
                 // Cursor session changes (new/ended/busy flip) should reach the
