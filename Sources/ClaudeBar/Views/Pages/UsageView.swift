@@ -107,7 +107,7 @@ struct UsageView: View {
             }
         }
         .padding(Theme.Space.s16)
-        .panelCard()
+        .sectionRules()
     }
 
     private func usageRow(_ stat: ModelUsage) -> some View {

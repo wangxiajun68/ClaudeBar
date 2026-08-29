@@ -154,8 +154,6 @@ struct DashboardView: View {
                     .animation(Theme.Animation.smooth, value: runningCount)
             }
             .padding(.horizontal, Theme.Space.s16)
-            .padding(.top, Theme.Space.s16)
-            .padding(.bottom, Theme.Space.s8)
 
             let rows = overviewRows.prefix(8)
             if rows.isEmpty {
@@ -180,7 +178,8 @@ struct DashboardView: View {
                 }
             }
         }
-        .panelCard()
+        .padding(.vertical, Theme.Space.s8)
+        .sectionRules()
     }
 
     /// Unified view-model for one overview row (Claude or Cursor).
@@ -244,15 +243,13 @@ struct DashboardView: View {
                 UsageBarRow(stat: stat, maxTokens: maxUsageTokens, density: .mini)
             }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                Text("无用量数据")
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.textTertiary())
+                StandbyEmptyState(label: "no usage data")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             }
         }
         .padding(Theme.Space.s16)
-        .panelCard()
+        .sectionRules()
     }
 
     private var maxUsageTokens: Int {

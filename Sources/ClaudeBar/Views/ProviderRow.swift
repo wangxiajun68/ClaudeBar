@@ -65,13 +65,7 @@ struct ProviderRow: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background {
-                if isActive {
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Color.clear)
-                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                }
-            }
+            .modifier(ActiveRowEdge(isActive: isActive, selected: isActive))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -102,13 +96,7 @@ struct ProviderRow: View {
                     .font(Theme.Font.caption).foregroundColor(Theme.textTertiary(0.35))
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background {
-                if isActive {
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Color.clear)
-                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                }
-            }
+            .modifier(ActiveRowEdge(isActive: isActive, selected: isActive && provider.models.first?.name == currentModelName))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -139,13 +127,7 @@ struct ProviderRow: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background {
-                if modelNameMatches(model) && isActive {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.clear)
-                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: 4))
-                }
-            }
+            .modifier(ActiveRowEdge(isActive: modelNameMatches(model) && isActive, selected: modelNameMatches(model) && isActive, corner: 4))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -165,7 +147,7 @@ struct ProviderRow: View {
 
     private func radioIndicator(isSelected: Bool) -> some View {
         ZStack {
-            Circle().strokeBorder(isSelected ? Theme.accent : Color.gray.opacity(0.4), lineWidth: 1.5)
+            Circle().strokeBorder(isSelected ? Theme.accent : Theme.statusIdle.opacity(0.4), lineWidth: 1.5)
                 .frame(width: 13, height: 13)
             if isSelected {
                 Circle().fill(Theme.accent).frame(width: 7, height: 7)
@@ -173,5 +155,33 @@ struct ProviderRow: View {
             }
         }
         .animation(Theme.Animation.bouncy, value: isSelected)
+    }
+}
+
+// MARK: - Active row edge (de-carded selection)
+
+/// De-carded selection treatment for provider rows: a 2px accent edge on the
+/// left plus a quiet tint fill — replaces the old nested glass "card".
+private struct ActiveRowEdge: ViewModifier {
+    var isActive: Bool
+    var selected: Bool
+    var corner: CGFloat = Theme.Radius.sm
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if isActive {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(Theme.claude.opacity(0.10))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if isActive {
+                    Rectangle()
+                        .fill(selected ? Theme.claude : Theme.claude.opacity(0.45))
+                        .frame(width: 2)
+                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                }
+            }
     }
 }

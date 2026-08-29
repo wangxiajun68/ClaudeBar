@@ -255,3 +255,17 @@ struct SectionBlock<Content: View>: View {
         .padding(.vertical, Theme.Space.s6)
     }
 }
+
+extension View {
+    /// Just the hairline rules of a section — for stacks that manage their
+    /// own inner padding. The de-carded alternative to `.panelCard()`.
+    func sectionRules(inset: CGFloat = Theme.Space.s16,
+                      top: Bool = true, bottom: Bool = true) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if top { HairlineDivider(inset: inset) }
+            self
+            if bottom { HairlineDivider(inset: inset) }
+        }
+        .padding(.vertical, Theme.Space.s4)
+    }
+}
