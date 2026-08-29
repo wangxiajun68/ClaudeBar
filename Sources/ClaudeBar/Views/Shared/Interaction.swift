@@ -63,7 +63,7 @@ struct ActionChip: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
+                .font(Theme.Font.bodySmall.weight(.semibold))
                 .foregroundColor(tint)
                 .frame(width: 26, height: 26)
                 .background(
@@ -102,7 +102,7 @@ struct IconChip: View {
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: size))
+            .font(Theme.Font.systemIcon(size))
             .foregroundColor(hover ? tint : tint.opacity(0.85))
             .frame(width: tile, height: tile)
             .glassEffect(

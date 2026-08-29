@@ -39,9 +39,10 @@ struct SessionCardView: View {
                 }
             }
 
-            if session.contextTokens > 0 {
-                ContextBar(ratio: ratio, height: 3)
-            }
+            // Always rendered (dimmed when no data) so every card in the
+            // grid row keeps the same height regardless of context data.
+            ContextBar(ratio: ratio, height: 3)
+                .opacity(session.contextTokens > 0 ? 1 : 0.25)
 
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -73,12 +74,16 @@ struct SessionCardView: View {
                             .foregroundColor(Theme.textTertiary(0.55))
                     }
                 }
+                Spacer(minLength: 0)
+            }
+            .overlay(alignment: .topTrailing) {
                 // Subagent chord: one vertical line per live subagent —
                 // taller and glowing while running, dim stub when done.
-                // Parallelism made visible at a glance.
+                // Overlaid (not stacked) so the card height stays stable.
                 if runningAgents > 0 {
                     AgentChordLines(running: runningAgents, total: agentTotal)
                         .frame(height: 22)
+                        .offset(x: 0, y: 2)
                         .transition(.opacity)
                 }
             }
@@ -93,7 +98,6 @@ struct SessionCardView: View {
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(isBusy ? Theme.statusBusy.opacity(isHovered ? 0.55 : 0.35) : Theme.hairline, lineWidth: 1)
         )
-        .scaleEffect(isHovered ? 1.02 : 1)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

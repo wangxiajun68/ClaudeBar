@@ -20,31 +20,27 @@ struct ProvidersPanel: View {
                     .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
                     .fixedSize()
-                    .padding(.horizontal, Theme.Space.s16 + Theme.Space.s6).padding(.bottom, Theme.Space.s4)
+                    .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
 
-                VStack(spacing: 2) {
+                TileGrid(.popupProvider) {
                     ForEach(providerStore.providers) { provider in
-                        ProviderRow(
+                        ProviderTile(
                             provider: provider,
                             isActive: provider.id == providerStore.activeProviderID,
-                            isExpanded: !providerStore.collapsedProviderIDs.contains(provider.id),
                             currentModelName: providerStore.currentEnv?.ANTHROPIC_MODEL,
-                            onToggleExpand: {
-                                if providerStore.collapsedProviderIDs.contains(provider.id) {
-                                    providerStore.collapsedProviderIDs.remove(provider.id)
-                                } else {
-                                    providerStore.collapsedProviderIDs.insert(provider.id)
-                                }
-                            },
                             onActivateModel: { modelID in
                                 providerStore.activateModel(providerID: provider.id, modelID: modelID)
                                 if let m = provider.models.first(where: { $0.id == modelID }) {
                                     panel.showFeedback("\(provider.name) / \(m.name)")
                                 }
-                            }
+                            },
+                            dense: true
                         )
                     }
                 }
+                // Tile inner padding is s8 (dense), so a grid inset of s8 puts
+                // tile *text* on the same s16 edge as the section labels.
+                .padding(.horizontal, Theme.Space.s8)
 
                 // Feedback toast (render-only; lifecycle lives in the shell).
                 FeedbackToast(message: panel.feedbackMessage, tint: Theme.statusBusy)
@@ -52,7 +48,7 @@ struct ProvidersPanel: View {
 
                 HairlineDivider().padding(.top, Theme.Space.s6)
             }
-            .padding(.horizontal, Theme.Space.s6).padding(.vertical, Theme.Space.s6)
+            .padding(.horizontal, Theme.Space.s16).padding(.vertical, Theme.Space.s6)
         }
     }
 
@@ -97,6 +93,6 @@ struct ProvidersPanel: View {
                 }
             }
         }
-        .padding(.horizontal, Theme.Space.s16 - 2).padding(.vertical, Theme.Space.s8)
+        .padding(.horizontal, Theme.Space.s16).padding(.vertical, Theme.Space.s8)
     }
 }

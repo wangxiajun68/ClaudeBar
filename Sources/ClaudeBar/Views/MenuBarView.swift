@@ -29,7 +29,7 @@ struct MenuBarView: View {
                     Divider().background(Theme.divider)
 
                     sessionsPanel
-                        .frame(maxHeight: 300)
+                        .frame(maxHeight: 260)
 
                     Divider().background(Theme.divider)
 
@@ -38,9 +38,11 @@ struct MenuBarView: View {
                         UsagePanel()
                             .frame(maxWidth: .infinity)
                     }
-                    .frame(maxHeight: 150)
+                    // No height cap — capping this area is what squeezed the
+                    // chips + date nav + tile grid into a cramped pile.
                 }
-                .frame(maxHeight: 460)
+                // No total cap either — let content size itself; the panel
+                // scrolls per-section instead of compressing.
             }
 
             actionBar
