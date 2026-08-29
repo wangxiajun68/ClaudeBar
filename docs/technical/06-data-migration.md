@@ -1,23 +1,24 @@
-# 数据迁移
+# 数据迁移与格式兼容
 
 > ClaudeBar 技术文档 · §6
 > 相关：设计文档 [数据模型](../design/03-data-models.md) · 技术文档 [数据访问层](04-data-access-layer.md)
 
-## 旧 Preset → Provider 迁移
+## 现状
 
-`MigrationHelper.migrateIfNeeded()`（在 `Provider.swift`）：
-1. 检测 `claude-bar-presets.json`（旧）是否存在且非空。
-2. 按 `baseURL`（trim `/`）分组旧 preset。
-3. 每组：旧 preset 的 `ANTHROPIC_MODEL` 去重后转为 `ModelConfig`（继承 contextTokens / disableCompact / 等），Provider 名取 URL host 的主域段首字母大写。
-4. 返回 `ProvidersFile`，由 `loadProviders` 保存为新格式并**删除旧文件**。
+当前唯一的数据格式是 `claude-bar-providers.json`（`ProvidersFile`）。历史版本的扁平 `Preset` 列表（`claude-bar-presets.json`）与其自动迁移器 `MigrationHelper` 已从代码中移除；`FilePaths` 也不再保留旧文件路径。若存在更早版本的残留文件，ClaudeBar 不再读取或迁移。
 
-## `Provider.init(from:)` 的旧格式兼容
+## `Provider.init(from:)` 的旧字段兼容
 
-即便新格式文件，`Provider` 的 `Decodable` 实现也兼容：
-- `models`：先试 `[ModelConfig]`，失败再试旧 `[String]`（此时用 provider 级的 `contextTokens`/`disableCompact` 等动态键）。
+即便新格式文件，`Provider` 的 `Decodable` 实现也兼容早期手写内容：
+
+- `models`：先试 `[ModelConfig]`，失败再试旧 `[String]`（此时用 provider 级的 `contextTokens`/`disableCompact`/`disableExperimentalBetas`/`autoCompactWindow` 动态键填充每个模型）。
 - `activeModelID`：先试 `UUID`，失败用旧 `activeModel`（String 模型名）匹配。
-- `id` / `authToken` / `baseURL`：`decodeIfPresent` 缺失则生成默认。
+- `id` / `authToken` / `baseURL`：`decodeIfPresent` 缺失则取默认（id 生成新 UUID）。
 
 `EnvConfig.init(from:)` 全字段 `decodeIfPresent`，缺字段默认 `""`，保证向后兼容。
 
-`Preset.init(from:)`：`id` 缺失时生成新 UUID，让无 id 的旧数据存活。
+## 若需重新引入迁移
+
+1. 在 `Models/Provider.swift`（或独立文件）重建 `Preset`/`PresetsFile` 类型与 `MigrationHelper.migrateIfNeeded()`。
+2. `FilePaths` 加回旧文件路径。
+3. `ProviderStore.loadProviders()` 开头调用迁移并 `saveProviders()`（保存新格式后删除旧文件）。

@@ -10,5 +10,6 @@
 | 写 settings.json 失败 | `errorMessage` 提示，面板反馈 |
 | 无活跃会话 | 会话区显示 "No active sessions" |
 | Cursor 未安装 / DB 不存在 | Cursor 区显示 "none"，不影响 Claude 区 |
-| DeepSeek 余额请求失败 / 非 DeepSeek | `balanceText = nil`，不显示余额 |
+| DeepSeek 余额请求失败 / 非 DeepSeek | `balanceText = nil`，不显示余额（popup 显示 "⋯" 加载态后回落为空） |
+| 通知权限被拒 | `NotificationService` 静默降级：不再请求、不发送通知，其余功能不受影响 |
 | Widget 读不到快照 | 先试 UserDefaults → App Group 文件 → `~/.claude` → Widget 沙盒容器，全部失败则显示诊断信息（`UD:nil F:N/-1B`） |
