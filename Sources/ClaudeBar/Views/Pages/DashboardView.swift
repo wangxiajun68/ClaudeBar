@@ -241,7 +241,7 @@ struct DashboardView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             ForEach(Array(providerStore.usageStats.prefix(5).enumerated()), id: \.element.id) { _, stat in
-                MiniUsageRow(stat: stat, maxTokens: maxUsageTokens)
+                UsageBarRow(stat: stat, maxTokens: maxUsageTokens, density: .mini)
             }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 Text("无用量数据")
@@ -325,44 +325,5 @@ private struct SessionOverviewRow: View {
     }
 }
 
-// MARK: - Mini usage row
-
-/// Dashboard's compact usage row: model + proportional bar + share + tokens.
-private struct MiniUsageRow: View {
-    let stat: ModelUsage
-    let maxTokens: Int
-
-    var body: some View {
-        let ratio = maxTokens > 0 ? CGFloat(stat.totalTokens) / CGFloat(maxTokens) : 0
-        return HStack(spacing: 8) {
-            // Fixed width so the bars, percentages, and token counts line up
-            // in a vertical grid across all rows.
-            Text(stat.model)
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: 140, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Theme.cardFill(0.06))
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Theme.barColor(for: stat.model))
-                        .frame(width: max(3, geo.size.width * ratio))
-                }
-            }
-            .frame(height: 6)
-            Text("\(Int((ratio * 100).rounded()))%")
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textTertiary())
-                .frame(width: 36, alignment: .trailing)
-            Text(UsageStats.formatTokens(stat.totalTokens))
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textSecondary)
-                .frame(width: 56, alignment: .trailing)
-                .contentTransition(.numericText())
-                .animation(Theme.Animation.smooth, value: stat.totalTokens)
-        }
-    }
-}
+// Mini usage rows now use the shared `UsageBarRow(density: .mini)`
+// from `Views/Shared/UsageBar.swift`.

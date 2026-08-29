@@ -115,7 +115,8 @@ struct UsageView: View {
 
     private func usageRow(_ stat: ModelUsage) -> some View {
         UsageBarRow(stat: stat,
-                    maxTokens: providerStore.usageStats.first?.totalTokens ?? 1)
+                    maxTokens: providerStore.usageStats.first?.totalTokens ?? 1,
+                    density: .page)
     }
 
     private func selectPeriod(_ period: UsagePeriod) {
@@ -138,53 +139,5 @@ struct UsageView: View {
 
 // MARK: - Usage bar row
 
-/// A per-model usage row: model name, a proportional fill bar, the formatted
-/// token count and its share — all visible without interaction.
-private struct UsageBarRow: View {
-    let stat: ModelUsage
-    let maxTokens: Int
-    @State private var isHovered = false
-
-    var body: some View {
-        let ratio = maxTokens > 0 ? CGFloat(stat.totalTokens) / CGFloat(maxTokens) : 0
-        let color = Theme.barColor(for: stat.model)
-        return HStack(spacing: 12) {
-            // Fixed model column keeps the bars and trailing numbers on a
-            // shared vertical grid across rows; long names truncate in the
-            // middle so the head and TLD of the id stay visible.
-            Text(stat.model)
-                .font(Theme.Font.bodySmall)
-                .foregroundColor(Theme.textPrimary.opacity(isHovered ? 1 : 0.85))
-                .frame(width: 180, alignment: .leading)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.cardFill(0.08))
-                        .frame(height: 8)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(color)
-                        .frame(width: max(4, geo.size.width * ratio), height: 8)
-                }
-            }
-            .frame(height: 14)
-            // Tokens and share each get their own fixed trailing column so
-            // digits align vertically instead of drifting with content.
-            Text(UsageStats.formatTokens(stat.totalTokens))
-                .font(Theme.Font.bodySmall)
-                .monospacedDigit()
-                .foregroundColor(Theme.textSecondary)
-                .frame(width: 64, alignment: .trailing)
-                .contentTransition(.numericText())
-                .animation(Theme.Animation.smooth, value: stat.totalTokens)
-            Text("\(Int(ratio * 100))%")
-                .font(Theme.Font.captionMono)
-                .monospacedDigit()
-                .foregroundColor(color)
-                .frame(width: 40, alignment: .trailing)
-        }
-        .padding(.vertical, 3)
-        .hoverState($isHovered)
-    }
-}
+// Per-model usage rows now use the shared `UsageBarRow(density: .page)`
+// from `Views/Shared/UsageBar.swift` — the former private copy is gone.

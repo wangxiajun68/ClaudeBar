@@ -15,7 +15,9 @@ extension Notification.Name {
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var switchFeedback: String? = nil
-    @State private var switchFeedbackTimer: Timer? = nil
+    /// Monotonic token bumping on each showFeedback — drives the auto-dismiss
+    /// .task below without holding a Timer in @State (which leaks on rebuild).
+    @State private var feedbackToken = 0
     /// Collapse the model-config/provider area so sessions + usage get the
     /// full panel width. Sessions are the focus of the panel, so this
     /// defaults to collapsed. Persisted across launches via @AppStorage.
@@ -71,6 +73,13 @@ struct MenuBarView: View {
             actionBar
         }
         .frame(width: 560)
+        // Auto-dismiss the toast 2s after the latest showFeedback call.
+        .task(id: feedbackToken) {
+            guard feedbackToken > 0 else { return }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(Theme.Animation.smooth) { switchFeedback = nil }
+        }
     }
 
     // MARK: - Header
@@ -265,8 +274,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 16)
 
             if alive.isEmpty {
-                Text("No active Cursor sessions")
-                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                StandbyEmptyState(label: "no cursor signals")
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: 4) {
@@ -317,13 +325,14 @@ struct MenuBarView: View {
             .padding(.horizontal, 16)
 
             if alive.isEmpty {
-                Text("No active sessions")
-                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                StandbyEmptyState(label: "no signals")
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: 4) {
                     ForEach(alive) { session in
-                        SessionCardView(session: session) { resumeInTerminal(session) }
+                        SessionCardView(session: session, heartbeat: providerStore.heartbeats[session.pid]) {
+                            resumeInTerminal(session)
+                        }
                     }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 4)
@@ -502,11 +511,11 @@ struct MenuBarView: View {
     // MARK: - Helpers
 
     private func showFeedback(_ message: String) {
-        switchFeedbackTimer?.invalidate()
+        // Structs can't hold identity, so disambiguate repeated messages with
+        // a monotonically increasing token; .task(id:) auto-cancels the
+        // previous 2s dismiss task — no Timer, no leak on view rebuild.
+        feedbackToken += 1
         withAnimation(Theme.Animation.smooth) { switchFeedback = message }
-        switchFeedbackTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
-            DispatchQueue.main.async { withAnimation(Theme.Animation.smooth) { switchFeedback = nil } }
-        }
     }
 
     // MARK: - External Actions

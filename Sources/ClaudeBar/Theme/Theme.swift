@@ -44,6 +44,11 @@ enum Theme {
     static let accentDim = Color(hex: 0x3A6FD1)
     static let cursorAccent = cursor
 
+    /// Session-kind hue — blue for Claude, violet for Cursor.
+    static func signal(isCursor: Bool) -> Color {
+        isCursor ? cursor : claude
+    }
+
     // MARK: Text
     static let textPrimary = Color(hex: 0xF5F5F7)   // Apple white
     static let textSecondary = Color(hex: 0xA1A1A6) // Apple gray
@@ -67,6 +72,7 @@ enum Theme {
     enum Space {
         static let s2: CGFloat = 2
         static let s4: CGFloat = 4
+        static let s6: CGFloat = 6
         static let s8: CGFloat = 8
         static let s12: CGFloat = 12
         static let s16: CGFloat = 16
@@ -109,6 +115,21 @@ enum Theme {
         /// than a full monospace face for display numbers.
         static let displayMetric = SwiftUI.Font.system(size: 30, weight: .semibold)
         static let displayMetricSmall = SwiftUI.Font.system(size: 19, weight: .semibold)
+
+        // Popup-density aliases — the menu-bar panel runs tighter than pages.
+        // These exist so view files never hand-roll `.system(size:)` inline.
+        /// 11px medium row-title (popup session/provider lines).
+        static let rowTitle = SwiftUI.Font.system(size: 11, weight: .medium)
+        /// 13px row title (provider list lines).
+        static let rowLarge = SwiftUI.Font.system(size: 13, weight: .regular)
+        /// 10px popup micro text; use the weighted variants for emphasis.
+        static let micro = SwiftUI.Font.system(size: 10, weight: .regular)
+        static let microMedium = SwiftUI.Font.system(size: 10, weight: .medium)
+        static let microSemibold = SwiftUI.Font.system(size: 10, weight: .semibold)
+        /// 10px monospaced — data only (activity, model names).
+        static let microMono = SwiftUI.Font.system(size: 10, weight: .regular, design: .monospaced)
+        /// 9px monospaced badge (context chips, model badges).
+        static let badgeMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
     }
 
     // MARK: Context health color
@@ -128,7 +149,18 @@ enum Theme {
             Color(hex: 0xE0A13C),  // amber
             Color(hex: 0xE46464),  // coral
         ]
-        return palette[abs(model.hashValue) % palette.count]
+        return palette[djb2(model) % palette.count]
+    }
+
+    /// Stable string hash — unlike String.hashValue, djb2 is deterministic
+    /// across launches and processes, so the main app and Widget always tint
+    /// the same model the same color.
+    static func djb2(_ s: String) -> Int {
+        var h: UInt64 = 5_381
+        for b in s.utf8 {
+            h = (h &* 33) &+ UInt64(b)
+        }
+        return Int(h % UInt64(Int.max))
     }
 
     // MARK: Animation (speed-first, state-driven only)
@@ -187,5 +219,39 @@ extension View {
     /// Apply the Liquid Glass card surface (native `glassEffect`).
     func panelCard(radius: CGFloat = Theme.Radius.md, fill: Double = 0.07) -> some View {
         modifier(PanelCardModifier(radius: radius, fill: fill))
+    }
+}
+
+// MARK: - Hairline sectioning (de-carded layout primitives)
+
+/// A single hairline rule — the de-carded alternative to nested glass cards.
+/// Sections separate with a 1px line and spacing, not another surface.
+struct HairlineDivider: View {
+    var inset: CGFloat = 0
+
+    var body: some View {
+        Rectangle()
+            .fill(Theme.hairline)
+            .frame(height: 1)
+            .padding(.horizontal, inset)
+    }
+}
+
+/// Hairline section container: no background, no corner — just spacing and
+/// optional top/bottom rules. Replaces `.panelCard()` nesting for list areas.
+struct SectionBlock<Content: View>: View {
+    var topRule: Bool = true
+    var bottomRule: Bool = true
+    var inset: CGFloat = Theme.Space.s16
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            if topRule { HairlineDivider(inset: inset) }
+            content()
+                .padding(.horizontal, inset)
+            if bottomRule { HairlineDivider(inset: inset) }
+        }
+        .padding(.vertical, Theme.Space.s6)
     }
 }
