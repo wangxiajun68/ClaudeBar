@@ -16,6 +16,8 @@ codesign ... --entitlements app.plist   "$MACOS_DIR/ClaudeBar"         # 4. 主�
 codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 5. 主 bundle wrapper
 ```
 
+安装到 /Applications 后**再次** `xattr -cr`（`cp` 会重新引入扩展属性）。
+
 ## Entitlements
 
 **Widget appex**（沙盒开）：

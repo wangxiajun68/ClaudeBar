@@ -25,14 +25,16 @@
 
 ## `writeWidgetSnapshot()` — 四路冗余写入 + diff（B6）
 
-因 Widget 沙盒环境的多样性，快照被写到四个位置，按 Widget 读取优先级：
+快照写入逻辑已抽到 `Models/WidgetSnapshotWriter.swift`（`enum WidgetSnapshotWriter`）。因 Widget 沙盒环境的多样性，快照被写到四个位置，按 Widget 读取优先级：
 
 1. **App Group 容器**：`containerURL(forSecurityApplicationGroupIdentifier:)` 下的 `claude-bar-widget-data.json`（首选，沙盒可读）。
-2. **`~/.claude/`**：非沙盒回退。
+2. **`~/.claude/`**：非沙盒回退，便于手工调试。
 3. **Widget 沙盒容器**：`~/Library/Containers/com.claudebar.app.widget/Data/claude-bar-widget-data.json`。
-4. **UserDefaults (App Group)**：`shared.set(data, forKey: "widgetSnapshot")`。
+4. **UserDefaults (App Group)**：`shared.set(data, forKey: AppConfig.widgetSnapshotDefaultsKey)`。
 
-> **diff 优化（B6）**：2.5s 轮询会反复调用 `writeWidgetSnapshot()`。现缓存上次 snapshot 的 JSON `Data`，仅当新 `Data != lastSnapshotData` 时才执行四路写入 + `WidgetCenter.shared.reloadAllTimelines()`。Apple 建议仅数据变化时重载 timeline——无 diff 时每 2.5s 无意义重载会浪费磁盘 I/O 与 widget 刷新配额。已删除原 `shared.synchronize()`（现代 macOS 自动同步，已弃用）。
+各路写入均为 best-effort，一路失败不阻塞其他路。
+
+> **diff 优化（B6）**：2.5s 轮询会反复调用 `writeWidgetSnapshot()`。`WidgetSnapshotWriter.write(_:deduplicatingAgainst:)` 缓存上次 snapshot 的 JSON `Data`，仅当新 `Data != lastSnapshotData` 时才执行四路写入 + `WidgetCenter.shared.reloadAllTimelines()`。Apple 建议仅数据变化时重载 timeline——无 diff 时每 2.5s 无意义重载会浪费磁盘 I/O 与 widget 刷新配额。已删除原 `shared.synchronize()`（现代 macOS 自动同步，已弃用）。
 
 ## `SessionMonitor` — Claude Code 会话
 

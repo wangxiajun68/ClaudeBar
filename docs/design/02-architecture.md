@@ -43,8 +43,8 @@
 │                                                               │
 │  ┌──────────── Models ────────────┐  ┌──────────── Utils ────────────┐
 │  │ Provider / ModelConfig          │  │ FilePaths                     │
-│  │ EnvConfig / Preset (迁移用)     │  │ SettingsManager (读写 settings)│
-│  │ ProvidersFile / MigrationHelper │  │ BalanceFetcher (DeepSeek API)  │
+│  │ EnvConfig / ProvidersFile       │  │ SettingsManager (读写 settings)│
+│  │ WidgetSnapshot(+Writer)         │  │ BalanceFetcher (DeepSeek API)  │
 │  │ ProviderEditorModel             │  │ SessionMonitor (Claude 进程)   │
 │  │ WidgetSnapshot(+Writer)         │  │ CursorSessionMonitor (SQLite) │
 │  │ AppConfig / AppPreferences      │  │ CursorUsageStats             │
@@ -78,7 +78,7 @@
 | 状态管理 | 单一 `ProviderStore: ObservableObject` 注入环境 | 主窗口与菜单栏 popup 共享同一份真值源；轮询定时器、余额请求、快照写入都挂在 store 上，生命周期与 app 一致。 |
 | 布局语言 | 全界面宫格化：数据域以等高瓦片网格呈现，列模板收敛到 `Theme.GridLayout.Preset` | 每个数据域只在一处决定"怎么排"；瓦片等高保证网格行整齐，信息密度高于卡片列表。 |
 | 设计系统 | `Theme` 设计 token（颜色/间距/圆角/字距/字体/宫格/动画/表面）单点定义 | 主窗口与 popup 共用同一套 token，配色一致、可单点改。`Shared/` 组件层（`TileGrid`/`MetricTile`/`SectionHeader`/`SessionCardView`/`CommandPalette` 等）跨面复用。 |
-| 数据格式 | JSON（Codable） | 与 `settings.json` 一致，人类可读可手改；`Preset` 旧格式通过 `MigrationHelper` 自动迁移。 |
+| 数据格式 | JSON（Codable） | 与 `settings.json` 一致，人类可读可手改；`Provider` 解码兼容早期手写文件的旧字段。 |
 | 沙盒策略 | 主 app **非沙盒**（需读 `~/.claude`、`~/.cursor`、调 osascript），Widget **沙盒** | 主 app 必须跨目录读文件与驱动外部进程；Widget 受 WidgetKit 限制必须沙盒，故通过 App Group 共享快照。 |
 | 依赖 | 零第三方依赖（仅系统框架 + libsqlite3） | 用 `swiftc` + shell 脚本构建，无 Xcode 工程，自用分发最简。 |
-| 最低系统 | macOS 15.0 (Sequoia) 起编译，运行目标 macOS 26（Liquid Glass `glassEffect`），arm64 | 主内容表面用原生 `glassEffect`；仅 Apple Silicon。 |
+| 最低系统 | macOS 26，arm64 | 主内容表面用原生 `glassEffect`（Liquid Glass），`build.sh` 以 `arm64-apple-macos26.0` 编译；仅 Apple Silicon。 |

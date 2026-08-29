@@ -16,8 +16,8 @@ ClaudeBar/
 │   │   ├── Theme/
 │   │   │   └── Theme.swift               ← 设计 token（颜色/间距/圆角/字距/字体/宫格/动画/表面）单点
 │   │   ├── Models/
-│   │   │   ├── Provider.swift            ← Provider/ModelConfig/ProvidersFile/MigrationHelper
-│   │   │   ├── Preset.swift              ← EnvConfig/Preset(旧)
+│   │   │   ├── Provider.swift            ← Provider/ModelConfig/ProvidersFile
+│   │   │   ├── Preset.swift              ← EnvConfig（settings.json env 镜像）
 │   │   │   ├── ProviderStore.swift       ← 状态中枢（刷新管线 + 心跳 + 空闲检测 + 快照 diff）
 │   │   │   ├── ProviderStore+Derived.swift ← 派生量（活跃会话/busy 数/用量合计/活跃 Provider）
 │   │   │   ├── ProviderEditorModel.swift ← 编辑器 @Observable 模型（EditableModel）

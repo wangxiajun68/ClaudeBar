@@ -9,12 +9,13 @@
 |----|------|------|
 | 语言 | Swift 5.9+ | 随 Xcode/Command Line Tools 提供 |
 | UI | SwiftUI + AppKit 混合 | SwiftUI 渲染面板内容；AppKit 管理 `NSStatusItem`/`NSPanel`/`NSWindow` |
+| 表面 | macOS 26 原生 Liquid Glass（`glassEffect`） | 主内容卡 `panelCard()` / 瓦片 `.tile()` 都基于原生玻璃 |
 | Widget | WidgetKit | systemLarge 尺寸，`StaticConfiguration` |
 | 数据 | Foundation Codable + JSONSerialization | 编码用 Codable，settings.json 读写用 JSONSerialization 以保留未知字段 |
 | 数据库 | SQLite3（系统库） | 读 Cursor 的 `state.vscdb`，仅只读 |
 | 依赖 | **零第三方依赖** | 仅链接 `libsqlite3` 与系统框架 |
 | 构建 | `swiftc` + `bash` 脚本 | 无 Xcode 工程、无 SPM |
-| 最低系统 | macOS 15.0 (Sequoia), arm64 | 仅 Apple Silicon；依赖 `symbolEffect`/`MeshGradient`/`sensoryFeedback`/`onGeometryChange` |
+| 最低系统 | macOS 26，arm64 | 仅 Apple Silicon；`build.sh` 以 `arm64-apple-macos26.0` 为编译目标 |
 
 ## 构建脚本 `Sources/build.sh`
 
@@ -24,7 +25,7 @@
 
 ```bash
 swiftc -o "$MACOS_DIR/ClaudeBar" \
-  -sdk macosx -target arm64-apple-macos15.0 \
+  -sdk macosx -target arm64-apple-macos26.0 \
   -framework SwiftUI -framework AppKit -framework WidgetKit \
   -lsqlite3 \
   -Xlinker -rpath -Xlinker /usr/lib/swift \
@@ -39,7 +40,7 @@ swiftc -o "$MACOS_DIR/ClaudeBar" \
 ```bash
 swiftc -o "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" \
   -module-name ClaudeBarWidget -parse-as-library \
-  -sdk macosx -target arm64-apple-macos15.0 \
+  -sdk macosx -target arm64-apple-macos26.0 \
   -framework SwiftUI -framework WidgetKit \
   -Xlinker -application_extension \
   -Xlinker -e -Xlinker _NSExtensionMain \

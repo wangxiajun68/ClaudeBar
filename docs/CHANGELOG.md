@@ -4,7 +4,27 @@
 
 ---
 
-## [1.7.0] — 2026-08-29 · 信息优先重构
+## [1.8.0] — 2026-08-29 · 宫格重构 + 空闲通知
+
+### 变更 — 全界面宫格化（瓦片）
+- 新增 `Theme.GridLayout.Preset` 列模板（`pageMetric` 4 等分 / `pageSession`·`pageUsage`·`pageProvider` 自适应 / `popupSession`·`popupProvider`·`popupUsage` 2 列）与 `Views/Shared/Tile.swift`（`TileGrid` + `MetricTile` + `.tile()` modifier）——每个数据域的布局只在一处决定。
+- 主窗口 5 页全部瓦片化：Dashboard（4 指标瓦片 + 会话总览 + 用量 Top）、Sessions（`SessionTileFull`，瓦片内展开子 agent）、Providers（`ProviderTile` 宫格 + accent 左缘选中态）、Usage（每模型一个 `UsageModelTile`）。
+- popup 同步宫格化：供应商区改 `ProviderTile` 2 列（瓦片内 chevron 展开模型行，收起时等高）；会话区 2 列 `SessionCardView`/`CursorSessionCardView`（含 `HeartbeatSparkline`）；用量区 2 列 `UsageModelTile`。
+- popup 拆分：`Views/MenuBarView.swift` 变组合壳，内容移入 `Views/Popup/` 五文件（`PanelHeader`/`ProvidersPanel`/`SessionsPanel`/`UsagePanel`/`PanelState`）；编辑器窗口管理下沉 `ProviderEditorWindowController`；表单模型下沉 `Models/ProviderEditorModel.swift`（校验 + spinner）。
+- 统一组件：`SectionHeader`/`StatusDot`/`HoverActionChips`/`FeedbackToast`/`StandbyEmptyState`/`UsageBar`（`UsageBarRow`/`UsageModelTile`/`ProportionBar`/`MetricText`）。
+
+### 新增 — 空闲通知
+- `Models/AppPreferences.swift`：`idleNotifyEnabled` 开关（UserDefaults 持久化，默认开；popup 铃铛按钮 + 设置页 Toggle）。
+- `Models/IdleTransitionDetector.swift`：busy→idle 边沿检测。
+- `Utils/NotificationService.swift`：UNUserNotificationCenter 封装（授权、`IDLE_SESSION` category 含 "在终端恢复" 动作、"Claude 等你输入"/"Cursor 等你输入" 通知）；点按经 `.resumeSession` 通知回 AppDelegate 在终端恢复会话。
+- `ProviderStore` 新增 `heartbeats`（busy/idle 采样轨迹，`AppConfig.heartbeatLength`）与空闲检测接线；轮询间隔/心跳长度/Widget key 收敛到新 `Models/AppConfig.swift`。
+
+### 清理 — 数据层
+- 删除旧 Preset 迁移通道：`MigrationHelper`、`Preset`/`PresetsFile`、`FilePaths.oldPresetsFile`（`claude-bar-presets.json` 不再读取）；`Provider` 保留旧字段解码兼容。
+- Widget 快照写入抽到 `Models/WidgetSnapshotWriter.swift`；会话派生量抽到 `Models/ProviderStore+Derived.swift`。
+
+---
+
 
 ### 删除 — 装饰性组件（不承载数据的视觉全部移除）
 - `Views/Shared/LiveRadar.swift`（实时雷达，含 `RadarBlip`/`RadarAgentDetail`）、`LivePulseGraph.swift`（伪正弦信号历史，不编码真实数据）、`SignalTrace.swift`（动画均衡器）、`PointerFX.swift`（`TiltOnHover`/`SpecularSheen`/`CursorSpotlight`）。

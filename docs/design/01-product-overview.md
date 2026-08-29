@@ -9,7 +9,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 2. **会话监控** — 实时展示本机所有活跃的 Claude Code 进程与 Cursor Composer 会话：上下文占用、当前正在执行的工具、子 Agent / Workflow 状态。
 3. **用量统计** — 按日 / 月 / 年 / 自定义日期聚合各模型的 token 消耗，并在桌面 Widget 中呈现概览。
 
-应用以 `.regular` 激活策略运行（含 Dock 图标与主窗口），同时保留菜单栏 status item 与失焦自动收起的非激活毛玻璃面板。主窗口是新增的旗舰交互面（NavigationSplitView + 5 个页面），菜单栏 popup 仍为快速概览。
+应用以 `.regular` 激活策略运行（含 Dock 图标与主窗口），同时保留菜单栏 status item 与失焦自动收起的非激活毛玻璃面板。主窗口是旗舰交互面（NavigationSplitView + 5 个宫格化页面），菜单栏 popup 仍为快速概览。会话由忙转闲时可发 macOS 系统通知（可开关）提醒用户恢复输入。
 
 ## 目标用户
 
