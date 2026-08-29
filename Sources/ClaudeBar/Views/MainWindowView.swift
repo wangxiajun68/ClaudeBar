@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Page enum
 
-/// The five sidebar destinations.
+/// The five top-nav destinations.
 enum AppPage: String, CaseIterable, Identifiable {
     case dashboard, sessions, providers, usage, settings
     var id: String { rawValue }
@@ -30,18 +30,19 @@ enum AppPage: String, CaseIterable, Identifiable {
 
 // MARK: - Main window root
 
-/// The main window's SwiftUI content: a `NavigationSplitView` with a dark
-/// sidebar and a detail area that switches between the five pages. Motion is
-/// state-driven only: page fades, hover feedback, busy indicator.
+/// The main window's SwiftUI content: a top navigation bar (brand · pages ·
+/// live status) above a full-width detail area. The horizontal bar replaces
+/// the old vertical sidebar — the 宫格 content gets the whole window width and
+/// the chrome reads as one calm strip instead of a heavy left column.
 struct MainWindowView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-        } detail: {
+        VStack(spacing: 0) {
+            topBar
+            HairlineDivider()
             detailView
         }
         .frame(minWidth: 900, minHeight: 600)
@@ -70,29 +71,33 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: Sidebar
+    // MARK: Top navigation bar
 
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            brandHeader
-
-            VStack(spacing: 2) {
+    /// Brand · page tabs (centered) · live status (trailing). One row, 48pt.
+    private var topBar: some View {
+        HStack(spacing: Theme.Space.s16) {
+            brand
+            Spacer()
+            HStack(spacing: Theme.Space.s4) {
                 ForEach(AppPage.allCases) { page in
-                    sidebarRow(page)
+                    TopNavTab(page: page, isSelected: selectedPage == page,
+                              badge: badge(for: page)) {
+                        navigate(to: page)
+                    }
+                    .help(page.label)
                 }
             }
-            .padding(.horizontal, 10)
-
             Spacer()
-            sidebarFooter
-                .padding(12)
+            liveStatus
         }
+        .padding(.horizontal, Theme.Space.s16)
+        .frame(height: 48)
         .background(Theme.sidebarFill)
         .glassEffect(.regular.tint(Theme.base2.opacity(0.15)), in: Rectangle())
     }
 
-    private var brandHeader: some View {
-        HStack(spacing: 10) {
+    private var brand: some View {
+        HStack(spacing: Theme.Space.s8) {
             ZStack {
                 Circle()
                     .fill(Theme.claude)
@@ -101,27 +106,14 @@ struct MainWindowView: View {
                     .font(Theme.Font.microSemibold)
                     .foregroundColor(Theme.base0)
             }
-
             Text("Axon")
                 .font(Theme.Font.titleSmall)
                 .tracking(Theme.Tracking.titleSmall)
                 .foregroundColor(Theme.textPrimary)
-            Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 16)
     }
 
-    private func sidebarRow(_ page: AppPage) -> some View {
-        let isSelected = selectedPage == page
-        return SidebarRowButton(page: page, isSelected: isSelected, badge: badge(for: page)) {
-            navigate(to: page)
-        }
-        .help(page.label)
-    }
-
-    /// Live count badges per sidebar destination.
+    /// Live count badges per destination.
     private func badge(for page: AppPage) -> Int? {
         switch page {
         case .sessions:
@@ -140,7 +132,7 @@ struct MainWindowView: View {
             || providerStore.cursorSessions.contains { $0.status == .active }
     }
 
-    private var sidebarFooter: some View {
+    private var liveStatus: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(isBusy ? Theme.claudeHi : Theme.statusIdle)
@@ -148,7 +140,6 @@ struct MainWindowView: View {
             Text(currentLabel)
                 .font(Theme.Font.captionMono)
                 .foregroundColor(isBusy ? Theme.claudeHi : Theme.textSecondary)
-            Spacer()
         }
     }
 
@@ -177,8 +168,8 @@ struct MainWindowView: View {
         .transition(.opacity)
     }
 
-    /// Centralized navigation: a page change animates the sidebar selection
-    /// and the detail swap together, fast.
+    /// Centralized navigation: a page change animates the tab selection and
+    /// the detail swap together, fast.
     private func navigate(to page: AppPage) {
         withAnimation(Theme.Motion.page) {
             selectedPage = page
@@ -186,11 +177,12 @@ struct MainWindowView: View {
     }
 }
 
-// MARK: - Sidebar row button
+// MARK: - Top nav tab
 
-/// A navigation row: icon + label + live count badge. The selected row gets a
-/// simple accent fill; unselected rows brighten on hover.
-struct SidebarRowButton: View {
+/// A top-bar navigation tab: icon + label + live count badge. Selected tabs
+/// get an accent underline and brightened label — a lighter treatment than
+/// the old sidebar's filled pill, fitting the horizontal strip.
+struct TopNavTab: View {
     let page: AppPage
     let isSelected: Bool
     var badge: Int? = nil
@@ -199,51 +191,52 @@ struct SidebarRowButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: page.icon)
-                    .font(Theme.Font.titleSmall)
-                    .foregroundColor(isSelected ? Theme.claudeHi : rowColor)
-                    .frame(width: 20)
-                Text(page.label)
-                    .font(Theme.Font.bodyLarge)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundColor(rowColor)
-                    .lineLimit(1)
-                    .fixedSize()
-                Spacer()
-                if let badge, badge > 0 {
-                    Text("\(badge)")
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(isSelected ? Theme.claudeHi : Theme.textSecondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? Theme.claude.opacity(0.18) : Theme.cardFill(0.08))
-                        )
-                        .contentTransition(.numericText())
-                        .animation(Theme.Animation.smooth, value: badge)
+            VStack(spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: page.icon)
+                        .font(Theme.Font.bodySmall)
+                        .foregroundColor(isSelected ? Theme.claudeHi : rowColor)
+                    Text(page.label)
+                        .font(Theme.Font.body)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
+                        .lineLimit(1)
+                        .fixedSize()
+                    if let badge, badge > 0 {
+                        Text("\(badge)")
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(isSelected ? Theme.claudeHi : Theme.textSecondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? Theme.claude.opacity(0.18) : Theme.cardFill(0.08))
+                            )
+                            .contentTransition(.numericText())
+                            .animation(Theme.Animation.smooth, value: badge)
+                    }
                 }
+                // Accent underline: only on the selected tab.
+                Capsule()
+                    .fill(isSelected ? Theme.claude : Color.clear)
+                    .frame(width: isSelected ? 24 : 0, height: 2)
+                    .animation(Theme.Animation.smooth, value: isSelected)
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 10)
-            .background {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: Theme.Radius.md)
-                        .fill(Theme.claude.opacity(0.18))
-                } else if isHovered {
-                    RoundedRectangle(cornerRadius: Theme.Radius.md)
-                        .fill(Theme.cardFill(0.06))
-                }
-            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
             .contentShape(Rectangle())
+            .background {
+                if isHovered && !isSelected {
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(Theme.cardFill(0.05))
+                }
+            }
         }
         .buttonStyle(.plain)
         .hoverState($isHovered)
     }
 
     private var rowColor: Color {
-        if isSelected { return Theme.textPrimary }
-        return isHovered ? Theme.textPrimary.opacity(0.9) : Theme.textSecondary
+        isHovered ? Theme.textPrimary.opacity(0.9) : Theme.textSecondary
     }
 }

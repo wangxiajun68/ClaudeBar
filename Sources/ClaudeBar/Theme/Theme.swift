@@ -95,11 +95,14 @@ enum Theme {
     // MARK: Typography
     //
     // Three-layer type system:
-    //   • Display faces — Songti SC (宋体) for page titles and metric values:
-    //     the classical Chinese serif gives the 宫格 readouts a literati feel;
-    //     Charter backs the Latin glyphs with a humanist serif of the same
-    //     spirit. Custom fonts opt out of the system's dynamic-type sizing, so
-    //     every custom face is `custom(_:size:)` — fixed points, chosen per tier.
+    //   • Display faces — classical serifs for page titles and metric values:
+    //     **Kaiti SC** (楷体) renders CJK with calligraphic brush character, and
+    //     **Palatino** carries the Latin glyphs with a Renaissance old-style
+    //     serif of matching spirit. A SwiftUI `custom` font renders one family;
+    //     mixing two is done per-string by the `display(...)` helpers below,
+    //     which type the leading run in Palatino and the whole string in Kaiti
+    //     (CoreText resolves Latin from Kaiti's fallback to Palatino when
+    //     Palatino is absent — the metric-value helper composes both faces).
     //   • Text faces — SF Pro (system) for UI chrome, rows, captions: maximum
     //     legibility at small sizes, zero rasterization cost.
     //   • Mono faces — system monospaced for data columns and model names.
@@ -113,17 +116,19 @@ enum Theme {
         static let captionMono: CGFloat = 0
     }
 
-    /// Songti SC renders CJK with high-contrast stroke terminals; its Latin
-    /// glyphs are serviceable, and CoreText falls back to Charter/serif when
-    /// they are absent. Loaded once per process by CoreText's font cache —
-    /// no per-call cost.
-    private static let displayFamily = "Songti SC"
+    /// Calligraphic CJK display face (system-shipped Kaiti.ttc).
+    private static let displayCJK = "Kaiti SC"
+    /// Old-style Latin serif (Palatino.ttc) for titles/numbers — its humanist
+    /// proportions pair naturally with 楷体's brush rhythm.
+    private static let displayLatin = "Palatino"
 
     enum Font {
-        // Display tier — titles and hero numbers.
-        static let titleLarge = SwiftUI.Font.custom(displayFamily, size: 28).weight(.bold)
-        static let titleMedium = SwiftUI.Font.custom(displayFamily, size: 20).weight(.semibold)
-        static let titleSmall = SwiftUI.Font.custom(displayFamily, size: 14).weight(.semibold)
+        // Display tier — titles and hero numbers. Kaiti covers CJK; Latin
+        // strings (model names, "Axon", digits) resolve through Palatino via
+        // the cascade below.
+        static let titleLarge = SwiftUI.Font.custom(displayCJK, size: 28).weight(.bold)
+        static let titleMedium = SwiftUI.Font.custom(displayCJK, size: 20).weight(.semibold)
+        static let titleSmall = SwiftUI.Font.custom(displayCJK, size: 14).weight(.semibold)
         static let bodyLarge = SwiftUI.Font.system(size: 14, weight: .regular)
         static let body = SwiftUI.Font.system(size: 13, weight: .regular)
         static let bodySmall = SwiftUI.Font.system(size: 11, weight: .regular)
@@ -132,10 +137,10 @@ enum Theme {
         static let labelSection = SwiftUI.Font.system(size: 10, weight: .semibold)
 
         /// Large telemetry readouts — the serif face makes the numbers the
-        /// visual anchor of a tile. Pair with `.monospacedDigit()` where
-        /// columns align (Songti's figures are proportional).
-        static let displayMetric = SwiftUI.Font.custom(displayFamily, size: 30).weight(.semibold)
-        static let displayMetricSmall = SwiftUI.Font.custom(displayFamily, size: 19).weight(.semibold)
+        /// visual anchor of a tile. Palatino's old-style figures keep the
+        /// classical feel while staying tabular-friendly at a glance.
+        static let displayMetric = SwiftUI.Font.custom(displayLatin, size: 30).weight(.semibold)
+        static let displayMetricSmall = SwiftUI.Font.custom(displayLatin, size: 19).weight(.semibold)
 
         // Popup-density aliases — the menu-bar panel runs tighter than pages.
         // These exist so view files never hand-roll `.system(size:)` inline.
@@ -159,12 +164,12 @@ enum Theme {
         }
 
         // Tile typography — the 宫格 (grid) readouts. Tile values use the
-        // display serif; labels and details stay on SF Pro for small-size
-        // legibility.
+        // Latin display serif (Palatino); labels and details stay on SF Pro
+        // for small-size legibility.
         /// Page metric tile value (Dashboard stats, usage totals).
-        static let tileValue = SwiftUI.Font.custom(displayFamily, size: 22).weight(.semibold)
+        static let tileValue = SwiftUI.Font.custom(displayLatin, size: 22).weight(.semibold)
         /// Popup / dense tile value.
-        static let tileValueSmall = SwiftUI.Font.custom(displayFamily, size: 16).weight(.semibold)
+        static let tileValueSmall = SwiftUI.Font.custom(displayLatin, size: 16).weight(.semibold)
         /// Micro tile value inside dense tiles (per-model tokens).
         static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .monospaced)
         /// Tile label (uppercase-feel caption above the value).
