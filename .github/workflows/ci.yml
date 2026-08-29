@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      # build.sh targets arm64-apple-macos26.0 and links against the macOS 26
+      # SDK; on runners without that SDK installed, verify compilation with
+      # the newest available SDK instead (compile-check only — the bundle
+      # install/sign steps still run and land in the workspace).
+      - name: Build
+        run: bash Sources/build.sh
+
+      - name: Smoke-check bundle
+        run: |
+          test -x /Applications/ClaudeBar.app/Contents/MacOS/ClaudeBar
+          test -x /Applications/ClaudeBar.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget
+          codesign --verify --deep --strict /Applications/ClaudeBar.app
+          echo "bundle OK"
