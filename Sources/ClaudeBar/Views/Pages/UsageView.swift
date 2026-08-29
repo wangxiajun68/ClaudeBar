@@ -43,7 +43,7 @@ struct UsageView: View {
                 HStack(spacing: 8) {
                     Button(action: { shiftUsage(-1) }) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(Theme.Font.bodySmall.weight(.semibold))
                             .foregroundColor(Theme.textSecondary)
                             .frame(width: 20, height: 20)
                     }
@@ -57,7 +57,7 @@ struct UsageView: View {
 
                     Button(action: { shiftUsage(1) }) {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(Theme.Font.bodySmall.weight(.semibold))
                             .foregroundColor(Theme.textSecondary)
                             .frame(width: 20, height: 20)
                     }
@@ -92,8 +92,7 @@ struct UsageView: View {
     }
 
     private var totalLabel: String {
-        let total = providerStore.usageStats.reduce(0) { $0 + $1.totalTokens }
-        return UsageStats.formatTokens(total) + " tokens"
+        providerStore.totalUsageLabel + " tokens"
     }
 
     private var breakdown: some View {
@@ -102,9 +101,7 @@ struct UsageView: View {
                 usageRow(stat)
             }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                Text("无用量数据")
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.textTertiary())
+                StandbyEmptyState(label: "no usage data")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
             }

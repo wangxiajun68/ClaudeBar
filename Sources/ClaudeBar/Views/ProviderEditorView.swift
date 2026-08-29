@@ -43,7 +43,7 @@ struct ProviderEditorView: View {
                     ForEach(providerStore.providers) { provider in
                         HStack(spacing: 8) {
                             Image(systemName: "server.rack")
-                                .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                                .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(provider.name).font(Theme.Font.body)
                                     .lineLimit(1).truncationMode(.tail)
@@ -54,7 +54,7 @@ struct ProviderEditorView: View {
                             Spacer(minLength: 8)
                             if provider.id == providerStore.activeProviderID {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
+                                    .font(Theme.Font.bodySmall).foregroundColor(Theme.statusBusy)
                                     .transition(.scale.combined(with: .opacity))
                             }
                         }
@@ -142,11 +142,11 @@ struct ProviderEditorView: View {
                                         HStack(spacing: 4) {
                                             TextField("Add…", text: $newModelName)
                                                 .textFieldStyle(.roundedBorder)
-                                                .font(.system(size: 11))
+                                                .font(Theme.Font.bodySmall)
                                                 .onSubmit { addModel() }
                                             Button(action: addModel) {
                                                 Image(systemName: "plus.circle.fill")
-                                                    .font(.system(size: 14))
+                                                    .font(Theme.Font.bodyLarge)
                                             }
                                             .buttonStyle(.glass)
                                             .disabled(newModelName.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -164,7 +164,7 @@ struct ProviderEditorView: View {
                                             EditorField(label: "Model Name") {
                                                 TextField("e.g. deepseek-v4-pro[1m]", text: $editingModels[idx].name)
                                                     .textFieldStyle(.roundedBorder)
-                                                    .font(.system(size: 12, design: .monospaced))
+                                                    .font(Theme.Font.microMono)
                                             }
                                             HStack(alignment: .top, spacing: 16) {
                                                 EditorField(label: "Context Tokens") {
@@ -177,9 +177,9 @@ struct ProviderEditorView: View {
                                                 }
                                             }
                                             Toggle("Disable Compact", isOn: $editingModels[idx].disableCompact)
-                                                .font(.system(size: 12))
+                                                .font(Theme.Font.bodySmall)
                                             Toggle("Disable Experimental Betas", isOn: $editingModels[idx].disableExperimentalBetas)
-                                                .font(.system(size: 12))
+                                                .font(Theme.Font.bodySmall)
                                         }
                                         .padding(12)
                                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -201,7 +201,7 @@ struct ProviderEditorView: View {
                     HStack(spacing: 12) {
                         if showSaveSuccess {
                             Label("Saved ✓", systemImage: "checkmark.circle.fill")
-                                .foregroundColor(Theme.statusBusy).font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Theme.statusBusy).font(Theme.Font.bodySmall.weight(.medium))
                                 .transition(.scale.combined(with: .opacity))
                         }
                         Spacer()
@@ -218,7 +218,7 @@ struct ProviderEditorView: View {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: "server.rack")
-                        .font(.system(size: 28)).foregroundColor(Theme.textSecondary.opacity(0.5))
+                        .font(Theme.Font.titleMedium).foregroundColor(Theme.textSecondary.opacity(0.5))
                     Text("Select a provider or add a new one")
                         .foregroundColor(Theme.textSecondary).font(Theme.Font.body)
                     Spacer()
@@ -271,12 +271,12 @@ struct ProviderEditorView: View {
         return Button(action: { withAnimation(Theme.Animation.bouncy) { editingModelID = model.id } }) {
             HStack(spacing: 6) {
                 Text(model.name)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Theme.Font.microMono)
                     .lineLimit(1)
                 Spacer()
                 if isDefault {
                     Text("默认")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(Theme.Font.microSemibold)
                         .foregroundColor(Theme.statusWarning)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(Theme.statusWarning.opacity(0.15)))

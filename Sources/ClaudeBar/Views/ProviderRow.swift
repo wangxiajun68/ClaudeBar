@@ -48,7 +48,7 @@ struct ProviderRow: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.name)
-                        .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                        .font(Theme.Font.rowLarge.weight(isActive ? .semibold : .regular))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                     if let model = provider.models.first {
@@ -60,7 +60,7 @@ struct ProviderRow: View {
                 Spacer()
                 if isActive && provider.models.first?.name == currentModelName {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
+                        .font(Theme.Font.bodySmall).foregroundColor(Theme.statusBusy)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -83,17 +83,17 @@ struct ProviderRow: View {
         Button(action: onToggleExpand) {
             HStack(spacing: 8) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(Theme.Font.microSemibold)
                     .foregroundColor(Theme.textTertiary(0.5)).frame(width: 10)
 
                 Text(provider.name)
-                    .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                    .font(Theme.Font.rowLarge.weight(isActive ? .semibold : .regular))
                     .foregroundColor(Theme.textPrimary).lineLimit(1)
 
                 Spacer()
 
                 if isActive {
-                    Text("active").font(.system(size: 9, weight: .medium)).foregroundColor(Theme.statusBusy)
+                    Text("active").font(Theme.Font.microMedium).foregroundColor(Theme.statusBusy)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
                         .transition(.scale.combined(with: .opacity))
@@ -121,20 +121,20 @@ struct ProviderRow: View {
             HStack(spacing: 8) {
                 radioIndicator(isSelected: isActive && modelNameMatches(model))
                 Text(model.name)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(Theme.Font.microMono)
                     .foregroundColor(modelNameMatches(model) ? Theme.textPrimary : Theme.textTertiary(0.75))
                     .lineLimit(1)
                 Spacer()
                 if !model.contextTokens.isEmpty {
                     Text(formatContext(model.contextTokens))
-                        .font(.system(size: 9, weight: .medium))
+                        .font(Theme.Font.microMedium)
                         .foregroundColor(Theme.textTertiary(0.35))
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(Theme.cardFill(0.06)))
                 }
                 if modelNameMatches(model) && isActive {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold)).foregroundColor(Theme.statusBusy)
+                        .font(Theme.Font.microSemibold).foregroundColor(Theme.statusBusy)
                         .transition(.scale.combined(with: .opacity))
                 }
             }

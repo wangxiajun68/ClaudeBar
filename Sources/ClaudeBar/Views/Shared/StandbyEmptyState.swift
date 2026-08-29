@@ -11,10 +11,10 @@ struct StandbyEmptyState: View {
     var body: some View {
         HStack(spacing: 0) {
             Text("// \(label)")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(Theme.Font.rowTitle.monospaced())
                 .foregroundColor(Theme.textTertiary(0.35))
             Text("▍")
-                .font(.system(size: 11, design: .monospaced))
+                .font(Theme.Font.bodySmall.monospaced())
                 .foregroundColor(Theme.signal(isCursor: false).opacity(0.7))
                 .opacity(cursorVisible ? 1 : 0)
             Spacer(minLength: 0)

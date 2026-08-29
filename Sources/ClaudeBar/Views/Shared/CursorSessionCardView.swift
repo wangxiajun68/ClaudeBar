@@ -24,13 +24,13 @@ struct CursorSessionCardView: View {
                     .frame(width: 6, height: 6)
                     .symbolEffect(.pulse, options: .repeating, isActive: isActive)
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary.opacity(0.9))
                     .lineLimit(1)
                 Spacer()
                 if session.contextPercent >= 0 {
                     Text(session.contextLabel)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(Theme.Font.microMono.weight(.medium))
                         .foregroundColor(accentColor.opacity(0.9))
                 }
             }
@@ -41,7 +41,7 @@ struct CursorSessionCardView: View {
 
             if !session.currentActivity.isEmpty {
                 Text(session.currentActivity)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(Theme.Font.microMono)
                     .foregroundColor(isActive ? Theme.textPrimary.opacity(0.65) : Theme.textTertiary())
                     .lineLimit(1)
             }
@@ -49,12 +49,12 @@ struct CursorSessionCardView: View {
             HStack(spacing: 4) {
                 if hasAgents {
                     Text("⚙\(session.subagents.count)")
-                        .font(.system(size: 10))
+                        .font(Theme.Font.micro)
                         .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
                 }
                 Spacer()
                 Text(session.relativeUpdated)
-                    .font(.system(size: 10))
+                    .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             }
         }
