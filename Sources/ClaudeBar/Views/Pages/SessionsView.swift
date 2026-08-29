@@ -200,44 +200,41 @@ private struct SessionTileFull: View {
                     .foregroundColor(isBusy ? Theme.claudeHi : Theme.textTertiary())
             }
 
-            if session.contextTokens > 0 {
-                VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                    HStack {
-                        Text(session.contextLabel)
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.contextColor(session.contextRatio))
-                            .lineLimit(1)
-                            .fixedSize()
-                        Spacer()
-                        Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
-                            .font(Theme.Font.caption)
-                            .monospacedDigit()
-                            .foregroundColor(Theme.textTertiary())
-                            .lineLimit(1)
-                    }
-                    ContextBar(ratio: session.contextRatio)
+            // Context block and activity line are always rendered (dimmed
+            // when there is no data) so every tile in a grid row keeps the
+            // same height regardless of what the transcript scan found.
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack {
+                    Text(session.contextLabel)
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .lineLimit(1)
+                        .fixedSize()
+                    Spacer()
+                    Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
+                        .font(Theme.Font.caption)
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
                 }
+                ContextBar(ratio: session.contextRatio)
             }
+            .opacity(session.contextTokens > 0 ? 1 : 0.25)
 
-            if !session.currentActivity.isEmpty {
-                ActivityLine(activity: session.currentActivity, isBusy: isBusy, color: Theme.statusBusy)
-            }
+            ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
+                         isBusy: isBusy, color: Theme.statusBusy)
 
             HStack(spacing: 4) {
-                if !session.model.isEmpty {
-                    Text(session.model)
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                if !session.name.isEmpty {
-                    Text(session.name)
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                Text(session.model)
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(session.name)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
                 // Expand chevron stays always-on when there are subagents;
                 // action chips slide in only while hovered.
@@ -354,36 +351,33 @@ private struct CursorTileFull: View {
                     .foregroundColor(isActive ? Theme.cursorHi : Theme.textTertiary())
             }
 
-            if session.contextPercent >= 0 {
-                VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                    HStack {
-                        Text(session.contextLabel)
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.contextColor(session.contextRatio))
-                            .lineLimit(1)
-                            .fixedSize()
-                        Spacer()
-                        Text(session.relativeUpdated)
-                            .font(Theme.Font.caption)
-                            .monospacedDigit()
-                            .foregroundColor(Theme.textTertiary())
-                            .lineLimit(1)
-                    }
-                    ContextBar(ratio: session.contextRatio)
-                }
-            }
-
-            if !session.currentActivity.isEmpty {
-                ActivityLine(activity: session.currentActivity, isBusy: isActive, color: Theme.cursorAccent)
-            }
-            HStack {
-                if !session.name.isEmpty {
-                    Text(session.name)
+            // Space-reserved context + activity lines — see SessionTileFull.
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack {
+                    Text(session.contextLabel)
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .lineLimit(1)
+                        .fixedSize()
+                    Spacer()
+                    Text(session.relativeUpdated)
                         .font(Theme.Font.caption)
+                        .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
-                        .truncationMode(.tail)
                 }
+                ContextBar(ratio: session.contextRatio)
+            }
+            .opacity(session.contextPercent >= 0 ? 1 : 0.25)
+
+            ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
+                         isBusy: isActive, color: Theme.cursorAccent)
+            HStack {
+                Text(session.name)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
                 SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {

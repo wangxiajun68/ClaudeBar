@@ -287,13 +287,11 @@ private struct OverviewTile: View {
                 ContextBar(ratio: row.contextRatio)
                     .opacity(row.contextRatio > 0 ? 1 : 0.25)
                 HStack {
-                    if !row.activity.isEmpty {
-                        Text(row.activity)
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                    Text(row.activity.isEmpty ? " " : row.activity)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     Spacer()
                     Text(row.contextRatio > 0 ? row.contextLabel : "—")
                         .font(Theme.Font.captionMono)

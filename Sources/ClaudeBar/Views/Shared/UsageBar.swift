@@ -33,6 +33,8 @@ struct UsageModelTile: View {
                     .foregroundColor(color)
             }
             ProportionBar(ratio: ratio, color: color, height: dense ? 5 : 7, corner: dense ? 2 : 3)
+            // Always rendered so the bottom line's height is uniform across
+            // tiles (the detail text is single-line and may be clipped).
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageStats.formatTokens(stat.totalTokens))
                     .font(dense ? Theme.Font.tileMicroValue : Theme.Font.tileValueSmall)
@@ -40,13 +42,12 @@ struct UsageModelTile: View {
                     .foregroundColor(Theme.textPrimary)
                     .contentTransition(.numericText())
                     .animation(Theme.Animation.smooth, value: stat.totalTokens)
-                Spacer()
+                Spacer(minLength: 8)
                 Text("\(stat.calls) 次调用 · 输入 \(UsageStats.formatTokens(stat.inputTokens)) · 输出 \(UsageStats.formatTokens(stat.outputTokens))")
                     .font(Theme.Font.tileDetail)
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .fixedSize(horizontal: true, vertical: false)
             }
         }
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)

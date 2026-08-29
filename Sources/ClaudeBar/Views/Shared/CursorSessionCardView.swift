@@ -28,11 +28,9 @@ struct CursorSessionCardView: View {
                     .foregroundColor(Theme.textPrimary.opacity(0.9))
                     .lineLimit(1)
                 Spacer()
-                if session.contextPercent >= 0 {
-                    Text(session.contextLabel)
-                        .font(Theme.Font.microMono.weight(.medium))
-                        .foregroundColor(accentColor.opacity(0.9))
-                }
+                Text(session.contextLabel)
+                    .font(Theme.Font.microMono.weight(.medium))
+                    .foregroundColor(accentColor.opacity(0.9))
             }
 
             // Always rendered (dimmed when no data) so every card in the
