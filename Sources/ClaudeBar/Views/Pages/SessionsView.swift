@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Full session list: all live Claude Code and Cursor sessions with expandable
-/// subagent trees and double-click-to-resume. Mirrors the menu-bar popup's
-/// sessions but at full width with richer detail.
+/// Full session page: all live Claude Code and Cursor sessions as an adaptive
+/// tile grid, with expandable subagent trees inside each tile and
+/// double-click-to-resume. Mirrors the menu-bar popup's sessions at full width.
 struct SessionsView: View {
     @EnvironmentObject var providerStore: ProviderStore
 
@@ -40,9 +40,9 @@ struct SessionsView: View {
             if alive.isEmpty {
                 emptyHint("无活跃 Claude Code 会话")
             } else {
-                VStack(spacing: Theme.Space.s8) {
+                TileGrid(.pageSession) {
                     ForEach(alive) { session in
-                        SessionRowFull(session: session, store: providerStore)
+                        SessionTileFull(session: session, store: providerStore)
                     }
                 }
             }
@@ -63,9 +63,9 @@ struct SessionsView: View {
             if alive.isEmpty {
                 emptyHint("无活跃 Cursor 会话")
             } else {
-                VStack(spacing: Theme.Space.s8) {
+                TileGrid(.pageSession) {
                     ForEach(alive) { session in
-                        CursorSessionRowFull(session: session, store: providerStore)
+                        CursorTileFull(session: session, store: providerStore)
                     }
                 }
             }
@@ -109,13 +109,13 @@ struct SessionsView: View {
     }
 }
 
-// MARK: - Full session rows
+// MARK: - Full session tiles
 
-/// A wide, detailed Claude Code session row with subagent expansion.
-/// On hover the row lifts + gains an accent edge and trailing action chips
-/// (resume / reveal cwd) slide in — the affordances emerge from the row
-/// instead of being hidden behind a double-click.
-private struct SessionRowFull: View {
+/// A Claude Code session tile with subagent expansion. On hover the tile
+/// lifts and trailing action chips (resume / reveal cwd) slide in — the
+/// affordances emerge from the tile instead of being hidden behind a
+/// double-click.
+private struct SessionTileFull: View {
     let session: SessionInfo
     @ObservedObject var store: ProviderStore
     private var isExpanded: Bool { store.expandedSessionPIDs.contains(session.pid) }
@@ -123,31 +123,62 @@ private struct SessionRowFull: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            HStack(spacing: 8) {
                 StatusBadge(isOn: isBusy, color: Theme.statusBusy, big: true)
                 Text(session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .layoutPriority(1)
-                Text(session.name.isEmpty ? "PID \(session.pid)" : session.name)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 8)
-                // Fixed-width status + action columns so the expand chevron
-                // and hover chips line up across all rows.
+                Spacer(minLength: 4)
                 Text(isBusy ? "busy" : "idle")
                     .font(Theme.Font.caption)
                     .monospacedDigit()
                     .foregroundColor(isBusy ? Theme.claudeHi : Theme.textTertiary())
-                    .frame(width: 34, alignment: .trailing)
-                // Trailing actions: reveal on hover. The expand chevron stays
-                // always-on when there are subagents; the resume/open chips
-                // slide in only while the pointer is over the row.
+            }
+
+            if session.contextTokens > 0 {
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    HStack {
+                        Text(session.contextLabel)
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(Theme.contextColor(session.contextRatio))
+                            .lineLimit(1)
+                            .fixedSize()
+                        Spacer()
+                        Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
+                            .font(Theme.Font.caption)
+                            .monospacedDigit()
+                            .foregroundColor(Theme.textTertiary())
+                            .lineLimit(1)
+                    }
+                    ContextBar(ratio: session.contextRatio)
+                }
+            }
+
+            if !session.currentActivity.isEmpty {
+                ActivityLine(activity: session.currentActivity, isBusy: isBusy)
+            }
+
+            HStack(spacing: 4) {
+                if !session.model.isEmpty {
+                    Text(session.model)
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if !session.name.isEmpty {
+                    Text(session.name)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer()
+                // Expand chevron stays always-on when there are subagents;
+                // the resume/open chips slide in only while hovered.
                 if !session.subagents.isEmpty || !session.workflows.isEmpty {
                     Button(action: { toggle() }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -169,53 +200,18 @@ private struct SessionRowFull: View {
                 .allowsHitTesting(isHovered)
             }
 
-            if session.contextTokens > 0 {
-                HStack(spacing: 8) {
-                    // Fixed-size context label + capped bar: the model name
-                    // column therefore starts at the same x in every row.
-                    Text(session.contextLabel)
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(Theme.contextColor(session.contextRatio))
-                        .lineLimit(1)
-                        .fixedSize()
-                    ContextBar(ratio: session.contextRatio)
-                        .frame(width: 160)
-                    if !session.model.isEmpty {
-                        Text(session.model)
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.textTertiary())
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(width: 150, alignment: .leading)
-                    } else {
-                        Color.clear.frame(width: 150, height: 1)
-                    }
-                    Spacer(minLength: 8)
-                    Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
-                        .font(Theme.Font.caption)
-                        .monospacedDigit()
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-            }
-
-            if !session.currentActivity.isEmpty {
-                ActivityLine(activity: session.currentActivity, isBusy: isBusy)
-            }
-
             if isExpanded {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(session.subagents) { subagentRow($0) }
                     ForEach(session.workflows) { workflowRow($0) }
                 }
-                .padding(.leading, 16)
+                .padding(.top, 2)
+                .transition(.opacity)
             }
         }
         .padding(Theme.Space.s12)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.md)
-            .fill(isBusy ? Theme.claude.opacity(0.07) : (isHovered ? Theme.cardFill(0.08) : Color.clear)))
-        .scaleEffect(isHovered ? 1.004 : 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: isBusy ? Theme.claude : nil, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume() }
         .hoverState($isHovered)
@@ -251,12 +247,9 @@ private struct SessionRowFull: View {
             }
             Spacer(minLength: 8)
             if !agent.activity.isEmpty {
-                // Fixed width so the trailing activity column lines up across
-                // subagent rows instead of drifting with content length.
                 Text("↳ \(agent.activity)").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(width: 220, alignment: .trailing)
             }
         }
     }
@@ -277,10 +270,10 @@ private struct SessionRowFull: View {
     }
 }
 
-/// A wide Cursor session row. Same hover-reveal pattern as the Claude row:
-/// actions (open in Cursor / show in Finder) slide in on hover and the row
-/// gains a leading accent edge.
-private struct CursorSessionRowFull: View {
+/// A Cursor session tile. Same hover-reveal pattern as the Claude tile:
+/// actions (open in Cursor / show in Finder) slide in on hover and the tile
+/// carries the violet cursor tint while active.
+private struct CursorTileFull: View {
     let session: CursorSessionInfo
     @ObservedObject var store: ProviderStore
     private var isExpanded: Bool { store.cursorExpanded.contains(session.composerId) }
@@ -288,24 +281,52 @@ private struct CursorSessionRowFull: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            HStack(spacing: 8) {
                 StatusBadge(isOn: isActive, color: Theme.cursorAccent, big: true)
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .layoutPriority(1)
-                if !session.name.isEmpty {
-                    Text(session.name).font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
-                        .lineLimit(1).truncationMode(.tail)
-                }
-                Spacer(minLength: 8)
+                Spacer(minLength: 4)
                 Text(isActive ? "active" : "idle")
                     .font(Theme.Font.caption)
                     .foregroundColor(isActive ? Theme.cursorHi : Theme.textTertiary())
-                    .frame(width: 44, alignment: .trailing)
+            }
+
+            if session.contextPercent >= 0 {
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    HStack {
+                        Text(session.contextLabel)
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(Theme.contextColor(session.contextRatio))
+                            .lineLimit(1)
+                            .fixedSize()
+                        Spacer()
+                        Text(session.relativeUpdated)
+                            .font(Theme.Font.caption)
+                            .monospacedDigit()
+                            .foregroundColor(Theme.textTertiary())
+                            .lineLimit(1)
+                    }
+                    ContextBar(ratio: session.contextRatio)
+                }
+            }
+
+            if !session.currentActivity.isEmpty {
+                ActivityLine(activity: session.currentActivity, isBusy: isActive, color: Theme.cursorAccent)
+            }
+
+            HStack {
+                if !session.name.isEmpty {
+                    Text(session.name)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer()
                 HStack(spacing: 4) {
                     ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -318,30 +339,10 @@ private struct CursorSessionRowFull: View {
                 .offset(x: isHovered ? 0 : 10)
                 .allowsHitTesting(isHovered)
             }
-
-            if session.contextPercent >= 0 {
-                HStack(spacing: 8) {
-                    Text(session.contextLabel)
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(Theme.contextColor(session.contextRatio))
-                        .lineLimit(1)
-                        .fixedSize()
-                    ContextBar(ratio: session.contextRatio)
-                        .frame(width: 160)
-                    Spacer(minLength: 8)
-                    Text(session.relativeUpdated).font(Theme.Font.caption).monospacedDigit().foregroundColor(Theme.textTertiary())
-                        .lineLimit(1).fixedSize()
-                }
-            }
-
-            if !session.currentActivity.isEmpty {
-                ActivityLine(activity: session.currentActivity, isBusy: isActive, color: Theme.cursorAccent)
-            }
         }
         .padding(Theme.Space.s12)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.md)
-            .fill(isActive ? Theme.cursorAccent.opacity(0.07) : (isHovered ? Theme.cardFill(0.08) : Color.clear)))
-        .scaleEffect(isHovered ? 1.004 : 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: isActive ? Theme.cursorAccent : nil, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { openCursor() }
         .hoverState($isHovered)

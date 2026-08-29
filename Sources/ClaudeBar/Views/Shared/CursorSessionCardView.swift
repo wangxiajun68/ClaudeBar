@@ -35,16 +35,17 @@ struct CursorSessionCardView: View {
                 }
             }
 
-            if session.contextPercent >= 0 {
-                ContextBar(ratio: ratio, height: 3)
-            }
+            // Always rendered (dimmed when no data) so every card in the
+            // grid row keeps the same height regardless of context data.
+            ContextBar(ratio: ratio, height: 3)
+                .opacity(session.contextPercent >= 0 ? 1 : 0.25)
 
-            if !session.currentActivity.isEmpty {
-                Text(session.currentActivity)
-                    .font(Theme.Font.microMono)
-                    .foregroundColor(isActive ? Theme.textPrimary.opacity(0.65) : Theme.textTertiary())
-                    .lineLimit(1)
-            }
+            // Always render the activity line (space-reserved when empty)
+            // so both cards in a grid row have equal height.
+            Text(session.currentActivity.isEmpty ? " " : session.currentActivity)
+                .font(Theme.Font.microMono)
+                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.65) : Theme.textTertiary())
+                .lineLimit(1)
 
             HStack(spacing: 4) {
                 if hasAgents {
@@ -67,7 +68,6 @@ struct CursorSessionCardView: View {
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(isActive ? Theme.cursorAccent.opacity(isHovered ? 0.55 : 0.35) : Theme.hairline, lineWidth: 1)
         )
-        .scaleEffect(isHovered ? 1.02 : 1)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

@@ -78,6 +78,10 @@ enum Theme {
         static let s16: CGFloat = 16
         static let s24: CGFloat = 24
         static let s32: CGFloat = 32
+        /// Grid gap — popup density (2-col tiles in the 560pt panel).
+        static let gridGap: CGFloat = 6
+        /// Grid gap — main-window pages (tile grids).
+        static let gridGapPage: CGFloat = 12
     }
 
     // MARK: Corner radii
@@ -130,6 +134,56 @@ enum Theme {
         static let microMono = SwiftUI.Font.system(size: 10, weight: .regular, design: .monospaced)
         /// 9px monospaced badge (context chips, model badges).
         static let badgeMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
+
+        /// Parametric system-icon size (SF Symbols), tokenized so view files
+        /// never hand-roll `.system(size:)` for icon fonts.
+        static func systemIcon(_ size: CGFloat) -> SwiftUI.Font {
+            SwiftUI.Font.system(size: size)
+        }
+
+        // Tile typography — the 宫格 (grid) readouts. Values pair with
+        // `.monospacedDigit()` for tabular figures.
+        /// Page metric tile value (Dashboard stats, usage totals).
+        static let tileValue = SwiftUI.Font.system(size: 22, weight: .semibold)
+        /// Popup / dense tile value.
+        static let tileValueSmall = SwiftUI.Font.system(size: 16, weight: .semibold)
+        /// Micro tile value inside dense tiles (per-model tokens).
+        static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .monospaced)
+        /// Tile label (uppercase-feel caption above the value).
+        static let tileLabel = SwiftUI.Font.system(size: 10, weight: .semibold)
+        /// Tile detail / tertiary line under a value.
+        static let tileDetail = SwiftUI.Font.system(size: 10, weight: .regular)
+    }
+
+    // MARK: Grid column templates
+    /// Column templates for the tile grids — the single place that decides
+    /// how a data domain lays out as a 宫格.
+    enum GridLayout {
+        enum Preset {
+            case pageMetric      // 4 equal metric tiles across the page
+            case pageSession     // adaptive session tiles (≥280pt)
+            case pageUsage       // adaptive per-model usage tiles
+            case pageProvider    // adaptive provider tiles
+            case popupSession    // 2-col popup
+            case popupProvider   // 2-col popup
+            case popupUsage      // 2-col popup
+        }
+
+        static func columns(_ preset: Preset) -> [GridItem] {
+            switch preset {
+            case .pageMetric:
+                Array(repeating: GridItem(.flexible(), spacing: Space.gridGapPage), count: 4)
+            case .pageSession:
+                [GridItem(.adaptive(minimum: 280), spacing: Space.gridGapPage, alignment: .top)]
+            case .pageUsage, .pageProvider:
+                [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
+            case .popupSession, .popupProvider, .popupUsage:
+                // Top-aligned cells: tiles in a row share a baseline instead
+                // of floating at differing centers.
+                [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
+                 GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
+            }
+        }
     }
 
     // MARK: Context health color
@@ -219,6 +273,35 @@ extension View {
     /// Apply the Liquid Glass card surface (native `glassEffect`).
     func panelCard(radius: CGFloat = Theme.Radius.md, fill: Double = 0.07) -> some View {
         modifier(PanelCardModifier(radius: radius, fill: fill))
+    }
+}
+
+// MARK: - Active tile edge (de-carded selection for tiles & rows)
+
+/// Selection treatment shared by provider tiles and model rows: a 2px accent
+/// edge on the leading side plus a quiet tint fill. (Formerly the private
+/// `ActiveRowEdge` in ProviderRow.swift.)
+struct ActiveTileEdge: ViewModifier {
+    var isActive: Bool
+    var selected: Bool
+    var corner: CGFloat = Theme.Radius.sm
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if isActive {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(Theme.claude.opacity(0.10))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if isActive {
+                    Rectangle()
+                        .fill(selected ? Theme.claude : Theme.claude.opacity(0.45))
+                        .frame(width: 2)
+                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                }
+            }
     }
 }
 

@@ -20,6 +20,7 @@ struct StandbyEmptyState: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
+        .frame(height: 18)
         .accessibilityLabel("无活跃会话")
         .task {
             while !Task.isCancelled {

@@ -97,23 +97,21 @@ struct UsageView: View {
 
     private var breakdown: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            ForEach(providerStore.usageStats) { stat in
-                usageRow(stat)
-            }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 StandbyEmptyState(label: "no usage data")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
+            } else {
+                TileGrid(.pageUsage) {
+                    ForEach(providerStore.usageStats) { stat in
+                        UsageModelTile(stat: stat,
+                                       maxTokens: providerStore.usageStats.first?.totalTokens ?? 1)
+                    }
+                }
             }
         }
         .padding(Theme.Space.s16)
         .sectionRules()
-    }
-
-    private func usageRow(_ stat: ModelUsage) -> some View {
-        UsageBarRow(stat: stat,
-                    maxTokens: providerStore.usageStats.first?.totalTokens ?? 1,
-                    density: .page)
     }
 
     private func selectPeriod(_ period: UsagePeriod) {
@@ -134,7 +132,7 @@ struct UsageView: View {
     }
 }
 
-// MARK: - Usage bar row
+// MARK: - Usage tiles
 
-// Per-model usage rows now use the shared `UsageBarRow(density: .page)`
-// from `Views/Shared/UsageBar.swift` — the former private copy is gone.
+// Per-model usage now renders as `UsageModelTile` in a `TileGrid(.pageUsage)`
+// — the former `.page` row density is superseded on this page.

@@ -42,6 +42,6 @@ struct PanelHeader: View {
             .sensoryFeedback(.selection, trigger: providerStore.sessions.map(\.pid))
             .help("Refresh")
         }
-        .padding(.horizontal, Theme.Space.s16 - 2).padding(.vertical, Theme.Space.s12)
+        .padding(.horizontal, Theme.Space.s16).padding(.vertical, Theme.Space.s12)
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Popup usage area: period chips, date navigation, and per-model bars.
+/// Popup usage area: period chips, date navigation, and per-model tiles in a
+/// 2-col 宫格.
 struct UsagePanel: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
@@ -26,12 +27,12 @@ struct UsagePanel: View {
                 StandbyEmptyState(label: "no usage")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
-                VStack(spacing: 2) {
+                TileGrid(.popupUsage) {
                     ForEach(providerStore.usageStats) { stat in
-                        UsageBarRow(stat: stat, maxTokens: providerStore.maxUsageTokens)
+                        UsageModelTile(stat: stat, maxTokens: providerStore.maxUsageTokens, dense: true)
                     }
                 }
-                .padding(.horizontal, Theme.Space.s6).padding(.bottom, Theme.Space.s4)
+                .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
             }
         }
         .padding(.vertical, Theme.Space.s6)

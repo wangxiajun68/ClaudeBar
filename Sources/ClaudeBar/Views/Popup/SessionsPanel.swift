@@ -17,7 +17,7 @@ struct SessionsPanelView: View {
 
     /// Grid layout for session cards: two columns → a 2×N "four-grid".
     private var sessionGridColumns: [GridItem] {
-        [GridItem(.flexible(), spacing: Theme.Space.s4), GridItem(.flexible(), spacing: Theme.Space.s4)]
+        Theme.GridLayout.columns(.popupSession)
     }
 
     // MARK: Claude Code
@@ -48,7 +48,7 @@ struct SessionsPanelView: View {
                         }
                     }
                 }
-                .padding(.horizontal, Theme.Space.s8 + 2).padding(.bottom, Theme.Space.s4)
+                .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
             }
         }
         .padding(.vertical, Theme.Space.s6)
@@ -80,7 +80,7 @@ struct SessionsPanelView: View {
                         CursorSessionCardView(session: session) { openInCursor(session) }
                     }
                 }
-                .padding(.horizontal, Theme.Space.s8 + 2).padding(.bottom, Theme.Space.s4)
+                .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
             }
         }
         .padding(.vertical, Theme.Space.s6)

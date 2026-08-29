@@ -116,6 +116,65 @@ struct UsageBarRow: View {
     }
 }
 
+// MARK: - Usage model tile
+
+/// One per-model usage tile — the 宫格 replacement for usage rows on the
+/// usage page (and a dense 2-col variant in the popup). Model name + bar,
+/// token total with share, and a micro breakdown line.
+struct UsageModelTile: View {
+    let stat: ModelUsage
+    let maxTokens: Int
+    /// Popup density: smaller fonts, tighter padding.
+    var dense: Bool = false
+
+    @State private var isHovered = false
+
+    private var ratio: Double { maxTokens > 0 ? Double(stat.totalTokens) / Double(maxTokens) : 0 }
+    private var color: Color { Theme.barColor(for: stat.model) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s6) {
+            HStack(spacing: Theme.Space.s6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: dense ? 5 : 6, height: dense ? 5 : 6)
+                Text(stat.model)
+                    .font(dense ? Theme.Font.rowTitle : Theme.Font.bodySmall)
+                    .foregroundColor(Theme.textPrimary.opacity(isHovered ? 1 : 0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text("\(Int((ratio * 100).rounded()))%")
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(color)
+            }
+            ProportionBar(ratio: ratio, color: color, height: dense ? 5 : 7, corner: dense ? 2 : 3)
+            HStack(alignment: .firstTextBaseline) {
+                Text(UsageStats.formatTokens(stat.totalTokens))
+                    .font(dense ? Theme.Font.tileMicroValue : Theme.Font.tileValueSmall)
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textPrimary)
+                    .contentTransition(.numericText())
+                    .animation(Theme.Animation.smooth, value: stat.totalTokens)
+                Spacer()
+                Text("\(stat.calls) 次调用 · 输入 \(UsageStats.formatTokens(stat.inputTokens)) · 输出 \(UsageStats.formatTokens(stat.outputTokens))")
+                    .font(Theme.Font.tileDetail)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(hovered: isHovered, dense: dense)
+        .hoverState($isHovered)
+        .animation(Theme.Animation.smooth, value: isHovered)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens，占比 \(Int((ratio * 100).rounded()))%")
+    }
+}
+
 // MARK: - Proportion bar
 
 /// A plain proportional fill bar — track + colored fill. The one GeometryReader

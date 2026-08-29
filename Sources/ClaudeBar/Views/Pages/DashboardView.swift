@@ -1,14 +1,12 @@
 import SwiftUI
 
-/// Dashboard page: an information-first overview. Four metric tiles carry the
-/// key numbers (active config, balance, sessions, token total), a session
-/// overview lists every live Claude Code / Cursor session with its context
-/// fill at a glance, and the usage top list rounds it out. All data flows
-/// from `ProviderStore`.
+/// Dashboard page: the 宫格 overview. Four metric tiles carry the key numbers,
+/// live sessions appear as an adaptive tile grid, and per-model usage lands in
+/// its own tile grid. All data flows from `ProviderStore`.
 struct DashboardView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var refreshTick = 0
-    /// Injected by the window so a tile/row tap navigates to the page.
+    /// Injected by the window so a tile tap navigates to the page.
     var onNavigate: (AppPage) -> Void = { _ in }
 
     var body: some View {
@@ -49,58 +47,25 @@ struct DashboardView: View {
 
     // MARK: Metric tiles
 
-    /// The four key numbers, one tile each: label above, tabular value below.
+    /// The four key numbers, one tile each.
     private var metricRow: some View {
-        HStack(alignment: .top, spacing: Theme.Space.s12) {
-            statTile("活跃配置", value: activeConfigLabel,
-                     detail: providerStore.currentEnv?.ANTHROPIC_MODEL ?? "") {
+        TileGrid(.pageMetric) {
+            MetricTile(label: "活跃配置", value: activeConfigLabel,
+                       detail: providerStore.currentEnv?.ANTHROPIC_MODEL ?? "") {
                 onNavigate(.providers)
             }
-            statTile("余额", value: balanceValue, detail: "") {
+            MetricTile(label: "余额", value: balanceValue, detail: "") {
                 onNavigate(.providers)
             }
-            statTile("会话", value: sessionValue,
-                     detail: "\(runningCount) 忙碌 · \(aliveCount + providerStore.cursorSessions.count) 活跃") {
+            MetricTile(label: "会话", value: sessionValue,
+                       detail: "\(runningCount) 忙碌 · \(aliveCount + providerStore.cursorSessions.count) 活跃") {
                 onNavigate(.sessions)
             }
-            statTile("Token 总量", value: tokenTotalValue,
-                     detail: UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)) {
+            MetricTile(label: "Token 总量", value: tokenTotalValue,
+                       detail: UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)) {
                 onNavigate(.usage)
             }
         }
-    }
-
-    private func statTile(_ label: String, value: String, detail: String,
-                          action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(label)
-                    .font(Theme.Font.caption)
-                    .tracking(Theme.Tracking.caption)
-                    .foregroundColor(Theme.textSecondary)
-                Text(value)
-                    .font(Theme.Font.displayMetricSmall)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .minimumScaleFactor(0.5)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: value)
-                // Always render the detail line (space-reserved when empty) so
-                // all four tiles stay the same height regardless of content.
-                Text(detail.isEmpty ? " " : detail)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(Theme.Space.s16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .panelCard()
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: Metric values
@@ -132,13 +97,13 @@ struct DashboardView: View {
             + providerStore.cursorSessions.filter { $0.status == .active }.count
     }
 
-    // MARK: Session overview
+    // MARK: Session overview grid
 
-    /// Every live session as one readable row: status dot, source tint,
-    /// project, current activity, context fill. Tap navigates to the sessions
-    /// page where the full actions (resume / reveal) live.
+    /// Every live session as one tile: status, source tint, project, context
+    /// fill, activity. Tap navigates to the sessions page where the full
+    /// actions (resume / reveal) live.
     private var sessionOverview: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack {
                 Text("活跃会话")
                     .font(Theme.Font.titleSmall)
@@ -163,9 +128,12 @@ struct DashboardView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 28)
             } else {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { _, row in
-                    SessionOverviewRow(row: row) { onNavigate(.sessions) }
+                TileGrid(.pageSession) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { _, row in
+                        OverviewTile(row: row) { onNavigate(.sessions) }
+                    }
                 }
+                .padding(.horizontal, Theme.Space.s16)
                 if overviewRows.count > 8 {
                     Button(action: { onNavigate(.sessions) }) {
                         Label("查看全部 \(overviewRows.count) 个会话", systemImage: "arrow.right")
@@ -182,7 +150,7 @@ struct DashboardView: View {
         .sectionRules()
     }
 
-    /// Unified view-model for one overview row (Claude or Cursor).
+    /// Unified view-model for one overview tile (Claude or Cursor).
     struct OverviewRow: Identifiable {
         let id: String
         let tint: Color
@@ -223,7 +191,7 @@ struct DashboardView: View {
         return rows
     }
 
-    // MARK: Usage top
+    // MARK: Usage top grid
 
     private var usageTop: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
@@ -239,13 +207,16 @@ struct DashboardView: View {
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
             }
-            ForEach(Array(providerStore.usageStats.prefix(5).enumerated()), id: \.element.id) { _, stat in
-                UsageBarRow(stat: stat, maxTokens: maxUsageTokens, density: .mini)
-            }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 StandbyEmptyState(label: "no usage data")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
+            } else {
+                TileGrid(.pageUsage) {
+                    ForEach(Array(providerStore.usageStats.prefix(5).enumerated()), id: \.element.id) { _, stat in
+                        UsageModelTile(stat: stat, maxTokens: maxUsageTokens)
+                    }
+                }
             }
         }
         .padding(Theme.Space.s16)
@@ -257,29 +228,38 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - Session overview row
+// MARK: - Session overview tile
 
-/// One row of the dashboard session overview: source dot + status, project
-/// name, activity line, context bar with its label, and recency — everything
-/// readable without interaction.
-private struct SessionOverviewRow: View {
+/// One tile of the dashboard session overview: source dot + status header,
+/// full-width context bar with its label, activity line, and recency —
+/// everything readable without interaction.
+private struct OverviewTile: View {
     let row: DashboardView.OverviewRow
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(row.tint)
-                    .frame(width: 6, height: 6)
-                StatusBadge(isOn: row.busy, color: row.busy ? row.tint : Theme.statusIdle)
-                VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(row.tint)
+                        .frame(width: 6, height: 6)
+                    StatusBadge(isOn: row.busy, color: row.busy ? row.tint : Theme.statusIdle)
                     Text(row.project)
                         .font(Theme.Font.bodySmall)
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    Spacer()
+                    Text(row.updated)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+                ContextBar(ratio: row.contextRatio)
+                    .opacity(row.contextRatio > 0 ? 1 : 0.25)
+                HStack {
                     if !row.activity.isEmpty {
                         Text(row.activity)
                             .font(Theme.Font.caption)
@@ -287,40 +267,25 @@ private struct SessionOverviewRow: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
+                    Spacer()
+                    Text(row.contextRatio > 0 ? row.contextLabel : "—")
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(row.contextRatio > 0 ? Theme.contextColor(row.contextRatio) : Theme.textTertiary())
+                        .lineLimit(1)
                 }
-                // Fixed width (not maxWidth) so the project/activity column
-                // — and therefore every column to its right — aligns across rows.
-                .frame(width: 220, alignment: .leading)
-                Spacer(minLength: 12)
-                // Always reserve the context columns even when there is no
-                // context data, so the trailing recency column stays aligned.
-                ContextBar(ratio: row.contextRatio)
-                    .frame(width: 120)
-                    .opacity(row.contextRatio > 0 ? 1 : 0.25)
-                Text(row.contextRatio > 0 ? row.contextLabel : "—")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(row.contextRatio > 0 ? Theme.contextColor(row.contextRatio) : Theme.textTertiary())
-                    .frame(width: 84, alignment: .trailing)
-                    .lineLimit(1)
-                Text(row.updated)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
-                    .frame(width: 64, alignment: .trailing)
-                    .lineLimit(1)
             }
-            .padding(.horizontal, Theme.Space.s16)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                    .fill(isHovered ? Theme.cardFill(0.06) : Color.clear)
-            )
-            .contentShape(Rectangle())
+            .padding(Theme.Space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .tile(tint: row.busy ? row.tint : nil, hovered: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
         }
         .buttonStyle(.plain)
         .hoverState($isHovered)
-        .help("在会话页查看")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.project)，\(row.busy ? "忙碌" : "空闲")，上下文 \(row.contextLabel)")
+        .accessibilityHint("在会话页查看")
     }
 }
 
-// Mini usage rows now use the shared `UsageBarRow(density: .mini)`
+// Mini usage rows now use the shared `UsageModelTile`
 // from `Views/Shared/UsageBar.swift`.
