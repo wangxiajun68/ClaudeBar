@@ -70,6 +70,9 @@ struct CursorSessionCardView: View {
         .scaleEffect(isHovered ? 1.02 : 1)
         .hoverState($isHovered)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)，\(isActive ? "活跃" : "空闲")")
+        .accessibilityHint("连按在 Cursor 中打开")
         .onTapGesture(count: 2) { onDoubleTap?() }
     }
 }
