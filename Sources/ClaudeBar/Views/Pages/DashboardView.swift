@@ -92,12 +92,14 @@ struct DashboardView: View {
     private var runningCount: Int {
         providerStore.sessions.filter { $0.isAlive && $0.status == .busy }.count
             + providerStore.cursorSessions.filter { $0.status == .active }.count
+            + providerStore.activeExternalCount
     }
 
-    /// All live sessions across both sources — the denominator of the
+    /// All live sessions across all sources — the denominator of the
     /// busy/total metrics.
     private var totalSessionCount: Int {
         aliveCount + providerStore.cursorSessions.count
+            + providerStore.aliveExternalSessions.count
     }
 
     // MARK: Session overview grid
@@ -193,7 +195,22 @@ struct DashboardView: View {
                     updated: s.relativeUpdated
                 )
             }
-        return claudeRows + cursorRows
+        // External tools (Codex / WorkBuddy / OpenClaw) — teal rows, no
+        // context data (they expose none), so the bar reads 0 and dims.
+        let externalRows = providerStore.aliveExternalSessions
+            .map { s in
+                OverviewRow(
+                    id: "e-\(s.kind.rawValue)-\(s.sessionId)",
+                    tint: Theme.external,
+                    busy: s.isActive,
+                    project: s.projectFolder.isEmpty ? s.kind.displayName : s.projectFolder,
+                    activity: s.model,
+                    contextRatio: 0,
+                    contextLabel: s.kind.displayName,
+                    updated: s.relativeUpdated
+                )
+            }
+        return claudeRows + cursorRows + externalRows
     }
 
     // MARK: Usage top grid

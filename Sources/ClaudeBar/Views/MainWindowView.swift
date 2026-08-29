@@ -122,7 +122,8 @@ struct MainWindowView: View {
         case .sessions:
             let alive = providerStore.sessions.filter(\.isAlive).count
             let cursor = providerStore.cursorSessions.count
-            return alive + cursor
+            let external = providerStore.aliveExternalSessions.count
+            return alive + cursor + external
         case .providers:
             return providerStore.providers.count
         default:
@@ -133,6 +134,7 @@ struct MainWindowView: View {
     private var isBusy: Bool {
         providerStore.sessions.contains { $0.isAlive && $0.status == .busy }
             || providerStore.cursorSessions.contains { $0.status == .active }
+            || providerStore.anyExternalBusy
     }
 
     private var liveStatus: some View {
@@ -150,8 +152,9 @@ struct MainWindowView: View {
         let alive = providerStore.sessions.filter(\.isAlive)
         let busy = alive.filter { $0.status == .busy }.count
         let cursor = providerStore.cursorSessions.filter { $0.status == .active }.count
-        if alive.isEmpty && cursor == 0 { return "空闲" }
-        return "\(busy + cursor) 运行中"
+        let external = providerStore.activeExternalCount
+        if alive.isEmpty && cursor == 0 && external == 0 { return "空闲" }
+        return "\(busy + cursor + external) 运行中"
     }
 
     // MARK: Detail

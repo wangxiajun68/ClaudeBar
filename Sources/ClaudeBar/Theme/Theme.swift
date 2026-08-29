@@ -34,11 +34,17 @@ enum Theme {
     static let bgTertiary = base2
     static let bgOverlay = base3
 
-    // MARK: Signals (soft blue = Claude · violet = Cursor)
+    // MARK: Signals (soft blue = Claude · violet = Cursor · teal = external)
     static let claude = Color(hex: 0x4F8EF7)    // soft blue — Claude Code
     static let claudeHi = Color(hex: 0x79ABF9)  // light blue — busy/active
     static let cursor = Color(hex: 0xA78BFA)    // soft violet — Cursor
     static let cursorHi = Color(hex: 0xC0ACFC)  // light violet
+
+    /// Teal — external agent tools (Codex / WorkBuddy / OpenClaw). A third
+    /// hue so the newest session family reads as its own source at a glance
+    /// while staying inside the muted palette.
+    static let external = Color(hex: 0x46C58F)
+    static let externalHi = Color(hex: 0x6FD9AD)
 
     static let accent = claude
     static let accentDim = Color(hex: 0x3A6FD1)

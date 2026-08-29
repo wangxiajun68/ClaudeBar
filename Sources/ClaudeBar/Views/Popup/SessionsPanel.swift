@@ -11,6 +11,8 @@ struct SessionsPanelView: View {
                 sessionsSection
                 HairlineDivider()
                 cursorSessionsSection
+                HairlineDivider()
+                externalSessionsSection
             }
         }
     }
@@ -86,6 +88,38 @@ struct SessionsPanelView: View {
         .padding(.vertical, Theme.Space.s6)
     }
 
+    // MARK: External tools (Codex / WorkBuddy / OpenClaw)
+
+    private var externalSessionsSection: some View {
+        let alive = providerStore.aliveExternalSessions
+        let activeCount = providerStore.activeExternalCount
+
+        return VStack(alignment: .leading, spacing: Theme.Space.s4) {
+            SectionHeader(
+                icon: "rectangle.stack.person.crop",
+                title: "CODEX · WORKBUDDY · OPENCLAW",
+                tint: Theme.external,
+                count: alive.count,
+                activeCount: activeCount,
+                activeSymbol: "A"
+            )
+            .padding(.horizontal, Theme.Space.s16)
+
+            if alive.isEmpty {
+                StandbyEmptyState(label: "no external signals")
+                    .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
+            } else {
+                LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {
+                    ForEach(alive) { session in
+                        ExternalSessionCardView(session: session) { revealInFinder(session) }
+                    }
+                }
+                .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
+            }
+        }
+        .padding(.vertical, Theme.Space.s6)
+    }
+
     // MARK: Actions
 
     /// Double-click a Claude Code session: open a terminal in the session's
@@ -97,5 +131,12 @@ struct SessionsPanelView: View {
     /// Double-click a Cursor session: open the workspace folder in Cursor.app.
     private func openInCursor(_ session: CursorSessionInfo) {
         TerminalLauncher.openInCursor(cwd: session.cwd)
+    }
+
+    /// External sessions have no resume affordance — reveal the project.
+    private func revealInFinder(_ session: ExternalSessionInfo) {
+        guard !session.cwd.isEmpty,
+              FileManager.default.fileExists(atPath: session.cwd) else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
     }
 }

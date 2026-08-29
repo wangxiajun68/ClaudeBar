@@ -77,6 +77,18 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
+    /// External tool flavor (Codex / WorkBuddy / OpenClaw) — the tool name
+    /// leads so sessions from different agents stay distinguishable.
+    func notifyIdle(external session: ExternalSessionInfo) {
+        post(
+            title: "\(session.kind.displayName) 等你输入",
+            body: "\(session.projectFolder) · \(session.model.isEmpty ? "任务完成" : session.model)",
+            subtitle: session.id,
+            categoryID: Self.categoryID,
+            pid: nil
+        )
+    }
+
     private func post(title: String, body: String, subtitle: String,
                       categoryID: String, pid: Int?) {
         guard AppPreferences.shared.idleNotifyEnabled else { return }

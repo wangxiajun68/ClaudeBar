@@ -69,6 +69,7 @@ struct SessionsView: View {
                 titleBar
                 claudeSection
                 cursorSection
+                externalSection
             }
             .padding(Theme.Space.s24)
         }
@@ -123,6 +124,29 @@ struct SessionsView: View {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
                         CursorTileFull(session: session, store: providerStore)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: External tools (Codex / WorkBuddy / OpenClaw)
+
+    private var externalSection: some View {
+        let alive = providerStore.aliveExternalSessions
+        let active = providerStore.activeExternalCount
+        return sectionContainer(
+            title: "Codex · WorkBuddy · OpenClaw",
+            icon: "rectangle.stack.person.crop",
+            count: alive.count,
+            active: active
+        ) {
+            if alive.isEmpty {
+                emptyHint("无活跃外部 Agent 会话")
+            } else {
+                TileGrid(.pageSession) {
+                    ForEach(alive) { session in
+                        ExternalTileFull(session: session)
                     }
                 }
             }
@@ -430,5 +454,81 @@ private struct CursorTileFull: View {
         guard FileManager.default.fileExists(atPath: cursorURL.path) else { return }
         NSWorkspace.shared.open([URL(fileURLWithPath: session.cwd)], withApplicationAt: cursorURL,
                                configuration: NSWorkspace.OpenConfiguration())
+    }
+}
+
+/// An external-agent session tile (Codex / WorkBuddy / OpenClaw). These tools
+/// have no PID files and no resume URL scheme, so the tile is read-only:
+/// reveal the working directory in Finder, double-click included. Teal tint
+/// distinguishes the family from Claude (blue) and Cursor (violet).
+private struct ExternalTileFull: View {
+    let session: ExternalSessionInfo
+    @State private var isHovered = false
+
+    private var tint: Color { Theme.external }
+    private var isActive: Bool { session.isActive }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            HStack(spacing: 8) {
+                PulsingStatusDot(isOn: isActive, color: tint, big: true)
+                Text(session.projectFolder.isEmpty ? session.kind.displayName : session.projectFolder)
+                    .font(Theme.Font.bodyLarge)
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text(session.kind.displayName)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.externalHi)
+                Text(isActive ? "active" : "idle")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(isActive ? Theme.externalHi : Theme.textTertiary())
+            }
+
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack {
+                    Text(session.cwd.isEmpty ? "—" : session.cwd)
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Text(session.relativeUpdated)
+                        .font(Theme.Font.caption)
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+            }
+            .opacity(session.cwd.isEmpty ? 0.25 : 1)
+
+            HStack {
+                Text(session.model)
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                SessionActionChips(isHovered: isHovered) {
+                    ActionChip(systemImage: "folder", tint: tint, help: "在 Finder 显示") {
+                        revealCwd()
+                    }
+                }
+            }
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: isActive ? tint : nil, hovered: isHovered)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { revealCwd() }
+        .hoverState($isHovered)
+        .help("\(session.cwd)\n双击在 Finder 显示")
+    }
+
+    private func revealCwd() {
+        guard !session.cwd.isEmpty,
+              FileManager.default.fileExists(atPath: session.cwd) else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
     }
 }
