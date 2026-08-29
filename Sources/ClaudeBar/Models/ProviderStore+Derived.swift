@@ -2,8 +2,8 @@ import Foundation
 
 extension ProviderStore {
     // MARK: - Session derivation (single source of truth)
-    // Views previously recomputed these counts in three places each; they now
-    // read the derived values from here.
+    // Views read these derived values instead of recomputing counts, so the
+    // filtering rules cannot drift between screens.
 
     /// Alive Claude Code sessions.
     var aliveSessions: [SessionInfo] { sessions.filter(\.isAlive) }

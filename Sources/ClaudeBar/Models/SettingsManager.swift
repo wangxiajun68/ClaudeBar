@@ -34,9 +34,8 @@ struct SettingsManager {
     }
 
     static func writeSettings(env: EnvConfig) throws {
-        // Read existing env so empty preset values don't nuke user's manual config.
-        // NOTE: by design, an empty preset value does NOT overwrite a value the
-        // user set manually — so switching to a provider without an auth token
+        // By design, an empty preset value does NOT overwrite a value the user
+        // set manually — so switching to a provider without an auth token
         // keeps the previously-written token. This prevents preset gaps from
         // wiping hand-edited config, at the cost of needing an explicit clear
         // path if a credential must be removed (delete it in settings.json).
@@ -76,12 +75,16 @@ struct SettingsManager {
         json["env"] = envDict
 
         var data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
-        // Fix: JSONSerialization escapes forward slashes in strings (e.g. https:\/\/...).
-        // Replace them back so URLs are clean and readable.
+        // JSONSerialization escapes "/" in strings (e.g. https:\/\/…);
+        // unescape so URLs stay clean and diffable. Content is otherwise
+        // untouched, so the result is still valid JSON.
         if let raw = String(data: data, encoding: .utf8) {
-            let cleaned = raw.replacingOccurrences(of: "\\/", with: "/")
-            data = cleaned.data(using: .utf8) ?? data
+            data = raw.replacingOccurrences(of: "\\/", with: "/").data(using: .utf8) ?? data
         }
+        // Ensure the parent directory exists before the atomic write (fresh
+        // machines may not have ~/.claude yet — reading is tolerant of a
+        // missing file, writing is not).
+        try FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
         try data.write(to: FilePaths.settingsFile, options: .atomic)
     }
 }
