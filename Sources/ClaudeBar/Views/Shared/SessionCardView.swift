@@ -25,13 +25,13 @@ struct SessionCardView: View {
                     .frame(width: 6, height: 6)
                     .symbolEffect(.pulse, options: .repeating, isActive: isBusy)
                 Text(session.projectFolder.isEmpty ? "session" : session.projectFolder)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(Theme.textPrimary.opacity(0.9))
                     .lineLimit(1)
                 Spacer()
                 if session.contextTokens > 0 {
                     Text(session.contextLabel)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundColor(ctxColor.opacity(0.9))
                         .lineLimit(1)
                 }
@@ -43,7 +43,7 @@ struct SessionCardView: View {
 
             if !session.currentActivity.isEmpty {
                 Text(session.currentActivity)
-                    .font(.system(size: 8, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
                     .lineLimit(1)
             }
@@ -51,18 +51,18 @@ struct SessionCardView: View {
             HStack(spacing: 4) {
                 if hasAgents {
                     Text("⚙\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count })")
-                        .font(.system(size: 8))
+                        .font(.system(size: 10))
                         .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
                 }
                 if !session.model.isEmpty {
                     Text(session.model)
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
                 Spacer()
                 Text(session.relativeUpdated)
-                    .font(.system(size: 8))
+                    .font(.system(size: 10))
                     .foregroundColor(Theme.textTertiary())
             }
         }

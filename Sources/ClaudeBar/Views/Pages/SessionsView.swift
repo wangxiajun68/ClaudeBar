@@ -10,12 +10,8 @@ struct SessionsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.s24) {
                 titleBar
-                GlassEffectContainer(spacing: Theme.Space.s24) {
-                    VStack(alignment: .leading, spacing: Theme.Space.s24) {
-                        claudeSection
-                        cursorSection
-                    }
-                }
+                claudeSection
+                cursorSection
             }
             .padding(Theme.Space.s24)
         }
@@ -26,6 +22,8 @@ struct SessionsView: View {
         Text("会话")
             .font(Theme.Font.titleLarge)
             .foregroundColor(Theme.textPrimary)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     // MARK: Claude Code
@@ -87,6 +85,8 @@ struct SessionsView: View {
                 Text(title.uppercased())
                     .font(Theme.Font.labelSection)
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 Spacer()
                 Text("\(active) 运行 · \(count) 总计")
                     .font(Theme.Font.captionMono)
@@ -98,12 +98,6 @@ struct SessionsView: View {
         }
         .padding(Theme.Space.s16)
         .panelCard()
-        .scrollTransition(.animated(Theme.Animation.smooth)) { content, phase in
-            content
-                .opacity(phase.isIdentity ? 1 : 0.5)
-                .scaleEffect(phase.isIdentity ? 1 : 0.96)
-                .offset(y: phase.isIdentity ? 0 : phase.value * 26)
-        }
     }
 
     private func emptyHint(_ text: String) -> some View {
@@ -135,16 +129,22 @@ private struct SessionRowFull: View {
                 Text(session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
                 Text(session.name.isEmpty ? "PID \(session.pid)" : session.name)
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textTertiary())
-                Spacer()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                // Fixed-width status + action columns so the expand chevron
+                // and hover chips line up across all rows.
                 Text(isBusy ? "busy" : "idle")
                     .font(Theme.Font.caption)
+                    .monospacedDigit()
                     .foregroundColor(isBusy ? Theme.claudeHi : Theme.textTertiary())
-                if isBusy {
-                    SignalTrace(isActive: true, color: Theme.claude)
-                }
+                    .frame(width: 34, alignment: .trailing)
                 // Trailing actions: reveal on hover. The expand chevron stays
                 // always-on when there are subagents; the resume/open chips
                 // slide in only while the pointer is over the row.
@@ -171,20 +171,32 @@ private struct SessionRowFull: View {
 
             if session.contextTokens > 0 {
                 HStack(spacing: 8) {
+                    // Fixed-size context label + capped bar: the model name
+                    // column therefore starts at the same x in every row.
                     Text(session.contextLabel)
                         .font(Theme.Font.captionMono)
                         .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .lineLimit(1)
+                        .fixedSize()
                     ContextBar(ratio: session.contextRatio)
-                        .frame(maxWidth: 200)
+                        .frame(width: 160)
                     if !session.model.isEmpty {
                         Text(session.model)
                             .font(Theme.Font.captionMono)
                             .foregroundColor(Theme.textTertiary())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(width: 150, alignment: .leading)
+                    } else {
+                        Color.clear.frame(width: 150, height: 1)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
                         .font(Theme.Font.caption)
+                        .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
 
@@ -232,12 +244,19 @@ private struct SessionRowFull: View {
         HStack(spacing: 6) {
             Circle().fill(running ? Theme.statusBusy : Theme.textTertiary()).frame(width: 4, height: 4)
             Text(agent.agentType).font(Theme.Font.bodySmall).foregroundColor(running ? Theme.textPrimary.opacity(0.85) : Theme.textTertiary())
+                .lineLimit(1)
             if !agent.description.isEmpty {
                 Text("· \(agent.description)").font(Theme.Font.bodySmall).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1).truncationMode(.tail)
             }
-            Spacer()
+            Spacer(minLength: 8)
             if !agent.activity.isEmpty {
+                // Fixed width so the trailing activity column lines up across
+                // subagent rows instead of drifting with content length.
                 Text("↳ \(agent.activity)").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: 220, alignment: .trailing)
             }
         }
     }
@@ -247,7 +266,9 @@ private struct SessionRowFull: View {
         HStack(spacing: 6) {
             Image(systemName: "gearshape").font(.system(size: 8)).foregroundColor(Theme.textTertiary())
             Text(wf.workflowId).font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
+                .lineLimit(1).truncationMode(.middle)
             Text("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
             if wf.runningCount > 0 {
                 Text("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.statusBusy)
             }
@@ -273,16 +294,18 @@ private struct CursorSessionRowFull: View {
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
                 if !session.name.isEmpty {
                     Text(session.name).font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                        .lineLimit(1).truncationMode(.tail)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Text(isActive ? "active" : "idle")
                     .font(Theme.Font.caption)
                     .foregroundColor(isActive ? Theme.cursorHi : Theme.textTertiary())
-                if isActive {
-                    SignalTrace(isActive: true, color: Theme.cursor)
-                }
+                    .frame(width: 44, alignment: .trailing)
                 HStack(spacing: 4) {
                     ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -301,10 +324,13 @@ private struct CursorSessionRowFull: View {
                     Text(session.contextLabel)
                         .font(Theme.Font.captionMono)
                         .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .lineLimit(1)
+                        .fixedSize()
                     ContextBar(ratio: session.contextRatio)
-                        .frame(maxWidth: 200)
-                    Spacer()
-                    Text(session.relativeUpdated).font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                        .frame(width: 160)
+                    Spacer(minLength: 8)
+                    Text(session.relativeUpdated).font(Theme.Font.caption).monospacedDigit().foregroundColor(Theme.textTertiary())
+                        .lineLimit(1).fixedSize()
                 }
             }
 

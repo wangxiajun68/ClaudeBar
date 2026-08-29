@@ -84,15 +84,44 @@ struct UsageStats {
         }
     }
 
+    // MARK: - Incremental file cache
+    //
+    // Parsing is the bottleneck on large transcript trees (a month/year scan
+    // re-reads thousands of files). Cache each file's parsed usage entries
+    // keyed by mtime + size: transcript files are append-only, so an unchanged
+    // file can never produce different results and is skipped entirely on the
+    // next scan. Entries are date-filtered at aggregation time, so one cache
+    // serves every period (day/month/year/custom).
+
+    private struct UsageEntry {
+        let date: Date
+        let model: String
+        var calls: Int = 0
+        var inputTokens: Int = 0
+        var outputTokens: Int = 0
+        var cacheReadTokens: Int = 0
+        var cacheCreationTokens: Int = 0
+    }
+
+    private struct FileCacheEntry {
+        var mtime: Date
+        var size: Int
+        var entries: [UsageEntry]
+    }
+
+    private static var fileCache: [String: FileCacheEntry] = [:]
+    private static let cacheLock = NSLock()
+
     /// Aggregate usage per model within `interval`, sorted by total tokens descending.
-    /// Optimized with: file-mtime prefilter, timestamp-string prefilter, parallel parsing.
+    /// Optimized with: file-mtime prefilter, incremental per-file cache,
+    /// timestamp-string prefilter, parallel parsing.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
         let projectsDir = FilePaths.claudeDir.appendingPathComponent("projects")
 
         guard FileManager.default.fileExists(atPath: projectsDir.path),
               let enumerator = FileManager.default.enumerator(
                   at: projectsDir,
-                  includingPropertiesForKeys: [.contentModificationDateKey],
+                  includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                   options: [.skipsHiddenFiles]) else {
             return []
         }
@@ -100,53 +129,63 @@ struct UsageStats {
         // --- File-level mtime prefilter ---
         // A file last modified before the interval began cannot contain entries
         // in the interval (entries are appended at message time, mtime = last write).
-        let candidateFiles: [URL] = enumerator.compactMap { item -> URL? in
+        let candidateFiles: [(url: URL, mtime: Date?, size: Int?)] = enumerator.compactMap { item -> (URL, Date?, Int?)? in
             guard let url = item as? URL, url.pathExtension == "jsonl" else { return nil }
-            if let attrs = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-               let mod = attrs.contentModificationDate,
-               mod < interval.start {
+            guard let attrs = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
+                return (url, nil, nil)
+            }
+            if let mod = attrs.contentModificationDate, mod < interval.start {
                 return nil
             }
-            return url
+            return (url, attrs.contentModificationDate, attrs.fileSize)
         }
 
-        // --- Coarse timestamp-string window (UTC date prefix, ±1 day slack for tz) ---
-        // ISO timestamps are UTC and zero-padded (yyyy-MM-dd...), so their first 10
-        // chars sort lexicographically == chronologically. Reject lines whose UTC date
-        // clearly falls outside [interval.start - 1d, interval.end + 1d] BEFORE parsing.
-        let slackStart = interval.start.addingTimeInterval(-86400)
-        let slackEnd = interval.end.addingTimeInterval(86400)
-        let minDateStr = utcDateString(slackStart)
-        let maxDateStr = utcDateString(slackEnd)
+        // --- Split candidates into cache hits (reuse) and misses (parse) ---
+        var cachedEntries: [[UsageEntry]] = []
+        var toParse: [(url: URL, mtime: Date?, size: Int?)] = []
+        for file in candidateFiles {
+            if let mtime = file.mtime, let size = file.size {
+                cacheLock.lock()
+                let hit = fileCache[file.url.path]
+                cacheLock.unlock()
+                if let hit, hit.mtime == mtime, hit.size == size {
+                    cachedEntries.append(hit.entries)
+                    continue
+                }
+            }
+            toParse.append(file)
+        }
 
-        // One shared formatter — ISO8601DateFormatter is thread-safe (unlike DateFormatter).
-        let tsFormatter = ISO8601DateFormatter()
-        tsFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        // --- Parallel parse: each file → its own [String: ModelUsage] ---
-        let n = candidateFiles.count
-        var partial = [[String: ModelUsage]](repeating: [:], count: n)
-        if n > 0 {
-            DispatchQueue.concurrentPerform(iterations: n) { i in
-                partial[i] = parseFile(
-                    candidateFiles[i],
-                    interval: interval,
-                    minDateStr: minDateStr,
-                    maxDateStr: maxDateStr,
-                    tsFormatter: tsFormatter
-                )
+        // --- Parallel parse only the cache misses ---
+        var parsed = [[UsageEntry]](repeating: [], count: toParse.count)
+        DispatchQueue.concurrentPerform(iterations: toParse.count) { j in
+            let file = toParse[j]
+            let entries = parseFile(file.url)
+            parsed[j] = entries
+            // Store for the next scan — append-only files keep this valid.
+            if let mtime = file.mtime, let size = file.size {
+                cacheLock.lock()
+                fileCache[file.url.path] = FileCacheEntry(mtime: mtime, size: size, entries: entries)
+                cacheLock.unlock()
             }
         }
 
-        // --- Merge ---
+        // --- Filter by interval + merge ---
         var agg: [String: ModelUsage] = [:]
-        for dict in partial {
-            for (model, usage) in dict {
-                var entry = agg[model] ?? ModelUsage(model: model)
-                entry.merge(usage)
-                agg[model] = entry
+        func merge(_ entries: [UsageEntry]) {
+            for e in entries where interval.contains(e.date) {
+                var entry = agg[e.model] ?? ModelUsage(model: e.model)
+                entry.calls += e.calls
+                entry.inputTokens += e.inputTokens
+                entry.outputTokens += e.outputTokens
+                entry.cacheReadTokens += e.cacheReadTokens
+                entry.cacheCreationTokens += e.cacheCreationTokens
+                agg[e.model] = entry
             }
         }
+        for entries in cachedEntries { merge(entries) }
+        for entries in parsed { merge(entries) }
+
         return agg.values
             .filter { $0.totalTokens > 0 }
             .sorted { $0.totalTokens > $1.totalTokens }
@@ -154,34 +193,32 @@ struct UsageStats {
 
     // MARK: - File parsing
 
-    private static func parseFile(
-        _ url: URL,
-        interval: DateInterval,
-        minDateStr: String,
-        maxDateStr: String,
-        tsFormatter: ISO8601DateFormatter
-    ) -> [String: ModelUsage] {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+    /// Parse a transcript file into raw usage entries (date + model + token
+    /// counts). Interval filtering happens later, so one parsed result is
+    /// reusable across all periods via the incremental cache.
+    private static func parseFile(_ url: URL) -> [UsageEntry] {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
 
-        var local: [String: ModelUsage] = [:]
+        var entries: [UsageEntry] = []
         let tsKey = "\"timestamp\":\""
+
+        // One shared formatter — ISO8601DateFormatter is thread-safe (unlike DateFormatter).
+        let tsFormatter = ISO8601DateFormatter()
+        tsFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
             // 1) Cheap presence check — `usage` only appears on assistant messages.
             guard line.contains("\"usage\"") else { continue }
 
-            // 2) Coarse timestamp window — reject before any JSON parsing.
+            // 2) Locate the timestamp before any JSON parsing.
             guard let r = line.range(of: tsKey) else { continue }
             let after = line[r.upperBound...]
             guard let q = after.firstIndex(of: "\"") else { continue }
             let tsStr = after[..<q]
             guard tsStr.count >= 10 else { continue }
-            let datePart = String(tsStr.prefix(10))
-            if datePart < minDateStr || datePart > maxDateStr { continue }
 
-            // 3) Precise parse + interval check (handles tz boundary exactly).
-            guard let date = tsFormatter.date(from: String(tsStr)),
-                  interval.contains(date) else { continue }
+            // 3) Precise parse (the full timestamp is needed for interval filtering).
+            guard let date = tsFormatter.date(from: String(tsStr)) else { continue }
 
             // 4) Only now do the expensive full-JSON parse.
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -191,15 +228,15 @@ struct UsageStats {
             guard !model.isEmpty, !model.hasPrefix("<") else { continue }
             guard let usage = message["usage"] as? [String: Any] else { continue }
 
-            var entry = local[model] ?? ModelUsage(model: model)
-            entry.calls += 1
-            entry.inputTokens += JSONCoerce.intVal(usage["input_tokens"])
-            entry.outputTokens += JSONCoerce.intVal(usage["output_tokens"])
-            entry.cacheReadTokens += JSONCoerce.intVal(usage["cache_read_input_tokens"])
-            entry.cacheCreationTokens += JSONCoerce.intVal(usage["cache_creation_input_tokens"])
-            local[model] = entry
+            var entry = UsageEntry(date: date, model: model)
+            entry.calls = 1
+            entry.inputTokens = JSONCoerce.intVal(usage["input_tokens"])
+            entry.outputTokens = JSONCoerce.intVal(usage["output_tokens"])
+            entry.cacheReadTokens = JSONCoerce.intVal(usage["cache_read_input_tokens"])
+            entry.cacheCreationTokens = JSONCoerce.intVal(usage["cache_creation_input_tokens"])
+            entries.append(entry)
         }
-        return local
+        return entries
     }
 
     // MARK: - Formatting
@@ -216,13 +253,4 @@ struct UsageStats {
     }
 
     // MARK: - Helpers
-
-    /// UTC yyyy-MM-dd for a Date (for coarse string comparison against ISO timestamps).
-    private static func utcDateString(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: date)
-    }
 }

@@ -27,7 +27,7 @@ final class MenuBarController: NSObject {
         }
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
-                               accessibilityDescription: "ClaudeBar")?
+                               accessibilityDescription: "Axon")?
             .withSymbolConfiguration(config)
         button.image?.isTemplate = true
         button.target = self

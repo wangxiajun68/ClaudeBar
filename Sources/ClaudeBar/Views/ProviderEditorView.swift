@@ -35,6 +35,8 @@ struct ProviderEditorView: View {
                 Text("PROVIDERS")
                     .font(Theme.Font.labelSection)
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                     .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
 
                 List(selection: $selectedID) {
@@ -44,10 +46,12 @@ struct ProviderEditorView: View {
                                 .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(provider.name).font(Theme.Font.body)
+                                    .lineLimit(1).truncationMode(.tail)
                                 Text("\(provider.models.count) model\(provider.models.count == 1 ? "" : "s")")
                                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                                    .lineLimit(1)
                             }
-                            Spacer()
+                            Spacer(minLength: 8)
                             if provider.id == providerStore.activeProviderID {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
@@ -90,6 +94,8 @@ struct ProviderEditorView: View {
                                 Label("Provider Configuration", systemImage: "server.rack")
                                     .font(Theme.Font.titleSmall)
                                     .foregroundColor(Theme.textPrimary)
+                                    .lineLimit(1)
+                                    .fixedSize()
                                 EditorField(label: "Name") {
                                     TextField("e.g. DeepSeek", text: $editingName)
                                         .textFieldStyle(.roundedBorder)
@@ -111,6 +117,8 @@ struct ProviderEditorView: View {
                                 Label("Model Configuration", systemImage: "cpu")
                                     .font(Theme.Font.titleSmall)
                                     .foregroundColor(Theme.textPrimary)
+                                    .lineLimit(1)
+                                    .fixedSize()
                                     .padding(.bottom, 12)
                                 HStack(alignment: .top, spacing: 0) {
                                     // Model list (left)
@@ -158,13 +166,15 @@ struct ProviderEditorView: View {
                                                     .textFieldStyle(.roundedBorder)
                                                     .font(.system(size: 12, design: .monospaced))
                                             }
-                                            EditorField(label: "Context Tokens") {
-                                                TextField("1000000", text: $editingModels[idx].contextTokens)
-                                                    .textFieldStyle(.roundedBorder)
-                                            }
-                                            EditorField(label: "Auto Compact Window") {
-                                                TextField("1000000", text: $editingModels[idx].autoCompactWindow)
-                                                    .textFieldStyle(.roundedBorder)
+                                            HStack(alignment: .top, spacing: 16) {
+                                                EditorField(label: "Context Tokens") {
+                                                    TextField("1000000", text: $editingModels[idx].contextTokens)
+                                                        .textFieldStyle(.roundedBorder)
+                                                }
+                                                EditorField(label: "Auto Compact Window") {
+                                                    TextField("1000000", text: $editingModels[idx].autoCompactWindow)
+                                                        .textFieldStyle(.roundedBorder)
+                                                }
                                             }
                                             Toggle("Disable Compact", isOn: $editingModels[idx].disableCompact)
                                                 .font(.system(size: 12))

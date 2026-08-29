@@ -60,9 +60,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ClaudeBar</string>
+    <string>Axon</string>
     <key>CFBundleDisplayName</key>
-    <string>ClaudeBar</string>
+    <string>Axon</string>
     <key>CFBundleIdentifier</key>
     <string>com.claudebar.app</string>
     <key>CFBundleVersion</key>
@@ -123,7 +123,7 @@ cat > "$APPEX_CONTENTS/Info.plist" << 'WPLIST'
     <key>CFBundleName</key>
     <string>ClaudeBarWidget</string>
     <key>CFBundleDisplayName</key>
-    <string>ClaudeBar Widget</string>
+    <string>Axon Widget</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

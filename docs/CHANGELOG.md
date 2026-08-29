@@ -4,6 +4,26 @@
 
 ---
 
+## [1.7.0] — 2026-08-29 · 信息优先重构
+
+### 删除 — 装饰性组件（不承载数据的视觉全部移除）
+- `Views/Shared/LiveRadar.swift`（实时雷达，含 `RadarBlip`/`RadarAgentDetail`）、`LivePulseGraph.swift`（伪正弦信号历史，不编码真实数据）、`SignalTrace.swift`（动画均衡器）、`PointerFX.swift`（`TiltOnHover`/`SpecularSheen`/`CursorSpotlight`）。
+- Theme token：`enum Radar`、`accentGradient`/`cursorGradient`/`barGradient`/`contextGradient`（各调用点改纯色 `barColor`/`contextColor`/`claude`）、`beaconGlow`/`ambientGlow`、`glassCard`、`Elevation`+`elevation()`、`glassContainer`/`topLuminance`、`Animation.lively`。
+
+### 变更 — 动效原则：全部状态驱动
+- 仅保留有动机的动效：hover 反馈、busy 状态脉冲（`StatusBadge`/header orb）、页面切换淡入、`contentTransition(.numericText())` 数字滚动。删除 scrollTransition、symbolEffect(.bounce)、玻璃 morph 侧栏 pill（`glassEffectID` matchedGeometry → 简单选中填充）、`GlassEffectContainer` 非必要包裹。
+
+### 变更 — Dashboard 信息化
+- 移除雷达 hero + "信号历史"，新布局：**指标头行**（4 个 StatTile：活跃配置/余额/会话 busy-total/Token 总量，tabular 数字，点按跳转对应页）→ **活跃会话总览**（每行：源色点 + busy 点 + 项目/活动 + ContextBar + 上下文标签 + 更新时间，无需交互即可读全，上限 8 行 + 查看全部）→ **用量 Top**（加常显百分比，bar 纯色）。
+
+### 变更 — 其余页面与 popup
+- `MainWindowView`：侧栏去装饰（静态 brand orb、简单选中填充、静态 footer 圆点、纯 opacity 页面过渡）。
+- `SessionsView`/`UsageView`：去 scrollTransition/symbolEffect；UsageBarRow 恒定高度 + 百分比常显。
+- Popup：`SessionCardView`/`CursorSessionCardView` 字号 8-9pt → 10-11pt（可读性优先）；header 去 beaconGlow。
+- `SettingsView` 版本号 1.4.0 → 1.6.0。
+
+---
+
 ## [1.6.0] — 2026-08-01 · 指挥中枢 (Dispatch Radar) 视觉重构
 
 ### 新增 — 设计世界

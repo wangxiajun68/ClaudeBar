@@ -73,7 +73,6 @@ struct ActionChip: View {
                     Circle()
                         .strokeBorder(tint.opacity(hover ? 0.5 : 0.25), lineWidth: 1)
                 )
-                .beaconGlow(tint, radius: 10, opacity: hover ? 0.30 : 0)
                 .scaleEffect(hover ? 1.08 : 1)
         }
         .buttonStyle(.plain)
@@ -109,7 +108,6 @@ struct IconChip: View {
                 .regular.tint(tint.opacity(hover ? 0.22 : 0)),
                 in: RoundedRectangle(cornerRadius: corner)
             )
-            .beaconGlow(tint, radius: 12, opacity: hover ? 0.26 : 0)
             .scaleEffect(hover ? 1.08 : 1)
             .onHover { hovering in
                 withAnimation(Theme.Animation.bouncy) { hover = hovering }

@@ -79,18 +79,14 @@ struct MenuBarView: View {
         HStack(spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(Theme.accentGradient)
+                    .fill(Theme.claude)
                     .frame(width: 20, height: 20)
-                Circle()
-                    .strokeBorder(Theme.claudeHi.opacity(0.55), lineWidth: 1)
-                    .frame(width: 21, height: 21)
-                Text("CB")
-                    .font(.system(size: 8, weight: .bold))
+                Text("A")
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(Theme.base0)
             }
-            .beaconGlow(Theme.claude, radius: 8, opacity: 0.25)
             .symbolEffect(.pulse, options: .repeating, isActive: providerStore.sessions.contains { $0.isAlive && $0.status == .busy })
-            Text("ClaudeBar")
+            Text("Axon")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(Theme.textPrimary)
             Spacer()
@@ -100,7 +96,6 @@ struct MenuBarView: View {
                 Image(systemName: configCollapsed ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
-                    .symbolEffect(.bounce, value: configCollapsed)
             }
             .buttonStyle(.glass)
             .help(configCollapsed ? "展开配置与供应商" : "折叠配置与供应商")
@@ -133,6 +128,8 @@ struct MenuBarView: View {
                 Text(providerName ?? "Unsaved Config")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(Theme.textPrimary.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
                 if let model = providerStore.providers
                     .first(where: { $0.id == providerStore.activeProviderID })?.activeModel {
@@ -140,6 +137,7 @@ struct MenuBarView: View {
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
 
@@ -187,6 +185,8 @@ struct MenuBarView: View {
             Text("PROVIDERS")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 22).padding(.bottom, 4)
 
             VStack(spacing: 2) {
@@ -246,6 +246,8 @@ struct MenuBarView: View {
                 Text("CURSOR")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 Spacer()
                 if alive.isEmpty {
                     Text("none")
@@ -267,11 +269,9 @@ struct MenuBarView: View {
                     .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
-                GlassEffectContainer(spacing: 4) {
-                    LazyVGrid(columns: sessionGridColumns, spacing: 4) {
-                        ForEach(alive) { session in
-                            CursorSessionCardView(session: session) { openInCursor(session) }
-                        }
+                LazyVGrid(columns: sessionGridColumns, spacing: 4) {
+                    ForEach(alive) { session in
+                        CursorSessionCardView(session: session) { openInCursor(session) }
                     }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 4)
@@ -298,6 +298,8 @@ struct MenuBarView: View {
                 Text("CLAUDE CODE")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 Spacer()
                 if alive.isEmpty {
                     Text("none")
@@ -319,11 +321,9 @@ struct MenuBarView: View {
                     .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
-                GlassEffectContainer(spacing: 4) {
-                    LazyVGrid(columns: sessionGridColumns, spacing: 4) {
-                        ForEach(alive) { session in
-                            SessionCardView(session: session) { resumeInTerminal(session) }
-                        }
+                LazyVGrid(columns: sessionGridColumns, spacing: 4) {
+                    ForEach(alive) { session in
+                        SessionCardView(session: session) { resumeInTerminal(session) }
                     }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 4)
@@ -352,11 +352,9 @@ struct MenuBarView: View {
 
     private var usageSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Period selector chips: 日 / 月 / 年 / 指定 — glass chips that
-            // merge into one continuous glass surface via the container.
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach(UsagePeriod.allCases) { period in
+            // Period selector chips: 日 / 月 / 年 / 指定
+            HStack(spacing: 4) {
+                ForEach(UsagePeriod.allCases) { period in
                         let isOn = providerStore.usagePeriod == period
                         Button(action: {
                             if period == .custom {
@@ -383,7 +381,6 @@ struct MenuBarView: View {
                     }
                     Spacer()
                 }
-            }
             .padding(.horizontal, 16).padding(.bottom, 2)
 
             // Custom date picker (inline, only for custom period)
@@ -396,7 +393,8 @@ struct MenuBarView: View {
                     .transition(.opacity)
             }
 
-            // Date navigation: ◀ label ▶
+            // Date navigation: ◀ label ▶ — the total gets a fixed trailing
+            // slot so the label column doesn't shift when the number changes.
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.xaxis")
                     .font(.system(size: 10)).foregroundColor(Theme.textSecondary)
@@ -412,6 +410,7 @@ struct MenuBarView: View {
                 Text(periodLabel)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Theme.textTertiary(0.6))
+                    .lineLimit(1)
 
                 Button(action: { shiftUsage(1) }) {
                     Image(systemName: "chevron.right")
@@ -422,13 +421,16 @@ struct MenuBarView: View {
                 .buttonStyle(.glass)
                 .help("下一个\(providerStore.usagePeriod.label)")
 
-                Spacer()
+                Spacer(minLength: 8)
                 if providerStore.usageLoading {
                     ProgressView().scaleEffect(0.5).frame(width: 10, height: 10)
+                        .frame(width: 64, alignment: .trailing)
                 } else {
                     Text(totalUsageLabel)
                         .font(.system(size: 10, weight: .medium))
+                        .monospacedDigit()
                         .foregroundColor(Theme.textTertiary(0.6))
+                        .frame(width: 64, alignment: .trailing)
                         .contentTransition(.numericText())
                         .animation(Theme.Animation.smooth, value: totalUsageLabel)
                 }
@@ -469,22 +471,20 @@ struct MenuBarView: View {
     // MARK: - Action Bar (compact icon buttons)
 
     private var actionBar: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary) {
-                    providerStore.refresh()
-                    showFeedback("已刷新")
-                }
-                iconButton("macwindow", help: "打开主窗口", color: Theme.accent) {
-                    NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                }
-                iconButton("pencil.line", help: "编辑供应商", color: Theme.cursorAccent) { openEditor() }
-                iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
-                    .disabled(!providerStore.hasSettingsFile)
-                Spacer()
-                iconButton("power", help: "退出", color: Theme.statusError) {
-                    NSApplication.shared.terminate(nil)
-                }
+        HStack(spacing: 4) {
+            iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary) {
+                providerStore.refresh()
+                showFeedback("已刷新")
+            }
+            iconButton("macwindow", help: "打开主窗口", color: Theme.accent) {
+                NotificationCenter.default.post(name: .showMainWindow, object: nil)
+            }
+            iconButton("pencil.line", help: "编辑供应商", color: Theme.cursorAccent) { openEditor() }
+            iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
+                .disabled(!providerStore.hasSettingsFile)
+            Spacer()
+            iconButton("power", help: "退出", color: Theme.statusError) {
+                NSApplication.shared.terminate(nil)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)

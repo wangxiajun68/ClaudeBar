@@ -1,7 +1,42 @@
-# 主窗口与设计系统 — 指挥中枢 (Dispatch Radar)
+# 主窗口与设计系统 — 信息优先
 
-> ClaudeBar 设计文档 · §5（视觉重构 1.6.0）
+> ClaudeBar 设计文档 · §5（信息优先重构 1.7.0）
 > 相关：[顶层架构](02-architecture.md) · 技术文档 [视图层](../technical/05-view-layer.md)
+
+## 设计原则
+
+ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐、层级由字重与排版驱动、色彩只用于身份（Claude 蓝/Cursor 紫）与状态（busy/warning/error）。动效全部状态驱动（hover 反馈、busy 脉冲、页面淡入），不存在不承载数据的装饰性视觉。表面仍为 macOS 26 原生 **Liquid Glass**（`panelCard()`），但无玻璃 morph、无背景光斑、无信标光晕。
+
+## 主窗口（`MainWindowController` + `MainWindowView`）
+
+1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），`NavigationSplitView`：
+
+- **Sidebar**：静态 brand mark（"CB" 蓝色圆标）+ 5 项导航（图标 + 标签 + 实时计数 badge）；选中项为简单 accent 填充，hover 变亮。底部状态圆点（busy 时变蓝）+ "N 运行中/空闲"。
+- **Detail**：按 `selectedPage` 切换 5 页，纯 opacity 过渡（`Theme.Motion.page`）。
+- **全局**：⌘K `CommandPalette`；关窗后 status item 保活。
+
+## 5 个 Pages
+
+- **DashboardView**：信息优先总览。**指标头行**（4 个 StatTile：活跃配置/余额/会话 busy-total/Token 总量；label 在上、`displayMetricSmall` + `.monospacedDigit()` tabular 值在下，点按跳转对应页）→ **活跃会话总览**（每行：源色点 + busy 点 + 项目/当前活动 + ContextBar + 上下文标签 + 更新时间，无需交互即全部可读；上限 8 行 + "查看全部"）→ **用量 Top**（比例条 + 常显百分比 + token 数）。
+- **SessionsView**：CLAUDE CODE / CURSOR 两个频道面板（`panelCard`），全宽会话行，可展开子 agent 树，双击恢复；hover 行揭示 action chips（有动机的 hover 反馈）。
+- **ProvidersView**：嵌入 `ProviderEditorView`。
+- **UsageView**：周期 chips + 日期导航 + 用量条形图（恒定高度、百分比常显）。
+- **SettingsView**：面板卡设置页。
+
+## 共享交互层（`Views/Shared/`）
+
+- `PressableStyle`、`HoverState`、`ActionChip`/`IconChip`（hover 反馈）、`StatusBadge`（busy 脉冲点）、`ActivityLine`、`ContextBar`（上下文健康条）、`SessionCardView`/`CursorSessionCardView`（popup 紧凑卡）、`UsageRowView`、`CommandPalette`（⌘K）。
+
+## Theme 设计 token（`Theme/Theme.swift`）
+
+- **基底**：`base0` 0x0D0D11 … `base4` 0x353A45（中性近黑，无色彩偏向）。
+- **信号**：`claude` 0x4F8EF7 / `claudeHi`（软蓝，Claude Code）；`cursor` 0xA78BFA / `cursorHi`（软紫，Cursor）。`accent=claude`。
+- **语义**：`statusBusy`=claude、`statusActive`=cursor、`statusIdle`、`statusWarning` 0xE0A13C、`statusError` 0xE46464、`statusSuccess` 0x46C58F。
+- **文本**：`textPrimary` 0xF5F5F7、`textSecondary` 0xA1A1A6、`textTertiary()`。
+- **表面**：`panelCard()` = 原生 `glassEffect`（内容卡主表面）、`shadowCard()`、`cardFill()`、`divider`/`hairline`。
+- **字体**：SF Pro 单族，字号+字重驱动层级；`displayMetric`/`displayMetricSmall` semibold + `.monospacedDigit()`；代码/测量值用 mono（`captionMono`）。
+- **动效**：`bouncy`/`smooth`/`pulse`/`snappy` + `Motion.page`/`Motion.state`——全部状态驱动，无循环装饰动画。
+- **Helper**：`contextColor(ratio)`（blue/warning/red 阈值）、`barColor(for:)`（hash 调色板）。
 
 ## 设计世界：指挥中枢
 
