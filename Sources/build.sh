@@ -33,6 +33,15 @@ if [ -f "$ICONS_SOURCE" ]; then
     echo "Icon copied to bundle"
 fi
 
+# Copy bundled fonts (LXGW WenKai GB — CJK display face). Custom fonts are
+# loaded at runtime via CTFontManager, so they must ship inside the bundle.
+FONT_SOURCE_DIR="$PROJECT_DIR/Sources/Resources/Fonts"
+if [ -d "$FONT_SOURCE_DIR" ]; then
+    mkdir -p "$RESOURCES_DIR/Fonts"
+    cp "$FONT_SOURCE_DIR"/*.ttf "$RESOURCES_DIR/Fonts/"
+    echo "Fonts copied to bundle"
+fi
+
 # Compile Swift sources
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"

@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and its non-activating popup panel work regardless of this policy.
         NSApp.setActivationPolicy(.regular)
 
+        Self.loadBundledFonts()
+
         let store = ProviderStore()
         providerStore = store
 
@@ -34,6 +36,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .resumeSession, object: nil)
 
         store.refresh()
+    }
+
+    /// Register the bundled LXGW WenKai GB display font with CoreText so
+    /// `Theme.Font.custom("LXGW WenKai GB", …)` resolves. Bundle fonts are not
+    /// auto-registered like ~/Library/Fonts installs; a scoped (non-persistent)
+    /// registration keeps the system font cache untouched.
+    private static func loadBundledFonts() {
+        guard let fontsURL = Bundle.main.url(forResource: "Fonts", withExtension: nil,
+                                             subdirectory: "Fonts") ?? Bundle.main.resourceURL?
+            .appendingPathComponent("Fonts") else { return }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: fontsURL.path) else { return }
+        for file in files where file.hasSuffix(".ttf") || file.hasSuffix(".otf") {
+            let url = fontsURL.appendingPathComponent(file)
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
     }
 
     @objc private func resumeSession(_ note: Notification) {
