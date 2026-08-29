@@ -44,6 +44,10 @@ class ProviderStore: ObservableObject {
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var cursorExpanded: Set<String> = []
 
+    // Live sessions from external agent tools (Codex / WorkBuddy / OpenClaw)
+    @Published var externalSessions: [ExternalSessionInfo] = []
+    private var externalIdleDetector = IdleTransitionDetector<String>()
+
     /// Initial state is populated by the AppDelegate once the status item and
     /// main window are wired up — calling `refresh()` here would run file I/O
     /// and spawn background tasks before the UI surfaces exist, and the
@@ -89,6 +93,7 @@ class ProviderStore: ObservableObject {
                 self.recordHeartbeats(samples)
                 self.detectIdleTransitions(enriched)
                 self.refreshCursorSessions()
+                self.refreshExternalSessions()
             }
         }
     }
@@ -211,6 +216,28 @@ class ProviderStore: ObservableObject {
                 // widget on the same poll — refreshCursorSessions runs on the 2.5s
                 // timer but does not otherwise call writeWidgetSnapshot.
                 self.writeWidgetSnapshot()
+            }
+        }
+    }
+
+    /// Scan external agent tools (Codex / WorkBuddy / OpenClaw). Same
+    /// off-main scan + unchanged-publish skip as the other two sources.
+    func refreshExternalSessions() {
+        Task.detached(priority: .utility) {
+            let result = ExternalSessionMonitor.fetchActive()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if self.externalSessions == result { return }
+                self.externalSessions = result
+                // Busy-edge notifications reuse the same detector machinery:
+                // a session that leaves the busy window just finished a turn.
+                let busyIDs = Set(result.filter(\.isActive).map(\.id))
+                let (newlyIdle, _) = self.externalIdleDetector.record(busyIDs: busyIDs)
+                for id in newlyIdle {
+                    if let session = result.first(where: { $0.id == id }) {
+                        NotificationService.shared.notifyIdle(external: session)
+                    }
+                }
             }
         }
     }
@@ -421,8 +448,16 @@ class ProviderStore: ObservableObject {
                 // switches don't rescan the multi-GB Cursor DB.
                 if let cursor = CursorUsageStats.fetch() {
                     result.append(cursor)
-                    result.sort { $0.totalTokens > $1.totalTokens }
                 }
+                // External agent tools (Codex / WorkBuddy / OpenClaw) parse
+                // the same way — JSONL transcripts, per-record timestamps —
+                // so their usage folds into the same per-model aggregate and
+                // the interval filter applies identically.
+                let external = ExternalUsageStats.fetch(in: interval)
+                if !external.isEmpty {
+                    result.append(contentsOf: external)
+                }
+                result = ModelUsage.merged(result).sorted { $0.totalTokens > $1.totalTokens }
                 let final = result
 
                 // If another refresh was requested while scanning, loop and

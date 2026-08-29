@@ -20,6 +20,19 @@ struct ModelUsage: Identifiable {
         cacheReadTokens += other.cacheReadTokens
         cacheCreationTokens += other.cacheCreationTokens
     }
+
+    /// Merge a list by model id — used when several sources (Claude
+    /// transcripts, external tools, Cursor) contribute entries for the same
+    /// model name.
+    static func merged(_ list: [ModelUsage]) -> [ModelUsage] {
+        var agg: [String: ModelUsage] = [:]
+        for item in list {
+            var entry = agg[item.model] ?? ModelUsage(model: item.model)
+            entry.merge(item)
+            agg[item.model] = entry
+        }
+        return Array(agg.values)
+    }
 }
 
 /// Granularity for usage aggregation.
