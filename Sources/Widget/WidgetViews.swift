@@ -1,6 +1,67 @@
 import SwiftUI
 import WidgetKit
 
+/// Minimal local copy of the main-app Theme tokens so the Widget (which
+/// compiles as an independent appex target and cannot import Theme) stays
+/// visually consistent with the main app. Mirrors the values in
+/// `Sources/ClaudeBar/Theme/Theme.swift`.
+private enum WidgetTheme {
+    // Foundation (luminous dark, matching the main app's macOS 26 glass world)
+    static let bgPrimary = Color(hex: 0x0D0D11)
+    static let bgSecondary = Color(hex: 0x15151B)
+    // Signals: soft blue = Claude Code
+    static let accent = Color(hex: 0x4F8EF7)
+    static let accentDim = Color(hex: 0x3A6FD1)
+    static let claudeHi = Color(hex: 0x79ABF9)
+    // Text
+    static let textPrimary = Color(hex: 0xF5F5F7)
+    static let textSecondary = Color(hex: 0xA1A1A6)
+    static func textTertiary(_ opacity: Double = 0.4) -> Color { .white.opacity(opacity) }
+    // Semantic
+    static let statusBusy = Color(hex: 0x4F8EF7)
+    static let statusIdle = Color(hex: 0x8A8F98)
+    static let statusWarning = Color(hex: 0xE0A13C)
+    static let statusError = Color(hex: 0xE46464)
+    // Cursor identity (violet)
+    static let cursorAccent = Color(hex: 0xA78BFA)
+    // Surfaces
+    static func cardFill(_ opacity: Double = 0.06) -> Color { .white.opacity(opacity) }
+
+    /// Context-health color using the SAME thresholds as the main app (0.6 / 0.85).
+    static func contextColor(_ ratio: Double) -> Color {
+        if ratio < 0.6 { return statusBusy }
+        if ratio < 0.85 { return statusWarning }
+        return statusError
+    }
+
+    /// Hash-stable per-model gradient mirroring `Theme.barGradient(for:)`.
+    static func barGradient(for model: String) -> LinearGradient {
+        let c = barColor(for: model)
+        return LinearGradient(colors: [c, c.opacity(0.6)], startPoint: .leading, endPoint: .trailing)
+    }
+
+    static func barColor(for model: String) -> Color {
+        let palette: [Color] = [
+            Color(hex: 0x4F8EF7),
+            Color(hex: 0xA78BFA),
+            Color(hex: 0x46C58F),
+            Color(hex: 0xE0A13C),
+            Color(hex: 0xE46464),
+        ]
+        return palette[abs(model.hashValue) % palette.count]
+    }
+}
+
+private extension Color {
+    init(hex: UInt, opacity: Double = 1.0) {
+        self.init(.sRGB,
+                  red: Double((hex >> 16) & 0xFF) / 255.0,
+                  green: Double((hex >> 8) & 0xFF) / 255.0,
+                  blue: Double(hex & 0xFF) / 255.0,
+                  opacity: opacity)
+    }
+}
+
 struct WidgetEntryView: View {
     let entry: WidgetEntry
 
@@ -13,7 +74,7 @@ struct WidgetEntryView: View {
                 Spacer()
                 Text("等待数据...")
                     .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.35))
+                    .foregroundColor(WidgetTheme.textTertiary())
                     .frame(maxWidth: .infinity)
                 Spacer()
             } else {
@@ -22,14 +83,15 @@ struct WidgetEntryView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("ClaudeBar")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(WidgetTheme.textSecondary)
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
                             Text(formatTokens(s.todayTotalTokens))
-                                .font(.system(size: 28, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
+                                .font(.system(size: 28, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundColor(WidgetTheme.textPrimary)
                             Text("tokens")
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.35))
+                                .foregroundColor(WidgetTheme.textTertiary())
                         }
                     }
                     Spacer()
@@ -37,10 +99,11 @@ struct WidgetEntryView: View {
                         VStack(alignment: .trailing, spacing: 2) {
                             Text("余额")
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.35))
+                                .foregroundColor(WidgetTheme.textTertiary())
                             Text("¥\(bal)")
-                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.green.opacity(0.85))
+                                .font(.system(size: 15, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundColor(WidgetTheme.accent.opacity(0.85))
                         }
                     }
                 }
@@ -49,19 +112,19 @@ struct WidgetEntryView: View {
                 // Row 2: Provider + Model
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(Color.green)
+                        .fill(WidgetTheme.accent)
                         .frame(width: 6, height: 6)
                     Text(s.activeProviderName)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(WidgetTheme.textPrimary.opacity(0.7))
                     Text(s.activeModelName)
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(WidgetTheme.textTertiary())
                         .lineLimit(1)
                     Spacer()
                     Text(relativeTime(s.updatedAt))
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.25))
+                        .foregroundColor(WidgetTheme.textTertiary(0.25))
                 }
                 .padding(.horizontal, 16).padding(.top, 8)
 
@@ -73,7 +136,7 @@ struct WidgetEntryView: View {
                                 ? CGFloat(m.totalTokens) / CGFloat(s.todayTotalTokens)
                                 : 0
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(barColor(for: m.model))
+                                .fill(WidgetTheme.barGradient(for: m.model))
                                 .frame(width: max(8, 260 * ratio))
                         }
                         Spacer(minLength: 0)
@@ -85,10 +148,10 @@ struct WidgetEntryView: View {
                     HStack(spacing: 10) {
                         ForEach(Array(s.modelBreakdown.prefix(4)), id: \.model) { m in
                             HStack(spacing: 3) {
-                                Circle().fill(barColor(for: m.model)).frame(width: 4, height: 4)
+                                Circle().fill(WidgetTheme.barColor(for: m.model)).frame(width: 4, height: 4)
                                 Text(truncateModel(m.model))
                                     .font(.system(size: 8, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.45))
+                                    .foregroundColor(WidgetTheme.textTertiary(0.45))
                                     .lineLimit(1)
                             }
                         }
@@ -101,12 +164,12 @@ struct WidgetEntryView: View {
                     HStack {
                         Text("活跃会话")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(WidgetTheme.textTertiary())
                         Spacer()
                         let busy = s.sessions.filter { $0.status == "busy" }.count
                         Text("\(s.sessions.count) 个 · \(busy) 忙碌")
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.25))
+                            .foregroundColor(WidgetTheme.textTertiary(0.25))
                     }
                     .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
 
@@ -120,15 +183,15 @@ struct WidgetEntryView: View {
                     HStack {
                         Image(systemName: "cursorarrow.rays")
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(WidgetTheme.textTertiary())
                         Text("CURSOR")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(WidgetTheme.textTertiary())
                         Spacer()
                         let active = s.cursorSessions.filter { $0.status == "active" }.count
                         Text("\(s.cursorSessions.count) · \(active)A")
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.25))
+                            .foregroundColor(WidgetTheme.textTertiary(0.25))
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, s.sessions.isEmpty ? 10 : 6)
@@ -144,7 +207,7 @@ struct WidgetEntryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .containerBackground(for: .widget) {
-            Color(white: 0.10)
+            WidgetTheme.bgPrimary
         }
     }
 
@@ -154,18 +217,18 @@ struct WidgetEntryView: View {
         let isBusy = s.status == "busy"
         return HStack(spacing: 8) {
             Circle()
-                .fill(isBusy ? Color.green : Color.gray.opacity(0.4))
+                .fill(isBusy ? WidgetTheme.statusBusy : WidgetTheme.statusIdle.opacity(0.5))
                 .frame(width: 6, height: 6)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(s.projectFolder.isEmpty ? "session-\(s.pid)" : s.projectFolder)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(WidgetTheme.textPrimary.opacity(0.8))
                     .lineLimit(1)
                 if !s.currentActivity.isEmpty {
                     Text(s.currentActivity)
                         .font(.system(size: 8, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(WidgetTheme.textTertiary())
                         .lineLimit(1)
                 }
             }
@@ -177,13 +240,13 @@ struct WidgetEntryView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("\(Int(s.contextRatio * 100))%")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(contextColor(s.contextRatio))
+                        .foregroundColor(WidgetTheme.contextColor(s.contextRatio))
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white.opacity(0.06))
+                                .fill(WidgetTheme.cardFill(0.06))
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(contextColor(s.contextRatio))
+                                .fill(WidgetTheme.contextColor(s.contextRatio))
                                 .frame(width: geo.size.width * min(s.contextRatio, 1.0))
                         }
                     }
@@ -198,21 +261,20 @@ struct WidgetEntryView: View {
 
     private func cursorSessionRow(_ s: WidgetSnapshot.CursorSessionSummary) -> some View {
         let isActive = s.status == "active"
-        let accent: Color = Color(red: 0.62, green: 0.52, blue: 0.95)
         return HStack(spacing: 8) {
             Circle()
-                .fill(isActive ? accent : Color.gray.opacity(0.4))
+                .fill(isActive ? WidgetTheme.cursorAccent : WidgetTheme.statusIdle.opacity(0.5))
                 .frame(width: 6, height: 6)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(s.projectFolder.isEmpty ? "cursor" : s.projectFolder)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(WidgetTheme.textPrimary.opacity(0.8))
                     .lineLimit(1)
                 if !s.currentActivity.isEmpty {
                     Text(s.currentActivity)
                         .font(.system(size: 8, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(WidgetTheme.textTertiary())
                         .lineLimit(1)
                 }
             }
@@ -224,13 +286,13 @@ struct WidgetEntryView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(s.relativeUpdated)
                         .font(.system(size: 8, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(WidgetTheme.textTertiary())
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.white.opacity(0.06))
+                                .fill(WidgetTheme.cardFill(0.06))
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(accent)
+                                .fill(WidgetTheme.cursorAccent)
                                 .frame(width: geo.size.width * min(s.contextRatio, 1.0))
                         }
                     }
@@ -259,23 +321,5 @@ struct WidgetEntryView: View {
         if seconds < 60 { return "just now" }
         if seconds < 3600 { return "\(seconds / 60)m ago" }
         return "\(seconds / 3600)h ago"
-    }
-
-    private func contextColor(_ ratio: Double) -> Color {
-        if ratio > 0.8 { return .orange }
-        if ratio > 0.5 { return .yellow }
-        return .green
-    }
-
-    private func barColor(for model: String) -> Color {
-        let palette: [Color] = [
-            Color(red: 0.40, green: 0.58, blue: 0.95),
-            Color(red: 0.30, green: 0.75, blue: 0.60),
-            Color(red: 0.92, green: 0.62, blue: 0.40),
-            Color(red: 0.78, green: 0.50, blue: 0.90),
-            Color(red: 0.90, green: 0.50, blue: 0.55),
-        ]
-        let hash = abs(model.hashValue)
-        return palette[hash % palette.count]
     }
 }

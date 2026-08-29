@@ -215,9 +215,9 @@ struct SessionMonitor {
                   let message = obj["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { continue }
             msgCount += 1
-            let input = intVal(usage["input_tokens"])
-            let cacheRead = intVal(usage["cache_read_input_tokens"])
-            let cacheCreate = intVal(usage["cache_creation_input_tokens"])
+            let input = JSONCoerce.intVal(usage["input_tokens"])
+            let cacheRead = JSONCoerce.intVal(usage["cache_read_input_tokens"])
+            let cacheCreate = JSONCoerce.intVal(usage["cache_creation_input_tokens"])
             lastContext = input + cacheRead + cacheCreate
             lastModel = (message["model"] as? String) ?? lastModel
         }
@@ -306,7 +306,11 @@ struct SessionMonitor {
             return ("", false)
         }
         let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: max(0, size - 32_000))
+        // Clamp before subtracting: `size` is UInt64, so `size - 32_000`
+        // underflows (and Swift traps) when the transcript is smaller than
+        // 32 KB — e.g. a freshly-spawned subagent with an almost-empty file.
+        let readSize = min(32_000, size)
+        try? handle.seek(toOffset: size - readSize)
         guard let tailData = try? handle.readToEnd(),
               let tail = String(data: tailData, encoding: .utf8) else {
             try? handle.close()
@@ -389,12 +393,5 @@ struct SessionMonitor {
             lastTool = detail.isEmpty ? name : "\(name) · \(detail)"
         }
         return lastTool
-    }
-
-    private static func intVal(_ v: Any?) -> Int {
-        if let n = v as? Int { return n }
-        if let n = v as? NSNumber { return n.intValue }
-        if let s = v as? String, let n = Int(s) { return n }
-        return 0
     }
 }

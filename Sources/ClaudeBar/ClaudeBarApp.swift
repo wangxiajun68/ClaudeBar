@@ -2,12 +2,14 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
+    private var mainWindowController: MainWindowController?
     private var providerStore: ProviderStore?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Must be .accessory so the status item's target/action works and the
-        // app can receive mouse events without stealing focus from the terminal.
-        NSApp.setActivationPolicy(.accessory)
+        // .regular: the app has a Dock icon, standard app menu, and proper
+        // window management for the new main window. The menu-bar status item
+        // and its non-activating popup panel work regardless of this policy.
+        NSApp.setActivationPolicy(.regular)
 
         let store = ProviderStore()
         providerStore = store
@@ -16,7 +18,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.setup()
         menuBarController = controller
 
+        let main = MainWindowController(providerStore: store)
+        mainWindowController = main
+        main.showWindow()
+
+        // The menu-bar popup's "open main window" button posts this notification.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(showMainWindow),
+            name: .showMainWindow, object: nil)
+
         store.refresh()
+    }
+
+    @objc private func showMainWindow() {
+        mainWindowController?.showWindow()
     }
 
     /// Handle widget tap → show the menu panel.
@@ -26,6 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menuBarController?.showPanel()
             }
         }
+    }
+
+    /// Re-open the main window if the user clicked the Dock icon while it was
+    /// closed. The app stays alive after the window closes (status item runs).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { mainWindowController?.showWindow() }
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

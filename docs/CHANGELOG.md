@@ -4,6 +4,77 @@
 
 ---
 
+## [1.6.0] — 2026-08-01 · 指挥中枢 (Dispatch Radar) 视觉重构
+
+### 新增 — 设计世界
+- **视觉世界替换**：深空靛蓝 + 琥珀(Claude)/青(Cursor) 双信号，取代"近黑 + 荧光绿 + 全玻璃"的默认配方。整个应用读作 AI agent 的调度台。
+- 新增签名组件 `Views/Shared/LiveRadar.swift`：Canvas + `TimelineView` 实时雷达——graticule 同心环/准线/刻度、示波器面板底、扫描束（随负载加速）、会话光点（上下文映射轨道半径，busy 时 ping 扩散环）、悬停标签。**点击光点 → 内联 agent 读数**（`RadarAgentDetail`：上下文/模型/消息/时间 + 恢复/Finder/跳转会话页），雷达即调度台。`accessibilityReduceMotion` 降级。
+- 新增 `Views/Shared/SignalTrace.swift`：忙碌会话行内实时等化器（4 柱 TimelineView 波纹，reduced motion 降级）。
+- 新增 `Views/Shared/RadarBackdrop.swift`（替换 `AuroraBackground`）：极淡雷达刻度网格 + 缓慢扫描光 + 颗粒 + 暗角；移除昂贵的 `MeshGradient`。
+
+### 变更 — Theme 设计 token（`Theme/Theme.swift` 重写）
+- **材质改为 macOS 26 原生 Liquid Glass（透明毛玻璃）**：`panelCard()` 重定义为原生 `glassEffect`，所有内容卡为真实模糊+透光+毛玻璃边缘高光；桌面透过 vibrancy 显示。整个应用是连续的玻璃台面，不再是实体面板。
+- **配色改为近单色 + 冷色信号**（多次否定高饱和暖色后收敛）：中性近黑基底 `base0` 0x0D0D11（无色彩偏向）；**Claude 软蓝** `claude` 0x4F8EF7、**Cursor 软紫** `cursor` 0xA78BFA；语义色去饱和（`statusWarning` 0xE0A13C、`statusError` 0xE46464、`statusIdle` 0x8A8F98、`statusSuccess` 0x46C58F）。层级由字体字重驱动，色彩只用于状态/身份。
+- **删除背景雷达**：移除 `RadarBackdrop`（graticule 同心环/准线/扫描 全窗装饰）——那是噪音；真正的雷达只在仪表盘。窗口背景为干净 vibrancy + 极淡 `CursorSpotlight`。
+- 文本：`textPrimary` 0xF4F6F9（毛玻璃上高可读）、`textSecondary` 0xA7B0BE。
+- 字体高级化：`displayMetric`/`displayMetricSmall` 改 SF Pro semibold + `.monospacedDigit()`（表格数字，弃用整段 mono）；`titleLarge` 28pt bold、tracking 收紧；数据仍用 mono（合法：测量）。
+- 文本溢出修复：读数 value 支持 `truncationMode(.tail)` + `minimumScaleFactor`，长文本值（如 provider/model）用自适应小字号；会话行/卡片/详情统一 `lineLimit(1)` 截断。
+- 新增 `beaconGlow()`（信标光晕）、`GlassEffectContainer` 包裹相邻玻璃卡合并模糊。
+- 动效 token 速度优先（`smooth` ~0.2s）；移除每页 `StaggeredEntrance` 入场编排，页面切换快速淡入 + 轻 scale。
+
+### 变更 — 视图
+- `MainWindowView`：侧栏→"花名册"（信标 brand mark、导航行实时 blip 徽标、琥珀信号选中 pill 保留 glass morph、底部 `STANDBY/N RUNNING`）；页面过渡简化。
+- `DashboardView`：移除四张 stat 卡与入场编排 → **雷达 hero**（`LiveRadar`）+ 系统遥测读数列（活跃配置/余额/会话/Token，mono instrument register）+ 信号历史（`LivePulseGraph` 琥珀信号）+ 活跃频道 + 用量 Top。
+- `SessionsView`/`UsageView`/`SettingsView`/`ProvidersView`/`ProviderEditorView`/`ProviderRow`/`MenuBarView`：按新 token 与面板材质重排，去掉装饰性 left-edge / ambient glow / 入场编排。
+- `Shared/`：`StatusBadge`/`ActivityLine` idle 色→`statusIdle`；`SessionCardView`/`CursorSessionCardView`→阳极面板 blip 卡；`IconChip`/`ActionChchip`→信标光晕；`CursorSpotlight`→极淡 beacon；`LivePulseGraph`→琥珀信号。
+- Widget `WidgetTheme` 镜像新值（indigo 基底 + amber/teal）。
+
+### 删除
+- `Views/Shared/StaggeredEntrance.swift`、`AuroraBackground.swift`、`RadarBackdrop.swift`、`Theme.meshPoints`。
+
+---
+
+## [1.5.0] — 2026-08-01
+
+### 新增 — 主窗口
+- 新增 `MainWindowController`（1120×720，`.underWindowBackground` vibrancy，`fullSizeContentView`，透明标题栏）+ `MainWindowView`（`NavigationSplitView`）：sidebar 5 项（概览 / 会话 / 供应商 / 用量 / 设置）+ `matchedGeometryEffect` 选中 pill + 实时计数 badge（`numericText`）+ `.asymmetric` 页面切换过渡 + `AuroraBackground`（MeshGradient 漂移）+ `CursorSpotlight`（指针跟随光晕）+ `CommandPalette`（⌘K 模糊搜索导航）。
+- 新增 5 个主窗口页面 `Views/Pages/`：`DashboardView`（stat cards + pulse graph + activity feed）、`SessionsView`（全宽会话行 + 子 agent 树 + 双击恢复）、`ProvidersView`（嵌入 `ProviderEditorView`）、`UsageView`（周期 chips + 用量条形图）、`SettingsView`。
+- 新增 `applicationShouldHandleReopen` 重开主窗口；`applicationShouldTerminateAfterLastWindowClosed = false` 保活。
+
+### 新增 — Theme 设计系统
+- 新增 `Theme/Theme.swift` 设计 token 单点：颜色（`bgPrimary` 0x000B1A / `accent` 0x68E78E Harmony Green / `cursorAccent` 0x9E85F2 / `statusWarning`/`statusError`）、间距 `Space`（8pt grid）、`Radius`、`Font`、`Animation`、`shadowCard()`/`glassCard()`/`contextColor()`。popup 与主窗口共用，统一配色。
+- 新增 13 个共享交互组件 `Views/Shared/`：`PressableStyle`（.pressable）、`HoverState`（.hoverState）、`IconChip`、`ActionChip`、`TiltOnHover`（.tiltOnHover + SpecularSheen）、`CursorSpotlight`、`AuroraBackground`、`CommandPalette`、`LivePulseGraph`、`StaggeredEntrance`、`StatusBadge`、`ActivityLine`、`SessionCardView`/`CursorSessionCardView`/`UsageRowView`。
+
+### 变更 — 激活策略
+- `.accessory`（`LSUIElement=true`）→ `.regular`（`LSUIElement=false`）：现含 Dock 图标 + 主窗口，菜单栏 status item popup 保留为快速概览。
+- 最低系统 macOS 14.0 → macOS 15.0（依赖 `symbolEffect`/`MeshGradient`/`sensoryFeedback`/`onGeometryChange`）。
+
+### 重构 — 结构优化（D 组）
+- **删除死代码**：`InteractiveCard`/`interactiveCard()`、`FocusRing`/`focusRing()`、`HoverReveal`/`hoverReveal()`（`Interaction.swift`）、`ContextBar.swift` 整文件（均 0 调用点）。
+- **去重**：提取 `Utils/CursorDB.swift`（共享 SQLite 打开 + `textColumn`，供 `CursorSessionMonitor`/`CursorUsageStats` 复用）、`Utils/JSONCoerce.swift`（共享 `intVal`，消除 3 份重复）、`Utils/TerminalLauncher.swift`（共享 `resumeClaudeSession`/`openInCursor`，统一 Warp 优先 + osascript + Terminal 回退，消除 `MenuBarView` 与 `SessionsView` 两份实现）。
+- **Token 迁移（D3）**：`ProviderRow`（0→22 Theme 引用）、`ProviderEditorView`、`MenuBarView`（CB logo 渐变 + 散落 `Color(white: x)`）统一迁移到 `Theme` token，popup 与主窗口视觉一致。
+- `ProviderStore.writeWidgetSnapshot()` 拆为 `buildSnapshot()` + `persistSnapshot(_:)`。
+
+### 修复 — Bug（B 组）
+- **B1**：`ProviderStore` 加 `deinit { sessionTimer?.invalidate() }`，修复轮询定时器泄漏。
+- **B2**：`refreshCursorSessions()` / `refreshUsage()` 的 `Task.detached` 改用 `MainActor.run { [weak self] in }`，修复强引用 self + Swift 6 "captured var" 警告。
+- **B3**：`CursorSessionMonitor` 的 `map[key]!` → `map[key]?.sort`，消除 force-unwrap 崩溃面（并入 `CursorDB` 重构）。
+- **B4**：`SettingsManager.preserve()` 空值保留语义确认为有意设计（保护用户手填配置），在 `design.md` §5.1 文档化此取舍；`buildEnv()` 切换时显式写入新 Provider token 已覆盖风险。
+- **B5**：`BalanceFetcher` 由 `baseURL.contains("deepseek")` 改为 `URL(string:)?.host` 判定，避免向非预期主机发送 token。
+- **B6**：`writeWidgetSnapshot()` 加 diff 缓存，仅数据变化时才写四路文件 + `reloadAllTimelines()`；删除已弃用的 `shared.synchronize()`。
+- **B7**：`ProviderStore.init()` 移除 `refresh()`，统一由 AppDelegate 启动时调用，避免重复刷新。
+- **B8**：`usageReferenceDate.didSet` 加 `!= oldValue` 守卫，避免值未变也触发全量扫描。
+- **B9**：删除 `updateProvider` 中 no-op 的 `if activeProviderID == provider.id { activeProviderID = provider.id }`。
+- **B10**：`balanceText` 现含币种（`"\(balance) \(currency)"`）。
+- **B11**：`readSettings()` 简化为返回 `EnvConfig?`，删除无调用方的 `raw` 元组通道。
+
+### 文档
+- `design.md`：§1 产品概述、§2 架构图、§3.2 `buildEnv` 取舍、新增 §4b 主窗口与设计系统、§5 交互流程、§6 文件结构、§8 构建全面对齐当前代码。
+- `architecture.md`：最低系统 macOS 15.0、`LSUIElement=false`、`.regular` 激活策略、新增 §2.2/§2.3 主窗口架构、§4.3 Widget diff、§4.8 host 判定、§5 Theme token 与 token 迁移、§9 文件索引更新。
+- `CHANGELOG.md`：新增本段。
+
+---
+
 ## [1.4.0] — 2026-08-01
 
 ### 文档

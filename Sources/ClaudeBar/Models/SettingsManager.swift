@@ -1,43 +1,46 @@
 import Foundation
 
 struct SettingsManager {
-    static func readSettings() -> (env: EnvConfig?, raw: [String: Any]) {
+    /// Read and parse `~/.claude/settings.json` into an `EnvConfig`. Returns
+    /// nil when the file is missing or has no `env` block. The raw top-level
+    /// dict is read separately by `writeSettings()` when it needs to preserve
+    /// sibling fields, so it is not surfaced here.
+    static func readSettings() -> EnvConfig? {
         guard FileManager.default.fileExists(atPath: FilePaths.settingsFile.path),
               let data = try? Data(contentsOf: FilePaths.settingsFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (nil, [:])
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envDict = json["env"] as? [String: String] else {
+            return nil
         }
 
-        let env: EnvConfig?
-        if let envDict = json["env"] as? [String: String] {
-            env = EnvConfig(
-                ANTHROPIC_AUTH_TOKEN: envDict["ANTHROPIC_AUTH_TOKEN"] ?? "",
-                ANTHROPIC_BASE_URL: envDict["ANTHROPIC_BASE_URL"] ?? "",
-                ANTHROPIC_MODEL: envDict["ANTHROPIC_MODEL"] ?? "",
-                CLAUDE_CODE_MAX_CONTEXT_TOKENS: envDict["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] ?? "",
-                DISABLE_COMPACT: envDict["DISABLE_COMPACT"] ?? "",
-                GITHUB_PERSONAL_ACCESS_TOKEN: envDict["GITHUB_PERSONAL_ACCESS_TOKEN"] ?? "",
-                CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: envDict["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] ?? "",
-                ANTHROPIC_DEFAULT_OPUS_MODEL: envDict["ANTHROPIC_DEFAULT_OPUS_MODEL"] ?? "",
-                ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"] ?? "",
-                ANTHROPIC_DEFAULT_SONNET_MODEL: envDict["ANTHROPIC_DEFAULT_SONNET_MODEL"] ?? "",
-                ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] ?? "",
-                ANTHROPIC_DEFAULT_HAIKU_MODEL: envDict["ANTHROPIC_DEFAULT_HAIKU_MODEL"] ?? "",
-                ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"] ?? "",
-                ANTHROPIC_DEFAULT_FABLE_MODEL: envDict["ANTHROPIC_DEFAULT_FABLE_MODEL"] ?? "",
-                ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] ?? "",
-                CLAUDE_CODE_AUTO_COMPACT_WINDOW: envDict["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] ?? ""
-            )
-        } else {
-            env = nil
-        }
-
-        return (env, json)
+        return EnvConfig(
+            ANTHROPIC_AUTH_TOKEN: envDict["ANTHROPIC_AUTH_TOKEN"] ?? "",
+            ANTHROPIC_BASE_URL: envDict["ANTHROPIC_BASE_URL"] ?? "",
+            ANTHROPIC_MODEL: envDict["ANTHROPIC_MODEL"] ?? "",
+            CLAUDE_CODE_MAX_CONTEXT_TOKENS: envDict["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] ?? "",
+            DISABLE_COMPACT: envDict["DISABLE_COMPACT"] ?? "",
+            GITHUB_PERSONAL_ACCESS_TOKEN: envDict["GITHUB_PERSONAL_ACCESS_TOKEN"] ?? "",
+            CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: envDict["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] ?? "",
+            ANTHROPIC_DEFAULT_OPUS_MODEL: envDict["ANTHROPIC_DEFAULT_OPUS_MODEL"] ?? "",
+            ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"] ?? "",
+            ANTHROPIC_DEFAULT_SONNET_MODEL: envDict["ANTHROPIC_DEFAULT_SONNET_MODEL"] ?? "",
+            ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"] ?? "",
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: envDict["ANTHROPIC_DEFAULT_HAIKU_MODEL"] ?? "",
+            ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"] ?? "",
+            ANTHROPIC_DEFAULT_FABLE_MODEL: envDict["ANTHROPIC_DEFAULT_FABLE_MODEL"] ?? "",
+            ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: envDict["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] ?? "",
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: envDict["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] ?? ""
+        )
     }
 
     static func writeSettings(env: EnvConfig) throws {
-        // Read existing env so empty preset values don't nuke user's manual config
-        let (existingEnv, _) = readSettings()
+        // Read existing env so empty preset values don't nuke user's manual config.
+        // NOTE: by design, an empty preset value does NOT overwrite a value the
+        // user set manually — so switching to a provider without an auth token
+        // keeps the previously-written token. This prevents preset gaps from
+        // wiping hand-edited config, at the cost of needing an explicit clear
+        // path if a credential must be removed (delete it in settings.json).
+        let existingEnv = readSettings()
 
         func preserve(newValue: String, existing: String?) -> String {
             if !newValue.isEmpty { return newValue }

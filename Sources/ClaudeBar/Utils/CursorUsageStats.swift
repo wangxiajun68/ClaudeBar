@@ -24,7 +24,7 @@ struct CursorUsageStats {
     /// into one `ModelUsage(model: "Cursor")`. Returns nil if the DB is
     /// unavailable or no tokens are found.
     static func fetch() -> ModelUsage? {
-        guard let db = openDB() else { return nil }
+        guard let db = CursorDB.open() else { return nil }
         defer { sqlite3_close(db) }
 
         // cursorDiskKV has no usable index on token counts, and bubble
@@ -37,49 +37,17 @@ struct CursorUsageStats {
 
         var usage = ModelUsage(model: "Cursor")
         while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let raw = textColumn(stmt, 0),
+            guard let raw = CursorDB.textColumn(stmt, 0),
                   let data = raw.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tc = obj["tokenCount"] as? [String: Any] else { continue }
-            let input = intVal(tc["inputTokens"])
-            let output = intVal(tc["outputTokens"])
+            let input = JSONCoerce.intVal(tc["inputTokens"])
+            let output = JSONCoerce.intVal(tc["outputTokens"])
             if input == 0 && output == 0 { continue }
             usage.calls += 1
             usage.inputTokens += input
             usage.outputTokens += output
         }
         return usage.totalTokens > 0 ? usage : nil
-    }
-
-    // MARK: - SQLite helpers
-
-    /// Open Cursor's state DB read-only. WAL mode allows concurrent readers, so
-    /// this never contends with Cursor's writer. Mirrors `CursorSessionMonitor`.
-    private static func openDB() -> OpaquePointer? {
-        guard FileManager.default.fileExists(atPath: FilePaths.cursorStateDB.path) else { return nil }
-        var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(FilePaths.cursorStateDB.path, &db, flags, nil) == SQLITE_OK else {
-            sqlite3_close(db)
-            return nil
-        }
-        sqlite3_busy_timeout(db, 2000)
-        return db
-    }
-
-    /// Read a TEXT/BLOB column using its byte length — needed for the large
-    /// JSON `value` column so embedded multi-byte UTF-8 round-trips correctly.
-    private static func textColumn(_ stmt: OpaquePointer?, _ idx: Int32) -> String? {
-        guard let bytes = sqlite3_column_text(stmt, idx) else { return nil }
-        let len = Int(sqlite3_column_bytes(stmt, idx))
-        return String(bytes: UnsafeBufferPointer(start: bytes, count: len), encoding: .utf8)
-    }
-
-    /// Coerce a JSON number (Int / NSNumber / numeric String) to Int.
-    private static func intVal(_ v: Any?) -> Int {
-        if let n = v as? Int { return n }
-        if let n = v as? NSNumber { return n.intValue }
-        if let s = v as? String, let n = Int(s) { return n }
-        return 0
     }
 }

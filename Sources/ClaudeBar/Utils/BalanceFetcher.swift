@@ -8,10 +8,14 @@ struct BalanceFetcher {
 
     /// Fetch DeepSeek balance. Returns nil for non-DeepSeek URLs or on failure.
     static func fetch(authToken: String, baseURL: String) async -> BalanceResult? {
-        // Only works for DeepSeek
-        guard baseURL.contains("deepseek"),
-              !authToken.isEmpty,
-              let base = URL(string: baseURL) else { return nil }
+        // Only fetch for DeepSeek — match on the URL host so a misconfigured
+        // baseURL like `https://deepseek-proxy.evil.com/` can't trick us into
+        // sending the auth token to an unintended host (a plain `.contains`
+        // would). Verify the host before constructing the request URL.
+        guard !authToken.isEmpty,
+              let base = URL(string: baseURL),
+              let host = base.host?.lowercased(),
+              host.contains("deepseek.com") else { return nil }
 
         guard let url = URL(string: "user/balance", relativeTo: base) else { return nil }
 

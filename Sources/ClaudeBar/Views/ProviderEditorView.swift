@@ -33,24 +33,25 @@ struct ProviderEditorView: View {
             // MARK: - Left Sidebar (fixed width, not draggable)
             VStack(alignment: .leading, spacing: 0) {
                 Text("PROVIDERS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(Theme.Font.labelSection)
+                    .foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
 
                 List(selection: $selectedID) {
                     ForEach(providerStore.providers) { provider in
                         HStack(spacing: 8) {
                             Image(systemName: "server.rack")
-                                .font(.system(size: 11)).foregroundColor(.secondary)
+                                .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(provider.name).font(.system(size: 13))
+                                Text(provider.name).font(Theme.Font.body)
                                 Text("\(provider.models.count) model\(provider.models.count == 1 ? "" : "s")")
-                                    .font(.system(size: 10)).foregroundColor(.secondary)
+                                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                             }
                             Spacer()
                             if provider.id == providerStore.activeProviderID {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 11)).foregroundColor(.green)
+                                    .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
+                                    .transition(.scale.combined(with: .opacity))
                             }
                         }
                         .padding(.vertical, 3)
@@ -58,19 +59,23 @@ struct ProviderEditorView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
 
                 HStack(spacing: 6) {
-                    Button(action: addNew) { Image(systemName: "plus") }.help("Add provider")
+                    Button(action: addNew) { Image(systemName: "plus") }
+                        .buttonStyle(.glass).help("Add provider")
                     Button(action: duplicateSelected) { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.glass)
                         .disabled(selectedID == nil).help("Duplicate")
                     Button(action: deleteSelected) { Image(systemName: "trash") }
+                        .buttonStyle(.glass)
                         .disabled(selectedID == nil).help("Delete")
                     Spacer()
                 }
                 .padding(.horizontal, 10).padding(.vertical, 8)
             }
             .frame(width: 220)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(Theme.base1.opacity(0.45))
 
             Divider()
 
@@ -81,38 +86,38 @@ struct ProviderEditorView: View {
                         VStack(alignment: .leading, spacing: 16) {
 
                             // ========== PROVIDER CONFIGURATION ==========
-                            GroupBox(label:
+                            VStack(alignment: .leading, spacing: 12) {
                                 Label("Provider Configuration", systemImage: "server.rack")
-                                    .font(.system(size: 12, weight: .semibold))
-                            ) {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    EditorField(label: "Name") {
-                                        TextField("e.g. DeepSeek", text: $editingName)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    EditorField(label: "API Key") {
-                                        TextField("sk-...", text: $editingAuthToken)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    EditorField(label: "Base URL") {
-                                        TextField("https://api.deepseek.com/anthropic", text: $editingBaseURL)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
+                                    .font(Theme.Font.titleSmall)
+                                    .foregroundColor(Theme.textPrimary)
+                                EditorField(label: "Name") {
+                                    TextField("e.g. DeepSeek", text: $editingName)
+                                        .textFieldStyle(.roundedBorder)
                                 }
-                                .padding(12)
+                                EditorField(label: "API Key") {
+                                    TextField("sk-...", text: $editingAuthToken)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                EditorField(label: "Base URL") {
+                                    TextField("https://api.deepseek.com/anthropic", text: $editingBaseURL)
+                                        .textFieldStyle(.roundedBorder)
+                                }
                             }
+                            .padding(12)
+                            .panelCard()
 
                             // ========== MODEL CONFIGURATION (master-detail) ==========
-                            GroupBox(label:
+                            VStack(alignment: .leading, spacing: 0) {
                                 Label("Model Configuration", systemImage: "cpu")
-                                    .font(.system(size: 12, weight: .semibold))
-                            ) {
+                                    .font(Theme.Font.titleSmall)
+                                    .foregroundColor(Theme.textPrimary)
+                                    .padding(.bottom, 12)
                                 HStack(alignment: .top, spacing: 0) {
                                     // Model list (left)
                                     VStack(spacing: 0) {
                                         if editingModels.isEmpty {
                                             Text("No models")
-                                                .font(.system(size: 11)).foregroundColor(.secondary)
+                                                .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                                                 .padding(.vertical, 12).frame(maxWidth: .infinity)
                                         } else {
                                             ScrollView {
@@ -135,7 +140,7 @@ struct ProviderEditorView: View {
                                                 Image(systemName: "plus.circle.fill")
                                                     .font(.system(size: 14))
                                             }
-                                            .buttonStyle(.plain)
+                                            .buttonStyle(.glass)
                                             .disabled(newModelName.trimmingCharacters(in: .whitespaces).isEmpty)
                                             .help("Add model")
                                         }
@@ -170,11 +175,13 @@ struct ProviderEditorView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     } else {
                                         Text("Select a model")
-                                            .font(.system(size: 11)).foregroundColor(.secondary)
+                                            .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                                     }
                                 }
                             }
+                            .padding(12)
+                            .panelCard()
                         }
                         .padding(16)
                     }
@@ -184,24 +191,26 @@ struct ProviderEditorView: View {
                     HStack(spacing: 12) {
                         if showSaveSuccess {
                             Label("Saved ✓", systemImage: "checkmark.circle.fill")
-                                .foregroundColor(.green).font(.system(size: 12, weight: .medium))
-                                .transition(.opacity)
+                                .foregroundColor(Theme.statusBusy).font(.system(size: 12, weight: .medium))
+                                .transition(.scale.combined(with: .opacity))
                         }
                         Spacer()
                         Button("Save") { saveCurrent() }
+                            .buttonStyle(.glassProminent)
+                            .tint(Theme.accent)
                             .keyboardShortcut(.return, modifiers: .command)
                             .help("Save provider (⌘S)")
                     }
                     .padding(.horizontal, 20).padding(.vertical, 12)
-                    .animation(.easeInOut(duration: 0.2), value: showSaveSuccess)
+                    .animation(Theme.Animation.bouncy, value: showSaveSuccess)
                 }
             } else {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: "server.rack")
-                        .font(.system(size: 28)).foregroundColor(.secondary.opacity(0.5))
+                        .font(.system(size: 28)).foregroundColor(Theme.textSecondary.opacity(0.5))
                     Text("Select a provider or add a new one")
-                        .foregroundColor(.secondary).font(.system(size: 13))
+                        .foregroundColor(Theme.textSecondary).font(Theme.Font.body)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -249,7 +258,7 @@ struct ProviderEditorView: View {
     private func modelRow(_ model: EditableModel) -> some View {
         let isSelected = model.id == (editingModelID ?? editingModels.first?.id)
         let isDefault = model.id == activeModelID
-        return Button(action: { editingModelID = model.id }) {
+        return Button(action: { withAnimation(Theme.Animation.bouncy) { editingModelID = model.id } }) {
             HStack(spacing: 6) {
                 Text(model.name)
                     .font(.system(size: 11, design: .monospaced))
@@ -258,24 +267,28 @@ struct ProviderEditorView: View {
                 if isDefault {
                     Text("默认")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.orange)
+                        .foregroundColor(Theme.statusWarning)
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        .background(Capsule().fill(Theme.statusWarning.opacity(0.15)))
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-            )
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color.clear)
+                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: 5))
+                }
+            }
         }
         .buttonStyle(.plain)
         .help(isDefault ? "默认模型:切换到该供应商时自动选用" : "右键设为默认")
         .contextMenu {
             if !isDefault {
-                Button("设为默认") { activeModelID = model.id }
+                Button("设为默认") { withAnimation(Theme.Animation.bouncy) { activeModelID = model.id } }
             }
             Button("删除", role: .destructive) {
                 editingModels.removeAll { $0.id == model.id }
@@ -308,8 +321,10 @@ struct ProviderEditorView: View {
             providerStore.activateModel(providerID: p.id, modelID: model.id)
         }
 
-        showSaveSuccess = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { showSaveSuccess = false }
+        withAnimation(Theme.Animation.bouncy) { showSaveSuccess = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(Theme.Animation.bouncy) { showSaveSuccess = false }
+        }
     }
 
     private func addNew() {
@@ -338,7 +353,7 @@ private struct EditorSectionHeader: View {
     let title: String
     init(_ title: String) { self.title = title }
     var body: some View {
-        Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary).padding(.top, 4)
+        Text(title).font(Theme.Font.labelSection).foregroundColor(Theme.textSecondary).padding(.top, 4)
     }
 }
 
@@ -350,7 +365,7 @@ private struct EditorField<Content: View>: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11)).foregroundColor(.secondary)
+            Text(label).font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
             content()
         }
     }

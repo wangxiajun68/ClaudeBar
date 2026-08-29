@@ -9,7 +9,6 @@ struct ProviderRow: View {
     let onActivateModel: (UUID) -> Void
 
     private var isSingleModel: Bool { provider.models.count <= 1 }
-    private var accentColor: Color { Color(red: 0.29, green: 0.56, blue: 0.85) }
 
     /// Case-insensitive model name match (settings.json may use different casing).
     private func modelNameMatches(_ model: ModelConfig) -> Bool {
@@ -50,27 +49,29 @@ struct ProviderRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(provider.name)
                         .font(.system(size: 13, weight: isActive ? .semibold : .regular))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                     if let model = provider.models.first {
                         Text(model.name)
-                            .font(.system(size: 10))
-                            .foregroundColor(isActive ? accentColor : Color.white.opacity(0.4))
+                            .font(Theme.Font.caption)
+                            .foregroundColor(isActive ? Theme.accent : Theme.textTertiary())
                     }
                 }
                 Spacer()
                 if isActive && provider.models.first?.name == currentModelName {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11)).foregroundColor(.green)
+                        .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isActive ? Color(red: 0.15, green: 0.35, blue: 0.55) : Color.clear)
-                    .overlay(RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(isActive ? accentColor.opacity(0.4) : Color.clear, lineWidth: 1))
-            )
+            .background {
+                if isActive {
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(Color.clear)
+                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -83,25 +84,31 @@ struct ProviderRow: View {
             HStack(spacing: 8) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.5)).frame(width: 10)
+                    .foregroundColor(Theme.textTertiary(0.5)).frame(width: 10)
 
                 Text(provider.name)
                     .font(.system(size: 13, weight: isActive ? .semibold : .regular))
-                    .foregroundColor(.white.opacity(0.9)).lineLimit(1)
+                    .foregroundColor(Theme.textPrimary).lineLimit(1)
 
                 Spacer()
 
                 if isActive {
-                    Text("active").font(.system(size: 9, weight: .medium)).foregroundColor(.green)
+                    Text("active").font(.system(size: 9, weight: .medium)).foregroundColor(Theme.statusBusy)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.green.opacity(0.15)))
+                        .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
+                        .transition(.scale.combined(with: .opacity))
                 }
                 Text("\(provider.models.count) models")
-                    .font(.system(size: 10)).foregroundColor(Color.white.opacity(0.35))
+                    .font(Theme.Font.caption).foregroundColor(Theme.textTertiary(0.35))
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Color(red: 0.15, green: 0.35, blue: 0.55, opacity: 0.5) : Color.clear))
+            .background {
+                if isActive {
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                        .fill(Color.clear)
+                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -115,24 +122,30 @@ struct ProviderRow: View {
                 radioIndicator(isSelected: isActive && modelNameMatches(model))
                 Text(model.name)
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(modelNameMatches(model) ? .white : .white.opacity(0.75))
+                    .foregroundColor(modelNameMatches(model) ? Theme.textPrimary : Theme.textTertiary(0.75))
                     .lineLimit(1)
                 Spacer()
                 if !model.contextTokens.isEmpty {
                     Text(formatContext(model.contextTokens))
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(Theme.textTertiary(0.35))
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.white.opacity(0.06)))
+                        .background(Capsule().fill(Theme.cardFill(0.06)))
                 }
                 if modelNameMatches(model) && isActive {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold)).foregroundColor(.green)
+                        .font(.system(size: 10, weight: .bold)).foregroundColor(Theme.statusBusy)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 4)
-                .fill(modelNameMatches(model) && isActive ? accentColor.opacity(0.15) : Color.clear))
+            .background {
+                if modelNameMatches(model) && isActive {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.clear)
+                        .glassEffect(.regular.tint(Theme.claude.opacity(0.16)), in: RoundedRectangle(cornerRadius: 4))
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -152,11 +165,13 @@ struct ProviderRow: View {
 
     private func radioIndicator(isSelected: Bool) -> some View {
         ZStack {
-            Circle().strokeBorder(isSelected ? accentColor : Color.gray.opacity(0.4), lineWidth: 1.5)
+            Circle().strokeBorder(isSelected ? Theme.accent : Color.gray.opacity(0.4), lineWidth: 1.5)
                 .frame(width: 13, height: 13)
             if isSelected {
-                Circle().fill(accentColor).frame(width: 7, height: 7)
+                Circle().fill(Theme.accent).frame(width: 7, height: 7)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
+        .animation(Theme.Animation.bouncy, value: isSelected)
     }
 }

@@ -17,26 +17,35 @@ class ProviderStore: ObservableObject {
         didSet { if usagePeriod != oldValue { refreshUsage() } }
     }
     @Published var usageReferenceDate: Date = Date() {
-        didSet { refreshUsage() }
+        didSet { if usageReferenceDate != oldValue { refreshUsage() } }
     }
 
     // Live Claude Code sessions
     @Published var sessions: [SessionInfo] = []
     @Published var expandedSessionPIDs: Set<Int> = []
     private var sessionTimer: Timer?
+    /// Last serialized snapshot — `writeWidgetSnapshot()` only writes files +
+    /// reloads widget timelines when the payload actually changes, so the 2.5s
+    /// poll does not hammer disk / WidgetCenter with identical data.
+    private var lastSnapshotData: Data?
 
     // Live Cursor (IDE) sessions
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var cursorExpanded: Set<String> = []
 
-    init() { refresh() }
+    /// Initial state is populated by the AppDelegate once the status item and
+    /// main window are wired up — calling `refresh()` here would run file I/O
+    /// and spawn background tasks before the UI surfaces exist, and the
+    /// delegate calls `refresh()` again anyway (which would duplicate that).
+    init() {}
+
+    deinit { sessionTimer?.invalidate() }
 
     // MARK: - Refresh
 
     func refresh() {
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
-        let (env, _) = SettingsManager.readSettings()
-        currentEnv = env
+        currentEnv = SettingsManager.readSettings()
         loadProviders()
         refreshBalance()
         refreshUsage()
@@ -78,7 +87,8 @@ class ProviderStore: ObservableObject {
     func refreshCursorSessions() {
         Task.detached(priority: .utility) {
             let result = CursorSessionMonitor.fetchActive()
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.cursorSessions = result
                 // Cursor session changes (new/ended/busy flip) should reach the
                 // widget on the same poll — refreshCursorSessions runs on the 2.5s
@@ -243,7 +253,6 @@ class ProviderStore: ObservableObject {
     func updateProvider(_ provider: Provider) {
         guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else { return }
         providers[idx] = provider
-        if activeProviderID == provider.id { activeProviderID = provider.id }
         saveProviders()
     }
 
@@ -252,10 +261,11 @@ class ProviderStore: ObservableObject {
     func refreshBalance() {
         guard let env = currentEnv else { balanceText = nil; return }
         balanceLoading = true
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             defer { balanceLoading = false }
             if let result = await BalanceFetcher.fetch(authToken: env.ANTHROPIC_AUTH_TOKEN, baseURL: env.ANTHROPIC_BASE_URL) {
-                balanceText = "\(result.balance)"
+                balanceText = "\(result.balance) \(result.currency)"
             } else {
                 balanceText = nil
             }
@@ -277,7 +287,8 @@ class ProviderStore: ObservableObject {
                 result.sort { $0.totalTokens > $1.totalTokens }
             }
             let final = result
-            await MainActor.run {
+            await MainActor.run { [weak self] in
+                guard let self else { return }
                 self.usageStats = final
                 self.usageLoading = false
                 self.writeWidgetSnapshot()
@@ -288,8 +299,21 @@ class ProviderStore: ObservableObject {
     // MARK: - Widget Snapshot
 
     func writeWidgetSnapshot() {
+        let snapshot = buildSnapshot()
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        // Diff against the last written payload: if nothing changed since the
+        // previous poll, skip the 4 file writes + WidgetCenter reload
+        // entirely. WidgetCenter.reloadAllTimelines() is expensive and Apple
+        // recommends calling it only on meaningful data change.
+        guard data != lastSnapshotData else { return }
+        lastSnapshotData = data
+        persistSnapshot(data)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func buildSnapshot() -> WidgetSnapshot {
         let alive = sessions.filter(\.isAlive)
-        let snapshot = WidgetSnapshot(
+        return WidgetSnapshot(
             todayTotalTokens: usageStats.reduce(0) { $0 + $1.totalTokens },
             modelBreakdown: usageStats.prefix(5).map {
                 WidgetSnapshot.ModelTokenUsage(model: $0.model, totalTokens: $0.totalTokens)
@@ -324,23 +348,25 @@ class ProviderStore: ObservableObject {
             },
             updatedAt: Date()
         )
-        // Write to multiple locations for maximum widget compatibility
-        if let data = try? JSONEncoder().encode(snapshot) {
-            // 1. App Group container
-            try? data.write(to: FilePaths.widgetSnapshotFile, options: .atomic)
-            // 2. ~/.claude/
-            let claudeFile = FilePaths.claudeDir.appendingPathComponent("claude-bar-widget-data.json")
-            try? data.write(to: claudeFile, options: .atomic)
-            // 3. Widget's own sandbox container (sandboxed widget can read this)
-            let widgetContainer = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Containers/com.claudebar.app.widget/Data/claude-bar-widget-data.json")
-            try? data.write(to: widgetContainer, options: .atomic)
-            // 4. UserDefaults (App Group)
-            if let shared = UserDefaults(suiteName: FilePaths.appGroupID) {
-                shared.set(data, forKey: "widgetSnapshot")
-                shared.synchronize()
-            }
+    }
+
+    /// Write the snapshot JSON to every location the widget might read from.
+    /// Multiple paths maximize compatibility across App Group / sandbox /
+    /// fallback setups — see FilePaths.widgetSnapshotFile for the resolution.
+    private func persistSnapshot(_ data: Data) {
+        // 1. App Group container (or ~/.claude fallback — see FilePaths).
+        try? data.write(to: FilePaths.widgetSnapshotFile, options: .atomic)
+        // 2. ~/.claude/
+        let claudeFile = FilePaths.claudeDir.appendingPathComponent("claude-bar-widget-data.json")
+        try? data.write(to: claudeFile, options: .atomic)
+        // 3. Widget's own sandbox container (sandboxed widget can read this).
+        let widgetContainer = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers/com.claudebar.app.widget/Data/claude-bar-widget-data.json")
+        try? data.write(to: widgetContainer, options: .atomic)
+        // 4. UserDefaults (App Group). `synchronize()` is a deprecated no-op
+        // on modern macOS — UserDefaults flush automatically.
+        if let shared = UserDefaults(suiteName: FilePaths.appGroupID) {
+            shared.set(data, forKey: "widgetSnapshot")
         }
-        WidgetCenter.shared.reloadAllTimelines()
     }
 }
