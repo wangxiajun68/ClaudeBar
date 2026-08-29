@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// EKG-style busy heartbeat: a row of thin ticks, one per poll sample —
-/// colored while the session was busy, dim gray while idle. Turns the
-/// store's 2.5s polling (which happens anyway) into a visual asset.
+/// colored while the session was busy, dim gray while idle. Renders the
+/// store's existing polling history, adding no polling of its own.
 struct HeartbeatSparkline: View {
     /// Oldest → newest busy samples. Empty = no history yet.
     let trail: [Bool]

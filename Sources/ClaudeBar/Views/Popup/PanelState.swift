@@ -2,7 +2,7 @@ import SwiftUI
 import Observation
 
 /// Popup panel UI state: toast feedback + config-collapse persistence.
-/// Extracted from MenuBarView @State so panel subviews share one owner.
+/// One instance owned by the popup shell and passed to panel subviews.
 @Observable @MainActor
 final class PanelState {
     var feedbackMessage: String? = nil

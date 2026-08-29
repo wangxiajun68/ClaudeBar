@@ -7,12 +7,13 @@ import SwiftUI
 struct SectionHeader: View {
     let icon: String
     let title: String
-    /// Pulsing accent under the icon when `true` (busy sessions).
+    /// Accent used for the icon's pulsing state.
     var tint: Color = Theme.claude
     var count: Int? = nil
     /// Second component of the count, e.g. busy/active split ("● 1B · 2I").
     var activeCount: Int? = nil
     var activeSymbol: String = "B"
+    /// Shown instead of a count when `count` is zero.
     var emptyLabel: String = "none"
 
     var body: some View {

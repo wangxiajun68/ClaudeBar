@@ -1,5 +1,39 @@
 import SwiftUI
 
+/// Hover-revealed action chips: fade + slide in and accept hits only while
+/// the parent tile is hovered.
+private struct SessionActionChips<Content: View>: View {
+    let isHovered: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 4) { content() }
+            .opacity(isHovered ? 1 : 0)
+            .offset(x: isHovered ? 0 : 10)
+            .allowsHitTesting(isHovered)
+            .animation(Theme.Animation.smooth, value: isHovered)
+    }
+}
+
+/// Pulsing status dot: filled + ringed while `isOn`, muted gray otherwise.
+private struct PulsingStatusDot: View {
+    let isOn: Bool
+    let color: Color
+    var big: Bool = false
+
+    var body: some View {
+        Circle()
+            .fill(isOn ? color : Theme.statusIdle.opacity(0.55))
+            .frame(width: big ? 8 : 6, height: big ? 8 : 6)
+            .overlay(
+                Circle().strokeBorder(isOn ? color.opacity(0.4) : Color.clear, lineWidth: big ? 4 : 3)
+                    .scaleEffect(isOn ? 1.7 : 1)
+                    .opacity(isOn ? 0.5 : 0)
+                    .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: isOn)
+            )
+    }
+}
+
 /// Full session page: all live Claude Code and Cursor sessions as an adaptive
 /// tile grid, with expandable subagent trees inside each tile and
 /// double-click-to-resume. Mirrors the menu-bar popup's sessions at full width.
@@ -111,6 +145,34 @@ struct SessionsView: View {
 
 // MARK: - Full session tiles
 
+/// A session activity line: dot + text, dimmed when idle.
+private struct ActivityLine: View {
+    let activity: String
+    let isBusy: Bool
+    var color: Color = Theme.statusBusy
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isBusy ? color : Theme.statusIdle.opacity(0.5))
+                .frame(width: 4, height: 4)
+                .overlay(
+                    Circle().strokeBorder(isBusy ? color.opacity(0.4) : Color.clear, lineWidth: 2)
+                        .scaleEffect(isBusy ? 1.8 : 1)
+                        .opacity(isBusy ? 0.5 : 0)
+                        .animation(Theme.Animation.pulse.repeatForever(autoreverses: true),
+                                   value: isBusy)
+                )
+            Text(activity)
+                .font(Theme.Font.captionMono)
+                .foregroundColor(isBusy ? .white.opacity(0.7) : .white.opacity(0.4))
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.leading, 2)
+    }
+}
+
 /// A Claude Code session tile with subagent expansion. On hover the tile
 /// lifts and trailing action chips (resume / reveal cwd) slide in — the
 /// affordances emerge from the tile instead of being hidden behind a
@@ -125,7 +187,7 @@ private struct SessionTileFull: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
-                StatusBadge(isOn: isBusy, color: Theme.statusBusy, big: true)
+                PulsingStatusDot(isOn: isBusy, color: Theme.statusBusy, big: true)
                 Text(session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
@@ -158,7 +220,7 @@ private struct SessionTileFull: View {
             }
 
             if !session.currentActivity.isEmpty {
-                ActivityLine(activity: session.currentActivity, isBusy: isBusy)
+                ActivityLine(activity: session.currentActivity, isBusy: isBusy, color: Theme.statusBusy)
             }
 
             HStack(spacing: 4) {
@@ -178,7 +240,7 @@ private struct SessionTileFull: View {
                 }
                 Spacer()
                 // Expand chevron stays always-on when there are subagents;
-                // the resume/open chips slide in only while hovered.
+                // action chips slide in only while hovered.
                 if !session.subagents.isEmpty || !session.workflows.isEmpty {
                     Button(action: { toggle() }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -187,7 +249,7 @@ private struct SessionTileFull: View {
                     }
                     .buttonStyle(.plain)
                 }
-                HStack(spacing: 4) {
+                SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "play.fill", tint: Theme.accent, help: "在终端恢复") {
                         resume()
                     }
@@ -195,9 +257,6 @@ private struct SessionTileFull: View {
                         revealCwd()
                     }
                 }
-                .opacity(isHovered ? 1 : 0)
-                .offset(x: isHovered ? 0 : 10)
-                .allowsHitTesting(isHovered)
             }
 
             if isExpanded {
@@ -283,7 +342,7 @@ private struct CursorTileFull: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
-                StatusBadge(isOn: isActive, color: Theme.cursorAccent, big: true)
+                PulsingStatusDot(isOn: isActive, color: Theme.cursorAccent, big: true)
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
                     .font(Theme.Font.bodyLarge)
                     .foregroundColor(Theme.textPrimary)
@@ -317,7 +376,6 @@ private struct CursorTileFull: View {
             if !session.currentActivity.isEmpty {
                 ActivityLine(activity: session.currentActivity, isBusy: isActive, color: Theme.cursorAccent)
             }
-
             HStack {
                 if !session.name.isEmpty {
                     Text(session.name)
@@ -327,7 +385,7 @@ private struct CursorTileFull: View {
                         .truncationMode(.tail)
                 }
                 Spacer()
-                HStack(spacing: 4) {
+                SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
                     }
@@ -335,9 +393,6 @@ private struct CursorTileFull: View {
                         revealCwd()
                     }
                 }
-                .opacity(isHovered ? 1 : 0)
-                .offset(x: isHovered ? 0 : 10)
-                .allowsHitTesting(isHovered)
             }
         }
         .padding(Theme.Space.s12)
