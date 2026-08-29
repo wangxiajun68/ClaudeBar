@@ -27,7 +27,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(showMainWindow),
             name: .showMainWindow, object: nil)
 
+        // Tapping an idle notification (or its Resume action) resumes the
+        // session in a terminal.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumeSession(_:)),
+            name: .resumeSession, object: nil)
+
         store.refresh()
+    }
+
+    @objc private func resumeSession(_ note: Notification) {
+        guard let pid = note.userInfo?["pid"] as? Int,
+              let session = providerStore?.sessions.first(where: { $0.pid == pid }) else { return }
+        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId)
     }
 
     @objc private func showMainWindow() {

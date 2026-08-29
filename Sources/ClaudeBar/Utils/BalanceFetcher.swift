@@ -17,7 +17,8 @@ struct BalanceFetcher {
               let host = base.host?.lowercased(),
               host.contains("deepseek.com") else { return nil }
 
-        guard let url = URL(string: "user/balance", relativeTo: base) else { return nil }
+        guard let url = URL(string: "user/balance", relativeTo: base),
+              url.host?.lowercased() == host else { return nil }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -37,6 +38,9 @@ struct BalanceFetcher {
 
             return BalanceResult(balance: balance, currency: currency)
         } catch {
+            // Network/HTTP failures are expected (offline, bad token, rate
+            // limit); the balance is an optional UI nicety, so nil is the
+            // correct silent outcome.
             return nil
         }
     }

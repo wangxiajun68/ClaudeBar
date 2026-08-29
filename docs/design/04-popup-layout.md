@@ -3,13 +3,19 @@
 > ClaudeBar 设计文档 · §4
 > 相关：[主窗口与设计系统](05-main-window-and-theme.md) · 技术文档 [视图层](../technical/05-view-layer.md)
 
-面板宽 560pt，垂直自适应（最高占满屏幕可见区）。从上到下：
+面板宽 560pt，垂直自适应（最高占满屏幕可见区）。实现为组合壳 `MenuBarView`（`Views/MenuBarView.swift`），内容拆分在 `Views/Popup/` 五个文件（`PanelHeader` / `ProvidersPanel` / `SessionsPanelView` / `UsagePanel` / `PanelState`）。从上到下：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ ▦ CB  ClaudeBar            [展开/折叠] [刷新]    ← Header    │
+│ ⬤ Axon                    [折叠] [刷新]        ← PanelHeader│
 ├─────────────────────────────────────────────────────────────┤
-│ （折叠态默认隐藏）当前 Provider · Model · host · ¥余额        │
+│ （折叠态默认隐藏）当前配置条：状态点 · Provider · Model        │
+├─────────────────────────────────────────────────────────────┤
+│ PROVIDERS                                                    │
+│  ┌──────────────┐ ┌──────────────┐                          │
+│  │ ◉ DeepSeek   │ │ ○ Kimi Local │  ← 2 列供应商瓦片         │
+│  │ 1M · 1 model │ │ ▸ 3 models   │    （瓦片内展开模型行）    │
+│  └──────────────┘ └──────────────┘                          │
 ├─────────────────────────────────────────────────────────────┤
 │ ⬢ CLAUDE CODE          ● 1B · 2I                            │
 │  ┌──────────────┐ ┌──────────────┐                          │
@@ -24,33 +30,41 @@
 │  │ ● Proj      │ │ ○ cursor    │                            │
 │  └──────────────┘ └──────────────┘                          │
 ├─────────────────────────────────────────────────────────────┤
-│ PROVIDERS              │ 日 月 年 指定 ◀ JULY 2026 ▶ 38.7M   │
-│  ◉ DeepSeek            │  kimi-k2.6   ████████ 30.0M        │
-│    ◉ deepseek-v4-pro   │  cursor       ███      8.6M        │
-│  ○ Kimi Local          │  claude-...   ██       2.1M        │
-│ ▼ Anthropic (3 models) │                                       │
-└─────────────────────────────────────────────────────────────┘
-│ [刷新] [编辑供应商] [打开 settings.json]      [退出]        │
+│ 日 月 年 指定   ◀ JULY 2026 ▶                                │
+│  ┌──────────────┐ ┌──────────────┐                          │
+│  │ kimi-k2.6    │ │ cursor       │  ← 2 列用量瓦片           │
+│  │ 30.0M ██████ │ │ 8.6M ███     │                            │
+│  └──────────────┘ └──────────────┘                          │
+├─────────────────────────────────────────────────────────────┤
+│ [刷新][主窗口][编辑供应商][settings.json][🔔空闲通知]  [退出] │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## 会话卡片信息
 
-每张卡片（`sessionCard` / `cursorSessionCard`）展示：状态指示点（busy/active 时绿色脉冲动画）、项目文件夹名、上下文占用（Claude 是 `已用/上限` token，Cursor 是百分比）、当前活动工具（如 `Bash · build.sh`）、子 Agent 数量与运行数、相对更新时间。
+每张卡片（`SessionCardView` / `CursorSessionCardView`，`Views/Shared/`）展示：状态指示点（busy/active 时高亮）、项目文件夹名、上下文占用（Claude 是 `已用/上限` token，Cursor 是百分比）、当前活动工具（如 `Bash · build.sh`）、子 Agent 数量与运行数、相对更新时间、busy/idle 心跳 sparkline（`HeartbeatSparkline`）。
 
 - **Claude Code 卡片**：双击在 Warp（优先）或 Terminal 中执行 `claude --resume <sessionId>` 恢复会话。
 - **Cursor 卡片**：双击用 Cursor.app 打开该 workspace。
+- 空态显示 `StandbyEmptyState`（"no signals" / "no cursor signals"）。
 
-## Provider 行
+## 供应商瓦片
 
-- **单模型 Provider**：整行可点选，行内显示模型名与上下文上限（如 `1M`）。
-- **多模型 Provider**：头部可折叠/展开，展开后列出每个模型行，每行独立可选；右键可设为该 Provider 的默认模型。
+供应商区不再使用可折叠行，而是 `TileGrid(.popupProvider)` 2 列宫格，每格一个 `ProviderTile`（`Views/ProviderRow.swift`）：
 
-展开的子 Agent / Workflow 行显示类型、描述、当前活动与运行/完成状态。
+- 瓦片头：Provider 名 + 活跃胶囊（激活瓦片左缘 2px accent 竖条）。
+- 活跃模型行（case-insensitive 匹配 `ANTHROPIC_MODEL`）+ 模型总数。
+- 多模型 Provider 瓦片带 chevron，点击在瓦片内展开模型行（hairline 分隔），每行独立可选；默认收起以保证网格行高一致。
+- 激活模型后弹出 `FeedbackToast` 反馈（如 "DeepSeek / deepseek-v4-pro"，2 秒淡出）。
 
 ## 用量区
 
 - 顶部周期切换 chips：`日 / 月 / 年 / 指定`，`指定` 弹出内联 DatePicker。
 - 下方 `◀ 标签 ▶` 可前后翻页，标签如 `JULY 2026` 或 `2026-08-01`。
-- 每个模型一行水平条形图，按 token 总量降序，颜色按模型名 hash 分配。
+- 每个模型一个 `UsageModelTile`（2 列 `TileGrid(.popupUsage)`）：模型名 + token 总量 + 比例条，颜色按模型名 hash 分配（`Theme.barColor(for:)`）。
 - Cursor 历史用量作为一条 `Cursor` 行附加到所有周期（因其 token 数据自 2026-03 起不再更新，是一次性全量值）。
+- 空态显示 `StandbyEmptyState`（"no usage"）。
+
+## 底部操作栏
+
+`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、编辑供应商（`ProviderEditorWindowController`）、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、退出。

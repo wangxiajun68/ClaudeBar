@@ -112,9 +112,19 @@ struct UsageStats {
     private static var fileCache: [String: FileCacheEntry] = [:]
     private static let cacheLock = NSLock()
 
+    /// Upper bound on cached files. A project tree can outlive its transcripts
+    /// (deleted sessions, `claude` version upgrades) and the enumerator would
+    /// otherwise keep stale entries forever; evicting oldest-validated entries
+    /// keeps memory bounded. Large enough that a normal day/month scan never
+    /// evicts anything.
+    private static let fileCacheCapacity = 4_000
+
     /// Aggregate usage per model within `interval`, sorted by total tokens descending.
-    /// Optimized with: file-mtime prefilter, incremental per-file cache,
-    /// timestamp-string prefilter, parallel parsing.
+    ///
+    /// Pipeline: mtime prefilter (files last written before the interval cannot
+    /// contain interval entries) → incremental per-file cache keyed by
+    /// mtime+size (transcripts are append-only, so unchanged files are skipped
+    /// entirely) → parallel parse of cache misses → interval filter + merge.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
         let projectsDir = FilePaths.claudeDir.appendingPathComponent("projects")
 
@@ -165,6 +175,13 @@ struct UsageStats {
             // Store for the next scan — append-only files keep this valid.
             if let mtime = file.mtime, let size = file.size {
                 cacheLock.lock()
+                if fileCache.count >= fileCacheCapacity, fileCache[file.url.path] == nil {
+                    // Evict an arbitrary (first-hit) entry; the cache is a
+                    // pure accelerator so any eviction is safe.
+                    if let victim = fileCache.keys.first {
+                        fileCache.removeValue(forKey: victim)
+                    }
+                }
                 fileCache[file.url.path] = FileCacheEntry(mtime: mtime, size: size, entries: entries)
                 cacheLock.unlock()
             }
@@ -251,6 +268,4 @@ struct UsageStats {
             return "\(n)"
         }
     }
-
-    // MARK: - Helpers
 }

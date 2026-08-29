@@ -10,14 +10,9 @@ enum FilePaths {
         claudeDir.appendingPathComponent("settings.json")
     }
 
+    /// Provider-based config file (the current on-disk format).
     static var presetsFile: URL {
-        // New format: providers based
         claudeDir.appendingPathComponent("claude-bar-providers.json")
-    }
-
-    static var oldPresetsFile: URL {
-        // Old format: for migration only
-        claudeDir.appendingPathComponent("claude-bar-presets.json")
     }
 
     /// Shared App Group identifier between the main app and the widget
@@ -69,6 +64,9 @@ enum FilePaths {
 
     /// The agent transcript for a Cursor composer:
     /// `~/.cursor/projects/<encoded-cwd>/agent-transcripts/<composerId>/<composerId>.jsonl`
+    ///
+    /// `cwd` and `composerId` come from Cursor's own DB/filesystem, so their
+    /// path segments are already trusted (no traversal sanitization needed).
     static func cursorTranscriptURL(cwd: String, composerId: String) -> URL {
         cursorProjectsDir
             .appendingPathComponent(cursorProjectName(for: cwd))

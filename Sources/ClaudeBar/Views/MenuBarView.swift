@@ -9,6 +9,7 @@ extension Notification.Name {
 /// `PanelState`, window management in `ProviderEditorWindowController`.
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
 
     var body: some View {
@@ -92,6 +93,12 @@ struct MenuBarView: View {
             iconButton("pencil.line", help: "编辑供应商", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
                 .disabled(!providerStore.hasSettingsFile)
+            iconButton(prefs.idleNotifyEnabled ? "bell.fill" : "bell.slash",
+                       help: "空闲通知（Claude 跑完时提醒）",
+                       color: prefs.idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
+                prefs.idleNotifyEnabled.toggle()
+                panel.showFeedback(prefs.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")
+            }
             Spacer()
             iconButton("power", help: "退出", color: Theme.statusError) {
                 NSApplication.shared.terminate(nil)

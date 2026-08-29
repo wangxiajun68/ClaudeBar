@@ -246,19 +246,20 @@ struct CursorSessionMonitor {
     /// either `{"role":"user"|"assistant","message":{"content":[...]}}` or a
     /// turn marker `{"type":"turn_ended",...}`. A turn is "pending" when the
     /// last assistant message has no following `turn_ended`.
+    ///
+    /// Single open/seek/read per call; the file's existence is implied by a
+    /// successful open, so no separate stat is needed.
     private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool) {
-        guard FileManager.default.fileExists(atPath: url.path),
-              let handle = try? FileHandle(forReadingFrom: url) else {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
             return (0, "", false)
         }
+        defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: max(0, size - min(readSize, size)))
+        try? handle.seek(toOffset: size - min(readSize, size))
         guard let tailData = try? handle.readToEnd(),
               let tail = String(data: tailData, encoding: .utf8) else {
-            try? handle.close()
             return (0, "", false)
         }
-        try? handle.close()
 
         var msgCount = 0
         var lastActivity = ""
@@ -352,7 +353,6 @@ struct CursorSessionMonitor {
 
     // MARK: - SQLite helpers
 
-    // openDB / textColumn / cString now live in `CursorDB` (shared with
-    // CursorUsageStats). The composerId UUID column is read via `cString`
-    // (plain ASCII); the large JSON `value` column via `textColumn` (byte-length).
+    // Open + column-read helpers live in `CursorDB` (shared with
+    // CursorUsageStats).
 }

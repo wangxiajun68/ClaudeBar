@@ -24,14 +24,17 @@ import SQLite3
 ///   1. Aggregation runs in SQL (`json_extract` + `sum`) — one pass, no
 ///      per-row Swift JSONSerialization (that was 543k allocations on top of
 ///      the I/O).
-///   2. The result is cached in-process and refreshed at most once per
-///     `cacheTTL` — Cursor stopped writing this data, so re-scanning on every
+///   2. The result is cached in-process with a TTL — re-scanning on every
 ///     period switch / date shift / refresh is pure waste.
+///
+/// Cache policy: only successful scans are cached. A failed scan (DB closed,
+/// Cursor updating) returns the last known value if any, so the UI never
+/// flickers to zero, and the next call retries the scan.
 struct CursorUsageStats {
 
-    /// How long a computed aggregate stays valid. The source data is frozen
-    /// (no writes since ~2026-03), so this only guards against the rare case
-    /// of Cursor resuming writes; 10 minutes keeps it fresh without any
+    /// How long a computed aggregate stays valid. The source data is essentially
+    /// frozen (no writes since ~2026-03), so this only guards against the rare
+    /// case of Cursor resuming writes; 10 minutes keeps it fresh with no
     /// realistic cost.
     private static let cacheTTL: TimeInterval = 600
 
@@ -40,8 +43,8 @@ struct CursorUsageStats {
     private static let cacheLock = NSLock()
 
     /// Scan all `bubbleId:*` rows in `cursorDiskKV` and sum their token counts
-    /// into one `ModelUsage(model: "Cursor")`. Returns nil if the DB is
-    /// unavailable or no tokens are found. Result is cached (see `cacheTTL`).
+    /// into one `ModelUsage(model: "Cursor")`. Returns nil only if the scan
+    /// fails and no previous value is available. Result is TTL-cached.
     static func fetch() -> ModelUsage? {
         cacheLock.lock()
         let hit = cachedUsage
@@ -55,8 +58,9 @@ struct CursorUsageStats {
             cachedUsage = fresh
             cachedAt = Date()
         }
+        let result = fresh ?? cachedUsage
         cacheLock.unlock()
-        return fresh ?? cachedUsage
+        return result
     }
 
     /// One SQL pass over the bubble rows: sums happen inside SQLite so only a

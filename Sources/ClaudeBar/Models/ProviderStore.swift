@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import WidgetKit
 
 class ProviderStore: ObservableObject {
     @Published var providers: [Provider] = []
@@ -23,16 +22,23 @@ class ProviderStore: ObservableObject {
     // Live Claude Code sessions
     @Published var sessions: [SessionInfo] = []
     @Published var expandedSessionPIDs: Set<Int> = []
-    /// Per-session busy heartbeat — the last `heartbeatLength` polls, oldest
-    /// first. `true` = the session was busy at that sample. Published so cards
-    /// can draw an EKG-style sparkline from polling we were doing anyway.
+    /// Per-session busy heartbeat — the last `AppConfig.heartbeatLength`
+    /// polls, oldest first. `true` = the session was busy at that sample.
+    /// Published so cards can draw an EKG-style sparkline from polling we
+    /// were doing anyway.
     @Published var heartbeats: [Int: [Bool]] = [:]
-    static let heartbeatLength = 24
+    static let heartbeatLength = AppConfig.heartbeatLength
     private var sessionTimer: Timer?
-    /// Last serialized snapshot — `writeWidgetSnapshot()` only writes files +
-    /// reloads widget timelines when the payload actually changes, so the 2.5s
-    /// poll does not hammer disk / WidgetCenter with identical data.
+    /// Last serialized snapshot payload — `writeWidgetSnapshot()` skips the
+    /// file writes + widget reload when the data is unchanged (see
+    /// `WidgetSnapshotWriter.write`).
     private var lastSnapshotData: Data?
+
+    // Idle-notification edge detection, one detector per session flavor.
+    // Main-actor confined; see IdleTransitionDetector.
+    @Published var anySessionBusy = false   // drives the menu-bar icon
+    private var claudeIdleDetector = IdleTransitionDetector<Int>()
+    private var cursorIdleDetector = IdleTransitionDetector<String>()
 
     // Live Cursor (IDE) sessions
     @Published var cursorSessions: [CursorSessionInfo] = []
@@ -64,7 +70,7 @@ class ProviderStore: ObservableObject {
     func refreshSessions() {
         // The scan reads session JSONs + transcript tails + subagent dirs —
         // pure file I/O. Run it off the main thread and only hop back to
-        // publish the parsed results, so the 2.5s poll never blocks the UI.
+        // publish the parsed results, so the poll never blocks the UI.
         let contextLimits = currentContextLimits
         Task.detached(priority: .utility) { [weak self] in
             // `let scanned` (not var) so the capture is an immutable
@@ -72,9 +78,11 @@ class ProviderStore: ObservableObject {
             let enriched = Self.enrich(SessionMonitor.fetchActive(), limits: contextLimits)
             let samples = Self.heartbeatSamples(from: enriched)
             await MainActor.run { [weak self] in
-                self?.sessions = enriched
-                self?.recordHeartbeats(samples)
-                self?.refreshCursorSessions()
+                guard let self else { return }
+                self.sessions = enriched
+                self.recordHeartbeats(samples)
+                self.detectIdleTransitions(enriched)
+                self.refreshCursorSessions()
             }
         }
     }
@@ -104,6 +112,34 @@ class ProviderStore: ObservableObject {
         // Prune trails for sessions that have died.
         let live = Set(samples.keys)
         heartbeats = heartbeats.filter { live.contains($0.key) }
+    }
+
+    /// Diff this poll's busy states against the last poll's. A session that
+    /// was busy and is now idle-and-alive just finished its turn — notify.
+    /// Edge bookkeeping lives in `IdleTransitionDetector`; dead sessions are
+    /// pruned there, never notified.
+    private func detectIdleTransitions(_ fresh: [SessionInfo]) {
+        let alive = fresh.filter(\.isAlive)
+        let busyIDs = Set(alive.filter { $0.status == .busy || $0.toolPending }.map(\.pid))
+        let (newlyIdle, busyNow) = claudeIdleDetector.record(busyIDs: busyIDs)
+        for pid in newlyIdle {
+            if let session = alive.first(where: { $0.pid == pid }) {
+                NotificationService.shared.notifyIdle(session: session)
+            }
+        }
+        if anySessionBusy != busyNow { anySessionBusy = busyNow }
+    }
+
+    /// Cursor flavor of the same edge detection (see `detectIdleTransitions`).
+    private func detectIdleTransitionsCursor(_ fresh: [CursorSessionInfo]) {
+        let busyIDs = Set(fresh.filter { $0.status == .active || $0.toolPending }.map(\.composerId))
+        let (newlyIdle, busyNow) = cursorIdleDetector.record(busyIDs: busyIDs)
+        for id in newlyIdle {
+            if let session = fresh.first(where: { $0.composerId == id }) {
+                NotificationService.shared.notifyIdle(cursor: session)
+            }
+        }
+        if anySessionBusy != busyNow { anySessionBusy = busyNow }
     }
 
     /// Enrich alive sessions with transcript context + subagents. Pure
@@ -155,6 +191,7 @@ class ProviderStore: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.cursorSessions = result
+                self.detectIdleTransitionsCursor(result)
                 // Cursor session changes (new/ended/busy flip) should reach the
                 // widget on the same poll — refreshCursorSessions runs on the 2.5s
                 // timer but does not otherwise call writeWidgetSnapshot.
@@ -165,7 +202,7 @@ class ProviderStore: ObservableObject {
 
     private func startSessionPolling() {
         sessionTimer?.invalidate()
-        sessionTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: AppConfig.sessionPollInterval, repeats: true) { [weak self] _ in
             self?.refreshSessions()
         }
     }
@@ -176,14 +213,6 @@ class ProviderStore: ObservableObject {
     // MARK: - Load / Save
 
     func loadProviders() {
-        if let migrated = MigrationHelper.migrateIfNeeded() {
-            providers = migrated.providers
-            activeProviderID = migrated.activeProviderID
-            // Multi-model providers display expanded by default (collapsedProviderIDs stays empty)
-            saveProviders()
-            return
-        }
-
         guard FileManager.default.fileExists(atPath: FilePaths.presetsFile.path),
               let data = try? Data(contentsOf: FilePaths.presetsFile),
               let file = try? JSONDecoder().decode(ProvidersFile.self, from: data) else {
@@ -192,24 +221,24 @@ class ProviderStore: ObservableObject {
         providers = file.providers
         activeProviderID = file.activeProviderID
 
-        // Detect current provider from settings.json
-        if let env = currentEnv {
-            for provider in providers {
-                let a = provider.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                let b = env.ANTHROPIC_BASE_URL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                if a == b {
-                    activeProviderID = provider.id
-                    // Match active model (case-insensitive)
-                    if let idx = providers.firstIndex(where: { $0.id == provider.id }),
-                       let model = provider.models.first(where: {
-                           $0.name.caseInsensitiveCompare(env.ANTHROPIC_MODEL) == .orderedSame
-                       }) {
-                        providers[idx].activeModelID = model.id
-                    }
-                    saveProviders()
-                    break
-                }
+        // Detect current provider from settings.json. When the settings file
+        // matches a configured provider, adopt it as active and persist the
+        // reconciled state (a single save, after all mutations below).
+        guard let env = currentEnv else { return }
+        for provider in providers {
+            let a = provider.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let b = env.ANTHROPIC_BASE_URL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard a == b else { continue }
+            activeProviderID = provider.id
+            // Match active model (case-insensitive)
+            if let idx = providers.firstIndex(where: { $0.id == provider.id }),
+               let model = provider.models.first(where: {
+                   $0.name.caseInsensitiveCompare(env.ANTHROPIC_MODEL) == .orderedSame
+               }) {
+                providers[idx].activeModelID = model.id
             }
+            saveProviders()
+            break
         }
     }
 
@@ -394,16 +423,7 @@ class ProviderStore: ObservableObject {
     // MARK: - Widget Snapshot
 
     func writeWidgetSnapshot() {
-        let snapshot = buildSnapshot()
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        // Diff against the last written payload: if nothing changed since the
-        // previous poll, skip the 4 file writes + WidgetCenter reload
-        // entirely. WidgetCenter.reloadAllTimelines() is expensive and Apple
-        // recommends calling it only on meaningful data change.
-        guard data != lastSnapshotData else { return }
-        lastSnapshotData = data
-        persistSnapshot(data)
-        WidgetCenter.shared.reloadAllTimelines()
+        lastSnapshotData = WidgetSnapshotWriter.write(buildSnapshot(), deduplicatingAgainst: lastSnapshotData)
     }
 
     private func buildSnapshot() -> WidgetSnapshot {
@@ -443,25 +463,5 @@ class ProviderStore: ObservableObject {
             },
             updatedAt: Date()
         )
-    }
-
-    /// Write the snapshot JSON to every location the widget might read from.
-    /// Multiple paths maximize compatibility across App Group / sandbox /
-    /// fallback setups — see FilePaths.widgetSnapshotFile for the resolution.
-    private func persistSnapshot(_ data: Data) {
-        // 1. App Group container (or ~/.claude fallback — see FilePaths).
-        try? data.write(to: FilePaths.widgetSnapshotFile, options: .atomic)
-        // 2. ~/.claude/
-        let claudeFile = FilePaths.claudeDir.appendingPathComponent("claude-bar-widget-data.json")
-        try? data.write(to: claudeFile, options: .atomic)
-        // 3. Widget's own sandbox container (sandboxed widget can read this).
-        let widgetContainer = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.claudebar.app.widget/Data/claude-bar-widget-data.json")
-        try? data.write(to: widgetContainer, options: .atomic)
-        // 4. UserDefaults (App Group). `synchronize()` is a deprecated no-op
-        // on modern macOS — UserDefaults flush automatically.
-        if let shared = UserDefaults(suiteName: FilePaths.appGroupID) {
-            shared.set(data, forKey: "widgetSnapshot")
-        }
     }
 }

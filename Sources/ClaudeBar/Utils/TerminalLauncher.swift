@@ -18,13 +18,20 @@ import Foundation
 enum TerminalLauncher {
     /// Resume a Claude Code session: open a terminal in `cwd` and run
     /// `claude --resume <sessionId>` to restore that exact conversation.
+    ///
+    /// The command is embedded in AppleScript double-quoted string literals,
+    /// so both `\` and `"` must be escaped (AppleScript and the shell both
+    /// consume the backslash layer, giving the shell a correctly quoted cd).
+    /// `sessionId` is a UUID from the session file, but it is validated to a
+    /// safe charset anyway so a tampered file cannot inject shell syntax.
     static func resumeClaudeSession(cwd: String, sessionId: String) {
         guard !cwd.isEmpty else { return }
+        // Reject a sessionId that could break out of the shell quoting; real
+        // session ids are plain UUID hex+dashes.
+        guard !sessionId.contains(where: { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-".contains($0) == false }) else { return }
         let safeCwd = cwd
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        // `claude --resume` opens an interactive list by default; passing the
-        // sessionId as an argument resumes that specific session directly.
         let shellCmd = "cd \"\(safeCwd)\" && claude --resume \(sessionId)"
 
         if FileManager.default.fileExists(atPath: "/Applications/Warp.app") {
@@ -88,8 +95,11 @@ enum TerminalLauncher {
 
     // MARK: - osascript runner
 
-    /// Run an AppleScript string via `/usr/bin/osascript` on a background
-    /// thread. `run()` is synchronous, so this keeps the UI responsive.
+    /// Run an AppleScript string via `/usr/bin/osascript` (args array — no
+    /// shell interpolation, so the source cannot inject extra arguments).
+    /// `run()` is synchronous, so this runs off the main thread to keep the
+    /// UI responsive; the result is intentionally discarded (best-effort UX
+    /// action — a failure leaves the terminal simply unopened).
     private static func runAppleScript(_ source: String) {
         Task.detached(priority: .userInitiated) {
             let proc = Process()
