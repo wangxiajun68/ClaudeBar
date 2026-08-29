@@ -4,6 +4,7 @@ import SwiftUI
 /// Lightweight — most configuration happens via the Providers page.
 struct SettingsView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @ObservedObject var prefs = AppPreferences.shared
 
     var body: some View {
         ScrollView {
@@ -15,6 +16,23 @@ struct SettingsView: View {
                     .fixedSize()
 
                 VStack(alignment: .leading, spacing: Theme.Space.s24) {
+                    // Notifications
+                    settingCard("通知", icon: "bell") {
+                        Toggle(isOn: $prefs.idleNotifyEnabled) {
+                            VStack(alignment: .leading, spacing: Theme.Space.s2) {
+                                Text("空闲通知")
+                                    .font(Theme.Font.body)
+                                    .foregroundColor(Theme.textPrimary)
+                                Text("会话从运行中变为空闲（Claude 跑完等你输入）时发送系统通知")
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.textTertiary())
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(Theme.claude)
+                    }
+
                     // Raw config
                     settingCard("配置文件", icon: "gearshape") {
                         fileRow(path: "~/.claude/settings.json") {

@@ -7,10 +7,6 @@ struct SessionInfo: Identifiable, Equatable {
     let sessionId: String
     let cwd: String
     let startedAt: Double                // epoch ms
-    let procStart: String                // human string e.g. "Thu Jul 30 07:48:05 2026"
-    let version: String
-    let kind: String                     // "interactive" | "headless" | ...
-    let entrypoint: String               // "cli" | "sdk" | ...
     let name: String                     // derived session name
     var status: SessionStatus
     var updatedAt: Double               // epoch ms — recency
@@ -48,15 +44,6 @@ struct SessionInfo: Identifiable, Equatable {
     var relativeUpdated: String {
         let now = Date().timeIntervalSince1970 * 1000
         let secs = max(0, (now - updatedAt) / 1000)
-        if secs < 60 { return "\(Int(secs))s" }
-        if secs < 3600 { return "\(Int(secs / 60))m" }
-        return "\(Int(secs / 3600))h"
-    }
-
-    /// Short "5m ago" style label since the session started.
-    var relativeStarted: String {
-        let now = Date().timeIntervalSince1970 * 1000
-        let secs = max(0, (now - startedAt) / 1000)
         if secs < 60 { return "\(Int(secs))s" }
         if secs < 3600 { return "\(Int(secs / 60))m" }
         if secs < 86400 { return "\(Int(secs / 3600))h" }
@@ -127,10 +114,6 @@ struct SessionMonitor {
             let sessionId = (obj["sessionId"] as? String) ?? ""
             let cwd = (obj["cwd"] as? String) ?? ""
             let startedAt = (obj["startedAt"] as? Double) ?? (obj["startedAt"] as? Int).map(Double.init) ?? 0
-            let procStart = (obj["procStart"] as? String) ?? ""
-            let version = (obj["version"] as? String) ?? ""
-            let kind = (obj["kind"] as? String) ?? ""
-            let entrypoint = (obj["entrypoint"] as? String) ?? ""
             let name = (obj["name"] as? String) ?? ""
             let statusStr = (obj["status"] as? String) ?? ""
             let status = SessionStatus(rawValue: statusStr) ?? .unknown
@@ -144,10 +127,6 @@ struct SessionMonitor {
                 sessionId: sessionId,
                 cwd: cwd,
                 startedAt: startedAt,
-                procStart: procStart,
-                version: version,
-                kind: kind,
-                entrypoint: entrypoint,
                 name: name,
                 status: status,
                 updatedAt: updatedAt,
@@ -163,26 +142,26 @@ struct SessionMonitor {
     }
 
     /// Scan a session's transcript for context-window usage. Reads only the
-    /// tail of the file (last ~64KB) for speed and returns the latest
-    /// assistant message's total input tokens as the current context size,
-    /// plus the most recent tool_use (what the session is doing right now)
+    /// tail of the file (last ~96KB) — the latest assistant message's total
+    /// input tokens (fresh + cache read + cache create) approximates the
+    /// current context size — plus the most recent tool_use (current activity)
     /// and whether a tool call is still pending (no result yet → busy).
+    ///
+    /// Single open/seek/read per poll; `size` from `seekToEnd` doubles as the
+    /// existence check, so no separate `fileExists` stat is needed.
     static func fetchContext(for session: SessionInfo) -> ContextScan {
-        let transcript = transcriptURL(for: session)
-        guard FileManager.default.fileExists(atPath: transcript.path),
-              let handle = try? FileHandle(forReadingFrom: transcript) else {
+        guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else {
             return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false)
         }
+        defer { try? handle.close() }
 
         let fileSize = (try? handle.seekToEnd()) ?? 0
         let readSize = min(96_000, fileSize)
-        try? handle.seek(toOffset: max(0, fileSize - readSize))
+        try? handle.seek(toOffset: fileSize - readSize)
         guard let tailData = try? handle.readToEnd(),
               let tail = String(data: tailData, encoding: .utf8) else {
-            try? handle.close()
             return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false)
         }
-        try? handle.close()
 
         var lastContext = 0
         var lastModel = ""
@@ -210,6 +189,8 @@ struct SessionMonitor {
             if line.contains("\"type\":\"tool_result\"") {
                 lastToolResultLine = lineIndex
             }
+            // Substring check first: only assistant usage lines pay for a
+            // full JSON parse, which is the dominant cost on large tails.
             guard line.contains("\"usage\""), line.contains("\"type\":\"assistant\"") else { continue }
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let message = obj["message"] as? [String: Any],
@@ -301,22 +282,17 @@ struct SessionMonitor {
     /// Read the tail of an agent transcript and return (latest activity,
     /// toolPending). Mirrors the pending-tool logic in `fetchContext`.
     private static func scanAgentActivity(transcript: URL) -> (activity: String, pending: Bool) {
-        guard FileManager.default.fileExists(atPath: transcript.path),
-              let handle = try? FileHandle(forReadingFrom: transcript) else {
+        guard let handle = try? FileHandle(forReadingFrom: transcript) else {
             return ("", false)
         }
+        defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
-        // Clamp before subtracting: `size` is UInt64, so `size - 32_000`
-        // underflows (and Swift traps) when the transcript is smaller than
-        // 32 KB — e.g. a freshly-spawned subagent with an almost-empty file.
         let readSize = min(32_000, size)
         try? handle.seek(toOffset: size - readSize)
         guard let tailData = try? handle.readToEnd(),
               let tail = String(data: tailData, encoding: .utf8) else {
-            try? handle.close()
             return ("", false)
         }
-        try? handle.close()
 
         var lastActivity = ""
         var lastToolUseLine = -1

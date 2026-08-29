@@ -76,32 +76,3 @@ struct EnvConfig: Codable, Equatable {
         self.CLAUDE_CODE_AUTO_COMPACT_WINDOW = CLAUDE_CODE_AUTO_COMPACT_WINDOW
     }
 }
-
-struct Preset: Codable, Identifiable, Equatable {
-    var id: UUID = UUID()
-    var name: String
-    var env: EnvConfig
-
-    enum CodingKeys: String, CodingKey {
-        case id, name, env
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        // Old presets files don't have "id" — generate one so existing data survives
-        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        self.name = try c.decode(String.self, forKey: .name)
-        self.env = try c.decode(EnvConfig.self, forKey: .env)
-    }
-
-    init(name: String, env: EnvConfig) {
-        self.id = UUID()
-        self.name = name
-        self.env = env
-    }
-}
-
-struct PresetsFile: Codable {
-    var presets: [Preset]
-    var activePresetName: String?
-}
