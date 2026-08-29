@@ -42,7 +42,7 @@ swift_files=$(find "$SOURCES_DIR" -name "*.swift" | sort)
 swiftc \
     -o "$MACOS_DIR/$APP_NAME" \
     -sdk "$SDK_PATH" \
-    -target arm64-apple-macos14.0 \
+    -target arm64-apple-macos26.0 \
     -framework SwiftUI \
     -framework AppKit \
     -framework WidgetKit \
@@ -74,9 +74,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>CFBundleExecutable</key>
     <string>ClaudeBar</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>LSUIElement</key>
-    <true/>
+    <false/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIconFile</key>
@@ -102,7 +102,7 @@ swiftc \
     -module-name ClaudeBarWidget \
     -parse-as-library \
     -sdk "$SDK_PATH" \
-    -target arm64-apple-macos14.0 \
+    -target arm64-apple-macos26.0 \
     -framework SwiftUI \
     -framework WidgetKit \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
@@ -133,7 +133,7 @@ cat > "$APPEX_CONTENTS/Info.plist" << 'WPLIST'
     <key>CFBundleExecutable</key>
     <string>ClaudeBarWidget</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>MacOSX</string>

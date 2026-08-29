@@ -193,10 +193,10 @@ struct UsageStats {
 
             var entry = local[model] ?? ModelUsage(model: model)
             entry.calls += 1
-            entry.inputTokens += intVal(usage["input_tokens"])
-            entry.outputTokens += intVal(usage["output_tokens"])
-            entry.cacheReadTokens += intVal(usage["cache_read_input_tokens"])
-            entry.cacheCreationTokens += intVal(usage["cache_creation_input_tokens"])
+            entry.inputTokens += JSONCoerce.intVal(usage["input_tokens"])
+            entry.outputTokens += JSONCoerce.intVal(usage["output_tokens"])
+            entry.cacheReadTokens += JSONCoerce.intVal(usage["cache_read_input_tokens"])
+            entry.cacheCreationTokens += JSONCoerce.intVal(usage["cache_creation_input_tokens"])
             local[model] = entry
         }
         return local
@@ -216,13 +216,6 @@ struct UsageStats {
     }
 
     // MARK: - Helpers
-
-    private static func intVal(_ v: Any?) -> Int {
-        if let n = v as? Int { return n }
-        if let n = v as? NSNumber { return n.intValue }
-        if let s = v as? String, let n = Int(s) { return n }
-        return 0
-    }
 
     /// UTC yyyy-MM-dd for a Date (for coarse string comparison against ISO timestamps).
     private static func utcDateString(_ date: Date) -> String {

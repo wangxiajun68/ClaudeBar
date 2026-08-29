@@ -8,6 +8,10 @@ private final class EditorWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
+extension Notification.Name {
+    static let showMainWindow = Notification.Name("com.claudebar.showMainWindow")
+}
+
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var switchFeedback: String? = nil
@@ -24,7 +28,7 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 0) {
             headerView
 
-            Divider().background(Color(white: 0.27))
+            Divider().background(Theme.divider)
 
             if !providerStore.hasSettingsFile {
                 missingSettingsView
@@ -35,17 +39,17 @@ struct MenuBarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if !configCollapsed, let env = providerStore.currentEnv {
                         currentConfigView(env)
-                        Divider().background(Color(white: 0.27))
+                        Divider().background(Theme.divider)
                     }
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             sessionsSection
-                            Divider().background(Color(white: 0.27))
+                            Divider().background(Theme.divider)
                             cursorSessionsSection
                         }
                     }
 
-                    Divider().background(Color(white: 0.27))
+                    Divider().background(Theme.divider)
 
                     // Bottom split: model config (left) | token usage (right)
                     HStack(alignment: .top, spacing: 0) {
@@ -54,7 +58,7 @@ struct MenuBarView: View {
                         }
                         .frame(maxWidth: .infinity)
 
-                        Divider().background(Color(white: 0.27))
+                        Divider().background(Theme.divider)
 
                         usageSection
                             .frame(maxWidth: .infinity)
@@ -74,26 +78,31 @@ struct MenuBarView: View {
     private var headerView: some View {
         HStack(spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(LinearGradient(
-                        colors: [Color(red: 0.42, green: 0.55, blue: 1.0),
-                                 Color(red: 0.29, green: 0.42, blue: 0.97)],
-                        startPoint: .top, endPoint: .bottom))
+                Circle()
+                    .fill(Theme.accentGradient)
                     .frame(width: 20, height: 20)
-                Text("CB").font(.system(size: 9, weight: .bold)).foregroundColor(.white)
+                Circle()
+                    .strokeBorder(Theme.claudeHi.opacity(0.55), lineWidth: 1)
+                    .frame(width: 21, height: 21)
+                Text("CB")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Theme.base0)
             }
+            .beaconGlow(Theme.claude, radius: 8, opacity: 0.25)
+            .symbolEffect(.pulse, options: .repeating, isActive: providerStore.sessions.contains { $0.isAlive && $0.status == .busy })
             Text("ClaudeBar")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
             Spacer()
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) { configCollapsed.toggle() }
+                withAnimation(Theme.Animation.smooth) { configCollapsed.toggle() }
             }) {
                 Image(systemName: configCollapsed ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(Theme.textSecondary)
+                    .symbolEffect(.bounce, value: configCollapsed)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glass)
             .help(configCollapsed ? "展开配置与供应商" : "折叠配置与供应商")
             Button(action: {
                 providerStore.refresh()
@@ -101,9 +110,11 @@ struct MenuBarView: View {
             }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(Theme.textSecondary)
             }
-            .buttonStyle(.plain).help("Refresh")
+            .buttonStyle(.glass)
+            .sensoryFeedback(.selection, trigger: providerStore.sessions.map(\.pid))
+            .help("Refresh")
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
     }
@@ -114,20 +125,20 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(providerStore.activeProviderID != nil ? Color.green : Color.orange)
+                    .fill(providerStore.activeProviderID != nil ? Theme.statusBusy : Theme.statusWarning)
                     .frame(width: 6, height: 6)
 
                 let providerName = providerStore.providers
                     .first(where: { $0.id == providerStore.activeProviderID })?.name
                 Text(providerName ?? "Unsaved Config")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(Theme.textPrimary.opacity(0.8))
 
                 if let model = providerStore.providers
                     .first(where: { $0.id == providerStore.activeProviderID })?.activeModel {
                     Text("/ \(model.name)")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
             }
@@ -136,16 +147,16 @@ struct MenuBarView: View {
                 if let host = URL(string: env.ANTHROPIC_BASE_URL)?.host {
                     Text(host)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
                 Spacer()
                 if providerStore.balanceLoading {
-                    Text("⋯").font(.system(size: 11)).foregroundColor(.white.opacity(0.4))
+                    Text("⋯").font(.system(size: 11)).foregroundColor(Theme.textTertiary())
                 } else if let balance = providerStore.balanceText {
                     Text("¥\(balance)")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.green.opacity(0.85))
+                        .foregroundColor(Theme.statusBusy.opacity(0.85))
                 }
             }
         }
@@ -157,13 +168,16 @@ struct MenuBarView: View {
     private var missingSettingsView: some View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 18)).foregroundColor(.orange)
+                .font(.system(size: 18)).foregroundColor(Theme.statusWarning)
             Text("No settings.json found")
-                .font(.system(size: 12)).foregroundColor(.secondary)
+                .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
             Text("Run Claude Code once, then click Refresh.")
-                .font(.system(size: 11)).foregroundColor(.secondary)
+                .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
         }
-        .padding(.vertical, 24).frame(maxWidth: .infinity)
+        .padding(Theme.Space.s16)
+        .frame(maxWidth: .infinity)
+        .panelCard()
+        .padding(Theme.Space.s16)
     }
 
     // MARK: - Providers
@@ -172,7 +186,7 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("PROVIDERS")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Color(white: 0.53))
+                .foregroundColor(Theme.textSecondary)
                 .padding(.horizontal, 22).padding(.bottom, 4)
 
             VStack(spacing: 2) {
@@ -203,21 +217,19 @@ struct MenuBarView: View {
             if let feedback = switchFeedback {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green).font(.system(size: 10))
+                        .foregroundColor(Theme.statusBusy).font(.system(size: 10))
                     Text(feedback)
-                        .font(.system(size: 11)).foregroundColor(.green)
+                        .font(.system(size: 11)).foregroundColor(Theme.statusBusy)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 4)
                 .transition(.opacity)
             }
 
-            Divider().background(Color(white: 0.27)).padding(.top, 6)
+            Divider().background(Theme.divider).padding(.top, 6)
         }
         .padding(.horizontal, 6).padding(.vertical, 6)
-        .animation(.easeInOut(duration: 0.2), value: switchFeedback)
+        .animation(Theme.Animation.smooth, value: switchFeedback)
     }
-
-    // MARK: - Usage Stats
 
     @State private var showCustomDatePicker = false
 
@@ -230,31 +242,36 @@ struct MenuBarView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "cursorarrow.rays")
-                    .font(.system(size: 10)).foregroundColor(Color(white: 0.53))
+                    .font(.system(size: 10)).foregroundColor(Theme.textSecondary)
                 Text("CURSOR")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Color(white: 0.53))
+                    .foregroundColor(Theme.textSecondary)
                 Spacer()
                 if alive.isEmpty {
                     Text("none")
                         .font(.system(size: 10))
-                        .foregroundColor(Color(white: 0.35))
+                        .foregroundColor(Theme.textTertiary())
                 } else {
                     Text("● \(activeCount)A · \(alive.count - activeCount)I")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color(white: 0.55))
+                        .foregroundColor(Theme.textSecondary)
+                        .contentTransition(.numericText())
+                        .animation(Theme.Animation.smooth, value: activeCount)
+                        .animation(Theme.Animation.smooth, value: alive.count)
                 }
             }
             .padding(.horizontal, 16)
 
             if alive.isEmpty {
                 Text("No active Cursor sessions")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
-                LazyVGrid(columns: sessionGridColumns, spacing: 4) {
-                    ForEach(alive) { session in
-                        cursorSessionCard(session)
+                GlassEffectContainer(spacing: 4) {
+                    LazyVGrid(columns: sessionGridColumns, spacing: 4) {
+                        ForEach(alive) { session in
+                            CursorSessionCardView(session: session) { openInCursor(session) }
+                        }
                     }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 4)
@@ -268,244 +285,6 @@ struct MenuBarView: View {
         [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
     }
 
-    private func cursorSessionRow(_ session: CursorSessionInfo) -> some View {
-        let isActive = session.status == .active
-        let ratio = session.contextRatio
-        // Cursor accent: purple, to distinguish from Claude's blue/green.
-        let accentColor: Color = ratio < 0.6 ? Color(red: 0.62, green: 0.52, blue: 0.95)
-                               : (ratio < 0.85 ? .yellow : .red)
-        let hasAgents = !session.subagents.isEmpty
-        let runningAgents = session.subagents.filter { $0.status == .running }.count
-        let isExpanded = providerStore.cursorExpanded.contains(session.composerId)
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95) : Color.gray.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                    .overlay(
-                        Circle().strokeBorder(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95).opacity(0.4) : Color.clear, lineWidth: 3)
-                            .scaleEffect(isActive ? 1.7 : 1)
-                            .opacity(isActive ? 0.5 : 0)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                                       value: isActive)
-                    )
-                Text(session.projectFolder)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-                Spacer()
-                Text(isActive ? "active" : "idle")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95) : Color.white.opacity(0.4))
-            }
-
-            // Composer name (the human title Cursor assigns), if present.
-            if !session.name.isEmpty {
-                Text(session.name)
-                    .font(.system(size: 8))
-                    .foregroundColor(Color.white.opacity(0.4))
-                    .lineLimit(1)
-                    .padding(.leading, 12)
-            }
-
-            // Context window bar — percent-based for Cursor.
-            if session.contextPercent >= 0 {
-                ContextBar(
-                    label: session.contextLabel,
-                    ratio: ratio,
-                    color: accentColor,
-                    leading: { EmptyView() },
-                    trailing: {
-                        if session.messageCount > 0 {
-                            Text("\(session.messageCount) msgs")
-                                .font(.system(size: 7))
-                                .foregroundColor(Color.white.opacity(0.3))
-                        }
-                    }
-                )
-            }
-
-            // Current activity line.
-            if !session.currentActivity.isEmpty {
-                activityLine(session.currentActivity, isBusy: isActive)
-            }
-
-            // Subagent summary + expansion.
-            if hasAgents {
-                HStack(spacing: 6) {
-                    Button(action: {
-                        if isExpanded {
-                            providerStore.cursorExpanded.remove(session.composerId)
-                        } else {
-                            providerStore.cursorExpanded.insert(session.composerId)
-                        }
-                    }) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.5))
-                            .frame(width: 12, height: 12)
-                    }
-                    .buttonStyle(.plain)
-
-                    Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 8))
-                        .foregroundColor(Color.white.opacity(0.4))
-                    Text("\(session.subagents.count) agents")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.6))
-                    if runningAgents > 0 {
-                        Text("· \(runningAgents)●")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    Spacer()
-                }
-                .padding(.leading, 2)
-
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(session.subagents) { agent in
-                            cursorSubagentRow(agent)
-                        }
-                    }
-                    .padding(.leading, 10)
-                }
-            }
-
-            HStack(spacing: 3) {
-                Text(session.composerId.prefix(8))
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.35))
-                Text("· \(session.relativeUpdated)")
-                    .font(.system(size: 8))
-                    .foregroundColor(Color.white.opacity(0.3))
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 5)
-            .fill(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95).opacity(0.07) : Color.clear))
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { openInCursor(session) }
-        .help("\(session.name)\n\(session.cwd)\n双击在 Cursor 打开")
-    }
-
-    /// Compact card for the 2-column session grid. Shows status, project,
-    /// context fill, activity, and recency in a tight tile.
-    private func cursorSessionCard(_ session: CursorSessionInfo) -> some View {
-        let isActive = session.status == .active
-        let ratio = session.contextRatio
-        let accentColor: Color = ratio < 0.6 ? Color(red: 0.62, green: 0.52, blue: 0.95)
-                               : (ratio < 0.85 ? .yellow : .red)
-        let hasAgents = !session.subagents.isEmpty
-        let runningAgents = session.subagents.filter { $0.status == .running }.count
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95) : Color.gray.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-                Spacer()
-                if session.contextPercent >= 0 {
-                    Text(session.contextLabel)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundColor(accentColor.opacity(0.9))
-                }
-            }
-
-            // Context fill bar (percent-based).
-            if session.contextPercent >= 0 {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 3)
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(accentColor)
-                            .frame(width: max(2, geo.size.width * min(ratio, 1.0)), height: 3)
-                    }
-                }
-                .frame(height: 3)
-            }
-
-            if !session.currentActivity.isEmpty {
-                Text(session.currentActivity)
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(isActive ? .white.opacity(0.65) : .white.opacity(0.35))
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 4) {
-                if hasAgents {
-                    Text("⚙\(session.subagents.count)")
-                        .font(.system(size: 8))
-                        .foregroundColor(runningAgents > 0 ? .green : .white.opacity(0.35))
-                }
-                Text(session.relativeUpdated)
-                    .font(.system(size: 8))
-                    .foregroundColor(.white.opacity(0.3))
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 7).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6)
-            .fill(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95).opacity(0.08) : Color.white.opacity(0.03)))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(isActive ? Color(red: 0.62, green: 0.52, blue: 0.95).opacity(0.3) : Color.white.opacity(0.06), lineWidth: 1))
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { openInCursor(session) }
-        .help("\(session.name)\n\(session.cwd)\n双击在 Cursor 打开")
-    }
-
-    /// One Cursor subagent: type · description, with current activity.
-    private func cursorSubagentRow(_ agent: CursorSubagentInfo) -> some View {
-        let running = agent.status == .running
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(running ? Color.green : Color.gray.opacity(0.4))
-                    .frame(width: 4, height: 4)
-                    .overlay(
-                        Circle().strokeBorder(running ? Color.green.opacity(0.4) : Color.clear, lineWidth: 2)
-                            .scaleEffect(running ? 1.8 : 1)
-                            .opacity(running ? 0.5 : 0)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                                       value: running)
-                    )
-                Text(agent.agentType)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(running ? Color.white.opacity(0.8) : Color.white.opacity(0.45))
-                if !agent.description.isEmpty {
-                    Text("· \(agent.description)")
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.white.opacity(0.4))
-                        .lineLimit(1)
-                }
-                Spacer()
-                if !running {
-                    Text("✓")
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.white.opacity(0.3))
-                }
-            }
-            if !agent.activity.isEmpty {
-                Text("↳ \(agent.activity)")
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(running ? Color.white.opacity(0.55) : Color.white.opacity(0.3))
-                    .lineLimit(1)
-                    .padding(.leading, 8)
-            }
-        }
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(RoundedRectangle(cornerRadius: 4)
-            .fill(running ? Color.green.opacity(0.05) : Color.clear))
-    }
-
-    // MARK: - Usage Stats (continued)
-
     // MARK: - Sessions
 
     private var sessionsSection: some View {
@@ -515,31 +294,36 @@ struct MenuBarView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.connected.to.line.below")
-                    .font(.system(size: 10)).foregroundColor(Color(white: 0.53))
+                    .font(.system(size: 10)).foregroundColor(Theme.textSecondary)
                 Text("CLAUDE CODE")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Color(white: 0.53))
+                    .foregroundColor(Theme.textSecondary)
                 Spacer()
                 if alive.isEmpty {
                     Text("none")
                         .font(.system(size: 10))
-                        .foregroundColor(Color(white: 0.35))
+                        .foregroundColor(Theme.textTertiary())
                 } else {
                     Text("● \(busyCount)B · \(alive.count - busyCount)I")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color(white: 0.55))
+                        .foregroundColor(Theme.textSecondary)
+                        .contentTransition(.numericText())
+                        .animation(Theme.Animation.smooth, value: busyCount)
+                        .animation(Theme.Animation.smooth, value: alive.count)
                 }
             }
             .padding(.horizontal, 16)
 
             if alive.isEmpty {
                 Text("No active sessions")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
-                LazyVGrid(columns: sessionGridColumns, spacing: 4) {
-                    ForEach(alive) { session in
-                        sessionCard(session)
+                GlassEffectContainer(spacing: 4) {
+                    LazyVGrid(columns: sessionGridColumns, spacing: 4) {
+                        ForEach(alive) { session in
+                            SessionCardView(session: session) { resumeInTerminal(session) }
+                        }
                     }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 4)
@@ -548,461 +332,57 @@ struct MenuBarView: View {
         .padding(.vertical, 6)
     }
 
-    private func sessionRow(_ session: SessionInfo) -> some View {
-        let isBusy = session.status == .busy
-        let ratio = session.contextRatio
-        // Context health: green < 60%, yellow < 85%, red otherwise.
-        let ctxColor: Color = ratio < 0.6 ? .green : (ratio < 0.85 ? .yellow : .red)
-        let hasAgents = !session.subagents.isEmpty || !session.workflows.isEmpty
-        let runningAgents = session.subagents.filter { $0.status == .running }.count
-            + session.workflows.reduce(0) { $0 + $1.runningCount }
-        let isExpanded = providerStore.expandedSessionPIDs.contains(session.pid)
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isBusy ? Color.green : Color.gray.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                    .overlay(
-                        Circle().strokeBorder(isBusy ? Color.green.opacity(0.4) : Color.clear, lineWidth: 3)
-                            .scaleEffect(isBusy ? 1.7 : 1)
-                            .opacity(isBusy ? 0.5 : 0)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                                       value: isBusy)
-                    )
-                Text(session.projectFolder)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-                Spacer()
-                Text(isBusy ? "busy" : "idle")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isBusy ? .green : Color.white.opacity(0.4))
-            }
-
-            // Context window bar
-            if session.contextTokens > 0 {
-                ContextBar(
-                    label: session.contextLabel,
-                    ratio: ratio,
-                    color: ctxColor,
-                    leading: {
-                        if !session.model.isEmpty {
-                            Text("· \(session.model)")
-                                .font(.system(size: 8, design: .monospaced))
-                                .foregroundColor(Color.white.opacity(0.35))
-                                .lineLimit(1)
-                        }
-                    },
-                    trailing: {
-                        if session.messageCount > 0 {
-                            Text("\(session.messageCount) msgs")
-                                .font(.system(size: 7))
-                                .foregroundColor(Color.white.opacity(0.3))
-                        }
-                    }
-                )
-            }
-
-            // Current activity line — shown whenever non-empty.
-            if !session.currentActivity.isEmpty {
-                activityLine(session.currentActivity, isBusy: isBusy)
-            }
-
-            // Subagent / workflow summary + expansion toggle.
-            if hasAgents {
-                HStack(spacing: 6) {
-                    Button(action: {
-                        if isExpanded {
-                            providerStore.expandedSessionPIDs.remove(session.pid)
-                        } else {
-                            providerStore.expandedSessionPIDs.insert(session.pid)
-                        }
-                    }) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.5))
-                            .frame(width: 12, height: 12)
-                    }
-                    .buttonStyle(.plain)
-
-                    Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 8))
-                        .foregroundColor(Color.white.opacity(0.4))
-                    Text("\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count }) agents")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.6))
-                    if runningAgents > 0 {
-                        Text("· \(runningAgents)●")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    if !session.workflows.isEmpty {
-                        Text("· ⚙\(session.workflows.count)")
-                            .font(.system(size: 9))
-                            .foregroundColor(Color.white.opacity(0.4))
-                    }
-                    Spacer()
-                }
-                .padding(.leading, 2)
-
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(session.subagents) { agent in
-                            subagentRow(agent)
-                        }
-                        ForEach(session.workflows) { wf in
-                            workflowRow(wf)
-                        }
-                    }
-                    .padding(.leading, 10)
-                }
-            }
-
-            HStack(spacing: 3) {
-                Text("\(session.pid)")
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.35))
-                Text("· \(session.relativeUpdated)")
-                    .font(.system(size: 8))
-                    .foregroundColor(Color.white.opacity(0.3))
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 5)
-            .fill(isBusy ? Color.green.opacity(0.07) : Color.clear))
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { resumeInTerminal(session) }
-        .help("\(session.name) · PID \(session.pid)\n\(session.cwd)\n双击在 Terminal 恢复会话")
-    }
-
-    /// Compact card for the 2-column session grid. Shows status, project,
-    /// context fill, activity, and recency in a tight tile.
-    private func sessionCard(_ session: SessionInfo) -> some View {
-        let isBusy = session.status == .busy
-        let ratio = session.contextRatio
-        let ctxColor: Color = ratio < 0.6 ? .green : (ratio < 0.85 ? .yellow : .red)
-        let hasAgents = !session.subagents.isEmpty || !session.workflows.isEmpty
-        let runningAgents = session.subagents.filter { $0.status == .running }.count
-            + session.workflows.reduce(0) { $0 + $1.runningCount }
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(isBusy ? Color.green : Color.gray.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                Text(session.projectFolder.isEmpty ? "session" : session.projectFolder)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
-                    .lineLimit(1)
-                Spacer()
-                if session.contextTokens > 0 {
-                    Text(session.contextLabel)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundColor(ctxColor.opacity(0.9))
-                        .lineLimit(1)
-                }
-            }
-
-            // Context fill bar.
-            if session.contextTokens > 0 {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 3)
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(ctxColor)
-                            .frame(width: max(2, geo.size.width * min(ratio, 1.0)), height: 3)
-                    }
-                }
-                .frame(height: 3)
-            }
-
-            if !session.currentActivity.isEmpty {
-                Text(session.currentActivity)
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(isBusy ? .white.opacity(0.7) : .white.opacity(0.35))
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 4) {
-                if hasAgents {
-                    Text("⚙\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count })")
-                        .font(.system(size: 8))
-                        .foregroundColor(runningAgents > 0 ? .green : .white.opacity(0.35))
-                }
-                if !session.model.isEmpty {
-                    Text(session.model)
-                        .font(.system(size: 8, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
-                        .lineLimit(1)
-                }
-                Spacer()
-                Text(session.relativeUpdated)
-                    .font(.system(size: 8))
-                    .foregroundColor(.white.opacity(0.3))
-            }
-        }
-        .padding(.horizontal, 7).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6)
-            .fill(isBusy ? Color.green.opacity(0.08) : Color.white.opacity(0.03)))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(isBusy ? Color.green.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 1))
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { resumeInTerminal(session) }
-        .help("\(session.name) · PID \(session.pid)\n\(session.cwd)\n双击在 Terminal 恢复会话")
-    }
-
-    /// The session's current activity, e.g. "Bash · build.sh".
-    private func activityLine(_ activity: String, isBusy: Bool) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(isBusy ? Color.green : Color.gray.opacity(0.4))
-                .frame(width: 4, height: 4)
-                .overlay(
-                    Circle().strokeBorder(isBusy ? Color.green.opacity(0.4) : Color.clear, lineWidth: 2)
-                        .scaleEffect(isBusy ? 1.8 : 1)
-                        .opacity(isBusy ? 0.5 : 0)
-                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                                   value: isBusy)
-                )
-            Text(activity)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(isBusy ? Color.white.opacity(0.7) : Color.white.opacity(0.4))
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.leading, 2)
-    }
-
-    /// Reusable context-window bar: a ratio bar with a label and optional
-    /// leading/trailing text. Shared by Claude and Cursor session rows.
-    private struct ContextBar<Leading: View, Trailing: View>: View {
-        let label: String
-        let ratio: Double
-        let color: Color
-        @ViewBuilder var leading: () -> Leading
-        @ViewBuilder var trailing: () -> Trailing
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(label)
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(color.opacity(0.9))
-                    leading()
-                    Spacer()
-                    trailing()
-                }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(Color.white.opacity(0.08))
-                            .frame(height: 3)
-                        if ratio > 0 {
-                            RoundedRectangle(cornerRadius: 1.5)
-                                .fill(color)
-                                .frame(width: max(2, geo.size.width * ratio), height: 3)
-                        }
-                    }
-                }
-                .frame(height: 3)
-            }
-        }
-    }
-
-    /// One live subagent: type · description, with its current activity.
-    private func subagentRow(_ agent: SubagentInfo) -> some View {
-        let running = agent.status == .running
-        return VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(running ? Color.green : Color.gray.opacity(0.4))
-                    .frame(width: 4, height: 4)
-                    .overlay(
-                        Circle().strokeBorder(running ? Color.green.opacity(0.4) : Color.clear, lineWidth: 2)
-                            .scaleEffect(running ? 1.8 : 1)
-                            .opacity(running ? 0.5 : 0)
-                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                                       value: running)
-                    )
-                Text(agent.agentType)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(running ? Color.white.opacity(0.8) : Color.white.opacity(0.45))
-                if !agent.description.isEmpty {
-                    Text("· \(agent.description)")
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.white.opacity(0.4))
-                        .lineLimit(1)
-                }
-                Spacer()
-                if !running {
-                    Text("✓")
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.white.opacity(0.3))
-                }
-            }
-            if !agent.activity.isEmpty {
-                Text("↳ \(agent.activity)")
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundColor(running ? Color.white.opacity(0.55) : Color.white.opacity(0.3))
-                    .lineLimit(1)
-                    .padding(.leading, 8)
-            }
-        }
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(RoundedRectangle(cornerRadius: 4)
-            .fill(running ? Color.green.opacity(0.05) : Color.clear))
-    }
-
-    /// A workflow rendered as a summary row (agents not individually expanded).
-    private func workflowRow(_ wf: WorkflowInfo) -> some View {
-        let running = wf.runningCount
-        return HStack(spacing: 4) {
-            Image(systemName: "gearshape")
-                .font(.system(size: 8))
-                .foregroundColor(Color.white.opacity(0.45))
-            Text(wf.workflowId)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.6))
-                .lineLimit(1)
-            Text("· \(wf.agents.count) agents")
-                .font(.system(size: 9))
-                .foregroundColor(Color.white.opacity(0.4))
-            if running > 0 {
-                Text("(\(running)●)")
-                    .font(.system(size: 9))
-                    .foregroundColor(.green)
-            } else {
-                Text("✓")
-                    .font(.system(size: 9))
-                    .foregroundColor(Color.white.opacity(0.3))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 6).padding(.vertical, 2)
-    }
+    // MARK: - Resume / Open Actions
 
     /// Double-click a Claude Code session: open a terminal in the session's
-    /// project directory and auto-run `claude --resume <sessionId>` to restore
-    /// that exact conversation (no interactive picker needed).
-    ///
-    /// Prefers Warp if installed (`/Applications/Warp.app`): opens a new Warp
-    /// window at the cwd, then injects the command via System Events and
-    /// submits it (Warp exposes no AppleScript `do script`, and its `warp://`
-    /// scheme has no documented "run command" deep link, so keystroke
-    /// injection is the reliable path). Falls back to Terminal's native
-    /// `do script` when Warp is absent.
+    /// project directory and auto-run `claude --resume <sessionId>`. The
+    /// Warp-vs-Terminal selection and osascript wiring live in
+    /// `TerminalLauncher`, shared with the main-window Sessions page so the
+    /// two surfaces can't drift apart.
     private func resumeInTerminal(_ session: SessionInfo) {
-        guard !session.cwd.isEmpty else { return }
-        let safeCwd = session.cwd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let sid = session.sessionId
-        // `claude --resume` opens an interactive list by default; passing the
-        // sessionId as an argument resumes that specific session directly.
-        let shellCmd = "cd \"\(safeCwd)\" && claude --resume \(sid)"
-
-        if FileManager.default.fileExists(atPath: "/Applications/Warp.app") {
-            resumeInWarp(shellCmd: shellCmd, cwd: session.cwd)
-        } else {
-            resumeInAppleTerminal(shellCmd: shellCmd)
-        }
-    }
-
-    /// Warp path: Warp exposes no AppleScript `do script` and no `warp://`
-    /// run-command deep link, so we open a window at the cwd (reliable +
-    /// permission-free via LaunchServices) and then type+submit the command
-    /// via osascript. The osascript runs on a background thread so the double-
-    /// tap returns instantly — `activate`+`delay`+`keystroke` would otherwise
-    /// block the main thread ~0.5s (or hang if an automation prompt is modal).
-    /// Requires Automation permission for Warp on first use.
-    private func resumeInWarp(shellCmd: String, cwd: String) {
-        // Open (or focus) Warp at the cwd via LaunchServices — no Apple Events
-        // permission needed, returns immediately, and lands a window there.
-        NSWorkspace.shared.open([URL(fileURLWithPath: cwd)],
-                               withApplicationAt: URL(fileURLWithPath: "/Applications/Warp.app"),
-                               configuration: NSWorkspace.OpenConfiguration())
-        // Escape the command for an AppleScript double-quoted string.
-        let appleStr = shellCmd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        // Run the injection off the main thread so the tap handler is instant.
-        let script = """
-        tell application "Warp" to activate
-        delay 0.35
-        tell application "System Events"
-            keystroke "\(appleStr)"
-            delay 0.08
-            key code 36
-        end tell
-        """
-        Task.detached(priority: .userInitiated) {
-            let proc = Process()
-            proc.launchPath = "/usr/bin/osascript"
-            proc.arguments = ["-e", script]
-            // run() is synchronous; fine here because we're already detached.
-            _ = try? proc.run()
-        }
-    }
-
-    /// Terminal fallback: native `do script` runs the command in a new window.
-    private func resumeInAppleTerminal(shellCmd: String) {
-        let appleStr = shellCmd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "tell application \"Terminal\" to do script \"\(appleStr)\""
-        let proc = Process()
-        proc.launchPath = "/usr/bin/osascript"
-        proc.arguments = ["-e", script]
-        try? proc.run()
-        NSWorkspace.shared.openApplication(
-            at: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
-            configuration: NSWorkspace.OpenConfiguration()
-        )
+        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId)
     }
 
     /// Double-click a Cursor session: open the workspace folder in Cursor.app.
     private func openInCursor(_ session: CursorSessionInfo) {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        let cursorURL = URL(fileURLWithPath: "/Applications/Cursor.app")
-        guard FileManager.default.fileExists(atPath: cursorURL.path) else { return }
-        let folderURL = URL(fileURLWithPath: session.cwd)
-        NSWorkspace.shared.open([folderURL], withApplicationAt: cursorURL,
-                                configuration: NSWorkspace.OpenConfiguration())
+        TerminalLauncher.openInCursor(cwd: session.cwd)
     }
+
+    // MARK: - Usage Stats
 
     private var usageSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Period selector chips: 日 / 月 / 年 / 指定
-            HStack(spacing: 4) {
-                ForEach(UsagePeriod.allCases) { period in
-                    let isOn = providerStore.usagePeriod == period
-                    Button(action: {
-                        if period == .custom {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showCustomDatePicker.toggle()
+            // Period selector chips: 日 / 月 / 年 / 指定 — glass chips that
+            // merge into one continuous glass surface via the container.
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach(UsagePeriod.allCases) { period in
+                        let isOn = providerStore.usagePeriod == period
+                        Button(action: {
+                            if period == .custom {
+                                withAnimation(Theme.Animation.bouncy) {
+                                    showCustomDatePicker.toggle()
+                                }
+                                providerStore.usagePeriod = .custom
+                            } else {
+                                showCustomDatePicker = false
+                                providerStore.usagePeriod = period
+                                providerStore.usageReferenceDate = Date()
                             }
-                            providerStore.usagePeriod = .custom
-                        } else {
-                            showCustomDatePicker = false
-                            providerStore.usagePeriod = period
-                            providerStore.usageReferenceDate = Date()
+                        }) {
+                            Text(period.label)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(isOn ? .white : Theme.textSecondary)
+                                .padding(.horizontal, 7).padding(.vertical, 2.5)
+                                .glassEffect(
+                                    .regular.tint(isOn ? Theme.accent.opacity(0.3) : .clear),
+                                    in: RoundedRectangle(cornerRadius: 4)
+                                )
                         }
-                    }) {
-                        Text(period.label)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(isOn ? .white : Color(white: 0.55))
-                            .padding(.horizontal, 7).padding(.vertical, 2.5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(isOn ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.05))
-                            )
+                        .buttonStyle(.pressable)
                     }
-                    .buttonStyle(.plain)
+                    Spacer()
                 }
-                Spacer()
             }
             .padding(.horizontal, 16).padding(.bottom, 2)
 
@@ -1019,24 +399,28 @@ struct MenuBarView: View {
             // Date navigation: ◀ label ▶
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.xaxis")
-                    .font(.system(size: 10)).foregroundColor(Color(white: 0.53))
+                    .font(.system(size: 10)).foregroundColor(Theme.textSecondary)
                 Button(action: { shiftUsage(-1) }) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color(white: 0.5))
+                        .foregroundColor(Theme.textTertiary(0.5))
                         .frame(width: 14, height: 14)
-                }.buttonStyle(.plain).help("上一个\(providerStore.usagePeriod.label)")
+                }
+                .buttonStyle(.glass)
+                .help("上一个\(providerStore.usagePeriod.label)")
 
                 Text(periodLabel)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Color(white: 0.6))
+                    .foregroundColor(Theme.textTertiary(0.6))
 
                 Button(action: { shiftUsage(1) }) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color(white: 0.5))
+                        .foregroundColor(Theme.textTertiary(0.5))
                         .frame(width: 14, height: 14)
-                }.buttonStyle(.plain).help("下一个\(providerStore.usagePeriod.label)")
+                }
+                .buttonStyle(.glass)
+                .help("下一个\(providerStore.usagePeriod.label)")
 
                 Spacer()
                 if providerStore.usageLoading {
@@ -1044,19 +428,21 @@ struct MenuBarView: View {
                 } else {
                     Text(totalUsageLabel)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Color(white: 0.6))
+                        .foregroundColor(Theme.textTertiary(0.6))
+                        .contentTransition(.numericText())
+                        .animation(Theme.Animation.smooth, value: totalUsageLabel)
                 }
             }
             .padding(.horizontal, 16).padding(.bottom, 2)
 
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 Text("无用量")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     .padding(.horizontal, 16).padding(.bottom, 4)
             } else {
                 VStack(spacing: 2) {
                     ForEach(providerStore.usageStats) { stat in
-                        usageRow(stat)
+                        UsageRowView(stat: stat, maxTokens: providerStore.usageStats.first?.totalTokens ?? 1)
                     }
                 }
                 .padding(.horizontal, 6).padding(.bottom, 4)
@@ -1071,37 +457,6 @@ struct MenuBarView: View {
         )
     }
 
-    private func usageRow(_ stat: ModelUsage) -> some View {
-        let maxTokens = providerStore.usageStats.first?.totalTokens ?? 1
-        let ratio = maxTokens > 0 ? CGFloat(stat.totalTokens) / CGFloat(maxTokens) : 0
-
-        return HStack(spacing: 8) {
-            Text(stat.model)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.white.opacity(0.75))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.08))
-                        .frame(height: 5)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(barColor(for: stat.model))
-                        .frame(width: max(3, geo.size.width * ratio), height: 5)
-                }
-            }
-            .frame(width: 70, height: 12)
-
-            Text(UsageStats.formatTokens(stat.totalTokens))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(.white.opacity(0.6))
-                .frame(width: 38, alignment: .trailing)
-        }
-        .padding(.horizontal, 8).padding(.vertical, 1)
-    }
-
     private var periodLabel: String {
         UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
     }
@@ -1111,32 +466,25 @@ struct MenuBarView: View {
         return UsageStats.formatTokens(total)
     }
 
-    private func barColor(for model: String) -> Color {
-        let palette: [Color] = [
-            Color(red: 0.40, green: 0.58, blue: 0.95),
-            Color(red: 0.30, green: 0.75, blue: 0.60),
-            Color(red: 0.92, green: 0.62, blue: 0.40),
-            Color(red: 0.78, green: 0.50, blue: 0.90),
-            Color(red: 0.90, green: 0.50, blue: 0.55)
-        ]
-        let hash = abs(model.hashValue)
-        return palette[hash % palette.count]
-    }
-
     // MARK: - Action Bar (compact icon buttons)
 
     private var actionBar: some View {
-        HStack(spacing: 4) {
-            iconButton("arrow.clockwise", help: "刷新", color: .white.opacity(0.6)) {
-                providerStore.refresh()
-                showFeedback("已刷新")
-            }
-            iconButton("pencil.line", help: "编辑供应商", color: .blue) { openEditor() }
-            iconButton("gearshape", help: "打开 settings.json", color: .secondary) { openSettingsFile() }
-                .disabled(!providerStore.hasSettingsFile)
-            Spacer()
-            iconButton("power", help: "退出", color: .secondary) {
-                NSApplication.shared.terminate(nil)
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary) {
+                    providerStore.refresh()
+                    showFeedback("已刷新")
+                }
+                iconButton("macwindow", help: "打开主窗口", color: Theme.accent) {
+                    NotificationCenter.default.post(name: .showMainWindow, object: nil)
+                }
+                iconButton("pencil.line", help: "编辑供应商", color: Theme.cursorAccent) { openEditor() }
+                iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
+                    .disabled(!providerStore.hasSettingsFile)
+                Spacer()
+                iconButton("power", help: "退出", color: Theme.statusError) {
+                    NSApplication.shared.terminate(nil)
+                }
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
@@ -1145,14 +493,9 @@ struct MenuBarView: View {
     private func iconButton(_ icon: String, help: String, color: Color,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(color)
-                .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.white.opacity(0.06)))
+            IconChip(systemImage: icon, tint: color)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .help(help)
     }
 
@@ -1160,9 +503,9 @@ struct MenuBarView: View {
 
     private func showFeedback(_ message: String) {
         switchFeedbackTimer?.invalidate()
-        withAnimation(.easeInOut(duration: 0.2)) { switchFeedback = message }
+        withAnimation(Theme.Animation.smooth) { switchFeedback = message }
         switchFeedbackTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
-            DispatchQueue.main.async { withAnimation(.easeInOut(duration: 0.3)) { switchFeedback = nil } }
+            DispatchQueue.main.async { withAnimation(Theme.Animation.smooth) { switchFeedback = nil } }
         }
     }
 

@@ -112,7 +112,7 @@ struct CursorSessionMonitor {
     /// All live Cursor sessions: parses composer heads, drops stale ones,
     /// enriches with transcript activity, sorts busy-first then by recency.
     static func fetchActive() -> [CursorSessionInfo] {
-        guard let db = openDB() else { return [] }
+        guard let db = CursorDB.open() else { return [] }
         defer { sqlite3_close(db) }
 
         let nowMs = Date().timeIntervalSince1970 * 1000
@@ -133,9 +133,9 @@ struct CursorSessionMonitor {
         sqlite3_bind_int(stmt, 1, queryLimit)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let composerId = cString(stmt, 0)
+            let composerId = CursorDB.cString(stmt, 0)
             let recency = Double(sqlite3_column_int64(stmt, 1))
-            guard let value = textColumn(stmt, 2),
+            guard let value = CursorDB.textColumn(stmt, 2),
                   let data = value.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
@@ -198,7 +198,7 @@ struct CursorSessionMonitor {
         defer { sqlite3_finalize(stmt) }
 
         while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let value = textColumn(stmt, 0),
+            guard let value = CursorDB.textColumn(stmt, 0),
                   let data = value.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             let composerId = (obj["composerId"] as? String) ?? ""
@@ -218,7 +218,7 @@ struct CursorSessionMonitor {
 
         // Running first, then by composerId for stable ordering.
         for key in map.keys {
-            map[key]!.sort { a, b in
+            map[key]?.sort { a, b in
                 if a.status != b.status { return a.status == .running }
                 return a.composerId < b.composerId
             }
@@ -352,33 +352,7 @@ struct CursorSessionMonitor {
 
     // MARK: - SQLite helpers
 
-    /// Open Cursor's state DB read-only. WAL mode allows concurrent readers, so
-    /// this never contends with Cursor's writer. `FULLMUTEX` makes the handle
-    /// safe to share across the polling thread.
-    private static func openDB() -> OpaquePointer? {
-        guard FileManager.default.fileExists(atPath: FilePaths.cursorStateDB.path) else { return nil }
-        var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(FilePaths.cursorStateDB.path, &db, flags, nil) == SQLITE_OK else {
-            sqlite3_close(db)
-            return nil
-        }
-        sqlite3_busy_timeout(db, 2000)
-        return db
-    }
-
-    /// Read a TEXT column as a Swift String via cString (safe for plain text
-    /// like the composerId UUID column).
-    private static func cString(_ stmt: OpaquePointer?, _ idx: Int32) -> String {
-        guard let cs = sqlite3_column_text(stmt, idx) else { return "" }
-        return String(cString: cs)
-    }
-
-    /// Read a TEXT column using its byte length — needed for the large JSON
-    /// `value` column so embedded/multi-byte UTF-8 round-trips correctly.
-    private static func textColumn(_ stmt: OpaquePointer?, _ idx: Int32) -> String? {
-        guard let bytes = sqlite3_column_text(stmt, idx) else { return nil }
-        let len = Int(sqlite3_column_bytes(stmt, idx))
-        return String(bytes: UnsafeBufferPointer(start: bytes, count: len), encoding: .utf8)
-    }
+    // openDB / textColumn / cString now live in `CursorDB` (shared with
+    // CursorUsageStats). The composerId UUID column is read via `cString`
+    // (plain ASCII); the large JSON `value` column via `textColumn` (byte-length).
 }
