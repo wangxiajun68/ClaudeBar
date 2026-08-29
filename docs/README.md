@@ -1,9 +1,9 @@
-# ClaudeBar 文档总索引
+# Axon (ClaudeBar) 文档总索引
 
-> 本文件是 agent 与人类阅读 ClaudeBar 文档的**唯一入口**。
-> 最后更新：2026-08-29
+> 本文件是 agent 与人类阅读 Axon 文档的**唯一入口**。
+> 最后更新：2026-08-30
 
-ClaudeBar 文档分为两层，按「为什么（设计）→ 怎么做（技术）」组织。每层都有独立的 README 索引与「何时读」指引，便于渐进阅读。
+Axon 文档分为两层，按「为什么（设计）→ 怎么做（技术）」组织。每层都有独立的 README 索引与「何时读」指引，便于渐进阅读。
 
 ```
 docs/
@@ -14,6 +14,7 @@ docs/
 ├── technical/             技术文档（实现细节，描述「怎么做」）
 │   ├── README.md          技术文档索引
 │   └── 01..10-*.md
+├── FAQ.md                 常见问题（使用排障）
 └── CHANGELOG.md           版本变更记录
 ```
 
@@ -53,6 +54,7 @@ docs/
 | 扩展新功能 | [technical/10](technical/10-extension-guide.md) |
 | 找某个文件 | [technical/09](technical/09-file-index.md) |
 | 看版本变更 | [CHANGELOG.md](CHANGELOG.md) |
+| 使用排障 / 常见问题 | [FAQ.md](FAQ.md) |
 
 ---
 

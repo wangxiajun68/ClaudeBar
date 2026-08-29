@@ -13,4 +13,11 @@ build/
 DerivedData/
 
 # Claude Code local settings
-.claude/settings.local.json
+.claude/
+.claude/worktrees/
+
+# Design source (binary, edited via Pencil)
+*.pen
+
+# Stray env-expansion artifacts (e.g. a literal "{{HOMEBREW_PREFIX}}/" dir)
+{{*/
