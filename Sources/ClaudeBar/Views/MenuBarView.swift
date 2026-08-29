@@ -34,7 +34,7 @@ struct MenuBarView: View {
                     Divider().background(Theme.divider)
 
                     HStack(alignment: .top, spacing: 0) {
-                        ScrollView { EmptyView() }.frame(maxWidth: 0).hidden()
+                        Color.clear.frame(width: 0)
                         UsagePanel()
                             .frame(maxWidth: .infinity)
                     }

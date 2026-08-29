@@ -95,7 +95,7 @@ struct CommandPalette: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .semibold))
+                .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.accent)
                 .symbolEffect(.pulse, options: .repeating)
             TextField("搜索页面、会话、供应商…", text: $query)
@@ -110,7 +110,7 @@ struct CommandPalette: View {
             if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(Theme.Font.bodySmall)
                         .foregroundColor(Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -237,7 +237,7 @@ private struct CommandRow: View {
                         .fill(item.tint.opacity(isSelected ? 0.25 : 0.12))
                         .frame(width: 30, height: 30)
                     Image(systemName: item.icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(Theme.Font.bodySmall.weight(.semibold))
                         .foregroundColor(item.tint)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -253,7 +253,7 @@ private struct CommandRow: View {
                 Spacer()
                 if isSelected {
                     Image(systemName: "return")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(Theme.Font.badgeMono.weight(.bold))
                         .foregroundColor(Theme.accent.opacity(0.8))
                         .symbolEffect(.bounce, value: isSelected)
                 }

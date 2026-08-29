@@ -79,7 +79,7 @@ struct SessionsView: View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(Theme.Font.micro)
                     .foregroundColor(active > 0 ? Theme.claude : Theme.textSecondary)
                     .symbolEffect(.pulse, options: .repeating, isActive: active > 0)
                 Text(title.uppercased())
@@ -151,7 +151,7 @@ private struct SessionRowFull: View {
                 if !session.subagents.isEmpty || !session.workflows.isEmpty {
                     Button(action: { toggle() }) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10))
+                            .font(Theme.Font.micro)
                             .foregroundColor(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
@@ -264,7 +264,7 @@ private struct SessionRowFull: View {
     @ViewBuilder
     private func workflowRow(_ wf: WorkflowInfo) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "gearshape").font(.system(size: 8)).foregroundColor(Theme.textTertiary())
+            Image(systemName: "gearshape").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
             Text(wf.workflowId).font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
                 .lineLimit(1).truncationMode(.middle)
             Text("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
