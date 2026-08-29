@@ -97,7 +97,7 @@ struct SessionsView: View {
             content()
         }
         .padding(Theme.Space.s16)
-        .panelCard()
+        .sectionRules()
     }
 
     private func emptyHint(_ text: String) -> some View {
