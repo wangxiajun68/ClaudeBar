@@ -312,9 +312,19 @@ struct WidgetEntryView: View {
     // MARK: - Helpers
 
     private func formatTokens(_ n: Int) -> String {
-        if n >= 1_000_000_000 { return String(format: "%.2fB (%.1f亿)", Double(n) / 1_000_000_000, Double(n) / 100_000_000) }
-        if n >= 1_000_000 { return String(format: "%.1fM (%.1f万)", Double(n) / 1_000_000, Double(n) / 10_000) }
-        if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
+        // The widget process has its own AppPreferences singleton instance
+        // (UserDefaults is shared via the suite, but the widget target doesn't
+        // compile AppPreferences) — read the same key directly. Default 万/亿.
+        let raw = UserDefaults.standard.string(forKey: "tokenUnitStyle")
+        if raw == "metric" {
+            if n >= 1_000_000_000 { return String(format: "%.2fB", Double(n) / 1_000_000_000) }
+            if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
+            if n >= 1_000 { return String(format: "%dK", Int(round(Double(n) / 1_000))) }
+            return "\(n)"
+        }
+        if n >= 100_000_000 { return String(format: "%.1f亿", Double(n) / 100_000_000) }
+        if n >= 10_000 { return String(format: "%.1f万", Double(n) / 10_000) }
+        if n >= 1_000 { return String(format: "%dK", Int(round(Double(n) / 1_000))) }
         return "\(n)"
     }
 

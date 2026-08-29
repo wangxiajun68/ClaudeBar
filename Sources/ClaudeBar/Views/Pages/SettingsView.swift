@@ -16,6 +16,23 @@ struct SettingsView: View {
                     .fixedSize()
 
                 VStack(alignment: .leading, spacing: Theme.Space.s24) {
+                    // Display
+                    settingCard("显示", icon: "textformat") {
+                        HStack {
+                            Text("Token 单位")
+                                .font(Theme.Font.body)
+                                .foregroundColor(Theme.textPrimary)
+                            Spacer()
+                            Picker("", selection: $prefs.tokenUnitStyle) {
+                                ForEach([TokenUnitStyle.chinese, .metric], id: \.self) { style in
+                                    Text(style == .chinese ? "万 / 亿" : "K / M / B").tag(style)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 180)
+                        }
+                    }
+
                     // Notifications
                     settingCard("通知", icon: "bell") {
                         Toggle(isOn: $prefs.idleNotifyEnabled) {
