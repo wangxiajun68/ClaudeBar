@@ -48,7 +48,11 @@ private enum WidgetTheme {
             Color(hex: 0xE0A13C),
             Color(hex: 0xE46464),
         ]
-        return palette[abs(model.hashValue) % palette.count]
+        // djb2 — stable across launches/processes so Widget matches the main
+        // app's tint for the same model (String.hashValue is NOT stable).
+        var h: UInt64 = 5_381
+        for b in model.utf8 { h = (h &* 33) &+ UInt64(b) }
+        return palette[Int(h % UInt64(palette.count))]
     }
 }
 
@@ -72,8 +76,8 @@ struct WidgetEntryView: View {
         VStack(alignment: .leading, spacing: 0) {
             if isEmpty {
                 Spacer()
-                Text("等待数据...")
-                    .font(.system(size: 14))
+                Text("// waiting for signals")
+                    .font(.system(size: 14, design: .monospaced))
                     .foregroundColor(WidgetTheme.textTertiary())
                     .frame(maxWidth: .infinity)
                 Spacer()
@@ -88,6 +92,8 @@ struct WidgetEntryView: View {
                             Text(formatTokens(s.todayTotalTokens))
                                 .font(.system(size: 28, weight: .semibold))
                                 .monospacedDigit()
+                                .contentTransition(.numericText())
+                                .animation(.easeInOut(duration: 0.4), value: s.todayTotalTokens)
                                 .foregroundColor(WidgetTheme.textPrimary)
                             Text("tokens")
                                 .font(.system(size: 9))

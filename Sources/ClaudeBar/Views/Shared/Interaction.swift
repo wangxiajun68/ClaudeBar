@@ -13,6 +13,7 @@ struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
             .animation(Theme.Animation.bouncy, value: configuration.isPressed)
     }
 }

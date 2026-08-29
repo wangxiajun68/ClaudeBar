@@ -5,6 +5,8 @@ import SwiftUI
 /// Dashboard's activity feed. Extracted from `MenuBarView.sessionCard`.
 struct SessionCardView: View {
     let session: SessionInfo
+    /// Busy heartbeat trail for this session (oldest → newest); nil = N/A.
+    var heartbeat: [Bool]? = nil
     var onDoubleTap: (() -> Void)? = nil
 
     private var isBusy: Bool { session.status == .busy }
@@ -41,32 +43,48 @@ struct SessionCardView: View {
                 ContextBar(ratio: ratio, height: 3)
             }
 
-            if !session.currentActivity.isEmpty {
-                Text(session.currentActivity)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
-                    .lineLimit(1)
-            }
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 3) {
+                    if !session.currentActivity.isEmpty {
+                        Text(session.currentActivity)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
+                            .lineLimit(1)
+                    }
 
-            HStack(spacing: 4) {
-                if hasAgents {
-                    Text("⚙\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count })")
-                        .font(.system(size: 10))
-                        .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
+                    HStack(spacing: 4) {
+                        if hasAgents {
+                            Text("⚙\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count })")
+                                .font(.system(size: 10))
+                                .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
+                        }
+                        if !session.model.isEmpty {
+                            Text(session.model)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary())
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if let heartbeat {
+                            HeartbeatSparkline(trail: heartbeat)
+                        }
+                        Text(session.relativeUpdated)
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.textTertiary())
+                    }
                 }
-                if !session.model.isEmpty {
-                    Text(session.model)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
+                // Subagent chord: one vertical line per live subagent —
+                // taller and glowing while running, dim stub when done.
+                // Parallelism made visible at a glance.
+                if runningAgents > 0 {
+                    AgentChordLines(running: runningAgents, total: agentTotal)
+                        .frame(height: 22)
+                        .transition(.opacity)
                 }
-                Spacer()
-                Text(session.relativeUpdated)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary())
             }
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
+        .animation(Theme.Animation.smooth, value: runningAgents)
         .glassEffect(
             .regular.tint(isBusy ? Theme.statusBusy.opacity(isHovered ? 0.20 : 0.12) : Color.white.opacity(0.05)),
             in: RoundedRectangle(cornerRadius: 6)
@@ -79,5 +97,37 @@ struct SessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onDoubleTap?() }
+    }
+
+    private var agentTotal: Int {
+        session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count }
+    }
+}
+
+/// Vertical bars, one per subagent of the session. Running agents render as
+/// tall glowing lines; finished ones as short dim stubs — like audio level
+/// meters frozen mid-mix.
+private struct AgentChordLines: View {
+    let running: Int
+    let total: Int
+
+    var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<total, id: \.self) { i in
+                let isRunning = i < running
+                Capsule()
+                    .fill(isRunning ? Theme.statusBusy.opacity(0.85) : Theme.textTertiary(0.18))
+                    .frame(width: 2.5, height: isRunning ? 20 : 7)
+                    // Tall lines get a faint glow via a blurred underlay.
+                    .background {
+                        if isRunning {
+                            Capsule()
+                                .fill(Theme.statusBusy.opacity(0.35))
+                                .frame(height: 20)
+                                .blur(radius: 2.5)
+                        }
+                    }
+            }
+        }
     }
 }

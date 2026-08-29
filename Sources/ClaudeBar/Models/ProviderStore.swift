@@ -23,6 +23,11 @@ class ProviderStore: ObservableObject {
     // Live Claude Code sessions
     @Published var sessions: [SessionInfo] = []
     @Published var expandedSessionPIDs: Set<Int> = []
+    /// Per-session busy heartbeat — the last `heartbeatLength` polls, oldest
+    /// first. `true` = the session was busy at that sample. Published so cards
+    /// can draw an EKG-style sparkline from polling we were doing anyway.
+    @Published var heartbeats: [Int: [Bool]] = [:]
+    static let heartbeatLength = 24
     private var sessionTimer: Timer?
     /// Last serialized snapshot — `writeWidgetSnapshot()` only writes files +
     /// reloads widget timelines when the payload actually changes, so the 2.5s
@@ -57,27 +62,87 @@ class ProviderStore: ObservableObject {
     // MARK: - Sessions
 
     func refreshSessions() {
-        var sessions = SessionMonitor.fetchActive()
-        // Enrich alive sessions with context-window usage from their transcripts.
-        for i in sessions.indices where sessions[i].isAlive {
-            let ctx = SessionMonitor.fetchContext(for: sessions[i])
-            sessions[i].contextTokens = ctx.tokens
-            sessions[i].model = ctx.model
-            sessions[i].messageCount = ctx.count
-            sessions[i].currentActivity = ctx.activity
-            sessions[i].toolPending = ctx.toolPending
+        // The scan reads session JSONs + transcript tails + subagent dirs —
+        // pure file I/O. Run it off the main thread and only hop back to
+        // publish the parsed results, so the 2.5s poll never blocks the UI.
+        let contextLimits = currentContextLimits
+        Task.detached(priority: .utility) { [weak self] in
+            // `let scanned` (not var) so the capture is an immutable
+            // sendable value — no concurrent-mutation warning.
+            let enriched = Self.enrich(SessionMonitor.fetchActive(), limits: contextLimits)
+            let samples = Self.heartbeatSamples(from: enriched)
+            await MainActor.run { [weak self] in
+                self?.sessions = enriched
+                self?.recordHeartbeats(samples)
+                self?.refreshCursorSessions()
+            }
+        }
+    }
+
+    /// pid → was-busy for this poll (alive sessions only).
+    private static func heartbeatSamples(from sessions: [SessionInfo]) -> [Int: Bool] {
+        var out: [Int: Bool] = [:]
+        for s in sessions where s.isAlive {
+            out[s.pid] = s.status == .busy || s.toolPending
+        }
+        return out
+    }
+
+    /// Append one sample per session to its ring buffer, dropping dead
+    /// sessions' trails and pruning to `heartbeatLength`.
+    private func recordHeartbeats(_ samples: [Int: Bool]) {
+        guard !samples.isEmpty else {
+            if !heartbeats.isEmpty { heartbeats = [:] }
+            return
+        }
+        for (pid, busy) in samples {
+            var trail = heartbeats[pid] ?? []
+            trail.append(busy)
+            if trail.count > Self.heartbeatLength { trail.removeFirst(trail.count - Self.heartbeatLength) }
+            heartbeats[pid] = trail
+        }
+        // Prune trails for sessions that have died.
+        let live = Set(samples.keys)
+        heartbeats = heartbeats.filter { live.contains($0.key) }
+    }
+
+    /// Enrich alive sessions with transcript context + subagents. Pure
+    /// function so it can run wholly off-main.
+    private static func enrich(_ sessions: [SessionInfo], limits: [String: Int]) -> [SessionInfo] {
+        var result = sessions
+        for i in result.indices where result[i].isAlive {
+            let ctx = SessionMonitor.fetchContext(for: result[i])
+            result[i].contextTokens = ctx.tokens
+            result[i].model = ctx.model
+            result[i].messageCount = ctx.count
+            result[i].currentActivity = ctx.activity
+            result[i].toolPending = ctx.toolPending
             // A pending tool call means the session is actively working even
             // if the session-json status hasn't flipped to "busy" yet.
-            if ctx.toolPending { sessions[i].status = .busy }
+            if ctx.toolPending { result[i].status = .busy }
             // Resolve the context limit from the matching provider's model config.
-            sessions[i].contextLimit = resolveContextLimit(for: sessions[i])
+            result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
             // Live subagents + workflows spawned by this session.
-            let subs = SessionMonitor.fetchSubagents(for: sessions[i])
-            sessions[i].subagents = subs.direct
-            sessions[i].workflows = subs.workflows
+            let subs = SessionMonitor.fetchSubagents(for: result[i])
+            result[i].subagents = subs.direct
+            result[i].workflows = subs.workflows
         }
-        self.sessions = sessions
-        refreshCursorSessions()
+        return result
+    }
+
+    /// Case-insensitive model name → configured context-token limit. Captured
+    /// on the calling thread before the detached scan (providers is main-thread
+    /// state); the lookup itself then runs off-main.
+    private var currentContextLimits: [String: Int] {
+        var limits: [String: Int] = [:]
+        for provider in providers {
+            for m in provider.models {
+                if let n = Int(m.contextTokens), n > 0 {
+                    limits[m.name.lowercased()] = n
+                }
+            }
+        }
+        return limits
     }
 
     // MARK: - Cursor Sessions
@@ -98,24 +163,15 @@ class ProviderStore: ObservableObject {
         }
     }
 
-    /// Find the provider/model matching a session's actual model name and
-    /// return its configured context-token limit (0 if unknown).
-    private func resolveContextLimit(for session: SessionInfo) -> Int {
-        guard !session.model.isEmpty else { return 0 }
-        for provider in providers {
-            for m in provider.models where m.name.caseInsensitiveCompare(session.model) == .orderedSame {
-                return Int(m.contextTokens) ?? 0
-            }
-        }
-        return 0
-    }
-
     private func startSessionPolling() {
         sessionTimer?.invalidate()
         sessionTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             self?.refreshSessions()
         }
     }
+    // Note: the timer only *triggers* on the main run loop; the actual scan
+    // runs inside a detached task (see refreshSessions) — the main thread
+    // merely receives parsed results.
 
     // MARK: - Load / Save
 
