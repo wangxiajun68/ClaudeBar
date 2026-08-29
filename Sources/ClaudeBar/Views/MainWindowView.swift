@@ -92,8 +92,11 @@ struct MainWindowView: View {
         }
         .padding(.horizontal, Theme.Space.s16)
         .frame(height: 48)
-        .background(Theme.sidebarFill)
-        .glassEffect(.regular.tint(Theme.base2.opacity(0.15)), in: Rectangle())
+        // Flat translucent fill, not glassEffect: a full-width live blur is
+        // re-composited on every 2.5s poll publish and is the single most
+        // expensive layer in the window. A static fill reads the same over
+        // the near-black backdrop at a fraction of the GPU cost.
+        .background(Theme.base1.opacity(0.55))
     }
 
     private var brand: some View {

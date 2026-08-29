@@ -123,6 +123,8 @@ private struct AgentChordLines: View {
                     .fill(isRunning ? Theme.statusBusy.opacity(0.85) : Theme.textTertiary(0.18))
                     .frame(width: 2.5, height: isRunning ? 20 : 7)
                     // Tall lines get a faint glow via a blurred underlay.
+                    // Static (no animation) — blur layers are expensive to
+                    // keep live; the underlay only changes with `running`.
                     .background {
                         if isRunning {
                             Capsule()
