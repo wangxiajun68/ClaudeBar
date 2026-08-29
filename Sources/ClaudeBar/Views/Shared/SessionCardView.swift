@@ -45,12 +45,12 @@ struct SessionCardView: View {
 
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
-                    if !session.currentActivity.isEmpty {
-                        Text(session.currentActivity)
-                            .font(Theme.Font.microMono)
-                            .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
-                            .lineLimit(1)
-                    }
+                    // Always render the activity line (space-reserved when
+                    // empty) so the card height doesn't jitter between polls.
+                    Text(session.currentActivity.isEmpty ? " " : session.currentActivity)
+                        .font(Theme.Font.microMono)
+                        .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary(0.55))
+                        .lineLimit(1)
 
                     HStack(spacing: 4) {
                         if hasAgents {
@@ -61,7 +61,7 @@ struct SessionCardView: View {
                         if !session.model.isEmpty {
                             Text(session.model)
                                 .font(Theme.Font.microMono)
-                                .foregroundColor(Theme.textTertiary())
+                                .foregroundColor(Theme.textTertiary(0.55))
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -70,7 +70,7 @@ struct SessionCardView: View {
                         }
                         Text(session.relativeUpdated)
                             .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textTertiary())
+                            .foregroundColor(Theme.textTertiary(0.55))
                     }
                 }
                 // Subagent chord: one vertical line per live subagent —
@@ -96,6 +96,9 @@ struct SessionCardView: View {
         .scaleEffect(isHovered ? 1.02 : 1)
         .hoverState($isHovered)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(session.projectFolder)，\(isBusy ? "忙碌" : "空闲")，上下文 \(session.contextLabel)")
+        .accessibilityHint("连按在终端中恢复会话")
         .onTapGesture(count: 2) { onDoubleTap?() }
     }
 
