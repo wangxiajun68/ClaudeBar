@@ -44,6 +44,15 @@ enum ExternalAgentKind: String, CaseIterable {
         }
     }
 
+    /// SF Symbol used in section headers.
+    var icon: String {
+        switch self {
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .workbuddy: return "person.crop.rectangle.stack"
+        case .openclaw: return "antenna.radiowaves.left.and.right"
+        }
+    }
+
     /// Root directory of the tool's session data.
     var rootDir: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

@@ -69,7 +69,7 @@ struct SessionsView: View {
                 titleBar
                 claudeSection
                 cursorSection
-                externalSection
+                externalSections
             }
             .padding(Theme.Space.s24)
         }
@@ -130,19 +130,28 @@ struct SessionsView: View {
         }
     }
 
-    // MARK: External tools (Codex / WorkBuddy / OpenClaw)
+    // MARK: External tools — one section per tool
 
-    private var externalSection: some View {
-        let alive = providerStore.aliveExternalSessions
-        let active = providerStore.activeExternalCount
+    /// One section per external tool, in a fixed display order. Tools with no
+    /// sessions in the window collapse to a quiet empty hint so the page
+    /// reads as a stable roster.
+    private var externalSections: some View {
+        ForEach([ExternalAgentKind.codex, .workbuddy, .openclaw], id: \.rawValue) { kind in
+            externalSection(kind: kind)
+        }
+    }
+
+    private func externalSection(kind: ExternalAgentKind) -> some View {
+        let alive = providerStore.externalSessions.filter { $0.kind == kind && $0.isAlive }
+        let active = alive.filter(\.isActive).count
         return sectionContainer(
-            title: "Codex · WorkBuddy · OpenClaw",
-            icon: "rectangle.stack.person.crop",
+            title: kind.displayName,
+            icon: kind.icon,
             count: alive.count,
             active: active
         ) {
             if alive.isEmpty {
-                emptyHint("无活跃外部 Agent 会话")
+                emptyHint("无 \(kind.displayName) 会话")
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
