@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// A unified context-health progress bar replacing the inconsistent mix of
-/// system `ProgressView(value:)` and ad-hoc `GeometryReader` bars. Uses
-/// `Theme.contextGradient` so the fill carries directional depth.
+/// system `ProgressView(value:)` and ad-hoc `GeometryReader` bars. The fill
+/// color tracks `Theme.contextColor(ratio)`.
 struct ContextBar: View {
     let ratio: Double
     var height: CGFloat = 4
@@ -14,7 +14,7 @@ struct ContextBar: View {
                 RoundedRectangle(cornerRadius: height / 2)
                     .fill(Theme.cardFill(trackOpacity))
                 RoundedRectangle(cornerRadius: height / 2)
-                    .fill(Theme.contextGradient(ratio))
+                    .fill(Theme.contextColor(ratio))
                     .frame(width: max(height, geo.size.width * min(max(ratio, 0), 1.0)))
             }
         }

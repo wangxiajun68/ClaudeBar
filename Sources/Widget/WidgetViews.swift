@@ -81,7 +81,7 @@ struct WidgetEntryView: View {
                 // Row 1: Header + Token + Balance
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("ClaudeBar")
+                        Text("Axon")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(WidgetTheme.textSecondary)
                         HStack(alignment: .firstTextBaseline, spacing: 4) {

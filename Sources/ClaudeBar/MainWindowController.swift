@@ -44,7 +44,7 @@ final class MainWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "ClaudeBar"
+        window.title = "Axon"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         // Keep the traffic-light buttons but let content flow under the titlebar.

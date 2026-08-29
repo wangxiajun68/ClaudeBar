@@ -62,7 +62,7 @@ struct CommandPalette: View {
                         .regular.tint(Theme.bgSecondary.opacity(0.3)),
                         in: RoundedRectangle(cornerRadius: Theme.Radius.xl)
                     )
-                    .elevation(.overlay)
+                    .shadowCard(radius: 30, y: 16, opacity: 0.5)
                     .scaleEffect(isPresented ? 1 : 0.92)
                     .opacity(isPresented ? 1 : 0)
                     .offset(y: isPresented ? 0 : 8)
@@ -79,7 +79,7 @@ struct CommandPalette: View {
                 }
             }
         }
-        .animation(Theme.Animation.lively, value: isPresented)
+        .animation(Theme.Animation.smooth, value: isPresented)
     }
 
     private func moveSelection(_ delta: Int) {

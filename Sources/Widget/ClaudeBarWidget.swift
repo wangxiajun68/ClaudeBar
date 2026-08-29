@@ -8,7 +8,7 @@ struct ClaudeBarWidget: Widget {
             WidgetEntryView(entry: entry)
                 .widgetURL(URL(string: "claudebar://"))
         }
-        .configurationDisplayName("ClaudeBar")
+        .configurationDisplayName("Axon")
         .description("Claude Code 状态概览")
         .supportedFamilies([.systemLarge])
         .contentMarginsDisabled()

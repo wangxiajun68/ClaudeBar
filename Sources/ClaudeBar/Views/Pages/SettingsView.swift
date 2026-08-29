@@ -11,51 +11,41 @@ struct SettingsView: View {
                 Text("设置")
                     .font(Theme.Font.titleLarge)
                     .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .fixedSize()
 
-                GlassEffectContainer(spacing: Theme.Space.s24) {
-                    VStack(alignment: .leading, spacing: Theme.Space.s24) {
-                        // Raw config
-                        settingCard("配置文件", icon: "gearshape") {
-                            HStack {
-                                Text("~/.claude/settings.json")
-                                    .font(Theme.Font.bodySmall)
-                                    .foregroundColor(Theme.textSecondary)
-                                Spacer()
-                                Button("打开") { openSettingsFile() }
-                                    .disabled(!providerStore.hasSettingsFile)
-                                    .buttonStyle(.glass)
-                                    .tint(Theme.claude)
-                            }
-                            HStack {
-                                Text("~/.claude/claude-bar-providers.json")
-                                    .font(Theme.Font.bodySmall)
-                                    .foregroundColor(Theme.textSecondary)
-                                Spacer()
-                                Button("打开") { openProvidersFile() }
-                                    .buttonStyle(.glass)
-                                    .tint(Theme.claude)
-                            }
+                VStack(alignment: .leading, spacing: Theme.Space.s24) {
+                    // Raw config
+                    settingCard("配置文件", icon: "gearshape") {
+                        fileRow(path: "~/.claude/settings.json") {
+                            openSettingsFile()
                         }
+                        .disabled(!providerStore.hasSettingsFile)
+                        Divider()
+                        fileRow(path: "~/.claude/claude-bar-providers.json") {
+                            openProvidersFile()
+                        }
+                    }
 
-                        // About
-                        settingCard("关于", icon: "info.circle") {
-                            row("名称", "ClaudeBar")
-                            row("版本", "1.4.0")
-                            row("构建", "swiftc · ad-hoc")
-                            row("最低系统", "macOS 26 (Tahoe)")
-                        }
+                    // About
+                    settingCard("关于", icon: "info.circle") {
+                        row("名称", "Axon")
+                        row("原名", "ClaudeBar")
+                        row("版本", "1.6.0")
+                        row("构建", "swiftc · ad-hoc")
+                        row("最低系统", "macOS 26 (Tahoe)")
+                    }
 
-                        // Actions
-                        settingCard("操作", icon: "power") {
-                            Button(role: .destructive) {
-                                NSApplication.shared.terminate(nil)
-                            } label: {
-                                Label("退出 ClaudeBar", systemImage: "power")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.glassProminent)
-                            .tint(Theme.statusError)
+                    // Actions
+                    settingCard("操作", icon: "power") {
+                        Button(role: .destructive) {
+                            NSApplication.shared.terminate(nil)
+                        } label: {
+                            Label("退出 Axon", systemImage: "power")
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.statusError)
                     }
                 }
             }
@@ -70,17 +60,39 @@ struct SettingsView: View {
             Label(title, systemImage: icon)
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .fixedSize()
             content()
         }
         .padding(Theme.Space.s16)
         .panelCard()
     }
 
-    private func row(_ key: String, _ value: String) -> some View {
+    /// One settings.json / providers.json line: path on the left, "打开"
+    /// button on the right — a shared layout so both rows align.
+    private func fileRow(path: String, action: @escaping () -> Void) -> some View {
         HStack {
+            Text(path)
+                .font(Theme.Font.bodySmall)
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Button("打开", action: action)
+                .buttonStyle(.glass)
+                .tint(Theme.claude)
+        }
+    }
+
+    private func row(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(key).font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
             Spacer()
-            Text(value).font(Theme.Font.bodySmall).foregroundColor(Theme.textPrimary.opacity(0.85))
+            Text(value).font(Theme.Font.bodySmall)
+                .monospacedDigit()
+                .foregroundColor(Theme.textPrimary.opacity(0.85))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 

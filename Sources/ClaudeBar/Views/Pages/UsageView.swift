@@ -13,25 +13,22 @@ struct UsageView: View {
                 titleBar
 
                 // Period selector chips
-                GlassEffectContainer(spacing: Theme.Space.s4) {
-                    HStack(spacing: Theme.Space.s4) {
-                        ForEach(UsagePeriod.allCases) { period in
-                            let isOn = providerStore.usagePeriod == period
-                            Button(action: { selectPeriod(period) }) {
-                                Text(period.label)
-                                    .font(Theme.Font.labelSection)
-                                    .foregroundColor(isOn ? .white : Theme.textSecondary)
-                                    .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .glassEffect(
-                                        .regular.tint(isOn ? Theme.accent.opacity(0.3) : .clear),
-                                        in: RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                    )
-                            }
-                            .buttonStyle(.pressable)
-                            .symbolEffect(.bounce, value: isOn)
+                HStack(spacing: Theme.Space.s4) {
+                    ForEach(UsagePeriod.allCases) { period in
+                        let isOn = providerStore.usagePeriod == period
+                        Button(action: { selectPeriod(period) }) {
+                            Text(period.label)
+                                .font(Theme.Font.labelSection)
+                                .foregroundColor(isOn ? .white : Theme.textSecondary)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .glassEffect(
+                                    .regular.tint(isOn ? Theme.accent.opacity(0.3) : .clear),
+                                    in: RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                )
                         }
-                        Spacer()
+                        .buttonStyle(.pressable)
                     }
+                    Spacer()
                 }
 
                 if showCustomDatePicker {
@@ -51,7 +48,6 @@ struct UsageView: View {
                             .frame(width: 20, height: 20)
                     }
                     .buttonStyle(.glass)
-                    .symbolEffect(.bounce, value: providerStore.usageReferenceDate)
 
                     Text(UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
                         .font(Theme.Font.titleSmall)
@@ -66,7 +62,6 @@ struct UsageView: View {
                             .frame(width: 20, height: 20)
                     }
                     .buttonStyle(.glass)
-                    .symbolEffect(.bounce, value: providerStore.usageReferenceDate)
 
                     Spacer()
 
@@ -92,6 +87,8 @@ struct UsageView: View {
         Text("用量")
             .font(Theme.Font.titleLarge)
             .foregroundColor(Theme.textPrimary)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     private var totalLabel: String {
@@ -114,11 +111,6 @@ struct UsageView: View {
         }
         .padding(Theme.Space.s16)
         .panelCard()
-        .scrollTransition(.animated(Theme.Animation.smooth)) { content, phase in
-            content
-                .opacity(phase.isIdentity ? 1 : 0.6)
-                .scaleEffect(phase.isIdentity ? 1 : 0.97)
-        }
     }
 
     private func usageRow(_ stat: ModelUsage) -> some View {
@@ -146,10 +138,8 @@ struct UsageView: View {
 
 // MARK: - Usage bar row
 
-/// A per-model usage row that responds to hover: the bar grows slightly taller
-/// and brighter, and the track reveals a percentage label. Hovering a data row
-/// to surface its detail is the kind of in-place exploration that replaces a
-/// flat listing with an interactive one.
+/// A per-model usage row: model name, a proportional fill bar, the formatted
+/// token count and its share — all visible without interaction.
 private struct UsageBarRow: View {
     let stat: ModelUsage
     let maxTokens: Int
@@ -159,37 +149,40 @@ private struct UsageBarRow: View {
         let ratio = maxTokens > 0 ? CGFloat(stat.totalTokens) / CGFloat(maxTokens) : 0
         let color = Theme.barColor(for: stat.model)
         return HStack(spacing: 12) {
+            // Fixed model column keeps the bars and trailing numbers on a
+            // shared vertical grid across rows; long names truncate in the
+            // middle so the head and TLD of the id stay visible.
             Text(stat.model)
                 .font(Theme.Font.bodySmall)
                 .foregroundColor(Theme.textPrimary.opacity(isHovered ? 1 : 0.85))
-                .frame(width: 160, alignment: .leading)
+                .frame(width: 180, alignment: .leading)
                 .lineLimit(1)
+                .truncationMode(.middle)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Theme.cardFill(0.08))
-                        .frame(height: isHovered ? 10 : 8)
+                        .frame(height: 8)
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.barGradient(for: stat.model))
-                        .frame(width: max(4, geo.size.width * ratio), height: isHovered ? 10 : 8)
-                        .opacity(isHovered ? 1 : 0.9)
+                        .fill(color)
+                        .frame(width: max(4, geo.size.width * ratio), height: 8)
                 }
             }
             .frame(height: 14)
-            HStack(spacing: 4) {
-                Text(UsageStats.formatTokens(stat.totalTokens))
-                    .font(Theme.Font.bodySmall)
-                    .foregroundColor(Theme.textSecondary)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: stat.totalTokens)
-                // Percentage reveals on hover — the row "explains itself".
-                Text("\(Int(ratio * 100))%")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(color)
-                    .opacity(isHovered ? 1 : 0)
-                    .frame(width: isHovered ? nil : 0)
-            }
-            .frame(width: 80, alignment: .trailing)
+            // Tokens and share each get their own fixed trailing column so
+            // digits align vertically instead of drifting with content.
+            Text(UsageStats.formatTokens(stat.totalTokens))
+                .font(Theme.Font.bodySmall)
+                .monospacedDigit()
+                .foregroundColor(Theme.textSecondary)
+                .frame(width: 64, alignment: .trailing)
+                .contentTransition(.numericText())
+                .animation(Theme.Animation.smooth, value: stat.totalTokens)
+            Text("\(Int(ratio * 100))%")
+                .font(Theme.Font.captionMono)
+                .monospacedDigit()
+                .foregroundColor(color)
+                .frame(width: 40, alignment: .trailing)
         }
         .padding(.vertical, 3)
         .hoverState($isHovered)

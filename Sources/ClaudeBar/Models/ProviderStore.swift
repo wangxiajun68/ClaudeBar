@@ -274,24 +274,63 @@ class ProviderStore: ObservableObject {
 
     // MARK: - Usage Stats
 
+    /// Coalesces rapid `refreshUsage()` calls (period flips, date arrows, the
+    /// manual refresh button) into one background scan — a scan can take a
+    /// moment on a large transcript tree, so back-to-back requests collapse
+    /// instead of queueing duplicate work.
+    private var usageRefreshPending = false
+    private var usageRefreshQueued = false
+
     func refreshUsage() {
+        // Runs entirely on the main actor: the state below is only touched
+        // here, so plain boolean fields need no lock. The heavy scan happens
+        // inside `Task.detached`, and this call returns immediately.
+        if usageRefreshPending {
+            usageRefreshQueued = true
+            return
+        }
+        usageRefreshPending = true
         usageLoading = true
-        let interval = UsageStats.interval(for: usagePeriod, reference: usageReferenceDate)
-        Task.detached(priority: .utility) {
-            var result = UsageStats.fetch(in: interval)
-            // Cursor's token history is a stable full-scan total (Cursor
-            // stopped writing tokens after ~2026-03), so it is appended to
-            // every period rather than interval-filtered. See CursorUsageStats.
-            if let cursor = CursorUsageStats.fetch() {
-                result.append(cursor)
-                result.sort { $0.totalTokens > $1.totalTokens }
-            }
-            let final = result
-            await MainActor.run { [weak self] in
+
+        Task.detached(priority: .utility) { [weak self] in
+            while true {
                 guard let self else { return }
-                self.usageStats = final
-                self.usageLoading = false
-                self.writeWidgetSnapshot()
+                // Capture the caller's requested period/date on the main actor.
+                let interval = await MainActor.run {
+                    UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate)
+                }
+
+                var result = UsageStats.fetch(in: interval)
+                // Cursor's token history is a stable full-scan total (Cursor
+                // stopped writing tokens after ~2026-03), so it is appended to
+                // every period rather than interval-filtered. See CursorUsageStats.
+                // The fetch is TTL-cached inside CursorUsageStats, so repeated
+                // period/date switches don't rescan the multi-GB Cursor DB.
+                if let cursor = CursorUsageStats.fetch() {
+                    result.append(cursor)
+                    result.sort { $0.totalTokens > $1.totalTokens }
+                }
+                let final = result
+
+                // If another refresh was requested while scanning, loop and
+                // re-run with the latest period; otherwise publish and finish.
+                let shouldContinue: Bool = await MainActor.run {
+                    if self.usageRefreshQueued {
+                        self.usageRefreshQueued = false
+                        return true
+                    }
+                    self.usageRefreshPending = false
+                    return false
+                }
+                if shouldContinue { continue }
+
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.usageStats = final
+                    self.usageLoading = false
+                    self.writeWidgetSnapshot()
+                }
+                return
             }
         }
     }
