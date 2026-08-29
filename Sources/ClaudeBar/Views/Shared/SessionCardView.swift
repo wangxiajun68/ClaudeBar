@@ -30,12 +30,10 @@ struct SessionCardView: View {
                     .foregroundColor(Theme.textPrimary.opacity(0.9))
                     .lineLimit(1)
                 Spacer()
-                if session.contextTokens > 0 {
-                    Text(session.contextLabel)
-                        .font(Theme.Font.microMono.weight(.medium))
-                        .foregroundColor(ctxColor.opacity(0.9))
-                        .lineLimit(1)
-                }
+                Text(session.contextLabel)
+                    .font(Theme.Font.microMono.weight(.medium))
+                    .foregroundColor(ctxColor.opacity(0.9))
+                    .lineLimit(1)
             }
 
             // Always rendered (dimmed when no data) so every card in the
