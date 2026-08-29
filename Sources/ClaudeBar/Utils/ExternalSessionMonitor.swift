@@ -110,8 +110,11 @@ struct ExternalSessionMonitor {
             for file in files where file.hasSuffix(".jsonl") {
                 let path = "\(dayPath)/\(file)"
                 guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
-                let head = readHead(path: path, bytes: 16_000)
+                let head = readHead(path: path, bytes: 32_000)
                 let cwd = head.field(forKey: "\"cwd\":\"")
+                // Prefer the turn_context model; fall back to any "model"
+                // occurrence (session_meta has none, turn_context always
+                // appears within the first turns).
                 let model = head.field(forKey: "\"model\":\"")
                 let sessionId = file
                     .replacingOccurrences(of: "rollout-", with: "")
@@ -154,9 +157,24 @@ struct ExternalSessionMonitor {
             for file in files where file.hasSuffix(".jsonl") {
                 let path = "\(dirPath)/\(file)"
                 guard let meta = fileMeta(path: path, cutoff: now - kind.recencyWindow) else { continue }
-                let head = readHead(path: path, bytes: 8_000)
+                // WorkBuddy's cwd lives inside the first user message's
+                // <system-reminder> block, which can run long — the head
+                // needs enough bytes to reach it (measured: ~13.4KB on a
+                // real transcript).
+                let head = readHead(path: path, bytes: 24_000)
                 let cwd = head.field(forKey: "\"cwd\":\"")
-                let model = head.field(forKey: "\"model\":\"")
+                // The model sits on providerData (e.g. "providerData":
+                // {"model":"glm-5.2",…}); a bare "model" key also appears in
+                // other uuid-ish contexts, so anchor on providerData.
+                var model = ""
+                if let pr = head.range(of: "\"providerData\":{") {
+                    let pdSegment = head[pr.upperBound...]
+                    let pdEnd = pdSegment.firstIndex(of: "\n") ?? pdSegment.endIndex
+                    if let mr = pdSegment[..<pdEnd].range(of: "\"model\":\"") {
+                        let after = pdSegment[mr.upperBound...]
+                        if let q = after.firstIndex(of: "\"") { model = String(after[..<q]) }
+                    }
+                }
                 results.append(ExternalSessionInfo(
                     kind: .workbuddy,
                     sessionId: (file as NSString).deletingPathExtension,
@@ -227,7 +245,8 @@ struct ExternalSessionMonitor {
     /// Bounded head read of a JSONL file, returned as a String. Only the
     /// first records are needed (session_meta / turn_context / model_change
     /// all appear at the top of the file), so we never read the full
-    /// transcript — a fresh 8–16KB head answers cwd + model.
+    /// transcript. 24KB covers WorkBuddy's long first user-context block
+    /// (measured ~13.4KB before the cwd appears on a real transcript).
     private static func readHead(path: String, bytes: Int) -> String {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return "" }
         defer { try? handle.close() }
