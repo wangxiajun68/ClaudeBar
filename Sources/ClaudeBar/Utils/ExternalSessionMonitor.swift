@@ -54,11 +54,11 @@ enum ExternalAgentKind: String, CaseIterable {
         }
     }
 
-    /// A session counts as "alive" while its transcript was touched this
-    /// recently — there is no PID file, so recency is the only liveness
-    /// signal. 6 hours covers a long working day without flooding the list
-    /// with day-old composers.
-    var recencyWindow: TimeInterval { 6 * 3600 }
+    /// A session counts as "alive" (surfaced in the list) while its
+    /// transcript was touched this recently. There is no PID file, so
+    /// recency is the only liveness signal. 30 days covers history browsing;
+    /// sessions sort most-recent-first so old ones never crowd the top.
+    var recencyWindow: TimeInterval { 30 * 86400 }
 
     /// A session counts as "active" (mid-turn) while its transcript was
     /// touched this recently. Turn granularity differs per tool: Codex
@@ -94,42 +94,51 @@ struct ExternalSessionMonitor {
         let root = ExternalAgentKind.codex.rootDir
         let now = Date().timeIntervalSince1970
         // A session is only surfaced if its file was touched within the
-        // recency window — restrict the directory walk to dates that can
-        // still qualify (today ± 1).
+        // recency window. Codex nests by year/month/day; cap the walk at the
+        // 3 most recent months so a long Codex history never walks the whole
+        // tree.
         let cutoff = now - ExternalAgentKind.codex.recencyWindow
 
         var results: [ExternalSessionInfo] = []
         let fm = FileManager.default
-        guard let dayDirs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
-        for day in dayDirs.sorted().reversed() {                    // newest date first
-            let dayPath = "\(root)/\(day)"
-            guard let attrs = try? fm.attributesOfItem(atPath: dayPath),
-                  let dayMod = attrs[.modificationDate] as? Date, dayMod.timeIntervalSince1970 >= cutoff - 86_400
-            else { continue }
-            guard let files = try? fm.contentsOfDirectory(atPath: dayPath) else { continue }
-            for file in files where file.hasSuffix(".jsonl") {
-                let path = "\(dayPath)/\(file)"
-                guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
-                let head = readHead(path: path, bytes: 32_000)
-                let cwd = head.field(forKey: "\"cwd\":\"")
-                // Prefer the turn_context model; fall back to any "model"
-                // occurrence (session_meta has none, turn_context always
-                // appears within the first turns).
-                let model = head.field(forKey: "\"model\":\"")
-                let sessionId = file
-                    .replacingOccurrences(of: "rollout-", with: "")
-                    .suffix(36)                                     // trailing uuid
-                results.append(ExternalSessionInfo(
-                    kind: .codex,
-                    sessionId: String(sessionId),
-                    cwd: cwd,
-                    startedAt: meta.mtime * 1000,
-                    updatedAt: meta.mtime * 1000,
-                    model: model,
-                    isAlive: true,
-                    isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow
-                ))
+        guard let yearDirs = try? fm.contentsOfDirectory(atPath: root).sorted().reversed() else { return [] }
+        yearLoop: for year in yearDirs {
+            let yearPath = "\(root)/\(year)"
+            guard let months = try? fm.contentsOfDirectory(atPath: yearPath).sorted().reversed() else { continue }
+            for month in months {
+                let monthPath = "\(yearPath)/\(month)"
+                guard let days = try? fm.contentsOfDirectory(atPath: monthPath).sorted().reversed() else { continue }
+                for day in days {
+                    let dayPath = "\(monthPath)/\(day)"
+                    guard let files = try? fm.contentsOfDirectory(atPath: dayPath) else { continue }
+                    for file in files where file.hasSuffix(".jsonl") {
+                        let path = "\(dayPath)/\(file)"
+                        guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
+                        let head = readHead(path: path, bytes: 32_000)
+                        let cwd = head.field(forKey: "\"cwd\":\"")
+                        // Prefer the turn_context model; fall back to any "model"
+                        // occurrence (session_meta has none, turn_context always
+                        // appears within the first turns).
+                        let model = head.field(forKey: "\"model\":\"")
+                        let sessionId = file
+                            .replacingOccurrences(of: "rollout-", with: "")
+                            .suffix(36)                                 // trailing uuid
+                        results.append(ExternalSessionInfo(
+                            kind: .codex,
+                            sessionId: String(sessionId),
+                            cwd: cwd,
+                            startedAt: meta.mtime * 1000,
+                            updatedAt: meta.mtime * 1000,
+                            model: model,
+                            isAlive: true,
+                            isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow
+                        ))
+                    }
+                }
             }
+            // History is capped: once a year's scan has crossed the window,
+            // older years cannot qualify. Stop after 2 years max walk.
+            if results.count > 400 { break yearLoop }
         }
         return results
     }
