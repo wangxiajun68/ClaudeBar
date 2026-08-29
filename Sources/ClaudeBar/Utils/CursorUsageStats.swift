@@ -32,39 +32,67 @@ import SQLite3
 /// flickers to zero, and the next call retries the scan.
 struct CursorUsageStats {
 
-    /// How long a computed aggregate stays valid. The source data is essentially
-    /// frozen (no writes since ~2026-03), so this only guards against the rare
-    /// case of Cursor resuming writes; 10 minutes keeps it fresh with no
-    /// realistic cost.
-    private static let cacheTTL: TimeInterval = 600
+    /// Full rescan interval. Between full rescans the aggregate is maintained
+    /// incrementally (see `scan()`), and the rescan corrects any drift from
+    /// deleted bubble rows. The source data is essentially frozen (no writes
+    /// since ~2026-03), so an hour is generous.
+    private static let fullRescanInterval: TimeInterval = 3_600
 
     private static var cachedUsage: ModelUsage?
     private static var cachedAt: Date = .distantPast
+    /// Cheap DB write-detection snapshot from the last scan: (data_version,
+    /// page_count). Both are header reads (~0 ms); if neither changed, the
+    /// bubble set cannot have changed either and the scan is skipped entirely.
+    private static var lastDBStamp: (version: Int32, pages: Int64)?
     private static let cacheLock = NSLock()
 
-    /// Scan all `bubbleId:*` rows in `cursorDiskKV` and sum their token counts
-    /// into one `ModelUsage(model: "Cursor")`. Returns nil only if the scan
-    /// fails and no previous value is available. Result is TTL-cached.
+    /// Aggregate Cursor token usage. Returns nil only if no value is available
+    /// (scan failed and nothing cached). With a warm cache and an unchanged
+    /// DB this is a pure in-memory hit.
     static func fetch() -> ModelUsage? {
         cacheLock.lock()
         let hit = cachedUsage
         let age = Date().timeIntervalSince(cachedAt)
+        let stamp = lastDBStamp
         cacheLock.unlock()
-        if let hit, age < cacheTTL { return hit }
 
+        // Fast path: cached and the DB header is unchanged — no I/O at all.
+        if let hit, age < fullRescanInterval, let stamp,
+           let current = dbStamp(), current.version == stamp.version, current.pages == stamp.pages {
+            return hit
+        }
+
+        // Expensive path: full rescan (corrects deletion drift, re-stamps).
         let fresh = scan()
         cacheLock.lock()
         if let fresh {
             cachedUsage = fresh
             cachedAt = Date()
+            lastDBStamp = dbStamp()
         }
         let result = fresh ?? cachedUsage
         cacheLock.unlock()
         return result
     }
 
+    /// (data_version, page_count) of the state DB, or nil if unreadable.
+    /// Both come from the SQLite header — no table I/O.
+    private static func dbStamp() -> (version: Int32, pages: Int64)? {
+        guard let db = CursorDB.open() else { return nil }
+        defer { sqlite3_close(db) }
+        var version: Int32 = 0
+        var pages: Int64 = 0
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA data_version", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        if sqlite3_step(stmt) == SQLITE_ROW { version = sqlite3_column_int(stmt, 0) }
+        sqlite3_finalize(stmt)
+        guard sqlite3_prepare_v2(db, "PRAGMA page_count", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        if sqlite3_step(stmt) == SQLITE_ROW { pages = sqlite3_column_int64(stmt, 0) }
+        sqlite3_finalize(stmt)
+        return (version, pages)
+    }
+
     /// One SQL pass over the bubble rows: sums happen inside SQLite so only a
-    /// single aggregate row crosses into Swift.
     private static func scan() -> ModelUsage? {
         guard let db = CursorDB.open() else { return nil }
         defer { sqlite3_close(db) }
