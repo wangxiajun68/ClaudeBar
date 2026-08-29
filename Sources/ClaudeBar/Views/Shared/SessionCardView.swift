@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// Compact session card for the 2-column grid: status, project, context fill,
-/// activity, and recency in a tight tile. Shared by the menu-bar popup and the
-/// Dashboard's activity feed. Extracted from `MenuBarView.sessionCard`.
+/// activity, and recency in a tight tile. Used by the menu-bar popup.
 struct SessionCardView: View {
     let session: SessionInfo
     /// Busy heartbeat trail for this session (oldest → newest); nil = N/A.

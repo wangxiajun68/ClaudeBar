@@ -161,12 +161,13 @@ struct CommandPalette: View {
                         tint: Theme.statusBusy,
                         result: .session(pid: s.pid))
         }
+        // Cursor sessions carry no UUID, so they route to the sessions page.
         items += providerStore.cursorSessions.map { s in
             CommandItem(kind: .cursorSession, title: s.projectFolder,
                         subtitle: s.name.isEmpty ? "Cursor" : s.name,
                         icon: "cursorarrow",
                         tint: Theme.cursorAccent,
-                        result: .provider(id: UUID())) // cursor has no UUID; route to sessions page
+                        result: .provider(id: UUID()))
         }
         items += providerStore.providers.map { p in
             CommandItem(kind: .provider, title: p.name,
@@ -178,24 +179,16 @@ struct CommandPalette: View {
         return items
     }
 
-    /// Fuzzy-ish filter: case-insensitive substring on title + subtitle, with
-    /// simple prefix-rank so typed-prefix matches float above contained ones.
+    /// Case-insensitive substring filter on title + subtitle; prefix matches
+    /// rank above contained matches.
     private var filtered: [CommandItem] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return allItems }
-        return allItems.compactMap { item in
-            let title = item.title.lowercased()
-            let sub = item.subtitle.lowercased()
-            guard title.contains(q) || sub.contains(q) else { return nil }
-            return item
-        }
-        .sorted { a, b in
-            // Prefix matches rank first.
-            let ap = a.title.lowercased().hasPrefix(q)
-            let bp = b.title.lowercased().hasPrefix(q)
-            if ap != bp { return ap }
-            return false
-        }
+        return allItems
+            .filter { item in
+                item.title.lowercased().contains(q) || item.subtitle.lowercased().contains(q)
+            }
+            .sorted { $0.title.lowercased().hasPrefix(q) && !$1.title.lowercased().hasPrefix(q) }
     }
 
     // MARK: Actions

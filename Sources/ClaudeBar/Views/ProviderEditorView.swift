@@ -17,15 +17,14 @@ struct ProviderEditorView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 500)
-        .onChange(of: model.selectedID) { old, new in
-            if old != new { model.loadSelected() }
+        .onChange(of: model.selectedID) { _, _ in
+            model.loadSelected()
         }
         .onAppear { model.attach(store: providerStore) }
-        // "Saved ✓" shows for 2s after each successful save.
+        // Hold the "saving" affordance briefly so a fast save still registers.
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
         }
     }
 

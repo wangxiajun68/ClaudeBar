@@ -5,7 +5,6 @@ import SwiftUI
 /// its own tile grid. All data flows from `ProviderStore`.
 struct DashboardView: View {
     @EnvironmentObject var providerStore: ProviderStore
-    @State private var refreshTick = 0
     /// Injected by the window so a tile tap navigates to the page.
     var onNavigate: (AppPage) -> Void = { _ in }
 
@@ -33,10 +32,7 @@ struct DashboardView: View {
                 .lineLimit(1)
                 .fixedSize()
             Spacer()
-            Button(action: {
-                refreshTick += 1
-                providerStore.refresh()
-            }) {
+            Button(action: { providerStore.refresh() }) {
                 Label("刷新", systemImage: "arrow.clockwise")
                     .font(Theme.Font.bodySmall)
             }
@@ -58,7 +54,7 @@ struct DashboardView: View {
                 onNavigate(.providers)
             }
             MetricTile(label: "会话", value: sessionValue,
-                       detail: "\(runningCount) 忙碌 · \(aliveCount + providerStore.cursorSessions.count) 活跃") {
+                       detail: "\(runningCount) 忙碌 · \(totalSessionCount) 活跃") {
                 onNavigate(.sessions)
             }
             MetricTile(label: "Token 总量", value: tokenTotalValue,
@@ -81,7 +77,7 @@ struct DashboardView: View {
     }
 
     private var sessionValue: String {
-        "\(runningCount)/\(aliveCount + providerStore.cursorSessions.count)"
+        "\(runningCount)/\(totalSessionCount)"
     }
 
     private var tokenTotalValue: String {
@@ -92,9 +88,16 @@ struct DashboardView: View {
         providerStore.sessions.filter(\.isAlive).count
     }
 
+    /// Claude busy sessions + active Cursor sessions.
     private var runningCount: Int {
         providerStore.sessions.filter { $0.isAlive && $0.status == .busy }.count
             + providerStore.cursorSessions.filter { $0.status == .active }.count
+    }
+
+    /// All live sessions across both sources — the denominator of the
+    /// busy/total metrics.
+    private var totalSessionCount: Int {
+        aliveCount + providerStore.cursorSessions.count
     }
 
     // MARK: Session overview grid
@@ -112,7 +115,7 @@ struct DashboardView: View {
                     .lineLimit(1)
                     .fixedSize()
                 Spacer()
-                Text("\(runningCount) 忙碌 / \(aliveCount + providerStore.cursorSessions.count) 活跃")
+                Text("\(runningCount) 忙碌 / \(totalSessionCount) 活跃")
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                     .contentTransition(.numericText())
@@ -163,32 +166,34 @@ struct DashboardView: View {
     }
 
     private var overviewRows: [OverviewRow] {
-        var rows: [OverviewRow] = []
-        for s in providerStore.sessions where s.isAlive {
-            rows.append(OverviewRow(
-                id: "c-\(s.pid)",
-                tint: Theme.claude,
-                busy: s.status == .busy,
-                project: s.projectFolder,
-                activity: s.currentActivity,
-                contextRatio: s.contextRatio,
-                contextLabel: s.contextLabel,
-                updated: s.relativeUpdated
-            ))
-        }
-        for s in providerStore.cursorSessions {
-            rows.append(OverviewRow(
-                id: "u-\(s.composerId)",
-                tint: Theme.cursor,
-                busy: s.status == .active,
-                project: s.projectFolder.isEmpty ? "cursor" : s.projectFolder,
-                activity: s.currentActivity,
-                contextRatio: s.contextRatio,
-                contextLabel: s.contextLabel,
-                updated: s.relativeUpdated
-            ))
-        }
-        return rows
+        let claudeRows = providerStore.sessions
+            .filter(\.isAlive)
+            .map { s in
+                OverviewRow(
+                    id: "c-\(s.pid)",
+                    tint: Theme.claude,
+                    busy: s.status == .busy,
+                    project: s.projectFolder,
+                    activity: s.currentActivity,
+                    contextRatio: s.contextRatio,
+                    contextLabel: s.contextLabel,
+                    updated: s.relativeUpdated
+                )
+            }
+        let cursorRows = providerStore.cursorSessions
+            .map { s in
+                OverviewRow(
+                    id: "u-\(s.composerId)",
+                    tint: Theme.cursor,
+                    busy: s.status == .active,
+                    project: s.projectFolder.isEmpty ? "cursor" : s.projectFolder,
+                    activity: s.currentActivity,
+                    contextRatio: s.contextRatio,
+                    contextLabel: s.contextLabel,
+                    updated: s.relativeUpdated
+                )
+            }
+        return claudeRows + cursorRows
     }
 
     // MARK: Usage top grid
@@ -230,6 +235,28 @@ struct DashboardView: View {
 
 // MARK: - Session overview tile
 
+/// Status dot for an overview tile: tinted + pulsing ring while busy, muted
+/// tint while idle.
+private struct OverviewStatusDot: View {
+    let tint: Color
+    let isBusy: Bool
+
+    var body: some View {
+        Circle()
+            .fill(isBusy ? tint : tint.opacity(0.35))
+            .frame(width: 6, height: 6)
+            .overlay {
+                if isBusy {
+                    Circle()
+                        .strokeBorder(tint.opacity(0.4), lineWidth: 3)
+                        .scaleEffect(1.7)
+                        .opacity(0.5)
+                        .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: isBusy)
+                }
+            }
+    }
+}
+
 /// One tile of the dashboard session overview: source dot + status header,
 /// full-width context bar with its label, activity line, and recency —
 /// everything readable without interaction.
@@ -245,7 +272,7 @@ private struct OverviewTile: View {
                     Circle()
                         .fill(row.tint)
                         .frame(width: 6, height: 6)
-                    StatusBadge(isOn: row.busy, color: row.busy ? row.tint : Theme.statusIdle)
+                    OverviewStatusDot(tint: row.tint, isBusy: row.busy)
                     Text(row.project)
                         .font(Theme.Font.bodySmall)
                         .foregroundColor(Theme.textPrimary)
@@ -286,6 +313,3 @@ private struct OverviewTile: View {
         .accessibilityHint("在会话页查看")
     }
 }
-
-// Mini usage rows now use the shared `UsageModelTile`
-// from `Views/Shared/UsageBar.swift`.

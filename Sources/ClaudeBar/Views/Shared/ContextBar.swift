@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// A unified context-health progress bar replacing the inconsistent mix of
-/// system `ProgressView(value:)` and ad-hoc `GeometryReader` bars. The fill
-/// color tracks `Theme.contextColor(ratio)`.
+/// Context-health progress bar; the fill color tracks
+/// `Theme.contextColor(ratio)` (calm → warning → critical).
 struct ContextBar: View {
     let ratio: Double
     var height: CGFloat = 4

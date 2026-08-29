@@ -165,13 +165,12 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detailView: some View {
         Group {
-            switch selectedPage {
+            switch selectedPage ?? .dashboard {
             case .dashboard: DashboardView(onNavigate: navigate(to:))
             case .sessions: SessionsView()
             case .providers: ProvidersView()
             case .usage: UsageView()
             case .settings: SettingsView()
-            case nil: DashboardView(onNavigate: navigate(to:))
             }
         }
         .id(selectedPage)

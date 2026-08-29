@@ -131,8 +131,3 @@ struct UsageView: View {
         )
     }
 }
-
-// MARK: - Usage tiles
-
-// Per-model usage now renders as `UsageModelTile` in a `TileGrid(.pageUsage)`
-// — the former `.page` row density is superseded on this page.

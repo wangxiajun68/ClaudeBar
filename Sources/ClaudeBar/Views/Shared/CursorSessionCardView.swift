@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Compact Cursor session card for the 2-column grid: status, project, context
-/// fill percent, activity, and recency. Cursor uses a purple accent to
-/// distinguish it from Claude's green. Extracted from `MenuBarView.cursorSessionCard`.
+/// fill percent, activity, and recency. Purple accent distinguishes it from
+/// Claude's green.
 struct CursorSessionCardView: View {
     let session: CursorSessionInfo
     var onDoubleTap: (() -> Void)? = nil

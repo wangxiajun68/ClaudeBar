@@ -2,13 +2,11 @@ import SwiftUI
 
 // MARK: - PressableStyle
 
-/// A button style that scales the content down slightly on press and lifts the
-/// shadow, then springs back on release. This is the "tactile" foundation for
-/// every tappable chip, icon button, and card — flat buttons that don't react
-/// to the press read as dead. The scale is small (0.96) so it stays classy.
+/// A button style that scales the content down slightly on press, then
+/// springs back on release. The tactile foundation for chips, icon buttons,
+/// and cards — the small 0.96 scale keeps the press subtle.
 struct PressableStyle: ButtonStyle {
     var scale: CGFloat = 0.96
-    var lift: CGFloat = 1.5
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -24,12 +22,10 @@ extension ButtonStyle where Self == PressableStyle {
 
 // MARK: - HoverState
 
-/// Tracks pointer-in / pointer-out for a view. SwiftUI's `.onHover` fires on
-/// both enter and leave, which makes building "hover-only" UI awkward; this
-/// wraps it into a bindable `@State` you can read declaratively.
+/// Tracks pointer-in / pointer-out for a view, wrapped into a bindable
+/// `@State` so hover-driven UI can be read declaratively.
 struct HoverState: ViewModifier {
     @Binding var isHovered: Bool
-    var shape: any Shape = RoundedRectangle(cornerRadius: Theme.Radius.md)
 
     func body(content: Content) -> some View {
         content
@@ -86,12 +82,9 @@ struct ActionChip: View {
 
 // MARK: - Icon chip
 
-/// A compact rounded icon tile with its own hover lift + highlight — the
-/// building block for the menu-bar popup's action bar and any small icon
-/// button. Now backed by native Liquid Glass so every icon button across
-/// the app automatically carries a real specular glass surface. The fill
-/// brightens (via glass tint) and the tile scales up slightly on hover so
-/// each icon reads as a live target.
+/// A compact rounded icon tile with a hover lift + highlight, backed by
+/// Liquid Glass so each icon carries a specular surface. Used for the
+/// menu-bar popup's action bar and small icon buttons.
 struct IconChip: View {
     let systemImage: String
     var tint: Color = .white

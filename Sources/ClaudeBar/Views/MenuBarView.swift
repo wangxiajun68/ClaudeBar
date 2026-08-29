@@ -23,7 +23,9 @@ struct MenuBarView: View {
             if !providerStore.hasSettingsFile {
                 missingSettingsView
             } else {
-                // Sessions on top; below, config+providers (left) | usage (right).
+                // Sections stack vertically; each scrolls independently rather
+                // than the whole panel compressing. No height cap here — capping
+                // the usage area squeezed its chips + tile grid.
                 VStack(alignment: .leading, spacing: 0) {
                     ProvidersPanel(panel: panel, configCollapsed: $panel.configCollapsed)
 
@@ -34,16 +36,9 @@ struct MenuBarView: View {
 
                     Divider().background(Theme.divider)
 
-                    HStack(alignment: .top, spacing: 0) {
-                        Color.clear.frame(width: 0)
-                        UsagePanel()
-                            .frame(maxWidth: .infinity)
-                    }
-                    // No height cap — capping this area is what squeezed the
-                    // chips + date nav + tile grid into a cramped pile.
+                    UsagePanel()
+                        .frame(maxWidth: .infinity)
                 }
-                // No total cap either — let content size itself; the panel
-                // scrolls per-section instead of compressing.
             }
 
             actionBar
