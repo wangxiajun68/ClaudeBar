@@ -259,9 +259,19 @@ class ProviderStore: ObservableObject {
         do {
             try SettingsManager.writeSettings(env: env)
         } catch {
+            // The settings file may now hold a partially-updated env (the
+            // write itself is atomic, but sibling fields written by an
+            // earlier activation could differ). Re-read from disk so the
+            // in-memory state always mirrors reality, and leave the old
+            // provider/model active since nothing was switched.
+            currentEnv = SettingsManager.readSettings()
             errorMessage = "Failed to write settings: \(error.localizedDescription)"
             return
         }
+        // Settings written successfully — now commit the UI state. Mutations
+        // are ordered so a hypothetical crash mid-way leaves at most a stale
+        // activeModelID on disk, never a settings file pointing at a model
+        // the store doesn't know about.
         activeProviderID = providerID
         currentEnv = env
 
@@ -272,6 +282,9 @@ class ProviderStore: ObservableObject {
         refreshBalance()
     }
 
+    /// Maps a provider/model pair onto the `settings.json` env block. All
+    /// `ANTHROPIC_DEFAULT_*_MODEL` aliases carry the chosen model name so
+    /// subagent/background traffic is routed to the same endpoint.
     private func buildEnv(from provider: Provider, model: ModelConfig) -> EnvConfig {
         EnvConfig(
             ANTHROPIC_AUTH_TOKEN: provider.authToken,
@@ -388,9 +401,9 @@ class ProviderStore: ObservableObject {
                 var result = UsageStats.fetch(in: interval)
                 // Cursor's token history is a stable full-scan total (Cursor
                 // stopped writing tokens after ~2026-03), so it is appended to
-                // every period rather than interval-filtered. See CursorUsageStats.
-                // The fetch is TTL-cached inside CursorUsageStats, so repeated
-                // period/date switches don't rescan the multi-GB Cursor DB.
+                // every period rather than interval-filtered. The fetch is
+                // TTL-cached inside CursorUsageStats, so repeated period/date
+                // switches don't rescan the multi-GB Cursor DB.
                 if let cursor = CursorUsageStats.fetch() {
                     result.append(cursor)
                     result.sort { $0.totalTokens > $1.totalTokens }
