@@ -116,8 +116,11 @@ enum Theme {
         static let captionMono: CGFloat = 0
     }
 
-    /// Calligraphic CJK display face (system-shipped Kaiti.ttc).
-    private static let displayCJK = "Kaiti SC"
+    /// Calligraphic CJK display face (system-shipped Xingkai.ttc). 行楷's
+    /// slender, tapering brush strokes are the closest system face to 瘦金体's
+    /// sharp elegance; reserved for display sizes only (small CJK text falls
+    /// back to SF Pro tiers for legibility).
+    private static let displayCJK = "Xingkai SC"
     /// Old-style Latin serif (Palatino.ttc) for titles/numbers — its humanist
     /// proportions pair naturally with 楷体's brush rhythm.
     private static let displayLatin = "Palatino"

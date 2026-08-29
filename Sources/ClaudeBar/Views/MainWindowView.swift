@@ -193,9 +193,6 @@ struct TopNavTab: View {
         Button(action: action) {
             VStack(spacing: 3) {
                 HStack(spacing: 6) {
-                    Image(systemName: page.icon)
-                        .font(Theme.Font.bodySmall)
-                        .foregroundColor(isSelected ? Theme.claudeHi : rowColor)
                     Text(page.label)
                         .font(Theme.Font.body)
                         .fontWeight(isSelected ? .semibold : .regular)
