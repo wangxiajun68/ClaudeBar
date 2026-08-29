@@ -116,11 +116,13 @@ enum Theme {
         static let captionMono: CGFloat = 0
     }
 
-    /// Calligraphic CJK display face (system-shipped Xingkai.ttc). 行楷's
-    /// slender, tapering brush strokes are the closest system face to 瘦金体's
-    /// sharp elegance; reserved for display sizes only (small CJK text falls
-    /// back to SF Pro tiers for legibility).
-    private static let displayCJK = "Xingkai SC"
+    /// Bundled CJK display face: **LXGW WenKai GB** (霞鹜文楷，开源 OFL 授权，
+    /// shipping in Resources/Fonts and registered by AppDelegate at launch).
+    /// A WenKai-style kaiti with the slender, elegant brush character of
+    /// 瘦金体-inspired letterforms — the closest open-source face to that
+    /// aesthetic; reserved for display sizes (small CJK text stays on SF Pro
+    /// tiers for legibility).
+    private static let displayCJK = "LXGW WenKai GB"
     /// Old-style Latin serif (Palatino.ttc) for titles/numbers — its humanist
     /// proportions pair naturally with 楷体's brush rhythm.
     private static let displayLatin = "Palatino"
