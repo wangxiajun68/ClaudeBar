@@ -195,7 +195,7 @@ struct DashboardView: View {
                     updated: s.relativeUpdated
                 )
             }
-        // External tools (Codex / WorkBuddy / OpenClaw) — teal rows, no
+        // External tools (Codex / OpenClaw) — teal rows, no
         // context data (they expose none), so the bar reads 0 and dims.
         let externalRows = providerStore.aliveExternalSessions
             .map { s in

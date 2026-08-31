@@ -136,7 +136,7 @@ struct SessionsView: View {
     /// sessions in the window collapse to a quiet empty hint so the page
     /// reads as a stable roster.
     private var externalSections: some View {
-        ForEach([ExternalAgentKind.codex, .workbuddy, .openclaw], id: \.rawValue) { kind in
+        ForEach(ExternalAgentKind.allCases, id: \.self) { kind in
             externalSection(kind: kind)
         }
     }
@@ -466,7 +466,7 @@ private struct CursorTileFull: View {
     }
 }
 
-/// An external-agent session tile (Codex / WorkBuddy / OpenClaw). These tools
+/// An external-agent session tile (Codex / OpenClaw). These tools
 /// have no PID files and no resume URL scheme, so the tile is read-only:
 /// reveal the working directory in Finder, double-click included. Teal tint
 /// distinguishes the family from Claude (blue) and Cursor (violet).

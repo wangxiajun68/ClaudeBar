@@ -90,7 +90,7 @@ struct SessionsPanelView: View {
     // MARK: External tools — one header per tool
 
     private var externalSessionsSection: some View {
-        ForEach([ExternalAgentKind.codex, .workbuddy, .openclaw], id: \.rawValue) { kind in
+        ForEach(ExternalAgentKind.allCases, id: \.self) { kind in
             externalSessionsSection(kind: kind)
         }
     }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Compact external-agent session card (Codex / WorkBuddy / OpenClaw) for the
+/// Compact external-agent session card (Codex / OpenClaw) for the
 /// 2-column popup grid: status, tool name, project, model, recency. Teal
 /// accent distinguishes the family from Claude (blue) and Cursor (violet).
 /// No context data exists for these tools, so the card carries the tool name

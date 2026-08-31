@@ -77,7 +77,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
-    /// External tool flavor (Codex / WorkBuddy / OpenClaw) — the tool name
+    /// External tool flavor (Codex / OpenClaw) — the tool name
     /// leads so sessions from different agents stay distinguishable.
     func notifyIdle(external session: ExternalSessionInfo) {
         post(

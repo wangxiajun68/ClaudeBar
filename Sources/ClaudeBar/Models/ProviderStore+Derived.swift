@@ -20,7 +20,7 @@ extension ProviderStore {
     /// Is any Claude session busy (drives brand pulse / status icon).
     var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.status == .busy } }
 
-    /// External-tool sessions (Codex / WorkBuddy / OpenClaw) currently alive.
+    /// External-tool sessions (Codex / OpenClaw) currently alive.
     var aliveExternalSessions: [ExternalSessionInfo] { externalSessions.filter(\.isAlive) }
 
     /// External sessions currently mid-turn.

@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - Model
 
-/// A live session from an external agent tool — Codex CLI/Desktop,
-/// WorkBuddy, or OpenClaw. None of these tools write PID files like Claude
+/// A live session from an external agent tool — Codex CLI/Desktop or
+/// OpenClaw. None of these tools write PID files like Claude
 /// Code does, so liveness and busy-ness are both **recency-based**: a session
 /// file touched within `recencyWindow` is alive, and one touched within
 /// `busyWindow` is considered mid-turn (its writer is actively appending).
@@ -33,13 +33,11 @@ struct ExternalSessionInfo: Identifiable, Equatable {
 /// The external agent tools we recognize, with their on-disk homes.
 enum ExternalAgentKind: String, CaseIterable {
     case codex
-    case workbuddy
     case openclaw
 
     var displayName: String {
         switch self {
         case .codex: return "Codex"
-        case .workbuddy: return "WorkBuddy"
         case .openclaw: return "OpenClaw"
         }
     }
@@ -48,7 +46,6 @@ enum ExternalAgentKind: String, CaseIterable {
     var icon: String {
         switch self {
         case .codex: return "chevron.left.forwardslash.chevron.right"
-        case .workbuddy: return "person.crop.rectangle.stack"
         case .openclaw: return "antenna.radiowaves.left.and.right"
         }
     }
@@ -58,7 +55,6 @@ enum ExternalAgentKind: String, CaseIterable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         switch self {
         case .codex: return home + "/.codex/sessions"
-        case .workbuddy: return home + "/.workbuddy/projects"
         case .openclaw: return home + "/.openclaw/agents"
         }
     }
@@ -71,7 +67,7 @@ enum ExternalAgentKind: String, CaseIterable {
 
     /// A session counts as "active" (mid-turn) while its transcript was
     /// touched this recently. Turn granularity differs per tool: Codex
-    /// appends token_count events continuously, WorkBuddy/OpenClaw append
+    /// appends token_count events continuously, OpenClaw appends
     /// per tool call — all land within seconds of each other while working.
     var busyWindow: TimeInterval { 90 }
 }
@@ -79,16 +75,15 @@ enum ExternalAgentKind: String, CaseIterable {
 // MARK: - Monitor
 
 /// Scans the on-disk session stores of external agent tools (Codex rollout
-/// JSONLs, WorkBuddy project JSONLs, OpenClaw session JSONLs) and reports
+/// JSONLs, OpenClaw session JSONLs) and reports
 /// recent sessions. Pure file metadata + a bounded head read per file, run
 /// off-main by `ProviderStore`.
 struct ExternalSessionMonitor {
 
-    /// All recent sessions across the three tools, most recent first.
+    /// All recent sessions across the tools, most recent first.
     static func fetchActive() -> [ExternalSessionInfo] {
         var sessions: [ExternalSessionInfo] = []
         sessions.append(contentsOf: fetchCodex())
-        sessions.append(contentsOf: fetchWorkBuddy())
         sessions.append(contentsOf: fetchOpenClaw())
         return sessions.sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -152,62 +147,6 @@ struct ExternalSessionMonitor {
         return results
     }
 
-    // MARK: WorkBuddy
-
-    /// WorkBuddy writes one JSONL per project under
-    /// `~/.workbuddy/projects/<encoded-cwd>/<sessionId>.jsonl`. Usage-bearing
-    /// `function_call` records carry `providerData.model`. The encoded
-    /// directory name maps back to the workspace title; the real cwd lives
-    /// inside the records, but reading it requires a full scan — the
-    /// directory name (e.g. `Users-wangxiajun-WorkBuddy-2026-08-25-19-17-10`)
-    /// is human-readable enough as a fallback via the last path component.
-    private static func fetchWorkBuddy() -> [ExternalSessionInfo] {
-        let kind = ExternalAgentKind.workbuddy
-        let root = kind.rootDir
-        let now = Date().timeIntervalSince1970
-        let fm = FileManager.default
-        guard let projectDirs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
-
-        var results: [ExternalSessionInfo] = []
-        for dir in projectDirs {
-            let dirPath = "\(root)/\(dir)"
-            guard let files = try? fm.contentsOfDirectory(atPath: dirPath) else { continue }
-            for file in files where file.hasSuffix(".jsonl") {
-                let path = "\(dirPath)/\(file)"
-                guard let meta = fileMeta(path: path, cutoff: now - kind.recencyWindow) else { continue }
-                // WorkBuddy's cwd lives inside the first user message's
-                // <system-reminder> block, which can run long — the head
-                // needs enough bytes to reach it (measured: ~13.4KB on a
-                // real transcript).
-                let head = readHead(path: path, bytes: 24_000)
-                let cwd = head.field(forKey: "\"cwd\":\"")
-                // The model sits on providerData (e.g. "providerData":
-                // {"model":"glm-5.2",…}); a bare "model" key also appears in
-                // other uuid-ish contexts, so anchor on providerData.
-                var model = ""
-                if let pr = head.range(of: "\"providerData\":{") {
-                    let pdSegment = head[pr.upperBound...]
-                    let pdEnd = pdSegment.firstIndex(of: "\n") ?? pdSegment.endIndex
-                    if let mr = pdSegment[..<pdEnd].range(of: "\"model\":\"") {
-                        let after = pdSegment[mr.upperBound...]
-                        if let q = after.firstIndex(of: "\"") { model = String(after[..<q]) }
-                    }
-                }
-                results.append(ExternalSessionInfo(
-                    kind: .workbuddy,
-                    sessionId: (file as NSString).deletingPathExtension,
-                    cwd: cwd,
-                    startedAt: meta.mtime * 1000,
-                    updatedAt: meta.mtime * 1000,
-                    model: model,
-                    isAlive: true,
-                    isActive: now - meta.mtime <= kind.busyWindow
-                ))
-            }
-        }
-        return results
-    }
-
     // MARK: OpenClaw
 
     /// OpenClaw stores sessions under
@@ -263,8 +202,7 @@ struct ExternalSessionMonitor {
     /// Bounded head read of a JSONL file, returned as a String. Only the
     /// first records are needed (session_meta / turn_context / model_change
     /// all appear at the top of the file), so we never read the full
-    /// transcript. 24KB covers WorkBuddy's long first user-context block
-    /// (measured ~13.4KB before the cwd appears on a real transcript).
+    /// transcript.
     private static func readHead(path: String, bytes: Int) -> String {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return "" }
         defer { try? handle.close() }
