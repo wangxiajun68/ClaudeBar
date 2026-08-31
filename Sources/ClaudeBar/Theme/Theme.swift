@@ -40,7 +40,7 @@ enum Theme {
     static let cursor = Color(hex: 0xA78BFA)    // soft violet — Cursor
     static let cursorHi = Color(hex: 0xC0ACFC)  // light violet
 
-    /// Teal — external agent tools (Codex / WorkBuddy / OpenClaw). A third
+    /// Teal — external agent tools (Codex / OpenClaw). A third
     /// hue so the newest session family reads as its own source at a glance
     /// while staying inside the muted palette.
     static let external = Color(hex: 0x46C58F)

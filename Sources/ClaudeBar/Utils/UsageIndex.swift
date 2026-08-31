@@ -284,9 +284,9 @@ struct UsageIndex {
     }
 
     /// Walk an external tool's directory tree. The layouts are uniform enough
-    /// for one generic 4-level walk: Codex nests year/month/day, WorkBuddy
-    /// project/session, OpenClaw agent/session; files may also sit directly
-    /// in upper levels (Codex day-dir files).
+    /// for one generic 4-level walk: Codex nests year/month/day, OpenClaw
+    /// agent/session; files may also sit directly in upper levels (Codex
+    /// day-dir files).
     private static func collectExternal(kind: ExternalAgentKind) -> [Candidate] {
         let fm = FileManager.default
         let root = kind.rootDir
@@ -493,7 +493,6 @@ struct UsageIndex {
     private static func parse(_ kind: Substring, _ lines: [Data]) -> [ParsedEntry] {
         switch kind {
         case "claude": return parseClaude(lines)
-        case "workbuddy": return parseWorkBuddy(lines)
         case "openclaw": return parseOpenClaw(lines)
         default: return []
         }
@@ -529,28 +528,6 @@ struct UsageIndex {
                               output: JSONCoerce.intVal(usage["output_tokens"]),
                               read: JSONCoerce.intVal(usage["cache_read_input_tokens"]),
                               create: JSONCoerce.intVal(usage["cache_creation_input_tokens"])))
-        }
-        return out
-    }
-
-    /// WorkBuddy: {"timestamp":<ms>,"type":"function_call","providerData":{"model":...,"usage":{...}}}
-    private static func parseWorkBuddy(_ lines: [Data]) -> [ParsedEntry] {
-        var out: [ParsedEntry] = []
-        for line in lines {
-            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  obj["type"] as? String == "function_call",
-                  let pd = obj["providerData"] as? [String: Any],
-                  let usage = pd["usage"] as? [String: Any],
-                  let ms = JSONCoerce.doubleVal(obj["timestamp"]) else { continue }
-            let model = (pd["model"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "workbuddy"
-            var read = 0
-            if let details = usage["inputTokensDetails"] as? [[String: Any]] {
-                read = details.reduce(0) { $0 + JSONCoerce.intVal($1["cached_tokens"]) }
-            }
-            out.append(record(dayString(Date(timeIntervalSince1970: ms / 1000)), model,
-                              input: JSONCoerce.intVal(usage["inputTokens"]),
-                              output: JSONCoerce.intVal(usage["outputTokens"]),
-                              read: read))
         }
         return out
     }

@@ -44,7 +44,7 @@ class ProviderStore: ObservableObject {
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var cursorExpanded: Set<String> = []
 
-    // Live sessions from external agent tools (Codex / WorkBuddy / OpenClaw)
+    // Live sessions from external agent tools (Codex / OpenClaw)
     @Published var externalSessions: [ExternalSessionInfo] = []
     private var externalIdleDetector = IdleTransitionDetector<String>()
 
@@ -220,7 +220,7 @@ class ProviderStore: ObservableObject {
         }
     }
 
-    /// Scan external agent tools (Codex / WorkBuddy / OpenClaw). Same
+    /// Scan external agent tools (Codex / OpenClaw). Same
     /// off-main scan + unchanged-publish skip as the other two sources.
     func refreshExternalSessions() {
         Task.detached(priority: .utility) {
@@ -441,7 +441,7 @@ class ProviderStore: ObservableObject {
                 }
 
                 // UsageStats.fetch covers Claude Code transcripts *and* the
-                // external agents (Codex / WorkBuddy / OpenClaw) — everything
+                // external agents (Codex / OpenClaw) — everything
                 // lives in the shared persistent UsageIndex, which it updates
                 // incrementally first. Query cost is milliseconds.
                 var result = UsageStats.fetch(in: interval)

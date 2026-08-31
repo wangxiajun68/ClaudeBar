@@ -16,14 +16,4 @@ enum JSONCoerce {
         if let s = v as? String, let n = Int(s) { return n }
         return 0
     }
-
-    /// Coerce a JSON number to Double (Int / NSNumber / numeric String).
-    /// WorkBuddy writes epoch-ms timestamps as bare JSON numbers that can
-    /// exceed Int32 on some decoders, so the Double chain is separate.
-    static func doubleVal(_ v: Any?) -> Double? {
-        if let n = v as? Double { return n }
-        if let n = v as? NSNumber { return n.doubleValue }
-        if let s = v as? String, let n = Double(s) { return n }
-        return nil
-    }
 }
