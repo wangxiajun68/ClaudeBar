@@ -430,7 +430,7 @@ class ProviderStore: ObservableObject {
             return
         }
         usageRefreshPending = true
-        usageLoading = true
+        usageLoading = UsageIndex.needsInitialBuild
 
         Task.detached(priority: .utility) { [weak self] in
             while true {
@@ -440,6 +440,10 @@ class ProviderStore: ObservableObject {
                     UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate)
                 }
 
+                // UsageStats.fetch covers Claude Code transcripts *and* the
+                // external agents (Codex / WorkBuddy / OpenClaw) — everything
+                // lives in the shared persistent UsageIndex, which it updates
+                // incrementally first. Query cost is milliseconds.
                 var result = UsageStats.fetch(in: interval)
                 // Cursor's token history is a stable full-scan total (Cursor
                 // stopped writing tokens after ~2026-03), so it is appended to
@@ -449,14 +453,7 @@ class ProviderStore: ObservableObject {
                 if let cursor = CursorUsageStats.fetch() {
                     result.append(cursor)
                 }
-                // External agent tools (Codex / WorkBuddy / OpenClaw) parse
-                // the same way — JSONL transcripts, per-record timestamps —
-                // so their usage folds into the same per-model aggregate and
-                // the interval filter applies identically.
-                let external = ExternalUsageStats.fetch(in: interval)
-                if !external.isEmpty {
-                    result.append(contentsOf: external)
-                }
+                // External agents fold into the same index — nothing extra.
                 result = ModelUsage.merged(result).sorted { $0.totalTokens > $1.totalTokens }
                 let final = result
 
