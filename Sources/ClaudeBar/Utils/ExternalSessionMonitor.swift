@@ -29,8 +29,8 @@ struct ExternalSessionInfo: Identifiable, Equatable {
 
     var contextLabel: String {
         guard contextLimit > 0 || contextTokens > 0 else { return kind.displayName }
-        let used = UsageStats.formatTokens(contextTokens)
-        if contextLimit > 0 { return "\(used) / \(UsageStats.formatTokens(contextLimit))" }
+        let used = UsageStats.formatContext(contextTokens)
+        if contextLimit > 0 { return "\(used) / \(UsageStats.formatContext(contextLimit))" }
         return used
     }
 

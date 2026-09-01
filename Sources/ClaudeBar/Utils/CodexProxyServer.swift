@@ -20,6 +20,20 @@ final class CodexProxyServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "claudebar.proxy")
     private var listener: NWListener?
 
+    /// Ephemeral session that does not advertise gzip. URLSession.shared
+    /// sets `Accept-Encoding: gzip` and can hold the first SSE event until
+    /// the decoder sees a flush — Claude Code then reports "streaming
+    /// response ended before any complete data" and retries without stream.
+    private static let upstreamSession: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 600
+        c.timeoutIntervalForResource = 3600
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.urlCache = nil
+        c.httpCookieStorage = nil
+        return URLSession(configuration: c)
+    }()
+
     /// Monotonic SSE sequence numbers are per-stream (CodexProxyTransform
     /// handles them); server-level state is only the listener.
     init(port: UInt16, state: CodexProxyState) {
@@ -72,11 +86,26 @@ final class CodexProxyServer: @unchecked Sendable {
         // 2. Route.
         let path = request.path.split(separator: "?").first.map(String.init) ?? request.path
 
+        let isAnthropicPath = path.contains("/messages") || path.contains("/complete")
+        let hasAnthropicHeaders = request.headers["anthropic-version"] != nil
+            || (request.headers["x-api-key"] != nil
+                && !path.contains("/responses")
+                && !path.contains("/chat/completions"))
+
         if request.method == "GET" || request.method == "HEAD" {
             if path.hasSuffix("/models") {
+                if isAnthropicPath || hasAnthropicHeaders {
+                    await forwardAnthropic(connection, request: request, inspect: false)
+                    return
+                }
                 await serveModels(connection)
                 return
             }
+        }
+
+        if isAnthropicPath || hasAnthropicHeaders {
+            await forwardAnthropic(connection, request: request, inspect: request.method == "POST")
+            return
         }
 
         guard path.contains("/responses") || path.hasSuffix("/chat/completions") else {
@@ -154,8 +183,16 @@ final class CodexProxyServer: @unchecked Sendable {
         dumpRequest(outData)
 
         let wantsStream = (json["stream"] as? Bool) ?? false
+        let tap = await makeOpenAITap(
+            kind: .openaiResponses, request: request, json: json,
+            rewritten: outData, stream: wantsStream, upstream: upstream)
+        var capState = CaptureState.done
+        var capError: String?
+        defer { tap?.finish(state: capState, status: 200, error: capError) }
+
         let upstreamURL = joinURL(upstream.baseURL, path: request.path)
 
+        do {
         if wantsStream {
             // Connect upstream *before* writing the SSE head to Codex, so a
             // ResponseInput 400 can be retried as Chat without corrupting the
@@ -194,6 +231,7 @@ final class CodexProxyServer: @unchecked Sendable {
                         lastSequence = seq
                     }
                     ev = CodexProxyTransform.rewriteResponsesEvent(ev, registry: registry)
+                    tap?.applyResponses(ev)
                     await write(connection, data: CodexProxyTransform.sse(ev))
                 } else {
                     await write(connection, data: CodexProxyTransform.sseRaw(event))
@@ -210,8 +248,14 @@ final class CodexProxyServer: @unchecked Sendable {
             var out: [String: Any] = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             out = CodexProxyTransform.rewriteResponsesEvent(out, registry: registry)
             CodexProxyTransform.normalizeUsage(&out)
+            tap?.applyResponses(out)
             let fixed = (try? JSONSerialization.data(withJSONObject: out)) ?? data
             await respond(connection, status: "\(status) OK", contentType: "application/json", body: fixed)
+        }
+        } catch {
+            capState = .error
+            capError = error.localizedDescription
+            throw error
         }
     }
 
@@ -223,10 +267,17 @@ final class CodexProxyServer: @unchecked Sendable {
         let chatBody = CodexProxyTransform.responsesToChatRequest(json, registry: &registry)
         let outData = try JSONSerialization.data(withJSONObject: chatBody)
         dumpRequest(outData)
+        let tap = await makeOpenAITap(
+            kind: .openaiChat, request: request, json: json,
+            rewritten: outData, stream: true, upstream: upstream)
+        var capState = CaptureState.done
+        var capError: String?
+        defer { tap?.finish(state: capState, status: 200, error: capError) }
         // Always hit /chat/completions when bridging — posting a Chat body
         // to /v1/responses is how the original 400 happens.
         let upstreamURL = chatCompletionsURL(upstream.baseURL)
 
+        do {
         let chatLines = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
         await write(connection, data: sseHead())
         var streamState = CodexProxyTransform.ChatStreamState()
@@ -240,6 +291,7 @@ final class CodexProxyServer: @unchecked Sendable {
             guard let data = line.data(using: .utf8),
                   let delta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
+            tap?.applyChat(delta)
             let events = CodexProxyTransform.chatDeltaToResponsesEvents(delta, state: &streamState)
 
             for ev in events {
@@ -263,6 +315,11 @@ final class CodexProxyServer: @unchecked Sendable {
             }
         }
         await write(connection, data: CodexProxyTransform.sseRaw("[DONE]"))
+        } catch {
+            capState = .error
+            capError = error.localizedDescription
+            throw error
+        }
     }
 
     // MARK: - Upstream I/O
@@ -274,7 +331,9 @@ final class CodexProxyServer: @unchecked Sendable {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await Self.upstreamSession.bytes(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
@@ -299,7 +358,8 @@ final class CodexProxyServer: @unchecked Sendable {
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        let (data, response) = try await URLSession.shared.data(for: req)
+        req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let (data, response) = try await Self.upstreamSession.data(for: req)
         let status = (response as? HTTPURLResponse).map { "\($0.statusCode)" } ?? "200"
         return (data, status)
     }
@@ -330,6 +390,172 @@ final class CodexProxyServer: @unchecked Sendable {
             return URL(string: s + "/chat/completions") ?? URL(string: "http://127.0.0.1")!
         }
         return URL(string: s + "/v1/chat/completions") ?? URL(string: "http://127.0.0.1")!
+    }
+
+    // MARK: - Anthropic passthrough (Claude Code)
+
+    /// Forward Claude Code's Anthropic Messages traffic. Body is not rewritten;
+    /// client headers (`x-api-key`, `anthropic-version`, `anthropic-beta`) pass
+    /// through so official and `/anthropic` gateways keep working.
+    private func forwardAnthropic(_ connection: NWConnection, request: HTTPRequest, inspect: Bool) async {
+        guard let upstream = await state.anthropic else {
+            await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
+                    body: Data(#"{"error":{"message":"no anthropic upstream — enable capture on the active provider"}}"#.utf8))
+            connection.cancel()
+            return
+        }
+
+        let wantsStream: Bool = {
+            guard let body = request.body,
+                  let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return false }
+            return (json["stream"] as? Bool) ?? false
+        }()
+        let model: String = {
+            guard let body = request.body,
+                  let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return "" }
+            return (json["model"] as? String) ?? ""
+        }()
+
+        let tap: CaptureTap?
+        if inspect, await state.captureAnthropic {
+            tap = ProxyCaptureStore.shared.begin(
+                kind: .anthropic,
+                source: .claude,
+                provider: upstream.name,
+                model: model,
+                path: request.path,
+                stream: wantsStream,
+                requestJSON: request.body.flatMap { String(data: $0, encoding: .utf8) },
+                rewrittenJSON: nil)
+        } else {
+            tap = nil
+        }
+        var capState = CaptureState.done
+        var capError: String?
+        var statusCode = 200
+        defer { tap?.finish(state: capState, status: statusCode, error: capError) }
+
+        var req = URLRequest(url: joinAnthropic(upstream.baseURL, path: request.path))
+        req.httpMethod = request.method
+        req.httpBody = request.body
+        req.timeoutInterval = 600
+        copyClientHeaders(request.headers, onto: &req)
+        req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        if request.headers["authorization"] == nil, request.headers["x-api-key"] == nil, !upstream.apiKey.isEmpty {
+            req.setValue(upstream.apiKey, forHTTPHeaderField: "x-api-key")
+            req.setValue("Bearer \(upstream.apiKey)", forHTTPHeaderField: "Authorization")
+        }
+
+        do {
+            if wantsStream {
+                let (bytes, response) = try await Self.upstreamSession.bytes(for: req)
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                statusCode = http.statusCode
+                let ctype = http.value(forHTTPHeaderField: "Content-Type") ?? "text/event-stream"
+                await write(connection, data: streamHead(status: http.statusCode, contentType: ctype))
+                if http.statusCode >= 400 {
+                    var errBody = Data()
+                    for try await byte in bytes.prefix(4096) { errBody.append(byte) }
+                    await write(connection, data: errBody)
+                    capState = .error
+                    capError = String(data: errBody, encoding: .utf8)
+                    connection.cancel()
+                    return
+                }
+                try await pipeAnthropicSSE(bytes, to: connection, tap: tap)
+            } else {
+                let (data, response) = try await Self.upstreamSession.data(for: req)
+                let http = response as? HTTPURLResponse
+                statusCode = http?.statusCode ?? 200
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    tap?.ingestAnthropicMessage(json)
+                }
+                if statusCode >= 400 {
+                    capState = .error
+                    capError = String(data: data, encoding: .utf8)
+                }
+                let ctype = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/json"
+                await respond(connection, status: "\(statusCode) \(statusCode >= 400 ? "Error" : "OK")",
+                              contentType: ctype, body: data)
+            }
+        } catch {
+            capState = .error
+            capError = error.localizedDescription
+            if !(wantsStream) {
+                await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
+                        body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
+            }
+        }
+        connection.cancel()
+    }
+
+    private func copyClientHeaders(_ headers: [String: String], onto req: inout URLRequest) {
+        let skip: Set<String> = ["host", "connection", "content-length", "transfer-encoding", "accept-encoding"]
+        for (key, value) in headers where !skip.contains(key) {
+            req.setValue(value, forHTTPHeaderField: key)
+        }
+    }
+
+    private func streamHead(status: Int, contentType: String) -> Data {
+        let reason = status >= 400 ? "Error" : "OK"
+        return Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(contentType)\r\nCache-Control: no-cache\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n".utf8)
+    }
+
+    /// Forward SSE as complete events. Flush on each blank line so Claude
+    /// Code sees `message_start` immediately instead of a half-frame.
+    private func pipeAnthropicSSE(_ bytes: URLSession.AsyncBytes, to connection: NWConnection, tap: CaptureTap?) async throws {
+        var parser = LineSSEParser()
+        var batch = Data()
+        batch.reserveCapacity(4096)
+        for try await line in bytes.lines {
+            batch.append(contentsOf: line.utf8)
+            batch.append(10)
+            if line.isEmpty || batch.count >= 4096 {
+                await write(connection, data: batch)
+                tap?.appendRaw(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
+            if let ev = parser.push(line: line), !ev.done, let json = ev.json {
+                let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
+                tap?.applyAnthropic(event: name, json: json)
+            }
+        }
+        if !batch.isEmpty {
+            await write(connection, data: batch)
+            tap?.appendRaw(batch)
+        }
+        if let ev = parser.finish(), !ev.done, let json = ev.json {
+            let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
+            tap?.applyAnthropic(event: name, json: json)
+        }
+    }
+
+    private func joinAnthropic(_ base: String, path: String) -> URL {
+        let s = base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        var suffix = String(parts.first ?? "")
+        let query = parts.count > 1 ? "?\(parts[1])" : ""
+        if suffix.hasPrefix("/") { suffix.removeFirst() }
+        if s.hasSuffix("/v1") && (suffix == "v1" || suffix.hasPrefix("v1/")) {
+            suffix = suffix == "v1" ? "" : String(suffix.dropFirst(3))
+        }
+        let joined = suffix.isEmpty ? s : s + "/" + suffix
+        return URL(string: joined + query) ?? URL(string: "http://127.0.0.1")!
+    }
+
+    private func makeOpenAITap(kind: CaptureKind, request: HTTPRequest, json: [String: Any],
+                               rewritten: Data, stream: Bool,
+                               upstream: CodexProxyState.UpstreamEndpoint) async -> CaptureTap? {
+        guard await state.captureOpenAI else { return nil }
+        return ProxyCaptureStore.shared.begin(
+            kind: kind,
+            source: .codex,
+            provider: upstream.name,
+            model: (json["model"] as? String) ?? "",
+            path: request.path,
+            stream: stream,
+            requestJSON: request.body.flatMap { String(data: $0, encoding: .utf8) },
+            rewrittenJSON: String(data: rewritten, encoding: .utf8))
     }
 
     private func dumpRequest(_ body: Data) {

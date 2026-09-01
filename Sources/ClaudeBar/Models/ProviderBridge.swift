@@ -52,7 +52,7 @@ enum ProviderBridge {
             CodexModelConfig(
                 id: UUID(),
                 name: stripClaudeModelSuffix(model.name),
-                reasoningEffort: "",
+                reasoningEffort: "max",
                 contextWindow: model.contextTokens,
                 autoCompactTokenLimit: model.disableCompact ? "" : model.autoCompactWindow)
         }
@@ -70,7 +70,8 @@ enum ProviderBridge {
             preserveOfficialLogin: true,
             disableResponseStorage: true,
             models: models,
-            activeModelID: activeID)
+            activeModelID: activeID,
+            captureEnabled: source.captureEnabled)
     }
 
     static func toClaude(_ source: CodexProvider) -> Provider {
@@ -93,7 +94,8 @@ enum ProviderBridge {
             authToken: source.apiKey,
             baseURL: url,
             models: models,
-            activeModelID: activeID)
+            activeModelID: activeID,
+            captureEnabled: source.captureEnabled)
     }
 
     /// Claude and Codex records of the same vendor — name or rewritten OpenAI URL.
@@ -135,6 +137,7 @@ enum ProviderBridge {
         if !source.authToken.isEmpty { out.apiKey = source.authToken }
         let url = openaiCompatibleURL(source.baseURL)
         if !url.isEmpty { out.baseURL = url }
+        out.captureEnabled = source.captureEnabled
 
         var models = dest.models
         for m in source.models {
@@ -149,7 +152,7 @@ enum ProviderBridge {
             } else {
                 models.append(CodexModelConfig(
                     name: slug,
-                    reasoningEffort: effort ?? "",
+                    reasoningEffort: effort.flatMap { $0.isEmpty ? nil : $0 } ?? "max",
                     contextWindow: m.contextTokens,
                     autoCompactTokenLimit: compact))
             }

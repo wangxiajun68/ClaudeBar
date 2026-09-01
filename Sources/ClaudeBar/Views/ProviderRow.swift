@@ -8,6 +8,7 @@ struct ProviderTile: View {
     let isActive: Bool
     let currentModelName: String?
     let onActivateModel: (UUID) -> Void
+    var onToggleCapture: (() -> Void)? = nil
 
     /// Popup density: tighter fonts/padding, single-column model list.
     var dense: Bool = false
@@ -20,7 +21,15 @@ struct ProviderTile: View {
     @State private var isHovered = false
 
     private var expanded: Bool { isExpanded ?? startsExpanded }
-    private var showsModels: Bool { !provider.models.isEmpty && (expanded || provider.models.count == 1) }
+
+    /// Collapsed multi-model tiles show only the active row so they match
+    /// single-model tiles; expanding reveals the rest.
+    private var listedModels: [ModelConfig] {
+        guard !provider.models.isEmpty else { return [] }
+        if expanded || provider.models.count == 1 { return provider.models }
+        if let active = activeModel { return [active] }
+        return Array(provider.models.prefix(1))
+    }
 
     /// The model the env currently points at, falling back to the first model
     /// when settings.json names a model this provider doesn't declare.
@@ -32,12 +41,14 @@ struct ProviderTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            header
-            // One-model providers always show the row so the tile stays
-            // clickable; multi-model lists stay collapsed until expanded.
-            if showsModels {
+            HStack(alignment: .top, spacing: Theme.Space.s6) {
+                header
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                captureToggle
+            }
+            if !listedModels.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(provider.models) { model in
+                    ForEach(listedModels) { model in
                         modelRow(model)
                     }
                 }
@@ -46,7 +57,7 @@ struct ProviderTile: View {
             }
         }
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(hovered: isHovered, dense: dense)
         .overlay(alignment: .leading) {
             if isActive {
@@ -70,6 +81,25 @@ struct ProviderTile: View {
         .buttonStyle(.plain)
         .help(headerHelp)
         .disabled(provider.models.isEmpty)
+    }
+
+    private var captureToggle: some View {
+        Button {
+            onToggleCapture?()
+        } label: {
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .font(Theme.Font.bodySmall.weight(.semibold))
+                .foregroundColor(provider.captureEnabled ? Theme.external : Theme.textTertiary(0.4))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(onToggleCapture == nil ? 0 : 1)
+        .allowsHitTesting(onToggleCapture != nil)
+        .help(provider.captureEnabled
+              ? "关闭代理抓包，直连上游"
+              : "打开代理抓包，请求会进流量页")
+        .accessibilityLabel(provider.captureEnabled ? "关闭抓包" : "打开抓包")
     }
 
     private var headerHelp: String {
@@ -103,12 +133,11 @@ struct ProviderTile: View {
                         .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
                         .transition(.scale.combined(with: .opacity))
                 }
-                if provider.models.count > 1 {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(Theme.Font.bodySmall.weight(.semibold))
-                        .foregroundColor(Theme.textSecondary)
-                        .frame(width: 22, height: 22)
-                }
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(Theme.Font.bodySmall.weight(.semibold))
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 22, height: 22)
+                    .opacity(provider.models.count > 1 ? 1 : 0)
             }
             Text(activeModelName ?? " ")
                 .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
@@ -206,14 +235,23 @@ struct CodexProviderTile: View {
     @State private var isHovered = false
 
     private var expanded: Bool { isExpanded ?? startsExpanded }
-    private var showsModels: Bool { !provider.models.isEmpty && (expanded || provider.models.count == 1) }
+
+    private var listedModels: [CodexModelConfig] {
+        guard !provider.models.isEmpty else { return [] }
+        if expanded || provider.models.count == 1 { return provider.models }
+        if let id = activeModelID ?? provider.models.first?.id,
+           let active = provider.models.first(where: { $0.id == id }) {
+            return [active]
+        }
+        return Array(provider.models.prefix(1))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             header
-            if showsModels {
+            if !listedModels.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(provider.models) { model in
+                    ForEach(listedModels) { model in
                         modelRow(model)
                     }
                 }
@@ -222,7 +260,7 @@ struct CodexProviderTile: View {
             }
         }
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: Theme.codex.opacity(0.06), hovered: isHovered, dense: dense)
         .overlay(alignment: .leading) {
             if isActive {
@@ -278,12 +316,18 @@ struct CodexProviderTile: View {
                         .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
                         .transition(.scale.combined(with: .opacity))
                 }
-                if provider.models.count > 1 {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(Theme.Font.bodySmall.weight(.semibold))
-                        .foregroundColor(Theme.textSecondary)
-                        .frame(width: 22, height: 22)
+                if provider.captureEnabled {
+                    Text("抓包")
+                        .font(Theme.Font.microMedium)
+                        .foregroundColor(Theme.external)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.external.opacity(0.15)))
                 }
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(Theme.Font.bodySmall.weight(.semibold))
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 22, height: 22)
+                    .opacity(provider.models.count > 1 ? 1 : 0)
             }
             Text(provider.activeModel?.name ?? " ")
                 .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)

@@ -33,8 +33,8 @@ struct SessionInfo: Identifiable, Equatable {
     /// Compact context label, e.g. "159K / 200K".
     var contextLabel: String {
         guard contextTokens > 0 else { return "—" }
-        let used = UsageStats.formatTokens(contextTokens)
-        return contextLimit > 0 ? "\(used) / \(UsageStats.formatTokens(contextLimit))" : used
+        let used = UsageStats.formatContext(contextTokens)
+        return contextLimit > 0 ? "\(used) / \(UsageStats.formatContext(contextLimit))" : used
     }
 
     /// Folder name derived from cwd, e.g. "ClaudeBar".

@@ -37,7 +37,7 @@ enum CodexModelCatalog {
         let compact = Int(model.autoCompactTokenLimit).flatMap { $0 > 0 ? $0 : nil }
         let display = model.name
         let effort = model.reasoningEffort
-        let defaultLevel = effort.isEmpty ? "high" : effort
+        let defaultLevel = effort.isEmpty ? "max" : effort
         var entry: [String: Any] = [
             "slug": model.name,
             "display_name": display,

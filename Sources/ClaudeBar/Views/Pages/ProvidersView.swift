@@ -57,6 +57,11 @@ struct ProvidersView: View {
                             currentModelName: providerStore.currentEnv?.ANTHROPIC_MODEL,
                             onActivateModel: { modelID in
                                 providerStore.activateModel(providerID: provider.id, modelID: modelID)
+                            },
+                            onToggleCapture: {
+                                providerStore.setCaptureEnabled(
+                                    providerID: provider.id,
+                                    enabled: !provider.captureEnabled)
                             }
                         )
                     }

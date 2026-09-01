@@ -20,18 +20,23 @@ struct Provider: Codable, Identifiable, Equatable {
     var baseURL: String = ""
     var models: [ModelConfig] = []
     var activeModelID: UUID? = nil
+    /// Route this vendor through the local inspect proxy (Claude Code
+    /// Anthropic `/v1/messages` and the Codex OpenAI twin).
+    var captureEnabled: Bool = false
 
     var activeModel: ModelConfig? {
         models.first { $0.id == activeModelID } ?? models.first
     }
 
     init(name: String, authToken: String = "", baseURL: String = "",
-         models: [ModelConfig] = [], activeModelID: UUID? = nil) {
+         models: [ModelConfig] = [], activeModelID: UUID? = nil,
+         captureEnabled: Bool = false) {
         self.name = name
         self.authToken = authToken
         self.baseURL = baseURL
         self.models = models
         self.activeModelID = activeModelID
+        self.captureEnabled = captureEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -70,11 +75,12 @@ struct Provider: Codable, Identifiable, Equatable {
                 activeModelID = models.first?.id
             }
         }
+        captureEnabled = try c.decodeIfPresent(Bool.self, forKey: .captureEnabled) ?? false
     }
 
     /// Only store keys that map to stored properties (for Encodable).
     private enum CodingKeys: String, CodingKey {
-        case id, name, authToken, baseURL, models, activeModelID
+        case id, name, authToken, baseURL, models, activeModelID, captureEnabled
     }
 
     /// Dynamic key for reading old-format fields during decoding only.

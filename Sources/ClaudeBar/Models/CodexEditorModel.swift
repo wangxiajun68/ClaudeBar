@@ -5,7 +5,7 @@ import Observation
 struct EditableCodexModel: Identifiable, Equatable {
     var id: UUID
     var name: String = ""
-    var reasoningEffort: String = ""
+    var reasoningEffort: String = "max"
     var contextWindow: String = ""
     var autoCompactTokenLimit: String = ""
 }
@@ -22,6 +22,7 @@ final class CodexProviderEditorModel {
     var requiresOpenAIAuth = true
     var preserveOfficialLogin = true
     var disableResponseStorage = true
+    var captureEnabled = false
     var models: [EditableCodexModel] = []
     var activeModelID: UUID?
     var editingModelID: UUID?
@@ -58,6 +59,7 @@ final class CodexProviderEditorModel {
         requiresOpenAIAuth = p.requiresOpenAIAuth
         preserveOfficialLogin = p.preserveOfficialLogin
         disableResponseStorage = p.disableResponseStorage
+        captureEnabled = p.captureEnabled
         models = p.models.map { EditableCodexModel(
             id: $0.id, name: $0.name,
             reasoningEffort: $0.reasoningEffort,
@@ -126,6 +128,7 @@ final class CodexProviderEditorModel {
         p.requiresOpenAIAuth = requiresOpenAIAuth
         p.preserveOfficialLogin = preserveOfficialLogin
         p.disableResponseStorage = disableResponseStorage
+        p.captureEnabled = captureEnabled
         p.models = models.map {
             CodexModelConfig(id: $0.id, name: $0.name,
                              reasoningEffort: $0.reasoningEffort,

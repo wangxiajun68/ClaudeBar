@@ -173,8 +173,16 @@ struct ProviderEditorView: View {
                 .font(Theme.Font.bodySmall)
             Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
                 .font(Theme.Font.bodySmall)
-            Toggle("disable_response_storage", isOn: $model.disableResponseStorage)
-                .font(Theme.Font.bodySmall)
+            Toggle(isOn: $model.disableResponseStorage) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("不在云端保存 Responses")
+                        .font(Theme.Font.bodySmall)
+                    Text("对应 Codex 的 disable_response_storage。打开后上游不持久化 Responses 会话；第三方中转建议开。关掉后官方 API 才能跨请求续写同一条 response。")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .padding(Theme.Space.s12)
         .panelCard()

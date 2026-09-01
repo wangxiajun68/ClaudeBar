@@ -22,6 +22,8 @@ final class CodexProviderStore: ObservableObject {
 
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
+    /// Weak back-ref so proxy lifecycle can see Claude capture flags.
+    weak var claudePeer: ProviderStore?
 
     init() {}
 
@@ -66,17 +68,18 @@ final class CodexProviderStore: ObservableObject {
         }
         if migrated { save() }
 
-        // Restore routing if it was enabled in a previous session.
-        syncProxyWithPreferences()
+        // Restore routing / capture if they were enabled in a previous session.
+        syncProxyRuntime()
 
         // Reconcile with the live config.toml: when the file on disk points
         // at a provider/model we know, adopt it as active (same trick as
         // ProviderStore.loadProviders detecting external switches). A
         // loopback base_url is OUR proxy config, not an external switch.
         guard let current = CodexConfigWriter.readCurrent() else { return }
-        let viaProxy = current.baseURL.hasPrefix("http://127.0.0.1:")
+        let viaProxy = LocalProxyAddress.isLoopback(current.baseURL)
         let routingOn = AppPreferences.shared.codexRoutingEnabled
-        if viaProxy && !routingOn {
+        let captureOn = activeProvider?.captureEnabled ?? false
+        if viaProxy && !routingOn && !captureOn {
             // Stale proxy config after the toggle flipped (or a fresh
             // session with routing off): rewrite the real URL back.
             if activeProviderID != nil {
@@ -111,22 +114,43 @@ final class CodexProviderStore: ObservableObject {
 
     // MARK: - Local routing proxy
 
-    /// Start/stop the proxy per AppPreferences. Idempotent; called from
-    /// load() and the Settings toggle.
-    func syncProxyWithPreferences() {
+    /// Start/stop the proxy from routing preference + per-vendor capture.
+    /// Idempotent; called from load(), activate, Settings, and Claude activate.
+    func syncProxyRuntime() {
         let prefs = AppPreferences.shared
-        if prefs.codexRoutingEnabled {
+        let claude = claudePeer?.providers.first { $0.id == claudePeer?.activeProviderID }
+        let openaiCapture = activeProvider?.captureEnabled ?? false
+        let anthropicCapture = claude?.captureEnabled ?? false
+        let viaOpenAI = prefs.codexRoutingEnabled || openaiCapture
+        let need = viaOpenAI || anthropicCapture
+
+        if need {
             startProxy()
-            // Push the current active provider as upstream, if any.
-            if let p = activeProvider {
-                Task { await proxyState.setUpstream(.init(
-                    baseURL: p.baseURL, apiKey: p.apiKey, wireAPI: p.wireAPI)) }
-            }
         } else {
             stopProxy()
-            Task { await proxyState.setUpstream(nil) }
+        }
+
+        Task { [proxyState] in
+            if viaOpenAI, let p = self.activeProvider {
+                await proxyState.setUpstream(.init(
+                    baseURL: p.baseURL, apiKey: p.apiKey, wireAPI: p.wireAPI, name: p.name))
+            } else {
+                await proxyState.setUpstream(nil)
+            }
+            await proxyState.setCaptureOpenAI(openaiCapture)
+
+            if anthropicCapture, let c = claude {
+                await proxyState.setAnthropic(.init(
+                    baseURL: c.baseURL, apiKey: c.authToken, name: c.name))
+            } else {
+                await proxyState.setAnthropic(nil)
+            }
+            await proxyState.setCaptureAnthropic(anthropicCapture)
         }
     }
+
+    /// Settings toggle still calls this name.
+    func syncProxyWithPreferences() { syncProxyRuntime() }
 
     var activeProvider: CodexProvider? {
         providers.first { $0.id == activeProviderID }
@@ -154,7 +178,7 @@ final class CodexProviderStore: ObservableObject {
     /// port takes effect.
     func restartProxyAndReactivate() {
         stopProxy()
-        if AppPreferences.shared.codexRoutingEnabled { startProxy() }
+        syncProxyRuntime()
         reactivateActive()
     }
 
@@ -173,18 +197,19 @@ final class CodexProviderStore: ObservableObject {
               let model = provider.models.first(where: { $0.id == modelID }) ?? provider.models.first else { return }
 
         let routingOn = AppPreferences.shared.codexRoutingEnabled
-        let proxyBase: String? = routingOn ? "http://127.0.0.1:\(AppPreferences.shared.codexProxyPort)/v1" : nil
+        let captureOn = provider.captureEnabled
+        let viaProxy = routingOn || captureOn
+        let proxyBase: String? = viaProxy ? LocalProxyAddress.codexBase : nil
 
-        // Order matters: upstream must be in place before config.toml points
-        // Codex at the proxy (no window where the proxy has no upstream).
+        // Upstream must be in place before config.toml points Codex at the
+        // proxy. Capture flags come from the provider we're activating, not
+        // the previous active row.
         Task { @MainActor in
-            if routingOn {
-                startProxy()
-                await proxyState.setUpstream(.init(
-                    baseURL: provider.baseURL, apiKey: provider.apiKey, wireAPI: provider.wireAPI))
-            } else {
-                await proxyState.setUpstream(nil)
-            }
+            if viaProxy { startProxy() }
+            await proxyState.setUpstream(.init(
+                baseURL: provider.baseURL, apiKey: provider.apiKey,
+                wireAPI: provider.wireAPI, name: provider.name))
+            await proxyState.setCaptureOpenAI(captureOn)
             do {
                 try CodexConfigWriter.write(provider: provider, model: model, key: activeKey, proxyBaseURL: proxyBase)
                 try CodexConfigWriter.writeAuth(apiKey: provider.apiKey, preserveOfficialLogin: provider.preserveOfficialLogin)
@@ -198,6 +223,7 @@ final class CodexProviderStore: ObservableObject {
                 providers[idx].activeModelID = model.id
             }
             save()
+            syncProxyRuntime()
         }
     }
 
@@ -266,6 +292,9 @@ final class CodexProviderStore: ObservableObject {
             save()
         }
         guard let provider = providers.first(where: { ProviderBridge.matches(claude, $0) }) else { return }
+        if let idx = providers.firstIndex(where: { $0.id == provider.id }) {
+            providers[idx].captureEnabled = claude.captureEnabled
+        }
         let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
         let modelID = provider.models.first {
             $0.name.caseInsensitiveCompare(slug) == .orderedSame

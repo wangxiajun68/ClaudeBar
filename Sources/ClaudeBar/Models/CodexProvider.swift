@@ -5,11 +5,11 @@ import Foundation
 struct CodexModelConfig: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String                 // → model = "..."
-    var reasoningEffort: String = "" // → model_reasoning_effort ("" = don't write)
+    var reasoningEffort: String = "max" // → model_reasoning_effort
     var contextWindow: String = ""   // → model_context_window ("" = don't write)
     var autoCompactTokenLimit: String = "" // → model_auto_compact_token_limit ("" = don't write)
 
-    init(id: UUID = UUID(), name: String, reasoningEffort: String = "",
+    init(id: UUID = UUID(), name: String, reasoningEffort: String = "max",
          contextWindow: String = "", autoCompactTokenLimit: String = "") {
         self.id = id
         self.name = name
@@ -22,7 +22,8 @@ struct CodexModelConfig: Codable, Identifiable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decode(String.self, forKey: .name)
-        reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? ""
+        let raw = try c.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? "max"
+        reasoningEffort = raw.isEmpty ? "max" : raw
         contextWindow = try c.decodeIfPresent(String.self, forKey: .contextWindow) ?? ""
         autoCompactTokenLimit = try c.decodeIfPresent(String.self, forKey: .autoCompactTokenLimit) ?? ""
     }
@@ -46,6 +47,9 @@ struct CodexProvider: Codable, Identifiable, Equatable {
     var disableResponseStorage: Bool = true
     var models: [CodexModelConfig] = []
     var activeModelID: UUID? = nil
+    /// Same flag as the Claude twin — Codex traffic goes through the local
+    /// proxy so the Traffic page can record OpenAI Chat/Responses calls.
+    var captureEnabled: Bool = false
 
     var activeModel: CodexModelConfig? {
         models.first { $0.id == activeModelID } ?? models.first
@@ -54,7 +58,8 @@ struct CodexProvider: Codable, Identifiable, Equatable {
     init(name: String, apiKey: String = "", baseURL: String = "",
          wireAPI: String = "responses", requiresOpenAIAuth: Bool = true,
          preserveOfficialLogin: Bool = true, disableResponseStorage: Bool = true,
-         models: [CodexModelConfig] = [], activeModelID: UUID? = nil) {
+         models: [CodexModelConfig] = [], activeModelID: UUID? = nil,
+         captureEnabled: Bool = false) {
         self.name = name
         self.apiKey = apiKey
         self.baseURL = baseURL
@@ -64,6 +69,7 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         self.disableResponseStorage = disableResponseStorage
         self.models = models
         self.activeModelID = activeModelID
+        self.captureEnabled = captureEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -78,11 +84,13 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         disableResponseStorage = try c.decodeIfPresent(Bool.self, forKey: .disableResponseStorage) ?? true
         models = try c.decodeIfPresent([CodexModelConfig].self, forKey: .models) ?? []
         activeModelID = try c.decodeIfPresent(UUID.self, forKey: .activeModelID) ?? models.first?.id
+        captureEnabled = try c.decodeIfPresent(Bool.self, forKey: .captureEnabled) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, apiKey, baseURL, wireAPI, requiresOpenAIAuth,
-             preserveOfficialLogin, disableResponseStorage, models, activeModelID
+             preserveOfficialLogin, disableResponseStorage, models, activeModelID,
+             captureEnabled
     }
 }
 
@@ -113,7 +121,7 @@ enum CodexPreset {
     static let openAI = CodexProvider(
         name: "OpenAI 官方", baseURL: "https://api.openai.com/v1", wireAPI: "responses",
         requiresOpenAIAuth: false,
-        models: [CodexModelConfig(name: "gpt-5.2-codex", reasoningEffort: "high")])
+        models: [CodexModelConfig(name: "gpt-5.2-codex")])
     /// Aibox 中转的是 GLM 等 Chat Completions 模型。它的 `/v1/responses` 只能
     /// 吃第一轮 `message`；第二轮回放 `function_call` 会 400
     /// `untagged enum ResponseInput`。和官方 GLM / cc-switch Chat / Codex++
@@ -123,7 +131,7 @@ enum CodexPreset {
         apiKey: "",
         baseURL: "http://aibox.richaibox.com:2026/v1", wireAPI: "chat",
         requiresOpenAIAuth: true,
-        models: [CodexModelConfig(name: "glm-5.3-flash", reasoningEffort: "high",
+        models: [CodexModelConfig(name: "glm-5.3-flash",
                                   contextWindow: "400000", autoCompactTokenLimit: "360000")])
     static let custom = CodexProvider(name: "自定义", baseURL: "", wireAPI: "responses", models: [])
 

@@ -63,6 +63,7 @@ struct SessionCardView: View {
                                 .lineLimit(1)
                         }
                         Spacer()
+                        SessionLoadChip(key: .pid(session.pid), compact: true)
                         if let heartbeat {
                             HeartbeatSparkline(trail: heartbeat)
                         }
@@ -86,6 +87,7 @@ struct SessionCardView: View {
             }
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(Theme.Animation.smooth, value: runningAgents)
         .glassEffect(
             .regular.tint(isBusy ? Theme.statusBusy.opacity(isHovered ? 0.20 : 0.12) : Color.white.opacity(0.05)),

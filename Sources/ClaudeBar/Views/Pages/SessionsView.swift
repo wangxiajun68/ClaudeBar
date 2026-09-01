@@ -275,6 +275,7 @@ private struct SessionTileFull: View {
 
             ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
                          isBusy: isBusy, color: Theme.statusBusy)
+            SessionLoadChip(key: .pid(session.pid))
 
             HStack(spacing: 4) {
                 Text(session.model)
@@ -318,7 +319,7 @@ private struct SessionTileFull: View {
             }
         }
         .padding(Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: isBusy ? Theme.claude : nil, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume() }
@@ -424,6 +425,7 @@ private struct CursorTileFull: View {
 
             ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
                          isBusy: isActive, color: Theme.cursorAccent)
+            SessionLoadChip(key: .cursor, shared: true)
             HStack {
                 Text(session.name)
                     .font(Theme.Font.caption)
@@ -442,7 +444,7 @@ private struct CursorTileFull: View {
             }
         }
         .padding(Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: isActive ? Theme.cursorAccent : nil, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { openCursor() }
@@ -494,22 +496,13 @@ private struct ExternalTileFull: View {
                     .foregroundColor(isActive ? Theme.externalHi : Theme.textTertiary())
             }
 
-            if session.contextLimit > 0 || session.contextTokens > 0 {
-                HStack(spacing: Theme.Space.s8) {
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack {
                     Text(session.contextLabel)
                         .font(Theme.Font.captionMono)
                         .foregroundColor(Theme.contextColor(session.contextRatio))
-                    ContextBar(ratio: session.contextRatio)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                HStack {
-                    Text(session.cwd.isEmpty ? "—" : session.cwd)
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .fixedSize()
                     Spacer()
                     Text(session.relativeUpdated)
                         .font(Theme.Font.caption)
@@ -517,11 +510,24 @@ private struct ExternalTileFull: View {
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
+                ContextBar(ratio: session.contextRatio)
+            }
+            .opacity(session.contextLimit > 0 || session.contextTokens > 0 ? 1 : 0.25)
+
+            SessionLoadChip(key: .standardizedCwd(session.cwd))
+
+            HStack {
+                Text(session.cwd.isEmpty ? " " : session.cwd)
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
             }
             .opacity(session.cwd.isEmpty ? 0.25 : 1)
 
             HStack {
-                Text(session.model)
+                Text(session.model.isEmpty ? " " : session.model)
                     .font(Theme.Font.captionMono)
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
@@ -535,7 +541,7 @@ private struct ExternalTileFull: View {
             }
         }
         .padding(Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: isActive ? tint : nil, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { revealCwd() }
