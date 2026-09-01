@@ -35,8 +35,21 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(tokenUnitStyle.rawValue, forKey: "tokenUnitStyle") }
     }
 
+    /// Route Codex traffic through the local compatibility proxy (fixes
+    /// openai/codex#23186 — MCP namespace tools unusable on generic backends).
+    @Published var codexRoutingEnabled: Bool {
+        didSet { UserDefaults.standard.set(codexRoutingEnabled, forKey: "codexRoutingEnabled") }
+    }
+
+    /// Port for the local Codex proxy (127.0.0.1:<port>).
+    @Published var codexProxyPort: Int {
+        didSet { UserDefaults.standard.set(codexProxyPort, forKey: "codexProxyPort") }
+    }
+
     private init() {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
+        codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
+        codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
     }
 }

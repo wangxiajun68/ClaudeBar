@@ -4,6 +4,7 @@ import SwiftUI
 /// Lightweight — most configuration happens via the Providers page.
 struct SettingsView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
 
     var body: some View {
@@ -48,6 +49,59 @@ struct SettingsView: View {
                         }
                         .toggleStyle(.switch)
                         .tint(Theme.claude)
+                    }
+
+                    // Codex local routing proxy
+                    settingCard("Codex 路由代理", icon: "arrow.triangle.branch") {
+                        Toggle(isOn: Binding(
+                            get: { prefs.codexRoutingEnabled },
+                            set: { on in
+                                prefs.codexRoutingEnabled = on
+                                codexStore.syncProxyWithPreferences()
+                                codexStore.reactivateActive()
+                            })) {
+                            VStack(alignment: .leading, spacing: Theme.Space.s2) {
+                                Text("本地路由")
+                                    .font(Theme.Font.body)
+                                    .foregroundColor(Theme.textPrimary)
+                                Text("修复 openai/codex#23186：Codex 的 MCP 工具包装只有官方后端能解析，通用 Responses/Chat 后端会丢弃。开启后 Codex 请求经本机代理转发并自动转换协议。")
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.textTertiary())
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(Theme.codex)
+                        Divider()
+                        HStack {
+                            Text("端口")
+                                .font(Theme.Font.body)
+                                .foregroundColor(Theme.textPrimary)
+                            Spacer()
+                            TextField("15721", text: Binding(
+                                get: { String(prefs.codexProxyPort) },
+                                set: { v in prefs.codexProxyPort = Int(v) ?? prefs.codexProxyPort }))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 90)
+                                .onSubmit { codexStore.restartProxyAndReactivate() }
+                        }
+                        HStack(spacing: Theme.Space.s6) {
+                            Circle()
+                                .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
+                                .frame(width: 6, height: 6)
+                            Text(codexStore.proxyRunning
+                                 ? "运行中 · 127.0.0.1:\(prefs.codexProxyPort)"
+                                 : "未启用")
+                                .font(Theme.Font.captionMono)
+                                .foregroundColor(Theme.textSecondary)
+                            Spacer()
+                            if let err = codexStore.errorMessage {
+                                Text(err)
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.statusError)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
 
                     // Raw config

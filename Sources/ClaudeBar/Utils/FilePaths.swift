@@ -15,6 +15,32 @@ enum FilePaths {
         claudeDir.appendingPathComponent("claude-bar-providers.json")
     }
 
+    // MARK: - Codex
+
+    /// `~/.codex` — Codex CLI/desktop config root.
+    static var codexDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex")
+    }
+
+    static var codexConfigFile: URL {
+        codexDir.appendingPathComponent("config.toml")
+    }
+
+    static var codexAuthFile: URL {
+        codexDir.appendingPathComponent("auth.json")
+    }
+
+    static var codexModelCatalogFile: URL {
+        CodexModelCatalog.fileURL
+    }
+
+    /// Codex provider list managed by ClaudeBar (separate from the Claude
+    /// providers file so the two lists stay independent).
+    static var codexProvidersFile: URL {
+        claudeDir.appendingPathComponent("claude-bar-codex-providers.json")
+    }
+
     /// Shared App Group identifier between the main app and the widget
     /// extension. The sandboxed widget cannot read `~/.claude`, so the
     /// snapshot is published here instead. Keep in sync with the widget

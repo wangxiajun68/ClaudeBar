@@ -39,6 +39,7 @@ enum Theme {
     static let claudeHi = Color(hex: 0x79ABF9)  // light blue — busy/active
     static let cursor = Color(hex: 0xA78BFA)    // soft violet — Cursor
     static let cursorHi = Color(hex: 0xC0ACFC)  // light violet
+    static let codex = Color(hex: 0xE8E3DC)     // warm porcelain — Codex
 
     /// Teal — external agent tools (Codex / OpenClaw). A third
     /// hue so the newest session family reads as its own source at a glance
