@@ -55,6 +55,7 @@ swiftc \
     -framework SwiftUI \
     -framework AppKit \
     -framework WidgetKit \
+    -framework CryptoKit \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
@@ -90,6 +91,11 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <true/>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
 PLIST
@@ -198,6 +204,8 @@ cat > "$ENT_DIR/app.plist" << 'AENT'
         <string>com.claudebar.app.widget</string>
     </array>
     <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
     <true/>
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>

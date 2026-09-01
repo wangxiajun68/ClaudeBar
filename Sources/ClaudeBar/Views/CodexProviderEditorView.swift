@@ -1,10 +1,13 @@
 import SwiftUI
 
-/// Provider editor — layout only. All state, validation, and persistence live
-/// in `ProviderEditorModel` (@Observable); this view binds and renders.
-struct ProviderEditorView: View {
-    @ObservedObject var providerStore: ProviderStore
-    @State private var model = ProviderEditorModel()
+/// Codex provider editor — layout only. All state, validation, and
+/// persistence live in `CodexProviderEditorModel` (@Observable). Mirrors
+/// `ProviderEditorView` with Codex-specific fields (wire_api, reasoning
+/// effort, preserve-official-login).
+struct CodexProviderEditorView: View {
+    @ObservedObject var codexStore: CodexProviderStore
+    @State private var model = CodexProviderEditorModel()
+    @State private var showPresets = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -20,8 +23,7 @@ struct ProviderEditorView: View {
         .onChange(of: model.selectedID) { _, _ in
             model.loadSelected()
         }
-        .onAppear { model.attach(store: providerStore) }
-        // Hold the "saving" affordance briefly so a fast save still registers.
+        .onAppear { model.attach(store: codexStore) }
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -32,7 +34,7 @@ struct ProviderEditorView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("PROVIDERS")
+            Text("CODEX PROVIDERS")
                 .font(Theme.Font.labelSection)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
@@ -40,9 +42,9 @@ struct ProviderEditorView: View {
                 .padding(.horizontal, Theme.Space.s16 - 2).padding(.top, Theme.Space.s12).padding(.bottom, Theme.Space.s6)
 
             List(selection: $model.selectedID) {
-                ForEach(providerStore.providers) { provider in
+                ForEach(codexStore.providers) { provider in
                     HStack(spacing: Theme.Space.s8) {
-                        Image(systemName: "server.rack")
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(provider.name).font(Theme.Font.body)
@@ -52,7 +54,7 @@ struct ProviderEditorView: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: Theme.Space.s8)
-                        if provider.id == providerStore.activeProviderID {
+                        if provider.id == codexStore.activeProviderID {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(Theme.Font.bodySmall).foregroundColor(Theme.statusBusy)
                                 .transition(.scale.combined(with: .opacity))
@@ -66,20 +68,57 @@ struct ProviderEditorView: View {
             .scrollContentBackground(.hidden)
 
             HStack(spacing: Theme.Space.s6) {
+                Button(action: { showPresets.toggle() }) { Image(systemName: "sparkles") }
+                    .buttonStyle(.glass).help("从预设添加")
                 Button(action: { model.addNew() }) { Image(systemName: "plus") }
-                    .buttonStyle(.glass).help("Add provider")
+                    .buttonStyle(.glass).help("添加供应商")
                 Button(action: { model.duplicateSelected() }) { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("Duplicate")
+                    .disabled(model.selectedID == nil).help("复制")
                 Button(action: { model.deleteSelected() }) { Image(systemName: "trash") }
                     .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("Delete")
+                    .disabled(model.selectedID == nil).help("删除")
                 Spacer()
             }
             .padding(.horizontal, Theme.Space.s8 + 2).padding(.vertical, Theme.Space.s8)
         }
         .frame(width: 220)
         .background(Theme.base1.opacity(0.45))
+        .overlay(alignment: .bottom) {
+            if showPresets { presetMenu }
+        }
+    }
+
+    private var presetMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(CodexPreset.all, id: \.label) { preset in
+                Button(action: {
+                    model.addFromPreset(preset.provider)
+                    showPresets = false
+                }) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(preset.label).font(Theme.Font.body)
+                        Text(preset.provider.baseURL)
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, Theme.Space.s8).padding(.vertical, Theme.Space.s6)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color.clear))
+            }
+        }
+        .padding(Theme.Space.s6)
+        .frame(width: 220)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.base1)
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 2)
+        )
+        .padding(Theme.Space.s8)
     }
 
     // MARK: - Detail
@@ -93,30 +132,68 @@ struct ProviderEditorView: View {
                 }
                 .padding(Theme.Space.s16)
             }
-
             footer
         }
     }
 
     private var providerConfigCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            Label("Provider Configuration", systemImage: "server.rack")
+            Label("供应商配置", systemImage: "chevron.left.forwardslash.chevron.right")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
-            EditorField(label: "Name", error: model.nameError) {
+            EditorField(label: "名称", error: model.nameError) {
                 TextField("e.g. DeepSeek", text: $model.name)
                     .textFieldStyle(.roundedBorder)
             }
             EditorField(label: "API Key") {
-                SecureField("sk-...", text: $model.authToken)
+                TextField("sk-...", text: $model.apiKey)
                     .textFieldStyle(.roundedBorder)
+                    .font(Theme.Font.microMono)
             }
             EditorField(label: "Base URL", error: model.urlError) {
-                TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)
+                TextField("https://api.deepseek.com", text: $model.baseURL)
                     .textFieldStyle(.roundedBorder)
             }
+            HStack(alignment: .top, spacing: Theme.Space.s16) {
+                EditorField(label: "上游格式 (wire_api)") {
+                    Picker("", selection: $model.wireAPI) {
+                        Text("Responses（原生）").tag("responses")
+                        Text("Chat Completions").tag("chat")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                EditorField(label: "推理档位") {
+                    Picker("", selection: Binding(
+                        get: { model.models.first(where: { $0.id == model.editingModelID })?.reasoningEffort ?? "" },
+                        set: { effort in
+                            if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
+                                model.models[idx].reasoningEffort = effort
+                            }
+                        })) {
+                        Text("不设置").tag("")
+                        Text("minimal").tag("minimal")
+                        Text("low").tag("low")
+                        Text("medium").tag("medium")
+                        Text("high").tag("high")
+                        Text("xhigh").tag("xhigh")
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
+            }
+            Toggle("切换第三方时保留官方登录（缓解桌面 App 模型门控）", isOn: $model.preserveOfficialLogin)
+                .font(Theme.Font.bodySmall)
+            Toggle("requires_openai_auth（写入 model_providers 表）", isOn: $model.requiresOpenAIAuth)
+                .font(Theme.Font.bodySmall)
+            Toggle("disable_response_storage", isOn: $model.disableResponseStorage)
+                .font(Theme.Font.bodySmall)
+            Text("保留官方登录时第三方 Key 写入 OPENAI_API_KEY，官方 tokens 保留；桌面 App 模型选择器门控属上游行为，CLI 不受影响。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
         }
         .padding(Theme.Space.s12)
         .panelCard()
@@ -124,7 +201,7 @@ struct ProviderEditorView: View {
 
     private var modelConfigCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label("Model Configuration", systemImage: "cpu")
+            Label("模型配置", systemImage: "cpu")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
@@ -132,6 +209,7 @@ struct ProviderEditorView: View {
                 .padding(.bottom, Theme.Space.s12)
             HStack(alignment: .top, spacing: 0) {
                 modelList
+                    .frame(height: 220) // fixed: unbounded inner ScrollView was inflating card height
                 Divider()
                 modelDetail
             }
@@ -143,7 +221,7 @@ struct ProviderEditorView: View {
     private var modelList: some View {
         VStack(spacing: 0) {
             if model.models.isEmpty {
-                Text("No models")
+                Text("暂无模型")
                     .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                     .padding(.vertical, Theme.Space.s12).frame(maxWidth: .infinity)
             } else {
@@ -159,7 +237,7 @@ struct ProviderEditorView: View {
 
             Divider()
             HStack(spacing: Theme.Space.s4) {
-                TextField("Add…", text: $model.newModelName)
+                TextField("添加模型…", text: $model.newModelName)
                     .textFieldStyle(.roundedBorder)
                     .font(Theme.Font.bodySmall)
                     .onSubmit { model.addModel() }
@@ -169,7 +247,7 @@ struct ProviderEditorView: View {
                 }
                 .buttonStyle(.glass)
                 .disabled(model.newModelName.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Add model")
+                .help("添加模型")
             }
             .padding(Theme.Space.s8)
         }
@@ -179,36 +257,26 @@ struct ProviderEditorView: View {
     @ViewBuilder private var modelDetail: some View {
         if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                EditorField(label: "Model Name") {
-                    TextField("e.g. deepseek-v4-pro[1m]", text: $model.models[idx].name)
+                EditorField(label: "模型名 (model)") {
+                    TextField("e.g. deepseek-chat", text: $model.models[idx].name)
                         .textFieldStyle(.roundedBorder)
                         .font(Theme.Font.microMono)
                 }
-                HStack(alignment: .top, spacing: Theme.Space.s16) {
-                    EditorField(label: "Context Tokens") {
-                        TextField("1000000", text: $model.models[idx].contextTokens)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    EditorField(label: "Auto Compact Window") {
-                        TextField("1000000", text: $model.models[idx].autoCompactWindow)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                EditorField(label: "上下文窗口 (model_context_window，留空不写入)") {
+                    TextField("400000", text: $model.models[idx].contextWindow)
+                        .textFieldStyle(.roundedBorder)
                 }
-                Toggle("Disable Compact", isOn: $model.models[idx].disableCompact)
-                    .font(Theme.Font.bodySmall)
-                Toggle("Disable Experimental Betas", isOn: $model.models[idx].disableExperimentalBetas)
-                    .font(Theme.Font.bodySmall)
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text("Select a model")
+            Text("选择一个模型")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private func modelRow(_ m: EditableModel) -> some View {
+    private func modelRow(_ m: EditableCodexModel) -> some View {
         let isSelected = m.id == (model.editingModelID ?? model.models.first?.id)
         let isDefault = m.id == model.activeModelID
         return Button(action: { withAnimation(Theme.Animation.bouncy) { model.editingModelID = m.id } }) {
@@ -229,7 +297,7 @@ struct ProviderEditorView: View {
             .padding(.horizontal, Theme.Space.s8 + 2)
             .padding(.vertical, Theme.Space.s6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .selectionTint(isSelected, color: Theme.claude, corner: 5)
+            .selectionTint(isSelected, color: Theme.codex, corner: 5)
         }
         .buttonStyle(.plain)
         .help(isDefault ? "默认模型:切换到该供应商时自动选用" : "右键设为默认")
@@ -252,6 +320,12 @@ struct ProviderEditorView: View {
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.statusError)
                 }
+                if let err = codexStore.errorMessage {
+                    Text(err)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.statusError)
+                        .lineLimit(1)
+                }
                 Spacer()
                 Button {
                     model.save()
@@ -259,14 +333,14 @@ struct ProviderEditorView: View {
                     if model.isSaving {
                         ProgressView().scaleEffect(0.5)
                     } else {
-                        Text("Save")
+                        Text("保存")
                     }
                 }
                 .buttonStyle(.glassProminent)
-                .tint(Theme.accent)
+                .tint(Theme.codex)
                 .disabled(!model.canSave)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Save provider (⌘S)")
+                .help("保存供应商 (⌘S)")
             }
             .padding(.horizontal, Theme.Space.s16 + Theme.Space.s4).padding(.vertical, Theme.Space.s12)
             .animation(Theme.Animation.bouncy, value: model.saveToken)
@@ -276,33 +350,12 @@ struct ProviderEditorView: View {
     private var emptyState: some View {
         VStack(spacing: Theme.Space.s12) {
             Spacer()
-            Image(systemName: "server.rack")
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .font(Theme.Font.titleMedium).foregroundColor(Theme.textSecondary.opacity(0.5))
-            Text("Select a provider or add a new one")
+            Text("选择一个供应商，或从预设添加")
                 .foregroundColor(Theme.textSecondary).font(Theme.Font.body)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-// MARK: - Field
-
-struct EditorField<Content: View>: View {
-    let label: String
-    var error: String? = nil
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s4) {
-            Text(label).font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
-            content()
-            if let error {
-                Text(error)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
-                    .transition(.opacity)
-            }
-        }
     }
 }

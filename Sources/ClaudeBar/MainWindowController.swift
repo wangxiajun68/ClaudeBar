@@ -9,9 +9,11 @@ import SwiftUI
 final class MainWindowController {
     private var window: NSWindow?
     private let providerStore: ProviderStore
+    private let codexProviderStore: CodexProviderStore
 
-    init(providerStore: ProviderStore) {
+    init(providerStore: ProviderStore, codexProviderStore: CodexProviderStore) {
         self.providerStore = providerStore
+        self.codexProviderStore = codexProviderStore
     }
 
     /// Bring the window to the front, creating it on first call or recreating
@@ -35,6 +37,7 @@ final class MainWindowController {
     private func makeWindow() -> NSWindow {
         let rootView = MainWindowView()
             .environmentObject(providerStore)
+            .environmentObject(codexProviderStore)
 
         let hosting = NSHostingView(rootView: rootView)
 

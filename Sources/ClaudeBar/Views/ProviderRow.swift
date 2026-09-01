@@ -165,3 +165,153 @@ struct ProviderTile: View {
         .animation(Theme.Animation.bouncy, value: isSelected)
     }
 }
+
+// MARK: - Codex Provider Tile
+
+/// Codex flavor of `ProviderTile` — same tile chrome, Codex tint, model rows
+/// route through `CodexProviderStore.activate`.
+struct CodexProviderTile: View {
+    let provider: CodexProvider
+    let isActive: Bool
+    let activeModelID: UUID?
+    let onActivateModel: (UUID) -> Void
+
+    var dense: Bool = false
+    var startsExpanded: Bool = false
+
+    @State private var isExpanded: Bool?
+    @State private var isHovered = false
+
+    private var expanded: Bool { isExpanded ?? startsExpanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            header
+            if expanded && !provider.models.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(provider.models) { model in
+                        modelRow(model)
+                    }
+                }
+                .padding(.top, 2)
+                .transition(.opacity)
+            }
+        }
+        .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: Theme.codex.opacity(0.06), hovered: isHovered, dense: dense)
+        .overlay(alignment: .leading) {
+            if isActive {
+                Rectangle()
+                    .fill(Theme.codex)
+                    .frame(width: 2)
+                    .clipShape(RoundedRectangle(cornerRadius: 1))
+            }
+        }
+        .hoverState($isHovered)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(provider.name)，\(isActive ? "活跃" : "未激活")，\(provider.models.count) 个模型")
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+            HStack(spacing: Theme.Space.s6) {
+                Text(provider.name)
+                    .font(dense ? Theme.Font.rowTitle : Theme.Font.titleSmall)
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                if isActive {
+                    Text("active")
+                        .font(Theme.Font.microMedium)
+                        .foregroundColor(Theme.statusBusy)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
+                        .transition(.scale.combined(with: .opacity))
+                }
+                if provider.models.count > 1 {
+                    Button(action: {
+                        withAnimation(Theme.Animation.snappy) {
+                            isExpanded = !(expanded)
+                        }
+                    }) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(Theme.Font.micro)
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            // Always rendered (space-reserved) so tiles in the same grid row
+            // keep equal height regardless of whether a model is active —
+            // mirrors ProviderTile's model-name line (same font metrics).
+            Text(provider.activeModel?.name ?? " ")
+                .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
+                .foregroundColor(isActive ? Theme.codex : Theme.textTertiary())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 0) {
+                Text("\(provider.models.count) models")
+                    .font(Theme.Font.tileDetail)
+                    .foregroundColor(Theme.textTertiary(0.35))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func modelRow(_ model: CodexModelConfig) -> some View {
+        let selected = isActive && model.id == (activeModelID ?? provider.models.first?.id)
+        return Button(action: { onActivateModel(model.id) }) {
+            HStack(spacing: Theme.Space.s6) {
+                radioIndicator(isSelected: selected)
+                Text(model.name)
+                    .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
+                    .foregroundColor(selected ? Theme.textPrimary : Theme.textTertiary(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if !model.contextWindow.isEmpty, let n = Int(model.contextWindow), n > 0 {
+                    Text(formatContext(model.contextWindow))
+                        .font(Theme.Font.microMedium)
+                        .foregroundColor(Theme.textTertiary(0.35))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Theme.cardFill(0.06)))
+                }
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(Theme.Font.microSemibold).foregroundColor(Theme.statusBusy)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .modifier(ActiveTileEdge(isActive: selected, selected: selected, corner: 4))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func formatContext(_ tokens: String) -> String {
+        guard let n = Int(tokens), n > 0 else { return tokens }
+        if n >= 1_000_000 {
+            let m = Double(n) / 1_000_000
+            return m == m.rounded() ? "\(Int(m))M" : String(format: "%.1fM", m)
+        } else if n >= 1_000 {
+            return "\(Int(round(Double(n) / 1_000)))K"
+        }
+        return tokens
+    }
+
+    private func radioIndicator(isSelected: Bool) -> some View {
+        ZStack {
+            Circle().strokeBorder(isSelected ? Theme.codex : Theme.statusIdle.opacity(0.4), lineWidth: 1.5)
+                .frame(width: 13, height: 13)
+            if isSelected {
+                Circle().fill(Theme.codex).frame(width: 7, height: 7)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(Theme.Animation.bouncy, value: isSelected)
+    }
+}

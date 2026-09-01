@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var mainWindowController: MainWindowController?
     private var providerStore: ProviderStore?
+    private var codexProviderStore: CodexProviderStore?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // .regular: the app has a Dock icon, standard app menu, and proper
@@ -15,12 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let store = ProviderStore()
         providerStore = store
+        let codexStore = CodexProviderStore()
+        codexProviderStore = codexStore
+        codexStore.load()
 
         let controller = MenuBarController(providerStore: store)
         controller.setup()
         menuBarController = controller
 
-        let main = MainWindowController(providerStore: store)
+        let main = MainWindowController(providerStore: store, codexProviderStore: codexStore)
         mainWindowController = main
         main.showWindow()
 
