@@ -4,75 +4,75 @@ import SQLite3
 /// Aggregates Cursor's historical token usage from `state.vscdb`.
 ///
 /// Cursor stores per-message ("bubble") token counts in the `cursorDiskKV`
-/// table, keyed `bubbleId:<composerId>:<bubbleId>`, with a JSON value whose
-/// `tokenCount.inputTokens` / `outputTokens` fields hold the counts.
-///
-/// Two hard limits, verified empirically against this user's DB:
-///   • The data is a historical snapshot — Cursor stopped writing token counts
-///     after ~2026-03, so recent months show nothing. This is an upstream
-///     behavior we cannot change.
-///   • There is no per-bubble model field, and `unifiedMode` (agent/chat/plan)
-///     cannot split usage into Cursor Agent vs Cursor Edit rows.
-///
-/// Per the user's decision, we therefore aggregate every non-zero bubble into
-/// a single `ModelUsage(model: "Cursor")` row, surfaced as one line in the
-/// usage panel alongside the per-model Claude rows. The number is stable across
-/// period switches (it is a full-scan total, not interval-filtered).
-///
-/// Performance: the bubble values total multi-GB, so any scan is expensive.
-/// Two mitigations, both verified against a 9.8GB DB with 543k bubbles:
-///   1. Aggregation runs in SQL (`json_extract` + `sum`) — one pass, no
-///      per-row Swift JSONSerialization (that was 543k allocations on top of
-///      the I/O).
-///   2. The result is cached in-process with a TTL — re-scanning on every
-///     period switch / date shift / refresh is pure waste.
-///
-/// Cache policy: only successful scans are cached. A failed scan (DB closed,
-/// Cursor updating) returns the last known value if any, so the UI never
-/// flickers to zero, and the next call retries the scan.
+/// table, keyed `bubbleId:<composerId>:<bubbleId>`. The data is a historical
+/// snapshot — Cursor stopped writing token counts after ~2026-03 — so a
+/// full `json_extract` pass over a multi-GB DB is paid **once**, then persisted
+/// in `usage-index.db`. Period chips never open `state.vscdb`.
 struct CursorUsageStats {
 
-    /// Full rescan interval. Between full rescans the aggregate is maintained
-    /// incrementally (see `scan()`), and the rescan corrects any drift from
-    /// deleted bubble rows. The source data is essentially frozen (no writes
-    /// since ~2026-03), so an hour is generous.
-    private static let fullRescanInterval: TimeInterval = 3_600
-
     private static var cachedUsage: ModelUsage?
-    private static var cachedAt: Date = .distantPast
-    /// Cheap DB write-detection snapshot from the last scan: (data_version,
-    /// page_count). Both are header reads (~0 ms); if neither changed, the
-    /// bubble set cannot have changed either and the scan is skipped entirely.
-    private static var lastDBStamp: (version: Int32, pages: Int64)?
+    private static var cachedStamp: (version: Int32, pages: Int64)?
     private static let cacheLock = NSLock()
 
-    /// Aggregate Cursor token usage. Returns nil only if no value is available
-    /// (scan failed and nothing cached). With a warm cache and an unchanged
-    /// DB this is a pure in-memory hit.
+    /// In-memory / persisted aggregate. Never scans `state.vscdb`.
     static func fetch() -> ModelUsage? {
         cacheLock.lock()
-        let hit = cachedUsage
-        let age = Date().timeIntervalSince(cachedAt)
-        let stamp = lastDBStamp
-        cacheLock.unlock()
-
-        // Fast path: cached and the DB header is unchanged — no I/O at all.
-        if let hit, age < fullRescanInterval, let stamp,
-           let current = dbStamp(), current.version == stamp.version, current.pages == stamp.pages {
+        if let hit = cachedUsage {
+            cacheLock.unlock()
             return hit
         }
-
-        // Expensive path: full rescan (corrects deletion drift, re-stamps).
-        let fresh = scan()
-        cacheLock.lock()
-        if let fresh {
-            cachedUsage = fresh
-            cachedAt = Date()
-            lastDBStamp = dbStamp()
-        }
-        let result = fresh ?? cachedUsage
         cacheLock.unlock()
-        return result
+
+        guard let row = UsageIndex.loadCursorTotals() else { return nil }
+        let usage = usage(from: row)
+        cacheLock.lock()
+        cachedUsage = usage
+        cachedStamp = (row.dbVersion, row.pageCount)
+        cacheLock.unlock()
+        return usage
+    }
+
+    /// Compare the Cursor DB header to the persisted stamp. Scan only when
+    /// the bubble set could have changed (or we have never scanned).
+    static func refreshIfNeeded() {
+        let stamp = dbStamp()
+        cacheLock.lock()
+        let known = cachedStamp
+        cacheLock.unlock()
+
+        if let stamp, let known, stamp.version == known.version, stamp.pages == known.pages {
+            if cachedUsage == nil { _ = fetch() }
+            return
+        }
+        if let row = UsageIndex.loadCursorTotals(),
+           let stamp,
+           row.dbVersion == stamp.version, row.pageCount == stamp.pages {
+            let usage = usage(from: row)
+            cacheLock.lock()
+            cachedUsage = usage
+            cachedStamp = stamp
+            cacheLock.unlock()
+            return
+        }
+        guard let fresh = scan(), let stamp else { return }
+        UsageIndex.saveCursorTotals(.init(
+            input: fresh.inputTokens,
+            output: fresh.outputTokens,
+            calls: fresh.calls,
+            dbVersion: stamp.version,
+            pageCount: stamp.pages))
+        cacheLock.lock()
+        cachedUsage = fresh
+        cachedStamp = stamp
+        cacheLock.unlock()
+    }
+
+    private static func usage(from row: UsageIndex.CursorRow) -> ModelUsage {
+        var usage = ModelUsage(model: "Cursor")
+        usage.calls = row.calls
+        usage.inputTokens = row.input
+        usage.outputTokens = row.output
+        return usage
     }
 
     /// (data_version, page_count) of the state DB, or nil if unreadable.
@@ -92,15 +92,10 @@ struct CursorUsageStats {
         return (version, pages)
     }
 
-    /// One SQL pass over the bubble rows: sums happen inside SQLite so only a
     private static func scan() -> ModelUsage? {
         guard let db = CursorDB.open() else { return nil }
         defer { sqlite3_close(db) }
 
-        // cursorDiskKV has no usable index on token counts, and bubble
-        // timestamps (createdAt) are ISO strings present on only ~78% of rows.
-        // We do a single full table scan of the value column with the sums
-        // pushed down into SQLite's JSON reader.
         let sql = """
             SELECT CAST(sum(json_extract(value,'$.tokenCount.inputTokens')) AS INTEGER),
                    CAST(sum(json_extract(value,'$.tokenCount.outputTokens')) AS INTEGER),

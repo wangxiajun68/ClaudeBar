@@ -78,7 +78,8 @@ enum CodexConfigWriter {
     /// Managed top-level keys (also used for reading the current state).
     static let managedTopLevelKeys: Set<String> = [
         "model", "model_provider", "model_reasoning_effort",
-        "model_context_window", "disable_response_storage",
+        "model_context_window", "model_auto_compact_token_limit",
+        "disable_response_storage",
         "model_catalog_json",
     ]
 
@@ -111,6 +112,9 @@ enum CodexConfigWriter {
         }
         if let window = Int(model.contextWindow), window > 0 {
             managed.append("model_context_window = \(window)")
+        }
+        if let compact = Int(model.autoCompactTokenLimit), compact > 0 {
+            managed.append("model_auto_compact_token_limit = \(compact)")
         }
         managed.append("disable_response_storage = \(provider.disableResponseStorage)")
         managed.append("model_catalog_json = \(serialize(CodexModelCatalog.filename))")

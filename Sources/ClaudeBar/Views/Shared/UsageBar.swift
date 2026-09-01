@@ -16,6 +16,10 @@ struct UsageModelTile: View {
     private var ratio: Double { maxTokens > 0 ? Double(stat.totalTokens) / Double(maxTokens) : 0 }
     private var color: Color { Theme.barColor(for: stat.model) }
 
+    private var hasCache: Bool {
+        stat.cacheReadTokens > 0 || stat.cacheCreationTokens > 0
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s6) {
             HStack(spacing: Theme.Space.s6) {
@@ -33,8 +37,6 @@ struct UsageModelTile: View {
                     .foregroundColor(color)
             }
             ProportionBar(ratio: ratio, color: color, height: dense ? 5 : 7, corner: dense ? 2 : 3)
-            // Always rendered so the bottom line's height is uniform across
-            // tiles (the detail text is single-line and may be clipped).
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageStats.formatTokens(stat.totalTokens))
                     .font(dense ? Theme.Font.tileMicroValue : Theme.Font.tileValueSmall)
@@ -43,12 +45,21 @@ struct UsageModelTile: View {
                     .contentTransition(.numericText())
                     .animation(Theme.Animation.smooth, value: stat.totalTokens)
                 Spacer(minLength: 8)
-                Text("\(stat.calls) 次调用 · 输入 \(UsageStats.formatTokens(stat.inputTokens)) · 输出 \(UsageStats.formatTokens(stat.outputTokens))")
-                    .font(Theme.Font.tileDetail)
-                    .foregroundColor(Theme.textTertiary())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if hasCache {
+                    Text("缓存命中 \(stat.cacheHitPercent)%")
+                        .font(dense ? Theme.Font.tileDetail : Theme.Font.captionMono)
+                        .monospacedDigit()
+                        .foregroundColor(color)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
+            Text(detailLine)
+                .font(Theme.Font.tileDetail)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -56,7 +67,24 @@ struct UsageModelTile: View {
         .hoverState($isHovered)
         .animation(Theme.Animation.smooth, value: isHovered)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens，占比 \(Int((ratio * 100).rounded()))%")
+        .accessibilityLabel(hasCache
+            ? "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens，缓存命中 \(stat.cacheHitPercent)%"
+            : "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens")
+    }
+
+    private var detailLine: String {
+        var parts = [
+            "\(stat.calls) 次",
+            "输入 \(UsageStats.formatTokens(stat.inputTokens))",
+            "输出 \(UsageStats.formatTokens(stat.outputTokens))",
+        ]
+        if hasCache {
+            parts.append("命中 \(UsageStats.formatTokens(stat.cacheReadTokens))")
+            if stat.cacheCreationTokens > 0 {
+                parts.append("写入 \(UsageStats.formatTokens(stat.cacheCreationTokens))")
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

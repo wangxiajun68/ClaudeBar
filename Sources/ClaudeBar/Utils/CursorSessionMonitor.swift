@@ -144,7 +144,9 @@ struct CursorSessionMonitor {
             let lastUpdatedAt = (obj["lastUpdatedAt"] as? Double) ?? recency
             let cwd = extractFsPath(obj)
             let ctxPct = (obj["contextUsagePercent"] as? Double) ?? -1
-            let isActive = isAgentActive(obj)
+            let locActive = isAgentActive(obj)
+            let unfinishedAt = (obj["unfinishedRunAt"] as? Double) ?? 0
+            let unfinishedRecent = unfinishedAt > 0 && (nowMs - unfinishedAt) < 120_000
 
             sessions.append(CursorSessionInfo(
                 composerId: composerId,
@@ -153,7 +155,7 @@ struct CursorSessionMonitor {
                 createdAt: createdAt,
                 lastUpdatedAt: lastUpdatedAt,
                 contextPercent: ctxPct,
-                status: isActive ? .active : .idle,
+                status: (unfinishedRecent || locActive) ? .active : .idle,
                 isAlive: lastUpdatedAt > cutoff
             ))
         }
@@ -165,10 +167,16 @@ struct CursorSessionMonitor {
             let scan = scanTranscript(cwd: shown[i].cwd, composerId: shown[i].composerId)
             shown[i].messageCount = scan.count
             shown[i].currentActivity = scan.activity
-            // A pending transcript turn means the agent is actively working,
-            // even if the head's agentLocation hasn't flipped to "active" yet.
-            if scan.toolPending { shown[i].status = .active }
             shown[i].toolPending = scan.toolPending
+            let recentlyTouched = (nowMs - shown[i].lastUpdatedAt) < 120_000
+            // Sticky `agentLocation.status == active` on old chats is a Cursor
+            // quirk. Trust a live transcript turn, a recent unfinished run, or
+            // location+recency together — never a stale "active" from yesterday.
+            if scan.toolPending {
+                shown[i].status = .active
+            } else if shown[i].status == .active && !recentlyTouched && !scan.toolPending {
+                shown[i].status = .idle
+            }
         }
 
         // --- Subagents: group non-archived sub-composers by their parent ---

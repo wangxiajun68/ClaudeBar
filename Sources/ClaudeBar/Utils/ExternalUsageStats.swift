@@ -1,6 +1,6 @@
 import Foundation
 
-/// Usage aggregation for external agent tools — Codex, OpenClaw.
+/// Usage aggregation for external agent tools — Codex.
 ///
 /// Since the persistent `UsageIndex` landed, external transcripts are parsed
 /// into the same rollup as Claude Code transcripts (source kind is part of

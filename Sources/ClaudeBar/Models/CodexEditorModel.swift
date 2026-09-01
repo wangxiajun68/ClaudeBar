@@ -7,6 +7,7 @@ struct EditableCodexModel: Identifiable, Equatable {
     var name: String = ""
     var reasoningEffort: String = ""
     var contextWindow: String = ""
+    var autoCompactTokenLimit: String = ""
 }
 
 /// Editor form view-model for Codex providers — direct port of
@@ -59,7 +60,9 @@ final class CodexProviderEditorModel {
         disableResponseStorage = p.disableResponseStorage
         models = p.models.map { EditableCodexModel(
             id: $0.id, name: $0.name,
-            reasoningEffort: $0.reasoningEffort, contextWindow: $0.contextWindow
+            reasoningEffort: $0.reasoningEffort,
+            contextWindow: $0.contextWindow,
+            autoCompactTokenLimit: $0.autoCompactTokenLimit
         )}
         activeModelID = p.activeModelID ?? p.models.first?.id
         editingModelID = activeModelID
@@ -126,7 +129,8 @@ final class CodexProviderEditorModel {
         p.models = models.map {
             CodexModelConfig(id: $0.id, name: $0.name,
                              reasoningEffort: $0.reasoningEffort,
-                             contextWindow: $0.contextWindow)
+                             contextWindow: $0.contextWindow,
+                             autoCompactTokenLimit: $0.autoCompactTokenLimit)
         }
         p.activeModelID = activeModelID ?? p.models.first?.id
 
@@ -177,5 +181,12 @@ final class CodexProviderEditorModel {
             selectedID = last.id
             loadSelected()
         }
+    }
+
+    func importFromClaude() {
+        guard let store else { return }
+        store.importFromClaude()
+        if selectedID == nil { selectedID = store.providers.first?.id }
+        loadSelected()
     }
 }

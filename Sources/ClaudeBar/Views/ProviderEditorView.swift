@@ -5,6 +5,7 @@ import SwiftUI
 struct ProviderEditorView: View {
     @ObservedObject var providerStore: ProviderStore
     @State private var model = ProviderEditorModel()
+    @State private var showPresets = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -16,7 +17,7 @@ struct ProviderEditorView: View {
                 emptyState
             }
         }
-        .frame(minWidth: 720, minHeight: 500)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: model.selectedID) { _, _ in
             model.loadSelected()
         }
@@ -66,20 +67,56 @@ struct ProviderEditorView: View {
             .scrollContentBackground(.hidden)
 
             HStack(spacing: Theme.Space.s6) {
+                Button(action: { showPresets.toggle() }) { Image(systemName: "sparkles") }
+                    .buttonStyle(.glass).help("从预设添加")
                 Button(action: { model.addNew() }) { Image(systemName: "plus") }
-                    .buttonStyle(.glass).help("Add provider")
+                    .buttonStyle(.glass).help("添加供应商")
                 Button(action: { model.duplicateSelected() }) { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("Duplicate")
+                    .disabled(model.selectedID == nil).help("复制")
                 Button(action: { model.deleteSelected() }) { Image(systemName: "trash") }
                     .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("Delete")
+                    .disabled(model.selectedID == nil).help("删除")
                 Spacer()
             }
             .padding(.horizontal, Theme.Space.s8 + 2).padding(.vertical, Theme.Space.s8)
         }
         .frame(width: 220)
         .background(Theme.base1.opacity(0.45))
+        .overlay(alignment: .bottom) {
+            if showPresets { presetMenu }
+        }
+    }
+
+    private var presetMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(CodexPreset.all, id: \.label) { preset in
+                Button(action: {
+                    model.addFromPreset(preset.provider)
+                    showPresets = false
+                }) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(preset.label).font(Theme.Font.body)
+                        Text(preset.provider.baseURL)
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, Theme.Space.s8).padding(.vertical, Theme.Space.s6)
+            }
+        }
+        .padding(Theme.Space.s6)
+        .frame(width: 220)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.base1)
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 2)
+        )
+        .padding(Theme.Space.s8)
     }
 
     // MARK: - Detail
@@ -117,6 +154,27 @@ struct ProviderEditorView: View {
                 TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)
                     .textFieldStyle(.roundedBorder)
             }
+            Text("Codex 自动写成：\(ProviderBridge.openaiCompatibleURL(model.baseURL))")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            HStack(alignment: .top, spacing: Theme.Space.s16) {
+                EditorField(label: "Codex 上游格式") {
+                    Picker("", selection: $model.wireAPI) {
+                        Text("Responses").tag("responses")
+                        Text("Chat").tag("chat")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+            }
+            Toggle("切换第三方时保留官方登录", isOn: $model.preserveOfficialLogin)
+                .font(Theme.Font.bodySmall)
+            Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
+                .font(Theme.Font.bodySmall)
+            Toggle("disable_response_storage", isOn: $model.disableResponseStorage)
+                .font(Theme.Font.bodySmall)
         }
         .padding(Theme.Space.s12)
         .panelCard()
@@ -132,6 +190,7 @@ struct ProviderEditorView: View {
                 .padding(.bottom, Theme.Space.s12)
             HStack(alignment: .top, spacing: 0) {
                 modelList
+                    .frame(height: 220)
                 Divider()
                 modelDetail
             }
@@ -193,6 +252,22 @@ struct ProviderEditorView: View {
                         TextField("1000000", text: $model.models[idx].autoCompactWindow)
                             .textFieldStyle(.roundedBorder)
                     }
+                }
+                EditorField(label: "Codex 推理档位") {
+                    Picker("", selection: $model.models[idx].reasoningEffort) {
+                        Text("不设置").tag("")
+                        Text("none").tag("none")
+                        Text("minimal").tag("minimal")
+                        Text("low").tag("low")
+                        Text("medium").tag("medium")
+                        Text("high").tag("high")
+                        Text("xhigh").tag("xhigh")
+                        Text("max").tag("max")
+                        Text("ultra").tag("ultra")
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: 160, alignment: .leading)
                 }
                 Toggle("Disable Compact", isOn: $model.models[idx].disableCompact)
                     .font(Theme.Font.bodySmall)

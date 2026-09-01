@@ -21,6 +21,8 @@ struct SessionInfo: Identifiable, Equatable {
     var toolPending: Bool = false       // a tool_use has no following tool_result
     var subagents: [SubagentInfo] = []  // live subagents spawned by this session
     var workflows: [WorkflowInfo] = []  // workflows spawned by this session
+    /// Transcript byte size at last context scan — skip the tail read when unchanged.
+    var transcriptSize: UInt64 = 0
 
     /// Context fill ratio 0...1 (0 if limit unknown).
     var contextRatio: Double {
@@ -332,6 +334,13 @@ struct SessionMonitor {
     /// The session's main transcript: projects/<encoded-cwd>/<sessionId>.jsonl
     static func transcriptURL(for session: SessionInfo) -> URL {
         projectDir(for: session).appendingPathComponent("\(session.sessionId).jsonl")
+    }
+
+    static func transcriptSize(for session: SessionInfo) -> UInt64 {
+        let path = transcriptURL(for: session).path
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let n = attrs[.size] as? NSNumber else { return 0 }
+        return n.uint64Value
     }
 
     /// The session's directory (holding subagents/), named after the sessionId

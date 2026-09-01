@@ -20,6 +20,12 @@ struct MenuBarView: View {
 
             Divider().background(Theme.divider)
 
+            ResourceStrip(dense: true)
+                .padding(.horizontal, Theme.Space.s16)
+                .padding(.vertical, Theme.Space.s8)
+
+            Divider().background(Theme.divider)
+
             if !providerStore.hasSettingsFile {
                 missingSettingsView
             } else {

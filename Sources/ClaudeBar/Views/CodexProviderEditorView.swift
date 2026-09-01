@@ -70,6 +70,11 @@ struct CodexProviderEditorView: View {
             HStack(spacing: Theme.Space.s6) {
                 Button(action: { showPresets.toggle() }) { Image(systemName: "sparkles") }
                     .buttonStyle(.glass).help("从预设添加")
+                Button(action: { model.importFromClaude() }) {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.glass)
+                .help("从 Claude 供应商导入（窗口 / compact / 密钥 / 模型）")
                 Button(action: { model.addNew() }) { Image(systemName: "plus") }
                     .buttonStyle(.glass).help("添加供应商")
                 Button(action: { model.duplicateSelected() }) { Image(systemName: "doc.on.doc") }
@@ -174,11 +179,14 @@ struct CodexProviderEditorView: View {
                             }
                         })) {
                         Text("不设置").tag("")
+                        Text("none").tag("none")
                         Text("minimal").tag("minimal")
                         Text("low").tag("low")
                         Text("medium").tag("medium")
                         Text("high").tag("high")
                         Text("xhigh").tag("xhigh")
+                        Text("max").tag("max")
+                        Text("ultra").tag("ultra")
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
@@ -262,10 +270,19 @@ struct CodexProviderEditorView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(Theme.Font.microMono)
                 }
-                EditorField(label: "上下文窗口 (model_context_window，留空不写入)") {
-                    TextField("400000", text: $model.models[idx].contextWindow)
-                        .textFieldStyle(.roundedBorder)
+                HStack(alignment: .top, spacing: Theme.Space.s16) {
+                    EditorField(label: "上下文窗口 (model_context_window)") {
+                        TextField("400000", text: $model.models[idx].contextWindow)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    EditorField(label: "Compact 阈值 (model_auto_compact_token_limit)") {
+                        TextField("360000", text: $model.models[idx].autoCompactTokenLimit)
+                            .textFieldStyle(.roundedBorder)
+                    }
                 }
+                Text("对应 Claude 的 Context Tokens / Auto Compact Window。Codex 会把 compact 上限卡在窗口的 90%。留空则不写入，运行时用窗口×90%。")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textSecondary)
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -319,6 +336,12 @@ struct CodexProviderEditorView: View {
                     Text(err)
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.statusError)
+                }
+                if let note = codexStore.importSummary {
+                    Text(note)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
                 }
                 if let err = codexStore.errorMessage {
                     Text(err)

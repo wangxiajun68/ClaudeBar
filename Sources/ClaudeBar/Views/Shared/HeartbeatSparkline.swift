@@ -1,32 +1,32 @@
 import SwiftUI
 
-/// EKG-style busy heartbeat: a row of thin ticks, one per poll sample —
-/// colored while the session was busy, dim gray while idle. Renders the
-/// store's existing polling history, adding no polling of its own.
+/// EKG-style busy heartbeat: a Canvas of ticks from the store's poll history.
 struct HeartbeatSparkline: View {
-    /// Oldest → newest busy samples. Empty = no history yet.
     let trail: [Bool]
-    /// Hue for busy ticks.
     var tint: Color = Theme.statusBusy
 
     var body: some View {
-        if trail.isEmpty {
-            // No history yet — a quiet dotted baseline so layout is stable.
-            HStack(spacing: 1.5) {
-                ForEach(0..<8, id: \.self) { _ in
-                    Capsule().fill(Color.white.opacity(0.08)).frame(width: 2, height: 4)
+        Canvas { ctx, size in
+            let gap: CGFloat = 1.5
+            let w: CGFloat = 2
+            let step = w + gap
+            if trail.isEmpty {
+                for i in 0..<8 {
+                    let x = CGFloat(i) * step
+                    let rect = CGRect(x: x, y: (size.height - 4) / 2, width: w, height: 4)
+                    ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
+                             with: .color(Color.white.opacity(0.08)))
                 }
+                return
             }
-        } else {
-            HStack(alignment: .center, spacing: 1.5) {
-                ForEach(trail.indices, id: \.self) { i in
-                    let busy = trail[i]
-                    Capsule()
-                        .fill(busy ? tint.opacity(0.9) : Color.white.opacity(0.14))
-                        .frame(width: 2, height: busy ? 9 : 4)
-                }
+            for (i, busy) in trail.enumerated() {
+                let x = CGFloat(i) * step
+                let h: CGFloat = busy ? 9 : 4
+                let rect = CGRect(x: x, y: (size.height - h) / 2, width: w, height: h)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
+                         with: .color(busy ? tint.opacity(0.9) : Color.white.opacity(0.14)))
             }
-            .animation(Theme.Animation.smooth, value: trail)
         }
+        .frame(width: CGFloat(max(trail.count, 8)) * 3.5, height: 9)
     }
 }

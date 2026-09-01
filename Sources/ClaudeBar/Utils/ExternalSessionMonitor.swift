@@ -2,11 +2,11 @@ import Foundation
 
 // MARK: - Model
 
-/// A live session from an external agent tool — Codex CLI/Desktop or
-/// OpenClaw. None of these tools write PID files like Claude
-/// Code does, so liveness and busy-ness are both **recency-based**: a session
-/// file touched within `recencyWindow` is alive, and one touched within
-/// `busyWindow` is considered mid-turn (its writer is actively appending).
+/// A live Codex CLI/Desktop session. Codex does not write PID files like
+/// Claude Code, so liveness and busy-ness are both **recency-based**: a
+/// session file touched within `recencyWindow` is alive, and one touched
+/// within `busyWindow` is considered mid-turn (its writer is actively
+/// appending).
 struct ExternalSessionInfo: Identifiable, Equatable {
     var id: String { "\(kind.rawValue):\(sessionId)" }
     let kind: ExternalAgentKind
@@ -17,8 +17,22 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     let model: String            // model declared by the tool ("" if unknown)
     var isAlive: Bool
     var isActive: Bool           // touched within busyWindow → working
+    var contextTokens: Int = 0
+    var contextLimit: Int = 0
 
     var projectFolder: String { (cwd as NSString).lastPathComponent }
+
+    var contextRatio: Double {
+        guard contextLimit > 0 else { return 0 }
+        return min(1, Double(contextTokens) / Double(contextLimit))
+    }
+
+    var contextLabel: String {
+        guard contextLimit > 0 || contextTokens > 0 else { return kind.displayName }
+        let used = UsageStats.formatTokens(contextTokens)
+        if contextLimit > 0 { return "\(used) / \(UsageStats.formatTokens(contextLimit))" }
+        return used
+    }
 
     /// Short "5m ago" style label since last update.
     var relativeUpdated: String {
@@ -33,30 +47,13 @@ struct ExternalSessionInfo: Identifiable, Equatable {
 /// The external agent tools we recognize, with their on-disk homes.
 enum ExternalAgentKind: String, CaseIterable {
     case codex
-    case openclaw
 
-    var displayName: String {
-        switch self {
-        case .codex: return "Codex"
-        case .openclaw: return "OpenClaw"
-        }
-    }
+    var displayName: String { "Codex" }
 
-    /// SF Symbol used in section headers.
-    var icon: String {
-        switch self {
-        case .codex: return "chevron.left.forwardslash.chevron.right"
-        case .openclaw: return "antenna.radiowaves.left.and.right"
-        }
-    }
+    var icon: String { "chevron.left.forwardslash.chevron.right" }
 
-    /// Root directory of the tool's session data.
     var rootDir: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        switch self {
-        case .codex: return home + "/.codex/sessions"
-        case .openclaw: return home + "/.openclaw/agents"
-        }
+        FileManager.default.homeDirectoryForCurrentUser.path + "/.codex/sessions"
     }
 
     /// A session counts as "alive" (surfaced in the list) while its
@@ -65,27 +62,20 @@ enum ExternalAgentKind: String, CaseIterable {
     /// sessions sort most-recent-first so old ones never crowd the top.
     var recencyWindow: TimeInterval { 30 * 86400 }
 
-    /// A session counts as "active" (mid-turn) while its transcript was
-    /// touched this recently. Turn granularity differs per tool: Codex
-    /// appends token_count events continuously, OpenClaw appends
-    /// per tool call — all land within seconds of each other while working.
+    /// Codex appends token_count events continuously while a turn is in
+    /// flight — they land within seconds of each other.
     var busyWindow: TimeInterval { 90 }
 }
 
 // MARK: - Monitor
 
-/// Scans the on-disk session stores of external agent tools (Codex rollout
-/// JSONLs, OpenClaw session JSONLs) and reports
-/// recent sessions. Pure file metadata + a bounded head read per file, run
-/// off-main by `ProviderStore`.
+/// Scans Codex rollout JSONLs and reports recent sessions. Pure file
+/// metadata + a bounded head/tail read per file, run off-main by
+/// `ProviderStore`.
 struct ExternalSessionMonitor {
 
-    /// All recent sessions across the tools, most recent first.
     static func fetchActive() -> [ExternalSessionInfo] {
-        var sessions: [ExternalSessionInfo] = []
-        sessions.append(contentsOf: fetchCodex())
-        sessions.append(contentsOf: fetchOpenClaw())
-        return sessions.sorted { $0.updatedAt > $1.updatedAt }
+        fetchCodex().sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: Codex
@@ -124,18 +114,20 @@ struct ExternalSessionMonitor {
                         // occurrence (session_meta has none, turn_context always
                         // appears within the first turns).
                         let model = head.field(forKey: "\"model\":\"")
-                        let sessionId = file
-                            .replacingOccurrences(of: "rollout-", with: "")
-                            .suffix(36)                                 // trailing uuid
+                        let base = (file as NSString).deletingPathExtension
+                        let sessionId = String(base.suffix(36))
+                        let ctx = readCodexContext(path: path)
                         results.append(ExternalSessionInfo(
                             kind: .codex,
-                            sessionId: String(sessionId),
+                            sessionId: sessionId,
                             cwd: cwd,
                             startedAt: meta.mtime * 1000,
                             updatedAt: meta.mtime * 1000,
                             model: model,
                             isAlive: true,
-                            isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow
+                            isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow,
+                            contextTokens: ctx.used,
+                            contextLimit: ctx.limit
                         ))
                     }
                 }
@@ -143,44 +135,6 @@ struct ExternalSessionMonitor {
             // History is capped: once a year's scan has crossed the window,
             // older years cannot qualify. Stop after 2 years max walk.
             if results.count > 400 { break yearLoop }
-        }
-        return results
-    }
-
-    // MARK: OpenClaw
-
-    /// OpenClaw stores sessions under
-    /// `~/.openclaw/agents/<agent>/sessions/<uuid>.jsonl` (the sibling
-    /// `.trajectory.jsonl` is a duplicate stream and is skipped). Line 1 is
-    /// a `session` record with cwd; `model_change` records carry the model.
-    private static func fetchOpenClaw() -> [ExternalSessionInfo] {
-        let kind = ExternalAgentKind.openclaw
-        let root = kind.rootDir
-        let now = Date().timeIntervalSince1970
-        let fm = FileManager.default
-        guard let agents = try? fm.contentsOfDirectory(atPath: root) else { return [] }
-
-        var results: [ExternalSessionInfo] = []
-        for agent in agents {
-            let sessionsPath = "\(root)/\(agent)/sessions"
-            guard let files = try? fm.contentsOfDirectory(atPath: sessionsPath) else { continue }
-            for file in files where file.hasSuffix(".jsonl") && !file.contains(".trajectory") {
-                let path = "\(sessionsPath)/\(file)"
-                guard let meta = fileMeta(path: path, cutoff: now - kind.recencyWindow) else { continue }
-                let head = readHead(path: path, bytes: 8_000)
-                let cwd = head.field(forKey: "\"cwd\":\"")
-                let model = head.field(forKey: "\"modelId\":\"")
-                results.append(ExternalSessionInfo(
-                    kind: .openclaw,
-                    sessionId: (file as NSString).deletingPathExtension,
-                    cwd: cwd,
-                    startedAt: meta.mtime * 1000,
-                    updatedAt: meta.mtime * 1000,
-                    model: model,
-                    isAlive: true,
-                    isActive: now - meta.mtime <= kind.busyWindow
-                ))
-            }
         }
         return results
     }
@@ -209,6 +163,35 @@ struct ExternalSessionMonitor {
         guard let data = try? handle.read(upToCount: bytes),
               let s = String(data: data, encoding: .utf8) else { return "" }
         return s
+    }
+
+    /// Tail `token_count` — `last_token_usage.total_tokens` vs `model_context_window`.
+    private static func readCodexContext(path: String) -> (used: Int, limit: Int) {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0) }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size - min(48_000, size))
+        guard let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return (0, 0) }
+        var used = 0, limit = 0
+        for line in text.split(separator: "\n") {
+            guard line.contains("token_count"),
+                  let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let payload = obj["payload"] as? [String: Any],
+                  payload["type"] as? String == "token_count",
+                  let info = payload["info"] as? [String: Any] else { continue }
+            if let w = info["model_context_window"] as? Int { limit = w }
+            else if let w = info["model_context_window"] as? Double { limit = Int(w) }
+            let last = (info["last_token_usage"] as? [String: Any])
+                ?? (info["total_token_usage"] as? [String: Any])
+            if let last {
+                let total = JSONCoerce.intVal(last["total_tokens"])
+                let input = JSONCoerce.intVal(last["input_tokens"])
+                    + JSONCoerce.intVal(last["cached_input_tokens"])
+                used = total > 0 ? total : input
+            }
+        }
+        return (used, limit)
     }
 }
 

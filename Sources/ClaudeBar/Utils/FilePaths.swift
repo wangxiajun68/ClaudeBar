@@ -82,11 +82,12 @@ enum FilePaths {
     /// Cursor encodes a workspace path by replacing every character outside
     /// `[A-Za-z0-9-]` with "-". Verified against on-disk directories:
     /// `/Project/prompt_engineering` → `Users-…-Project-prompt-engineering`
-    /// (underscore), `/openclaw-2026.5.7` → `…-openclaw-2026-5-7` (dot).
+    /// (underscore), `/Project/demo.1` → `…-Project-demo-1` (dot).
     /// Replacing only "/" misses underscores and dots and breaks transcript
     /// lookup for those workspaces.
     static func cursorProjectName(for cwd: String) -> String {
-        let scalars = cwd.unicodeScalars.map { scalar -> Unicode.Scalar in
+        let trimmed = cwd.hasPrefix("/") ? String(cwd.dropFirst()) : cwd
+        let scalars = trimmed.unicodeScalars.map { scalar -> Unicode.Scalar in
             (65...90).contains(scalar.value)      // A-Z
                 || (97...122).contains(scalar.value)  // a-z
                 || (48...57).contains(scalar.value)   // 0-9

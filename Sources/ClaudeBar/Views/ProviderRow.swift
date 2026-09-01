@@ -20,6 +20,7 @@ struct ProviderTile: View {
     @State private var isHovered = false
 
     private var expanded: Bool { isExpanded ?? startsExpanded }
+    private var showsModels: Bool { !provider.models.isEmpty && (expanded || provider.models.count == 1) }
 
     /// The model the env currently points at, falling back to the first model
     /// when settings.json names a model this provider doesn't declare.
@@ -32,9 +33,9 @@ struct ProviderTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             header
-            // Model rows render only while expanded; collapsed tiles are
-            // uniform, keeping grid rows even across providers.
-            if expanded && !provider.models.isEmpty {
+            // One-model providers always show the row so the tile stays
+            // clickable; multi-model lists stay collapsed until expanded.
+            if showsModels {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(provider.models) { model in
                         modelRow(model)
@@ -60,7 +61,32 @@ struct ProviderTile: View {
         .accessibilityLabel("\(provider.name)，\(isActive ? "活跃" : "未激活")，\(provider.models.count) 个模型")
     }
 
+    @ViewBuilder
     private var header: some View {
+        Button(action: headerAction) {
+            headerStack(activeModelName: activeModel?.name, accent: Theme.accent)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(headerHelp)
+        .disabled(provider.models.isEmpty)
+    }
+
+    private var headerHelp: String {
+        if provider.models.count > 1 { return expanded ? "收起模型" : "点击展开模型" }
+        if provider.models.count == 1 { return isActive ? "当前供应商" : "切换到此供应商" }
+        return ""
+    }
+
+    private func headerAction() {
+        if provider.models.count > 1 {
+            toggleExpanded()
+        } else if let id = provider.models.first?.id {
+            onActivateModel(id)
+        }
+    }
+
+    private func headerStack(activeModelName: String?, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s4) {
             HStack(spacing: Theme.Space.s6) {
                 Text(provider.name)
@@ -78,23 +104,15 @@ struct ProviderTile: View {
                         .transition(.scale.combined(with: .opacity))
                 }
                 if provider.models.count > 1 {
-                    Button(action: {
-                        withAnimation(Theme.Animation.snappy) {
-                            isExpanded = !(expanded)
-                        }
-                    }) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(Theme.Font.bodySmall.weight(.semibold))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(width: 22, height: 22)
                 }
             }
-            // Always rendered (space-reserved) so tiles in the same grid row
-            // keep equal height regardless of whether a model is active.
-            Text(activeModel?.name ?? " ")
+            Text(activeModelName ?? " ")
                 .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
-                .foregroundColor(isActive ? Theme.accent : Theme.textTertiary())
+                .foregroundColor(isActive ? accent : Theme.textTertiary())
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -105,6 +123,11 @@ struct ProviderTile: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    private func toggleExpanded() {
+        guard provider.models.count > 1 else { return }
+        withAnimation(Theme.Animation.snappy) { isExpanded = !expanded }
     }
 
     // MARK: Model row (in-tile, reuses ActiveTileEdge)
@@ -183,11 +206,12 @@ struct CodexProviderTile: View {
     @State private var isHovered = false
 
     private var expanded: Bool { isExpanded ?? startsExpanded }
+    private var showsModels: Bool { !provider.models.isEmpty && (expanded || provider.models.count == 1) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             header
-            if expanded && !provider.models.isEmpty {
+            if showsModels {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(provider.models) { model in
                         modelRow(model)
@@ -213,7 +237,31 @@ struct CodexProviderTile: View {
         .accessibilityLabel("\(provider.name)，\(isActive ? "活跃" : "未激活")，\(provider.models.count) 个模型")
     }
 
+    @ViewBuilder
     private var header: some View {
+        Button(action: headerAction) {
+            headerStack.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(headerHelp)
+        .disabled(provider.models.isEmpty)
+    }
+
+    private var headerHelp: String {
+        if provider.models.count > 1 { return expanded ? "收起模型" : "点击展开模型" }
+        if provider.models.count == 1 { return isActive ? "当前供应商" : "切换到此供应商" }
+        return ""
+    }
+
+    private func headerAction() {
+        if provider.models.count > 1 {
+            toggleExpanded()
+        } else if let id = provider.models.first?.id {
+            onActivateModel(id)
+        }
+    }
+
+    private var headerStack: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s4) {
             HStack(spacing: Theme.Space.s6) {
                 Text(provider.name)
@@ -231,21 +279,12 @@ struct CodexProviderTile: View {
                         .transition(.scale.combined(with: .opacity))
                 }
                 if provider.models.count > 1 {
-                    Button(action: {
-                        withAnimation(Theme.Animation.snappy) {
-                            isExpanded = !(expanded)
-                        }
-                    }) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(Theme.Font.bodySmall.weight(.semibold))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(width: 22, height: 22)
                 }
             }
-            // Always rendered (space-reserved) so tiles in the same grid row
-            // keep equal height regardless of whether a model is active —
-            // mirrors ProviderTile's model-name line (same font metrics).
             Text(provider.activeModel?.name ?? " ")
                 .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
                 .foregroundColor(isActive ? Theme.codex : Theme.textTertiary())
@@ -259,6 +298,11 @@ struct CodexProviderTile: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    private func toggleExpanded() {
+        guard provider.models.count > 1 else { return }
+        withAnimation(Theme.Animation.snappy) { isExpanded = !expanded }
     }
 
     private func modelRow(_ model: CodexModelConfig) -> some View {
