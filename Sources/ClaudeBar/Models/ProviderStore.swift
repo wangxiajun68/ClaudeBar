@@ -7,17 +7,28 @@ class ProviderStore: ObservableObject {
     @Published var currentEnv: EnvConfig? = nil
     @Published var hasSettingsFile: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var importSummary: String? = nil
     @Published var balanceText: String? = nil
     @Published var balanceLoading: Bool = false
     @Published var collapsedProviderIDs: Set<UUID> = []
     @Published var usageStats: [ModelUsage] = []
+    @Published var usageDays: [DayUsage] = []
+    /// Cursor bubbles have no timestamps (upstream stopped writing after ~2026-03).
+    /// Shown separately so they never inflate the selected day/month total.
+    @Published var cursorLifetimeUsage: ModelUsage?
     @Published var usageLoading: Bool = false
     @Published var usagePeriod: UsagePeriod = .month {
-        didSet { if usagePeriod != oldValue { refreshUsage() } }
+        didSet { if usagePeriod != oldValue { refreshUsage(rescan: false) } }
     }
     @Published var usageReferenceDate: Date = Date() {
-        didSet { if usageReferenceDate != oldValue { refreshUsage() } }
+        didSet { if usageReferenceDate != oldValue { refreshUsage(rescan: false) } }
     }
+
+    /// Codex projection of this list. Add/edit/delete/activate write both
+    /// `settings.json` and `~/.codex/config.toml`. Weak: AppDelegate owns both.
+    /// Isolated at the call sites (`@MainActor` CRUD); the stored reference is
+    /// only ever used on the main thread.
+    nonisolated(unsafe) weak var peer: CodexProviderStore?
 
     // Live Claude Code sessions
     @Published var sessions: [SessionInfo] = []
@@ -44,7 +55,7 @@ class ProviderStore: ObservableObject {
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var cursorExpanded: Set<String> = []
 
-    // Live sessions from external agent tools (Codex / OpenClaw)
+    // Live Codex sessions
     @Published var externalSessions: [ExternalSessionInfo] = []
     private var externalIdleDetector = IdleTransitionDetector<String>()
 
@@ -58,14 +69,18 @@ class ProviderStore: ObservableObject {
 
     // MARK: - Refresh
 
+    @MainActor
     func refresh() {
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
         currentEnv = SettingsManager.readSettings()
         loadProviders()
+        unifyWithPeer()
         refreshBalance()
-        refreshUsage()
+        refreshUsage(rescan: true)
         refreshSessions()
         startSessionPolling()
+        ProcessSampler.shared.start()
+        startUsageWatcher()
         writeWidgetSnapshot()
     }
 
@@ -76,22 +91,20 @@ class ProviderStore: ObservableObject {
         // pure file I/O. Run it off the main thread and only hop back to
         // publish the parsed results, so the poll never blocks the UI.
         let contextLimits = currentContextLimits
-        Task.detached(priority: .utility) { [weak self] in
-            // `let scanned` (not var) so the capture is an immutable
-            // sendable value — no concurrent-mutation warning.
-            let enriched = Self.enrich(SessionMonitor.fetchActive(), limits: contextLimits)
+        let previous = sessions
+        Task.detached(priority: .utility) {
+            let enriched = Self.enrich(SessionMonitor.fetchActive(), previous: previous, limits: contextLimits)
             let samples = Self.heartbeatSamples(from: enriched)
+            let pids = enriched.filter(\.isAlive).map(\.pid)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                // Skip the publish when nothing changed. Equatable payloads +
-                // an unchanged-published-value check mean the 2.5s poll only
-                // invalidates SwiftUI when a session actually moved — the
-                // single biggest win for UI stutter, since an idle system
-                // otherwise re-renders every observing view every poll.
-                if self.sessions == enriched { return }
-                self.sessions = enriched
                 self.recordHeartbeats(samples)
-                self.detectIdleTransitions(enriched)
+                if self.sessions != enriched {
+                    self.sessions = enriched
+                    self.detectIdleTransitions(enriched)
+                }
+                ProcessSampler.shared.setAgentPIDs(pids)
+                // Cursor / Codex must poll even when Claude is idle.
                 self.refreshCursorSessions()
                 self.refreshExternalSessions()
             }
@@ -137,44 +150,68 @@ class ProviderStore: ObservableObject {
     private func detectIdleTransitions(_ fresh: [SessionInfo]) {
         let alive = fresh.filter(\.isAlive)
         let busyIDs = Set(alive.filter { $0.status == .busy || $0.toolPending }.map(\.pid))
-        let (newlyIdle, busyNow) = claudeIdleDetector.record(busyIDs: busyIDs)
+        let (newlyIdle, _) = claudeIdleDetector.record(busyIDs: busyIDs)
         for pid in newlyIdle {
             if let session = alive.first(where: { $0.pid == pid }) {
                 NotificationService.shared.notifyIdle(session: session)
             }
         }
-        if anySessionBusy != busyNow { anySessionBusy = busyNow }
+        refreshAnyBusy()
     }
 
     /// Cursor flavor of the same edge detection (see `detectIdleTransitions`).
     private func detectIdleTransitionsCursor(_ fresh: [CursorSessionInfo]) {
         let busyIDs = Set(fresh.filter { $0.status == .active || $0.toolPending }.map(\.composerId))
-        let (newlyIdle, busyNow) = cursorIdleDetector.record(busyIDs: busyIDs)
+        let (newlyIdle, _) = cursorIdleDetector.record(busyIDs: busyIDs)
         for id in newlyIdle {
             if let session = fresh.first(where: { $0.composerId == id }) {
                 NotificationService.shared.notifyIdle(cursor: session)
             }
         }
-        if anySessionBusy != busyNow { anySessionBusy = busyNow }
+        refreshAnyBusy()
+    }
+
+    /// Menu-bar icon: any Claude / Cursor / Codex session mid-turn.
+    private func refreshAnyBusy() {
+        let claude = sessions.contains { $0.isAlive && ($0.status == .busy || $0.toolPending) }
+        let cursor = cursorSessions.contains { $0.status == .active || $0.toolPending }
+        let external = externalSessions.contains { $0.isActive }
+        let busy = claude || cursor || external
+        if anySessionBusy != busy {
+            anySessionBusy = busy
+            startSessionPolling()
+        }
     }
 
     /// Enrich alive sessions with transcript context + subagents. Pure
     /// function so it can run wholly off-main.
-    private static func enrich(_ sessions: [SessionInfo], limits: [String: Int]) -> [SessionInfo] {
+    private static func enrich(_ sessions: [SessionInfo], previous: [SessionInfo], limits: [String: Int]) -> [SessionInfo] {
+        let prior = Dictionary(uniqueKeysWithValues: previous.map { ($0.pid, $0) })
         var result = sessions
         for i in result.indices where result[i].isAlive {
+            let size = SessionMonitor.transcriptSize(for: result[i])
+            if let old = prior[result[i].pid], old.transcriptSize == size, size > 0 {
+                result[i].contextTokens = old.contextTokens
+                result[i].model = old.model
+                result[i].messageCount = old.messageCount
+                result[i].currentActivity = old.currentActivity
+                result[i].toolPending = old.toolPending
+                result[i].contextLimit = old.contextLimit
+                result[i].subagents = old.subagents
+                result[i].workflows = old.workflows
+                result[i].transcriptSize = size
+                if old.toolPending { result[i].status = .busy }
+                continue
+            }
             let ctx = SessionMonitor.fetchContext(for: result[i])
             result[i].contextTokens = ctx.tokens
             result[i].model = ctx.model
             result[i].messageCount = ctx.count
             result[i].currentActivity = ctx.activity
             result[i].toolPending = ctx.toolPending
-            // A pending tool call means the session is actively working even
-            // if the session-json status hasn't flipped to "busy" yet.
+            result[i].transcriptSize = size
             if ctx.toolPending { result[i].status = .busy }
-            // Resolve the context limit from the matching provider's model config.
             result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
-            // Live subagents + workflows spawned by this session.
             let subs = SessionMonitor.fetchSubagents(for: result[i])
             result[i].subagents = subs.direct
             result[i].workflows = subs.workflows
@@ -220,7 +257,7 @@ class ProviderStore: ObservableObject {
         }
     }
 
-    /// Scan external agent tools (Codex / OpenClaw). Same
+    /// Scan Codex sessions. Same
     /// off-main scan + unchanged-publish skip as the other two sources.
     func refreshExternalSessions() {
         Task.detached(priority: .utility) {
@@ -238,13 +275,15 @@ class ProviderStore: ObservableObject {
                         NotificationService.shared.notifyIdle(external: session)
                     }
                 }
+                self.refreshAnyBusy()
             }
         }
     }
 
     private func startSessionPolling() {
         sessionTimer?.invalidate()
-        sessionTimer = Timer.scheduledTimer(withTimeInterval: AppConfig.sessionPollInterval, repeats: true) { [weak self] _ in
+        let interval = anySessionBusy ? AppConfig.sessionPollInterval : AppConfig.sessionPollIdleInterval
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.refreshSessions()
         }
     }
@@ -255,13 +294,27 @@ class ProviderStore: ObservableObject {
     // MARK: - Load / Save
 
     func loadProviders() {
-        guard FileManager.default.fileExists(atPath: FilePaths.presetsFile.path),
-              let data = try? Data(contentsOf: FilePaths.presetsFile),
-              let file = try? JSONDecoder().decode(ProvidersFile.self, from: data) else {
-            providers = []; activeProviderID = nil; return
+        if FileManager.default.fileExists(atPath: FilePaths.presetsFile.path),
+           let data = try? Data(contentsOf: FilePaths.presetsFile),
+           let file = try? JSONDecoder().decode(ProvidersFile.self, from: data) {
+            providers = file.providers
+            activeProviderID = file.activeProviderID
+        } else {
+            providers = []
+            activeProviderID = nil
         }
-        providers = file.providers
-        activeProviderID = file.activeProviderID
+
+        if providers.isEmpty {
+            let codex = ProviderBridge.readCodexProviders()
+            if !codex.isEmpty {
+                let converted = codex.map { ProviderBridge.toClaude($0) }
+                let result = ProviderBridge.merge(into: &providers, from: converted)
+                if !result.isEmpty {
+                    importSummary = "已从 Codex 导入 · \(result.summary)"
+                    saveProviders()
+                }
+            }
+        }
 
         // Detect current provider from settings.json. When the settings file
         // matches a configured provider, adopt it as active and persist the
@@ -289,6 +342,7 @@ class ProviderStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
         try? data.write(to: FilePaths.presetsFile, options: .atomic)
+        projectToPeer()
     }
 
     // MARK: - Activate
@@ -322,6 +376,7 @@ class ProviderStore: ObservableObject {
         }
         saveProviders()
         refreshBalance()
+        activatePeer(provider: provider, model: model)
     }
 
     /// Maps a provider/model pair onto the `settings.json` env block. All
@@ -369,6 +424,7 @@ class ProviderStore: ObservableObject {
         providers.append(provider)
         if activeProviderID == nil { activeProviderID = provider.id }
         saveProviders()
+        projectToPeer()
     }
 
     func deleteProvider(_ provider: Provider) {
@@ -376,6 +432,7 @@ class ProviderStore: ObservableObject {
         if activeProviderID == provider.id { activeProviderID = providers.first?.id }
         if collapsedProviderIDs.contains(provider.id) { collapsedProviderIDs.remove(provider.id) }
         saveProviders()
+        projectToPeer()
     }
 
     func duplicateProvider(_ provider: Provider) {
@@ -388,12 +445,67 @@ class ProviderStore: ObservableObject {
         )
         providers.append(copy)
         saveProviders()
+        projectToPeer()
     }
 
-    func updateProvider(_ provider: Provider) {
+    /// Import Codex providers. Matching is by name or rewritten Anthropic URL.
+    @discardableResult
+    func importFromCodex(_ source: [CodexProvider]? = nil) -> ProviderBridge.ImportResult {
+        let incoming = source ?? ProviderBridge.readCodexProviders()
+        let converted = incoming.map { ProviderBridge.toClaude($0) }
+        let result = ProviderBridge.merge(into: &providers, from: converted)
+        importSummary = result.summary
+        if !result.isEmpty { saveProviders() }
+        return result
+    }
+
+    func updateProvider(_ provider: Provider, extras: ProviderBridge.CodexExtras? = nil) {
         guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else { return }
         providers[idx] = provider
         saveProviders()
+        projectToPeer(extras: extras.map { (provider, $0) })
+    }
+
+    /// One Claude list, two live configs. Missing Claude rows are imported
+    /// from Codex; Codex is then rewritten as a projection so extras survive.
+    @MainActor
+    func unifyWithPeer() {
+        guard let peer, !didUnifyWithPeer else { return }
+        didUnifyWithPeer = true
+        if !peer.providers.isEmpty {
+            _ = importFromCodex(peer.providers)
+        }
+        projectToPeer()
+    }
+
+    private var didUnifyWithPeer = false
+
+    /// Drop a Claude-shaped preset (from `CodexPreset`) into the unified list.
+    @MainActor
+    func addFromCodexPreset(_ preset: CodexProvider) {
+        var claude = ProviderBridge.toClaude(preset)
+        claude.id = UUID()
+        if claude.models.isEmpty {
+            claude.models = [ModelConfig(name: "default")]
+            claude.activeModelID = claude.models.first?.id
+        }
+        providers.append(claude)
+        saveProviders()
+        projectToPeer(extras: (claude, ProviderBridge.extras(from: preset)))
+    }
+
+    private func projectToPeer(extras: (Provider, ProviderBridge.CodexExtras)? = nil) {
+        let snapshot = providers
+        let extra = extras
+        Task { @MainActor [weak self] in
+            self?.peer?.project(from: snapshot, extras: extra)
+        }
+    }
+
+    private func activatePeer(provider: Provider, model: ModelConfig) {
+        Task { @MainActor [weak self] in
+            self?.peer?.activateMatching(claude: provider, model: model)
+        }
     }
 
     // MARK: - Balance
@@ -415,68 +527,92 @@ class ProviderStore: ObservableObject {
     // MARK: - Usage Stats
 
     /// Coalesces rapid `refreshUsage()` calls (period flips, date arrows, the
-    /// manual refresh button) into one background scan — a scan can take a
-    /// moment on a large transcript tree, so back-to-back requests collapse
-    /// instead of queueing duplicate work.
+    /// manual refresh button) into one background pass. Period chips query
+    /// the rollup only; launch / Refresh / FSEvents pass `rescan: true`.
     private var usageRefreshPending = false
     private var usageRefreshQueued = false
+    private var usageRefreshQueuedRescan = false
 
-    func refreshUsage() {
-        // Runs entirely on the main actor: the state below is only touched
-        // here, so plain boolean fields need no lock. The heavy scan happens
-        // inside `Task.detached`, and this call returns immediately.
+    func refreshUsage(rescan: Bool = true) {
         if usageRefreshPending {
             usageRefreshQueued = true
+            usageRefreshQueuedRescan = usageRefreshQueuedRescan || rescan
             return
         }
         usageRefreshPending = true
-        usageLoading = UsageIndex.needsInitialBuild
+        usageLoading = !UsageIndex.hasCachedData && UsageIndex.needsInitialBuild
 
         Task.detached(priority: .utility) { [weak self] in
+            var wantRescan = rescan
             while true {
                 guard let self else { return }
-                // Capture the caller's requested period/date on the main actor.
                 let interval = await MainActor.run {
                     UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate)
                 }
 
-                // UsageStats.fetch covers Claude Code transcripts *and* the
-                // external agents (Codex / OpenClaw) — everything
-                // lives in the shared persistent UsageIndex, which it updates
-                // incrementally first. Query cost is milliseconds.
-                var result = UsageStats.fetch(in: interval)
-                // Cursor's token history is a stable full-scan total (Cursor
-                // stopped writing tokens after ~2026-03), so it is appended to
-                // every period rather than interval-filtered. The fetch is
-                // TTL-cached inside CursorUsageStats, so repeated period/date
-                // switches don't rescan the multi-GB Cursor DB.
-                if let cursor = CursorUsageStats.fetch() {
-                    result.append(cursor)
+                if UsageIndex.hasCachedData {
+                    let quick = Self.queryUsage(in: interval)
+                    let days = UsageIndex.fetchDaily(in: interval)
+                    let cursor = CursorUsageStats.fetch()
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        self.usageStats = quick
+                        self.usageDays = days
+                        self.cursorLifetimeUsage = cursor
+                        self.usageLoading = false
+                    }
                 }
-                // External agents fold into the same index — nothing extra.
-                result = ModelUsage.merged(result).sorted { $0.totalTokens > $1.totalTokens }
-                let final = result
 
-                // If another refresh was requested while scanning, loop and
-                // re-run with the latest period; otherwise publish and finish.
-                let shouldContinue: Bool = await MainActor.run {
+                if wantRescan {
+                    UsageIndex.updateIndex()
+                    CursorUsageStats.refreshIfNeeded()
+                }
+                let final = Self.queryUsage(in: interval)
+                let days = UsageIndex.fetchDaily(in: interval)
+                let cursor = CursorUsageStats.fetch()
+
+                let next: (again: Bool, rescan: Bool) = await MainActor.run {
                     if self.usageRefreshQueued {
                         self.usageRefreshQueued = false
-                        return true
+                        let nextRescan = self.usageRefreshQueuedRescan
+                        self.usageRefreshQueuedRescan = false
+                        return (true, nextRescan)
                     }
                     self.usageRefreshPending = false
-                    return false
+                    return (false, false)
                 }
-                if shouldContinue { continue }
+                if next.again {
+                    wantRescan = next.rescan
+                    continue
+                }
 
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.usageStats = final
+                    self.usageDays = days
+                    self.cursorLifetimeUsage = cursor
                     self.usageLoading = false
                     self.writeWidgetSnapshot()
                 }
                 return
             }
+        }
+    }
+
+    private static func queryUsage(in interval: DateInterval) -> [ModelUsage] {
+        UsageIndex.fetch(in: interval)
+    }
+
+    private var usageWatcherStarted = false
+
+    private func startUsageWatcher() {
+        guard !usageWatcherStarted else { return }
+        usageWatcherStarted = true
+        UsageFSWatcher.start(paths: [
+            FilePaths.claudeDir.appendingPathComponent("projects").path,
+            FilePaths.codexDir.appendingPathComponent("sessions").path,
+        ]) { [weak self] in
+            DispatchQueue.main.async { self?.refreshUsage(rescan: true) }
         }
     }
 

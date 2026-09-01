@@ -76,7 +76,31 @@ struct UsageView: View {
                     }
                 }
 
+                if providerStore.usageDays.count > 1 {
+                    UsageRiver(days: providerStore.usageDays)
+                        .padding(Theme.Space.s16)
+                        .sectionRules()
+                }
+
+                if providerStore.usageStats.contains(where: { $0.cacheReadTokens > 0 || $0.cacheCreationTokens > 0 }) {
+                    CacheAnatomyBar(stats: providerStore.usageStats)
+                        .padding(Theme.Space.s16)
+                        .sectionRules()
+                }
+
                 breakdown
+
+                if let cursor = providerStore.cursorLifetimeUsage, cursor.totalTokens > 0 {
+                    VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                        Text("Cursor")
+                            .font(Theme.Font.titleSmall)
+                            .foregroundColor(Theme.textPrimary)
+                        UsageModelTile(stat: cursor, maxTokens: max(cursor.totalTokens, 1))
+                        Text("本地已不再写入 token，此为历史累计，无法按日 / 月拆分")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textTertiary())
+                    }
+                }
             }
             .padding(Theme.Space.s24)
         }

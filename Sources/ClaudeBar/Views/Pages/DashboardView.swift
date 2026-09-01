@@ -12,6 +12,9 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
+                ResourceStrip()
+                    .padding(Theme.Space.s16)
+                    .sectionRules()
                 metricRow
                 sessionOverview
                 usageTop
@@ -195,8 +198,7 @@ struct DashboardView: View {
                     updated: s.relativeUpdated
                 )
             }
-        // External tools (Codex / OpenClaw) — teal rows, no
-        // context data (they expose none), so the bar reads 0 and dims.
+        // Codex — teal rows.
         let externalRows = providerStore.aliveExternalSessions
             .map { s in
                 OverviewRow(
@@ -205,8 +207,8 @@ struct DashboardView: View {
                     busy: s.isActive,
                     project: s.projectFolder.isEmpty ? s.kind.displayName : s.projectFolder,
                     activity: s.model,
-                    contextRatio: 0,
-                    contextLabel: s.kind.displayName,
+                    contextRatio: s.contextRatio,
+                    contextLabel: s.contextLabel,
                     updated: s.relativeUpdated
                 )
             }

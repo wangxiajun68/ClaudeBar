@@ -466,8 +466,7 @@ private struct CursorTileFull: View {
     }
 }
 
-/// An external-agent session tile (Codex / OpenClaw). These tools
-/// have no PID files and no resume URL scheme, so the tile is read-only:
+/// An external-agent session tile (Codex). Codex has no PID file and no resume URL scheme, so the tile is read-only:
 /// reveal the working directory in Finder, double-click included. Teal tint
 /// distinguishes the family from Claude (blue) and Cursor (violet).
 private struct ExternalTileFull: View {
@@ -493,6 +492,15 @@ private struct ExternalTileFull: View {
                 Text(isActive ? "active" : "idle")
                     .font(Theme.Font.caption)
                     .foregroundColor(isActive ? Theme.externalHi : Theme.textTertiary())
+            }
+
+            if session.contextLimit > 0 || session.contextTokens > 0 {
+                HStack(spacing: Theme.Space.s8) {
+                    Text(session.contextLabel)
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                    ContextBar(ratio: session.contextRatio)
+                }
             }
 
             VStack(alignment: .leading, spacing: Theme.Space.s4) {

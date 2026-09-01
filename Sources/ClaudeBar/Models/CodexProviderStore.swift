@@ -18,6 +18,7 @@ final class CodexProviderStore: ObservableObject {
     @Published var activeKey: String = "custom"
     @Published var errorMessage: String? = nil
     @Published var proxyRunning: Bool = false
+    @Published var importSummary: String? = nil
 
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
@@ -36,6 +37,18 @@ final class CodexProviderStore: ObservableObject {
         } else {
             providers = []
             activeProviderID = nil
+        }
+
+        if providers.isEmpty {
+            let claude = ProviderBridge.readClaudeProviders()
+            if !claude.isEmpty {
+                let converted = claude.map { ProviderBridge.toCodex($0) }
+                let result = ProviderBridge.merge(into: &providers, from: converted)
+                if !result.isEmpty {
+                    importSummary = "已从 Claude 导入 · \(result.summary)"
+                    save()
+                }
+            }
         }
 
         // Aibox / GLM-style hosts used to be saved as wire_api=responses;
@@ -218,5 +231,59 @@ final class CodexProviderStore: ObservableObject {
         copy.activeModelID = copy.models.first?.id
         providers.append(copy)
         save()
+    }
+
+    /// Rewrite this list as a projection of the unified Claude list, keeping
+    /// Codex-only flags/reasoning on rows that already exist.
+    func project(from claude: [Provider], extras: (Provider, ProviderBridge.CodexExtras)? = nil) {
+        var next: [CodexProvider] = []
+        for p in claude {
+            guard !p.models.isEmpty else { continue }
+            let extraForP: ProviderBridge.CodexExtras? = extras.flatMap { pair in
+                pair.0.id == p.id || pair.0.name.caseInsensitiveCompare(p.name) == .orderedSame
+                    ? pair.1 : nil
+            }
+            if let existing = providers.first(where: { ProviderBridge.matches(p, $0) }) {
+                next.append(ProviderBridge.overlay(p, onto: existing, extras: extraForP))
+            } else {
+                var created = ProviderBridge.toCodex(p)
+                if let extraForP {
+                    created = ProviderBridge.overlay(p, onto: created, extras: extraForP)
+                }
+                next.append(created)
+            }
+        }
+        let stillActive = next.contains { $0.id == activeProviderID }
+        providers = next
+        if !stillActive { activeProviderID = next.first?.id }
+        save()
+    }
+
+    /// Activate the Codex twin of a Claude provider/model (same name/URL + slug).
+    func activateMatching(claude: Provider, model: ModelConfig) {
+        if providers.first(where: { ProviderBridge.matches(claude, $0) }) == nil {
+            providers.append(ProviderBridge.toCodex(claude))
+            save()
+        }
+        guard let provider = providers.first(where: { ProviderBridge.matches(claude, $0) }) else { return }
+        let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
+        let modelID = provider.models.first {
+            $0.name.caseInsensitiveCompare(slug) == .orderedSame
+        }?.id ?? provider.activeModelID ?? provider.models.first?.id
+        guard let modelID else { return }
+        activate(providerID: provider.id, modelID: modelID)
+    }
+
+    /// Import Claude Code providers (from the other store or from disk).
+    /// Matching is by name or rewritten OpenAI-compatible URL; existing
+    /// Codex-only fields (wire_api, reasoning) are kept on collision.
+    @discardableResult
+    func importFromClaude(_ source: [Provider]? = nil) -> ProviderBridge.ImportResult {
+        let incoming = source ?? ProviderBridge.readClaudeProviders()
+        let converted = incoming.map { ProviderBridge.toCodex($0) }
+        let result = ProviderBridge.merge(into: &providers, from: converted)
+        importSummary = result.summary
+        if !result.isEmpty { save() }
+        return result
     }
 }

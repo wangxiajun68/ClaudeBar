@@ -13,6 +13,8 @@ enum AppConfig {
     /// itself runs off-main (see `ProviderStore.refreshSessions`); this only
     /// controls how often the main run loop fires the trigger.
     static let sessionPollInterval: TimeInterval = 2.5
+    /// When every session is idle the transcript tails do not change; poll slower.
+    static let sessionPollIdleInterval: TimeInterval = 5
 
     /// Number of busy/idle samples kept per session for the heartbeat
     /// sparkline. At the default 2.5s poll this covers the last minute.

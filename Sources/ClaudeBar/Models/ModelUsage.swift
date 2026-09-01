@@ -14,6 +14,17 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
     }
 }
 
+/// One local-calendar day of aggregated usage — the river chart's column.
+struct DayUsage: Identifiable {
+    var id: String { day }
+    let day: String
+    var inputTokens: Int = 0
+    var outputTokens: Int = 0
+    var cacheReadTokens: Int = 0
+    var cacheCreationTokens: Int = 0
+    var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens }
+}
+
 struct ModelUsage: Identifiable {
     var id: String { model }
     let model: String
@@ -26,6 +37,15 @@ struct ModelUsage: Identifiable {
     /// All prompt-side tokens processed (fresh input + cache read + cache creation).
     var totalInputTokens: Int { inputTokens + cacheReadTokens + cacheCreationTokens }
     var totalTokens: Int { totalInputTokens + outputTokens }
+
+    /// Cache-hit share of prompt-side tokens (Claude Code / Codex).
+    var cacheHitRate: Double {
+        let denom = totalInputTokens
+        guard denom > 0 else { return 0 }
+        return Double(cacheReadTokens) / Double(denom)
+    }
+
+    var cacheHitPercent: Int { Int((cacheHitRate * 100).rounded()) }
 
     mutating func merge(_ other: ModelUsage) {
         calls += other.calls

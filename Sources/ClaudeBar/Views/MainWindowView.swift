@@ -80,8 +80,7 @@ struct MainWindowView: View {
             Spacer()
             HStack(spacing: Theme.Space.s4) {
                 ForEach(AppPage.allCases) { page in
-                    TopNavTab(page: page, isSelected: selectedPage == page,
-                              badge: badge(for: page)) {
+                    TopNavTab(page: page, isSelected: selectedPage == page) {
                         navigate(to: page)
                     }
                     .help(page.label)
@@ -113,21 +112,6 @@ struct MainWindowView: View {
                 .font(Theme.Font.titleSmall)
                 .tracking(Theme.Tracking.titleSmall)
                 .foregroundColor(Theme.textPrimary)
-        }
-    }
-
-    /// Live count badges per destination.
-    private func badge(for page: AppPage) -> Int? {
-        switch page {
-        case .sessions:
-            let alive = providerStore.sessions.filter(\.isAlive).count
-            let cursor = providerStore.cursorSessions.count
-            let external = providerStore.aliveExternalSessions.count
-            return alive + cursor + external
-        case .providers:
-            return providerStore.providers.count
-        default:
-            return nil
         }
     }
 
@@ -185,41 +169,22 @@ struct MainWindowView: View {
 
 // MARK: - Top nav tab
 
-/// A top-bar navigation tab: icon + label + live count badge. Selected tabs
-/// get an accent underline and brightened label — a lighter treatment than
-/// the old sidebar's filled pill, fitting the horizontal strip.
+/// A top-bar navigation tab: label + accent underline.
 struct TopNavTab: View {
     let page: AppPage
     let isSelected: Bool
-    var badge: Int? = nil
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(page.label)
-                        .font(Theme.Font.body)
-                        .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
-                        .lineLimit(1)
-                        .fixedSize()
-                    if let badge, badge > 0 {
-                        Text("\(badge)")
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(isSelected ? Theme.claudeHi : Theme.textSecondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? Theme.claude.opacity(0.18) : Theme.cardFill(0.08))
-                            )
-                            .contentTransition(.numericText())
-                            .animation(Theme.Animation.smooth, value: badge)
-                    }
-                }
-                // Accent underline: only on the selected tab.
+                Text(page.label)
+                    .font(Theme.Font.body)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
+                    .lineLimit(1)
+                    .fixedSize()
                 Capsule()
                     .fill(isSelected ? Theme.claude : Color.clear)
                     .frame(width: isSelected ? 24 : 0, height: 2)

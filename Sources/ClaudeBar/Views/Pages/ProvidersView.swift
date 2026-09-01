@@ -1,77 +1,52 @@
 import SwiftUI
 
-/// Providers page: the 宫格 of provider tiles (activate a model with one tap,
-/// expand models in-tile), plus a link into the full editor as the detail
-/// layer. Activation flows through the shared `ProviderStore`, updating both
-/// the popup and Dashboard.
+/// Unified provider grid. One list writes Claude Code (`settings.json`) and
+/// Codex (`config.toml` + catalog) together. The editor is a detail layer
+/// that replaces the grid so the page never stacks two competing layouts.
 struct ProvidersView: View {
     @EnvironmentObject var providerStore: ProviderStore
-    @EnvironmentObject var codexStore: CodexProviderStore
-    @State private var segment = 0 // 0 = Claude, 1 = Codex
     @State private var showEditor = false
-    @State private var showCodexEditor = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s16) {
-            HStack {
-                Text("供应商")
-                    .font(Theme.Font.titleLarge)
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .fixedSize()
-                Spacer()
-                Picker("", selection: $segment) {
-                    Text("Claude").tag(0)
-                    Text("Codex").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-                .onChange(of: segment) { _, newValue in
-                    // Switching target collapses the other editor so the
-                    // page never shows two editors stacked.
-                    if newValue == 0 { showCodexEditor = false } else { showEditor = false }
-                }
-                Button(action: {
-                    if segment == 0 { showEditor.toggle() } else { showCodexEditor.toggle() }
-                }) {
-                    Label(
-                        (segment == 0 ? showEditor : showCodexEditor) ? "收起编辑器" : "编辑供应商…",
-                        systemImage: "slider.horizontal.3")
-                        .font(Theme.Font.bodySmall)
-                }
-                .buttonStyle(.glass)
-                .tint(segment == 0 ? Theme.claude : Theme.codex)
-            }
-            .padding(.horizontal, Theme.Space.s24)
-            .padding(.top, Theme.Space.s24)
-
-            if segment == 0 {
-                claudeSection
-            } else {
-                codexSection
-            }
-
-            if showEditor && segment == 0 {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            HairlineDivider()
+            if showEditor {
                 ProviderEditorView(providerStore: providerStore)
-                    .background(Theme.base0.opacity(0.35))
-            }
-            if showCodexEditor && segment == 1 {
-                CodexProviderEditorView(codexStore: codexStore)
-                    .background(Theme.base0.opacity(0.35))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                grid
             }
         }
         .background(Theme.base0.opacity(0.35))
     }
 
-    // MARK: - Claude section (original grid)
-
-    @ViewBuilder private var claudeSection: some View {
-        if providerStore.providers.isEmpty {
-            Text("暂无供应商配置")
-                .font(Theme.Font.body)
+    private var header: some View {
+        HStack(alignment: .center, spacing: Theme.Space.s12) {
+            Text("供应商")
+                .font(Theme.Font.titleLarge)
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .fixedSize()
+            Text("Claude + Codex 同步")
+                .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 40)
+            Spacer(minLength: Theme.Space.s8)
+            Button(action: { showEditor.toggle() }) {
+                Label(showEditor ? "返回列表" : "编辑供应商…",
+                      systemImage: showEditor ? "square.grid.2x2" : "slider.horizontal.3")
+                    .font(Theme.Font.bodySmall)
+            }
+            .buttonStyle(.glass)
+            .tint(Theme.claude)
+        }
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.vertical, Theme.Space.s16)
+    }
+
+    @ViewBuilder private var grid: some View {
+        if providerStore.providers.isEmpty {
+            emptyState
         } else {
             ScrollView {
                 TileGrid(.pageProvider) {
@@ -88,65 +63,52 @@ struct ProvidersView: View {
                 }
                 .padding(.horizontal, Theme.Space.s24)
                 .padding(.bottom, Theme.Space.s16)
+                .padding(.top, Theme.Space.s16)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    // MARK: - Codex section
-
-    @ViewBuilder private var codexSection: some View {
-        if codexStore.providers.isEmpty {
-            // Empty state doubles as the preset entry point — no need to
-            // open the editor first to discover presets.
-            VStack(spacing: Theme.Space.s12) {
-                Text("暂无 Codex 供应商配置 — 从预设一键添加：")
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.textTertiary())
-                HStack(spacing: Theme.Space.s8) {
-                    ForEach(CodexPreset.all, id: \.label) { preset in
-                        Button {
-                            var p = preset.provider
-                            p.id = UUID()
-                            p.activeModelID = p.models.first?.id
-                            codexStore.addProvider(p)
-                        } label: {
-                            VStack(spacing: 2) {
-                                Text(preset.label)
-                                    .font(Theme.Font.bodySmall)
-                                    .foregroundColor(Theme.textPrimary)
-                                Text(preset.provider.wireAPI == "chat" ? "Chat" : "Responses")
-                                    .font(Theme.Font.caption)
-                                    .foregroundColor(Theme.textTertiary())
-                            }
-                            .padding(.horizontal, Theme.Space.s12)
-                            .padding(.vertical, Theme.Space.s8)
+    private var emptyState: some View {
+        VStack(spacing: Theme.Space.s16) {
+            Spacer()
+            Text("暂无供应商")
+                .font(Theme.Font.body)
+                .foregroundColor(Theme.textTertiary())
+            Text("选一个预设，会同时写入 Claude Code 和 Codex。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+            HStack(spacing: Theme.Space.s8) {
+                ForEach(CodexPreset.all, id: \.label) { preset in
+                    Button {
+                        providerStore.addFromCodexPreset(preset.provider)
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(preset.label)
+                                .font(Theme.Font.bodySmall)
+                                .foregroundColor(Theme.textPrimary)
+                            Text(preset.provider.wireAPI == "chat" ? "Chat" : "Responses")
+                                .font(Theme.Font.caption)
+                                .foregroundColor(Theme.textTertiary())
                         }
-                        .buttonStyle(.glass)
-                        .tint(Theme.codex)
-                        .help(preset.provider.baseURL)
+                        .padding(.horizontal, Theme.Space.s12)
+                        .padding(.vertical, Theme.Space.s8)
                     }
+                    .buttonStyle(.glass)
+                    .help(preset.provider.baseURL)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 40)
-        } else {
-            ScrollView {
-                TileGrid(.pageProvider) {
-                    ForEach(codexStore.providers) { provider in
-                        CodexProviderTile(
-                            provider: provider,
-                            isActive: provider.id == codexStore.activeProviderID,
-                            activeModelID: provider.activeModelID,
-                            onActivateModel: { modelID in
-                                codexStore.activate(providerID: provider.id, modelID: modelID)
-                            }
-                        )
-                    }
-                }
-                .padding(.horizontal, Theme.Space.s24)
-                .padding(.bottom, Theme.Space.s16)
+            Button {
+                showEditor = true
+            } label: {
+                Label("手动添加", systemImage: "plus")
+                    .font(Theme.Font.bodySmall)
             }
-            .frame(maxHeight: .infinity)
+            .buttonStyle(.glassProminent)
+            .tint(Theme.claude)
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, Theme.Space.s24)
     }
 }

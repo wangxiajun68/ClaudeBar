@@ -25,16 +25,12 @@ struct SessionsPanelView: View {
 
     private var sessionsSection: some View {
         let alive = providerStore.aliveSessions
-        let busyCount = providerStore.busySessionCount
 
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: "rectangle.connected.to.line.below",
                 title: "CLAUDE CODE",
-                tint: Theme.claude,
-                count: alive.count,
-                activeCount: busyCount,
-                activeSymbol: "B"
+                tint: Theme.claude
             )
             .padding(.horizontal, Theme.Space.s16)
 
@@ -59,16 +55,12 @@ struct SessionsPanelView: View {
 
     private var cursorSessionsSection: some View {
         let alive = providerStore.aliveCursorSessions
-        let activeCount = providerStore.activeCursorCount
 
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: "cursorarrow.rays",
                 title: "CURSOR",
-                tint: Theme.cursor,
-                count: alive.count,
-                activeCount: activeCount,
-                activeSymbol: "A"
+                tint: Theme.cursor
             )
             .padding(.horizontal, Theme.Space.s16)
 
@@ -97,16 +89,12 @@ struct SessionsPanelView: View {
 
     private func externalSessionsSection(kind: ExternalAgentKind) -> some View {
         let alive = providerStore.externalSessions.filter { $0.kind == kind && $0.isAlive }
-        let activeCount = alive.filter(\.isActive).count
 
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: kind.icon,
                 title: kind.displayName.uppercased(),
-                tint: Theme.external,
-                count: alive.count,
-                activeCount: activeCount,
-                activeSymbol: "A"
+                tint: Theme.external
             )
             .padding(.horizontal, Theme.Space.s16)
 

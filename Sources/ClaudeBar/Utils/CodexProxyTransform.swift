@@ -212,11 +212,225 @@ enum CodexProxyTransform {
         ]
     }
 
+    // MARK: - Tool-output image hoist
+
+    /// Chat Completions (and most Responses-lite Relays) treat `role:tool` /
+    /// `function_call_output.output` as a string. Codex `view_image` returns
+    /// `{type:input_image, image_url: data:…}` in that slot; JSON-stringifying
+    /// it sends megabytes of base64 as text tokens and the model never sees
+    /// pixels. Industry fix (LiteLLM hoist, OpenAI Chat 400 on tool images):
+    /// keep a short placeholder in the tool output and attach the image to
+    /// the following `role:user` message, where vision actually works.
+    private static let toolImagePlaceholder =
+        "[Tool returned an image — see the following user message]"
+
+    private static let dataImageRegex: NSRegularExpression = {
+        try! NSRegularExpression(
+            pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\n\r]+"#)
+    }()
+
+    private struct ExtractedImage {
+        var url: String
+        var detail: String?
+    }
+
+    /// After a run of consecutive `function_call_output` items: stringify
+    /// their output (lite-safe) and, if any contained images, append one
+    /// user message carrying every extracted `input_image`. Preserves
+    /// tool-call adjacency — the user image turn comes *after* the whole
+    /// tool-output run, never between two outputs of the same turn.
+    private static func hoistImagesOutOfToolOutputs(_ input: [Any]) -> [Any] {
+        var out: [Any] = []
+        var pending: [ExtractedImage] = []
+        func flush() {
+            guard !pending.isEmpty else { return }
+            out.append(canonicalMessage([
+                "role": "user",
+                "content": pending.map { responsesImagePart($0) },
+            ]))
+            pending.removeAll(keepingCapacity: true)
+        }
+        for item in input {
+            guard var d = item as? [String: Any],
+                  d["type"] as? String == "function_call_output" else {
+                flush()
+                out.append(item)
+                continue
+            }
+            let split = splitToolOutput(d["output"])
+            d["output"] = split.text
+            out.append(d)
+            pending.append(contentsOf: split.images)
+        }
+        flush()
+        return out
+    }
+
+    private static func splitToolOutput(_ raw: Any?) -> (text: String, images: [ExtractedImage]) {
+        var images: [ExtractedImage] = []
+        var texts: [String] = []
+
+        func walk(_ value: Any) {
+            if let parts = value as? [[String: Any]] {
+                for part in parts { walkPart(part) }
+                return
+            }
+            if let arr = value as? [Any] {
+                for el in arr { walk(el) }
+                return
+            }
+            if let dict = value as? [String: Any] {
+                walkPart(dict)
+                return
+            }
+            if let s = value as? String {
+                walkString(s)
+            }
+        }
+
+        func walkPart(_ part: [String: Any]) {
+            if let img = extractImage(from: part) {
+                images.append(img)
+                return
+            }
+            if let t = (part["text"] as? String)
+                ?? (part["input_text"] as? String)
+                ?? (part["output_text"] as? String) {
+                walkString(t)
+                return
+            }
+            for v in part.values { walk(v) }
+        }
+
+        func walkString(_ s: String) {
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("[") || trimmed.hasPrefix("{"),
+               let data = trimmed.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) {
+                let imgBefore = images.count
+                let textBefore = texts.count
+                walk(parsed)
+                if images.count == imgBefore && texts.count == textBefore, !trimmed.isEmpty {
+                    texts.append(trimmed)
+                }
+                return
+            }
+            let nsRange = NSRange(s.startIndex..<s.endIndex, in: s)
+            let matches = dataImageRegex.matches(in: s, options: [], range: nsRange)
+            if matches.isEmpty {
+                if !s.isEmpty { texts.append(s) }
+                return
+            }
+            for m in matches {
+                guard let r = Range(m.range, in: s) else { continue }
+                let url = String(s[r])
+                    .replacingOccurrences(of: "\n", with: "")
+                    .replacingOccurrences(of: "\r", with: "")
+                images.append(ExtractedImage(url: url, detail: nil))
+            }
+            var leftover = s
+            for m in matches.reversed() {
+                guard let r = Range(m.range, in: leftover) else { continue }
+                leftover.removeSubrange(r)
+            }
+            let rest = leftover.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rest.isEmpty && rest != "[]" && rest != "{}" {
+                texts.append(rest)
+            }
+        }
+
+        if let raw { walk(raw) }
+        var text = texts.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !images.isEmpty {
+            if text.isEmpty {
+                text = toolImagePlaceholder
+            } else if !text.contains(toolImagePlaceholder) {
+                text += "\n" + toolImagePlaceholder
+            }
+        }
+        return (text, images)
+    }
+
+    private static func extractImage(from part: [String: Any]) -> ExtractedImage? {
+        let type = part["type"] as? String
+        let typed = type == "input_image" || type == "image_url" || type == "image"
+        let url: String?
+        if typed {
+            url = imageURL(in: part) ?? (part["file_id"] as? String)
+        } else if let u = imageURL(in: part), u.hasPrefix("data:image") {
+            url = u
+        } else {
+            return nil
+        }
+        guard let url, !url.isEmpty else { return nil }
+        let detail = (part["detail"] as? String)
+            ?? (part["image_url"] as? [String: Any]).flatMap { $0["detail"] as? String }
+        return ExtractedImage(url: url, detail: detail)
+    }
+
+    private static func imageURL(in part: [String: Any]) -> String? {
+        if let s = part["image_url"] as? String { return s }
+        if let obj = part["image_url"] as? [String: Any], let s = obj["url"] as? String { return s }
+        if let src = part["source"] as? [String: Any] {
+            if let data = src["data"] as? String,
+               let media = src["media_type"] as? String, media.hasPrefix("image/") {
+                return "data:\(media);base64,\(data)"
+            }
+            if let u = src["url"] as? String { return u }
+        }
+        return nil
+    }
+
+    private static func responsesImagePart(_ img: ExtractedImage) -> [String: Any] {
+        var part: [String: Any] = ["type": "input_image", "image_url": img.url]
+        if let detail = img.detail { part["detail"] = detail }
+        return part
+    }
+
+    private static func chatImagePart(_ img: ExtractedImage) -> [String: Any] {
+        var url: [String: Any] = ["url": img.url]
+        if let detail = img.detail { url["detail"] = detail }
+        return ["type": "image_url", "image_url": url]
+    }
+
+    /// Chat content: a plain string when there are no images (strict Relays
+    /// reject array content on text-only turns); a part list when vision
+    /// parts are present.
+    private static func chatMessageContent(_ item: [String: Any]) -> Any {
+        if let s = item["content"] as? String { return s }
+        guard let arr = item["content"] as? [[String: Any]] else {
+            if let content = item["content"] { return jsonString(content) }
+            return ""
+        }
+        var parts: [[String: Any]] = []
+        var textBuf: [String] = []
+        func flushText() {
+            let t = textBuf.joined(separator: "\n")
+            textBuf.removeAll(keepingCapacity: true)
+            if !t.isEmpty { parts.append(["type": "text", "text": t]) }
+        }
+        for part in arr {
+            if let img = extractImage(from: part) {
+                flushText()
+                parts.append(chatImagePart(img))
+            } else if let t = (part["text"] as? String)
+                        ?? (part["input_text"] as? String)
+                        ?? (part["refusal"] as? String) {
+                textBuf.append(t)
+            }
+        }
+        if parts.isEmpty { return textBuf.joined(separator: "\n") }
+        flushText()
+        return parts
+    }
+
     /// Rebuild `input[]` as the intersection of shapes every strict
     /// Responses deserializer accepts:
     ///   message            {type, id, role, content: [input_text|output_text|input_image]}
     ///   function_call      {type, call_id, name, arguments}
     ///   function_call_output {type, call_id, output: string}
+    ///   (+ a following user message when the output contained images)
     ///
     /// Nested unknown content-part tags (`text`, `refusal`, screenshot, …)
     /// fail a closed `ResponseContentPart` enum; serde then collapses the
@@ -262,7 +476,7 @@ enum CodexProxyTransform {
         }
         for t in lifted { appendLiftedTool(t, into: &body, registry: &registry) }
         for t in pending { appendLiftedTool(t, into: &body, registry: &registry) }
-        body["input"] = input
+        body["input"] = hoistImagesOutOfToolOutputs(input)
     }
 
     /// Always `{type: message, id, role, content: [parts]}`. Content is never
@@ -355,14 +569,11 @@ enum CodexProxyTransform {
     }
 
     private static func cleanFunctionCallOutput(_ d: [String: Any]) -> [String: Any] {
-        var output: String
-        if let s = d["output"] as? String {
-            output = s
-        } else if let arr = d["output"] as? [[String: Any]] {
-            let texts = arr.compactMap { $0["text"] as? String }
-            output = texts.isEmpty ? jsonString(arr) : texts.joined(separator: "\n")
-        } else if let obj = d["output"], !(obj is NSNull) {
-            output = jsonString(obj)
+        // Leave structured image output intact; `hoistImagesOutOfToolOutputs`
+        // turns it into a string placeholder + following user message.
+        let output: Any
+        if let obj = d["output"], !(obj is NSNull) {
+            output = obj
         } else {
             output = ""
         }
@@ -500,7 +711,6 @@ enum CodexProxyTransform {
                 case "tool_search_output":
                     return bridgedOutput(d, pendingSurfaced: &pendingSurfaced)
                 case "function_call_output":
-                    flattenToolOutput(&d)
                     ensureReplayIDs(&d)
                     return d
                 default:
@@ -515,7 +725,7 @@ enum CodexProxyTransform {
             for t in pendingSurfaced {
                 appendLiftedTool(t, into: &body, registry: &registry)
             }
-            body["input"] = input
+            body["input"] = hoistImagesOutOfToolOutputs(input)
         }
     }
 
@@ -607,13 +817,6 @@ enum CodexProxyTransform {
         return out
     }
 
-    /// Array-form tool output → single text block.
-    private static func flattenToolOutput(_ d: inout [String: Any]) {
-        guard let arr = d["output"] as? [[String: Any]] else { return }
-        let texts = arr.compactMap { $0["text"] as? String }
-        if !texts.isEmpty { d["output"] = texts.joined(separator: "\n") }
-    }
-
     // MARK: - Request: Responses → Chat Completions
 
     static func responsesToChatRequest(_ body: [String: Any], registry: inout ToolRegistry) -> [String: Any] {
@@ -629,10 +832,19 @@ enum CodexProxyTransform {
         // Buffer consecutive function_call items into one assistant tool_calls
         // message, flushed before the first matching function_call_output.
         var pendingCalls: [[String: Any]] = []
+        var pendingToolImages: [ExtractedImage] = []
         func flushCalls() {
             guard !pendingCalls.isEmpty else { return }
             messages.append(["role": "assistant", "content": "", "tool_calls": pendingCalls])
             pendingCalls = []
+        }
+        func flushToolImages() {
+            guard !pendingToolImages.isEmpty else { return }
+            messages.append([
+                "role": "user",
+                "content": pendingToolImages.map { chatImagePart($0) },
+            ])
+            pendingToolImages.removeAll(keepingCapacity: true)
         }
 
         func toolCallsEntry(_ call: [String: Any]) -> [String: Any] {
@@ -646,10 +858,12 @@ enum CodexProxyTransform {
             ]
         }
 
-        for item in out["input"] as? [[String: Any]] ?? [] {
+        for raw in out["input"] as? [Any] ?? [] {
+            guard let item = raw as? [String: Any] else { continue }
             switch item["type"] as? String {
             case "message":
                 flushCalls()
+                flushToolImages()
                 // cc-switch `responses_role_to_chat_role`: developer is a
                 // Codex/OpenAI system alias; mapping it to user duplicates
                 // the instructions as a human turn.
@@ -660,34 +874,26 @@ enum CodexProxyTransform {
                 case "tool": role = "tool"
                 default: role = "user"
                 }
-                var text = ""
-                if let content = item["content"] as? [[String: Any]] {
-                    text = content.compactMap { ($0["text"] ?? $0["input_text"]) as? String }.joined(separator: "\n")
-                } else if let s = item["content"] as? String {
-                    text = s
-                }
-                messages.append(["role": role, "content": text])
+                messages.append(["role": role, "content": chatMessageContent(item)])
             case "reasoning":
                 continue // summaries are not replayable for most Chat backends
             case "function_call":
+                flushToolImages()
                 pendingCalls.append(toolCallsEntry(item))
             case "function_call_output":
                 // Assistant tool_calls flush happens lazily here so all
                 // consecutive calls share one message.
-                if !pendingCalls.isEmpty {
-                    messages.append(["role": "assistant", "content": "", "tool_calls": pendingCalls])
-                    pendingCalls = []
-                }
+                flushCalls()
                 let callID = (item["call_id"] as? String) ?? ""
-                var outputText = ""
-                if let s = item["output"] as? String { outputText = s }
-                else if let obj = item["output"] { outputText = jsonString(obj) }
-                messages.append(["role": "tool", "tool_call_id": callID, "content": outputText])
+                let split = splitToolOutput(item["output"])
+                messages.append(["role": "tool", "tool_call_id": callID, "content": split.text])
+                pendingToolImages.append(contentsOf: split.images)
             default:
                 continue
             }
         }
         flushCalls()
+        flushToolImages()
 
         // tools → Chat shape
         var chatTools: [[String: Any]] = []

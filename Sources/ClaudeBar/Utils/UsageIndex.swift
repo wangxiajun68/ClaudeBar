@@ -49,8 +49,11 @@ struct UsageIndex {
     }()
 
     private static let lock = NSLock()
+    private static let flagLock = NSLock()
     private static var db: OpaquePointer?
     private static var openFailed = false
+    private static var _initialBuildDone = false
+    private static var _hasCachedData: Bool?
 
     private static func connection() -> OpaquePointer? {
         lock.lock()
@@ -84,31 +87,83 @@ struct UsageIndex {
                 cache_create INTEGER NOT NULL,
                 PRIMARY KEY (path, day, model)
             ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS rollup_day ON rollup(day);
+            CREATE TABLE IF NOT EXISTS cursor_totals (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                input INTEGER NOT NULL,
+                output INTEGER NOT NULL,
+                calls INTEGER NOT NULL,
+                db_version INTEGER NOT NULL,
+                page_count INTEGER NOT NULL
+            );
             """, nil, nil, nil)
-        return db
+        guard let opened = db else { return nil }
+        migrateIfNeeded(opened)
+        return opened
+    }
+
+    /// v3: Codex usage switched from last-cumulative-total (dumped on the
+    /// last day) to per-turn `last_token_usage`.
+    /// v4: OpenClaw is no longer a usage source — drop leftover rollup rows.
+    private static func migrateIfNeeded(_ db: OpaquePointer) {
+        var stmt: OpaquePointer?
+        var version: Int32 = 0
+        if sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &stmt, nil) == SQLITE_OK {
+            if sqlite3_step(stmt) == SQLITE_ROW { version = sqlite3_column_int(stmt, 0) }
+            sqlite3_finalize(stmt)
+        }
+        if version < 3 {
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'codex:%' OR path LIKE 'openclaw%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'codex:%' OR path LIKE 'openclaw%';")
+        }
+        if version < 4 {
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'openclaw%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'openclaw%';")
+        }
+        if version < 5 {
+            // Claude assistant rows can repeat the same message.id (stream
+            // partial then final). Rebuild so last-wins per id is applied.
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'claude:%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'claude:%';")
+            _ = exec(db, "PRAGMA user_version = 5")
+        }
     }
 
     // MARK: - Public API
 
     /// True until the first `updateIndex()` of this app run has completed.
-    /// The UI shows a spinner only during this window; afterwards queries are
-    /// fast enough that results can update in place.
-    private static var initialBuildDone = false
+    /// The UI shows a spinner only when there is also no cached rollup from a
+    /// previous run — otherwise period chips query immediately.
     static var needsInitialBuild: Bool {
+        flagLock.lock(); defer { flagLock.unlock() }
+        return !_initialBuildDone
+    }
+
+    /// True when the rollup already has rows (this process or a previous one).
+    static var hasCachedData: Bool {
+        if let cached = { flagLock.lock(); defer { flagLock.unlock() }; return _hasCachedData }() {
+            return cached
+        }
+        guard let db = connection() else { return false }
         lock.lock(); defer { lock.unlock() }
-        return !initialBuildDone
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM rollup LIMIT 1", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        let hit = sqlite3_step(stmt) == SQLITE_ROW
+        flagLock.lock(); _hasCachedData = hit; flagLock.unlock()
+        return hit
     }
 
     /// Bring the index up to date with every transcript source. Incremental:
-    /// cost is proportional to changed bytes, not corpus size. Cheap enough
-    /// to call before every query.
+    /// unchanged files are skipped (mtime+size); cost is changed bytes, not
+    /// corpus size.
     static func updateIndex() {
+        let candidates = collectTranscripts()
         guard let db = connection() else { return }
         lock.lock()
         defer { lock.unlock() }
 
         let known = currentFiles(db)
-        let candidates = collectTranscripts()
 
         _ = exec(db, "BEGIN")
         var seen = Set<String>()
@@ -117,27 +172,35 @@ struct UsageIndex {
             seen.insert(file.key)
             sync(file: file, prior: known[file.key], db: db)
         }
-        // Prune files that vanished (rollup rows cascade).
         for key in known.keys where !seen.contains(key) {
             delete(db, "DELETE FROM rollup WHERE path = ?", key)
             delete(db, "DELETE FROM files WHERE path = ?", key)
         }
         _ = exec(db, "COMMIT")
-        lock.lock()
-        initialBuildDone = true
-        lock.unlock()
+        flagLock.lock()
+        _initialBuildDone = true
+        _hasCachedData = true
+        flagLock.unlock()
     }
 
     /// Aggregate per-model usage within `interval` (day/month/year/custom).
+    /// Does **not** walk transcripts — call `updateIndex()` separately when
+    /// the corpus may have changed.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
         guard let db = connection() else { return [] }
+        lock.lock(); defer { lock.unlock() }
         let startDay = dayString(interval.start)
-        let endDay = dayString(interval.end)
+        // DateInterval.end is exclusive; include the last local day that
+        // actually belongs to the period.
+        let lastIncluded = interval.end.addingTimeInterval(-1)
+        let endDay = dayString(lastIncluded)
 
         var stmt: OpaquePointer?
         let sql = """
             SELECT model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
-            FROM rollup WHERE day BETWEEN ?1 AND ?2 GROUP BY model
+            FROM rollup
+            WHERE day BETWEEN ?1 AND ?2 AND path NOT LIKE 'openclaw%'
+            GROUP BY model
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
@@ -157,25 +220,60 @@ struct UsageIndex {
         return out.sorted { $0.totalTokens > $1.totalTokens }
     }
 
+    /// Per-day totals for the river chart. Same interval rules as `fetch`.
+    static func fetchDaily(in interval: DateInterval) -> [DayUsage] {
+        guard let db = connection() else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        let startDay = dayString(interval.start)
+        let lastIncluded = interval.end.addingTimeInterval(-1)
+        let endDay = dayString(lastIncluded)
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT day, sum(input), sum(output), sum(cache_read), sum(cache_create)
+            FROM rollup
+            WHERE day BETWEEN ?1 AND ?2 AND path NOT LIKE 'openclaw%'
+            GROUP BY day ORDER BY day
+            """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, startDay, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, endDay, -1, SQLITE_TRANSIENT)
+        var out: [DayUsage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            var day = DayUsage(day: String(cString: sqlite3_column_text(stmt, 0)))
+            day.inputTokens = Int(sqlite3_column_int64(stmt, 1))
+            day.outputTokens = Int(sqlite3_column_int64(stmt, 2))
+            day.cacheReadTokens = Int(sqlite3_column_int64(stmt, 3))
+            day.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 4))
+            if day.totalTokens > 0 { out.append(day) }
+        }
+        return out
+    }
+
     // MARK: - Per-file sync
 
     private struct KnownFile {
         let mtime: TimeInterval
         let size: Int
         let offset: Int
-        let headHash: Int
+        let headHash: Int64
         let cxIn: Int
         let cxOut: Int
         let cxCached: Int
     }
 
-    /// Cheap content-continuity check for the append fast path: hash of the
-    /// file's first bytes. A rewritten/rotated file almost certainly differs;
-    /// an appended one is byte-identical at the head.
-    private static func headHash(_ path: String, length: Int) -> Int {
-        guard let data = readBytes(path, from: 0) as NSData? else { return 0 }
-        let head = data.subdata(with: NSRange(location: 0, length: min(length, data.count)))
-        return head.hashValue
+    /// FNV-1a of the first `length` bytes — stable across launches, unlike
+    /// `Data.hashValue`. Reads at most `length` bytes, never the whole file.
+    private static func headHash(_ path: String, length: Int) -> Int64 {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return 0 }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: length)
+        var hash: UInt64 = 0xcbf29ce484222325
+        for b in data {
+            hash ^= UInt64(b)
+            hash = hash &* 0x100000001b3
+        }
+        return Int64(bitPattern: hash)
     }
 
     /// Parse one file's new bytes and fold them into the index.
@@ -183,12 +281,18 @@ struct UsageIndex {
         let kind = file.key.prefix(while: { $0 != ":" })
         let isCodex = kind == "codex"
 
-        // Append when the file only grew (transcripts are append-only). A
-        // grow-with-rewrite (new content at the same path — rotation, session
-        // reset) would silently parse the wrong bytes, so verify content
-        // continuity: the stored head hash must still match the file's head.
-        let headMatches = prior.map { headHash(file.path, length: 256) == $0.headHash } ?? false
-        if let prior, headMatches, file.size > prior.size || prior.offset < prior.size {
+        if let prior, prior.mtime == file.mtime, prior.size == file.size, prior.offset <= file.size {
+            return
+        }
+
+        let storedHash = prior?.headHash ?? 0
+        let currentHash = (prior != nil && file.size >= prior!.size) ? headHash(file.path, length: 256) : 0
+        let headMatches = storedHash != 0 && currentHash == storedHash
+
+        // Claude assistant lines can rewrite the same message.id (partial then
+        // final). Incremental add would double-count; only Codex is append-delta.
+        if isCodex, let prior, file.size > prior.size, prior.offset <= file.size,
+           storedHash == 0 || headMatches {
             let chunk = readBytes(file.path, from: prior.offset)
             guard !chunk.isEmpty else { return }
             // Parse complete lines only; the trailing partial line (if any)
@@ -197,31 +301,18 @@ struct UsageIndex {
             let (lines, consumed) = completeLines(chunk)
             guard consumed > 0 else { return }
 
-            if isCodex {
-                // Cumulative totals: delta against the stored last totals.
-                guard let last = codexLastTotal(lines) else { return }
-                let dIn = max(0, last.input - prior.cxIn)
-                let dOut = max(0, last.output - prior.cxOut)
-                let dCached = max(0, last.cached - prior.cxCached)
-                guard dIn > 0 || dOut > 0 || dCached > 0 else {
-                    upsertFile(db, file, prior.offset + consumed, cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached)
-                    return
-                }
-                addRollup(db, file.key, [ParsedEntry(
-                    day: dayString(last.date), model: "codex",
-                    calls: 1, input: dIn, output: dOut, cacheRead: dCached, cacheCreate: 0)])
-                upsertFile(db, file, prior.offset + consumed, cxIn: last.input, cxOut: last.output, cxCached: last.cached)
-            } else {
-                let entries = parse(kind, lines)
-                guard !entries.isEmpty else {
-                    upsertFile(db, file, prior.offset + consumed,
-                               cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached)
-                    return
-                }
-                addRollup(db, file.key, entries)
+            let parsed = parseCodex(lines)
+            if parsed.entries.isEmpty {
                 upsertFile(db, file, prior.offset + consumed,
                            cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached)
+                return
             }
+            addRollup(db, file.key, parsed.entries)
+            let last = parsed.last
+            upsertFile(db, file, prior.offset + consumed,
+                       cxIn: last?.input ?? prior.cxIn,
+                       cxOut: last?.output ?? prior.cxOut,
+                       cxCached: last?.cached ?? prior.cxCached)
             return
         }
 
@@ -231,14 +322,11 @@ struct UsageIndex {
         if prior != nil { delete(db, "DELETE FROM rollup WHERE path = ?", file.key) }
 
         if isCodex {
-            if let last = codexLastTotal(lines) {
-                replaceRollup(db, file.key, [ParsedEntry(
-                    day: dayString(last.date), model: "codex",
-                    calls: 1, input: last.input, output: last.output, cacheRead: last.cached, cacheCreate: 0)])
-                upsertFile(db, file, consumed, cxIn: last.input, cxOut: last.output, cxCached: last.cached)
-            } else {
-                upsertFile(db, file, consumed, cxIn: 0, cxOut: 0, cxCached: 0)
-            }
+            let parsed = parseCodex(lines)
+            if !parsed.entries.isEmpty { replaceRollup(db, file.key, parsed.entries) }
+            let last = parsed.last
+            upsertFile(db, file, consumed,
+                       cxIn: last?.input ?? 0, cxOut: last?.output ?? 0, cxCached: last?.cached ?? 0)
         } else {
             replaceRollup(db, file.key, parse(kind, lines))
             upsertFile(db, file, consumed, cxIn: 0, cxOut: 0, cxCached: 0)
@@ -257,9 +345,7 @@ struct UsageIndex {
     private static func collectTranscripts() -> [Candidate] {
         var out: [Candidate] = []
         out.append(contentsOf: collectClaude())
-        for kind in ExternalAgentKind.allCases {
-            out.append(contentsOf: collectExternal(kind: kind))
-        }
+        out.append(contentsOf: collectExternal(kind: .codex))
         return out
     }
 
@@ -283,10 +369,8 @@ struct UsageIndex {
         return out
     }
 
-    /// Walk an external tool's directory tree. The layouts are uniform enough
-    /// for one generic 4-level walk: Codex nests year/month/day, OpenClaw
-    /// agent/session; files may also sit directly in upper levels (Codex
-    /// day-dir files).
+    /// Walk an external tool's directory tree. Codex nests year/month/day;
+    /// files may also sit directly in upper levels.
     private static func collectExternal(kind: ExternalAgentKind) -> [Candidate] {
         let fm = FileManager.default
         let root = kind.rootDir
@@ -327,7 +411,7 @@ struct UsageIndex {
                 mtime: sqlite3_column_double(stmt, 1),
                 size: Int(sqlite3_column_int64(stmt, 2)),
                 offset: Int(sqlite3_column_int64(stmt, 3)),
-                headHash: Int(sqlite3_column_int64(stmt, 4)),
+                headHash: sqlite3_column_int64(stmt, 4),
                 cxIn: Int(sqlite3_column_int64(stmt, 5)),
                 cxOut: Int(sqlite3_column_int64(stmt, 6)),
                 cxCached: Int(sqlite3_column_int64(stmt, 7)))
@@ -351,7 +435,7 @@ struct UsageIndex {
         sqlite3_bind_double(stmt, 2, file.mtime)
         sqlite3_bind_int64(stmt, 3, Int64(file.size))
         sqlite3_bind_int64(stmt, 4, Int64(offset))
-        sqlite3_bind_int64(stmt, 5, Int64(headHash(file.path, length: 256)))
+        sqlite3_bind_int64(stmt, 5, headHash(file.path, length: 256))
         sqlite3_bind_int64(stmt, 6, Int64(cxIn))
         sqlite3_bind_int64(stmt, 7, Int64(cxOut))
         sqlite3_bind_int64(stmt, 8, Int64(cxCached))
@@ -464,6 +548,8 @@ struct UsageIndex {
         }
     }
 
+    /// Last cumulative total in a file — used only to stamp `cx_*` so a
+    /// rewrite can be detected. Day-level usage comes from `last_token_usage`.
     private struct CodexTotal {
         let date: Date
         let input: Int
@@ -471,29 +557,51 @@ struct UsageIndex {
         let cached: Int
     }
 
-    /// Last cumulative token_count in a set of Codex lines, or nil.
-    private static func codexLastTotal(_ lines: [Data]) -> CodexTotal? {
+    private static func parseCodex(_ lines: [Data]) -> (entries: [ParsedEntry], last: CodexTotal?) {
+        var model = "codex"
+        var out: [ParsedEntry] = []
         var last: CodexTotal?
         for line in lines {
-            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  obj["type"] as? String == "event_msg",
+            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            if let payload = obj["payload"] as? [String: Any],
+               let m = payload["model"] as? String, !m.isEmpty {
+                model = m
+            }
+            guard obj["type"] as? String == "event_msg",
                   let payload = obj["payload"] as? [String: Any],
                   payload["type"] as? String == "token_count",
                   let info = payload["info"] as? [String: Any],
-                  let total = info["total_token_usage"] as? [String: Any],
                   let date = isoDate(obj["timestamp"]) else { continue }
-            last = CodexTotal(date: date,
-                              input: JSONCoerce.intVal(total["input_tokens"]),
-                              output: JSONCoerce.intVal(total["output_tokens"]),
-                              cached: JSONCoerce.intVal(total["cached_input_tokens"]))
+            if let total = info["total_token_usage"] as? [String: Any] {
+                last = CodexTotal(date: date,
+                                  input: JSONCoerce.intVal(total["input_tokens"]),
+                                  output: JSONCoerce.intVal(total["output_tokens"]),
+                                  cached: JSONCoerce.intVal(total["cached_input_tokens"]))
+            }
+            let turn = (info["last_token_usage"] as? [String: Any])
+                ?? (last == nil ? info["total_token_usage"] as? [String: Any] : nil)
+            guard let turn else { continue }
+            var e = record(dayString(date), model,
+                           input: JSONCoerce.intVal(turn["input_tokens"]),
+                           output: JSONCoerce.intVal(turn["output_tokens"])
+                                + JSONCoerce.intVal(turn["reasoning_output_tokens"]),
+                           read: JSONCoerce.intVal(turn["cached_input_tokens"]),
+                           create: JSONCoerce.intVal(turn["cache_write_input_tokens"]))
+            e.calls = 1
+            out.append(e)
         }
-        return last
+        if out.isEmpty, let last {
+            var e = record(dayString(last.date), model,
+                           input: last.input, output: last.output, read: last.cached)
+            e.calls = 1
+            out.append(e)
+        }
+        return (out, last)
     }
 
     private static func parse(_ kind: Substring, _ lines: [Data]) -> [ParsedEntry] {
         switch kind {
         case "claude": return parseClaude(lines)
-        case "openclaw": return parseOpenClaw(lines)
         default: return []
         }
     }
@@ -509,46 +617,38 @@ struct UsageIndex {
     private static func record(_ day: String, _ model: String, input: Int, output: Int, read: Int = 0, create: Int = 0) -> ParsedEntry {
         var e = ParsedEntry(day: day, model: model)
         e.input = input; e.output = output; e.cacheRead = read; e.cacheCreate = create
+        e.calls = 1
         return e
     }
 
     /// Claude Code: {"timestamp":"...","type":"assistant","message":{"model":...,"usage":{...}}}
+    /// Last-wins per `message.id` — the same id is rewritten as the stream
+    /// finalizes (partial then complete). There is no on-disk cache-hit rate;
+    /// we use Anthropic's fields: cache_read / (input + cache_read + cache_create).
     private static func parseClaude(_ lines: [Data]) -> [ParsedEntry] {
-        var out: [ParsedEntry] = []
+        var lastByID: [String: ParsedEntry] = [:]
+        var anonymous: [ParsedEntry] = []
         for line in lines {
-            guard line.count > 2, line.contains(0x22), // cheap non-empty guard
+            guard line.count > 2, line.contains(0x22),
                   let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                   obj["type"] as? String == "assistant",
                   let message = obj["message"] as? [String: Any],
                   let model = message["model"] as? String, !model.isEmpty, !model.hasPrefix("<"),
                   let usage = message["usage"] as? [String: Any],
                   let date = isoDate(obj["timestamp"]) else { continue }
-            out.append(record(dayString(date), model,
-                              input: JSONCoerce.intVal(usage["input_tokens"]),
-                              output: JSONCoerce.intVal(usage["output_tokens"]),
-                              read: JSONCoerce.intVal(usage["cache_read_input_tokens"]),
-                              create: JSONCoerce.intVal(usage["cache_creation_input_tokens"])))
+            let create = JSONCoerce.intVal(usage["cache_creation_input_tokens"])
+            let e = record(dayString(date), model,
+                           input: JSONCoerce.intVal(usage["input_tokens"]),
+                           output: JSONCoerce.intVal(usage["output_tokens"]),
+                           read: JSONCoerce.intVal(usage["cache_read_input_tokens"]),
+                           create: create)
+            if let id = message["id"] as? String, !id.isEmpty {
+                lastByID[id] = e
+            } else {
+                anonymous.append(e)
+            }
         }
-        return out
-    }
-
-    /// OpenClaw: {"type":"message","timestamp":"...","message":{"model":...,"usage":{"input","output","cacheRead","cacheWrite"}}}
-    private static func parseOpenClaw(_ lines: [Data]) -> [ParsedEntry] {
-        var out: [ParsedEntry] = []
-        for line in lines {
-            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  obj["type"] as? String == "message",
-                  let message = obj["message"] as? [String: Any],
-                  let usage = message["usage"] as? [String: Any],
-                  let date = isoDate(obj["timestamp"]) else { continue }
-            let model = (message["model"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "openclaw"
-            out.append(record(dayString(date), model,
-                              input: JSONCoerce.intVal(usage["input"]),
-                              output: JSONCoerce.intVal(usage["output"]),
-                              read: JSONCoerce.intVal(usage["cacheRead"]),
-                              create: JSONCoerce.intVal(usage["cacheWrite"])))
-        }
-        return out
+        return Array(lastByID.values) + anonymous
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {
@@ -561,5 +661,45 @@ struct UsageIndex {
     private static func isoDate(_ any: Any?) -> Date? {
         guard let s = any as? String else { return nil }
         return isoFormatter.date(from: s) ?? isoFormatterNoFrac.date(from: s)
+    }
+
+    // MARK: - Cursor totals (same DB, scanned once)
+
+    struct CursorRow {
+        var input: Int
+        var output: Int
+        var calls: Int
+        var dbVersion: Int32
+        var pageCount: Int64
+    }
+
+    static func loadCursorTotals() -> CursorRow? {
+        guard let db = connection() else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT input, output, calls, db_version, page_count FROM cursor_totals WHERE id = 1", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return CursorRow(
+            input: Int(sqlite3_column_int64(stmt, 0)),
+            output: Int(sqlite3_column_int64(stmt, 1)),
+            calls: Int(sqlite3_column_int64(stmt, 2)),
+            dbVersion: sqlite3_column_int(stmt, 3),
+            pageCount: sqlite3_column_int64(stmt, 4))
+    }
+
+    static func saveCursorTotals(_ row: CursorRow) {
+        guard let db = connection() else { return }
+        lock.lock(); defer { lock.unlock() }
+        var stmt: OpaquePointer?
+        let sql = "INSERT OR REPLACE INTO cursor_totals(id,input,output,calls,db_version,page_count) VALUES(1,?1,?2,?3,?4,?5)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(row.input))
+        sqlite3_bind_int64(stmt, 2, Int64(row.output))
+        sqlite3_bind_int64(stmt, 3, Int64(row.calls))
+        sqlite3_bind_int(stmt, 4, row.dbVersion)
+        sqlite3_bind_int64(stmt, 5, row.pageCount)
+        sqlite3_step(stmt)
     }
 }

@@ -9,6 +9,7 @@ struct EditableModel: Identifiable, Equatable {
     var disableCompact: Bool = true
     var disableExperimentalBetas: Bool = true
     var autoCompactWindow: String = ""
+    var reasoningEffort: String = ""
 }
 
 /// Editor form view-model: owns all editing state, derived validation, and
@@ -27,6 +28,11 @@ final class ProviderEditorModel {
     /// Monotonic token — each successful save bumps it; the view runs a
     /// `.task(id:)` to show "Saved ✓" for 2s (no asyncAfter, no Timer).
     var saveToken = 0
+
+    var wireAPI = "chat"
+    var requiresOpenAIAuth = false
+    var preserveOfficialLogin = true
+    var disableResponseStorage = true
 
     private unowned var store: ProviderStore?
 
@@ -60,6 +66,27 @@ final class ProviderEditorModel {
         activeModelID = p.activeModelID ?? p.models.first?.id
         editingModelID = activeModelID
         newModelName = ""
+        loadCodexExtras(for: p)
+    }
+
+    private func loadCodexExtras(for claude: Provider) {
+        guard let twin = store?.peer?.providers.first(where: { ProviderBridge.matches(claude, $0) }) else {
+            wireAPI = ProviderBridge.openaiCompatibleURL(claude.baseURL).lowercased().contains("api.openai.com")
+                ? "responses" : "chat"
+            requiresOpenAIAuth = false
+            preserveOfficialLogin = true
+            disableResponseStorage = true
+            return
+        }
+        let extras = ProviderBridge.extras(from: twin)
+        wireAPI = extras.wireAPI
+        requiresOpenAIAuth = extras.requiresOpenAIAuth
+        preserveOfficialLogin = extras.preserveOfficialLogin
+        disableResponseStorage = extras.disableResponseStorage
+        for i in models.indices {
+            let slug = ProviderBridge.stripClaudeModelSuffix(models[i].name).lowercased()
+            models[i].reasoningEffort = extras.reasoningBySlug[slug] ?? models[i].reasoningEffort
+        }
     }
 
     // MARK: - Derived validation (craft-floor error states)
@@ -123,9 +150,9 @@ final class ProviderEditorModel {
         }
         p.activeModelID = activeModelID ?? p.models.first?.id
 
-        store.updateProvider(p)
+        store.updateProvider(p, extras: currentExtras)
 
-        // If active, re-apply current model.
+        // If active, re-apply current model (writes Claude + Codex live configs).
         if store.activeProviderID == p.id,
            let model = p.models.first(where: { $0.id == p.activeModelID }) ?? p.models.first {
             store.activateModel(providerID: p.id, modelID: model.id)
@@ -160,5 +187,25 @@ final class ProviderEditorModel {
             selectedID = last.id
             loadSelected()
         }
+    }
+
+    private var currentExtras: ProviderBridge.CodexExtras {
+        var map: [String: String] = [:]
+        for m in models {
+            map[ProviderBridge.stripClaudeModelSuffix(m.name).lowercased()] = m.reasoningEffort
+        }
+        return ProviderBridge.CodexExtras(
+            wireAPI: wireAPI,
+            requiresOpenAIAuth: requiresOpenAIAuth,
+            preserveOfficialLogin: preserveOfficialLogin,
+            disableResponseStorage: disableResponseStorage,
+            reasoningBySlug: map)
+    }
+
+    func addFromPreset(_ preset: CodexProvider) {
+        guard let store else { return }
+        store.addFromCodexPreset(preset)
+        selectedID = store.providers.last?.id
+        loadSelected()
     }
 }

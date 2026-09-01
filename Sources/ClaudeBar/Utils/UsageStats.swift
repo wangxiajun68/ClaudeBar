@@ -49,14 +49,10 @@ struct UsageStats {
         }
     }
 
-    /// Aggregate usage per model within `interval`, sorted by total tokens
-    /// descending. Serves Claude Code transcripts and external agents from
-    /// the shared persistent index; updates the index incrementally first so
-    /// fresh transcript bytes are included. Cost is O(changed bytes + interval
-    /// rollup rows), not O(corpus).
+    /// Query cost is O(interval rollup rows). Call `UsageIndex.updateIndex()`
+    /// separately when transcripts may have changed.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
-        UsageIndex.updateIndex()
-        return UsageIndex.fetch(in: interval)
+        UsageIndex.fetch(in: interval)
     }
 
     // MARK: - Formatting

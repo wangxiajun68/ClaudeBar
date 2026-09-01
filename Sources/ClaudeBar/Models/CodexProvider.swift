@@ -7,6 +7,29 @@ struct CodexModelConfig: Codable, Identifiable, Equatable {
     var name: String                 // → model = "..."
     var reasoningEffort: String = "" // → model_reasoning_effort ("" = don't write)
     var contextWindow: String = ""   // → model_context_window ("" = don't write)
+    var autoCompactTokenLimit: String = "" // → model_auto_compact_token_limit ("" = don't write)
+
+    init(id: UUID = UUID(), name: String, reasoningEffort: String = "",
+         contextWindow: String = "", autoCompactTokenLimit: String = "") {
+        self.id = id
+        self.name = name
+        self.reasoningEffort = reasoningEffort
+        self.contextWindow = contextWindow
+        self.autoCompactTokenLimit = autoCompactTokenLimit
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? ""
+        contextWindow = try c.decodeIfPresent(String.self, forKey: .contextWindow) ?? ""
+        autoCompactTokenLimit = try c.decodeIfPresent(String.self, forKey: .autoCompactTokenLimit) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, reasoningEffort, contextWindow, autoCompactTokenLimit
+    }
 }
 
 // MARK: - Codex Provider
@@ -100,7 +123,8 @@ enum CodexPreset {
         apiKey: "",
         baseURL: "http://aibox.richaibox.com:2026/v1", wireAPI: "chat",
         requiresOpenAIAuth: true,
-        models: [CodexModelConfig(name: "glm-5.3-flash", reasoningEffort: "high", contextWindow: "400000")])
+        models: [CodexModelConfig(name: "glm-5.3-flash", reasoningEffort: "high",
+                                  contextWindow: "400000", autoCompactTokenLimit: "360000")])
     static let custom = CodexProvider(name: "自定义", baseURL: "", wireAPI: "responses", models: [])
 
     static var all: [(label: String, provider: CodexProvider)] {
