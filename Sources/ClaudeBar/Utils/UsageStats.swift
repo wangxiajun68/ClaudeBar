@@ -90,4 +90,14 @@ struct UsageStats {
             }
         }
     }
+
+    /// Context-window sizes on session tiles: always k, never 万/亿.
+    /// 200000 → "200k", 15900 → "16k", 800 → "800".
+    static func formatContext(_ n: Int) -> String {
+        guard n >= 1_000 else { return "\(n)" }
+        let k = Double(n) / 1_000
+        if k >= 10 { return "\(Int((k).rounded()))k" }
+        if abs(k - k.rounded()) < 0.05 { return "\(Int(k.rounded()))k" }
+        return String(format: "%.1fk", k)
+    }
 }

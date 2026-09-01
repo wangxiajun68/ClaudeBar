@@ -34,6 +34,11 @@ struct ProvidersPanel: View {
                                     panel.showFeedback("\(provider.name) / \(m.name)")
                                 }
                             },
+                            onToggleCapture: {
+                                providerStore.setCaptureEnabled(
+                                    providerID: provider.id,
+                                    enabled: !provider.captureEnabled)
+                            },
                             dense: true
                         )
                     }

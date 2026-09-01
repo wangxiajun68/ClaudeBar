@@ -52,12 +52,14 @@ struct CursorSessionCardView: View {
                         .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
                 }
                 Spacer()
+                SessionLoadChip(key: .cursor, compact: true, shared: true)
                 Text(session.relativeUpdated)
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             }
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .glassEffect(
             .regular.tint(isActive ? Theme.cursorAccent.opacity(isHovered ? 0.20 : 0.12) : Color.white.opacity(0.05)),
             in: RoundedRectangle(cornerRadius: 6)

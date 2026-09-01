@@ -107,9 +107,8 @@ enum CodexConfigWriter {
             "model = \(serialize(model.name))",
             "model_provider = \(serialize(key))",
         ]
-        if !model.reasoningEffort.isEmpty {
-            managed.append("model_reasoning_effort = \(serialize(model.reasoningEffort))")
-        }
+        let effort = model.reasoningEffort.isEmpty ? "max" : model.reasoningEffort
+        managed.append("model_reasoning_effort = \(serialize(effort))")
         if let window = Int(model.contextWindow), window > 0 {
             managed.append("model_context_window = \(window)")
         }

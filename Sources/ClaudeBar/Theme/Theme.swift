@@ -355,6 +355,17 @@ struct HairlineDivider: View {
     }
 }
 
+/// 1pt vertical rule for side-by-side panes. Never use `HairlineDivider`
+/// inside an HStack — a height-only rectangle expands and eats the gap.
+struct VerticalHairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Theme.hairline)
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+    }
+}
+
 /// Hairline section container: no background, no corner — just spacing and
 /// optional top/bottom rules. Replaces `.panelCard()` nesting for list areas.
 struct SectionBlock<Content: View>: View {

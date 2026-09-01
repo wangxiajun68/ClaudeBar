@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The five top-nav destinations.
 enum AppPage: String, CaseIterable, Identifiable {
-    case dashboard, sessions, providers, usage, settings
+    case dashboard, sessions, providers, usage, traffic, settings
     var id: String { rawValue }
 
     var label: String {
@@ -13,6 +13,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .sessions: return "会话"
         case .providers: return "供应商"
         case .usage: return "用量"
+        case .traffic: return "流量"
         case .settings: return "设置"
         }
     }
@@ -23,6 +24,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .sessions: return "antenna.radiowaves.left.and.right"
         case .providers: return "server.rack"
         case .usage: return "chart.bar.xaxis"
+        case .traffic: return "point.3.connected.trianglepath.dotted"
         case .settings: return "gearshape"
         }
     }
@@ -151,10 +153,12 @@ struct MainWindowView: View {
             case .sessions: SessionsView()
             case .providers: ProvidersView()
             case .usage: UsageView()
+            case .traffic: TrafficView()
             case .settings: SettingsView()
             }
         }
         .id(selectedPage)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.opacity)
     }
 

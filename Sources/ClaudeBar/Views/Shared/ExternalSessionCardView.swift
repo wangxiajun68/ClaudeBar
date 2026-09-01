@@ -34,6 +34,7 @@ struct ExternalSessionCardView: View {
                 .truncationMode(.middle)
 
             HStack(spacing: 4) {
+                SessionLoadChip(key: .standardizedCwd(session.cwd), compact: true)
                 Spacer()
                 Text(session.relativeUpdated)
                     .font(Theme.Font.microMono)
@@ -42,6 +43,7 @@ struct ExternalSessionCardView: View {
             }
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .glassEffect(
             .regular.tint(isActive ? Theme.external.opacity(isHovered ? 0.20 : 0.12) : Color.white.opacity(0.05)),
             in: RoundedRectangle(cornerRadius: 6)

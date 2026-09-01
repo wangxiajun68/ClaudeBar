@@ -82,6 +82,7 @@ class ProviderStore: ObservableObject {
         ProcessSampler.shared.start()
         startUsageWatcher()
         writeWidgetSnapshot()
+        syncPeerProxy()
     }
 
     // MARK: - Sessions
@@ -104,6 +105,7 @@ class ProviderStore: ObservableObject {
                     self.detectIdleTransitions(enriched)
                 }
                 ProcessSampler.shared.setAgentPIDs(pids)
+                self.publishLoadLabels()
                 // Cursor / Codex must poll even when Claude is idle.
                 self.refreshCursorSessions()
                 self.refreshExternalSessions()
@@ -253,6 +255,7 @@ class ProviderStore: ObservableObject {
                 // widget on the same poll — refreshCursorSessions runs on the 2.5s
                 // timer but does not otherwise call writeWidgetSnapshot.
                 self.writeWidgetSnapshot()
+                self.publishLoadLabels()
             }
         }
     }
@@ -276,6 +279,7 @@ class ProviderStore: ObservableObject {
                     }
                 }
                 self.refreshAnyBusy()
+                self.publishLoadLabels()
             }
         }
     }
@@ -320,6 +324,15 @@ class ProviderStore: ObservableObject {
         // matches a configured provider, adopt it as active and persist the
         // reconciled state (a single save, after all mutations below).
         guard let env = currentEnv else { return }
+        if LocalProxyAddress.isLoopback(env.ANTHROPIC_BASE_URL) {
+            let captureOn = providers.first(where: { $0.id == activeProviderID })?.captureEnabled ?? false
+            if !captureOn, let id = activeProviderID,
+               let p = providers.first(where: { $0.id == id }),
+               let m = p.activeModel {
+                activateModel(providerID: p.id, modelID: m.id)
+            }
+            return
+        }
         for provider in providers {
             let a = provider.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let b = env.ANTHROPIC_BASE_URL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -377,15 +390,17 @@ class ProviderStore: ObservableObject {
         saveProviders()
         refreshBalance()
         activatePeer(provider: provider, model: model)
+        syncPeerProxy()
     }
 
     /// Maps a provider/model pair onto the `settings.json` env block. All
     /// `ANTHROPIC_DEFAULT_*_MODEL` aliases carry the chosen model name so
     /// subagent/background traffic is routed to the same endpoint.
     private func buildEnv(from provider: Provider, model: ModelConfig) -> EnvConfig {
-        EnvConfig(
+        let base = provider.captureEnabled ? LocalProxyAddress.claudeBase : provider.baseURL
+        return EnvConfig(
             ANTHROPIC_AUTH_TOKEN: provider.authToken,
-            ANTHROPIC_BASE_URL: provider.baseURL,
+            ANTHROPIC_BASE_URL: base,
             ANTHROPIC_MODEL: model.name,
             CLAUDE_CODE_MAX_CONTEXT_TOKENS: model.contextTokens,
             DISABLE_COMPACT: model.disableCompact ? "1" : "",
@@ -441,7 +456,8 @@ class ProviderStore: ObservableObject {
             authToken: provider.authToken,
             baseURL: provider.baseURL,
             models: provider.models,
-            activeModelID: provider.activeModelID
+            activeModelID: provider.activeModelID,
+            captureEnabled: provider.captureEnabled
         )
         providers.append(copy)
         saveProviders()
@@ -464,6 +480,36 @@ class ProviderStore: ObservableObject {
         providers[idx] = provider
         saveProviders()
         projectToPeer(extras: extras.map { (provider, $0) })
+    }
+
+    /// Tile-level capture switch. Persists on the Claude row (Codex twin
+    /// follows via project). If this vendor is active, rewrite env + proxy.
+    func setCaptureEnabled(providerID: UUID, enabled: Bool) {
+        guard let idx = providers.firstIndex(where: { $0.id == providerID }) else { return }
+        providers[idx].captureEnabled = enabled
+        saveProviders()
+        projectToPeer()
+        if activeProviderID == providerID,
+           let modelID = providers[idx].activeModelID ?? providers[idx].models.first?.id {
+            activateModel(providerID: providerID, modelID: modelID)
+        } else {
+            syncPeerProxy()
+        }
+    }
+
+    func publishLoadLabels() {
+        var map: [ProcessSampler.Key: String] = [:]
+        for s in sessions where s.isAlive {
+            map[.pid(s.pid)] = s.projectFolder.isEmpty ? "Claude" : s.projectFolder
+        }
+        if !cursorSessions.isEmpty {
+            map[.cursor] = "Cursor"
+        }
+        for s in externalSessions where s.isAlive {
+            guard !s.cwd.isEmpty else { continue }
+            map[.standardizedCwd(s.cwd)] = s.projectFolder.isEmpty ? "Codex" : s.projectFolder
+        }
+        ProcessSampler.shared.setLabels(map)
     }
 
     /// One Claude list, two live configs. Missing Claude rows are imported
@@ -508,15 +554,29 @@ class ProviderStore: ObservableObject {
         }
     }
 
+    private func syncPeerProxy() {
+        Task { @MainActor [weak self] in
+            self?.peer?.syncProxyRuntime()
+        }
+    }
+
     // MARK: - Balance
 
     func refreshBalance() {
         guard let env = currentEnv else { balanceText = nil; return }
+        let token = env.ANTHROPIC_AUTH_TOKEN
+        let base: String = {
+            if let p = providers.first(where: { $0.id == activeProviderID }), !p.baseURL.isEmpty {
+                return p.baseURL
+            }
+            return env.ANTHROPIC_BASE_URL
+        }()
+        if LocalProxyAddress.isLoopback(base) { balanceText = nil; return }
         balanceLoading = true
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { balanceLoading = false }
-            if let result = await BalanceFetcher.fetch(authToken: env.ANTHROPIC_AUTH_TOKEN, baseURL: env.ANTHROPIC_BASE_URL) {
+            if let result = await BalanceFetcher.fetch(authToken: token, baseURL: base) {
                 balanceText = "\(result.balance) \(result.currency)"
             } else {
                 balanceText = nil

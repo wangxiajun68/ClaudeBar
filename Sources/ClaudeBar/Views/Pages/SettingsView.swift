@@ -64,7 +64,7 @@ struct SettingsView: View {
                                 Text("本地路由")
                                     .font(Theme.Font.body)
                                     .foregroundColor(Theme.textPrimary)
-                                Text("修复 openai/codex#23186：Codex 的 MCP 工具包装只有官方后端能解析，通用 Responses/Chat 后端会丢弃。开启后 Codex 请求经本机代理转发并自动转换协议。")
+                                Text("修复 openai/codex#23186：Codex 的 MCP 工具包装只有官方后端能解析，通用 Responses/Chat 后端会丢弃。开启后 Codex 请求经本机代理转发并自动转换协议。供应商里的「代理抓包」会另外记录 Anthropic / OpenAI 报文，在「流量」页查看。")
                                     .font(Theme.Font.caption)
                                     .foregroundColor(Theme.textTertiary())
                                     .fixedSize(horizontal: false, vertical: true)
@@ -107,13 +107,29 @@ struct SettingsView: View {
                     // Raw config
                     settingCard("配置文件", icon: "gearshape") {
                         fileRow(path: "~/.claude/settings.json") {
-                            openSettingsFile()
+                            NSWorkspace.shared.open(FilePaths.settingsFile)
                         }
-                        .disabled(!providerStore.hasSettingsFile)
+                        .disabled(!fileExists(FilePaths.settingsFile))
                         Divider()
                         fileRow(path: "~/.claude/claude-bar-providers.json") {
-                            openProvidersFile()
+                            NSWorkspace.shared.open(FilePaths.presetsFile)
                         }
+                        .disabled(!fileExists(FilePaths.presetsFile))
+                        Divider()
+                        fileRow(path: "~/.codex/config.toml") {
+                            NSWorkspace.shared.open(FilePaths.codexConfigFile)
+                        }
+                        .disabled(!fileExists(FilePaths.codexConfigFile))
+                        Divider()
+                        fileRow(path: "~/.codex/auth.json") {
+                            NSWorkspace.shared.open(FilePaths.codexAuthFile)
+                        }
+                        .disabled(!fileExists(FilePaths.codexAuthFile))
+                        Divider()
+                        fileRow(path: "~/.claude/claude-bar-codex-providers.json") {
+                            NSWorkspace.shared.open(FilePaths.codexProvidersFile)
+                        }
+                        .disabled(!fileExists(FilePaths.codexProvidersFile))
                     }
 
                     // About
@@ -185,11 +201,7 @@ struct SettingsView: View {
         }
     }
 
-    private func openSettingsFile() {
-        NSWorkspace.shared.open(FilePaths.settingsFile)
-    }
-
-    private func openProvidersFile() {
-        NSWorkspace.shared.open(FilePaths.presetsFile)
+    private func fileExists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
     }
 }

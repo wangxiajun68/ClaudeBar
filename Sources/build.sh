@@ -57,6 +57,7 @@ swiftc \
     -framework WidgetKit \
     -framework CryptoKit \
     -framework CoreServices \
+    -framework IOKit \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \

@@ -168,6 +168,8 @@ struct DashboardView: View {
         let contextRatio: Double
         let contextLabel: String
         let updated: String
+        let load: ProcessSampler.Key
+        var loadShared: Bool = false
     }
 
     private var overviewRows: [OverviewRow] {
@@ -182,7 +184,8 @@ struct DashboardView: View {
                     activity: s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
-                    updated: s.relativeUpdated
+                    updated: s.relativeUpdated,
+                    load: .pid(s.pid)
                 )
             }
         let cursorRows = providerStore.cursorSessions
@@ -195,7 +198,9 @@ struct DashboardView: View {
                     activity: s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
-                    updated: s.relativeUpdated
+                    updated: s.relativeUpdated,
+                    load: .cursor,
+                    loadShared: true
                 )
             }
         // Codex — teal rows.
@@ -209,7 +214,8 @@ struct DashboardView: View {
                     activity: s.model,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
-                    updated: s.relativeUpdated
+                    updated: s.relativeUpdated,
+                    load: .standardizedCwd(s.cwd)
                 )
             }
         return claudeRows + cursorRows + externalRows
@@ -315,6 +321,7 @@ private struct OverviewTile: View {
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
+                SessionLoadChip(key: row.load, shared: row.loadShared)
                 ContextBar(ratio: row.contextRatio)
                     .opacity(row.contextRatio > 0 ? 1 : 0.25)
                 HStack {
@@ -331,7 +338,7 @@ private struct OverviewTile: View {
                 }
             }
             .padding(Theme.Space.s12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .tile(tint: row.busy ? row.tint : nil, hovered: isHovered)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
         }

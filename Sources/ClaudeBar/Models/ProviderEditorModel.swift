@@ -9,7 +9,7 @@ struct EditableModel: Identifiable, Equatable {
     var disableCompact: Bool = true
     var disableExperimentalBetas: Bool = true
     var autoCompactWindow: String = ""
-    var reasoningEffort: String = ""
+    var reasoningEffort: String = "max"
 }
 
 /// Editor form view-model: owns all editing state, derived validation, and
@@ -33,6 +33,7 @@ final class ProviderEditorModel {
     var requiresOpenAIAuth = false
     var preserveOfficialLogin = true
     var disableResponseStorage = true
+    var captureEnabled = false
 
     private unowned var store: ProviderStore?
 
@@ -76,6 +77,7 @@ final class ProviderEditorModel {
             requiresOpenAIAuth = false
             preserveOfficialLogin = true
             disableResponseStorage = true
+            captureEnabled = claude.captureEnabled
             return
         }
         let extras = ProviderBridge.extras(from: twin)
@@ -83,6 +85,7 @@ final class ProviderEditorModel {
         requiresOpenAIAuth = extras.requiresOpenAIAuth
         preserveOfficialLogin = extras.preserveOfficialLogin
         disableResponseStorage = extras.disableResponseStorage
+        captureEnabled = claude.captureEnabled
         for i in models.indices {
             let slug = ProviderBridge.stripClaudeModelSuffix(models[i].name).lowercased()
             models[i].reasoningEffort = extras.reasoningBySlug[slug] ?? models[i].reasoningEffort
@@ -149,6 +152,7 @@ final class ProviderEditorModel {
                         autoCompactWindow: $0.autoCompactWindow)
         }
         p.activeModelID = activeModelID ?? p.models.first?.id
+        p.captureEnabled = captureEnabled
 
         store.updateProvider(p, extras: currentExtras)
 
