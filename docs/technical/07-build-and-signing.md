@@ -38,6 +38,15 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 5. 主 b
 3. **Widget 直接编译进 appex**：不经过主 app MacOS/ 的中间产物，避免 codesign 签到多余二进制。
 4. **不签 `--deep`**：App Group 容器等不需深签；自底向上显式签名更可控。
 
+## CI 与 zip
+
+```bash
+AXON_SKIP_INSTALL=1 bash Sources/build.sh                 # .build/ClaudeBar.app
+AXON_SKIP_INSTALL=1 AXON_PACKAGE=1 bash Sources/build.sh  # + .build/dist/Axon-<VERSION>-macos-arm64.zip
+```
+
+跳过安装时不 `pkill`、不写 `/Applications`、不跑 `pluginkit`。GitHub Actions 必须走这条路径。版本字符串从仓库根目录 `VERSION` 注入 Info.plist。发布步骤见 [RELEASING.md](../RELEASING.md)。
+
 ## Widget 注册
 
 ```bash

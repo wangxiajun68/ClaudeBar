@@ -1,0 +1,23 @@
+name: 功能建议
+description: 新能力、交互或数据源
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决什么问题
+      placeholder: 现在缺什么，谁会用到
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      placeholder: 界面、数据源、是否写入本机配置文件
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        贡献代码前请先读 [CONTRIBUTING.md](../../CONTRIBUTING.md)。本项目零第三方依赖，不要引入 SPM / CocoaPods。

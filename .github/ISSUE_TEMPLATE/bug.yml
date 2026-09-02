@@ -1,0 +1,61 @@
+name: 缺陷报告
+description: 构建失败、崩溃、数据显示错误或交互异常
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量附上复现步骤。不要粘贴 API key、token 或 `settings.json` 全文。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      placeholder: 实际结果 vs 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: 26.x
+    validations:
+      required: true
+  - type: input
+    id: axon
+    attributes:
+      label: Axon 版本
+      placeholder: 设置 → 关于，或 VERSION 文件
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关模块
+      options:
+        - 构建 / 安装
+        - 供应商切换
+        - 会话监控
+        - 用量统计
+        - Codex 代理 / 流量
+        - 菜单栏面板
+        - 主窗口
+        - Widget
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: Console.app 里与 Axon / ClaudeBar 相关的行。涉及密钥请打码。

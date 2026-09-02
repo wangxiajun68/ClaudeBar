@@ -16,7 +16,18 @@ MACOS_DIR="$CONTENTS/MacOS"
 INSTALL_DIR="/Applications"
 INSTALLED_APP="$INSTALL_DIR/$APP_NAME.app"
 
-echo "=== Building $APP_NAME ==="
+VERSION_FILE="$PROJECT_DIR/VERSION"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "Missing VERSION file at $VERSION_FILE" >&2
+    exit 1
+fi
+VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "VERSION must be MAJOR.MINOR.PATCH, got: '$VERSION'" >&2
+    exit 1
+fi
+
+echo "=== Building $APP_NAME $VERSION ==="
 
 # Clean previous build
 rm -rf "$APP_BUNDLE"
@@ -31,15 +42,6 @@ ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon.icns"
 if [ -f "$ICONS_SOURCE" ]; then
     cp "$ICONS_SOURCE" "$RESOURCES_DIR/AppIcon.icns"
     echo "Icon copied to bundle"
-fi
-
-# Copy bundled fonts (LXGW WenKai GB — CJK display face). Custom fonts are
-# loaded at runtime via CTFontManager, so they must ship inside the bundle.
-FONT_SOURCE_DIR="$PROJECT_DIR/Sources/Resources/Fonts"
-if [ -d "$FONT_SOURCE_DIR" ]; then
-    mkdir -p "$RESOURCES_DIR/Fonts"
-    cp "$FONT_SOURCE_DIR"/*.ttf "$RESOURCES_DIR/Fonts/"
-    echo "Fonts copied to bundle"
 fi
 
 # Compile Swift sources
@@ -66,7 +68,7 @@ swiftc \
 echo "Binary created: $MACOS_DIR/$APP_NAME"
 
 # Create Info.plist
-cat > "$CONTENTS/Info.plist" << 'PLIST'
+cat > "$CONTENTS/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -78,9 +80,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>com.claudebar.app</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
@@ -130,7 +132,7 @@ swiftc \
 echo "Widget binary: $APPEX_CONTENTS/MacOS/ClaudeBarWidget"
 
 # Widget Info.plist (inside Contents/)
-cat > "$APPEX_CONTENTS/Info.plist" << 'WPLIST'
+cat > "$APPEX_CONTENTS/Info.plist" << WPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -142,9 +144,9 @@ cat > "$APPEX_CONTENTS/Info.plist" << 'WPLIST'
     <key>CFBundleDisplayName</key>
     <string>Axon Widget</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>CFBundleExecutable</key>
@@ -239,24 +241,44 @@ codesign --force --sign - --options runtime --entitlements "$ENT_DIR/app.plist" 
     "$APP_BUNDLE"
 echo "Signed OK"
 
+# --- Optional zip for GitHub Releases ---
+if [ "${AXON_PACKAGE:-}" = "1" ]; then
+    DIST_DIR="$BUILD_DIR/dist"
+    mkdir -p "$DIST_DIR"
+    ZIP_NAME="Axon-${VERSION}-macos-arm64.zip"
+    ZIP_PATH="$DIST_DIR/$ZIP_NAME"
+    rm -f "$ZIP_PATH" "$ZIP_PATH.sha256"
+    echo "=== Packaging $ZIP_NAME ==="
+    COPYFILE_DISABLE=1 ditto -c -k --norsrc --noextattr --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+    (cd "$DIST_DIR" && shasum -a 256 "$ZIP_NAME" | tee "$ZIP_NAME.sha256")
+fi
+
 # --- Install to /Applications (single canonical copy) ---
-echo "=== Installing ==="
-pkill -9 "$APP_NAME" 2>/dev/null || true
-rm -rf "$INSTALLED_APP"
-cp -R "$APP_BUNDLE" "$INSTALLED_APP"
-# The cp re-introduces xattrs; strip them again post-copy so the installed
-# bundle stays clean (matches the signed state).
-xattr -cr "$INSTALLED_APP"
+if [ "${AXON_SKIP_INSTALL:-}" = "1" ]; then
+    echo "=== Skipping install (AXON_SKIP_INSTALL=1) ==="
+    echo "Build cache: $APP_BUNDLE"
+    if [ "${AXON_PACKAGE:-}" = "1" ]; then
+        echo "Package:     $BUILD_DIR/dist/Axon-${VERSION}-macos-arm64.zip"
+    fi
+else
+    echo "=== Installing ==="
+    pkill -9 "$APP_NAME" 2>/dev/null || true
+    rm -rf "$INSTALLED_APP"
+    cp -R "$APP_BUNDLE" "$INSTALLED_APP"
+    # The cp re-introduces xattrs; strip them again post-copy so the installed
+    # bundle stays clean (matches the signed state).
+    xattr -cr "$INSTALLED_APP"
 
-# Force LaunchServices + pluginkit to re-index the widget extension and mark
-# it enabled. Without this the gallery can lag behind a rebuild by one launch.
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-"$LSREGISTER" -f "$INSTALLED_APP"
-pluginkit -e use -i com.claudebar.app.widget 2>/dev/null || true
-killall widgetkitd 2>/dev/null || true
+    # Force LaunchServices + pluginkit to re-index the widget extension and mark
+    # it enabled. Without this the gallery can lag behind a rebuild by one launch.
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    "$LSREGISTER" -f "$INSTALLED_APP"
+    pluginkit -e use -i com.claudebar.app.widget 2>/dev/null || true
+    killall widgetkitd 2>/dev/null || true
 
-echo "=== Build complete ==="
-echo "Installed:   $INSTALLED_APP"
-echo "Build cache:  $APP_BUNDLE"
-echo ""
-echo "Run with: open $INSTALLED_APP"
+    echo "=== Build complete ==="
+    echo "Installed:   $INSTALLED_APP"
+    echo "Build cache:  $APP_BUNDLE"
+    echo ""
+    echo "Run with: open $INSTALLED_APP"
+fi

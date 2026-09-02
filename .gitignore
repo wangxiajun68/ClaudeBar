@@ -19,5 +19,8 @@ DerivedData/
 # Design source (binary, edited via Pencil)
 *.pen
 
-# Stray env-expansion artifacts (e.g. a literal "{{HOMEBREW_PREFIX}}/" dir)
-{{*/
+# Accidental screenshots dropped at repo root
+/screenshot-*.png
+
+# Stray env-expansion leftover (literal directory named {{HOMEBREW_PREFIX}})
+/[{{][{]HOMEBREW_PREFIX[}][}]/

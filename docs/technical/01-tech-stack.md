@@ -19,7 +19,7 @@
 
 ## 构建脚本 `Sources/build.sh`
 
-脚本完成「编译主 app → 编译 Widget appex → 生成 Info.plist → 生成 entitlements → 签名 → 安装到 /Applications → 注册 Widget」全流程。
+脚本完成「读 `VERSION` → 编译主 app → 编译 Widget appex → 生成 Info.plist → 生成 entitlements → 签名 →（默认）安装到 /Applications → 注册 Widget」全流程。`AXON_SKIP_INSTALL=1` 跳过安装；`AXON_PACKAGE=1` 额外打 zip。
 
 **主 app 编译：**
 

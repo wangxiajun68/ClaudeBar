@@ -6,25 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: macos-15
+    name: Build macOS arm64
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
-      # build.sh targets arm64-apple-macos26.0 and links against the macOS 26
-      # SDK; on runners without that SDK installed, verify compilation with
-      # the newest available SDK instead (compile-check only — the bundle
-      # install/sign steps still run and land in the workspace).
-      - name: Build
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+          cat VERSION
+
+      - name: Build (no install)
+        env:
+          AXON_SKIP_INSTALL: "1"
         run: bash Sources/build.sh
 
       - name: Smoke-check bundle
         run: |
-          test -x /Applications/ClaudeBar.app/Contents/MacOS/ClaudeBar
-          test -x /Applications/ClaudeBar.app/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget
-          codesign --verify --deep --strict /Applications/ClaudeBar.app
+          APP=".build/ClaudeBar.app"
+          test -x "$APP/Contents/MacOS/ClaudeBar"
+          test -x "$APP/Contents/PlugIns/ClaudeBarWidget.appex/Contents/MacOS/ClaudeBarWidget"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP"
           echo "bundle OK"

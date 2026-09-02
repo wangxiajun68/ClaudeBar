@@ -1,7 +1,7 @@
 # Axon (ClaudeBar) 文档总索引
 
 > 本文件是 agent 与人类阅读 Axon 文档的**唯一入口**。
-> 最后更新：2026-08-30
+> 最后更新：2026-09-02
 
 Axon 文档分为两层，按「为什么（设计）→ 怎么做（技术）」组织。每层都有独立的 README 索引与「何时读」指引，便于渐进阅读。
 
@@ -15,6 +15,8 @@ docs/
 │   ├── README.md          技术文档索引
 │   └── 01..10-*.md
 ├── FAQ.md                 常见问题（使用排障）
+├── RELEASING.md           打 tag、打包 macOS zip
+├── images/                README 截图
 └── CHANGELOG.md           版本变更记录
 ```
 
@@ -48,7 +50,7 @@ docs/
 | 改数据采集/读写 | [design/03](design/03-data-models.md)、[technical/04](technical/04-data-access-layer.md) |
 | 理解交互行为 | [design/06](design/06-interactions.md) |
 | 改数据格式 | [technical/06](technical/06-data-migration.md) |
-| 构建/签名/发布 | [design/09](design/09-build-and-distribution.md)、[technical/07](technical/07-build-and-signing.md) |
+| 构建/签名/发布 | [design/09](design/09-build-and-distribution.md)、[technical/07](technical/07-build-and-signing.md)、[RELEASING.md](RELEASING.md) |
 | 优化性能 | [technical/08](technical/08-performance.md) |
 | 处理边界/错误 | [design/08](design/08-error-handling.md) |
 | 扩展新功能 | [technical/10](technical/10-extension-guide.md) |
