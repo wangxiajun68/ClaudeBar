@@ -12,8 +12,8 @@ Claude Code 在已启动的会话里缓存 env——切换只影响**新启动**
 
 **Q: 会话列表里没有我的 Cursor / Codex？**
 - Cursor：需要 Cursor 至少运行过一次且存在 composer 记录；Axon 读 `state.vscdb` 是只读的。
-- Codex / WorkBuddy / OpenClaw：按文件 mtime 判活（30 天内），且要能从 transcript 头部解析出 cwd。
-- 全部工具只监控**本机用户目录**下的标准路径（`~/.claude`、`~/.cursor`、`~/.codex`、`~/.workbuddy`、`~/.openclaw`），自定义 `CLAUDE_CONFIG_DIR` 等暂不支持。
+- Codex：按文件 mtime 判活（30 天内），且要能从 transcript 头部解析出 cwd。
+- 全部工具只监控**本机用户目录**下的标准路径（`~/.claude`、`~/.cursor`、`~/.codex`），自定义 `CLAUDE_CONFIG_DIR` 等暂不支持。
 
 **Q: 会话状态一直 idle？**
 Claude Code 的 busy 状态来自 `~/.claude/sessions/<pid>.json` + transcript 尾部是否有未闭合的 tool_use。若你用非官方分支改变了这些文件格式，识别会失效。
@@ -33,7 +33,7 @@ Claude Code 的 busy 状态来自 `~/.claude/sessions/<pid>.json` + transcript �
 
 ## Widget
 
-**Q: Widget 显示 "// waiting for signals"？**
+**Q: Widget 一直空白 / 没有数据？**
 主 app 至少运行并完成一次刷新后会写入快照。若一直空白：移除 Widget 重新添加；或确认主 app 已安装到 `/Applications`（Widget 按 bundle id 找 appex，从 .build 目录直接启动会注册失败）。
 
 **Q: Widget 数据多久刷新？**

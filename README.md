@@ -1,126 +1,152 @@
 <div align="center">
 
-# Axon (ClaudeBar)
+<img src="Sources/AppIcon-1024.png" width="96" alt="Axon">
 
-**一款 macOS 菜单栏应用，把多供应商切换、Agent 会话监控与 token 用量统计装进一块 Liquid Glass 面板。**
+# Axon
 
-监控 Claude Code · Cursor · Codex · WorkBuddy · OpenClaw —— 五路 Agent 信号，一个入口。
+**macOS 菜单栏应用：把 Claude Code / Cursor / Codex 的供应商切换、会话监控与 token 用量放进一块 Liquid Glass 面板。**
 
-[![macOS](https://img.shields.io/badge/macOS-26%2B%20(Tahoe)-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+仓库目录名仍是 `ClaudeBar`；安装后的 bundle 是 `ClaudeBar.app`，界面显示名为 **Axon**。
+
+[![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)](https://github.com/wangxiajun68/ClaudeBar/releases)
+[![macOS](https://img.shields.io/badge/macOS-26%2B%20Tahoe-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)](https://swift.org)
-[![Architecture](https://img.shields.io/badge/arch-arm64--apple--silicon-blue)](#系统要求)
+[![arch](https://img.shields.io/badge/arch-arm64-blue)](#系统要求)
+[![deps](https://img.shields.io/badge/dependencies-none-lightgrey)](#依赖)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
 
----
+<p align="center">
+  <img src="docs/images/overview.png" alt="Axon 概览：系统资源、活跃配置、会话与 token 用量" width="920">
+</p>
 
 ## 它解决什么问题
 
-同时使用多家 Claude Code 兼容服务商（DeepSeek / Kimi / GLM / Anthropic 直连…）并开着一堆 Agent 会话的开发者，每天要回答三个问题：
+同时使用多家 Claude 兼容服务商，并开着一堆 Agent 会话时，每天要回答三件事：
 
-1. **现在用的哪个供应商？切换要改 JSON？** → Axon 一键切换并写回 `~/.claude/settings.json`，余额直接显示。
-2. **哪个会话还在跑？上下文还剩多少？Claude 跑完了吗？** → 五个来源的会话实时同屏：上下文水位、正在执行的工具、子 Agent 树、busy→idle 系统通知。
-3. **今天烧了多少 token？在哪个模型上烧的？** → 按日/月/年聚合所有工具的 token 消耗，按模型分解，桌面 Widget 常驻概览。
+1. **现在用的哪个供应商？** → 一键切换 Claude Code（写回 `~/.claude/settings.json`）和 Codex（写回 `~/.codex/config.toml`），余额能拉的会直接显示。
+2. **哪个会话还在跑？上下文还剩多少？** → Claude Code、Cursor、Codex 会话同屏：状态点、上下文水位、正在执行的工具、busy→idle 系统通知。
+3. **这个月烧了多少 token？** → 按日/月/年聚合，按模型分解；主窗口还有本机 CPU / GPU / 内存占用。
 
-## 功能一览
+## 功能
 
 | 能力 | 说明 |
 |------|------|
-| 🔌 **供应商切换** | 一键切换 Provider / Model，写入 `settings.json`；余额拉取（DeepSeek 等）；供应商/模型编辑器带校验 |
-| 📡 **五源会话监控** | Claude Code（PID 文件 + transcript tail）、Cursor（state.vscdb）、Codex / WorkBuddy / OpenClaw（rollout JSONL）——统一为状态点 + 上下文水位 + 活动行 |
-| 📊 **用量统计** | 日/月/年/自定义区间，全部工具按模型并集聚合；增量文件缓存 + mtime 预过滤 + 并行解析；Cursor 9.9GB DB 走 header 指纹零 I/O 快路径 |
-| 🔔 **空闲通知** | 任一会话 busy→idle 边沿触发系统通知（按工具区分标题），点按直接在终端恢复该会话 |
-| 🧩 **桌面 Widget** | WidgetKit systemLarge：当日 token、供应商/模型、余额、会话列表（App Group 快照驱动） |
-| 🎨 ** Liquid Glass UI** | macOS 26 原生 `glassEffect` 宫格瓦片；楷体系古典显示字体（内置霞鹜文楷 GB + Palatino）；⌘K 命令面板 |
-| ⚡ **性能克制** | 不变数据不发布（Equatable 跳过）、动画按需挂载、零第三方依赖、二进制直编（无 Xcode 工程） |
+| 供应商切换 | Claude Code 与 Codex 两套配置；模型列表、base URL、密钥；可选互导 |
+| 会话监控 | Claude Code（PID + transcript）、Cursor（`state.vscdb`）、Codex（rollout JSONL） |
+| 用量统计 | 持久化日聚合索引；按模型分解；桌面 Widget 当日概览 |
+| Codex 本地代理 | 本机 `127.0.0.1` 协议桥接；流量页可检查请求 / 改写 / 响应 |
+| 系统资源 | 整机 CPU / GPU / 内存，并标出 Axon、Claude Code、Cursor 占比 |
+| 空闲通知 | busy→idle 边沿触发；点按可在终端恢复该会话 |
+| 桌面 Widget | WidgetKit systemLarge，App Group 快照驱动 |
+| Liquid Glass | macOS 26 原生 `glassEffect`；系统字体 SF Pro / SF Mono；⌘K 命令面板 |
 
-## 界面
+## 安装
 
-- **菜单栏 popup** — 毛玻璃快速面板：供应商宫格、会话卡（含心跳波形）、用量分解，失焦自动收起。
-- **主窗口** — 顶部导航 + 五个页面：概览 / 会话 / 供应商 / 用量 / 设置，全部宫格化瓦片。
-- **Widget** — 桌面常驻当日概览。
+### 发行包（推荐）
 
-## 快速开始
+1. 从 [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 `Axon-<version>-macos-arm64.zip`。
+2. 解压，把 `ClaudeBar.app` 拖到 `/Applications`。
+3. 打开一次。若 Gatekeeper 拦截：
+
+```bash
+xattr -cr /Applications/ClaudeBar.app
+open /Applications/ClaudeBar.app
+```
+
+应用为 **ad-hoc 签名**（无 Apple Developer Team ID），不会走公证。仅建议本机或受信任环境使用。
+
+### 从源码构建
 
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
 cd ClaudeBar
-bash Sources/build.sh        # 编译 → 签名 → 安装到 /Applications → 注册 Widget
+bash Sources/build.sh        # 编译、ad-hoc 签名、安装到 /Applications、注册 Widget
 open /Applications/ClaudeBar.app
 ```
 
+CI 与发包不要往 `/Applications` 拷贝：
+
+```bash
+AXON_SKIP_INSTALL=1 bash Sources/build.sh
+AXON_SKIP_INSTALL=1 AXON_PACKAGE=1 bash Sources/build.sh
+# → .build/dist/Axon-<version>-macos-arm64.zip
+```
+
+打 tag 发布见 [docs/RELEASING.md](docs/RELEASING.md)。
+
 ### 系统要求
 
-- macOS 26 (Tahoe) 或更高，Apple Silicon (arm64)
-- Xcode Command Line Tools（swiftc；无需打开 Xcode 工程——本项目没有工程文件）
+- macOS 26 (Tahoe) 或更高
+- Apple Silicon (`arm64`)
+- 从源码构建需要 Xcode Command Line Tools / macOS 26 SDK（`swiftc`）。**没有 Xcode 工程文件。**
 
 ### 首次使用
 
-1. 菜单栏点击 Axon 图标 → 供应商区添加你的服务商（名称 / baseURL / API key / 模型列表）。
-2. 一键设为默认 —— `~/.claude/settings.json` 立即更新，Claude Code 下次调用即生效。
-3. 会话与用量无需配置，自动发现本机的 Claude Code / Cursor / Codex / WorkBuddy / OpenClaw。
+1. 点菜单栏 Axon 图标，或打开主窗口 → **供应商**，添加服务商（名称 / base URL / API key / 模型）。
+2. 设为默认：Claude Code 立即写 `settings.json`；Codex 写 `config.toml`。
+3. 会话与用量无需配置，自动发现 `~/.claude`、`~/.cursor`、`~/.codex`。
 
-## 数据来源（全部只读）
+## 依赖
+
+**运行时与构建均无第三方库。** 不使用 Swift Package Manager、CocoaPods、Carthage 或 vendored SDK。
+
+| 链接 | 用途 |
+|------|------|
+| SwiftUI, AppKit, WidgetKit, CryptoKit, CoreServices, IOKit | 系统框架 |
+| `libsqlite3` | 只读 Cursor `state.vscdb`；用量日聚合索引 |
+
+版本号单一来源：仓库根目录 [`VERSION`](VERSION)（当前 **1.8.0**），由 `Sources/build.sh` 写入 app 与 Widget 的 `CFBundleShortVersionString`。
+
+## 数据来源
+
+Axon **不上传**这些文件。除用户主动切换供应商外，会话与用量路径均为只读。
 
 | 来源 | 路径 | 方式 |
 |------|------|------|
-| Claude Code 会话 | `~/.claude/sessions/`、`~/.claude/projects/` | PID 文件 + transcript tail 扫描 |
-| Claude Code 用量 | `~/.claude/projects/**/*.jsonl` | 增量缓存 + 并行聚合 |
-| Cursor | `~/Library/.../state.vscdb` + `~/.cursor/projects/` | 只读 SQLite + transcript tail |
+| Claude Code 会话 | `~/.claude/sessions/`、`~/.claude/projects/` | PID 文件 + transcript tail |
+| Claude Code 用量 | `~/.claude/projects/**/*.jsonl` | 日聚合索引 |
+| Cursor | `~/Library/.../state.vscdb`、`~/.cursor/projects/` | 只读 SQLite + transcript |
 | Codex | `~/.codex/sessions/**/*.jsonl` | rollout 解析 |
-| WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` | providerData.usage 解析 |
-| OpenClaw | `~/.openclaw/agents/*/sessions/*.jsonl` | message.usage 解析 |
 
-Axon **从不写入**上述任何路径；唯一的写入目标是 Claude Code 自己的 `settings.json`（供应商切换，保留未知字段）。
+写入目标仅限用户操作触发的配置：`~/.claude/settings.json`、Codex 的 `config.toml` / `auth.json`，以及 Axon 自己的偏好与索引文件。
 
 ## 项目结构
 
 ```
-Sources/
-├── ClaudeBar/
-│   ├── ClaudeBarApp.swift          # 入口 + AppDelegate（字体注册、通知路由）
-│   ├── MenuBarController.swift     # NSStatusItem + 非激活玻璃面板
-│   ├── MainWindowController.swift  # 主窗口
-│   ├── Models/                     # ProviderStore（状态中枢）、配置、快照、通知
-│   ├── Utils/                      # 五源监控器、用量聚合、终端拉起
-│   ├── Views/
-│   │   ├── Pages/                  # 主窗口五页
-│   │   ├── Popup/                  # 菜单栏面板分区
-│   │   └── Shared/                 # Tile 宫格体系、卡片、命令面板
-│   └── Theme/                      # 设计令牌：色彩/字阶/间距/玻璃/动画
-├── Widget/                         # WidgetKit appex（独立编译）
-└── build.sh                        # swiftc 直编全流程
-docs/                               # 设计文档（为什么）+ 技术文档（怎么做）
+VERSION                             # 发行版本 MAJOR.MINOR.PATCH
+Sources/build.sh                    # swiftc 直编 + 签名 + 可选安装 / zip
+Sources/ClaudeBar/                  # 主应用
+Sources/Widget/                     # WidgetKit appex
+docs/                               # 设计 + 技术 + FAQ + 变更记录
+docs/images/                        # README 截图
+.github/workflows/ci.yml            # macos-26 构建
+.github/workflows/release.yml       # tag v* → zip + GitHub Release
 ```
+
+更细的树见 [docs/design/07-file-structure.md](docs/design/07-file-structure.md)。
 
 ## 文档
 
-文档分两层，入口在 [docs/README.md](docs/README.md)：
+入口：[docs/README.md](docs/README.md)
 
-- **设计层**（[docs/design/](docs/design/)）— 产品定位、架构取舍、交互与视觉规范
-- **技术层**（[docs/technical/](docs/technical/)）— 数据访问、状态管理、构建签名、性能、扩展指南
-- **变更记录** — [docs/CHANGELOG.md](docs/CHANGELOG.md)
+| 文档 | 内容 |
+|------|------|
+| [设计层](docs/design/) | 产品定位、交互与视觉 |
+| [技术层](docs/technical/) | 数据访问、状态、构建签名 |
+| [FAQ](docs/FAQ.md) | 使用排障 |
+| [CONTRIBUTING](CONTRIBUTING.md) | 分支、提交、本地构建 |
+| [RELEASING](docs/RELEASING.md) | 打 tag 与 macOS 打包 |
+| [CHANGELOG](docs/CHANGELOG.md) | 版本记录 |
+| [SECURITY](SECURITY.md) | 漏洞报告与数据边界 |
 
-## 构建
+## 分支与发布
 
-`Sources/build.sh` 一条命令完成：主 app 编译 → Widget appex 编译 → Info.plist / entitlements 生成 → ad-hoc 签名（自底向上，不用 `--deep`）→ 安装 `/Applications` → Widget 注册。
-
-常用变体：
-
-```bash
-bash Sources/build.sh               # 全量构建 + 安装
-killall ClaudeBar; open /Applications/ClaudeBar.app   # 重启到新构建
-```
-
-技术细节见 [docs/technical/07-build-and-signing.md](docs/technical/07-build-and-signing.md)。
-
-## 设计决策
-
-- **零第三方依赖** — 仅系统框架 + libsqlite3；供应链面为零。
-- **swiftc 直编，无 Xcode 工程** — 构建即一个 bash 脚本，可读可审计。
-- **轮询驱动但发布克制** — 2.5s 轮询全部 off-main；Equatable 不变即不发布；空闲时 UI 零失效。
-- **原生 Liquid Glass** — 不自绘模糊，直接用 macOS 26 `glassEffect`。
+- 默认分支 **`main`**，保持可构建。
+- 功能 / 修复：`feature/<topic>`、`fix/<topic>`、`docs/<topic>`，用 PR 合入 `main`。
+- 发行：改 [`VERSION`](VERSION) → 写 [CHANGELOG](docs/CHANGELOG.md) → tag `vMAJOR.MINOR.PATCH` → 推送后 [Release workflow](.github/workflows/release.yml) 上传 zip。
 
 ## License
 

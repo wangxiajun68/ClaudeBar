@@ -4,6 +4,15 @@
 
 ---
 
+## [Unreleased]
+
+### 基础设施
+- GitHub Actions：`macos-26` CI（`AXON_SKIP_INSTALL=1`）；`v*` tag 打包 `Axon-<version>-macos-arm64.zip` 并创建 Release。
+- 版本号单一来源：仓库根目录 `VERSION`，由 `build.sh` 写入 Info.plist。
+- Issue / PR 模板、`SECURITY.md`、Dependabot（github-actions）、贡献指南中的分支约定。
+
+---
+
 ## [1.8.0] — 2026-08-29 · 宫格重构 + 空闲通知
 
 ### 变更 — 全界面宫格化（瓦片）

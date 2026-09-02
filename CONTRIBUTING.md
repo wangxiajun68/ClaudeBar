@@ -1,29 +1,63 @@
 # Contributing to Axon (ClaudeBar)
 
-感谢关注本项目。这是一个零第三方依赖、swiftc 直编的 macOS 应用，贡献前请先读文档。
+这是一个 **零第三方依赖、swiftc 直编** 的 macOS 应用。贡献前请先读 [docs/README.md](docs/README.md)。
 
-## 开始之前
+## 分支
 
-1. 阅读 [docs/README.md](docs/README.md) —— 设计层讲「为什么」，技术层讲「怎么做」。
-2. 改代码前先看 [docs/technical/10-extension-guide.md](docs/technical/10-extension-guide.md) —— 常见扩展场景（加 env 字段、加数据源、加 Widget 尺寸）已有既定步骤。
-3. 构建：`bash Sources/build.sh`，然后 `killall ClaudeBar; open /Applications/ClaudeBar.app` 验证。
+采用 GitHub Flow，默认分支是 **`main`**。
 
-## 开发约定
+| 分支 | 用途 |
+|------|------|
+| `main` | 始终可构建；CI 在每次 push / PR 上跑 |
+| `feature/<topic>` | 新功能 |
+| `fix/<topic>` | 缺陷 |
+| `docs/<topic>` | 仅文档 |
+| `chore/<topic>` | 构建、CI、仓库元数据 |
 
-- **零第三方依赖** —— 不要引入 SPM/CocoaPods 包。需要能力时优先用系统框架实现。
-- **设计令牌唯一来源** —— 颜色/字体/间距/动画一律走 `Theme/Theme.swift`；视图文件里不手写裸数值（`Font.system(size:)` 等）。
-- **状态只从 `ProviderStore` 流出** —— 视图不自行开 Timer、不做文件 I/O；数据采集放 `Utils/*Monitor.swift` / `Utils/*Stats.swift`，off-main 扫描 + off-main 发布。
-- **发布克制** —— `@Published` 赋值前先做 Equatable 比较，不变不发布（见 `ProviderStore.refreshSessions` 的注释）。
-- **注释专业、讲「为什么」** —— 不写变更史式注释；旧兼容代码直接删。
+不要长期分叉 `develop`。发行不从分支切，只在 `main` 上打 **annotated tag**：`vMAJOR.MINOR.PATCH`（与根目录 `VERSION` 一致）。流程见 [docs/RELEASING.md](docs/RELEASING.md)。
+
+个人仓库里维护者可以直接推 `main`；有第二位贡献者时请走 Pull Request。
+
+## 本地构建
+
+```bash
+# 开发：编译、签名、安装到 /Applications
+bash Sources/build.sh
+killall ClaudeBar; open /Applications/ClaudeBar.app
+
+# 与 CI 相同：只出 .build/ClaudeBar.app，不碰 /Applications
+AXON_SKIP_INSTALL=1 bash Sources/build.sh
+```
+
+改代码前可看 [docs/technical/10-extension-guide.md](docs/technical/10-extension-guide.md)。
+
+## 约定
+
+- **零第三方依赖** — 不要引入 SPM / CocoaPods。优先系统框架。
+- **设计令牌** — 颜色 / 字体 / 间距 / 动画走 `Theme/Theme.swift`，视图里不写裸字号。
+- **状态从 `ProviderStore` 流出** — 视图不自行开 Timer、不做文件 I/O；扫描放 `Utils/`，off-main。
+- **发布克制** — `@Published` 赋值前 Equatable 比较，不变不发布。
 - **用户可见文案中文**，代码标识符英文。
-- SourceKit 的 "Cannot find X in scope" 多为误报 —— 以 `bash Sources/build.sh` 的结果为准。
+- SourceKit 的 “Cannot find X in scope” 多为误报，以 `bash Sources/build.sh` 为准。
 
-## 提交规范
+## 提交
 
-- 提交信息用 conventional commits：`feat(ui): …` / `fix(sessions): …` / `perf(store): …` / `docs: …`。
-- 一个提交一个完整可构建的状态；`bash Sources/build.sh` 通过再提交。
-- 新数据源（新增一个 Agent 工具监控）请按 `ExternalSessionMonitor.swift` 的模式：mtime 判活 + 有界头读 + off-main 扫描，并在 `docs/` 补对应文档。
+使用 conventional commits：
+
+```
+feat(ui): …
+fix(sessions): …
+perf(store): …
+docs: …
+chore(ci): …
+```
+
+一个提交保持可构建。改用户可见行为时更新 [docs/CHANGELOG.md](docs/CHANGELOG.md) 对应版本段。
+
+## Pull Request
+
+模板在 `.github/PULL_REQUEST_TEMPLATE.md`。合并前 CI（`macos-26` + `AXON_SKIP_INSTALL=1`）必须通过。
 
 ## 报告问题
 
-请附上：macOS 版本、触发步骤、`~/.claude/claude-bar-widget-data.json`（如涉及 Widget）、以及 Console 中 Axon 相关日志。**不要贴 API key。**
+用 [Issue 模板](https://github.com/wangxiajun68/ClaudeBar/issues/new/choose)。请附 macOS 版本、Axon 版本、复现步骤。**不要贴 API key。** 安全问题见 [SECURITY.md](SECURITY.md)。
