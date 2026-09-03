@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Combine
 
 /// Owns the menu-bar status item and a manually-positioned panel that hosts
 /// the SwiftUI menu. The panel is centered horizontally on the screen (its
@@ -14,9 +13,6 @@ final class MenuBarController: NSObject {
     private var globalMonitor: Any?
     private let providerStore: ProviderStore
     private var isOpen = false
-    private var busyCancellable: AnyCancellable?
-    /// true when the icon currently shows the idle-waiting bell.
-    private var showingBell = false
 
     init(providerStore: ProviderStore) {
         self.providerStore = providerStore
@@ -29,42 +25,24 @@ final class MenuBarController: NSObject {
             NSLog("[ClaudeBar] statusItem.button is nil — aborting")
             return
         }
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
-                               accessibilityDescription: "Axon")?
-            .withSymbolConfiguration(config)
+        button.image = Self.menuBarImage()
         button.image?.isTemplate = true
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         NSLog("[ClaudeBar] status item created OK")
-
-        // Icon follows session activity: spinning-arrows while any session is
-        // busy, a bell when everything alive is waiting for input. Crossfade
-        // so the swap doesn't flicker.
-        busyCancellable = providerStore.$anySessionBusy
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] busy in
-                self?.updateIcon(busy: busy)
-            }
     }
 
-    private func updateIcon(busy: Bool) {
-        guard let button = statusItem?.button else { return }
-        let wantsBell = !busy && !showingBell
-        guard wantsBell || (busy && showingBell) else { return }
-        let name = busy ? "arrow.triangle.2.circlepath" : "bell.fill"
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Axon")?
-            .withSymbolConfiguration(config)
-        image?.isTemplate = true
-
-        let fade = CATransition()
-        fade.type = .fade
-        fade.duration = 0.15
-        button.layer?.add(fade, forKey: "iconFade")
-        button.image = image
-        showingBell = !busy
+    private static func menuBarImage() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            let fallback = NSImage(systemSymbolName: "circle.dashed", accessibilityDescription: "Axon")
+            fallback?.isTemplate = true
+            return fallback
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
     }
 
     @objc private func statusItemClicked() {

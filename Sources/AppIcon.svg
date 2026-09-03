@@ -1,28 +1,25 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- Full-bleed mark. macOS applies the squircle mask; do not draw a plate. -->
+  <!-- Source mark for Axon. macOS applies the squircle mask at install. -->
   <defs>
-    <linearGradient id="axon" x1="140" y1="900" x2="880" y2="170" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4F8EF7"/>
-      <stop offset="0.55" stop-color="#46C58F"/>
-      <stop offset="1" stop-color="#B8F4DE"/>
-    </linearGradient>
-    <linearGradient id="echo" x1="140" y1="900" x2="880" y2="170" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4F8EF7" stop-opacity="0.30"/>
-      <stop offset="1" stop-color="#46C58F" stop-opacity="0.16"/>
-    </linearGradient>
-    <radialGradient id="node" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#F4FFFB"/>
-      <stop offset="0.4" stop-color="#C8F7E4"/>
-      <stop offset="1" stop-color="#46C58F" stop-opacity="0"/>
+    <radialGradient id="plate" cx="50%" cy="42%" r="62%">
+      <stop offset="0" stop-color="#1A2433"/>
+      <stop offset="1" stop-color="#0B0E14"/>
     </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
-  <rect width="1024" height="1024" fill="#101218"/>
-  <path d="M 112 872 C 272 792, 400 430, 852 148"
-        fill="none" stroke="url(#echo)" stroke-width="18" stroke-linecap="round"/>
-  <path d="M 168 928 C 328 848, 440 470, 908 200"
-        fill="none" stroke="url(#echo)" stroke-width="12" stroke-linecap="round"/>
-  <path d="M 140 900 C 300 820, 420 430, 880 170"
-        fill="none" stroke="url(#axon)" stroke-width="64" stroke-linecap="round"/>
-  <circle cx="880" cy="170" r="56" fill="url(#node)"/>
-  <circle cx="880" cy="170" r="22" fill="#EAFFF6"/>
+  <rect width="1024" height="1024" rx="228" fill="url(#plate)"/>
+  <g fill="none" stroke="#4A90E2" stroke-linecap="round" filter="url(#glow)">
+    <line x1="512" y1="168" x2="512" y2="856" stroke-width="18"/>
+    <path d="M 338 512 A 174 174 0 0 1 686 512" stroke-width="16"/>
+    <path d="M 686 512 A 174 174 0 0 1 338 512" stroke-width="16"/>
+    <path d="M 268 512 A 244 244 0 0 1 756 512" stroke-width="16"/>
+    <path d="M 756 512 A 244 244 0 0 1 268 512" stroke-width="16"/>
+  </g>
+  <circle cx="512" cy="512" r="28" fill="#4A90E2"/>
 </svg>

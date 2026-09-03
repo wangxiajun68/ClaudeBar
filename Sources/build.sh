@@ -44,6 +44,11 @@ if [ -f "$ICONS_SOURCE" ]; then
     echo "Icon copied to bundle"
 fi
 
+MENUBAR_ICON="$PROJECT_DIR/Sources/MenuBarIcon.png"
+if [ -f "$MENUBAR_ICON" ]; then
+    cp "$MENUBAR_ICON" "$RESOURCES_DIR/MenuBarIcon.png"
+fi
+
 # Compile Swift sources
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"
