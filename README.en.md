@@ -1,8 +1,9 @@
 **English** · **[中文](README.md)**
 
-![ClaudeBar](Sources/AppIcon-1024.png)
-
-# ClaudeBar
+<h1>
+  <img src="Sources/AppIcon-1024.png" alt="ClaudeBar" width="64" height="64" align="middle">
+  ClaudeBar
+</h1>
 
 macOS menu bar — multi-agent model switching, session monitoring, usage stats, and local LLM proxy capture.
 
