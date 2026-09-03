@@ -80,6 +80,7 @@ class ProviderStore: ObservableObject {
         refreshSessions()
         startSessionPolling()
         ProcessSampler.shared.start()
+        ProcessSampler.shared.setLive(anySessionBusy)
         startUsageWatcher()
         writeWidgetSnapshot()
         syncPeerProxy()
@@ -105,7 +106,6 @@ class ProviderStore: ObservableObject {
                     self.detectIdleTransitions(enriched)
                 }
                 ProcessSampler.shared.setAgentPIDs(pids)
-                self.publishLoadLabels()
                 // Cursor / Codex must poll even when Claude is idle.
                 self.refreshCursorSessions()
                 self.refreshExternalSessions()
@@ -182,6 +182,7 @@ class ProviderStore: ObservableObject {
         if anySessionBusy != busy {
             anySessionBusy = busy
             startSessionPolling()
+            ProcessSampler.shared.setLive(busy)
         }
     }
 
@@ -255,7 +256,6 @@ class ProviderStore: ObservableObject {
                 // widget on the same poll — refreshCursorSessions runs on the 2.5s
                 // timer but does not otherwise call writeWidgetSnapshot.
                 self.writeWidgetSnapshot()
-                self.publishLoadLabels()
             }
         }
     }
@@ -279,7 +279,6 @@ class ProviderStore: ObservableObject {
                     }
                 }
                 self.refreshAnyBusy()
-                self.publishLoadLabels()
             }
         }
     }
@@ -314,7 +313,7 @@ class ProviderStore: ObservableObject {
                 let converted = codex.map { ProviderBridge.toClaude($0) }
                 let result = ProviderBridge.merge(into: &providers, from: converted)
                 if !result.isEmpty {
-                    importSummary = "已从 Codex 导入 · \(result.summary)"
+                    importSummary = "已从 Codex 导入：\(result.summary)"
                     saveProviders()
                 }
             }
@@ -374,7 +373,7 @@ class ProviderStore: ObservableObject {
             // in-memory state always mirrors reality, and leave the old
             // provider/model active since nothing was switched.
             currentEnv = SettingsManager.readSettings()
-            errorMessage = "Failed to write settings: \(error.localizedDescription)"
+            errorMessage = "写入设置失败：\(error.localizedDescription)"
             return
         }
         // Settings written successfully — now commit the UI state. Mutations
@@ -452,7 +451,7 @@ class ProviderStore: ObservableObject {
 
     func duplicateProvider(_ provider: Provider) {
         let copy = Provider(
-            name: "\(provider.name) Copy",
+            name: "\(provider.name) 副本",
             authToken: provider.authToken,
             baseURL: provider.baseURL,
             models: provider.models,
@@ -495,21 +494,6 @@ class ProviderStore: ObservableObject {
         } else {
             syncPeerProxy()
         }
-    }
-
-    func publishLoadLabels() {
-        var map: [ProcessSampler.Key: String] = [:]
-        for s in sessions where s.isAlive {
-            map[.pid(s.pid)] = s.projectFolder.isEmpty ? "Claude" : s.projectFolder
-        }
-        if !cursorSessions.isEmpty {
-            map[.cursor] = "Cursor"
-        }
-        for s in externalSessions where s.isAlive {
-            guard !s.cwd.isEmpty else { continue }
-            map[.standardizedCwd(s.cwd)] = s.projectFolder.isEmpty ? "Codex" : s.projectFolder
-        }
-        ProcessSampler.shared.setLabels(map)
     }
 
     /// One Claude list, two live configs. Missing Claude rows are imported
@@ -664,6 +648,7 @@ class ProviderStore: ObservableObject {
     }
 
     private var usageWatcherStarted = false
+    private var persistenceObserver: NSObjectProtocol?
 
     private func startUsageWatcher() {
         guard !usageWatcherStarted else { return }
@@ -673,6 +658,13 @@ class ProviderStore: ObservableObject {
             FilePaths.codexDir.appendingPathComponent("sessions").path,
         ]) { [weak self] in
             DispatchQueue.main.async { self?.refreshUsage(rescan: true) }
+        }
+        if persistenceObserver == nil {
+            persistenceObserver = NotificationCenter.default.addObserver(
+                forName: .persistenceModeDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.refreshUsage(rescan: true)
+            }
         }
     }
 

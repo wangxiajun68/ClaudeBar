@@ -6,7 +6,24 @@ enum LocalProxyAddress {
     /// Claude Code appends `/v1/messages` itself.
     static var claudeBase: String { "http://127.0.0.1:\(port)" }
     /// Codex `base_url` includes `/v1`; it then hits `/v1/responses`.
-    static var codexBase: String { "http://127.0.0.1:\(port)/v1" }
+    static var openaiRoot: String { "http://127.0.0.1:\(port)/v1" }
+    static var codexBase: String { openaiRoot }
+
+    /// OpenAI Chat Completions — the wire most third-party clients speak.
+    /// The proxy injects the active Codex provider key; `Bearer local` is a dummy
+    /// so SDKs that require a token still send the request.
+    static func chatCompletionsCurl(model: String) -> String {
+        let safe = model.isEmpty ? "model-id" : model
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\"", with: "")
+        let body = #"{"model":"\#(safe)","messages":[{"role":"user","content":"ping"}]}"#
+        return """
+        curl -sS \(openaiRoot)/chat/completions \\
+          -H 'Content-Type: application/json' \\
+          -H 'Authorization: Bearer local' \\
+          -d '\(body)'
+        """
+    }
 
     static func isLoopback(_ url: String) -> Bool {
         let s = url.lowercased()

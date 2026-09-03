@@ -24,7 +24,7 @@ struct UsagePanel: View {
                 .padding(.horizontal, Theme.Space.s16).padding(.bottom, 2)
 
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "no usage")
+                StandbyEmptyState(label: "暂无用量")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
                 TileGrid(.popupUsage) {
@@ -58,9 +58,9 @@ struct UsagePanel: View {
                         .font(Theme.Font.microSemibold)
                         .foregroundColor(isOn ? .white : Theme.textSecondary)
                         .padding(.horizontal, 7).padding(.vertical, 2.5)
-                        .glassEffect(
-                            .regular.tint(isOn ? Theme.accent.opacity(0.3) : .clear),
-                            in: RoundedRectangle(cornerRadius: 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(isOn ? Theme.accent.opacity(0.3) : Color.white.opacity(0.05))
                         )
                 }
                 .buttonStyle(.pressable)

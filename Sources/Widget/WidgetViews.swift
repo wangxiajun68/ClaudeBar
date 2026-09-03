@@ -76,8 +76,8 @@ struct WidgetEntryView: View {
         VStack(alignment: .leading, spacing: 0) {
             if isEmpty {
                 Spacer()
-                Text("// waiting for signals")
-                    .font(.system(size: 14, design: .monospaced))
+                Text("暂无数据")
+                    .font(.system(size: 14))
                     .foregroundColor(WidgetTheme.textTertiary())
                     .frame(maxWidth: .infinity)
                 Spacer()
@@ -95,7 +95,7 @@ struct WidgetEntryView: View {
                                 .contentTransition(.numericText())
                                 .animation(.easeInOut(duration: 0.4), value: s.todayTotalTokens)
                                 .foregroundColor(WidgetTheme.textPrimary)
-                            Text("tokens")
+                            Text("Token")
                                 .font(.system(size: 9))
                                 .foregroundColor(WidgetTheme.textTertiary())
                         }
@@ -173,7 +173,7 @@ struct WidgetEntryView: View {
                             .foregroundColor(WidgetTheme.textTertiary())
                         Spacer()
                         let busy = s.sessions.filter { $0.status == "busy" }.count
-                        Text("\(s.sessions.count) 个 · \(busy) 忙碌")
+                        Text("\(s.sessions.count) 个 · \(busy) 运行中")
                             .font(.system(size: 9))
                             .foregroundColor(WidgetTheme.textTertiary(0.25))
                     }
@@ -190,7 +190,7 @@ struct WidgetEntryView: View {
                         Image(systemName: "cursorarrow.rays")
                             .font(.system(size: 9))
                             .foregroundColor(WidgetTheme.textTertiary())
-                        Text("CURSOR")
+                        Text("Cursor")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(WidgetTheme.textTertiary())
                         Spacer()

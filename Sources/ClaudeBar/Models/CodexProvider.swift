@@ -5,11 +5,11 @@ import Foundation
 struct CodexModelConfig: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String                 // → model = "..."
-    var reasoningEffort: String = "max" // → model_reasoning_effort
+    var reasoningEffort: String = "" // omit `model_reasoning_effort` when empty
     var contextWindow: String = ""   // → model_context_window ("" = don't write)
     var autoCompactTokenLimit: String = "" // → model_auto_compact_token_limit ("" = don't write)
 
-    init(id: UUID = UUID(), name: String, reasoningEffort: String = "max",
+    init(id: UUID = UUID(), name: String, reasoningEffort: String = "",
          contextWindow: String = "", autoCompactTokenLimit: String = "") {
         self.id = id
         self.name = name
@@ -22,8 +22,9 @@ struct CodexModelConfig: Codable, Identifiable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decode(String.self, forKey: .name)
-        let raw = try c.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? "max"
-        reasoningEffort = raw.isEmpty ? "max" : raw
+        let raw = try c.decodeIfPresent(String.self, forKey: .reasoningEffort) ?? ""
+        // Legacy default was "max"; empty means omit the Codex field.
+        reasoningEffort = raw == "max" ? "" : raw
         contextWindow = try c.decodeIfPresent(String.self, forKey: .contextWindow) ?? ""
         autoCompactTokenLimit = try c.decodeIfPresent(String.self, forKey: .autoCompactTokenLimit) ?? ""
     }

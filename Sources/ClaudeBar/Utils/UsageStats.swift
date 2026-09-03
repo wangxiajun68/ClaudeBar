@@ -21,17 +21,17 @@ struct UsageStats {
     /// Human-readable label for the period, e.g. "2026-07-30", "JULY 2026", "2026".
     static func label(for period: UsagePeriod, reference: Date) -> String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
+        f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone.current
         switch period {
         case .day, .custom:
-            f.dateFormat = "yyyy-MM-dd"
+            f.dateFormat = "yyyy年M月d日"
             return f.string(from: reference)
         case .month:
-            f.dateFormat = "MMMM yyyy"
-            return f.string(from: reference).uppercased()
+            f.dateFormat = "yyyy年M月"
+            return f.string(from: reference)
         case .year:
-            f.dateFormat = "yyyy"
+            f.dateFormat = "yyyy年"
             return f.string(from: reference)
         }
     }

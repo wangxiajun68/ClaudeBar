@@ -47,7 +47,7 @@ final class CodexProviderStore: ObservableObject {
                 let converted = claude.map { ProviderBridge.toCodex($0) }
                 let result = ProviderBridge.merge(into: &providers, from: converted)
                 if !result.isEmpty {
-                    importSummary = "已从 Claude 导入 · \(result.summary)"
+                    importSummary = "已从 Claude 导入：\(result.summary)"
                     save()
                 }
             }
@@ -67,6 +67,8 @@ final class CodexProviderStore: ObservableObject {
             }
         }
         if migrated { save() }
+
+        clearLegacyMaxReasoning()
 
         // Restore routing / capture if they were enabled in a previous session.
         syncProxyRuntime()
@@ -103,6 +105,29 @@ final class CodexProviderStore: ObservableObject {
             save()
             break
         }
+    }
+
+    /// Old builds defaulted Codex reasoning to `"max"`. Empty means omit
+    /// `model_reasoning_effort`; rewrite JSON and config.toml so stored
+    /// `"max"` does not linger after the default change.
+    private func clearLegacyMaxReasoning() {
+        var changed = false
+        for i in providers.indices {
+            for j in providers[i].models.indices where providers[i].models[j].reasoningEffort == "max" {
+                providers[i].models[j].reasoningEffort = ""
+                changed = true
+            }
+        }
+        let disk = (try? String(contentsOf: FilePaths.codexProvidersFile, encoding: .utf8)) ?? ""
+        let diskHadMax = disk.range(
+            of: #"\"reasoningEffort\"\s*:\s*\"max\""#,
+            options: .regularExpression) != nil
+        let toml = (try? String(contentsOf: FilePaths.codexConfigFile, encoding: .utf8)) ?? ""
+        let tomlHadMax = toml.range(
+            of: #"model_reasoning_effort\s*=\s*"max""#,
+            options: .regularExpression) != nil
+        if changed || diskHadMax { save() }
+        if changed || diskHadMax || tomlHadMax { reactivateActive() }
     }
 
     func save() {
@@ -164,7 +189,7 @@ final class CodexProviderStore: ObservableObject {
             proxyServer = server
             proxyRunning = true
         } catch {
-            errorMessage = "启动本地路由失败: \(error.localizedDescription)"
+            errorMessage = "启动本地代理失败：\(error.localizedDescription)"
         }
     }
 
@@ -214,7 +239,7 @@ final class CodexProviderStore: ObservableObject {
                 try CodexConfigWriter.write(provider: provider, model: model, key: activeKey, proxyBaseURL: proxyBase)
                 try CodexConfigWriter.writeAuth(apiKey: provider.apiKey, preserveOfficialLogin: provider.preserveOfficialLogin)
             } catch {
-                errorMessage = "写入 Codex 配置失败: \(error.localizedDescription)"
+                errorMessage = "写入 Codex 配置失败：\(error.localizedDescription)"
                 load()
                 return
             }
@@ -250,7 +275,7 @@ final class CodexProviderStore: ObservableObject {
     func duplicateProvider(_ provider: CodexProvider) {
         var copy = provider
         copy.id = UUID()
-        copy.name = "\(provider.name) Copy"
+        copy.name = "\(provider.name) 副本"
         copy.models = provider.models.map { m in
             var m = m; m.id = UUID(); return m
         }

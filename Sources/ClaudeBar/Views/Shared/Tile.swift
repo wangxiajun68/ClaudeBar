@@ -13,11 +13,15 @@ struct TileModifier: ViewModifier {
     func body(content: Content) -> some View {
         let radius = dense ? Theme.Radius.sm : Theme.Radius.md
         content
-            .glassEffect(
-                .regular.tint(tint?.opacity(hovered ? 0.20 : 0.12)
-                              ?? Color.white.opacity(hovered ? 0.09 : 0.06)),
-                in: RoundedRectangle(cornerRadius: radius)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(tint?.opacity(hovered ? 0.18 : 0.11)
+                          ?? Color.white.opacity(hovered ? 0.08 : 0.05))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(Color.white.opacity(hovered ? 0.10 : 0.06), lineWidth: 1)
+            }
             .scaleEffect(hovered && !dense ? 1.004 : 1)
     }
 }

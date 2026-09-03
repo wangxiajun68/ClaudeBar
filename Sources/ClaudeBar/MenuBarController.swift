@@ -128,7 +128,7 @@ final class MenuBarController: NSObject {
         let vibe = NSVisualEffectView()
         vibe.material = .menu
         vibe.blendingMode = .behindWindow
-        vibe.state = .active
+        vibe.state = .followsWindowActiveState
         vibe.wantsLayer = true
         vibe.layer?.cornerRadius = 10
         vibe.layer?.masksToBounds = true

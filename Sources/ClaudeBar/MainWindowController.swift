@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Owns the primary application window: a borderless-feeling, full-size-content
-/// `NSWindow` with a deep vibrancy backdrop (`NSVisualEffectView`) hosting the
-/// SwiftUI `MainWindowView`. The window is created once, kept alive across
-/// close/reopen, and shared with the menu-bar popup via the single
-/// `ProviderStore` injected into the SwiftUI environment.
+/// Owns the primary application window: a full-size-content `NSWindow`
+/// hosting SwiftUI `MainWindowView`. Opaque (no window-wide vibrancy) so
+/// the GPU is not holding a full-size backdrop blur. Created once, kept
+/// alive across close/reopen, shared with the menu-bar popup via the
+/// single `ProviderStore`.
 final class MainWindowController {
     private var window: NSWindow?
     private let providerStore: ProviderStore
@@ -50,37 +50,18 @@ final class MainWindowController {
         window.title = "Axon"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // Keep the traffic-light buttons but let content flow under the titlebar.
         window.standardWindowButton(.closeButton)?.superview?.isHidden = false
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("ClaudeBarMainWindow")
-        window.appearance = NSAppearance(named: .vibrantDark)
+        window.appearance = NSAppearance(named: .darkAqua)
         window.collectionBehavior = [.fullScreenAuxiliary]
-
-        // Translucent: the vibrancy view paints the background, not the window.
-        window.backgroundColor = .clear
-        window.isOpaque = false
+        // Opaque fill: a full-window NSVisualEffectView plus per-tile
+        // glassEffect was ~100 MB of GPU backing stores on a Retina window.
+        window.backgroundColor = NSColor(srgbRed: 13/255, green: 13/255, blue: 17/255, alpha: 1)
+        window.isOpaque = true
         window.hasShadow = true
-
-        // Frosted-glass backdrop. `.underWindowBackground` is deeper than the
-        // panel's `.menu` material — appropriate for a persistent main window.
-        let vibe = NSVisualEffectView()
-        vibe.material = .underWindowBackground
-        vibe.blendingMode = .behindWindow
-        vibe.state = .active
-        vibe.wantsLayer = true
-
-        window.contentView = vibe
-
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        vibe.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: vibe.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: vibe.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: vibe.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: vibe.bottomAnchor),
-        ])
+        window.contentView = hosting
         return window
     }
 }

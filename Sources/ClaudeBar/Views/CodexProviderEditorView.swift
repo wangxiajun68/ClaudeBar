@@ -34,7 +34,7 @@ struct CodexProviderEditorView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("CODEX PROVIDERS")
+            Text("Codex 供应商")
                 .font(Theme.Font.labelSection)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
@@ -49,7 +49,7 @@ struct CodexProviderEditorView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(provider.name).font(Theme.Font.body)
                                 .lineLimit(1).truncationMode(.tail)
-                            Text("\(provider.models.count) model\(provider.models.count == 1 ? "" : "s")")
+                            Text("\(provider.models.count) 个模型")
                                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                                 .lineLimit(1)
                         }
@@ -74,7 +74,7 @@ struct CodexProviderEditorView: View {
                     Image(systemName: "square.and.arrow.down")
                 }
                 .buttonStyle(.glass)
-                .help("从 Claude 供应商导入（窗口 / compact / 密钥 / 模型）")
+                .help("从 Claude 供应商导入密钥、地址与模型")
                 Button(action: { model.addNew() }) { Image(systemName: "plus") }
                     .buttonStyle(.glass).help("添加供应商")
                 Button(action: { model.duplicateSelected() }) { Image(systemName: "doc.on.doc") }
@@ -162,7 +162,7 @@ struct CodexProviderEditorView: View {
                     .textFieldStyle(.roundedBorder)
             }
             HStack(alignment: .top, spacing: Theme.Space.s16) {
-                EditorField(label: "上游格式 (wire_api)") {
+                EditorField(label: "协议") {
                     Picker("", selection: $model.wireAPI) {
                         Text("Responses（原生）").tag("responses")
                         Text("Chat Completions").tag("chat")
@@ -170,7 +170,7 @@ struct CodexProviderEditorView: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
-                EditorField(label: "推理档位") {
+                EditorField(label: "推理强度") {
                     Picker("", selection: Binding(
                         get: { model.models.first(where: { $0.id == model.editingModelID })?.reasoningEffort ?? "" },
                         set: { effort in
@@ -178,7 +178,7 @@ struct CodexProviderEditorView: View {
                                 model.models[idx].reasoningEffort = effort
                             }
                         })) {
-                        Text("不设置").tag("")
+                        Text("默认").tag("")
                         Text("none").tag("none")
                         Text("minimal").tag("minimal")
                         Text("low").tag("low")
@@ -193,21 +193,24 @@ struct CodexProviderEditorView: View {
                     .frame(width: 120)
                 }
             }
-            Toggle("切换第三方时保留官方登录（缓解桌面 App 模型门控）", isOn: $model.preserveOfficialLogin)
+            Text("选择「默认」则不写入 model_reasoning_effort。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+            Toggle("切换第三方供应商时保留官方登录", isOn: $model.preserveOfficialLogin)
                 .font(Theme.Font.bodySmall)
-            Toggle("requires_openai_auth（写入 model_providers 表）", isOn: $model.requiresOpenAIAuth)
+            Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
                 .font(Theme.Font.bodySmall)
             Toggle(isOn: $model.disableResponseStorage) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("不在云端保存 Responses")
+                    Text("不向云端持久化 Responses")
                         .font(Theme.Font.bodySmall)
-                    Text("对应 Codex 的 disable_response_storage。打开后上游不持久化 Responses 会话；第三方中转建议开。关掉后官方 API 才能跨请求续写同一条 response。")
+                    Text("对应 disable_response_storage。开启后上游不保存 Responses 会话，第三方中转建议开启。关闭后，官方 API 可跨请求续写同一条 Response。")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("保留官方登录时第三方 Key 写入 OPENAI_API_KEY，官方 tokens 保留；桌面 App 模型选择器门控属上游行为，CLI 不受影响。")
+            Text("保留官方登录时，第三方密钥写入 OPENAI_API_KEY，官方令牌保持不变。桌面端模型选择器的限制由上游决定，CLI 不受影响。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
         }
@@ -217,7 +220,7 @@ struct CodexProviderEditorView: View {
 
     private var modelConfigCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label("模型配置", systemImage: "cpu")
+            Label("模型", systemImage: "cpu")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
@@ -253,7 +256,7 @@ struct CodexProviderEditorView: View {
 
             Divider()
             HStack(spacing: Theme.Space.s4) {
-                TextField("添加模型…", text: $model.newModelName)
+                TextField("添加模型", text: $model.newModelName)
                     .textFieldStyle(.roundedBorder)
                     .font(Theme.Font.bodySmall)
                     .onSubmit { model.addModel() }
@@ -273,29 +276,29 @@ struct CodexProviderEditorView: View {
     @ViewBuilder private var modelDetail: some View {
         if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                EditorField(label: "模型名 (model)") {
+                EditorField(label: "模型名称") {
                     TextField("e.g. deepseek-chat", text: $model.models[idx].name)
                         .textFieldStyle(.roundedBorder)
                         .font(Theme.Font.microMono)
                 }
                 HStack(alignment: .top, spacing: Theme.Space.s16) {
-                    EditorField(label: "上下文窗口 (model_context_window)") {
+                    EditorField(label: "上下文窗口") {
                         TextField("400000", text: $model.models[idx].contextWindow)
                             .textFieldStyle(.roundedBorder)
                     }
-                    EditorField(label: "Compact 阈值 (model_auto_compact_token_limit)") {
+                    EditorField(label: "自动压缩阈值") {
                         TextField("360000", text: $model.models[idx].autoCompactTokenLimit)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
-                Text("对应 Claude 的 Context Tokens / Auto Compact Window。Codex 会把 compact 上限卡在窗口的 90%。留空则不写入，运行时用窗口×90%。")
+                Text("对应 Claude 的上下文窗口与自动压缩阈值。Codex 将压缩上限限制为窗口的 90%。留空则不写入，运行时按窗口 × 90% 计算。")
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text("选择一个模型")
+            Text("请选择模型")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -325,7 +328,7 @@ struct CodexProviderEditorView: View {
             .selectionTint(isSelected, color: Theme.codex, corner: 5)
         }
         .buttonStyle(.plain)
-        .help(isDefault ? "默认模型:切换到该供应商时自动选用" : "右键设为默认")
+        .help(isDefault ? "默认模型：切换到该供应商时自动选用" : "右键设为默认")
         .contextMenu {
             if !isDefault {
                 Button("设为默认") { withAnimation(Theme.Animation.bouncy) { model.setDefault(m.id) } }
@@ -383,7 +386,7 @@ struct CodexProviderEditorView: View {
             Spacer()
             Image(systemName: "chevron.left.forwardslash.chevron.right")
                 .font(Theme.Font.titleMedium).foregroundColor(Theme.textSecondary.opacity(0.5))
-            Text("选择一个供应商，或从预设添加")
+            Text("请选择供应商，或从预设添加")
                 .foregroundColor(Theme.textSecondary).font(Theme.Font.body)
             Spacer()
         }

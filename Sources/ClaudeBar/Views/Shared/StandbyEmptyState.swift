@@ -1,32 +1,15 @@
 import SwiftUI
 
-/// Standby empty state — a quiet oscilloscope-style marker: `// no signals`
-/// in mono type with a blinking block cursor. Used when a session list has
-/// nothing to show; the restraint *is* the design.
+/// Quiet empty placeholder. No terminal motif — the label states the fact.
 struct StandbyEmptyState: View {
-    var label: String = "no signals"
-    /// Blink only while visible — a `.task` heartbeat toggling the cursor.
-    @State private var cursorVisible = true
+    var label: String = "暂无数据"
 
     var body: some View {
-        HStack(spacing: 0) {
-            Text("// \(label)")
-                .font(Theme.Font.rowTitle.monospaced())
-                .foregroundColor(Theme.textTertiary(0.35))
-            Text("▍")
-                .font(Theme.Font.bodySmall.monospaced())
-                .foregroundColor(Theme.signal(isCursor: false).opacity(0.7))
-                .opacity(cursorVisible ? 1 : 0)
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 2)
-        .frame(height: 18)
-        .accessibilityLabel("无活跃会话")
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 900_000_000)
-                cursorVisible.toggle()
-            }
-        }
+        Text(label)
+            .font(Theme.Font.bodySmall)
+            .foregroundColor(Theme.textTertiary())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
+            .accessibilityLabel(label)
     }
 }

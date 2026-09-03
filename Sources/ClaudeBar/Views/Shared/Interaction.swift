@@ -98,10 +98,10 @@ struct IconChip: View {
             .font(Theme.Font.systemIcon(size))
             .foregroundColor(hover ? tint : tint.opacity(0.85))
             .frame(width: tile, height: tile)
-            .glassEffect(
-                .regular.tint(tint.opacity(hover ? 0.22 : 0)),
-                in: RoundedRectangle(cornerRadius: corner)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: corner)
+                    .fill(tint.opacity(hover ? 0.22 : 0.06))
+            }
             .scaleEffect(hover ? 1.08 : 1)
             .onHover { hovering in
                 withAnimation(Theme.Animation.bouncy) { hover = hovering }

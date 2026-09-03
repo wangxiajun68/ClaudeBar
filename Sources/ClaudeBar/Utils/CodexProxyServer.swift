@@ -8,8 +8,8 @@ import Network
 /// - Codex always speaks Responses; the proxy rewrites proprietary tool
 ///   shapes (namespace MCP wrappers, additional_tools) before forwarding.
 /// - Responses-native upstreams: SSE passthrough with per-event rewrite.
-/// - Chat upstreams: full Responses→Chat request conversion and synthesized
-///   Responses SSE back.
+/// - Chat Completions clients (`messages`): passthrough, no Responses rewrite.
+/// - Codex on Chat upstreams: Responses→Chat conversion and synthesized Responses SSE.
 /// - Every response uses `Connection: close` — reqwest (Codex's client)
 ///   tolerates fresh connections, and skipping keep-alive removes all
 ///   re-parse hazards in v1.
@@ -93,12 +93,20 @@ final class CodexProxyServer: @unchecked Sendable {
                 && !path.contains("/chat/completions"))
 
         if request.method == "GET" || request.method == "HEAD" {
+            if path == "/health" || path == "/v1/health" {
+                let tap = startLog(request, source: .codex, kind: .health, provider: "")
+                await serveHealth(connection)
+                tap.finish(status: 200)
+                return
+            }
             if path.hasSuffix("/models") {
                 if isAnthropicPath || hasAnthropicHeaders {
                     await forwardAnthropic(connection, request: request, inspect: false)
                     return
                 }
+                let tap = startLog(request, source: .codex, kind: .models, provider: "")
                 await serveModels(connection)
+                tap.finish(status: 200)
                 return
             }
         }
@@ -109,16 +117,25 @@ final class CodexProxyServer: @unchecked Sendable {
         }
 
         guard path.contains("/responses") || path.hasSuffix("/chat/completions") else {
+            let miss = startLog(request, source: .codex, kind: .other, provider: "")
+            miss.finish(status: 404, error: "not found")
             await respond(connection, status: "404 Not Found", contentType: "application/json",
                     body: Data(#"{"error":{"message":"not found"}}"#.utf8))
             return
         }
 
+        let openaiKind: ProxyLogKind = path.hasSuffix("/chat/completions") ? .openaiChat : .openaiResponses
+        let openaiTap = startLog(
+            request, source: .codex, kind: openaiKind,
+            provider: await state.upstream?.name ?? "")
+        defer { openaiTap.finish(status: 0, error: "interrupted") }
+
         guard let upstream = await state.upstream, !upstream.baseURL.isEmpty else {
+            openaiTap.finish(status: 502, error: "no upstream configured")
             let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
             if acceptSSE {
                 await write(connection, data: sseHead())
-                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "本地路由没有已激活的上游 — 请在 Axon 设置中配置 Codex 供应商"))
+                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "本地代理没有已激活的上游。请在设置中配置 Codex 供应商。"))
             } else {
                 await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
                         body: Data(#"{"error":{"message":"no upstream configured"}}"#.utf8))
@@ -130,6 +147,7 @@ final class CodexProxyServer: @unchecked Sendable {
         // 3. Parse body.
         guard let body = request.body,
               var json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            openaiTap.finish(status: 400, error: "invalid json")
             await respond(connection, status: "400 Bad Request", contentType: "application/json",
                     body: Data(#"{"error":{"message":"invalid json"}}"#.utf8))
             connection.cancel()
@@ -138,25 +156,35 @@ final class CodexProxyServer: @unchecked Sendable {
 
         do {
             let model = (json["model"] as? String) ?? ""
-            if CodexProxyTransform.shouldBridgeToChat(
+            // Native Chat Completions only: path + `messages`, and no Responses
+            // `input`. Codex is always configured with wire_api=responses when
+            // using this proxy, so it hits `/v1/responses` and never this arm.
+            if path.hasSuffix("/chat/completions"),
+               json["messages"] != nil,
+               json["input"] == nil {
+                try await forwardNativeChat(connection, request: request, json: json,
+                                            upstream: upstream, log: openaiTap)
+            } else if CodexProxyTransform.shouldBridgeToChat(
                 baseURL: upstream.baseURL, wireAPI: upstream.wireAPI, model: model) {
-                try await forwardViaChat(connection, request: request, json: &json, upstream: upstream)
+                try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
             } else {
                 do {
-                    try await forwardResponses(connection, request: request, json: &json, upstream: upstream)
+                    try await forwardResponses(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
                 } catch {
                     // Responses-lite gateway (Aibox/GLM wrappers): first turn
                     // of messages works, turn 2 replays function_call and the
                     // untagged ResponseInput enum 400s. Codex++ protocol_proxy
                     // and cc-switch Chat both convert instead of forwarding.
                     guard CodexProxyTransform.isResponseInputReject(error) else { throw error }
-                    try await forwardViaChat(connection, request: request, json: &json, upstream: upstream)
+                    try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
                 }
             }
         } catch {
+            openaiTap.finish(status: Self.statusFromProxyError(error),
+                             error: error.localizedDescription)
             let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
             if acceptSSE {
-                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "上游请求失败: \(error.localizedDescription)"))
+                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "上游请求失败：\(error.localizedDescription)"))
             } else {
                 await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
                         body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
@@ -165,10 +193,87 @@ final class CodexProxyServer: @unchecked Sendable {
         connection.cancel()
     }
 
+    /// Passthrough for OpenAI Chat Completions clients (Cursor, curl, etc.).
+    /// Body and response stay Chat-shaped; no Responses rewrite.
+    private func forwardNativeChat(_ connection: NWConnection, request: HTTPRequest,
+                                   json: [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
+                                   log: ProxyLogTap) async throws {
+        let outData = try JSONSerialization.data(withJSONObject: json)
+        let wantsStream = (json["stream"] as? Bool) ?? false
+        let tap = await makeOpenAITap(
+            kind: .openaiChat, request: request, json: json,
+            rewritten: outData, stream: wantsStream, upstream: upstream)
+        var capState = CaptureState.done
+        var capError: String?
+        var statusCode = 200
+        defer {
+            tap?.finish(state: capState, status: statusCode, error: capError)
+            if capState != .error { log.finish(status: statusCode) }
+        }
+        let upstreamURL = chatCompletionsURL(upstream.baseURL)
+
+        do {
+            if wantsStream {
+                var req = URLRequest(url: upstreamURL)
+                req.httpMethod = "POST"
+                req.setValue("Bearer \(upstream.apiKey)", forHTTPHeaderField: "Authorization")
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+                req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                req.httpBody = outData
+                let (bytes, response) = try await Self.upstreamSession.bytes(for: req)
+                let http = response as? HTTPURLResponse
+                statusCode = http?.statusCode ?? 200
+                let ctype = http?.value(forHTTPHeaderField: "Content-Type") ?? "text/event-stream"
+                await write(connection, data: streamHead(status: statusCode, contentType: ctype))
+                if statusCode >= 400 {
+                    var errBody = Data()
+                    for try await byte in bytes.prefix(4096) { errBody.append(byte) }
+                    await write(connection, data: errBody)
+                    capState = .error
+                    capError = String(data: errBody, encoding: .utf8)
+                    return
+                }
+                var batch = Data()
+                for try await line in bytes.lines {
+                    batch.append(contentsOf: line.utf8)
+                    batch.append(10)
+                    if line.hasPrefix("data:"),
+                       let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
+                       let delta = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] {
+                        tap?.applyChat(delta)
+                    }
+                    if line.isEmpty || batch.count >= 4096 {
+                        await write(connection, data: batch)
+                        batch.removeAll(keepingCapacity: true)
+                    }
+                }
+                if !batch.isEmpty { await write(connection, data: batch) }
+            } else {
+                let (data, status) = try await postJSON(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+                statusCode = Int(status) ?? 200
+                if statusCode >= 400 {
+                    capState = .error
+                    capError = String(data: data, encoding: .utf8)
+                } else if let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    tap?.applyChat(parsed)
+                }
+                let reason = statusCode >= 400 ? "Error" : "OK"
+                await respond(connection, status: "\(statusCode) \(reason)", contentType: "application/json", body: data)
+            }
+        } catch {
+            capState = .error
+            capError = error.localizedDescription
+            statusCode = Self.statusFromProxyError(error)
+            throw error
+        }
+    }
+
     // MARK: - Responses-native upstream
 
     private func forwardResponses(_ connection: NWConnection, request: HTTPRequest,
-                                  json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint) async throws {
+                                  json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
+                                  log: ProxyLogTap) async throws {
         var registry = CodexProxyTransform.ToolRegistry()
         // Official OpenAI Responses understands `type:namespace` natively;
         // flattening would break dispatch. Every other Responses peer is the
@@ -188,7 +293,13 @@ final class CodexProxyServer: @unchecked Sendable {
             rewritten: outData, stream: wantsStream, upstream: upstream)
         var capState = CaptureState.done
         var capError: String?
-        defer { tap?.finish(state: capState, status: 200, error: capError) }
+        var statusCode = 200
+        defer {
+            tap?.finish(state: capState, status: statusCode, error: capError)
+            // Leave the access log pending on error so handle() can retry
+            // Responses→Chat without sealing the line as a 400.
+            if capState != .error { log.finish(status: statusCode) }
+        }
 
         let upstreamURL = joinURL(upstream.baseURL, path: request.path)
 
@@ -245,6 +356,7 @@ final class CodexProxyServer: @unchecked Sendable {
             if !synth.isEmpty { await write(connection, data: synth) }
         } else {
             let (data, status) = try await postJSON(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+            statusCode = Int(status) ?? 200
             var out: [String: Any] = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             out = CodexProxyTransform.rewriteResponsesEvent(out, registry: registry)
             CodexProxyTransform.normalizeUsage(&out)
@@ -255,14 +367,14 @@ final class CodexProxyServer: @unchecked Sendable {
         } catch {
             capState = .error
             capError = error.localizedDescription
+            statusCode = Self.statusFromProxyError(error)
             throw error
         }
     }
 
-    // MARK: - Chat upstream
-
     private func forwardViaChat(_ connection: NWConnection, request: HTTPRequest,
-                                json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint) async throws {
+                                json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
+                                log: ProxyLogTap) async throws {
         var registry = CodexProxyTransform.ToolRegistry()
         let chatBody = CodexProxyTransform.responsesToChatRequest(json, registry: &registry)
         let outData = try JSONSerialization.data(withJSONObject: chatBody)
@@ -272,7 +384,13 @@ final class CodexProxyServer: @unchecked Sendable {
             rewritten: outData, stream: true, upstream: upstream)
         var capState = CaptureState.done
         var capError: String?
-        defer { tap?.finish(state: capState, status: 200, error: capError) }
+        var statusCode = 200
+        defer {
+            tap?.finish(state: capState, status: statusCode, error: capError)
+            // Leave the access log pending on error so handle() can retry
+            // Responses→Chat without sealing the line as a 400.
+            if capState != .error { log.finish(status: statusCode) }
+        }
         // Always hit /chat/completions when bridging — posting a Chat body
         // to /v1/responses is how the original 400 happens.
         let upstreamURL = chatCompletionsURL(upstream.baseURL)
@@ -318,6 +436,7 @@ final class CodexProxyServer: @unchecked Sendable {
         } catch {
             capState = .error
             capError = error.localizedDescription
+            statusCode = Self.statusFromProxyError(error)
             throw error
         }
     }
@@ -398,7 +517,13 @@ final class CodexProxyServer: @unchecked Sendable {
     /// client headers (`x-api-key`, `anthropic-version`, `anthropic-beta`) pass
     /// through so official and `/anthropic` gateways keep working.
     private func forwardAnthropic(_ connection: NWConnection, request: HTTPRequest, inspect: Bool) async {
+        let log = startLog(
+            request, source: .claude, kind: request.path.hasSuffix("/models") ? .models : .anthropic,
+            provider: await state.anthropic?.name ?? "")
+        defer { log.finish(status: 0, error: "interrupted") }
+
         guard let upstream = await state.anthropic else {
+            log.finish(status: 502, error: "no anthropic upstream")
             await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
                     body: Data(#"{"error":{"message":"no anthropic upstream — enable capture on the active provider"}}"#.utf8))
             connection.cancel()
@@ -433,7 +558,14 @@ final class CodexProxyServer: @unchecked Sendable {
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
-        defer { tap?.finish(state: capState, status: statusCode, error: capError) }
+        defer {
+            tap?.finish(state: capState, status: statusCode, error: capError)
+            if capState == .error {
+                log.finish(status: statusCode >= 400 ? statusCode : 502, error: capError)
+            } else {
+                log.finish(status: statusCode)
+            }
+        }
 
         var req = URLRequest(url: joinAnthropic(upstream.baseURL, path: request.path))
         req.httpMethod = request.method
@@ -558,6 +690,35 @@ final class CodexProxyServer: @unchecked Sendable {
             rewrittenJSON: String(data: rewritten, encoding: .utf8))
     }
 
+    /// Access log only — never the request/response body, just routing metadata.
+    private func startLog(_ request: HTTPRequest, source: ProxyLogSource, kind: ProxyLogKind,
+                          provider: String) -> ProxyLogTap {
+        let peek = Self.peekJSON(request.body)
+        return ProxyAccessLog.shared.begin(
+            method: request.method,
+            path: request.path,
+            source: source,
+            kind: kind,
+            provider: provider,
+            model: peek.model,
+            stream: peek.stream,
+            bytesIn: request.body?.count ?? 0)
+    }
+
+    private static func peekJSON(_ body: Data?) -> (model: String, stream: Bool) {
+        guard let body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return ("", false)
+        }
+        return ((json["model"] as? String) ?? "", (json["stream"] as? Bool) ?? false)
+    }
+
+    private static func statusFromProxyError(_ error: Error) -> Int {
+        let ns = error as NSError
+        if ns.domain == "CodexProxy", (400...599).contains(ns.code) { return ns.code }
+        return 502
+    }
+
     private func dumpRequest(_ body: Data) {
         let url = URL(fileURLWithPath: "/tmp/claudebar-codex-last-request.json")
         try? body.write(to: url, options: .atomic)
@@ -589,6 +750,16 @@ final class CodexProxyServer: @unchecked Sendable {
             try? lines.joined(separator: "\n").write(
                 toFile: "/tmp/claudebar-codex-last-request.input.txt", atomically: true, encoding: .utf8)
         }
+    }
+
+    private func serveHealth(_ connection: NWConnection) async {
+        var obj: [String: Any] = ["ok": true]
+        if let name = await state.upstream?.name { obj["openai_upstream"] = name }
+        if let name = await state.anthropic?.name { obj["anthropic_upstream"] = name }
+        let body = (try? JSONSerialization.data(withJSONObject: obj))
+            ?? Data(#"{"ok":true}"#.utf8)
+        await respond(connection, status: "200 OK", contentType: "application/json", body: body)
+        connection.cancel()
     }
 
     private func serveModels(_ connection: NWConnection) async {

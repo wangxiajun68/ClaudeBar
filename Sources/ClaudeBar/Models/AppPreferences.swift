@@ -46,10 +46,22 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(codexProxyPort, forKey: "codexProxyPort") }
     }
 
+    /// When on, capture + usage use SQLite. When off, they append JSON/JSONL
+    /// under Application Support/ClaudeBar/logs — no database is opened.
+    @Published var databaseEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(databaseEnabled, forKey: "databaseEnabled")
+            ProxyCaptureStore.shared.reloadPersistence()
+            UsageIndex.reloadPersistence()
+            NotificationCenter.default.post(name: .persistenceModeDidChange, object: nil)
+        }
+    }
+
     private init() {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
         codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
+        databaseEnabled = UserDefaults.standard.object(forKey: "databaseEnabled") as? Bool ?? true
     }
 }

@@ -101,18 +101,7 @@ enum Theme {
 
     // MARK: Typography
     //
-    // Three-layer type system:
-    //   • Display faces — classical serifs for page titles and metric values:
-    //     **Kaiti SC** (楷体) renders CJK with calligraphic brush character, and
-    //     **Palatino** carries the Latin glyphs with a Renaissance old-style
-    //     serif of matching spirit. A SwiftUI `custom` font renders one family;
-    //     mixing two is done per-string by the `display(...)` helpers below,
-    //     which type the leading run in Palatino and the whole string in Kaiti
-    //     (CoreText resolves Latin from Kaiti's fallback to Palatino when
-    //     Palatino is absent — the metric-value helper composes both faces).
-    //   • Text faces — SF Pro (system) for UI chrome, rows, captions: maximum
-    //     legibility at small sizes, zero rasterization cost.
-    //   • Mono faces — system monospaced for data columns and model names.
+    // Apple system faces only: SF Pro for UI and display, SF Mono for data.
     enum Tracking {
         static let titleLarge: CGFloat = -0.03
         static let titleMedium: CGFloat = -0.02
@@ -123,24 +112,10 @@ enum Theme {
         static let captionMono: CGFloat = 0
     }
 
-    /// Bundled CJK display face: **LXGW WenKai GB** (霞鹜文楷，开源 OFL 授权，
-    /// shipping in Resources/Fonts and registered by AppDelegate at launch).
-    /// A WenKai-style kaiti with the slender, elegant brush character of
-    /// 瘦金体-inspired letterforms — the closest open-source face to that
-    /// aesthetic; reserved for display sizes (small CJK text stays on SF Pro
-    /// tiers for legibility).
-    private static let displayCJK = "LXGW WenKai GB"
-    /// Old-style Latin serif (Palatino.ttc) for titles/numbers — its humanist
-    /// proportions pair naturally with 楷体's brush rhythm.
-    private static let displayLatin = "Palatino"
-
     enum Font {
-        // Display tier — titles and hero numbers. Kaiti covers CJK; Latin
-        // strings (model names, "Axon", digits) resolve through Palatino via
-        // the cascade below.
-        static let titleLarge = SwiftUI.Font.custom(displayCJK, size: 28).weight(.bold)
-        static let titleMedium = SwiftUI.Font.custom(displayCJK, size: 20).weight(.semibold)
-        static let titleSmall = SwiftUI.Font.custom(displayCJK, size: 14).weight(.semibold)
+        static let titleLarge = SwiftUI.Font.system(size: 28, weight: .bold)
+        static let titleMedium = SwiftUI.Font.system(size: 20, weight: .semibold)
+        static let titleSmall = SwiftUI.Font.system(size: 14, weight: .semibold)
         static let bodyLarge = SwiftUI.Font.system(size: 14, weight: .regular)
         static let body = SwiftUI.Font.system(size: 13, weight: .regular)
         static let bodySmall = SwiftUI.Font.system(size: 11, weight: .regular)
@@ -148,11 +123,8 @@ enum Theme {
         static let captionMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
         static let labelSection = SwiftUI.Font.system(size: 10, weight: .semibold)
 
-        /// Large telemetry readouts — the serif face makes the numbers the
-        /// visual anchor of a tile. Palatino's old-style figures keep the
-        /// classical feel while staying tabular-friendly at a glance.
-        static let displayMetric = SwiftUI.Font.custom(displayLatin, size: 30).weight(.semibold)
-        static let displayMetricSmall = SwiftUI.Font.custom(displayLatin, size: 19).weight(.semibold)
+        static let displayMetric = SwiftUI.Font.system(size: 30, weight: .semibold)
+        static let displayMetricSmall = SwiftUI.Font.system(size: 19, weight: .semibold)
 
         // Popup-density aliases — the menu-bar panel runs tighter than pages.
         // These exist so view files never hand-roll `.system(size:)` inline.
@@ -168,6 +140,8 @@ enum Theme {
         static let microMono = SwiftUI.Font.system(size: 10, weight: .regular, design: .monospaced)
         /// 9px monospaced badge (context chips, model badges).
         static let badgeMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
+        /// 11px monospaced console line (proxy access log).
+        static let console = SwiftUI.Font.system(size: 11, weight: .regular, design: .monospaced)
 
         /// Parametric system-icon size (SF Symbols), tokenized so view files
         /// never hand-roll `.system(size:)` for icon fonts.
@@ -175,13 +149,8 @@ enum Theme {
             SwiftUI.Font.system(size: size)
         }
 
-        // Tile typography — the 宫格 (grid) readouts. Tile values use the
-        // Latin display serif (Palatino); labels and details stay on SF Pro
-        // for small-size legibility.
-        /// Page metric tile value (Dashboard stats, usage totals).
-        static let tileValue = SwiftUI.Font.custom(displayLatin, size: 22).weight(.semibold)
-        /// Popup / dense tile value.
-        static let tileValueSmall = SwiftUI.Font.custom(displayLatin, size: 16).weight(.semibold)
+        static let tileValue = SwiftUI.Font.system(size: 22, weight: .semibold)
+        static let tileValueSmall = SwiftUI.Font.system(size: 16, weight: .semibold)
         /// Micro tile value inside dense tiles (per-model tokens).
         static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .monospaced)
         /// Tile label (uppercase-feel caption above the value).
@@ -297,15 +266,20 @@ struct PanelCardModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .glassEffect(
-                .regular.tint(Color.white.opacity(fill)),
-                in: RoundedRectangle(cornerRadius: radius)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.white.opacity(fill))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+            }
     }
 }
 
 extension View {
-    /// Apply the Liquid Glass card surface (native `glassEffect`).
+    /// Flat card fill — same silhouette as Liquid Glass, without the per-tile
+    /// backdrop-filter (which allocated ~100 MB of GPU textures in the main window).
     func panelCard(radius: CGFloat = Theme.Radius.md, fill: Double = 0.07) -> some View {
         modifier(PanelCardModifier(radius: radius, fill: fill))
     }
