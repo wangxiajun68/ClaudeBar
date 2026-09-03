@@ -18,7 +18,7 @@ struct ProxyCurlExample: View {
                 Spacer(minLength: Theme.Space.s8)
                 Button(copied ? "已复制" : "复制") { copy() }
                     .font(Theme.Font.caption)
-                    .buttonStyle(.glass)
+                    .adaptiveGlassButton()
                     .tint(Theme.codex)
                     .fixedSize()
             }

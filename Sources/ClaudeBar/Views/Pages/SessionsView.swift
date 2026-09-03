@@ -467,9 +467,8 @@ private struct CursorTileFull: View {
     }
 }
 
-/// An external-agent session tile (Codex). Codex has no PID file and no resume URL scheme, so the tile is read-only:
-/// reveal the working directory in Finder, double-click included. Teal tint
-/// distinguishes the family from Claude (blue) and Cursor (violet).
+/// An external-agent session tile (Codex). Double-click opens the session in
+/// Codex Desktop (or resumes it in the CLI when Desktop is unavailable).
 private struct ExternalTileFull: View {
     let session: ExternalSessionInfo
     @State private var isHovered = false
@@ -533,6 +532,9 @@ private struct ExternalTileFull: View {
                     .truncationMode(.middle)
                 Spacer()
                 SessionActionChips(isHovered: isHovered) {
+                    ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
+                        resume()
+                    }
                     ActionChip(systemImage: "folder", tint: tint, help: "在 Finder 显示") {
                         revealCwd()
                     }
@@ -543,9 +545,13 @@ private struct ExternalTileFull: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: isActive ? tint : nil, hovered: isHovered)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { revealCwd() }
+        .onTapGesture(count: 2) { resume() }
         .hoverState($isHovered)
-        .help("\(session.cwd)\n双击以在 Finder 中显示")
+        .help("\(session.cwd)\n双击以在 Codex 中继续")
+    }
+
+    private func resume() {
+        TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId)
     }
 
     private func revealCwd() {

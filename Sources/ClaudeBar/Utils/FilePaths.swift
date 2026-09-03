@@ -84,7 +84,6 @@ enum FilePaths {
     static var proxyLogFile: URL { logsDir.appendingPathComponent("proxy.jsonl") }
     static var usageFilesJSON: URL { logsDir.appendingPathComponent("usage-files.json") }
     static var usageRollupJSONL: URL { logsDir.appendingPathComponent("usage-rollup.jsonl") }
-    static var usageCursorJSON: URL { logsDir.appendingPathComponent("usage-cursor.json") }
 
     // MARK: - Cursor
 

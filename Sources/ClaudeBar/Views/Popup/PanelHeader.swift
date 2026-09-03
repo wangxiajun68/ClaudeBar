@@ -9,7 +9,7 @@ struct PanelHeader: View {
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
             BrandMark(size: 20)
-            Text("Axon")
+            Text("ClaudeBar")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
             Spacer()
@@ -20,8 +20,8 @@ struct PanelHeader: View {
                     .font(Theme.Font.bodySmall)
                     .foregroundColor(Theme.textSecondary)
             }
-            .buttonStyle(.glass)
-            .help(configCollapsed ? "展开配置与供应商" : "折叠配置与供应商")
+            .adaptiveGlassButton()
+            .help(configCollapsed ? "展开配置与模型" : "折叠配置与模型")
             Button(action: {
                 providerStore.refresh()
                 onFeedback()
@@ -30,7 +30,7 @@ struct PanelHeader: View {
                     .font(Theme.Font.bodySmall)
                     .foregroundColor(Theme.textSecondary)
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton()
             .sensoryFeedback(.selection, trigger: providerStore.sessions.map(\.pid))
             .help("刷新")
         }

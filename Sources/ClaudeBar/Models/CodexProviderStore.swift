@@ -254,6 +254,14 @@ final class CodexProviderStore: ObservableObject {
 
     // MARK: - CRUD
 
+    @discardableResult
+    func addBlankProvider() -> CodexProvider {
+        let placeholder = CodexModelConfig(name: "model-name")
+        let p = CodexProvider(name: "新供应商", models: [placeholder], activeModelID: placeholder.id)
+        addProvider(p)
+        return p
+    }
+
     func addProvider(_ provider: CodexProvider) {
         providers.append(provider)
         if activeProviderID == nil { activeProviderID = provider.id }

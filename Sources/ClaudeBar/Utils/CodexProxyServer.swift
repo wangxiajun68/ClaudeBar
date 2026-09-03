@@ -47,7 +47,13 @@ final class CodexProxyServer: @unchecked Sendable {
         guard listener == nil else { return }
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
-        let listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
+        guard let portValue = NWEndpoint.Port(rawValue: port) else {
+            throw NSError(domain: "CodexProxy", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "invalid proxy port \(port)"])
+        }
+        // Restrict to loopback — the proxy injects upstream API keys.
+        parameters.requiredInterfaceType = .loopback
+        let listener = try NWListener(using: parameters, on: portValue)
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
@@ -285,7 +291,6 @@ final class CodexProxyServer: @unchecked Sendable {
             rewritten = CodexProxyTransform.rewriteRequestBody(json, wireAPI: "responses", registry: &registry)
         }
         let outData = try JSONSerialization.data(withJSONObject: rewritten)
-        dumpRequest(outData)
 
         let wantsStream = (json["stream"] as? Bool) ?? false
         let tap = await makeOpenAITap(
@@ -378,7 +383,6 @@ final class CodexProxyServer: @unchecked Sendable {
         var registry = CodexProxyTransform.ToolRegistry()
         let chatBody = CodexProxyTransform.responsesToChatRequest(json, registry: &registry)
         let outData = try JSONSerialization.data(withJSONObject: chatBody)
-        dumpRequest(outData)
         let tap = await makeOpenAITap(
             kind: .openaiChat, request: request, json: json,
             rewritten: outData, stream: true, upstream: upstream)
@@ -717,39 +721,6 @@ final class CodexProxyServer: @unchecked Sendable {
         let ns = error as NSError
         if ns.domain == "CodexProxy", (400...599).contains(ns.code) { return ns.code }
         return 502
-    }
-
-    private func dumpRequest(_ body: Data) {
-        let url = URL(fileURLWithPath: "/tmp/claudebar-codex-last-request.json")
-        try? body.write(to: url, options: .atomic)
-        if let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
-            var lines: [String] = ["keys=\(obj.keys.sorted().joined(separator: ","))"]
-            if let input = obj["input"] as? [Any] {
-                lines.append("input[\(input.count)]")
-                for (i, item) in input.enumerated() {
-                    guard let d = item as? [String: Any] else { lines.append("[\(i)] <non-object>"); continue }
-                    let type = (d["type"] as? String) ?? "(no type)"
-                    let keys = d.keys.sorted().joined(separator: ",")
-                    var extra = ""
-                    if type == "message", let content = d["content"] as? [[String: Any]] {
-                        extra = " parts=" + content.map { ($0["type"] as? String) ?? "?" }.joined(separator: "+")
-                    }
-                    if type == "function_call" { extra = " name=\(d["name"] ?? "")" }
-                    lines.append("[\(i)] \(type) keys=\(keys)\(extra)")
-                }
-            }
-            if let messages = obj["messages"] as? [[String: Any]] {
-                lines.append("messages[\(messages.count)]")
-                for (i, m) in messages.enumerated() {
-                    let role = (m["role"] as? String) ?? "?"
-                    let nTools = (m["tool_calls"] as? [Any])?.count ?? 0
-                    let contentLen = ((m["content"] as? String) ?? "").count
-                    lines.append("[\(i)] role=\(role) content=\(contentLen) tool_calls=\(nTools)")
-                }
-            }
-            try? lines.joined(separator: "\n").write(
-                toFile: "/tmp/claudebar-codex-last-request.input.txt", atomically: true, encoding: .utf8)
-        }
     }
 
     private func serveHealth(_ connection: NWConnection) async {

@@ -101,7 +101,7 @@ enum Theme {
 
     // MARK: Typography
     //
-    // Apple system faces only: SF Pro for UI and display, SF Mono for data.
+    // macOS system text styles only (SF Pro / SF Mono). No bundled custom fonts.
     enum Tracking {
         static let titleLarge: CGFloat = -0.03
         static let titleMedium: CGFloat = -0.02
@@ -113,50 +113,38 @@ enum Theme {
     }
 
     enum Font {
-        static let titleLarge = SwiftUI.Font.system(size: 28, weight: .bold)
-        static let titleMedium = SwiftUI.Font.system(size: 20, weight: .semibold)
-        static let titleSmall = SwiftUI.Font.system(size: 14, weight: .semibold)
-        static let bodyLarge = SwiftUI.Font.system(size: 14, weight: .regular)
-        static let body = SwiftUI.Font.system(size: 13, weight: .regular)
-        static let bodySmall = SwiftUI.Font.system(size: 11, weight: .regular)
-        static let caption = SwiftUI.Font.system(size: 10, weight: .regular)
-        static let captionMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
-        static let labelSection = SwiftUI.Font.system(size: 10, weight: .semibold)
+        static let titleLarge = SwiftUI.Font.largeTitle.weight(.bold)
+        static let titleMedium = SwiftUI.Font.title2.weight(.semibold)
+        static let titleSmall = SwiftUI.Font.headline
+        static let bodyLarge = SwiftUI.Font.body
+        static let body = SwiftUI.Font.body
+        static let bodySmall = SwiftUI.Font.subheadline
+        static let caption = SwiftUI.Font.caption
+        static let captionMono = SwiftUI.Font.caption.monospaced()
+        static let labelSection = SwiftUI.Font.caption.weight(.semibold)
 
-        static let displayMetric = SwiftUI.Font.system(size: 30, weight: .semibold)
-        static let displayMetricSmall = SwiftUI.Font.system(size: 19, weight: .semibold)
+        static let displayMetric = SwiftUI.Font.title.weight(.semibold)
+        static let displayMetricSmall = SwiftUI.Font.title3.weight(.semibold)
 
-        // Popup-density aliases — the menu-bar panel runs tighter than pages.
-        // These exist so view files never hand-roll `.system(size:)` inline.
-        /// 11px medium row-title (popup session/provider lines).
-        static let rowTitle = SwiftUI.Font.system(size: 11, weight: .medium)
-        /// 13px row title (provider list lines).
-        static let rowLarge = SwiftUI.Font.system(size: 13, weight: .regular)
-        /// 10px popup micro text; use the weighted variants for emphasis.
-        static let micro = SwiftUI.Font.system(size: 10, weight: .regular)
-        static let microMedium = SwiftUI.Font.system(size: 10, weight: .medium)
-        static let microSemibold = SwiftUI.Font.system(size: 10, weight: .semibold)
-        /// 10px monospaced — data only (activity, model names).
-        static let microMono = SwiftUI.Font.system(size: 10, weight: .regular, design: .monospaced)
-        /// 9px monospaced badge (context chips, model badges).
-        static let badgeMono = SwiftUI.Font.system(size: 9, weight: .regular, design: .monospaced)
-        /// 11px monospaced console line (proxy access log).
-        static let console = SwiftUI.Font.system(size: 11, weight: .regular, design: .monospaced)
+        // Popup-density aliases — still system styles, one step smaller where needed.
+        static let rowTitle = SwiftUI.Font.subheadline.weight(.medium)
+        static let rowLarge = SwiftUI.Font.body
+        static let micro = SwiftUI.Font.caption2
+        static let microMedium = SwiftUI.Font.caption2.weight(.medium)
+        static let microSemibold = SwiftUI.Font.caption2.weight(.semibold)
+        static let microMono = SwiftUI.Font.caption2.monospaced()
+        static let badgeMono = SwiftUI.Font.caption2.monospaced()
+        static let console = SwiftUI.Font.footnote.monospaced()
 
-        /// Parametric system-icon size (SF Symbols), tokenized so view files
-        /// never hand-roll `.system(size:)` for icon fonts.
         static func systemIcon(_ size: CGFloat) -> SwiftUI.Font {
             SwiftUI.Font.system(size: size)
         }
 
-        static let tileValue = SwiftUI.Font.system(size: 22, weight: .semibold)
-        static let tileValueSmall = SwiftUI.Font.system(size: 16, weight: .semibold)
-        /// Micro tile value inside dense tiles (per-model tokens).
-        static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .monospaced)
-        /// Tile label (uppercase-feel caption above the value).
-        static let tileLabel = SwiftUI.Font.system(size: 10, weight: .semibold)
-        /// Tile detail / tertiary line under a value.
-        static let tileDetail = SwiftUI.Font.system(size: 10, weight: .regular)
+        static let tileValue = SwiftUI.Font.title2.weight(.semibold)
+        static let tileValueSmall = SwiftUI.Font.title3.weight(.semibold)
+        static let tileMicroValue = SwiftUI.Font.subheadline.weight(.semibold).monospaced()
+        static let tileLabel = SwiftUI.Font.caption.weight(.semibold)
+        static let tileDetail = SwiftUI.Font.caption2
     }
 
     // MARK: Grid column templates
@@ -255,11 +243,10 @@ extension View {
     }
 }
 
-// MARK: - Liquid Glass panel (native macOS 26 glassEffect)
+// MARK: - Panel card (translucent surface; native glass buttons on macOS 26+)
 
-/// The primary content surface: **native macOS 26 Liquid Glass** — real blur,
-/// specular edge highlights, and translucency, with a whisper of white tint to
-/// keep content readable over the backdrop.
+/// The primary content surface: translucent fill with a hairline border.
+/// On macOS 26+, toolbar buttons use native Liquid Glass via `adaptiveGlassButton()`.
 struct PanelCardModifier: ViewModifier {
     var radius: CGFloat = Theme.Radius.md
     var fill: Double = 0.07

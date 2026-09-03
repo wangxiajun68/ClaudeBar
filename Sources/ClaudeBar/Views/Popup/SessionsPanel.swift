@@ -104,7 +104,7 @@ struct SessionsPanelView: View {
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {
                     ForEach(alive) { session in
-                        ExternalSessionCardView(session: session) { revealInFinder(session) }
+                        ExternalSessionCardView(session: session) { resumeCodex(session) }
                     }
                 }
                 .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
@@ -126,10 +126,8 @@ struct SessionsPanelView: View {
         TerminalLauncher.openInCursor(cwd: session.cwd)
     }
 
-    /// External sessions have no resume affordance — reveal the project.
-    private func revealInFinder(_ session: ExternalSessionInfo) {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
+    /// Double-click a Codex session: open it in Codex Desktop or resume in the CLI.
+    private func resumeCodex(_ session: ExternalSessionInfo) {
+        TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId)
     }
 }

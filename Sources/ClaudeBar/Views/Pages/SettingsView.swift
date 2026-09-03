@@ -153,20 +153,19 @@ struct SettingsView: View {
                 }
 
                 group("关于") {
-                    infoRow("名称", "Axon")
-                    infoRow("原名", "ClaudeBar")
+                    infoRow("名称", "ClaudeBar")
                     infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                     infoRow("构建", "swiftc · ad-hoc")
-                    infoRow("系统要求", "macOS 26")
+                    infoRow("系统要求", "macOS 15")
                 }
 
                 Button(role: .destructive) {
                     NSApplication.shared.terminate(nil)
                 } label: {
-                    Text("退出 Axon")
+                    Text("退出 ClaudeBar")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.glassProminent)
+                .adaptiveGlassButton(prominent: true)
                 .tint(Theme.statusError)
             }
             .frame(maxWidth: 560, alignment: .leading)
@@ -231,7 +230,7 @@ struct SettingsView: View {
                 .truncationMode(.middle)
             Spacer(minLength: Theme.Space.s12)
             Button("打开", action: action)
-                .buttonStyle(.glass)
+                .adaptiveGlassButton()
                 .tint(Theme.claude)
                 .fixedSize()
         }
@@ -265,7 +264,7 @@ struct SettingsView: View {
 
     private var currentVendorCaption: String {
         guard let p = providerStore.activeProvider else {
-            return "尚未激活供应商。请先在「供应商」中选择模型。"
+            return "尚未激活模型。请先在「模型」页选择。"
         }
         let model = p.activeModel?.name ?? "—"
         return "\(p.name) · \(model)"

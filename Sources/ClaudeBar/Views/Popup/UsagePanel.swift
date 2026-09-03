@@ -81,7 +81,7 @@ struct UsagePanel: View {
                     .foregroundColor(Theme.textTertiary(0.5))
                     .frame(width: 14, height: 14)
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton()
             .help("上一个\(providerStore.usagePeriod.label)")
 
             Text(periodLabel)
@@ -95,7 +95,7 @@ struct UsagePanel: View {
                     .foregroundColor(Theme.textTertiary(0.5))
                     .frame(width: 14, height: 14)
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton()
             .help("下一个\(providerStore.usagePeriod.label)")
 
             Spacer(minLength: Theme.Space.s8)

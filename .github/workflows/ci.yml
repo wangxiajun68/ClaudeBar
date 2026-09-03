@@ -29,7 +29,7 @@ jobs:
 
       - name: Build (no install)
         env:
-          AXON_SKIP_INSTALL: "1"
+          CLAUDEBAR_SKIP_INSTALL: "1"
         run: bash Sources/build.sh
 
       - name: Smoke-check bundle

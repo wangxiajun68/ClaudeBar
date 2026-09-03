@@ -22,7 +22,7 @@ struct ConnectivityProbeButton: View {
                     Text(title)
                 }
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton()
             .tint(tint)
             .disabled(disabled || outcome.state == .running)
             .help(help)

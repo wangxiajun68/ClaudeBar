@@ -361,6 +361,5 @@ struct CursorSessionMonitor {
 
     // MARK: - SQLite helpers
 
-    // Open + column-read helpers live in `CursorDB` (shared with
-    // CursorUsageStats).
+    // Open + column-read helpers live in `CursorDB`.
 }

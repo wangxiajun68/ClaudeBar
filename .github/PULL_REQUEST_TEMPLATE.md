@@ -1,22 +1,29 @@
-## 变更说明
+## Summary
 
-- 
+<!-- 用 1–3 句话说明本 PR 做了什么、为什么 -->
 
-## 类型
+## Type
 
-- [ ] feat
-- [ ] fix
-- [ ] docs
-- [ ] chore / ci
-- [ ] refactor / perf
+- [ ] feat — 新功能
+- [ ] fix — 缺陷修复
+- [ ] docs — 文档
+- [ ] chore / ci — 构建、CI、仓库元数据
+- [ ] refactor / perf — 重构或性能
 
-## 检查
+## Checklist
 
-- [ ] `AXON_SKIP_INSTALL=1 bash Sources/build.sh` 通过
+- [ ] `make ci` 或 `CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh` 通过
 - [ ] 用户可见文案为中文；代码标识符为英文
-- [ ] 未引入第三方依赖
-- [ ] 需要时已更新 `docs/` 或 `docs/CHANGELOG.md`
+- [ ] 未引入第三方依赖（SPM / CocoaPods 等）
+- [ ] 行为变更已更新 `docs/CHANGELOG.md`（如适用）
+- [ ] 文档已更新（如适用）
 
-## 测试
+## Test plan
 
-- [ ] 本地 `open /Applications/ClaudeBar.app` 验证过相关页面
+<!-- 你如何验证？例如：打开主窗口 → 供应商页 → … -->
+
+- [ ] 本地 `open /Applications/ClaudeBar.app` 验证相关页面
+
+## Screenshots
+
+<!-- UI 变更请附图，可删本节 -->

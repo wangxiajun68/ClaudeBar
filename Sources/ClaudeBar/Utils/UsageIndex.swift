@@ -82,14 +82,6 @@ struct UsageIndex {
                 PRIMARY KEY (path, day, model)
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS rollup_day ON rollup(day);
-            CREATE TABLE IF NOT EXISTS cursor_totals (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                input INTEGER NOT NULL,
-                output INTEGER NOT NULL,
-                calls INTEGER NOT NULL,
-                db_version INTEGER NOT NULL,
-                page_count INTEGER NOT NULL
-            );
             """, nil, nil, nil)
         guard let opened = db else { return nil }
         migrateIfNeeded(opened)
@@ -815,56 +807,5 @@ struct UsageIndex {
     private static func isoDate(_ any: Any?) -> Date? {
         guard let s = any as? String else { return nil }
         return isoFormatter.date(from: s) ?? isoFormatterNoFrac.date(from: s)
-    }
-
-    // MARK: - Cursor totals (same DB, scanned once)
-
-    struct CursorRow {
-        var input: Int
-        var output: Int
-        var calls: Int
-        var dbVersion: Int32
-        var pageCount: Int64
-    }
-
-    static func loadCursorTotals() -> CursorRow? {
-        if !DiskPersistence.useDatabase {
-            guard let rec = UsageJSONStore.shared.loadCursor() else { return nil }
-            return CursorRow(input: rec.input, output: rec.output, calls: rec.calls,
-                             dbVersion: rec.dbVersion, pageCount: rec.pageCount)
-        }
-        guard let db = connection() else { return nil }
-        lock.lock(); defer { lock.unlock() }
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT input, output, calls, db_version, page_count FROM cursor_totals WHERE id = 1", -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return CursorRow(
-            input: Int(sqlite3_column_int64(stmt, 0)),
-            output: Int(sqlite3_column_int64(stmt, 1)),
-            calls: Int(sqlite3_column_int64(stmt, 2)),
-            dbVersion: sqlite3_column_int(stmt, 3),
-            pageCount: sqlite3_column_int64(stmt, 4))
-    }
-
-    static func saveCursorTotals(_ row: CursorRow) {
-        if !DiskPersistence.useDatabase {
-            UsageJSONStore.shared.saveCursor(.init(
-                input: row.input, output: row.output, calls: row.calls,
-                dbVersion: row.dbVersion, pageCount: row.pageCount))
-            return
-        }
-        guard let db = connection() else { return }
-        lock.lock(); defer { lock.unlock() }
-        var stmt: OpaquePointer?
-        let sql = "INSERT OR REPLACE INTO cursor_totals(id,input,output,calls,db_version,page_count) VALUES(1,?1,?2,?3,?4,?5)"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int64(stmt, 1, Int64(row.input))
-        sqlite3_bind_int64(stmt, 2, Int64(row.output))
-        sqlite3_bind_int64(stmt, 3, Int64(row.calls))
-        sqlite3_bind_int(stmt, 4, row.dbVersion)
-        sqlite3_bind_int64(stmt, 5, row.pageCount)
-        sqlite3_step(stmt)
     }
 }

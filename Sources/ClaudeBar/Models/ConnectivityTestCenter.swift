@@ -48,8 +48,13 @@ final class ConnectivityTestCenter: ObservableObject {
         }
     }
 
+    static func vendorModelKey(_ providerID: UUID, _ modelID: UUID) -> String {
+        "v:\(providerID.uuidString):\(modelID.uuidString)"
+    }
+
     func testVendor(id: UUID, claude: Provider, model: ModelConfig?, codex: CodexProvider?) {
-        run(Self.vendorKey(id)) {
+        let key = model.map { Self.vendorModelKey(id, $0.id) } ?? Self.vendorKey(id)
+        run(key) {
             await Self.probeVendor(claude: claude, modelName: model?.name, codex: codex)
         }
     }

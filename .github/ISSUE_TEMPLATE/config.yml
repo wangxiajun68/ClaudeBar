@@ -1,8 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
   - name: 常见问题 FAQ
     url: https://github.com/wangxiajun68/ClaudeBar/blob/main/docs/FAQ.md
-    about: 切换供应商、会话不显示、Widget、Gatekeeper 等问题先看这里
-  - name: 发布说明
+    about: 安装、供应商切换、会话、Widget、Gatekeeper 等
+  - name: 贡献指南
+    url: https://github.com/wangxiajun68/ClaudeBar/blob/main/CONTRIBUTING.md
+    about: 本地构建、分支策略、PR 规范
+  - name: 发版说明（维护者）
     url: https://github.com/wangxiajun68/ClaudeBar/blob/main/docs/RELEASING.md
-    about: 如何打 tag、打包 macOS zip
+    about: 打 tag、DMG 打包、GitHub Release

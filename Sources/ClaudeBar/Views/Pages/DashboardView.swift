@@ -39,7 +39,7 @@ struct DashboardView: View {
                 Label("刷新", systemImage: "arrow.clockwise")
                     .font(Theme.Font.bodySmall)
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton()
             .tint(Theme.claude)
         }
     }

@@ -11,7 +11,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         switch self {
         case .dashboard: return "概览"
         case .sessions: return "会话"
-        case .providers: return "供应商"
+        case .providers: return "模型"
         case .usage: return "用量"
         case .traffic: return "流量"
         case .settings: return "设置"
@@ -60,6 +60,9 @@ struct MainWindowView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
+            navigate(to: .providers)
+        }
     }
 
     private func handleCommand(_ result: CommandResult) {
@@ -103,7 +106,7 @@ struct MainWindowView: View {
     private var brand: some View {
         HStack(spacing: Theme.Space.s8) {
             BrandMark(size: 22)
-            Text("Axon")
+            Text("ClaudeBar")
                 .font(Theme.Font.titleSmall)
                 .tracking(Theme.Tracking.titleSmall)
                 .foregroundColor(Theme.textPrimary)

@@ -47,7 +47,7 @@ struct UsageView: View {
                             .foregroundColor(Theme.textSecondary)
                             .frame(width: 20, height: 20)
                     }
-                    .buttonStyle(.glass)
+                    .adaptiveGlassButton()
 
                     Text(UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
                         .font(Theme.Font.titleSmall)
@@ -61,7 +61,7 @@ struct UsageView: View {
                             .foregroundColor(Theme.textSecondary)
                             .frame(width: 20, height: 20)
                     }
-                    .buttonStyle(.glass)
+                    .adaptiveGlassButton()
 
                     Spacer()
 
@@ -89,18 +89,6 @@ struct UsageView: View {
                 }
 
                 breakdown
-
-                if let cursor = providerStore.cursorLifetimeUsage, cursor.totalTokens > 0 {
-                    VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                        Text("Cursor")
-                            .font(Theme.Font.titleSmall)
-                            .foregroundColor(Theme.textPrimary)
-                        UsageModelTile(stat: cursor, maxTokens: max(cursor.totalTokens, 1))
-                        Text("本地已停止写入 Token。以下为历史累计，无法按日或月拆分。")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.textTertiary())
-                    }
-                }
             }
             .padding(Theme.Space.s24)
         }

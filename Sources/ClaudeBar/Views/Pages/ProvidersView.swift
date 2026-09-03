@@ -1,30 +1,45 @@
 import SwiftUI
 
 /// Unified provider grid. One list writes Claude Code (`settings.json`) and
-/// Codex (`config.toml` + catalog) together. The editor is a detail layer
-/// that replaces the grid so the page never stacks two competing layouts.
+/// Codex (`config.toml` + catalog) together. Full editor replaces the grid
+/// in-place — no separate floating editor window.
 struct ProvidersView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @State private var showEditor = false
+    @State private var editorFocusProviderID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            HairlineDivider()
+        Group {
             if showEditor {
-                ProviderEditorView(providerStore: providerStore)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProviderEditorView(
+                    providerStore: providerStore,
+                    focusProviderID: $editorFocusProviderID,
+                    embedded: true,
+                    onBack: { showEditor = false }
+                )
             } else {
-                grid
+                gridPage
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.base0.opacity(0.35))
+        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
+            showEditor = true
+        }
     }
 
-    private var header: some View {
+    private var gridPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            gridHeader
+            HairlineDivider()
+            grid
+        }
+    }
+
+    private var gridHeader: some View {
         HStack(alignment: .center, spacing: Theme.Space.s12) {
-            Text("供应商")
+            Text("模型")
                 .font(Theme.Font.titleLarge)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
@@ -33,12 +48,13 @@ struct ProvidersView: View {
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
             Spacer(minLength: Theme.Space.s8)
-            Button(action: { showEditor.toggle() }) {
-                Label(showEditor ? "返回列表" : "编辑供应商",
-                      systemImage: showEditor ? "square.grid.2x2" : "slider.horizontal.3")
+            Button {
+                showEditor = true
+            } label: {
+                Label("管理", systemImage: "slider.horizontal.3")
                     .font(Theme.Font.bodySmall)
             }
-            .buttonStyle(.glass)
+            .adaptiveGlassButton(prominent: true)
             .tint(Theme.claude)
         }
         .padding(.horizontal, Theme.Space.s24)
@@ -86,39 +102,45 @@ struct ProvidersView: View {
     private var emptyState: some View {
         VStack(spacing: Theme.Space.s16) {
             Spacer()
-            Text("暂无供应商")
+            Text("暂无模型")
                 .font(Theme.Font.body)
                 .foregroundColor(Theme.textTertiary())
-            Text("选择预设后，将同时写入 Claude Code 与 Codex。")
+            Text("选择预设快速开始，或进入管理自定义。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
-            HStack(spacing: Theme.Space.s8) {
-                ForEach(CodexPreset.all, id: \.label) { preset in
-                    Button {
-                        providerStore.addFromCodexPreset(preset.provider)
-                    } label: {
-                        VStack(spacing: 2) {
-                            Text(preset.label)
-                                .font(Theme.Font.bodySmall)
-                                .foregroundColor(Theme.textPrimary)
-                            Text(preset.provider.wireAPI == "chat" ? "Chat" : "Responses")
-                                .font(Theme.Font.caption)
-                                .foregroundColor(Theme.textTertiary())
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: Theme.Space.s8)], spacing: Theme.Space.s8) {
+                    ForEach(CodexPreset.all.filter { !$0.provider.baseURL.isEmpty }, id: \.label) { preset in
+                        Button {
+                            providerStore.addFromCodexPreset(preset.provider)
+                        } label: {
+                            VStack(spacing: 2) {
+                                Text(preset.label)
+                                    .font(Theme.Font.bodySmall)
+                                    .foregroundColor(Theme.textPrimary)
+                                    .lineLimit(1)
+                                Text(preset.provider.wireAPI == "chat" ? "Chat" : "Responses")
+                                    .font(Theme.Font.caption)
+                                    .foregroundColor(Theme.textTertiary())
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, Theme.Space.s12)
+                            .padding(.vertical, Theme.Space.s8)
                         }
-                        .padding(.horizontal, Theme.Space.s12)
-                        .padding(.vertical, Theme.Space.s8)
+                        .adaptiveGlassButton()
+                        .help(preset.provider.baseURL)
                     }
-                    .buttonStyle(.glass)
-                    .help(preset.provider.baseURL)
                 }
+                .padding(.horizontal, Theme.Space.s24)
             }
+            .frame(maxHeight: 220)
             Button {
                 showEditor = true
             } label: {
-                Label("自定义", systemImage: "plus")
+                Label("进入管理", systemImage: "slider.horizontal.3")
                     .font(Theme.Font.bodySmall)
             }
-            .buttonStyle(.glassProminent)
+            .adaptiveGlassButton()
             .tint(Theme.claude)
             Spacer()
         }

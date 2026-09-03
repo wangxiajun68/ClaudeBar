@@ -36,12 +36,13 @@ final class MenuBarController: NSObject {
     private static func menuBarImage() -> NSImage? {
         guard let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
               let image = NSImage(contentsOf: url) else {
-            let fallback = NSImage(systemSymbolName: "circle.dashed", accessibilityDescription: "Axon")
+            let fallback = NSImage(systemSymbolName: "circle.dashed", accessibilityDescription: "ClaudeBar")
             fallback?.isTemplate = true
             return fallback
         }
         image.isTemplate = true
-        image.size = NSSize(width: 18, height: 18)
+        // Optical size matches SF Symbols “medium” in the menu bar (~20pt).
+        image.size = NSSize(width: 20, height: 20)
         return image
     }
 
