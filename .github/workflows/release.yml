@@ -76,11 +76,22 @@ jobs:
             echo
             echo "## Changelog"
             echo
-            awk -v ver="$VERSION" '
-              $0 ~ "^## \\[" ver "\\]" { found = 1 }
-              found && NR > 1 && $0 ~ /^## \\[/ { exit }
-              found { print }
-            ' docs/CHANGELOG.md
+            python3 - <<'PY'
+import os, re
+ver = os.environ["VERSION"]
+pat = re.compile(rf"^## \[{re.escape(ver)}\]")
+out, found = [], False
+for line in open("docs/CHANGELOG.md"):
+    if pat.match(line):
+        found = True
+        out.append(line)
+        continue
+    if found and line.startswith("## ["):
+        break
+    if found:
+        out.append(line)
+print("".join(out).rstrip())
+PY
             echo
             echo "[Full changelog](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/CHANGELOG.md)"
           } > /tmp/release-notes.md
