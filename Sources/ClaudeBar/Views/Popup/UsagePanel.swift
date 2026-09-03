@@ -1,39 +1,63 @@
 import SwiftUI
 
 /// Popup usage area: period chips, date navigation, and per-model tiles in a
-/// 2-col 宫格.
+/// fixed-height scroll region (2 columns × 2 rows visible).
 struct UsagePanel: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
 
+    /// Popup usage grid: one dense tile row height and how many rows stay visible.
+    enum Layout {
+        static let tileRowHeight: CGFloat = 78
+        static let visibleRows: CGFloat = 2
+        static var gridHeight: CGFloat {
+            tileRowHeight * visibleRows + Theme.Space.gridGap * (visibleRows - 1)
+        }
+        /// Chips + date nav + vertical padding (excludes optional date picker).
+        static let headerHeight: CGFloat = 60
+        static let datePickerHeight: CGFloat = 30
+        static func totalHeight(showingDatePicker: Bool) -> CGFloat {
+            headerHeight + (showingDatePicker ? datePickerHeight : 0) + gridHeight
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s4) {
             periodChips
-                .padding(.horizontal, Theme.Space.s16).padding(.bottom, 2)
+                .padding(.horizontal, Theme.Space.s16)
+                .padding(.bottom, 2)
 
             if showCustomDatePicker {
                 DatePicker("", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
                     .datePickerStyle(.compact)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, Theme.Space.s16).padding(.bottom, 2)
+                    .padding(.horizontal, Theme.Space.s16)
+                    .padding(.bottom, 2)
                     .transition(.opacity)
             }
 
             dateNav
-                .padding(.horizontal, Theme.Space.s16).padding(.bottom, 2)
+                .padding(.horizontal, Theme.Space.s16)
+                .padding(.bottom, 2)
 
-            if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量")
-                    .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
-            } else {
-                TileGrid(.popupUsage) {
-                    ForEach(providerStore.usageStats) { stat in
-                        UsageModelTile(stat: stat, maxTokens: providerStore.maxUsageTokens, dense: true)
+            ScrollView {
+                if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
+                    StandbyEmptyState(label: "暂无用量")
+                        .padding(.horizontal, Theme.Space.s8)
+                        .padding(.bottom, Theme.Space.s4)
+                } else {
+                    TileGrid(.popupUsage) {
+                        ForEach(providerStore.usageStats) { stat in
+                            UsageModelTile(stat: stat, maxTokens: providerStore.maxUsageTokens, dense: true)
+                                .frame(height: Layout.tileRowHeight, alignment: .top)
+                        }
                     }
+                    .padding(.horizontal, Theme.Space.s8)
+                    .padding(.bottom, Theme.Space.s4)
                 }
-                .padding(.horizontal, Theme.Space.s8).padding(.bottom, Theme.Space.s4)
             }
+            .frame(height: Layout.gridHeight)
         }
         .padding(.vertical, Theme.Space.s6)
     }

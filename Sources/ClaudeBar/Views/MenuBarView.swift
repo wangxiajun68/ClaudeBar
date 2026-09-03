@@ -14,9 +14,16 @@ struct MenuBarView: View {
     @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
 
+    /// Fixed section heights so model/usage grids never squeeze sessions.
+    private enum SectionHeight {
+        static let providers: CGFloat = 200
+        static let sessions: CGFloat = 240
+        static let usage: CGFloat = UsagePanel.Layout.totalHeight(showingDatePicker: false)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PanelHeader(configCollapsed: $panel.configCollapsed, onFeedback: {
+            PanelHeader(onFeedback: {
                 panel.showFeedback("已刷新")
             })
 
@@ -31,21 +38,19 @@ struct MenuBarView: View {
             if !providerStore.hasSettingsFile && codexStore.providers.isEmpty {
                 missingSettingsView
             } else {
-                // Sections stack vertically; each scrolls independently rather
-                // than the whole panel compressing. No height cap here — capping
-                // the usage area squeezed its chips + tile grid.
                 VStack(alignment: .leading, spacing: 0) {
-                    ProvidersPanel(panel: panel, configCollapsed: $panel.configCollapsed)
+                    ProvidersPanel(panel: panel)
+                        .frame(height: SectionHeight.providers)
 
                     Divider().background(Theme.divider)
 
                     sessionsPanel
-                        .frame(maxHeight: 260)
+                        .frame(height: SectionHeight.sessions)
 
                     Divider().background(Theme.divider)
 
                     UsagePanel()
-                        .frame(maxWidth: .infinity)
+                        .frame(height: SectionHeight.usage)
                 }
             }
 
