@@ -29,13 +29,13 @@ struct SessionsPanelView: View {
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: "rectangle.connected.to.line.below",
-                title: "CLAUDE CODE",
+                title: "Claude Code",
                 tint: Theme.claude
             )
             .padding(.horizontal, Theme.Space.s16)
 
             if alive.isEmpty {
-                StandbyEmptyState(label: "no signals")
+                StandbyEmptyState(label: "暂无会话")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {
@@ -59,13 +59,13 @@ struct SessionsPanelView: View {
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: "cursorarrow.rays",
-                title: "CURSOR",
+                title: "Cursor",
                 tint: Theme.cursor
             )
             .padding(.horizontal, Theme.Space.s16)
 
             if alive.isEmpty {
-                StandbyEmptyState(label: "no cursor signals")
+                StandbyEmptyState(label: "暂无 Cursor 会话")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {
@@ -93,13 +93,13 @@ struct SessionsPanelView: View {
         return VStack(alignment: .leading, spacing: Theme.Space.s4) {
             SectionHeader(
                 icon: kind.icon,
-                title: kind.displayName.uppercased(),
+                title: kind.displayName,
                 tint: Theme.external
             )
             .padding(.horizontal, Theme.Space.s16)
 
             if alive.isEmpty {
-                StandbyEmptyState(label: "no \(kind.displayName.lowercased()) signals")
+                StandbyEmptyState(label: "暂无 \(kind.displayName) 会话")
                     .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
             } else {
                 LazyVGrid(columns: sessionGridColumns, spacing: Theme.Space.s4) {

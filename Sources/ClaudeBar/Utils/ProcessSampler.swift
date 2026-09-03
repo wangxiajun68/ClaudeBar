@@ -1,16 +1,15 @@
 import Foundation
 import Darwin
 import IOKit
+import AppKit
 import Combine
 
-/// Live CPU / memory of Axon plus every tracked agent process, plus
-/// machine-wide GPU. Sampled off-main at 1 Hz; published on the main queue.
+/// Live process and host meters for the 本机负载 strip and session chips.
 ///
-/// CPU is Activity Monitor's "one-core" percent (can exceed 100 on SMP).
-/// Memory is `ri_phys_footprint` when rusage is available, else RSS.
-/// Per-process GPU needs `task_for_pid` (blocked for hardened tasks) so
-/// session chips usually omit it; the strip's GPU meter is IOKit device
-/// utilization, which does not need a task port.
+/// Sampling runs off-main. Headline numbers are the **machine** (all-core
+/// CPU, IOKit GPU, physical memory). Per-agent chips still use one-core
+/// CPU and `phys_footprint`. Family shares (Axon / CC / Cursor / Codex)
+/// are those processes as a fraction of the machine, not of each other.
 final class ProcessSampler: ObservableObject {
     static let shared = ProcessSampler()
 
@@ -23,19 +22,24 @@ final class ProcessSampler: ObservableObject {
             .cwd((path as NSString).standardizingPath)
         }
 
-        var shareID: String {
+        var family: Family {
             switch self {
-            case .pid(let n): return "c-\(n)"
-            case .cursor: return "cursor"
-            case .cwd(let p): return "x-\(p)"
+            case .pid: return .claude
+            case .cursor: return .cursor
+            case .cwd: return .codex
             }
         }
+    }
 
-        var fallbackLabel: String {
+    enum Family: String, CaseIterable {
+        case axon, claude, cursor, codex
+
+        var label: String {
             switch self {
-            case .pid: return "Claude"
+            case .axon: return "Axon"
+            case .claude: return "CC"
             case .cursor: return "Cursor"
-            case .cwd(let p): return (p as NSString).lastPathComponent
+            case .codex: return "Codex"
             }
         }
     }
@@ -44,6 +48,26 @@ final class ProcessSampler: ObservableObject {
         var cpu: Double = 0
         var gpu: Double = 0
         var memoryBytes: UInt64 = 0
+
+        mutating func add(_ other: Snapshot) {
+            cpu += other.cpu
+            gpu += other.gpu
+            memoryBytes &+= other.memoryBytes
+        }
+    }
+
+    struct HostStats: Equatable {
+        var cpu: Double = 0
+        var gpu: Double = 0
+        var memoryUsed: UInt64 = 0
+        var memoryTotal: UInt64 = 0
+        var coreCount: Int = 1
+
+        var memoryLabel: String {
+            let used = ProcessSampler.Snapshot(memoryBytes: memoryUsed).memoryLabel
+            let total = ProcessSampler.Snapshot(memoryBytes: memoryTotal).memoryLabel
+            return "\(used) / \(total)"
+        }
     }
 
     struct Point: Equatable {
@@ -52,21 +76,19 @@ final class ProcessSampler: ObservableObject {
         var mem: Double
     }
 
+    /// One product family's slice of the **machine**, not of the tracked set.
     struct Share: Equatable, Identifiable {
         var id: String
         var label: String
-        var cpu: Double
         var memoryBytes: UInt64
-        var gpu: Double
+        /// Fraction of all cores / physical RAM / GPU (0...1).
         var cpuShare: Double
         var memShare: Double
         var gpuShare: Double
     }
 
     @Published var axon = Snapshot()
-    @Published var agents = Snapshot()
-    /// IOKit GPU core utilization 0...100. Falls back to Axon's own GPU energy.
-    @Published var systemGPU: Double = 0
+    @Published var host = HostStats()
     @Published var byKey: [Key: Snapshot] = [:]
     @Published var shares: [Share] = []
     @Published var trail: [Point] = []
@@ -75,22 +97,37 @@ final class ProcessSampler: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastGPU: [pid_t: (nanojoules: UInt64, at: TimeInterval)] = [:]
+    private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
     private var claudeRoots: [pid_t] = []
-    private var labels: [Key: String] = [:]
     private var index = ProcessIndex()
     private var lastIndexAt: TimeInterval = 0
-    private let trailCap = 48
+    private let trailCap = 24
     private let gpuFullWatts = 2.0
-    private let indexInterval: TimeInterval = 2.0
+    private var live = false
+    private var foreground = true
+    private var period: TimeInterval = 2.5
+    private var scratch = ProcessScanScratch()
+    private var activeObs: NSObjectProtocol?
+    private var resignObs: NSObjectProtocol?
 
     func start() {
         queue.async { [weak self] in
             guard let self, self.timer == nil else { return }
             let t = DispatchSource.makeTimerSource(queue: self.queue)
-            t.schedule(deadline: .now(), repeating: 1.0)
+            t.schedule(deadline: .now(), repeating: self.period)
             t.setEventHandler { [weak self] in self?.tick() }
             t.resume()
             self.timer = t
+        }
+        observeAppState()
+    }
+
+    /// 1 Hz while a session is mid-turn; 2.5 s when idle; 6 s in background.
+    func setLive(_ on: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.live != on else { return }
+            self.live = on
+            self.applyPeriod()
         }
     }
 
@@ -98,14 +135,37 @@ final class ProcessSampler: ObservableObject {
         queue.async { self.claudeRoots = pids.map { pid_t($0) } }
     }
 
-    func setLabels(_ map: [Key: String]) {
-        queue.async { self.labels = map }
+    private func observeAppState() {
+        guard activeObs == nil else { return }
+        let center = NotificationCenter.default
+        activeObs = center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.queue.async {
+                self?.foreground = true
+                self?.applyPeriod()
+            }
+        }
+        resignObs = center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.queue.async {
+                self?.foreground = false
+                self?.applyPeriod()
+            }
+        }
+    }
+
+    private func applyPeriod() {
+        let next: TimeInterval
+        if !foreground { next = 6 }
+        else if live { next = 1 }
+        else { next = 2.5 }
+        guard abs(period - next) > 0.05 else { return }
+        period = next
+        timer?.schedule(deadline: .now() + next, repeating: next)
     }
 
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - lastIndexAt >= indexInterval {
-            index = ProcessIndex.scan(claudeRoots: claudeRoots)
+        if now - lastIndexAt >= period {
+            index = ProcessIndex.scan(claudeRoots: claudeRoots, scratch: &scratch)
             lastIndexAt = now
         } else {
             index.claudeRoots = claudeRoots
@@ -117,8 +177,14 @@ final class ProcessSampler: ObservableObject {
         axonSnap.memoryBytes = physFootprint() ?? footprint(pid: selfPID)
         axonSnap.gpu = gpuPercent(pid: selfPID, task: mach_task_self_, now: now)
 
-        let sysGPU = IOKitGPU.utilization()
-        let gpuForTrail = sysGPU > 0.5 ? sysGPU : axonSnap.gpu
+        let sysGPU = foreground ? IOKitGPU.utilization() : 0
+        let hostSnap = HostStats(
+            cpu: hostCPUPercent(),
+            gpu: sysGPU,
+            memoryUsed: hostMemoryUsed(),
+            memoryTotal: ProcessInfo.processInfo.physicalMemory,
+            coreCount: max(ProcessInfo.processInfo.processorCount, 1)
+        )
 
         var byKey: [Key: Snapshot] = [:]
         var claimed = Set<pid_t>()
@@ -144,18 +210,12 @@ final class ProcessSampler: ObservableObject {
             byKey[.cwd(cwd)] = sum(pids: Array(group), now: now)
         }
 
-        var agentSnap = Snapshot()
-        for snap in byKey.values {
-            agentSnap.cpu += snap.cpu
-            agentSnap.gpu += snap.gpu
-            agentSnap.memoryBytes &+= snap.memoryBytes
-        }
-
-        let memCap: Double = 512 * 1024 * 1024
+        let memTotal = max(Double(hostSnap.memoryTotal), 1)
+        let cores = Double(hostSnap.coreCount)
         let point = Point(
-            cpu: min(1, axonSnap.cpu / 100),
-            gpu: min(1, gpuForTrail / 100),
-            mem: min(1, Double(axonSnap.memoryBytes) / memCap)
+            cpu: min(1, hostSnap.cpu / 100),
+            gpu: min(1, hostSnap.gpu / 100),
+            mem: min(1, Double(hostSnap.memoryUsed) / memTotal)
         )
 
         var live = claimed
@@ -163,45 +223,48 @@ final class ProcessSampler: ObservableObject {
         lastCPU = lastCPU.filter { live.contains($0.key) }
         lastGPU = lastGPU.filter { live.contains($0.key) }
 
-        let shares = Self.makeShares(axon: axonSnap, byKey: byKey, labels: labels, systemGPU: gpuForTrail)
+        let shares = Self.makeShares(axon: axonSnap, byKey: byKey, host: hostSnap, cores: cores)
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.axon != axonSnap { self.axon = axonSnap }
-            if self.agents != agentSnap { self.agents = agentSnap }
-            if abs(self.systemGPU - gpuForTrail) > 0.4 { self.systemGPU = gpuForTrail }
+            if self.host != hostSnap { self.host = hostSnap }
             if self.byKey != byKey { self.byKey = byKey }
             if self.shares != shares { self.shares = shares }
             var trail = self.trail
-            trail.append(point)
-            if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
-            self.trail = trail
+            if let last = trail.last,
+               abs(last.cpu - point.cpu) < 0.015,
+               abs(last.gpu - point.gpu) < 0.015,
+               abs(last.mem - point.mem) < 0.01 {
+                // Idle: keep the ribbon, skip the 1 Hz SwiftUI publish.
+            } else {
+                trail.append(point)
+                if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
+                self.trail = trail
+            }
         }
     }
 
+    /// Four family buckets as fractions of the machine.
     private static func makeShares(axon: Snapshot, byKey: [Key: Snapshot],
-                                   labels: [Key: String], systemGPU: Double) -> [Share] {
-        var raw: [(id: String, label: String, snap: Snapshot)] = [
-            ("axon", "Axon", axon)
-        ]
+                                   host: HostStats, cores: Double) -> [Share] {
+        var buckets: [Family: Snapshot] = [.axon: axon]
         for (key, snap) in byKey {
-            raw.append((key.shareID, labels[key] ?? key.fallbackLabel, snap))
+            buckets[key.family, default: Snapshot()].add(snap)
         }
-        let visible = raw.filter { $0.snap.cpu >= 0.4 || $0.snap.memoryBytes > 3 * 1024 * 1024 }
-        let cpuTotal = max(visible.reduce(0) { $0 + $1.snap.cpu }, 0.01)
-        let memTotal = max(visible.reduce(0.0) { $0 + Double($1.snap.memoryBytes) }, 1)
-        let gpuPieces = visible.filter { $0.snap.gpu >= 0.4 }
-        let gpuKnown = gpuPieces.reduce(0) { $0 + $1.snap.gpu }
-        let gpuTotal = max(systemGPU, gpuKnown, 0.01)
-        return visible
-            .sorted { $0.snap.cpu > $1.snap.cpu }
-            .map { row in
-                Share(id: row.id, label: row.label,
-                      cpu: row.snap.cpu, memoryBytes: row.snap.memoryBytes, gpu: row.snap.gpu,
-                      cpuShare: row.snap.cpu / cpuTotal,
-                      memShare: Double(row.snap.memoryBytes) / memTotal,
-                      gpuShare: gpuTotal > 0 ? row.snap.gpu / gpuTotal : 0)
-            }
+        let memTotal = max(Double(host.memoryTotal), 1)
+        return Family.allCases.compactMap { family in
+            guard let snap = buckets[family] else { return nil }
+            let present = snap.cpu >= 0.3 || snap.memoryBytes > 2 * 1024 * 1024 || snap.gpu >= 0.3
+            guard present || family == .axon else { return nil }
+            return Share(
+                id: family.rawValue,
+                label: family.label,
+                memoryBytes: snap.memoryBytes,
+                cpuShare: min(1, (snap.cpu / cores) / 100),
+                memShare: min(1, Double(snap.memoryBytes) / memTotal),
+                gpuShare: min(1, snap.gpu / 100))
+        }
     }
 
     private func sum(pids: [pid_t], now: TimeInterval) -> Snapshot {
@@ -229,6 +292,48 @@ final class ProcessSampler: ObservableObject {
         let dt = now - prev.at
         let dTicks = ticks &- prev.ticks
         return (Double(dTicks) / 1_000_000_000 / dt) * 100
+    }
+
+    /// All-core utilization 0...100 from `HOST_CPU_LOAD_INFO` tick deltas.
+    private func hostCPUPercent() -> Double {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.stride / MemoryLayout<integer_t>.stride)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return 0 }
+        let user = info.cpu_ticks.0
+        let system = info.cpu_ticks.1
+        let idle = info.cpu_ticks.2
+        let nice = info.cpu_ticks.3
+        defer { lastHostTicks = (user, system, idle, nice) }
+        guard let prev = lastHostTicks else { return 0 }
+        let dUser = UInt64(user &- prev.user)
+        let dSys = UInt64(system &- prev.system)
+        let dIdle = UInt64(idle &- prev.idle)
+        let dNice = UInt64(nice &- prev.nice)
+        let total = dUser + dSys + dIdle + dNice
+        guard total > 0 else { return 0 }
+        return Double(dUser + dSys + dNice) / Double(total) * 100
+    }
+
+    /// App + wired + compressed pages. Capped at physical RAM.
+    private func hostMemoryUsed() -> UInt64 {
+        var vm = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
+        let kr = withUnsafeMutablePointer(to: &vm) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return 0 }
+        let page = UInt64(vm_kernel_page_size)
+        let used = (UInt64(vm.active_count) &+ UInt64(vm.wire_count) &+ UInt64(vm.compressor_page_count)) &* page
+        let total = ProcessInfo.processInfo.physicalMemory
+        return min(used, total)
     }
 
     private func footprint(pid: pid_t) -> UInt64 {
@@ -320,7 +425,15 @@ extension ProcessSampler.Snapshot {
     }
 }
 
-// MARK: - Process index (refreshed every 2s)
+// MARK: - Process index (sampler queue only)
+
+private struct ProcessScanScratch {
+    var pids: [pid_t] = Array(repeating: 0, count: 512)
+    var name = [CChar](repeating: 0, count: 64)
+    var info = [UInt8](repeating: 0, count: 512)
+    var path = [UInt8](repeating: 0, count: 4096)
+    var argv = [UInt8](repeating: 0, count: 4096)
+}
 
 private struct ProcessIndex {
     var claudeRoots: [pid_t] = []
@@ -347,30 +460,20 @@ private struct ProcessIndex {
         return out
     }
 
-    static func scan(claudeRoots: [pid_t]) -> ProcessIndex {
+    static func scan(claudeRoots: [pid_t], scratch: inout ProcessScanScratch) -> ProcessIndex {
         var idx = ProcessIndex(claudeRoots: claudeRoots)
-        let pids = allPIDs()
-        var names: [pid_t: String] = [:]
-        names.reserveCapacity(pids.count)
-        for pid in pids {
-            if let p = ppid(of: pid) { idx.parent[pid] = p }
-            names[pid] = processName(pid)
-        }
-
+        let pids = allPIDs(scratch: &scratch)
         var cursor: [pid_t] = []
         var codex: [pid_t] = []
+        idx.parent.reserveCapacity(pids.count)
         for pid in pids {
-            let name = names[pid] ?? ""
-            let lower = name.lowercased()
+            if let p = ppid(of: pid, scratch: &scratch) { idx.parent[pid] = p }
+            let lower = processName(pid, scratch: &scratch).lowercased()
             if lower == "cursor" || lower.hasPrefix("cursor helper") {
                 cursor.append(pid)
-                continue
-            }
-            if lower == "codex" {
+            } else if lower == "codex" {
                 codex.append(pid)
-                continue
-            }
-            if lower.hasPrefix("node"), argvMentionsCodex(pid) {
+            } else if lower.hasPrefix("node"), argvMentionsCodex(pid, scratch: &scratch) {
                 codex.append(pid)
             }
         }
@@ -378,7 +481,7 @@ private struct ProcessIndex {
 
         var byCwd: [String: [pid_t]] = [:]
         for pid in codex {
-            guard let cwd = cwd(of: pid), !cwd.isEmpty else { continue }
+            guard let cwd = cwd(of: pid, scratch: &scratch), !cwd.isEmpty else { continue }
             let key = (cwd as NSString).standardizingPath
             byCwd[key, default: []].append(pid)
         }
@@ -386,37 +489,42 @@ private struct ProcessIndex {
         return idx
     }
 
-    private static func ppid(of pid: pid_t) -> pid_t? {
-        var buf = [UInt8](repeating: 0, count: 512)
-        let got = buf.withUnsafeMutableBytes {
+    private static func ppid(of pid: pid_t, scratch: inout ProcessScanScratch) -> pid_t? {
+        let got = scratch.info.withUnsafeMutableBytes {
             proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0.baseAddress, Int32($0.count))
         }
         guard got >= 20 else { return nil }
+        let buf = scratch.info
         return pid_t(UInt32(buf[16]) | UInt32(buf[17]) << 8 | UInt32(buf[18]) << 16 | UInt32(buf[19]) << 24)
     }
 
-    private static func allPIDs() -> [pid_t] {
-        let needed = proc_listallpids(nil, 0)
-        guard needed > 0 else { return [] }
-        var buf = [pid_t](repeating: 0, count: Int(needed) + 32)
-        let filled = proc_listallpids(&buf, Int32(buf.count * MemoryLayout<pid_t>.stride))
+    private static func allPIDs(scratch: inout ProcessScanScratch) -> [pid_t] {
+        let neededBytes = proc_listallpids(nil, 0)
+        guard neededBytes > 0 else { return [] }
+        let count = Int(neededBytes) / MemoryLayout<pid_t>.stride + 32
+        if scratch.pids.count < count {
+            scratch.pids = [pid_t](repeating: 0, count: count)
+        }
+        let filled = scratch.pids.withUnsafeMutableBufferPointer { buf in
+            proc_listallpids(buf.baseAddress, Int32(buf.count * MemoryLayout<pid_t>.stride))
+        }
         guard filled > 0 else { return [] }
-        return buf.prefix(Int(filled)).filter { $0 > 0 }
+        let n = min(scratch.pids.count, Int(filled) / MemoryLayout<pid_t>.stride)
+        return Array(scratch.pids.prefix(n).filter { $0 > 0 })
     }
 
-    private static func processName(_ pid: pid_t) -> String {
-        var buf = [CChar](repeating: 0, count: 64)
-        guard proc_name(pid, &buf, UInt32(buf.count)) > 0 else { return "" }
-        return String(cString: buf)
+    private static func processName(_ pid: pid_t, scratch: inout ProcessScanScratch) -> String {
+        scratch.name[0] = 0
+        guard proc_name(pid, &scratch.name, UInt32(scratch.name.count)) > 0 else { return "" }
+        return String(cString: scratch.name)
     }
 
-    private static func cwd(of pid: pid_t) -> String? {
-        var buf = [UInt8](repeating: 0, count: 4096)
-        let got = buf.withUnsafeMutableBytes {
+    private static func cwd(of pid: pid_t, scratch: inout ProcessScanScratch) -> String? {
+        let got = scratch.path.withUnsafeMutableBytes {
             proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, $0.baseAddress, Int32($0.count))
         }
         guard got > 0 else { return nil }
-        return firstPath(in: buf, count: Int(got))
+        return firstPath(in: scratch.path, count: Int(got))
     }
 
     private static func firstPath(in buf: [UInt8], count: Int) -> String? {
@@ -436,14 +544,18 @@ private struct ProcessIndex {
     }
 
     /// `KERN_PROCARGS2` — only called for node processes, not the full table.
-    private static func argvMentionsCodex(_ pid: pid_t) -> Bool {
+    private static func argvMentionsCodex(_ pid: pid_t, scratch: inout ProcessScanScratch) -> Bool {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4, size < 256 * 1024 else { return false }
-        var buf = [UInt8](repeating: 0, count: size)
-        let ok = buf.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) == 0 }
+        if scratch.argv.count < size {
+            scratch.argv = [UInt8](repeating: 0, count: size)
+        }
+        var sz = size
+        let ok = scratch.argv.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &sz, nil, 0) == 0 }
         guard ok else { return false }
-        guard let text = String(bytes: buf, encoding: .utf8) ?? String(bytes: buf, encoding: .isoLatin1) else {
+        let slice = scratch.argv.prefix(sz)
+        guard let text = String(bytes: slice, encoding: .utf8) ?? String(bytes: slice, encoding: .isoLatin1) else {
             return false
         }
         return text.localizedCaseInsensitiveContains("codex")

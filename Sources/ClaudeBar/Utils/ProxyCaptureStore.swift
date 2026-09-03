@@ -85,9 +85,11 @@ final class ProxyCaptureStore {
     private var openFailed = false
     private var pendingLive: [Int64: CaptureLive] = [:]
     private var flushWork: DispatchWorkItem?
-    private let listLimit = 300
+    private let listLimit = 120
     private let payloadCap = 256 * 1024
     private let isoFormatter = ISO8601DateFormatter()
+    private lazy var jsonStore = CaptureJSONStore(listLimit: listLimit, iso: isoFormatter)
+    private var useDatabase: Bool { DiskPersistence.useDatabase }
 
     private static let dbURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -98,61 +100,49 @@ final class ProxyCaptureStore {
 
     private init() {
         lock.lock()
-        _ = connection()
-        recoverOrphans()
-        let rows = loadList()
+        let rows = loadCurrentBackendLocked()
         lock.unlock()
-        if Thread.isMainThread {
-            catalog.records = rows
-        } else {
-            DispatchQueue.main.async { [weak self] in self?.catalog.records = rows }
+        publishList(rows)
+    }
+
+    /// Close SQLite (if open) and reload from the backend selected in Settings.
+    func reloadPersistence() {
+        lock.lock()
+        closeDatabaseLocked()
+        let rows = loadCurrentBackendLocked()
+        lock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.catalog.records = rows
+            self.catalog.livePreview = [:]
+            self.streams.live = [:]
         }
     }
 
     // MARK: - Proxy API (any thread)
 
-    /// Start a capture. Returns nil if the DB is unavailable.
+    /// Start a capture. Returns nil if the active backend cannot persist.
     func begin(kind: CaptureKind, source: CaptureSource, provider: String,
                model: String, path: String, stream: Bool,
                requestJSON: String?, rewrittenJSON: String?) -> CaptureTap? {
         lock.lock()
         defer { lock.unlock() }
-        guard let db = connection() else { return nil }
         let preview = Self.preview(from: requestJSON)
-        let now = iso(Date())
-        let sql = """
-            INSERT INTO captures (started_at, kind, source, provider_name, model, path,
-                is_stream, state, preview)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-            """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        bind(stmt, 1, now)
-        bind(stmt, 2, kind.rawValue)
-        bind(stmt, 3, source.rawValue)
-        bind(stmt, 4, provider)
-        bind(stmt, 5, model)
-        bind(stmt, 6, path)
-        sqlite3_bind_int(stmt, 7, stream ? 1 : 0)
-        bind(stmt, 8, preview)
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            sqlite3_finalize(stmt)
-            return nil
+        let summary: CaptureSummary
+        if useDatabase {
+            guard let created = beginSQL(kind: kind, source: source, provider: provider,
+                                         model: model, path: path, stream: stream,
+                                         requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
+                                         preview: preview) else { return nil }
+            summary = created
+        } else {
+            let req = Self.truncate(requestJSON, cap: payloadCap)
+            let rew = Self.truncate(rewrittenJSON, cap: payloadCap)
+            summary = jsonStore.begin(kind: kind, source: source, provider: provider,
+                                      model: model, path: path, stream: stream,
+                                      requestJSON: req, rewrittenJSON: rew, preview: preview)
         }
-        sqlite3_finalize(stmt)
-        let id = sqlite3_last_insert_rowid(db)
-        let req = Self.truncate(requestJSON, cap: payloadCap)
-        let rew = Self.truncate(rewrittenJSON, cap: payloadCap)
-        exec("INSERT INTO payloads (capture_id, request_json, rewritten_json) VALUES (?, ?, ?)",
-             args: [.int(id), .text(req), .text(rew)])
-        pruneLocked()
-
-        let summary = CaptureSummary(
-            id: id, startedAt: Date(), endedAt: nil, firstTokenAt: nil,
-            kind: kind, source: source, providerName: provider, model: model,
-            path: path, isStream: stream, state: .pending, httpStatus: 0,
-            promptTokens: nil, completionTokens: nil, cacheReadTokens: nil,
-            error: nil, preview: preview)
+        let id = summary.id
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.catalog.records.insert(summary, at: 0)
@@ -187,23 +177,41 @@ final class ProxyCaptureStore {
     func finish(_ id: Int64, state: CaptureState, status: Int, error: String?,
                 assembler: CaptureAssembler, rawSSE: String?) {
         let ended = Date()
-        update(id, fields: [
-            "state": .text(state.rawValue),
-            "http_status": .int(Int64(status)),
-            "ended_at": .text(iso(ended)),
-            "prompt_tokens": assembler.promptTokens.map { .int(Int64($0)) } ?? .null,
-            "completion_tokens": assembler.completionTokens.map { .int(Int64($0)) } ?? .null,
-            "cache_read_tokens": assembler.cacheReadTokens.map { .int(Int64($0)) } ?? .null,
-            "error": error.map { .text($0) } ?? .null,
-            "model": assembler.model.isEmpty ? .null : .text(assembler.model),
-        ])
-        exec("""
-            UPDATE payloads SET response_json = ?, raw_sse = ? WHERE capture_id = ?
-            """, args: [
-            .text(Self.truncate(assembler.toResponseJSON(), cap: payloadCap)),
-            .text(Self.truncate(rawSSE, cap: payloadCap)),
-            .int(id),
-        ])
+        if useDatabase {
+            update(id, fields: [
+                "state": .text(state.rawValue),
+                "http_status": .int(Int64(status)),
+                "ended_at": .text(iso(ended)),
+                "prompt_tokens": assembler.promptTokens.map { .int(Int64($0)) } ?? .null,
+                "completion_tokens": assembler.completionTokens.map { .int(Int64($0)) } ?? .null,
+                "cache_read_tokens": assembler.cacheReadTokens.map { .int(Int64($0)) } ?? .null,
+                "error": error.map { .text($0) } ?? .null,
+                "model": assembler.model.isEmpty ? .null : .text(assembler.model),
+            ])
+            exec("""
+                UPDATE payloads SET response_json = ?, raw_sse = ? WHERE capture_id = ?
+                """, args: [
+                .text(Self.truncate(assembler.toResponseJSON(), cap: payloadCap)),
+                .text(Self.truncate(rawSSE, cap: payloadCap)),
+                .int(id),
+            ])
+        } else {
+            lock.lock()
+            jsonStore.patch(id) {
+                $0.state = state
+                $0.httpStatus = status
+                $0.endedAt = ended
+                $0.promptTokens = assembler.promptTokens
+                $0.completionTokens = assembler.completionTokens
+                $0.cacheReadTokens = assembler.cacheReadTokens
+                $0.error = error
+                if !assembler.model.isEmpty { $0.model = assembler.model }
+            }
+            jsonStore.mergePayload(id,
+                response: Self.truncate(assembler.toResponseJSON(), cap: payloadCap),
+                sse: Self.truncate(rawSSE, cap: payloadCap))
+            lock.unlock()
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let live = CaptureLive(content: assembler.content,
@@ -221,12 +229,31 @@ final class ProxyCaptureStore {
                 $0.error = error
                 if !assembler.model.isEmpty { $0.model = assembler.model }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                if self.catalog.records.first(where: { $0.id == id })?.state != .streaming {
+                    self.streams.live.removeValue(forKey: id)
+                    self.catalog.livePreview.removeValue(forKey: id)
+                }
+            }
         }
     }
 
     func detail(id: Int64, includeRaw: Bool = false) -> CaptureDetail? {
         lock.lock()
         defer { lock.unlock() }
+        if !useDatabase {
+            guard let summary = jsonStore.summary(id: id) else { return nil }
+            let payload = jsonStore.readPayload(id)
+            return CaptureDetail(
+                summary: summary,
+                requestJSON: payload.request,
+                rewrittenJSON: payload.rewritten,
+                responseJSON: payload.response,
+                rawSSE: includeRaw ? payload.sse : "",
+                turns: CaptureTranscript.turns(from: payload.request),
+                toolCalls: CaptureTranscript.toolCalls(request: payload.request, response: payload.response))
+        }
         guard let db = connection() else { return nil }
         let sql = includeRaw
             ? """
@@ -260,7 +287,11 @@ final class ProxyCaptureStore {
     }
 
     func delete(_ id: Int64) {
-        exec("DELETE FROM captures WHERE id = ?", args: [.int(id)])
+        if useDatabase {
+            exec("DELETE FROM captures WHERE id = ?", args: [.int(id)])
+        } else {
+            lock.lock(); jsonStore.delete(id); lock.unlock()
+        }
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records.removeAll { $0.id == id }
             self?.catalog.livePreview.removeValue(forKey: id)
@@ -269,7 +300,11 @@ final class ProxyCaptureStore {
     }
 
     func clearAll() {
-        exec("DELETE FROM captures", args: [])
+        if useDatabase {
+            exec("DELETE FROM captures", args: [])
+        } else {
+            lock.lock(); jsonStore.clearAll(); lock.unlock()
+        }
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records = []
             self?.catalog.livePreview = [:]
@@ -280,6 +315,7 @@ final class ProxyCaptureStore {
     // MARK: - SQLite
 
     private func connection() -> OpaquePointer? {
+        guard useDatabase else { return nil }
         if let db { return db }
         if openFailed { return nil }
         guard sqlite3_open_v2(Self.dbURL.path, &db,
@@ -288,7 +324,7 @@ final class ProxyCaptureStore {
             openFailed = true
             return nil
         }
-        sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000; PRAGMA foreign_keys=ON", nil, nil, nil)
         sqlite3_exec(db, """
             CREATE TABLE IF NOT EXISTS captures (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,8 +366,74 @@ final class ProxyCaptureStore {
             """, args: [])
     }
 
-    private func loadList() -> [CaptureSummary] {
-        lock.lock(); defer { lock.unlock() }
+    private func loadCurrentBackendLocked() -> [CaptureSummary] {
+        if useDatabase {
+            _ = connection()
+            recoverOrphans()
+            return loadListUnlocked()
+        }
+        jsonStore.load()
+        jsonStore.recoverOrphans()
+        return jsonStore.summaries
+    }
+
+    private func closeDatabaseLocked() {
+        guard let handle = db else { return }
+        sqlite3_exec(handle, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil)
+        sqlite3_close(handle)
+        db = nil
+        openFailed = false
+    }
+
+    private func publishList(_ rows: [CaptureSummary]) {
+        if Thread.isMainThread {
+            catalog.records = rows
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.catalog.records = rows }
+        }
+    }
+
+    private func beginSQL(kind: CaptureKind, source: CaptureSource, provider: String,
+                          model: String, path: String, stream: Bool,
+                          requestJSON: String?, rewrittenJSON: String?,
+                          preview: String) -> CaptureSummary? {
+        guard let db = connection() else { return nil }
+        let now = iso(Date())
+        let sql = """
+            INSERT INTO captures (started_at, kind, source, provider_name, model, path,
+                is_stream, state, preview)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        bind(stmt, 1, now)
+        bind(stmt, 2, kind.rawValue)
+        bind(stmt, 3, source.rawValue)
+        bind(stmt, 4, provider)
+        bind(stmt, 5, model)
+        bind(stmt, 6, path)
+        sqlite3_bind_int(stmt, 7, stream ? 1 : 0)
+        bind(stmt, 8, preview)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqlite3_finalize(stmt)
+            return nil
+        }
+        sqlite3_finalize(stmt)
+        let id = sqlite3_last_insert_rowid(db)
+        let req = Self.truncate(requestJSON, cap: payloadCap)
+        let rew = Self.truncate(rewrittenJSON, cap: payloadCap)
+        exec("INSERT INTO payloads (capture_id, request_json, rewritten_json) VALUES (?, ?, ?)",
+             args: [.int(id), .text(req), .text(rew)])
+        pruneLocked()
+        return CaptureSummary(
+            id: id, startedAt: Date(), endedAt: nil, firstTokenAt: nil,
+            kind: kind, source: source, providerName: provider, model: model,
+            path: path, isStream: stream, state: .pending, httpStatus: 0,
+            promptTokens: nil, completionTokens: nil, cacheReadTokens: nil,
+            error: nil, preview: preview)
+    }
+
+    private func loadListUnlocked() -> [CaptureSummary] {
         guard let db = connection() else { return [] }
         var stmt: OpaquePointer?
         let sql = """
@@ -356,6 +458,7 @@ final class ProxyCaptureStore {
                 SELECT id FROM captures ORDER BY id DESC LIMIT \(listLimit)
             )
             """, args: [])
+        if let db { sqlite3_exec(db, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil) }
     }
 
     private enum Bind {
@@ -363,6 +466,45 @@ final class ProxyCaptureStore {
     }
 
     private func update(_ id: Int64, fields: [String: Bind]) {
+        if !useDatabase {
+            lock.lock()
+            jsonStore.patch(id) { row in
+                for (k, v) in fields {
+                    switch (k, v) {
+                    case ("state", .text(let s)):
+                        if let st = CaptureState(rawValue: s) { row.state = st }
+                    case ("first_token_at", .text(let s)):
+                        row.firstTokenAt = parseISO(s)
+                    case ("ended_at", .text(let s)):
+                        row.endedAt = parseISO(s)
+                    case ("http_status", .int(let n)):
+                        row.httpStatus = Int(n)
+                    case ("prompt_tokens", .int(let n)):
+                        row.promptTokens = Int(n)
+                    case ("prompt_tokens", .null):
+                        row.promptTokens = nil
+                    case ("completion_tokens", .int(let n)):
+                        row.completionTokens = Int(n)
+                    case ("completion_tokens", .null):
+                        row.completionTokens = nil
+                    case ("cache_read_tokens", .int(let n)):
+                        row.cacheReadTokens = Int(n)
+                    case ("cache_read_tokens", .null):
+                        row.cacheReadTokens = nil
+                    case ("error", .text(let s)):
+                        row.error = s
+                    case ("error", .null):
+                        row.error = nil
+                    case ("model", .text(let s)):
+                        row.model = s
+                    default:
+                        break
+                    }
+                }
+            }
+            lock.unlock()
+            return
+        }
         var sets: [String] = []
         var args: [Bind] = []
         for (k, v) in fields {
@@ -375,7 +517,7 @@ final class ProxyCaptureStore {
 
     private func exec(_ sql: String, args: [Bind]) {
         lock.lock(); defer { lock.unlock() }
-        guard let db = connection() else { return }
+        guard useDatabase, let db = connection() else { return }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }

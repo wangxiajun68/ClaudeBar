@@ -37,7 +37,6 @@ enum CodexModelCatalog {
         let compact = Int(model.autoCompactTokenLimit).flatMap { $0 > 0 ? $0 : nil }
         let display = model.name
         let effort = model.reasoningEffort
-        let defaultLevel = effort.isEmpty ? "max" : effort
         var entry: [String: Any] = [
             "slug": model.name,
             "display_name": display,
@@ -55,7 +54,6 @@ enum CodexModelCatalog {
             "default_reasoning_summary": "none",
             "support_verbosity": true,
             "default_verbosity": "low",
-            "default_reasoning_level": defaultLevel,
             "supported_reasoning_levels": reasoningLevels,
             // Required by current ModelInfo serde (no default). Missing these
             // makes `model_catalog_json` fail to parse and Codex falls back.
@@ -69,6 +67,7 @@ enum CodexModelCatalog {
             "upgrade": NSNull(),
         ]
         if let compact { entry["auto_compact_token_limit"] = compact }
+        if !effort.isEmpty { entry["default_reasoning_level"] = effort }
         return entry
     }
 

@@ -21,9 +21,9 @@ struct UsageView: View {
                                 .font(Theme.Font.labelSection)
                                 .foregroundColor(isOn ? .white : Theme.textSecondary)
                                 .padding(.horizontal, 12).padding(.vertical, 6)
-                                .glassEffect(
-                                    .regular.tint(isOn ? Theme.accent.opacity(0.3) : .clear),
-                                    in: RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                        .fill(isOn ? Theme.accent.opacity(0.3) : Color.white.opacity(0.05))
                                 )
                         }
                         .buttonStyle(.pressable)
@@ -96,7 +96,7 @@ struct UsageView: View {
                             .font(Theme.Font.titleSmall)
                             .foregroundColor(Theme.textPrimary)
                         UsageModelTile(stat: cursor, maxTokens: max(cursor.totalTokens, 1))
-                        Text("本地已不再写入 token，此为历史累计，无法按日 / 月拆分")
+                        Text("本地已停止写入 Token。以下为历史累计，无法按日或月拆分。")
                             .font(Theme.Font.caption)
                             .foregroundColor(Theme.textTertiary())
                     }
@@ -116,13 +116,13 @@ struct UsageView: View {
     }
 
     private var totalLabel: String {
-        providerStore.totalUsageLabel + " tokens"
+        providerStore.totalUsageLabel
     }
 
     private var breakdown: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "no usage data")
+                StandbyEmptyState(label: "暂无用量")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
             } else {

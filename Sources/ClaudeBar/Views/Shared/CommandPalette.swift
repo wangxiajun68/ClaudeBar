@@ -58,10 +58,14 @@ struct CommandPalette: View {
                         resultsList
                     }
                     .frame(width: 460)
-                    .glassEffect(
-                        .regular.tint(Theme.bgSecondary.opacity(0.3)),
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.xl)
-                    )
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                            .fill(Theme.base1)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    }
                     .shadowCard(radius: 30, y: 16, opacity: 0.5)
                     .scaleEffect(isPresented ? 1 : 0.92)
                     .opacity(isPresented ? 1 : 0)
@@ -97,8 +101,7 @@ struct CommandPalette: View {
             Image(systemName: "magnifyingglass")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.accent)
-                .symbolEffect(.pulse, options: .repeating)
-            TextField("搜索页面、会话、供应商…", text: $query)
+            TextField("搜索页面、会话、供应商", text: $query)
                 .font(Theme.Font.bodyLarge)
                 .foregroundColor(Theme.textPrimary)
                 .focused($searchFocused)
@@ -150,7 +153,7 @@ struct CommandPalette: View {
     private var allItems: [CommandItem] {
         var items = AppPage.allCases.map { p in
             CommandItem(kind: .page, title: p.label,
-                        subtitle: "跳转到页面",
+                        subtitle: "前往页面",
                         icon: p.icon, tint: Theme.accent,
                         result: .page(p))
         }
@@ -253,10 +256,10 @@ private struct CommandRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .glassEffect(
-                .regular.tint(isSelected ? Theme.accent.opacity(0.2) : (isHovered ? Theme.cardFill(0.06) : .clear)),
-                in: RoundedRectangle(cornerRadius: Theme.Radius.md)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .fill(isSelected ? Theme.accent.opacity(0.2) : (isHovered ? Theme.cardFill(0.06) : Color.clear))
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

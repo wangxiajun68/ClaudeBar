@@ -14,7 +14,7 @@ struct SectionHeader: View {
     var activeCount: Int? = nil
     var activeSymbol: String = "B"
     /// Shown instead of a count when `count` is zero.
-    var emptyLabel: String = "none"
+    var emptyLabel: String = "无"
 
     var body: some View {
         HStack(spacing: Theme.Space.s6) {

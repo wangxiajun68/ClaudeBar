@@ -4,6 +4,7 @@ import SwiftUI
 /// and the feedback toast inline slot.
 struct ProvidersPanel: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @ObservedObject private var tests = ConnectivityTestCenter.shared
     var panel: PanelState
     @Binding var configCollapsed: Bool
 
@@ -15,7 +16,7 @@ struct ProvidersPanel: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("PROVIDERS")
+                Text("供应商")
                     .font(Theme.Font.microSemibold)
                     .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
@@ -38,6 +39,14 @@ struct ProvidersPanel: View {
                                 providerStore.setCaptureEnabled(
                                     providerID: provider.id,
                                     enabled: !provider.captureEnabled)
+                            },
+                            testOutcome: tests.outcome(ConnectivityTestCenter.vendorKey(provider.id)),
+                            onTest: {
+                                tests.testVendor(
+                                    id: provider.id,
+                                    claude: provider,
+                                    model: ProvidersView.modelToTest(provider, envModel: providerStore.currentEnv?.ANTHROPIC_MODEL),
+                                    codex: providerStore.peer?.providers.first { ProviderBridge.matches(provider, $0) })
                             },
                             dense: true
                         )
@@ -66,7 +75,7 @@ struct ProvidersPanel: View {
                     .fill(providerStore.activeProviderID != nil ? Theme.statusBusy : Theme.statusWarning)
                     .frame(width: 6, height: 6)
 
-                Text(providerStore.activeProvider?.name ?? "Unsaved Config")
+                Text(providerStore.activeProvider?.name ?? "未保存的配置")
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary.opacity(0.8))
                     .lineLimit(1)

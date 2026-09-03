@@ -14,7 +14,6 @@ struct ExternalSessionCardView: View {
                 Circle()
                     .fill(isActive ? Theme.external : Color.gray.opacity(0.5))
                     .frame(width: 6, height: 6)
-                    .symbolEffect(.pulse, options: .repeating, isActive: isActive)
                 Text(session.projectFolder.isEmpty ? session.kind.displayName : session.projectFolder)
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary.opacity(0.9))
@@ -44,10 +43,10 @@ struct ExternalSessionCardView: View {
         }
         .padding(.horizontal, 7).padding(.vertical, 5)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .glassEffect(
-            .regular.tint(isActive ? Theme.external.opacity(isHovered ? 0.20 : 0.12) : Color.white.opacity(0.05)),
-            in: RoundedRectangle(cornerRadius: 6)
-        )
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isActive ? Theme.external.opacity(isHovered ? 0.16 : 0.10) : Color.white.opacity(0.05))
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(isActive ? Theme.external.opacity(isHovered ? 0.55 : 0.35) : Theme.hairline, lineWidth: 1)

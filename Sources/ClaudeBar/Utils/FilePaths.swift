@@ -57,6 +57,35 @@ enum FilePaths {
         return claudeDir.appendingPathComponent("claude-bar-widget-data.json")
     }
 
+    // MARK: - App Support / logs
+
+    /// `~/Library/Application Support/ClaudeBar`
+    static var appSupportDir: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ClaudeBar", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// JSON / JSONL logs used when the SQLite stores are turned off.
+    static var logsDir: URL {
+        let dir = appSupportDir.appendingPathComponent("logs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static var captureIndexFile: URL { logsDir.appendingPathComponent("captures.jsonl") }
+    static var capturePayloadsDir: URL {
+        let dir = logsDir.appendingPathComponent("captures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    static var captureSeqFile: URL { logsDir.appendingPathComponent("capture-seq") }
+    static var proxyLogFile: URL { logsDir.appendingPathComponent("proxy.jsonl") }
+    static var usageFilesJSON: URL { logsDir.appendingPathComponent("usage-files.json") }
+    static var usageRollupJSONL: URL { logsDir.appendingPathComponent("usage-rollup.jsonl") }
+    static var usageCursorJSON: URL { logsDir.appendingPathComponent("usage-cursor.json") }
+
     // MARK: - Cursor
 
     /// `~/.cursor` — Cursor's user-data root (projects/, ai-tracking/, …).

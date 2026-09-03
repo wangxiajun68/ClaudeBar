@@ -9,6 +9,8 @@ struct ProviderTile: View {
     let currentModelName: String?
     let onActivateModel: (UUID) -> Void
     var onToggleCapture: (() -> Void)? = nil
+    var testOutcome: ConnectivityOutcome = .idle
+    var onTest: (() -> Void)? = nil
 
     /// Popup density: tighter fonts/padding, single-column model list.
     var dense: Bool = false
@@ -44,6 +46,9 @@ struct ProviderTile: View {
             HStack(alignment: .top, spacing: Theme.Space.s6) {
                 header
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if onTest != nil {
+                    ConnectivityTileButton(outcome: testOutcome, action: { onTest?() })
+                }
                 captureToggle
             }
             if !listedModels.isEmpty {
@@ -69,7 +74,7 @@ struct ProviderTile: View {
         }
         .hoverState($isHovered)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(provider.name)，\(isActive ? "活跃" : "未激活")，\(provider.models.count) 个模型")
+        .accessibilityLabel("\(provider.name)，\(isActive ? "当前" : "未激活")，\(provider.models.count) 个模型")
     }
 
     @ViewBuilder
@@ -97,13 +102,13 @@ struct ProviderTile: View {
         .opacity(onToggleCapture == nil ? 0 : 1)
         .allowsHitTesting(onToggleCapture != nil)
         .help(provider.captureEnabled
-              ? "关闭代理抓包，直连上游"
-              : "打开代理抓包，请求会进流量页")
-        .accessibilityLabel(provider.captureEnabled ? "关闭抓包" : "打开抓包")
+              ? "关闭流量记录，请求直连上游"
+              : "启用流量记录，请求将显示在「流量」页")
+        .accessibilityLabel(provider.captureEnabled ? "关闭流量记录" : "启用流量记录")
     }
 
     private var headerHelp: String {
-        if provider.models.count > 1 { return expanded ? "收起模型" : "点击展开模型" }
+        if provider.models.count > 1 { return expanded ? "收起模型" : "展开模型" }
         if provider.models.count == 1 { return isActive ? "当前供应商" : "切换到此供应商" }
         return ""
     }
@@ -126,7 +131,7 @@ struct ProviderTile: View {
                     .truncationMode(.tail)
                 Spacer()
                 if isActive {
-                    Text("active")
+                    Text("当前")
                         .font(Theme.Font.microMedium)
                         .foregroundColor(Theme.statusBusy)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -146,7 +151,7 @@ struct ProviderTile: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 0) {
-                Text("\(provider.models.count) models")
+                Text("\(provider.models.count) 个模型")
                     .font(Theme.Font.tileDetail)
                     .foregroundColor(Theme.textTertiary(0.35))
                 Spacer(minLength: 0)
@@ -272,7 +277,7 @@ struct CodexProviderTile: View {
         }
         .hoverState($isHovered)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(provider.name)，\(isActive ? "活跃" : "未激活")，\(provider.models.count) 个模型")
+        .accessibilityLabel("\(provider.name)，\(isActive ? "当前" : "未激活")，\(provider.models.count) 个模型")
     }
 
     @ViewBuilder
@@ -286,7 +291,7 @@ struct CodexProviderTile: View {
     }
 
     private var headerHelp: String {
-        if provider.models.count > 1 { return expanded ? "收起模型" : "点击展开模型" }
+        if provider.models.count > 1 { return expanded ? "收起模型" : "展开模型" }
         if provider.models.count == 1 { return isActive ? "当前供应商" : "切换到此供应商" }
         return ""
     }
@@ -309,7 +314,7 @@ struct CodexProviderTile: View {
                     .truncationMode(.tail)
                 Spacer()
                 if isActive {
-                    Text("active")
+                    Text("当前")
                         .font(Theme.Font.microMedium)
                         .foregroundColor(Theme.statusBusy)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -317,7 +322,7 @@ struct CodexProviderTile: View {
                         .transition(.scale.combined(with: .opacity))
                 }
                 if provider.captureEnabled {
-                    Text("抓包")
+                    Text("记录")
                         .font(Theme.Font.microMedium)
                         .foregroundColor(Theme.external)
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -336,7 +341,7 @@ struct CodexProviderTile: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 0) {
-                Text("\(provider.models.count) models")
+                Text("\(provider.models.count) 个模型")
                     .font(Theme.Font.tileDetail)
                     .foregroundColor(Theme.textTertiary(0.35))
                 Spacer(minLength: 0)

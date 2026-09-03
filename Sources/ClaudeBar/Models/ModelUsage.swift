@@ -9,7 +9,7 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
         case .day: return "日"
         case .month: return "月"
         case .year: return "年"
-        case .custom: return "指定"
+        case .custom: return "自定义"
         }
     }
 }

@@ -6,6 +6,7 @@ struct ProviderEditorView: View {
     @ObservedObject var providerStore: ProviderStore
     @State private var model = ProviderEditorModel()
     @State private var showPresets = false
+    @ObservedObject private var tests = ConnectivityTestCenter.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -33,7 +34,7 @@ struct ProviderEditorView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("PROVIDERS")
+            Text("供应商")
                 .font(Theme.Font.labelSection)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
@@ -48,7 +49,7 @@ struct ProviderEditorView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(provider.name).font(Theme.Font.body)
                                 .lineLimit(1).truncationMode(.tail)
-                            Text("\(provider.models.count) model\(provider.models.count == 1 ? "" : "s")")
+                            Text("\(provider.models.count) 个模型")
                                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                                 .lineLimit(1)
                         }
@@ -137,12 +138,12 @@ struct ProviderEditorView: View {
 
     private var providerConfigCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            Label("Provider Configuration", systemImage: "server.rack")
+            Label("供应商", systemImage: "server.rack")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
-            EditorField(label: "Name", error: model.nameError) {
+            EditorField(label: "名称", error: model.nameError) {
                 TextField("e.g. DeepSeek", text: $model.name)
                     .textFieldStyle(.roundedBorder)
             }
@@ -154,7 +155,7 @@ struct ProviderEditorView: View {
                 TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)
                     .textFieldStyle(.roundedBorder)
             }
-            Text("Codex 自动写成：\(ProviderBridge.openaiCompatibleURL(model.baseURL))")
+            Text("Codex 将写入：\(ProviderBridge.openaiCompatibleURL(model.baseURL))")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .lineLimit(1)
@@ -169,19 +170,31 @@ struct ProviderEditorView: View {
                     .labelsHidden()
                 }
             }
-            Toggle("切换第三方时保留官方登录", isOn: $model.preserveOfficialLogin)
+            Toggle("切换第三方供应商时保留官方登录", isOn: $model.preserveOfficialLogin)
                 .font(Theme.Font.bodySmall)
             Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
                 .font(Theme.Font.bodySmall)
             Toggle(isOn: $model.disableResponseStorage) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("不在云端保存 Responses")
+                    Text("不向云端持久化 Responses")
                         .font(Theme.Font.bodySmall)
-                    Text("对应 Codex 的 disable_response_storage。打开后上游不持久化 Responses 会话；第三方中转建议开。关掉后官方 API 才能跨请求续写同一条 response。")
+                    Text("对应 disable_response_storage。开启后上游不保存 Responses 会话，第三方中转建议开启。关闭后，官方 API 可跨请求续写同一条 Response。")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            ConnectivityProbeButton(
+                title: "检测连通性",
+                help: "使用当前表单中的地址、密钥与所选模型发送最短请求，无需先保存。",
+                outcome: tests.outcome(ConnectivityTestCenter.editorKey)
+            ) {
+                let name = model.models.first(where: { $0.id == model.editingModelID })?.name
+                    ?? model.models.first(where: { $0.id == model.activeModelID })?.name
+                    ?? model.models.first?.name
+                    ?? ""
+                tests.testEditor(baseURL: model.baseURL, apiKey: model.authToken,
+                                 modelName: name, wireAPI: model.wireAPI)
             }
         }
         .padding(Theme.Space.s12)
@@ -190,7 +203,7 @@ struct ProviderEditorView: View {
 
     private var modelConfigCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label("Model Configuration", systemImage: "cpu")
+            Label("模型", systemImage: "cpu")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
@@ -210,7 +223,7 @@ struct ProviderEditorView: View {
     private var modelList: some View {
         VStack(spacing: 0) {
             if model.models.isEmpty {
-                Text("No models")
+                Text("暂无模型")
                     .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                     .padding(.vertical, Theme.Space.s12).frame(maxWidth: .infinity)
             } else {
@@ -226,7 +239,7 @@ struct ProviderEditorView: View {
 
             Divider()
             HStack(spacing: Theme.Space.s4) {
-                TextField("Add…", text: $model.newModelName)
+                TextField("添加模型", text: $model.newModelName)
                     .textFieldStyle(.roundedBorder)
                     .font(Theme.Font.bodySmall)
                     .onSubmit { model.addModel() }
@@ -236,7 +249,7 @@ struct ProviderEditorView: View {
                 }
                 .buttonStyle(.glass)
                 .disabled(model.newModelName.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Add model")
+                .help("添加模型")
             }
             .padding(Theme.Space.s8)
         }
@@ -246,24 +259,24 @@ struct ProviderEditorView: View {
     @ViewBuilder private var modelDetail: some View {
         if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                EditorField(label: "Model Name") {
+                EditorField(label: "模型名称") {
                     TextField("e.g. deepseek-v4-pro[1m]", text: $model.models[idx].name)
                         .textFieldStyle(.roundedBorder)
                         .font(Theme.Font.microMono)
                 }
                 HStack(alignment: .top, spacing: Theme.Space.s16) {
-                    EditorField(label: "Context Tokens") {
+                    EditorField(label: "上下文窗口") {
                         TextField("1000000", text: $model.models[idx].contextTokens)
                             .textFieldStyle(.roundedBorder)
                     }
-                    EditorField(label: "Auto Compact Window") {
+                    EditorField(label: "自动压缩阈值") {
                         TextField("1000000", text: $model.models[idx].autoCompactWindow)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
-                EditorField(label: "Codex 推理档位") {
+                EditorField(label: "推理强度") {
                     Picker("", selection: $model.models[idx].reasoningEffort) {
-                        Text("不设置").tag("")
+                        Text("默认").tag("")
                         Text("none").tag("none")
                         Text("minimal").tag("minimal")
                         Text("low").tag("low")
@@ -277,15 +290,19 @@ struct ProviderEditorView: View {
                     .labelsHidden()
                     .frame(maxWidth: 160, alignment: .leading)
                 }
-                Toggle("Disable Compact", isOn: $model.models[idx].disableCompact)
+                Text("选择「默认」则不写入 model_reasoning_effort，由 Codex 或模型目录决定。")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textTertiary())
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("禁用压缩", isOn: $model.models[idx].disableCompact)
                     .font(Theme.Font.bodySmall)
-                Toggle("Disable Experimental Betas", isOn: $model.models[idx].disableExperimentalBetas)
+                Toggle("禁用实验性 Beta", isOn: $model.models[idx].disableExperimentalBetas)
                     .font(Theme.Font.bodySmall)
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text("Select a model")
+            Text("请选择模型")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -315,7 +332,7 @@ struct ProviderEditorView: View {
             .selectionTint(isSelected, color: Theme.claude, corner: 5)
         }
         .buttonStyle(.plain)
-        .help(isDefault ? "默认模型:切换到该供应商时自动选用" : "右键设为默认")
+        .help(isDefault ? "默认模型：切换到该供应商时自动选用" : "右键设为默认")
         .contextMenu {
             if !isDefault {
                 Button("设为默认") { withAnimation(Theme.Animation.bouncy) { model.setDefault(m.id) } }
@@ -342,14 +359,14 @@ struct ProviderEditorView: View {
                     if model.isSaving {
                         ProgressView().scaleEffect(0.5)
                     } else {
-                        Text("Save")
+                        Text("保存")
                     }
                 }
                 .buttonStyle(.glassProminent)
                 .tint(Theme.accent)
                 .disabled(!model.canSave)
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Save provider (⌘S)")
+                .help("保存供应商 (⌘S)")
             }
             .padding(.horizontal, Theme.Space.s16 + Theme.Space.s4).padding(.vertical, Theme.Space.s12)
             .animation(Theme.Animation.bouncy, value: model.saveToken)
@@ -361,7 +378,7 @@ struct ProviderEditorView: View {
             Spacer()
             Image(systemName: "server.rack")
                 .font(Theme.Font.titleMedium).foregroundColor(Theme.textSecondary.opacity(0.5))
-            Text("Select a provider or add a new one")
+            Text("请选择供应商，或从预设添加")
                 .foregroundColor(Theme.textSecondary).font(Theme.Font.body)
             Spacer()
         }

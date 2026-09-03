@@ -57,7 +57,7 @@ struct DashboardView: View {
                 onNavigate(.providers)
             }
             MetricTile(label: "会话", value: sessionValue,
-                       detail: "\(runningCount) 忙碌 · \(totalSessionCount) 活跃") {
+                       detail: "\(runningCount) 运行中 · \(totalSessionCount) 活动") {
                 onNavigate(.sessions)
             }
             MetricTile(label: "Token 总量", value: tokenTotalValue,
@@ -120,7 +120,7 @@ struct DashboardView: View {
                     .lineLimit(1)
                     .fixedSize()
                 Spacer()
-                Text("\(runningCount) 忙碌 / \(totalSessionCount) 活跃")
+                Text("\(runningCount) 运行中 / \(totalSessionCount) 活动")
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                     .contentTransition(.numericText())
@@ -226,7 +226,7 @@ struct DashboardView: View {
     private var usageTop: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             HStack {
-                Text("用量 Top")
+                Text("用量排行")
                     .font(Theme.Font.titleSmall)
                     .tracking(Theme.Tracking.titleSmall)
                     .foregroundColor(Theme.textPrimary)
@@ -238,7 +238,7 @@ struct DashboardView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "no usage data")
+                StandbyEmptyState(label: "暂无用量")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             } else {
@@ -345,7 +345,7 @@ private struct OverviewTile: View {
         .buttonStyle(.plain)
         .hoverState($isHovered)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.project)，\(row.busy ? "忙碌" : "空闲")，上下文 \(row.contextLabel)")
+        .accessibilityLabel("\(row.project)，\(row.busy ? "运行中" : "空闲")，上下文 \(row.contextLabel)")
         .accessibilityHint("在会话页查看")
     }
 }

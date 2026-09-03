@@ -21,10 +21,10 @@ enum ProviderBridge {
         var isEmpty: Bool { added == 0 && updated == 0 && modelsAdded == 0 }
 
         var summary: String {
-            if isEmpty { return "没有可导入的新供应商" }
+            if isEmpty { return "没有可导入的供应商" }
             var parts: [String] = []
             if added > 0 { parts.append("新增 \(added) 个供应商") }
-            if updated > 0 { parts.append("更新 \(updated) 个") }
+            if updated > 0 { parts.append("更新 \(updated) 个供应商") }
             if modelsAdded > 0 { parts.append("\(modelsAdded) 个模型") }
             return parts.joined(separator: " · ")
         }
@@ -52,7 +52,7 @@ enum ProviderBridge {
             CodexModelConfig(
                 id: UUID(),
                 name: stripClaudeModelSuffix(model.name),
-                reasoningEffort: "max",
+                reasoningEffort: "",
                 contextWindow: model.contextTokens,
                 autoCompactTokenLimit: model.disableCompact ? "" : model.autoCompactWindow)
         }
@@ -152,7 +152,7 @@ enum ProviderBridge {
             } else {
                 models.append(CodexModelConfig(
                     name: slug,
-                    reasoningEffort: effort.flatMap { $0.isEmpty ? nil : $0 } ?? "max",
+                    reasoningEffort: effort ?? "",
                     contextWindow: m.contextTokens,
                     autoCompactTokenLimit: compact))
             }

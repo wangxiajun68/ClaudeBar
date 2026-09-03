@@ -15,7 +15,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(configCollapsed: $panel.configCollapsed, onFeedback: {
-                panel.showFeedback("Refreshed")
+                panel.showFeedback("已刷新")
             })
 
             Divider().background(Theme.divider)
@@ -65,9 +65,9 @@ struct MenuBarView: View {
         VStack(spacing: Theme.Space.s8) {
             Image(systemName: "exclamationmark.triangle")
                 .font(Theme.Font.bodyLarge).foregroundColor(Theme.statusWarning)
-            Text("No settings.json found")
+            Text("未找到 settings.json")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
-            Text("Run Claude Code once, then click Refresh.")
+            Text("请先运行 Claude Code，然后刷新。")
                 .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
         }
         .padding(Theme.Space.s16)
@@ -95,7 +95,7 @@ struct MenuBarView: View {
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
                 .disabled(!providerStore.hasSettingsFile)
             iconButton(prefs.idleNotifyEnabled ? "bell.fill" : "bell.slash",
-                       help: "空闲通知（Claude 跑完时提醒）",
+                       help: "会话空闲时发送系统通知",
                        color: prefs.idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
                 prefs.idleNotifyEnabled.toggle()
                 panel.showFeedback(prefs.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")

@@ -6,6 +6,9 @@ extension Notification.Name {
     /// Posted when the user taps an idle notification (or its Resume action).
     /// userInfo["pid"] = Int — the session to resume in a terminal.
     static let resumeSession = Notification.Name("com.claudebar.resumeSession")
+
+    /// SQLite vs JSON/JSONL persistence flipped in Settings.
+    static let persistenceModeDidChange = Notification.Name("com.claudebar.persistenceModeDidChange")
 }
 
 /// Idle notifications: when a Claude (or Cursor) session transitions from
@@ -46,7 +49,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     /// Register the idle category (with a Resume action) once.
     private func ensureCategory() {
-        let resume = UNNotificationAction(identifier: "RESUME", title: "在终端恢复",
+        let resume = UNNotificationAction(identifier: "RESUME", title: "在终端继续",
                                           options: [.foreground])
         let category = UNNotificationCategory(
             identifier: Self.categoryID, actions: [resume], intentIdentifiers: [])
@@ -58,8 +61,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// "Claude 等你输入" — project folder + what it just finished.
     func notifyIdle(session: SessionInfo) {
         post(
-            title: "Claude 等你输入",
-            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? (session.model.isEmpty ? "任务完成" : session.model) : session.currentActivity)",
+            title: "Claude 等待输入",
+            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? (session.model.isEmpty ? "已完成" : session.model) : session.currentActivity)",
             subtitle: "session-\(session.pid)",
             categoryID: Self.categoryID,
             pid: session.pid
@@ -69,8 +72,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// Cursor flavor — same state machine, violet distinct label.
     func notifyIdle(cursor session: CursorSessionInfo) {
         post(
-            title: "Cursor 等你输入",
-            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? "任务完成" : session.currentActivity)",
+            title: "Cursor 等待输入",
+            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? "已完成" : session.currentActivity)",
             subtitle: "cursor-\(session.composerId)",
             categoryID: Self.categoryID,
             pid: nil
@@ -81,8 +84,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// leads so sessions from different agents stay distinguishable.
     func notifyIdle(external session: ExternalSessionInfo) {
         post(
-            title: "\(session.kind.displayName) 等你输入",
-            body: "\(session.projectFolder) · \(session.model.isEmpty ? "任务完成" : session.model)",
+            title: "\(session.kind.displayName) 等待输入",
+            body: "\(session.projectFolder) · \(session.model.isEmpty ? "已完成" : session.model)",
             subtitle: session.id,
             categoryID: Self.categoryID,
             pid: nil

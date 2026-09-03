@@ -7,23 +7,16 @@ let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
 #endif
 
-/// Persistent usage index — the single source of truth for usage aggregation.
+/// Persistent usage index. Each transcript is parsed once into per-(file,
+/// day, model) rollup rows; queries are a GROUP BY over those rows.
 ///
-/// Scanning transcripts on every query (the old design) is O(corpus size):
-/// each day/month/year switch re-enumerated and re-merged thousands of JSONL
-/// files. This index inverts that: every transcript is parsed **once** into
-/// per-(file, day, model) rollup rows in a small SQLite DB; any query then
-/// becomes a single GROUP BY over a few hundred rows — milliseconds.
+/// Backends (Settings → 开启数据库), independent, no migration either way:
+///   SQLite  `~/Library/Application Support/ClaudeBar/usage-index.db`
+///   JSON    `.../ClaudeBar/logs/usage-files.json` + `usage-rollup.jsonl`
 ///
-/// DB layout (`~/Library/Application Support/ClaudeBar/usage-index.db`):
-///   files  — one row per known transcript: prefixed path, mtime, size, and
-///            `offset` (bytes fully parsed: index after the last complete
-///            newline). Trailing bytes beyond `offset` are an unparsed
-///            partial line; the next append completes it and it is parsed
-///            then. For Codex files the row also holds the last-seen
-///            cumulative token totals (`cx_*`), used to derive deltas.
-///   rollup — per-(path, day, model) token aggregates, `day` in the user's
-///            local timezone so interval filtering matches the UI.
+/// `files` tracks mtime/size/`offset` (bytes through the last complete
+/// newline) and, for Codex, last cumulative totals plus the live model slug.
+/// `rollup` is (path, day, model) in the user's local timezone.
 ///
 /// Incremental maintenance:
 ///   - Unchanged files (mtime+size match) are skipped entirely.
@@ -33,10 +26,9 @@ let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_
 ///     replaces the path's rollup rows — stale data can never survive.
 ///   - Files that vanished are pruned with their rollup rows.
 ///
-/// Codex note: Codex reports *cumulative* per-file totals in each
-/// `token_count` record. A full parse stores only the last total; an append
-/// parse stores the new last total and inserts the *delta* (new − old,
-/// clamped at 0) as usage. All other sources report per-record deltas.
+/// Codex note: per-turn usage is `last_token_usage` on `token_count`.
+/// The upstream model slug is on `turn_context` (carried across appends
+/// via `cx_model`). Cumulative `total_token_usage` is only a rewrite stamp.
 struct UsageIndex {
 
     // MARK: - Schema / connection
@@ -58,13 +50,14 @@ struct UsageIndex {
     private static func connection() -> OpaquePointer? {
         lock.lock()
         defer { lock.unlock() }
+        if !DiskPersistence.useDatabase { return nil }
         if let db { return db }
         if openFailed { return nil }
         guard sqlite3_open_v2(dbURL.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             openFailed = true
             return nil
         }
-        sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000", nil, nil, nil)
         sqlite3_exec(db, """
             CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY,
@@ -74,7 +67,8 @@ struct UsageIndex {
                 head_hash INTEGER NOT NULL DEFAULT 0,
                 cx_in INTEGER NOT NULL DEFAULT 0,
                 cx_out INTEGER NOT NULL DEFAULT 0,
-                cx_cached INTEGER NOT NULL DEFAULT 0
+                cx_cached INTEGER NOT NULL DEFAULT 0,
+                cx_model TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS rollup (
                 path TEXT NOT NULL,
@@ -105,6 +99,8 @@ struct UsageIndex {
     /// v3: Codex usage switched from last-cumulative-total (dumped on the
     /// last day) to per-turn `last_token_usage`.
     /// v4: OpenClaw is no longer a usage source — drop leftover rollup rows.
+    /// v5: Claude last-wins per message.id (stream partial then final).
+    /// Schema version is stamped at the latest step (currently 6).
     private static func migrateIfNeeded(_ db: OpaquePointer) {
         var stmt: OpaquePointer?
         var version: Int32 = 0
@@ -125,11 +121,36 @@ struct UsageIndex {
             // partial then final). Rebuild so last-wins per id is applied.
             _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'claude:%';")
             _ = exec(db, "DELETE FROM files WHERE path LIKE 'claude:%';")
-            _ = exec(db, "PRAGMA user_version = 5")
+        }
+        if version < 6 {
+            // Codex model names live on `turn_context`, not on token_count.
+            // Incremental chunks without that record were stored as "codex".
+            _ = exec(db, "ALTER TABLE files ADD COLUMN cx_model TEXT NOT NULL DEFAULT ''")
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'codex:%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'codex:%';")
+            _ = exec(db, "PRAGMA user_version = 6")
         }
     }
 
     // MARK: - Public API
+
+    /// Close SQLite (if open) and drop in-memory JSON caches so the next
+    /// query / updateIndex uses the backend selected in Settings.
+    static func reloadPersistence() {
+        lock.lock()
+        if let handle = db {
+            sqlite3_exec(handle, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+            sqlite3_close(handle)
+            db = nil
+        }
+        openFailed = false
+        lock.unlock()
+        UsageJSONStore.shared.reset()
+        flagLock.lock()
+        _hasCachedData = nil
+        _initialBuildDone = false
+        flagLock.unlock()
+    }
 
     /// True until the first `updateIndex()` of this app run has completed.
     /// The UI shows a spinner only when there is also no cached rollup from a
@@ -143,6 +164,11 @@ struct UsageIndex {
     static var hasCachedData: Bool {
         if let cached = { flagLock.lock(); defer { flagLock.unlock() }; return _hasCachedData }() {
             return cached
+        }
+        if !DiskPersistence.useDatabase {
+            let hit = UsageJSONStore.shared.hasRows()
+            flagLock.lock(); _hasCachedData = hit; flagLock.unlock()
+            return hit
         }
         guard let db = connection() else { return false }
         lock.lock(); defer { lock.unlock() }
@@ -159,6 +185,10 @@ struct UsageIndex {
     /// corpus size.
     static func updateIndex() {
         let candidates = collectTranscripts()
+        if !DiskPersistence.useDatabase {
+            updateIndexJSON(candidates)
+            return
+        }
         guard let db = connection() else { return }
         lock.lock()
         defer { lock.unlock() }
@@ -170,13 +200,33 @@ struct UsageIndex {
         for file in candidates {
             guard !seen.contains(file.key) else { continue }
             seen.insert(file.key)
-            sync(file: file, prior: known[file.key], db: db)
+            sync(file: file, prior: known[file.key], backend: .sqlite(db))
         }
         for key in known.keys where !seen.contains(key) {
             delete(db, "DELETE FROM rollup WHERE path = ?", key)
             delete(db, "DELETE FROM files WHERE path = ?", key)
         }
         _ = exec(db, "COMMIT")
+        sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+        flagLock.lock()
+        _initialBuildDone = true
+        _hasCachedData = true
+        flagLock.unlock()
+    }
+
+    private static func updateIndexJSON(_ candidates: [Candidate]) {
+        UsageJSONStore.shared.load()
+        let known = knownFromJSON()
+        var seen = Set<String>()
+        for file in candidates {
+            guard !seen.contains(file.key) else { continue }
+            seen.insert(file.key)
+            sync(file: file, prior: known[file.key], backend: .json)
+        }
+        for key in known.keys where !seen.contains(key) {
+            UsageJSONStore.shared.deletePath(key)
+        }
+        UsageJSONStore.shared.save()
         flagLock.lock()
         _initialBuildDone = true
         _hasCachedData = true
@@ -187,13 +237,16 @@ struct UsageIndex {
     /// Does **not** walk transcripts — call `updateIndex()` separately when
     /// the corpus may have changed.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
-        guard let db = connection() else { return [] }
-        lock.lock(); defer { lock.unlock() }
         let startDay = dayString(interval.start)
         // DateInterval.end is exclusive; include the last local day that
         // actually belongs to the period.
         let lastIncluded = interval.end.addingTimeInterval(-1)
         let endDay = dayString(lastIncluded)
+        if !DiskPersistence.useDatabase {
+            return UsageJSONStore.shared.fetch(startDay: startDay, endDay: endDay)
+        }
+        guard let db = connection() else { return [] }
+        lock.lock(); defer { lock.unlock() }
 
         var stmt: OpaquePointer?
         let sql = """
@@ -222,11 +275,14 @@ struct UsageIndex {
 
     /// Per-day totals for the river chart. Same interval rules as `fetch`.
     static func fetchDaily(in interval: DateInterval) -> [DayUsage] {
-        guard let db = connection() else { return [] }
-        lock.lock(); defer { lock.unlock() }
         let startDay = dayString(interval.start)
         let lastIncluded = interval.end.addingTimeInterval(-1)
         let endDay = dayString(lastIncluded)
+        if !DiskPersistence.useDatabase {
+            return UsageJSONStore.shared.fetchDaily(startDay: startDay, endDay: endDay)
+        }
+        guard let db = connection() else { return [] }
+        lock.lock(); defer { lock.unlock() }
         var stmt: OpaquePointer?
         let sql = """
             SELECT day, sum(input), sum(output), sum(cache_read), sum(cache_create)
@@ -260,6 +316,7 @@ struct UsageIndex {
         let cxIn: Int
         let cxOut: Int
         let cxCached: Int
+        let cxModel: String
     }
 
     /// FNV-1a of the first `length` bytes — stable across launches, unlike
@@ -276,8 +333,13 @@ struct UsageIndex {
         return Int64(bitPattern: hash)
     }
 
+    private enum Backend {
+        case sqlite(OpaquePointer)
+        case json
+    }
+
     /// Parse one file's new bytes and fold them into the index.
-    private static func sync(file: Candidate, prior: KnownFile?, db: OpaquePointer) {
+    private static func sync(file: Candidate, prior: KnownFile?, backend: Backend) {
         let kind = file.key.prefix(while: { $0 != ":" })
         let isCodex = kind == "codex"
 
@@ -301,35 +363,38 @@ struct UsageIndex {
             let (lines, consumed) = completeLines(chunk)
             guard consumed > 0 else { return }
 
-            let parsed = parseCodex(lines)
+            let parsed = parseCodex(lines, previousModel: prior.cxModel)
             if parsed.entries.isEmpty {
-                upsertFile(db, file, prior.offset + consumed,
-                           cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached)
+                upsertFile(backend, file, prior.offset + consumed,
+                           cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached,
+                           cxModel: parsed.model)
                 return
             }
-            addRollup(db, file.key, parsed.entries)
+            addRollup(backend, file.key, parsed.entries)
             let last = parsed.last
-            upsertFile(db, file, prior.offset + consumed,
+            upsertFile(backend, file, prior.offset + consumed,
                        cxIn: last?.input ?? prior.cxIn,
                        cxOut: last?.output ?? prior.cxOut,
-                       cxCached: last?.cached ?? prior.cxCached)
+                       cxCached: last?.cached ?? prior.cxCached,
+                       cxModel: parsed.model)
             return
         }
 
         // Full (re)parse: brand-new file, or it shrank / was rewritten.
         guard let data = FileManager.default.contents(atPath: file.path) else { return }
         let (lines, consumed) = completeLines(data)
-        if prior != nil { delete(db, "DELETE FROM rollup WHERE path = ?", file.key) }
+        if prior != nil { deleteRollup(backend, file.key) }
 
         if isCodex {
-            let parsed = parseCodex(lines)
-            if !parsed.entries.isEmpty { replaceRollup(db, file.key, parsed.entries) }
+            let parsed = parseCodex(lines, previousModel: "")
+            if !parsed.entries.isEmpty { replaceRollup(backend, file.key, parsed.entries) }
             let last = parsed.last
-            upsertFile(db, file, consumed,
-                       cxIn: last?.input ?? 0, cxOut: last?.output ?? 0, cxCached: last?.cached ?? 0)
+            upsertFile(backend, file, consumed,
+                       cxIn: last?.input ?? 0, cxOut: last?.output ?? 0, cxCached: last?.cached ?? 0,
+                       cxModel: parsed.model)
         } else {
-            replaceRollup(db, file.key, parse(kind, lines))
-            upsertFile(db, file, consumed, cxIn: 0, cxOut: 0, cxCached: 0)
+            replaceRollup(backend, file.key, parse(kind, lines))
+            upsertFile(backend, file, consumed, cxIn: 0, cxOut: 0, cxCached: 0)
         }
     }
 
@@ -400,13 +465,25 @@ struct UsageIndex {
 
     // MARK: - DB helpers
 
+    private static func knownFromJSON() -> [String: KnownFile] {
+        var out: [String: KnownFile] = [:]
+        for (path, rec) in UsageJSONStore.shared.currentFiles() {
+            out[path] = KnownFile(
+                mtime: rec.mtime, size: rec.size, offset: rec.offset,
+                headHash: rec.headHash, cxIn: rec.cxIn, cxOut: rec.cxOut, cxCached: rec.cxCached,
+                cxModel: rec.cxModel)
+        }
+        return out
+    }
+
     private static func currentFiles(_ db: OpaquePointer) -> [String: KnownFile] {
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT path, mtime, size, offset, head_hash, cx_in, cx_out, cx_cached FROM files", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        guard sqlite3_prepare_v2(db, "SELECT path, mtime, size, offset, head_hash, cx_in, cx_out, cx_cached, cx_model FROM files", -1, &stmt, nil) == SQLITE_OK else { return [:] }
         defer { sqlite3_finalize(stmt) }
         var out: [String: KnownFile] = [:]
         while sqlite3_step(stmt) == SQLITE_ROW {
             let path = String(cString: sqlite3_column_text(stmt, 0))
+            let modelPtr = sqlite3_column_text(stmt, 8)
             out[path] = KnownFile(
                 mtime: sqlite3_column_double(stmt, 1),
                 size: Int(sqlite3_column_int64(stmt, 2)),
@@ -414,7 +491,8 @@ struct UsageIndex {
                 headHash: sqlite3_column_int64(stmt, 4),
                 cxIn: Int(sqlite3_column_int64(stmt, 5)),
                 cxOut: Int(sqlite3_column_int64(stmt, 6)),
-                cxCached: Int(sqlite3_column_int64(stmt, 7)))
+                cxCached: Int(sqlite3_column_int64(stmt, 7)),
+                cxModel: modelPtr.map { String(cString: $0) } ?? "")
         }
         return out
     }
@@ -427,9 +505,32 @@ struct UsageIndex {
         sqlite3_finalize(stmt)
     }
 
-    private static func upsertFile(_ db: OpaquePointer, _ file: Candidate, _ offset: Int, cxIn: Int, cxOut: Int, cxCached: Int) {
+    private static func deleteRollup(_ backend: Backend, _ path: String) {
+        switch backend {
+        case .sqlite(let db):
+            delete(db, "DELETE FROM rollup WHERE path = ?", path)
+        case .json:
+            break
+        }
+    }
+
+    private static func upsertFile(_ backend: Backend, _ file: Candidate, _ offset: Int,
+                                   cxIn: Int, cxOut: Int, cxCached: Int, cxModel: String = "") {
+        switch backend {
+        case .sqlite(let db):
+            upsertFileSQL(db, file, offset, cxIn: cxIn, cxOut: cxOut, cxCached: cxCached, cxModel: cxModel)
+        case .json:
+            UsageJSONStore.shared.upsertFile(key: file.key, rec: .init(
+                mtime: file.mtime, size: file.size, offset: offset,
+                headHash: headHash(file.path, length: 256),
+                cxIn: cxIn, cxOut: cxOut, cxCached: cxCached, cxModel: cxModel))
+        }
+    }
+
+    private static func upsertFileSQL(_ db: OpaquePointer, _ file: Candidate, _ offset: Int,
+                                      cxIn: Int, cxOut: Int, cxCached: Int, cxModel: String) {
         var stmt: OpaquePointer?
-        let sql = "INSERT OR REPLACE INTO files(path,mtime,size,offset,head_hash,cx_in,cx_out,cx_cached) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"
+        let sql = "INSERT OR REPLACE INTO files(path,mtime,size,offset,head_hash,cx_in,cx_out,cx_cached,cx_model) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         sqlite3_bind_text(stmt, 1, file.key, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(stmt, 2, file.mtime)
@@ -439,36 +540,52 @@ struct UsageIndex {
         sqlite3_bind_int64(stmt, 6, Int64(cxIn))
         sqlite3_bind_int64(stmt, 7, Int64(cxOut))
         sqlite3_bind_int64(stmt, 8, Int64(cxCached))
+        sqlite3_bind_text(stmt, 9, cxModel, -1, SQLITE_TRANSIENT)
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
     }
 
     /// Full replacement of a path's rollup (used on full reparse; caller has
     /// already deleted old rows).
-    private static func replaceRollup(_ db: OpaquePointer, _ path: String, _ entries: [ParsedEntry]) {
-        var stmt: OpaquePointer?
-        let sql = "INSERT OR REPLACE INTO rollup(path,day,model,calls,input,output,cache_read,cache_create) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
-        bindAndRun(stmt, path, ParsedEntry.aggregated(entries))
+    private static func replaceRollup(_ backend: Backend, _ path: String, _ entries: [ParsedEntry]) {
+        switch backend {
+        case .sqlite(let db):
+            var stmt: OpaquePointer?
+            let sql = "INSERT OR REPLACE INTO rollup(path,day,model,calls,input,output,cache_read,cache_create) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
+            bindAndRun(stmt, path, ParsedEntry.aggregated(entries))
+        case .json:
+            UsageJSONStore.shared.replaceRollup(path: path, rows: rollupRecs(path, entries))
+        }
     }
 
     /// Additive fold of appended bytes into the existing rollup rows.
-    private static func addRollup(_ db: OpaquePointer, _ path: String, _ entries: [ParsedEntry]) {
-        var stmt: OpaquePointer?
-        let sql = """
-            INSERT INTO rollup(path,day,model,calls,input,output,cache_read,cache_create)
-            VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
-            ON CONFLICT(path,day,model) DO UPDATE SET
-                calls = calls + excluded.calls,
-                input = input + excluded.input,
-                output = output + excluded.output,
-                cache_read = cache_read + excluded.cache_read,
-                cache_create = cache_create + excluded.cache_create
-            """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
-        // An append chunk can hold many records for the same (day, model);
-        // aggregate so the upsert-add runs once per key, not per record.
-        bindAndRun(stmt, path, ParsedEntry.aggregated(entries))
+    private static func addRollup(_ backend: Backend, _ path: String, _ entries: [ParsedEntry]) {
+        switch backend {
+        case .sqlite(let db):
+            var stmt: OpaquePointer?
+            let sql = """
+                INSERT INTO rollup(path,day,model,calls,input,output,cache_read,cache_create)
+                VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                ON CONFLICT(path,day,model) DO UPDATE SET
+                    calls = calls + excluded.calls,
+                    input = input + excluded.input,
+                    output = output + excluded.output,
+                    cache_read = cache_read + excluded.cache_read,
+                    cache_create = cache_create + excluded.cache_create
+                """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return }
+            bindAndRun(stmt, path, ParsedEntry.aggregated(entries))
+        case .json:
+            UsageJSONStore.shared.addRollup(path: path, rows: rollupRecs(path, entries))
+        }
+    }
+
+    private static func rollupRecs(_ path: String, _ entries: [ParsedEntry]) -> [UsageJSONStore.RollupRec] {
+        ParsedEntry.aggregated(entries).map {
+            .init(path: path, day: $0.day, model: $0.model, calls: $0.calls,
+                  input: $0.input, output: $0.output, cacheRead: $0.cacheRead, cacheCreate: $0.cacheCreate)
+        }
     }
 
     private static func bindAndRun(_ stmt: OpaquePointer, _ path: String, _ entries: [ParsedEntry]) {
@@ -557,16 +674,27 @@ struct UsageIndex {
         let cached: Int
     }
 
-    private static func parseCodex(_ lines: [Data]) -> (entries: [ParsedEntry], last: CodexTotal?) {
-        var model = "codex"
-        var out: [ParsedEntry] = []
-        var last: CodexTotal?
+    /// Codex usage is on `event_msg` / `token_count`. Those records have no
+    /// `payload.model` — the upstream slug (`glm-5.3-flash`, not the product
+    /// name "codex") is on `turn_context` / `world_state` / `thread_settings`.
+    /// Incremental appends are often token_count-only, so `previousModel` is
+    /// the last slug stored on the file row (`cx_model`).
+    private static func parseCodex(_ lines: [Data], previousModel: String) -> (entries: [ParsedEntry], last: CodexTotal?, model: String) {
+        var objects: [[String: Any]] = []
+        objects.reserveCapacity(lines.count)
+        var firstSlug: String?
         for line in lines {
             guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-            if let payload = obj["payload"] as? [String: Any],
-               let m = payload["model"] as? String, !m.isEmpty {
-                model = m
-            }
+            objects.append(obj)
+            if firstSlug == nil { firstSlug = codexModel(in: obj) }
+        }
+        // Seed from this chunk when the file row has no slug yet, so
+        // token_count lines that precede the first turn_context still count.
+        var model = previousModel.isEmpty ? (firstSlug ?? "") : previousModel
+        var out: [ParsedEntry] = []
+        var last: CodexTotal?
+        for obj in objects {
+            if let next = codexModel(in: obj) { model = next }
             guard obj["type"] as? String == "event_msg",
                   let payload = obj["payload"] as? [String: Any],
                   payload["type"] as? String == "token_count",
@@ -580,7 +708,7 @@ struct UsageIndex {
             }
             let turn = (info["last_token_usage"] as? [String: Any])
                 ?? (last == nil ? info["total_token_usage"] as? [String: Any] : nil)
-            guard let turn else { continue }
+            guard let turn, !model.isEmpty else { continue }
             var e = record(dayString(date), model,
                            input: JSONCoerce.intVal(turn["input_tokens"]),
                            output: JSONCoerce.intVal(turn["output_tokens"])
@@ -590,13 +718,39 @@ struct UsageIndex {
             e.calls = 1
             out.append(e)
         }
-        if out.isEmpty, let last {
+        if out.isEmpty, let last, !model.isEmpty {
             var e = record(dayString(last.date), model,
                            input: last.input, output: last.output, read: last.cached)
             e.calls = 1
             out.append(e)
         }
-        return (out, last)
+        return (out, last, model)
+    }
+
+    /// Live proxy slug. `token_count` has none; never invent `"codex"`.
+    private static func codexModel(in obj: [String: Any]) -> String? {
+        guard let payload = obj["payload"] as? [String: Any] else { return nil }
+        let type = obj["type"] as? String
+        if type == "turn_context", let m = nonempty(payload["model"]) { return m }
+        if type == "session_meta",
+           let provenance = (payload["base_instructions"] as? [String: Any])?["provenance"] as? [String: Any],
+           let m = nonempty(provenance["model"]) {
+            return m
+        }
+        if type == "world_state",
+           let state = payload["state"] as? [String: Any],
+           let m = nonempty(state["model"]) {
+            return m
+        }
+        if let settings = payload["thread_settings"] as? [String: Any],
+           let m = nonempty(settings["model"]) {
+            return m
+        }
+        return nil
+    }
+
+    private static func nonempty(_ any: Any?) -> String? {
+        (any as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     private static func parse(_ kind: Substring, _ lines: [Data]) -> [ParsedEntry] {
@@ -674,6 +828,11 @@ struct UsageIndex {
     }
 
     static func loadCursorTotals() -> CursorRow? {
+        if !DiskPersistence.useDatabase {
+            guard let rec = UsageJSONStore.shared.loadCursor() else { return nil }
+            return CursorRow(input: rec.input, output: rec.output, calls: rec.calls,
+                             dbVersion: rec.dbVersion, pageCount: rec.pageCount)
+        }
         guard let db = connection() else { return nil }
         lock.lock(); defer { lock.unlock() }
         var stmt: OpaquePointer?
@@ -689,6 +848,12 @@ struct UsageIndex {
     }
 
     static func saveCursorTotals(_ row: CursorRow) {
+        if !DiskPersistence.useDatabase {
+            UsageJSONStore.shared.saveCursor(.init(
+                input: row.input, output: row.output, calls: row.calls,
+                dbVersion: row.dbVersion, pageCount: row.pageCount))
+            return
+        }
         guard let db = connection() else { return }
         lock.lock(); defer { lock.unlock() }
         var stmt: OpaquePointer?

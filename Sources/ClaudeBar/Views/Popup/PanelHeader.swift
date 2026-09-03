@@ -16,7 +16,6 @@ struct PanelHeader: View {
                     .font(Theme.Font.microSemibold)
                     .foregroundColor(Theme.base0)
             }
-            .symbolEffect(.pulse, options: .repeating, isActive: providerStore.anyClaudeBusy)
             Text("Axon")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
@@ -40,7 +39,7 @@ struct PanelHeader: View {
             }
             .buttonStyle(.glass)
             .sensoryFeedback(.selection, trigger: providerStore.sessions.map(\.pid))
-            .help("Refresh")
+            .help("刷新")
         }
         .padding(.horizontal, Theme.Space.s16).padding(.vertical, Theme.Space.s12)
     }

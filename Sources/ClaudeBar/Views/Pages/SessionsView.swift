@@ -96,7 +96,7 @@ struct SessionsView: View {
             active: busy
         ) {
             if alive.isEmpty {
-                emptyHint("无活跃 Claude Code 会话")
+                emptyHint("暂无 Claude Code 会话")
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
@@ -119,7 +119,7 @@ struct SessionsView: View {
             active: active
         ) {
             if alive.isEmpty {
-                emptyHint("无活跃 Cursor 会话")
+                emptyHint("暂无 Cursor 会话")
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
@@ -151,7 +151,7 @@ struct SessionsView: View {
             active: active
         ) {
             if alive.isEmpty {
-                emptyHint("无 \(kind.displayName) 会话")
+                emptyHint("暂无 \(kind.displayName) 会话")
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
@@ -171,7 +171,6 @@ struct SessionsView: View {
                 Image(systemName: icon)
                     .font(Theme.Font.micro)
                     .foregroundColor(active > 0 ? Theme.claude : Theme.textSecondary)
-                    .symbolEffect(.pulse, options: .repeating, isActive: active > 0)
                 Text(title.uppercased())
                     .font(Theme.Font.labelSection)
                     .foregroundColor(Theme.textSecondary)
@@ -324,7 +323,7 @@ private struct SessionTileFull: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume() }
         .hoverState($isHovered)
-        .help("\(session.cwd)\n双击在终端恢复")
+        .help("\(session.cwd)\n双击以在终端继续")
     }
 
     private func toggle() {
@@ -449,7 +448,7 @@ private struct CursorTileFull: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { openCursor() }
         .hoverState($isHovered)
-        .help("\(session.cwd)\n双击在 Cursor 打开")
+        .help("\(session.cwd)\n双击以在 Cursor 中打开")
     }
 
     /// Reveal the session's working directory in Finder.
@@ -546,7 +545,7 @@ private struct ExternalTileFull: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { revealCwd() }
         .hoverState($isHovered)
-        .help("\(session.cwd)\n双击在 Finder 显示")
+        .help("\(session.cwd)\n双击以在 Finder 中显示")
     }
 
     private func revealCwd() {

@@ -14,6 +14,13 @@ struct TrafficView: View {
     @State private var rawSlice: RawSlice = .request
     @StateObject private var jsonFold = JSONFoldControl()
     @State private var rawCopied = false
+    @State private var mode: TrafficMode = .inspector
+
+    enum TrafficMode: String, CaseIterable, Identifiable {
+        case inspector, log
+        var id: String { rawValue }
+        var label: String { self == .inspector ? "检查器" : "日志" }
+    }
 
     enum RawSlice: String, CaseIterable, Identifiable {
         case request, rewritten, response, sse
@@ -72,6 +79,49 @@ struct TrafficView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            modeBar
+            HairlineDivider()
+            if mode == .log {
+                ProxyLogView()
+            } else {
+                inspector
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.base0.opacity(0.35))
+    }
+
+    private var modeBar: some View {
+        HStack(spacing: Theme.Space.s8) {
+            Text("流量")
+                .font(Theme.Font.titleSmall)
+                .foregroundColor(Theme.textPrimary)
+            HStack(spacing: Theme.Space.s4) {
+                ForEach(TrafficMode.allCases) { m in
+                    let on = mode == m
+                    Button(m.label) { mode = m }
+                        .font(Theme.Font.caption)
+                        .foregroundColor(on ? .white : Theme.textSecondary)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(on ? Theme.claude.opacity(0.35) : Theme.cardFill(0.06)))
+                        .buttonStyle(.plain)
+                }
+            }
+            Spacer()
+            Circle()
+                .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
+                .frame(width: 6, height: 6)
+            Text(codexStore.proxyRunning ? "代理已启用" : "代理未启用")
+                .font(Theme.Font.captionMono)
+                .foregroundColor(Theme.textSecondary)
+        }
+        .padding(.horizontal, Theme.Space.s16)
+        .padding(.top, Theme.Space.s16)
+        .padding(.bottom, Theme.Space.s8)
+    }
+
+    private var inspector: some View {
         HStack(spacing: 0) {
             listPane
                 .frame(width: 300)
@@ -106,22 +156,6 @@ struct TrafficView: View {
 
     private var listPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Theme.Space.s8) {
-                Text("流量")
-                    .font(Theme.Font.titleSmall)
-                    .foregroundColor(Theme.textPrimary)
-                Spacer()
-                Circle()
-                    .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
-                    .frame(width: 6, height: 6)
-                Text(codexStore.proxyRunning ? "代理开" : "代理关")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(Theme.textSecondary)
-            }
-            .padding(.horizontal, Theme.Space.s12)
-            .padding(.top, Theme.Space.s16)
-            .padding(.bottom, Theme.Space.s8)
-
             HStack(spacing: Theme.Space.s4) {
                 ForEach(TrafficFilter.allCases) { f in
                     let on = filter == f
@@ -145,6 +179,7 @@ struct TrafficView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.s12)
+            .padding(.top, Theme.Space.s12)
             .padding(.bottom, Theme.Space.s8)
 
             TextField("模型 / 供应商", text: $query)
@@ -157,10 +192,10 @@ struct TrafficView: View {
 
             if filtered.isEmpty {
                 VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    Text("暂无抓包")
+                    Text("暂无记录")
                         .font(Theme.Font.body)
                         .foregroundColor(Theme.textSecondary)
-                    Text("在供应商卡片上打开「抓包」，再跑一轮 Claude Code 或 Codex。")
+                    Text("在供应商上启用流量记录后，Claude Code 与 Codex 的请求将显示于此。")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .fixedSize(horizontal: false, vertical: true)
@@ -211,10 +246,10 @@ struct TrafficView: View {
             .background(Theme.base0.opacity(0.2))
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                Text("抓包检查器")
+                Text("流量检查器")
                     .font(Theme.Font.titleSmall)
                     .foregroundColor(Theme.textPrimary)
-                Text("打开供应商上的抓包后，Claude Code 的 Anthropic 调用和 Codex 的 OpenAI 调用会出现在左侧。流式请求会边收边显示思考与正文。")
+                Text("在供应商上启用流量记录后，Claude Code 的 Anthropic 请求与 Codex 的 OpenAI 请求将显示在左侧。流式响应会随接收进度展示推理与正文。")
                     .font(Theme.Font.bodySmall)
                     .foregroundColor(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -423,9 +458,9 @@ struct TrafficView: View {
 
     private var rawEmpty: String {
         switch rawSlice {
-        case .rewritten: return "此请求没有改写（Anthropic 原样转发，或未开 Chat 桥接）。"
-        case .sse: return "非流式，或尚未结束。"
-        default: return "(empty)"
+        case .rewritten: return "此请求未经改写：Anthropic 原样转发，或未启用 Chat 桥接。"
+        case .sse: return "非流式请求，或尚未结束。"
+        default: return "空"
         }
     }
 
@@ -437,7 +472,7 @@ struct TrafficView: View {
                     .font(Theme.Font.microSemibold)
                     .foregroundColor(roleColor(role))
                 if live {
-                    Text("LIVE")
+                    Text("实时")
                         .font(Theme.Font.badgeMono)
                         .foregroundColor(Theme.claudeHi)
                 }
@@ -558,7 +593,7 @@ private struct TrafficRow: View {
                     .lineLimit(1)
                 Spacer()
                 if rec.state == .streaming || rec.state == .pending {
-                    Text("LIVE")
+                    Text("实时")
                         .font(Theme.Font.badgeMono)
                         .foregroundColor(Theme.claudeHi)
                 }

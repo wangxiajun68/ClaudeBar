@@ -9,7 +9,7 @@ struct EditableModel: Identifiable, Equatable {
     var disableCompact: Bool = true
     var disableExperimentalBetas: Bool = true
     var autoCompactWindow: String = ""
-    var reasoningEffort: String = "max"
+    var reasoningEffort: String = ""
 }
 
 /// Editor form view-model: owns all editing state, derived validation, and
@@ -95,19 +95,19 @@ final class ProviderEditorModel {
     // MARK: - Derived validation (craft-floor error states)
 
     var nameError: String? {
-        name.trimmingCharacters(in: .whitespaces).isEmpty ? "名称不能为空" : nil
+        name.trimmingCharacters(in: .whitespaces).isEmpty ? "请填写名称" : nil
     }
 
     var urlError: String? {
         let trimmed = baseURL.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "Base URL 不能为空" }
-        return URL(string: trimmed)?.host == nil ? "URL 无效" : nil
+        if trimmed.isEmpty { return "请填写 Base URL" }
+        return URL(string: trimmed)?.host == nil ? "Base URL 无效" : nil
     }
 
     var duplicateModelError: String? {
         let names = models.map { $0.name.trimmingCharacters(in: .whitespaces).lowercased() }
         let dupes = names.filter { name in names.filter { $0 == name }.count > 1 }
-        return dupes.isEmpty ? nil : "模型名重复: \(dupes.first ?? "")"
+        return dupes.isEmpty ? nil : "模型名称重复：\(dupes.first ?? "")"
     }
 
     var canSave: Bool {

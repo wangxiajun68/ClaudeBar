@@ -14,11 +14,7 @@ struct SelectionTintModifier: ViewModifier {
         content.background {
             if isActive {
                 RoundedRectangle(cornerRadius: corner)
-                    .fill(Color.clear)
-                    .glassEffect(
-                        .regular.tint(color.opacity(opacity)),
-                        in: RoundedRectangle(cornerRadius: corner)
-                    )
+                    .fill(color.opacity(opacity))
             }
         }
     }

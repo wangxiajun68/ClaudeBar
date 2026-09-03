@@ -69,7 +69,7 @@ struct UsageModelTile: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(hasCache
             ? "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens，缓存命中 \(stat.cacheHitPercent)%"
-            : "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens")
+            : "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) Token")
     }
 
     private var detailLine: String {
