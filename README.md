@@ -17,8 +17,21 @@
 </div>
 
 <p align="center">
-  <img src="docs/images/overview.png" alt="ClaudeBar overview" width="920">
+  <img src="docs/screenshots/main-window.png" alt="ClaudeBar 主窗口" width="920">
 </p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/menubar-popup.png" alt="菜单栏弹出面板" width="420"><br>
+      <sub>菜单栏弹出面板</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/widget.png" alt="桌面小组件" width="420"><br>
+      <sub>桌面小组件</sub>
+    </td>
+  </tr>
+</table>
 
 ClaudeBar 面向同时运行多家 AI 编程 Agent 的开发者：在菜单栏完成供应商切换，在主窗口查看会话状态、token 消耗与本机资源占用，并通过本地代理桥接 Codex 协议。
 
