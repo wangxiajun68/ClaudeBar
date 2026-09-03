@@ -12,9 +12,10 @@ build/
 *.xcworkspace/
 DerivedData/
 
-# Claude Code local settings
+# Claude Code / Codex local settings
 .claude/
 .claude/worktrees/
+.codex/
 
 # Design source (binary, edited via Pencil)
 *.pen
