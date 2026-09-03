@@ -102,14 +102,7 @@ struct MainWindowView: View {
 
     private var brand: some View {
         HStack(spacing: Theme.Space.s8) {
-            ZStack {
-                Circle()
-                    .fill(Theme.claude)
-                    .frame(width: 22, height: 22)
-                Text("A")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.base0)
-            }
+            BrandMark(size: 22)
             Text("Axon")
                 .font(Theme.Font.titleSmall)
                 .tracking(Theme.Tracking.titleSmall)

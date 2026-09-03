@@ -8,14 +8,7 @@ struct PanelHeader: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
-            ZStack {
-                Circle()
-                    .fill(Theme.claude)
-                    .frame(width: 20, height: 20)
-                Text("A")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.base0)
-            }
+            BrandMark(size: 20)
             Text("Axon")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
