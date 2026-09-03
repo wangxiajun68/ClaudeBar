@@ -35,10 +35,6 @@ final class ProviderEditorModel {
     var saveToken = 0
     private(set) var saveFlashUntil: Date?
 
-    var wireAPI = "chat"
-    var requiresOpenAIAuth = false
-    var preserveOfficialLogin = true
-    var disableResponseStorage = true
     var captureEnabled = false
 
     private unowned var store: ProviderStore?
@@ -73,29 +69,7 @@ final class ProviderEditorModel {
         activeModelID = p.activeModelID ?? p.models.first?.id
         editingModelID = activeModelID
         newModelName = ""
-        loadCodexExtras(for: p)
-    }
-
-    private func loadCodexExtras(for claude: Provider) {
-        guard let twin = store?.peer?.providers.first(where: { ProviderBridge.matches(claude, $0) }) else {
-            wireAPI = ProviderBridge.openaiCompatibleURL(claude.baseURL).lowercased().contains("api.openai.com")
-                ? "responses" : "chat"
-            requiresOpenAIAuth = false
-            preserveOfficialLogin = true
-            disableResponseStorage = true
-            captureEnabled = claude.captureEnabled
-            return
-        }
-        let extras = ProviderBridge.extras(from: twin)
-        wireAPI = extras.wireAPI
-        requiresOpenAIAuth = extras.requiresOpenAIAuth
-        preserveOfficialLogin = extras.preserveOfficialLogin
-        disableResponseStorage = extras.disableResponseStorage
-        captureEnabled = claude.captureEnabled
-        for i in models.indices {
-            let slug = ProviderBridge.stripClaudeModelSuffix(models[i].name).lowercased()
-            models[i].reasoningEffort = extras.reasoningBySlug[slug] ?? models[i].reasoningEffort
-        }
+        captureEnabled = p.captureEnabled
     }
 
     // MARK: - Derived validation (craft-floor error states)
@@ -183,9 +157,8 @@ final class ProviderEditorModel {
         modelFetchMessage = nil
         let url = baseURL
         let key = authToken
-        let wire = wireAPI
         Task {
-            let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key, wireAPI: wire)
+            let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key)
             isFetchingModels = false
             switch result {
             case .success(let payload):
@@ -244,9 +217,9 @@ final class ProviderEditorModel {
         p.activeModelID = activeModelID ?? p.models.first?.id
         p.captureEnabled = captureEnabled
 
-        store.updateProvider(p, extras: currentExtras)
+        store.updateProvider(p)
 
-        // If active, re-apply current model (writes Claude + Codex live configs).
+        // If active, re-apply so settings.json matches the edited row.
         if store.activeProviderID == p.id,
            let model = p.models.first(where: { $0.id == p.activeModelID }) ?? p.models.first {
             store.activateModel(providerID: p.id, modelID: model.id)
@@ -291,23 +264,14 @@ final class ProviderEditorModel {
         }
     }
 
-    private var currentExtras: ProviderBridge.CodexExtras {
-        var map: [String: String] = [:]
-        for m in models {
-            map[ProviderBridge.stripClaudeModelSuffix(m.name).lowercased()] = m.reasoningEffort
-        }
-        return ProviderBridge.CodexExtras(
-            wireAPI: wireAPI,
-            requiresOpenAIAuth: requiresOpenAIAuth,
-            preserveOfficialLogin: preserveOfficialLogin,
-            disableResponseStorage: disableResponseStorage,
-            reasoningBySlug: map)
-    }
-
     func addFromPreset(_ preset: CodexProvider) {
         guard let store else { return }
         store.addFromCodexPreset(preset)
         selectedID = store.providers.last?.id
         loadSelected()
+    }
+
+    func importFromCodex() {
+        store?.importFromCodex()
     }
 }

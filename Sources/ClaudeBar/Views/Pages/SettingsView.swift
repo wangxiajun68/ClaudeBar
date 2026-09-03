@@ -111,8 +111,8 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     ConnectivityProbeButton(
-                        title: "检测当前模型",
-                        help: "向 Claude（Anthropic Messages）与 Codex（Chat / Responses）各发送一次最短请求。",
+                        title: "检测 Claude Code",
+                        help: "向当前 Claude Code 供应商发送一次最短 Anthropic Messages 请求。",
                         outcome: activeVendorOutcome,
                         disabled: providerStore.activeProvider == nil
                     ) {
@@ -121,7 +121,21 @@ struct SettingsView: View {
                             id: p.id,
                             claude: p,
                             model: p.activeModel,
-                            codex: providerStore.peer?.providers.first { ProviderBridge.matches(p, $0) })
+                            codex: nil)
+                    }
+                    ConnectivityProbeButton(
+                        title: "检测 Codex",
+                        help: "向当前 Codex 供应商发送一次最短 Chat / Responses 请求。",
+                        outcome: activeCodexOutcome,
+                        tint: Theme.codex,
+                        disabled: codexStore.activeProvider == nil
+                    ) {
+                        guard let p = codexStore.activeProvider else { return }
+                        tests.testVendor(
+                            id: p.id,
+                            claude: p.asDisplayProvider,
+                            model: p.activeModel.map { ModelConfig(id: $0.id, name: $0.name) },
+                            codex: p)
                     }
                 }
 
@@ -263,15 +277,32 @@ struct SettingsView: View {
     }
 
     private var currentVendorCaption: String {
-        guard let p = providerStore.activeProvider else {
-            return "尚未激活模型。请先在「模型」页选择。"
+        var parts: [String] = []
+        if let p = providerStore.activeProvider {
+            parts.append("Claude Code：\(p.name) · \(p.activeModel?.name ?? "—")")
         }
-        let model = p.activeModel?.name ?? "—"
-        return "\(p.name) · \(model)"
+        if let p = codexStore.activeProvider {
+            parts.append("Codex：\(p.name) · \(p.activeModel?.name ?? "—")")
+        }
+        if parts.isEmpty {
+            return "尚未激活模型。请先在「模型」页分别选择 Claude Code 与 Codex。"
+        }
+        return parts.joined(separator: "\n")
     }
 
     private var activeVendorOutcome: ConnectivityOutcome {
-        guard let id = providerStore.activeProviderID else { return .idle }
-        return tests.outcome(ConnectivityTestCenter.vendorKey(id))
+        guard let p = providerStore.activeProvider else { return .idle }
+        if let m = p.activeModel {
+            return tests.outcome(ConnectivityTestCenter.vendorModelKey(p.id, m.id))
+        }
+        return tests.outcome(ConnectivityTestCenter.vendorKey(p.id))
+    }
+
+    private var activeCodexOutcome: ConnectivityOutcome {
+        guard let p = codexStore.activeProvider else { return .idle }
+        if let m = p.activeModel {
+            return tests.outcome(ConnectivityTestCenter.vendorModelKey(p.id, m.id))
+        }
+        return tests.outcome(ConnectivityTestCenter.vendorKey(p.id))
     }
 }

@@ -11,6 +11,7 @@ struct ProviderTile: View {
     var onToggleCapture: (() -> Void)? = nil
     var testOutcome: ConnectivityOutcome = .idle
     var onTest: (() -> Void)? = nil
+    var accent: Color = Theme.claude
 
     /// Popup density: tighter fonts/padding, single-column model list.
     var dense: Bool = false
@@ -67,7 +68,7 @@ struct ProviderTile: View {
         .overlay(alignment: .leading) {
             if isActive {
                 Rectangle()
-                    .fill(Theme.claude)
+                    .fill(accent)
                     .frame(width: 2)
                     .clipShape(RoundedRectangle(cornerRadius: 1))
             }
@@ -80,7 +81,7 @@ struct ProviderTile: View {
     @ViewBuilder
     private var header: some View {
         Button(action: headerAction) {
-            headerStack(activeModelName: activeModel?.name, accent: Theme.accent)
+            headerStack(activeModelName: activeModel?.name, accent: accent)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -212,10 +213,10 @@ struct ProviderTile: View {
 
     private func radioIndicator(isSelected: Bool) -> some View {
         ZStack {
-            Circle().strokeBorder(isSelected ? Theme.accent : Theme.statusIdle.opacity(0.4), lineWidth: 1.5)
+            Circle().strokeBorder(isSelected ? accent : Theme.statusIdle.opacity(0.4), lineWidth: 1.5)
                 .frame(width: 13, height: 13)
             if isSelected {
-                Circle().fill(Theme.accent).frame(width: 7, height: 7)
+                Circle().fill(accent).frame(width: 7, height: 7)
                     .transition(.scale.combined(with: .opacity))
             }
         }
@@ -235,6 +236,7 @@ struct PopupModelTile: View {
     let onToggleCapture: () -> Void
     var testOutcome: ConnectivityOutcome = .idle
     let onTest: () -> Void
+    var accent: Color = Theme.claude
 
     @State private var isHovered = false
 
@@ -279,7 +281,7 @@ struct PopupModelTile: View {
         .overlay(alignment: .leading) {
             if isActive {
                 Rectangle()
-                    .fill(Theme.claude)
+                    .fill(accent)
                     .frame(width: 2)
                     .clipShape(RoundedRectangle(cornerRadius: 1))
             }

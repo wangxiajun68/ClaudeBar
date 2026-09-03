@@ -1,92 +1,79 @@
-**[English](README.en.md)** | **[中文](README.md)**
+**English** · **[中文](README.md)**
 
-<div align="center">
-
-<img src="Sources/AppIcon-1024.png" width="96" alt="ClaudeBar">
+![ClaudeBar](Sources/AppIcon-1024.png)
 
 # ClaudeBar
 
-**macOS menu bar — multi-agent model switching, session monitoring, usage stats, and local LLM proxy capture.**
+macOS menu bar — multi-agent model switching, session monitoring, usage stats, and local LLM proxy capture.
 
-[![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)](https://github.com/wangxiajun68/ClaudeBar/releases)
-[![macOS](https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)](https://swift.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)![macOS 15+](https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white)![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)![MIT](https://img.shields.io/badge/license-MIT-green)
 
-[**Download latest release**](https://github.com/wangxiajun68/ClaudeBar/releases/latest)
+**[Download latest release](https://github.com/wangxiajun68/ClaudeBar/releases/latest)**
 
-</div>
-
-For developers running Claude Code, Cursor, and Codex side by side. All data stays local — configs and keys are never uploaded.
+For developers running Claude Code, Cursor, and Codex side by side. 
 
 ## Install
 
-| OS | macOS 15+ · Apple Silicon (`arm64`) |
-| Method | Download DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) → drag to Applications |
+Requires **macOS 15+** and Apple Silicon (`arm64`). Download the DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) and drag it to Applications.
+
+If Gatekeeper blocks the app:
 
 ```bash
-# If Gatekeeper blocks the app
 xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 ```
 
-## Core features
 
-<table>
-  <tr>
-    <td width="52%" align="center">
-      <img src="docs/screenshots/main-window.png" alt="Main window" width="100%">
-    </td>
-    <td valign="top">
 
-**Local LLM proxy** — forwards on `127.0.0.1`, bridges Chat / Responses APIs; with traffic recording, inspect conversations, tool calls, and raw payloads.
+## Screenshots
 
-**Model switching** — unified Claude Code + Codex configs; one-click activation writes `settings.json` / `config.toml`.
+![Traffic inspector](docs/screenshots/traffic.png)
 
-**Sessions · usage · resources** — tri-agent session aggregation, token stats, CPU / GPU / memory attribution.
+*Traffic inspector · compact view: consecutive tool calls and system prompts are collapsed by default, with keyword search.*
 
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/menubar-popup.png" alt="Menu bar popup" width="88%">
-    </td>
-    <td valign="top">
 
-**Menu bar popup** — switch models, scan sessions, check resources and usage without opening the main window.
+| Main window                                      | Menu-bar popup                                        | Desktop widget                         |
+| ------------------------------------------------ | ----------------------------------------------------- | -------------------------------------- |
+| ![Main window](docs/screenshots/main-window.png) | ![Menu-bar popup](docs/screenshots/menubar-popup.png) | ![Widget](docs/screenshots/widget.png) |
 
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/widget.png" alt="Widget" width="72%">
-    </td>
-    <td valign="top">
 
-**Desktop widget** — today's token total and active sessions at a glance.
 
-    </td>
-  </tr>
-</table>
 
-### Quick start
+## Features
 
-| Goal | Path |
-|------|------|
-| **Capture traffic** | Settings → local proxy → enable recording on model card → **Traffic** |
-| **Switch model** | **Models** page or menu bar popup → activate → open new terminal session |
-| **Resume session** | **Sessions** page or popup → click card |
-| **Global search** | `⌘K` on any page — search pages / sessions / models |
-| **Third-party client** | Base URL → `http://127.0.0.1:<port>/v1` (key injected by proxy) |
+- **Local LLM proxy** — forwards on `127.0.0.1`, bridges Chat / Responses. With traffic recording, inspect conversations, tool calls, images, and raw payloads.
+- **Model switching** — Claude Code and Codex keep separate provider lists; activation writes `settings.json` / `config.toml` independently. Copy configs only via explicit import in Manage.
+- **Sessions · usage · resources** — tri-agent session aggregation, token stats, CPU / GPU / memory attribution.
+- **Menu-bar popup** — switch models, scan sessions, check resources and usage without opening the main window.
+- **Desktop widget** — today's token total and active sessions at a glance.
+
+
+
+## Quick start
+
+
+| Goal                   | Path                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Capture traffic**    | Settings → local proxy → enable recording on a model card → **Traffic**                               |
+| **Switch model**       | **Models** page (Claude Code / Codex tabs) or menu-bar popup → activate → open a new terminal session |
+| **Resume session**     | **Sessions** page or popup → click a card                                                             |
+| **Global search**      | `⌘K` on any page — search pages / sessions / models                                                   |
+| **Third-party client** | Base URL → `http://127.0.0.1:<port>/v1` (key injected by the proxy)                                   |
+
+
+
 
 ## Data & privacy
 
-| Source | Path | Access |
-|--------|------|--------|
-| Claude Code | `~/.claude/` | Read-only (writes `settings.json` on switch) |
-| Codex | `~/.codex/` | Read-only (writes `config.toml` on switch) |
-| Cursor | `~/Library/.../state.vscdb` | Read-only |
-| Proxy captures | `~/Library/Application Support/ClaudeBar/logs/` | Written when recording is on |
+
+| Source         | Path                                            | Access                                       |
+| -------------- | ----------------------------------------------- | -------------------------------------------- |
+| Claude Code    | `~/.claude/`                                    | Read-only (writes `settings.json` on switch) |
+| Codex          | `~/.codex/`                                     | Read-only (writes `config.toml` on switch)   |
+| Cursor         | `~/Library/.../state.vscdb`                     | Read-only                                    |
+| Proxy captures | `~/Library/Application Support/ClaudeBar/logs/` | Written when recording is on                 |
+
+
+
 
 ## Build from source
 
@@ -94,7 +81,7 @@ xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 git clone https://github.com/wangxiajun68/ClaudeBar.git && cd ClaudeBar && make build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) · [docs/RELEASING.md](docs/RELEASING.md) · [FAQ](docs/FAQ.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md) · [docs/VERSIONING.md](docs/VERSIONING.md) · [docs/RELEASING.md](docs/RELEASING.md) · [docs/CHANGELOG.md](docs/CHANGELOG.md) · [FAQ](docs/FAQ.md)
 
 ## License
 

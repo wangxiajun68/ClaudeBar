@@ -15,7 +15,7 @@ CI (tag v*)       →  release.yml  →  DMG + zip + GitHub Release
 - **开发构建**：`make build` 或 `bash Sources/build.sh`，ad-hoc 签名，安装到 `/Applications/ClaudeBar.app`。
 - **CI 构建**：`CLAUDEBAR_SKIP_INSTALL=1`，只产出 `.build/ClaudeBar.app`。
 - **发版打包**：`CLAUDEBAR_PACKAGE=1` 额外产出 `.build/dist/*.dmg`、`.zip` 及 `.sha256`。
-- **GitHub Release**：`main` 上打 tag `vMAJOR.MINOR.PATCH`；[release.yml](../../.github/workflows/release.yml) 自动上传。见 [RELEASING.md](../RELEASING.md)。
+- **GitHub Release**：`main` 上打 tag `vMAJOR.MINOR.PATCH`；[release.yml](../../.github/workflows/release.yml) 自动上传。版本号约定见 [VERSIONING.md](../VERSIONING.md)，步骤见 [RELEASING.md](../RELEASING.md)。
 
 ## 运行
 

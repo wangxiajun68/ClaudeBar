@@ -59,16 +59,11 @@ final class ConnectivityTestCenter: ObservableObject {
         }
     }
 
-    func testEditor(baseURL: String, apiKey: String, modelName: String, wireAPI: String) {
+    func testEditor(baseURL: String, apiKey: String, modelName: String) {
         run(Self.editorKey) {
             let claude = Provider(name: "editor", authToken: apiKey, baseURL: baseURL,
                                   models: [ModelConfig(name: modelName)])
-            let openaiURL = ProviderBridge.openaiCompatibleURL(baseURL)
-            let slug = ProviderBridge.stripClaudeModelSuffix(modelName)
-            let twin = CodexProvider(name: "editor", apiKey: apiKey, baseURL: openaiURL,
-                                     wireAPI: wireAPI,
-                                     models: [CodexModelConfig(name: slug)])
-            return await Self.probeVendor(claude: claude, modelName: modelName, codex: twin)
+            return await Self.probeVendor(claude: claude, modelName: modelName, codex: nil)
         }
     }
 
@@ -86,6 +81,21 @@ final class ConnectivityTestCenter: ObservableObject {
     private static func probeVendor(claude: Provider, modelName: String?,
                                     codex: CodexProvider?) async -> ConnectivityOutcome {
         let name = (modelName ?? claude.activeModel?.name ?? "").trimmingCharacters(in: .whitespaces)
+        if let codex {
+            let url = codex.baseURL.trimmingCharacters(in: .whitespaces)
+            let key = codex.apiKey.trimmingCharacters(in: .whitespaces)
+            let slug = (modelName ?? codex.activeModel?.name ?? name).trimmingCharacters(in: .whitespaces)
+            if url.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL") }
+            if key.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未填写 API Key") }
+            if slug.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未指定模型") }
+            let hit = await ConnectivityProbe.openai(
+                baseURL: url, apiKey: key, model: slug, wireAPI: codex.wireAPI)
+            return ConnectivityOutcome(
+                state: hit.ok ? .passed : .failed,
+                detail: "Codex \(hit.ok ? "✓" : "✗") \(hit.summary)",
+                latencyMS: hit.ok ? hit.latencyMS : nil)
+        }
+
         if claude.baseURL.trimmingCharacters(in: .whitespaces).isEmpty {
             return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL")
         }
@@ -95,27 +105,11 @@ final class ConnectivityTestCenter: ObservableObject {
         if name.isEmpty {
             return ConnectivityOutcome(state: .failed, detail: "未指定模型")
         }
-
-        let slug = ProviderBridge.stripClaudeModelSuffix(name)
-        let openaiURL = (codex?.baseURL).flatMap { $0.isEmpty ? nil : $0 }
-            ?? ProviderBridge.openaiCompatibleURL(claude.baseURL)
-        let openaiKey = (codex?.apiKey).flatMap { $0.isEmpty ? nil : $0 } ?? claude.authToken
-        let wire = codex?.wireAPI ?? (openaiURL.lowercased().contains("api.openai.com") ? "responses" : "chat")
-
-        async let claudeHit = ConnectivityProbe.anthropic(
+        let hit = await ConnectivityProbe.anthropic(
             baseURL: claude.baseURL, apiKey: claude.authToken, model: name)
-        async let openaiHit = ConnectivityProbe.openai(
-            baseURL: openaiURL, apiKey: openaiKey, model: slug, wireAPI: wire)
-        let (c, o) = await (claudeHit, openaiHit)
-
-        let ok = c.ok && o.ok
-        var parts: [String] = []
-        parts.append("Claude \(c.ok ? "✓" : "✗") \(c.summary)")
-        parts.append("Codex \(o.ok ? "✓" : "✗") \(o.summary)")
-        let latency = [c, o].filter(\.ok).map(\.latencyMS).min()
         return ConnectivityOutcome(
-            state: ok ? .passed : .failed,
-            detail: parts.joined(separator: "  ·  "),
-            latencyMS: latency)
+            state: hit.ok ? .passed : .failed,
+            detail: "Claude \(hit.ok ? "✓" : "✗") \(hit.summary)",
+            latencyMS: hit.ok ? hit.latencyMS : nil)
     }
 }

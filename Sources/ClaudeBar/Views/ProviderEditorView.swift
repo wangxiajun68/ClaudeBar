@@ -120,7 +120,8 @@ struct ProviderEditorView: View {
                 onNew: { model.addNew() },
                 onPreset: { model.addFromPreset($0) },
                 onDuplicate: { model.duplicateSelected() },
-                onDelete: { model.deleteSelected() }
+                onDelete: { model.deleteSelected() },
+                onImportFromClaude: { model.importFromCodex() }
             )
         }
         .frame(width: 220)
@@ -162,46 +163,16 @@ struct ProviderEditorView: View {
                 TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)
                     .textFieldStyle(.roundedBorder)
             }
-            Text("Codex 将写入：\(ProviderBridge.openaiCompatibleURL(model.baseURL))")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textTertiary())
-                .lineLimit(1)
-                .truncationMode(.middle)
-            HStack(alignment: .top, spacing: Theme.Space.s16) {
-                EditorField(label: "Codex 上游格式") {
-                    Picker("", selection: $model.wireAPI) {
-                        Text("Responses").tag("responses")
-                        Text("Chat").tag("chat")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-            }
-            Toggle("切换第三方供应商时保留官方登录", isOn: $model.preserveOfficialLogin)
-                .font(Theme.Font.bodySmall)
-            Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
-                .font(Theme.Font.bodySmall)
-            Toggle(isOn: $model.disableResponseStorage) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("不向云端持久化 Responses")
-                        .font(Theme.Font.bodySmall)
-                    Text("对应 disable_response_storage。开启后上游不保存 Responses 会话，第三方中转建议开启。关闭后，官方 API 可跨请求续写同一条 Response。")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
             ConnectivityProbeButton(
                 title: "检测连通性",
-                help: "使用当前表单中的地址、密钥与所选模型发送最短请求，无需先保存。",
+                help: "使用当前表单中的地址、密钥与所选模型发送最短 Anthropic 请求，无需先保存。",
                 outcome: tests.outcome(ConnectivityTestCenter.editorKey)
             ) {
                 let name = model.models.first(where: { $0.id == model.editingModelID })?.name
                     ?? model.models.first(where: { $0.id == model.activeModelID })?.name
                     ?? model.models.first?.name
                     ?? ""
-                tests.testEditor(baseURL: model.baseURL, apiKey: model.authToken,
-                                 modelName: name, wireAPI: model.wireAPI)
+                tests.testEditor(baseURL: model.baseURL, apiKey: model.authToken, modelName: name)
             }
         }
         .padding(Theme.Space.s12)
@@ -304,26 +275,6 @@ struct ProviderEditorView: View {
                             .textFieldStyle(.roundedBorder)
                     }
                 }
-                EditorField(label: "推理强度") {
-                    Picker("", selection: model.binding(for: editingID, keyPath: \.reasoningEffort)) {
-                        Text("默认").tag("")
-                        Text("none").tag("none")
-                        Text("minimal").tag("minimal")
-                        Text("low").tag("low")
-                        Text("medium").tag("medium")
-                        Text("high").tag("high")
-                        Text("xhigh").tag("xhigh")
-                        Text("max").tag("max")
-                        Text("ultra").tag("ultra")
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: 160, alignment: .leading)
-                }
-                Text("选择「默认」则不写入 model_reasoning_effort，由 Codex 或模型目录决定。")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
-                    .fixedSize(horizontal: false, vertical: true)
                 Toggle("禁用压缩", isOn: model.binding(for: editingID, keyPath: \.disableCompact))
                     .font(Theme.Font.bodySmall)
                 Toggle("禁用实验性 Beta", isOn: model.binding(for: editingID, keyPath: \.disableExperimentalBetas))

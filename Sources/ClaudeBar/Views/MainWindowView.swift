@@ -40,6 +40,10 @@ struct MainWindowView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
+    /// Traffic inspector keeps multi-MB payloads in memory; remounting it on
+    /// every tab switch is what makes 流量 feel stuck. Stay mounted after
+    /// the first visit.
+    @State private var trafficMounted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -143,26 +147,43 @@ struct MainWindowView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        Group {
-            switch selectedPage ?? .dashboard {
-            case .dashboard: DashboardView(onNavigate: navigate(to:))
-            case .sessions: SessionsView()
-            case .providers: ProvidersView()
-            case .usage: UsageView()
-            case .traffic: TrafficView()
-            case .settings: SettingsView()
+        ZStack {
+            if selectedPage != .traffic {
+                Group {
+                    switch selectedPage ?? .dashboard {
+                    case .dashboard: DashboardView(onNavigate: navigate(to:))
+                    case .sessions: SessionsView()
+                    case .providers: ProvidersView()
+                    case .usage: UsageView()
+                    case .settings: SettingsView()
+                    case .traffic: EmptyView()
+                    }
+                }
+                .id(selectedPage)
+                .transition(.opacity)
+            }
+            if trafficMounted {
+                TrafficView()
+                    .opacity(selectedPage == .traffic ? 1 : 0)
+                    .allowsHitTesting(selectedPage == .traffic)
+                    .accessibilityHidden(selectedPage != .traffic)
             }
         }
-        .id(selectedPage)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity)
+        .onChange(of: selectedPage) { _, page in
+            if page == .traffic { trafficMounted = true }
+        }
     }
 
-    /// Centralized navigation: a page change animates the tab selection and
-    /// the detail swap together, fast.
+    /// Traffic skips the page fade — animating a rebuilt inspector is the hitch.
     private func navigate(to page: AppPage) {
-        withAnimation(Theme.Motion.page) {
+        if page == .traffic { trafficMounted = true }
+        if page == .traffic || selectedPage == .traffic {
             selectedPage = page
+        } else {
+            withAnimation(Theme.Motion.page) {
+                selectedPage = page
+            }
         }
     }
 }

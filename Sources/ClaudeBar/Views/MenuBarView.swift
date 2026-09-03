@@ -10,6 +10,7 @@ extension Notification.Name {
 /// `PanelState`. Provider editing opens the main window.
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
 
@@ -27,7 +28,7 @@ struct MenuBarView: View {
 
             Divider().background(Theme.divider)
 
-            if !providerStore.hasSettingsFile {
+            if !providerStore.hasSettingsFile && codexStore.providers.isEmpty {
                 missingSettingsView
             } else {
                 // Sections stack vertically; each scrolls independently rather

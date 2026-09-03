@@ -1,61 +1,68 @@
-# 更新日志 / Changelog
+# 更新日志
 
-> 本日志记录 ClaudeBar 各版本的演进。日期为代码实际提交日期，由文件修改时间与代码内容推断。
+本文件记录 ClaudeBar **用户可见**的版本变化。版本规则见 [VERSIONING.md](VERSIONING.md)，发版步骤见 [RELEASING.md](RELEASING.md)。
+
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ---
 
 ## [Unreleased]
 
-### 文档与分发
-- 文档体系重写：统一索引、FAQ、CONTRIBUTING、SECURITY、Issue/PR 模板。
-- 用户安装路径改为 **GitHub Releases DMG**；`Sources/build.sh` 明确为开发者 / CI 专用。
-- Release workflow 产出 `ClaudeBar-<version>-macOS-arm64.dmg`（主）+ zip（备）+ `.sha256`。
-- 最低系统降至 **macOS 15+**；`adaptiveGlassButton()` 在 26+ 启用原生 Liquid Glass。
+---
 
-### 基础设施
-- GitHub Actions：`macos-26` CI（`CLAUDEBAR_SKIP_INSTALL=1`）；`v*` tag 触发 Release 打包。
-- 版本号单一来源：仓库根目录 `VERSION`，由 `build.sh` 写入 Info.plist。
-- Issue / PR 模板、`SECURITY.md`、Dependabot、贡献指南分支约定。
+## [1.9.0] — 2026-09-03
+
+Claude / Codex 供应商独立选择；流量简洁视图默认折叠工具与系统提示，并支持搜索。
+
+### 新增
+
+- 流量简洁视图：连续工具调用、系统提示默认折叠；对话区支持关键词搜索。
+- 流量检查器可渲染请求里的图片（base64 落盘后按文件引用显示）。
+- 版本管理文档 [`docs/VERSIONING.md`](VERSIONING.md)；GitHub Release 说明自动截取对应 CHANGELOG 段。
+
+### 变更
+
+- Claude Code 与 Codex 的供应商列表**各自独立**，激活一侧不再改写另一侧配置。需要拷贝时到管理页手动「导入」。
+- 菜单栏 popup 分栏展示并切换 Claude / Codex 模型；设置页连通性检测按协议分开。
+- README 增加流量检查器截图，修正表格排版。
+
+### 性能
+
+- 流量页首次打开后保留在内存，避免每次切 tab 重建整页。
+- 对话解析与图片解码改到后台；简洁模式截断超长工具/系统正文，主线程不再吞整份请求 JSON。
+
+### 修复
+
+- 菜单栏未观察 Codex 列表时，切换模型或流量记录开关界面不刷新。
+- 仅使用 Codex、没有 Claude `settings.json` 时 popup 被整块挡住。
 
 ---
 
-## [1.8.0] — 2026-08-29 · 宫格重构 + 空闲通知
+## [1.8.0] — 2026-09-03
 
-### 变更 — 全界面宫格化（瓦片）
-- 新增 `Theme.GridLayout.Preset` 列模板（`pageMetric` 4 等分 / `pageSession`·`pageUsage`·`pageProvider` 自适应 / `popupSession`·`popupProvider`·`popupUsage` 2 列）与 `Views/Shared/Tile.swift`（`TileGrid` + `MetricTile` + `.tile()` modifier）——每个数据域的布局只在一处决定。
-- 主窗口 5 页全部瓦片化：Dashboard（4 指标瓦片 + 会话总览 + 用量 Top）、Sessions（`SessionTileFull`，瓦片内展开子 agent）、Providers（`ProviderTile` 宫格 + accent 左缘选中态）、Usage（每模型一个 `UsageModelTile`）。
-- popup 同步宫格化：供应商区改 `ProviderTile` 2 列（瓦片内 chevron 展开模型行，收起时等高）；会话区 2 列 `SessionCardView`/`CursorSessionCardView`（含 `HeartbeatSparkline`）；用量区 2 列 `UsageModelTile`。
-- popup 拆分：`Views/MenuBarView.swift` 变组合壳，内容移入 `Views/Popup/` 五文件（`PanelHeader`/`ProvidersPanel`/`SessionsPanel`/`UsagePanel`/`PanelState`）；编辑器窗口管理下沉 `ProviderEditorWindowController`；表单模型下沉 `Models/ProviderEditorModel.swift`（校验 + spinner）。
-- 统一组件：`SectionHeader`/`StatusDot`/`HoverActionChips`/`FeedbackToast`/`StandbyEmptyState`/`UsageBar`（`UsageBarRow`/`UsageModelTile`/`ProportionBar`/`MetricText`）。
+本地 LLM 代理、Codex 供应商、流量检查器，以及主窗口宫格与空闲通知。最低系统 **macOS 15+**，安装包改为 GitHub Releases DMG。
 
-### 新增 — 空闲通知
-- `Models/AppPreferences.swift`：`idleNotifyEnabled` 开关（UserDefaults 持久化，默认开；popup 铃铛按钮 + 设置页 Toggle）。
-- `Models/IdleTransitionDetector.swift`：busy→idle 边沿检测。
-- `Utils/NotificationService.swift`：UNUserNotificationCenter 封装（授权、`IDLE_SESSION` category 含 "在终端恢复" 动作、"Claude 等你输入"/"Cursor 等你输入" 通知）；点按经 `.resumeSession` 通知回 AppDelegate 在终端恢复会话。
-- `ProviderStore` 新增 `heartbeats`（busy/idle 采样轨迹，`AppConfig.heartbeatLength`）与空闲检测接线；轮询间隔/心跳长度/Widget key 收敛到新 `Models/AppConfig.swift`。
+### 新增
 
-### 清理 — 数据层
-- 删除旧 Preset 迁移通道：`MigrationHelper`、`Preset`/`PresetsFile`、`FilePaths.oldPresetsFile`（`claude-bar-presets.json` 不再读取）；`Provider` 保留旧字段解码兼容。
-- Widget 快照写入抽到 `Models/WidgetSnapshotWriter.swift`；会话派生量抽到 `Models/ProviderStore+Derived.swift`。
+- **本机 LLM 代理**：`127.0.0.1` 转发 Anthropic Messages 与 OpenAI Chat / Responses；Chat 桥接与 MCP 工具名修复。
+- **流量检查器**：请求列表、对话 / 工具 / 原始报文、流式展示、访问日志；供应商卡片可开关流量记录。
+- **Codex 供应商**：独立 `~/.claude/claude-bar-codex-providers.json`，激活写 `~/.codex/config.toml`；支持预设与互导。
+- **空闲通知**：会话由忙碌转空闲时系统通知，可在终端恢复。
+- 外部会话纳入 Codex（及当时的其它 CLI）巡检；用量改为 SQLite 日聚合索引。
+- 本机资源条：会话相关 CPU / GPU / 内存归因。
+- GitHub Actions CI 与 `v*` Release 打包（DMG + zip + checksums）。
 
----
+### 变更
 
+- 主窗口改为顶部导航 + 宫格瓦片（概览 / 会话 / 模型 / 用量）；菜单栏 popup 同步宫格。
+- 模型页可管理 Claude 供应商与预设；应用图标更换为 Axon。
+- 用户安装路径改为 Releases DMG；`Sources/build.sh` 仅供开发与 CI。版本号单一来源：根目录 `VERSION`。
 
-### 删除 — 装饰性组件（不承载数据的视觉全部移除）
-- `Views/Shared/LiveRadar.swift`（实时雷达，含 `RadarBlip`/`RadarAgentDetail`）、`LivePulseGraph.swift`（伪正弦信号历史，不编码真实数据）、`SignalTrace.swift`（动画均衡器）、`PointerFX.swift`（`TiltOnHover`/`SpecularSheen`/`CursorSpotlight`）。
-- Theme token：`enum Radar`、`accentGradient`/`cursorGradient`/`barGradient`/`contextGradient`（各调用点改纯色 `barColor`/`contextColor`/`claude`）、`beaconGlow`/`ambientGlow`、`glassCard`、`Elevation`+`elevation()`、`glassContainer`/`topLuminance`、`Animation.lively`。
+### 移除
 
-### 变更 — 动效原则：全部状态驱动
-- 仅保留有动机的动效：hover 反馈、busy 状态脉冲（`StatusBadge`/header orb）、页面切换淡入、`contentTransition(.numericText())` 数字滚动。删除 scrollTransition、symbolEffect(.bounce)、玻璃 morph 侧栏 pill（`glassEffectID` matchedGeometry → 简单选中填充）、`GlassEffectContainer` 非必要包裹。
-
-### 变更 — Dashboard 信息化
-- 移除雷达 hero + "信号历史"，新布局：**指标头行**（4 个 StatTile：活跃配置/余额/会话 busy-total/Token 总量，tabular 数字，点按跳转对应页）→ **活跃会话总览**（每行：源色点 + busy 点 + 项目/活动 + ContextBar + 上下文标签 + 更新时间，无需交互即可读全，上限 8 行 + 查看全部）→ **用量 Top**（加常显百分比，bar 纯色）。
-
-### 变更 — 其余页面与 popup
-- `MainWindowView`：侧栏去装饰（静态 brand orb、简单选中填充、静态 footer 圆点、纯 opacity 页面过渡）。
-- `SessionsView`/`UsageView`：去 scrollTransition/symbolEffect；UsageBarRow 恒定高度 + 百分比常显。
-- Popup：`SessionCardView`/`CursorSessionCardView` 字号 8-9pt → 10-11pt（可读性优先）；header 去 beaconGlow。
-- `SettingsView` 版本号 1.4.0 → 1.6.0。
+- WorkBuddy / OpenClaw 会话与用量数据源。
+- 旧 Preset 迁移通道（`claude-bar-presets.json`）。
+- 不承载数据的装饰动效（雷达、伪示波器、指针光效等）。
 
 ---
 
@@ -219,3 +226,8 @@
 - `MenuBarView` / `PresetRow` / `PresetEditorView` 三视图。
 - `build.sh` 用 `swiftc` + shell 构建（无 Xcode 工程）。
 - Pencil 原型 `ClaudeBar.pen` 与应用图标资源。
+
+[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.9.0
+[1.8.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.8.0
+

@@ -100,7 +100,7 @@ chore(ci): 升级 release workflow
 ```
 
 - 每个提交应保持可构建。
-- 用户可见行为变更时，更新 [docs/CHANGELOG.md](docs/CHANGELOG.md) 对应版本段。
+- 用户可见行为变更时，更新 [docs/CHANGELOG.md](docs/CHANGELOG.md) 的 `[Unreleased]` 段（约定见 [docs/VERSIONING.md](docs/VERSIONING.md)）。
 
 ---
 
