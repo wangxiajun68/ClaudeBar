@@ -1,8 +1,9 @@
 **[English](README.en.md)** · **中文**
 
-![ClaudeBar](Sources/AppIcon-1024.png)
-
-# ClaudeBar
+<h1>
+  <img src="Sources/AppIcon-1024.png" alt="ClaudeBar" width="64" height="64" align="middle">
+  ClaudeBar
+</h1>
 
 macOS 菜单栏 — 多 Agent 模型切换、会话监控、用量统计与本机 LLM 代理抓包。
 
