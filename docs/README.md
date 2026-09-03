@@ -26,7 +26,7 @@ docs/
 ├── FAQ.md                    使用与排障
 ├── RELEASING.md              维护者发版流程
 ├── CHANGELOG.md              版本变更记录
-├── images/                   README 截图等资源
+├── screenshots/              README 界面截图
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
 │   └── 01–09 *.md
