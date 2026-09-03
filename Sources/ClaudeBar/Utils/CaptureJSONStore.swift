@@ -93,7 +93,9 @@ final class CaptureJSONStore {
             promptTokens: nil, completionTokens: nil, cacheReadTokens: nil,
             error: nil, preview: preview)
         summaries.insert(summary, at: 0)
-        writePayload(id, Payload(request: requestJSON ?? "", rewritten: rewrittenJSON ?? "",
+        let req = CaptureMedia.compact(requestJSON, captureID: id)
+        let rew = CaptureMedia.compact(rewrittenJSON, captureID: id)
+        writePayload(id, Payload(request: req, rewritten: rew,
                                  response: "", sse: ""))
         prune()
         persistIndex()
@@ -195,12 +197,13 @@ final class CaptureJSONStore {
 
     private func deletePayload(_ id: Int64) {
         try? FileManager.default.removeItem(at: payloadURL(id))
+        try? FileManager.default.removeItem(at: CaptureMedia.mediaDir(captureID: id))
     }
 
     private func summary(from row: IndexRow) -> CaptureSummary? {
         guard let kind = CaptureKind(rawValue: row.kind),
-              let source = CaptureSource(rawValue: row.source),
               let state = CaptureState(rawValue: row.state) else { return nil }
+        let source = CaptureSource(rawValue: row.source) ?? .other
         return CaptureSummary(
             id: row.id,
             startedAt: iso.date(from: row.startedAt) ?? Date(),

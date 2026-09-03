@@ -1,23 +1,44 @@
 import SwiftUI
 
-/// Unified provider grid. One list writes Claude Code (`settings.json`) and
-/// Codex (`config.toml` + catalog) together. Full editor replaces the grid
-/// in-place — no separate floating editor window.
+/// Provider grid. Claude Code and Codex lists are independent — activate
+/// one without rewriting the other. The editor still offers an explicit import.
 struct ProvidersView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @State private var showEditor = false
     @State private var editorFocusProviderID: UUID?
+    @AppStorage("providersStack") private var stackRaw = "claude"
+
+    private var stack: Stack {
+        get { Stack(rawValue: stackRaw) ?? .claude }
+        nonmutating set { stackRaw = newValue.rawValue }
+    }
+
+    private enum Stack: String, CaseIterable, Identifiable {
+        case claude, codex
+        var id: String { rawValue }
+        var label: String { self == .claude ? "Claude Code" : "Codex" }
+        var tint: Color { self == .claude ? Theme.claude : Theme.codex }
+    }
 
     var body: some View {
         Group {
             if showEditor {
-                ProviderEditorView(
-                    providerStore: providerStore,
-                    focusProviderID: $editorFocusProviderID,
-                    embedded: true,
-                    onBack: { showEditor = false }
-                )
+                if stack == .codex {
+                    CodexProviderEditorView(
+                        codexStore: codexStore,
+                        embedded: true,
+                        onBack: { showEditor = false }
+                    )
+                } else {
+                    ProviderEditorView(
+                        providerStore: providerStore,
+                        focusProviderID: $editorFocusProviderID,
+                        embedded: true,
+                        onBack: { showEditor = false }
+                    )
+                }
             } else {
                 gridPage
             }
@@ -44,7 +65,18 @@ struct ProvidersView: View {
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
-            Text("Claude Code 与 Codex 同步")
+            HStack(spacing: Theme.Space.s4) {
+                ForEach(Stack.allCases) { s in
+                    let on = stack == s
+                    Button(s.label) { stackRaw = s.rawValue }
+                        .font(Theme.Font.caption)
+                        .foregroundColor(on ? .white : Theme.textSecondary)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(on ? s.tint.opacity(0.45) : Theme.cardFill(0.08)))
+                        .buttonStyle(.plain)
+                }
+            }
+            Text("各自独立选择，互不同步")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
             Spacer(minLength: Theme.Space.s8)
@@ -55,15 +87,23 @@ struct ProvidersView: View {
                     .font(Theme.Font.bodySmall)
             }
             .adaptiveGlassButton(prominent: true)
-            .tint(Theme.claude)
+            .tint(stack.tint)
         }
         .padding(.horizontal, Theme.Space.s24)
         .padding(.vertical, Theme.Space.s16)
     }
 
     @ViewBuilder private var grid: some View {
+        if stack == .claude {
+            claudeGrid
+        } else {
+            codexGrid
+        }
+    }
+
+    @ViewBuilder private var claudeGrid: some View {
         if providerStore.providers.isEmpty {
-            emptyState
+            emptyState(stack: .claude)
         } else {
             ScrollView {
                 TileGrid(.pageProvider) {
@@ -86,8 +126,9 @@ struct ProvidersView: View {
                                     id: provider.id,
                                     claude: provider,
                                     model: Self.modelToTest(provider, envModel: providerStore.currentEnv?.ANTHROPIC_MODEL),
-                                    codex: providerStore.peer?.providers.first { ProviderBridge.matches(provider, $0) })
-                            }
+                                    codex: nil)
+                            },
+                            accent: Theme.claude
                         )
                     }
                 }
@@ -99,10 +140,51 @@ struct ProvidersView: View {
         }
     }
 
-    private var emptyState: some View {
+    @ViewBuilder private var codexGrid: some View {
+        if codexStore.providers.isEmpty {
+            emptyState(stack: .codex)
+        } else {
+            ScrollView {
+                TileGrid(.pageProvider) {
+                    ForEach(codexStore.providers) { provider in
+                        ProviderTile(
+                            provider: provider.asDisplayProvider,
+                            isActive: provider.id == codexStore.activeProviderID,
+                            currentModelName: provider.activeModel?.name,
+                            onActivateModel: { modelID in
+                                codexStore.activate(providerID: provider.id, modelID: modelID)
+                            },
+                            onToggleCapture: {
+                                codexStore.setCaptureEnabled(
+                                    providerID: provider.id,
+                                    enabled: !provider.captureEnabled)
+                            },
+                            testOutcome: tests.outcome(ConnectivityTestCenter.vendorKey(provider.id)),
+                            onTest: {
+                                tests.testVendor(
+                                    id: provider.id,
+                                    claude: provider.asDisplayProvider,
+                                    model: provider.activeModel.map {
+                                        ModelConfig(id: $0.id, name: $0.name)
+                                    },
+                                    codex: provider)
+                            },
+                            accent: Theme.codex
+                        )
+                    }
+                }
+                .padding(.horizontal, Theme.Space.s24)
+                .padding(.bottom, Theme.Space.s16)
+                .padding(.top, Theme.Space.s16)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func emptyState(stack: Stack) -> some View {
         VStack(spacing: Theme.Space.s16) {
             Spacer()
-            Text("暂无模型")
+            Text(stack == .claude ? "暂无 Claude Code 供应商" : "暂无 Codex 供应商")
                 .font(Theme.Font.body)
                 .foregroundColor(Theme.textTertiary())
             Text("选择预设快速开始，或进入管理自定义。")
@@ -112,7 +194,11 @@ struct ProvidersView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: Theme.Space.s8)], spacing: Theme.Space.s8) {
                     ForEach(CodexPreset.all.filter { !$0.provider.baseURL.isEmpty }, id: \.label) { preset in
                         Button {
-                            providerStore.addFromCodexPreset(preset.provider)
+                            if stack == .codex {
+                                codexStore.addFromPreset(preset.provider)
+                            } else {
+                                providerStore.addFromCodexPreset(preset.provider)
+                            }
                         } label: {
                             VStack(spacing: 2) {
                                 Text(preset.label)
@@ -141,14 +227,13 @@ struct ProvidersView: View {
                     .font(Theme.Font.bodySmall)
             }
             .adaptiveGlassButton()
-            .tint(Theme.claude)
+            .tint(stack.tint)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Theme.Space.s24)
     }
 
-    /// Prefer the env-selected model when this tile is the live vendor.
     static func modelToTest(_ provider: Provider, envModel: String?) -> ModelConfig? {
         provider.models.first {
             $0.name.caseInsensitiveCompare(envModel ?? "") == .orderedSame

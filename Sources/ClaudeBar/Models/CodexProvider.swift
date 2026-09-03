@@ -56,6 +56,24 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         models.first { $0.id == activeModelID } ?? models.first
     }
 
+    /// Display adapter for `ProviderTile` — IDs are preserved so activate/capture
+    /// still target this Codex row.
+    var asDisplayProvider: Provider {
+        var p = Provider(
+            name: name,
+            authToken: apiKey,
+            baseURL: baseURL,
+            models: models.map {
+                ModelConfig(id: $0.id, name: $0.name,
+                            contextTokens: $0.contextWindow,
+                            autoCompactWindow: $0.autoCompactTokenLimit)
+            },
+            activeModelID: activeModelID,
+            captureEnabled: captureEnabled)
+        p.id = id
+        return p
+    }
+
     init(name: String, apiKey: String = "", baseURL: String = "",
          wireAPI: String = "responses", requiresOpenAIAuth: Bool = true,
          preserveOfficialLogin: Bool = true, disableResponseStorage: Bool = true,

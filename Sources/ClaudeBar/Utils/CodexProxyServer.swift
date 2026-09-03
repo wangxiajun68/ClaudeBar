@@ -549,7 +549,7 @@ final class CodexProxyServer: @unchecked Sendable {
         if inspect, await state.captureAnthropic {
             tap = ProxyCaptureStore.shared.begin(
                 kind: .anthropic,
-                source: .claude,
+                source: CaptureSource.infer(headers: request.headers, route: .claude),
                 provider: upstream.name,
                 model: model,
                 path: request.path,
@@ -685,7 +685,7 @@ final class CodexProxyServer: @unchecked Sendable {
         guard await state.captureOpenAI else { return nil }
         return ProxyCaptureStore.shared.begin(
             kind: kind,
-            source: .codex,
+            source: CaptureSource.infer(headers: request.headers, route: .codex),
             provider: upstream.name,
             model: (json["model"] as? String) ?? "",
             path: request.path,

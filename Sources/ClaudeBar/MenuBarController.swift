@@ -12,10 +12,12 @@ final class MenuBarController: NSObject {
     private var localMonitor: Any?
     private var globalMonitor: Any?
     private let providerStore: ProviderStore
+    private let codexProviderStore: CodexProviderStore
     private var isOpen = false
 
-    init(providerStore: ProviderStore) {
+    init(providerStore: ProviderStore, codexProviderStore: CodexProviderStore) {
         self.providerStore = providerStore
+        self.codexProviderStore = codexProviderStore
         super.init()
     }
 
@@ -79,6 +81,7 @@ final class MenuBarController: NSObject {
         let rootView = AnyView(
             MenuBarView()
                 .environmentObject(providerStore)
+                .environmentObject(codexProviderStore)
         )
         let hosting = NSHostingView(rootView: rootView)
         hostingView = hosting

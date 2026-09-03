@@ -37,7 +37,7 @@ struct ProviderEditorSidebar: View {
                             .lineLimit(1)
                     }
                     .adaptiveGlassButton()
-                    .help("从 Claude 供应商导入")
+                    .help("从另一侧导入供应商（不会自动同步）")
                 }
 
                 Spacer(minLength: 0)

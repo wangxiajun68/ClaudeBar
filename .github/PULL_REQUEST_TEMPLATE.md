@@ -15,7 +15,7 @@
 - [ ] `make ci` 或 `CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh` 通过
 - [ ] 用户可见文案为中文；代码标识符为英文
 - [ ] 未引入第三方依赖（SPM / CocoaPods 等）
-- [ ] 行为变更已更新 `docs/CHANGELOG.md`（如适用）
+- [ ] 行为变更已写入 `docs/CHANGELOG.md` 的 `[Unreleased]`（发版规则见 `docs/VERSIONING.md`）
 - [ ] 文档已更新（如适用）
 
 ## Test plan

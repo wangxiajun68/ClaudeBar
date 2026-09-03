@@ -21,10 +21,9 @@ class ProviderStore: ObservableObject {
         didSet { if usageReferenceDate != oldValue { refreshUsage(rescan: false) } }
     }
 
-    /// Codex projection of this list. Add/edit/delete/activate write both
-    /// `settings.json` and `~/.codex/config.toml`. Weak: AppDelegate owns both.
-    /// Isolated at the call sites (`@MainActor` CRUD); the stored reference is
-    /// only ever used on the main thread.
+    /// Codex store lives beside this one; lists are independent. Used to
+    /// restart the shared local proxy after Claude capture/routing changes.
+    /// Weak: AppDelegate owns both.
     nonisolated(unsafe) weak var peer: CodexProviderStore?
 
     // Live Claude Code sessions
@@ -71,7 +70,6 @@ class ProviderStore: ObservableObject {
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
         currentEnv = SettingsManager.readSettings()
         loadProviders()
-        unifyWithPeer()
         refreshBalance()
         refreshUsage(rescan: true)
         refreshSessions()
@@ -304,18 +302,6 @@ class ProviderStore: ObservableObject {
             activeProviderID = nil
         }
 
-        if providers.isEmpty {
-            let codex = ProviderBridge.readCodexProviders()
-            if !codex.isEmpty {
-                let converted = codex.map { ProviderBridge.toClaude($0) }
-                let result = ProviderBridge.merge(into: &providers, from: converted)
-                if !result.isEmpty {
-                    importSummary = "已从 Codex 导入：\(result.summary)"
-                    saveProviders()
-                }
-            }
-        }
-
         // Detect current provider from settings.json. When the settings file
         // matches a configured provider, adopt it as active and persist the
         // reconciled state (a single save, after all mutations below).
@@ -351,7 +337,6 @@ class ProviderStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
         try? data.write(to: FilePaths.presetsFile, options: .atomic)
-        projectToPeer()
     }
 
     // MARK: - Activate
@@ -385,7 +370,6 @@ class ProviderStore: ObservableObject {
         }
         saveProviders()
         refreshBalance()
-        activatePeer(provider: provider, model: model)
         syncPeerProxy()
     }
 
@@ -435,7 +419,6 @@ class ProviderStore: ObservableObject {
         providers.append(provider)
         if activeProviderID == nil { activeProviderID = provider.id }
         saveProviders()
-        projectToPeer()
     }
 
     func deleteProvider(_ provider: Provider) {
@@ -443,7 +426,6 @@ class ProviderStore: ObservableObject {
         if activeProviderID == provider.id { activeProviderID = providers.first?.id }
         if collapsedProviderIDs.contains(provider.id) { collapsedProviderIDs.remove(provider.id) }
         saveProviders()
-        projectToPeer()
     }
 
     func duplicateProvider(_ provider: Provider) {
@@ -457,7 +439,6 @@ class ProviderStore: ObservableObject {
         )
         providers.append(copy)
         saveProviders()
-        projectToPeer()
     }
 
     /// Import Codex providers. Matching is by name or rewritten Anthropic URL.
@@ -475,16 +456,13 @@ class ProviderStore: ObservableObject {
         guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else { return }
         providers[idx] = provider
         saveProviders()
-        projectToPeer(extras: extras.map { (provider, $0) })
     }
 
-    /// Tile-level capture switch. Persists on the Claude row (Codex twin
-    /// follows via project). If this vendor is active, rewrite env + proxy.
+    /// Tile-level capture switch. If this vendor is active, rewrite env + proxy.
     func setCaptureEnabled(providerID: UUID, enabled: Bool) {
         guard let idx = providers.firstIndex(where: { $0.id == providerID }) else { return }
         providers[idx].captureEnabled = enabled
         saveProviders()
-        projectToPeer()
         if activeProviderID == providerID,
            let modelID = providers[idx].activeModelID ?? providers[idx].models.first?.id {
             activateModel(providerID: providerID, modelID: modelID)
@@ -492,20 +470,6 @@ class ProviderStore: ObservableObject {
             syncPeerProxy()
         }
     }
-
-    /// One Claude list, two live configs. Missing Claude rows are imported
-    /// from Codex; Codex is then rewritten as a projection so extras survive.
-    @MainActor
-    func unifyWithPeer() {
-        guard let peer, !didUnifyWithPeer else { return }
-        didUnifyWithPeer = true
-        if !peer.providers.isEmpty {
-            _ = importFromCodex(peer.providers)
-        }
-        projectToPeer()
-    }
-
-    private var didUnifyWithPeer = false
 
     /// Blank Claude provider with one placeholder model — ready to edit and save.
     @MainActor
@@ -515,7 +479,6 @@ class ProviderStore: ObservableObject {
         let p = Provider(name: "新供应商", models: [placeholder], activeModelID: placeholder.id)
         providers.append(p)
         saveProviders()
-        projectToPeer()
         return p
     }
 
@@ -530,21 +493,6 @@ class ProviderStore: ObservableObject {
         }
         providers.append(claude)
         saveProviders()
-        projectToPeer(extras: (claude, ProviderBridge.extras(from: preset)))
-    }
-
-    private func projectToPeer(extras: (Provider, ProviderBridge.CodexExtras)? = nil) {
-        let snapshot = providers
-        let extra = extras
-        Task { @MainActor [weak self] in
-            self?.peer?.project(from: snapshot, extras: extra)
-        }
-    }
-
-    private func activatePeer(provider: Provider, model: ModelConfig) {
-        Task { @MainActor [weak self] in
-            self?.peer?.activateMatching(claude: provider, model: model)
-        }
     }
 
     private func syncPeerProxy() {

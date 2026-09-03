@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         codexStore.claudePeer = store
         codexStore.load()
 
-        let controller = MenuBarController(providerStore: store)
+        let controller = MenuBarController(providerStore: store, codexProviderStore: codexStore)
         controller.setup()
         menuBarController = controller
 

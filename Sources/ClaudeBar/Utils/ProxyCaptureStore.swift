@@ -32,6 +32,8 @@ struct CaptureDetail: Equatable {
     var rawSSE: String
     var turns: [CaptureTranscript.Turn]
     var toolCalls: [CaptureTranscript.ToolCall]
+    var requestTruncated: Bool = false
+    var payloadsLoaded: Bool = true
 }
 
 enum CaptureKind: String {
@@ -49,8 +51,40 @@ enum CaptureKind: String {
 }
 
 enum CaptureSource: String {
-    case claude, codex
-    var label: String { self == .claude ? "Claude Code" : "Codex" }
+    case claude, codex, other
+
+    var label: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex"
+        case .other: return "代理"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .claude: return "CC"
+        case .codex: return "Codex"
+        case .other: return "代理"
+        }
+    }
+
+    /// Prefer User-Agent; fall back to the proxy route (Anthropic vs OpenAI).
+    static func infer(headers: [String: String], route: CaptureSource) -> CaptureSource {
+        let ua = (headers["user-agent"] ?? "").lowercased()
+        if ua.contains("claude-cli") || ua.contains("claude-code") || ua.contains("claude-user") {
+            return .claude
+        }
+        if ua.contains("codex") {
+            return .codex
+        }
+        if ua.contains("curl/") || ua.contains("httpie") || ua.contains("python-requests")
+            || ua.contains("httpx/") || ua.contains("openai-python") || ua.contains("openai/python")
+            || ua.contains("node-fetch") || ua.contains("got/") || ua.contains("axios") {
+            return .other
+        }
+        return route
+    }
 }
 
 enum CaptureState: String {
@@ -86,7 +120,7 @@ final class ProxyCaptureStore {
     private var pendingLive: [Int64: CaptureLive] = [:]
     private var flushWork: DispatchWorkItem?
     private let listLimit = 120
-    private let payloadCap = 256 * 1024
+    private let payloadCap = 16 * 1024 * 1024
     private let isoFormatter = ISO8601DateFormatter()
     private lazy var jsonStore = CaptureJSONStore(listLimit: listLimit, iso: isoFormatter)
     private var useDatabase: Bool { DiskPersistence.useDatabase }
@@ -136,11 +170,10 @@ final class ProxyCaptureStore {
                                          preview: preview) else { return nil }
             summary = created
         } else {
-            let req = Self.truncate(requestJSON, cap: payloadCap)
-            let rew = Self.truncate(rewrittenJSON, cap: payloadCap)
             summary = jsonStore.begin(kind: kind, source: source, provider: provider,
                                       model: model, path: path, stream: stream,
-                                      requestJSON: req, rewrittenJSON: rew, preview: preview)
+                                      requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
+                                      preview: preview)
         }
         let id = summary.id
         DispatchQueue.main.async { [weak self] in
@@ -239,20 +272,17 @@ final class ProxyCaptureStore {
         }
     }
 
-    func detail(id: Int64, includeRaw: Bool = false) -> CaptureDetail? {
+    func detail(id: Int64, includeRaw: Bool = false,
+                includePayloads: Bool = true, includeTools: Bool = true) -> CaptureDetail? {
         lock.lock()
         defer { lock.unlock() }
         if !useDatabase {
             guard let summary = jsonStore.summary(id: id) else { return nil }
             let payload = jsonStore.readPayload(id)
-            return CaptureDetail(
-                summary: summary,
-                requestJSON: payload.request,
-                rewrittenJSON: payload.rewritten,
-                responseJSON: payload.response,
-                rawSSE: includeRaw ? payload.sse : "",
-                turns: CaptureTranscript.turns(from: payload.request),
-                toolCalls: CaptureTranscript.toolCalls(request: payload.request, response: payload.response))
+            return makeDetail(id: id, summary: summary, request: payload.request,
+                              rewritten: payload.rewritten, response: payload.response,
+                              sse: includeRaw ? payload.sse : "",
+                              includePayloads: includePayloads, includeTools: includeTools)
         }
         guard let db = connection() else { return nil }
         let sql = includeRaw
@@ -276,14 +306,31 @@ final class ProxyCaptureStore {
         sqlite3_bind_int64(stmt, 1, id)
         guard sqlite3_step(stmt) == SQLITE_ROW, let summary = rowToSummary(stmt) else { return nil }
         let request = text(stmt, 17)
+        return makeDetail(id: id, summary: summary, request: request,
+                          rewritten: text(stmt, 18), response: text(stmt, 19),
+                          sse: includeRaw ? text(stmt, 20) : "",
+                          includePayloads: includePayloads, includeTools: includeTools)
+    }
+
+    private func makeDetail(id: Int64, summary: CaptureSummary,
+                            request: String, rewritten: String, response: String, sse: String,
+                            includePayloads: Bool, includeTools: Bool) -> CaptureDetail {
+        let dir = CaptureMedia.mediaDir(captureID: id)
+        var turns = CaptureTranscript.turns(from: request, mediaDir: dir)
+        if !response.isEmpty {
+            turns += CaptureTranscript.replyTurns(
+                responseJSON: response, live: nil, streaming: false, mode: .conversation)
+        }
         return CaptureDetail(
             summary: summary,
-            requestJSON: request,
-            rewrittenJSON: text(stmt, 18),
-            responseJSON: text(stmt, 19),
-            rawSSE: includeRaw ? text(stmt, 20) : "",
-            turns: CaptureTranscript.turns(from: request),
-            toolCalls: CaptureTranscript.toolCalls(request: request, response: text(stmt, 19)))
+            requestJSON: includePayloads ? request : "",
+            rewrittenJSON: includePayloads ? rewritten : "",
+            responseJSON: includePayloads ? response : "",
+            rawSSE: includePayloads ? sse : "",
+            turns: turns,
+            toolCalls: includeTools ? CaptureTranscript.toolCalls(request: request, response: response) : [],
+            requestTruncated: request.contains("[truncated]"),
+            payloadsLoaded: includePayloads)
     }
 
     func delete(_ id: Int64) {
@@ -297,6 +344,7 @@ final class ProxyCaptureStore {
             self?.catalog.livePreview.removeValue(forKey: id)
             self?.streams.live.removeValue(forKey: id)
         }
+        try? FileManager.default.removeItem(at: CaptureMedia.mediaDir(captureID: id))
     }
 
     func clearAll() {
@@ -420,8 +468,8 @@ final class ProxyCaptureStore {
         }
         sqlite3_finalize(stmt)
         let id = sqlite3_last_insert_rowid(db)
-        let req = Self.truncate(requestJSON, cap: payloadCap)
-        let rew = Self.truncate(rewrittenJSON, cap: payloadCap)
+        let req = Self.truncate(CaptureMedia.compact(requestJSON, captureID: id), cap: payloadCap)
+        let rew = Self.truncate(CaptureMedia.compact(rewrittenJSON, captureID: id), cap: payloadCap)
         exec("INSERT INTO payloads (capture_id, request_json, rewritten_json) VALUES (?, ?, ?)",
              args: [.int(id), .text(req), .text(rew)])
         pruneLocked()
@@ -538,8 +586,8 @@ final class ProxyCaptureStore {
     private func rowToSummary(_ stmt: OpaquePointer?) -> CaptureSummary? {
         guard let stmt else { return nil }
         guard let kind = CaptureKind(rawValue: text(stmt, 4)),
-              let source = CaptureSource(rawValue: text(stmt, 5)),
               let state = CaptureState(rawValue: text(stmt, 10)) else { return nil }
+        let source = CaptureSource(rawValue: text(stmt, 5)) ?? .other
         let err = text(stmt, 15)
         return CaptureSummary(
             id: sqlite3_column_int64(stmt, 0),
@@ -636,7 +684,7 @@ final class CaptureTap {
     var assembler = CaptureAssembler()
     private var raw: [Data] = []
     private var rawBytes = 0
-    private let rawCap = 256 * 1024
+    private let rawCap = 16 * 1024 * 1024
     private var firstToken = false
     private var startedStreaming = false
 

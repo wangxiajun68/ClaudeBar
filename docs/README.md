@@ -13,7 +13,7 @@ ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** �
 | **用户** | [README](../README.md) → [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG |
 | **排障** | [FAQ.md](FAQ.md) |
 | **贡献者** | [CONTRIBUTING.md](../CONTRIBUTING.md) → [technical/10-extension-guide.md](technical/10-extension-guide.md) |
-| **维护者 / 发版** | [RELEASING.md](RELEASING.md) |
+| **维护者 / 发版** | [VERSIONING.md](VERSIONING.md) → [RELEASING.md](RELEASING.md) |
 | **安全报告** | [SECURITY.md](../SECURITY.md) |
 
 ---
@@ -24,8 +24,9 @@ ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** �
 docs/
 ├── README.md                 ← 本文件
 ├── FAQ.md                    使用与排障
-├── RELEASING.md              维护者发版流程
-├── CHANGELOG.md              版本变更记录
+├── RELEASING.md              维护者发版步骤
+├── VERSIONING.md             版本号、tag、CHANGELOG 约定
+├── CHANGELOG.md              用户可见的版本变更
 ├── screenshots/              README 界面截图
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
@@ -85,7 +86,7 @@ docs/
 | 改 popup / 主窗口 UI | [04](design/04-popup-layout.md) · [05](design/05-main-window-and-theme.md) · [technical/05](technical/05-view-layer.md) |
 | 改数据采集 | [03](design/03-data-models.md) · [technical/04](technical/04-data-access-layer.md) |
 | 改状态与刷新 | [technical/03](technical/03-provider-store.md) |
-| 构建 / 签名 / 发版 | [09](design/09-build-and-distribution.md) · [technical/07](technical/07-build-and-signing.md) · [RELEASING](RELEASING.md) |
+| 构建 / 签名 / 发版 | [09](design/09-build-and-distribution.md) · [technical/07](technical/07-build-and-signing.md) · [VERSIONING](VERSIONING.md) · [RELEASING](RELEASING.md) |
 | 性能优化 | [technical/08](technical/08-performance.md) |
 | 边界与错误 | [08](design/08-error-handling.md) |
 | 新功能扩展 | [technical/10](technical/10-extension-guide.md) |

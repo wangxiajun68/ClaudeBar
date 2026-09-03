@@ -76,7 +76,13 @@ jobs:
             echo
             echo "## Changelog"
             echo
-            echo "[docs/CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/CHANGELOG.md)"
+            awk -v ver="$VERSION" '
+              $0 ~ "^## \\[" ver "\\]" { found = 1 }
+              found && NR > 1 && $0 ~ /^## \\[/ { exit }
+              found { print }
+            ' docs/CHANGELOG.md
+            echo
+            echo "[Full changelog](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/CHANGELOG.md)"
           } > /tmp/release-notes.md
           gh release create "$GITHUB_REF_NAME" \
             --title "ClaudeBar ${VERSION}" \

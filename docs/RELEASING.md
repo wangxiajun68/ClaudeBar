@@ -1,6 +1,6 @@
 # 发布 ClaudeBar（macOS arm64）
 
-> 相关：[构建与分发](design/09-build-and-distribution.md) · [构建与签名](technical/07-build-and-signing.md)
+> 相关：[版本管理](VERSIONING.md) · [更新日志](CHANGELOG.md) · [构建与分发](design/09-build-and-distribution.md) · [构建与签名](technical/07-build-and-signing.md)
 
 ## 分发模型
 
@@ -26,11 +26,13 @@
 
 ## 版本号
 
-单一来源：仓库根目录 [`VERSION`](../VERSION)，格式 `MAJOR.MINOR.PATCH`。
+规则见 [VERSIONING.md](VERSIONING.md)。单一来源：仓库根目录 [`VERSION`](../VERSION)，格式 `MAJOR.MINOR.PATCH`。
 
 `Sources/build.sh` 写入主 app 与 Widget appex 的 `CFBundleShortVersionString` / `CFBundleVersion`。
 
 Git tag 必须是 `v` + 该文件内容（如 `1.8.0` → `v1.8.0`）。Release workflow 会校验不一致则失败。
+
+发版前把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成对应版本段。GitHub Release 说明会自动截取该段。
 
 ## 本地验证打包
 
@@ -43,7 +45,7 @@ open .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.dmg
 ## 发版步骤
 
 1. `main` 处于要发布的提交（CI 绿）。
-2. 更新 `VERSION` 与 [CHANGELOG.md](CHANGELOG.md) 的 `## [x.y.z]` 段。
+2. 按 [VERSIONING.md](VERSIONING.md) 更新 `VERSION`，并把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成 `## [x.y.z] — 日期`。
 3. 提交，例如 `chore(release): 1.8.1`。
 4. 打 tag 并推送：
 

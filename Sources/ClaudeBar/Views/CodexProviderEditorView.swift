@@ -6,19 +6,24 @@ import SwiftUI
 /// effort, preserve-official-login).
 struct CodexProviderEditorView: View {
     @ObservedObject var codexStore: CodexProviderStore
+    var embedded: Bool = false
+    var onBack: (() -> Void)? = nil
     @State private var model = CodexProviderEditorModel()
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider()
-            if model.selected != nil {
-                detailPane
-            } else {
-                emptyState
+        VStack(spacing: 0) {
+            if embedded { embeddedToolbar }
+            HStack(spacing: 0) {
+                sidebar
+                Divider()
+                if model.selected != nil {
+                    detailPane
+                } else {
+                    emptyState
+                }
             }
         }
-        .frame(minWidth: 720, minHeight: 500)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: model.selectedID) { _, _ in
             model.loadSelected()
         }
@@ -36,6 +41,25 @@ struct CodexProviderEditorView: View {
                 onCancel: { model.cancelModelImport() }
             )
         }
+    }
+
+    private var embeddedToolbar: some View {
+        HStack(spacing: Theme.Space.s12) {
+            Button {
+                onBack?()
+            } label: {
+                Label("返回列表", systemImage: "chevron.left")
+                    .font(Theme.Font.bodySmall)
+            }
+            .adaptiveGlassButton()
+            Text("管理 Codex 供应商")
+                .font(Theme.Font.titleSmall)
+                .foregroundColor(Theme.textPrimary)
+            Spacer()
+        }
+        .padding(.horizontal, Theme.Space.s16)
+        .padding(.vertical, Theme.Space.s8)
+        .background(Theme.base1.opacity(0.45))
     }
 
     // MARK: - Sidebar
