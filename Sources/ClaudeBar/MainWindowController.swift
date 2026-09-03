@@ -47,7 +47,7 @@ final class MainWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Axon"
+        window.title = "ClaudeBar"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.standardWindowButton(.closeButton)?.superview?.isHidden = false

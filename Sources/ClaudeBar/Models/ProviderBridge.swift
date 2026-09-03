@@ -260,6 +260,18 @@ enum ProviderBridge {
         if lower.contains("dashscope.aliyuncs.com") {
             return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         }
+        if lower.contains("volces.com") || lower.contains("volcengine") {
+            if lower.hasSuffix("/chat/completions") {
+                return trimSlash(String(s.dropLast("/chat/completions".count)))
+            }
+            return s
+        }
+        if lower.contains("siliconflow.cn") {
+            if s.range(of: #"/v\d+$"#, options: .regularExpression) == nil, !lower.hasSuffix("/v1") {
+                return s + "/v1"
+            }
+            return s
+        }
         if lower.contains("openrouter.ai") {
             if lower.hasSuffix("/messages") {
                 s = String(s.dropLast("/messages".count))
@@ -290,6 +302,18 @@ enum ProviderBridge {
         }
         if lower.contains("dashscope.aliyuncs.com") {
             return "https://dashscope.aliyuncs.com/apps/anthropic"
+        }
+        if lower.contains("volces.com") || lower.contains("volcengine") {
+            // Volcengine Ark is OpenAI-compat only; Claude Code uses the same root.
+            if lower.hasSuffix("/chat/completions") {
+                return trimSlash(String(s.dropLast("/chat/completions".count)))
+            }
+            return s
+        }
+        if lower.contains("siliconflow.cn") {
+            if lower.hasSuffix("/anthropic") { return s }
+            let stripped = s.replacingOccurrences(of: #"/v\d+$"#, with: "", options: .regularExpression)
+            return trimSlash(stripped) + "/anthropic"
         }
         if lower.contains("openrouter.ai") {
             return lower.hasSuffix("/messages") ? s : s + "/messages"

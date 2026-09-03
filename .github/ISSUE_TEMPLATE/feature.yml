@@ -1,23 +1,34 @@
 name: 功能建议
-description: 新能力、交互或数据源
+description: 新能力、交互改进或数据源扩展
 title: "[feat] "
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        贡献代码前请阅读 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+        本项目零第三方依赖，请勿提议引入 SPM / CocoaPods 依赖。
   - type: textarea
     id: problem
     attributes:
-      label: 要解决什么问题
-      placeholder: 现在缺什么，谁会用到
+      label: 要解决的问题
+      description: 当前缺什么？谁会用到？使用场景是什么？
+      placeholder: 作为…，我希望…，以便…
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: 建议方案
-      placeholder: 界面、数据源、是否写入本机配置文件
+      description: 界面、数据流、是否写入本机配置文件
     validations:
       required: true
-  - type: markdown
+  - type: checkboxes
+    id: scope
     attributes:
-      value: |
-        贡献代码前请先读 [CONTRIBUTING.md](../../CONTRIBUTING.md)。本项目零第三方依赖，不要引入 SPM / CocoaPods。
+      label: 影响范围（可选）
+      options:
+        - label: 需要改 Claude Code 配置写入
+        - label: 需要改 Codex 配置 / 代理
+        - label: 需要新数据源（IDE / Agent）
+        - label: 仅 UI / 交互

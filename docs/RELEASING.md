@@ -1,30 +1,46 @@
-# 发布 Axon（macOS arm64）
+# 发布 ClaudeBar（macOS arm64）
 
 > 相关：[构建与分发](design/09-build-and-distribution.md) · [构建与签名](technical/07-build-and-signing.md)
 
-发行物是 **ad-hoc 签名** 的 `ClaudeBar.app` zip，目标 macOS 26 Apple Silicon。没有 Developer ID、没有公证、没有 Intel 包。
+## 分发模型
+
+| 角色 | 路径 |
+|------|------|
+| **终端用户** | [GitHub Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 **DMG**，拖入 Applications |
+| **维护者 / CI** | `Sources/build.sh` 编译并产出 `.build/dist/` 下的 DMG、zip、校验和 |
+| **贡献者** | `make build` 或 `bash Sources/build.sh` 本地开发安装 |
+
+`Sources/build.sh` 是**开发者与 CI 脚本**，不是面向用户的安装器。用户不应需要 clone 仓库或运行 shell 脚本来安装应用。
+
+## 发行物
+
+打 tag 后 CI 自动上传：
+
+| 文件 | 用途 |
+|------|------|
+| `ClaudeBar-<version>-macOS-arm64.dmg` | **主分发格式**（含 Applications 快捷方式） |
+| `ClaudeBar-<version>-macOS-arm64.zip` | 脚本/自动化备用 |
+| `*.sha256` | 校验和 |
+
+均为 **ad-hoc 签名**，目标 macOS 15+ Apple Silicon。无 Developer ID、无公证、无 Intel 包。
 
 ## 版本号
 
 单一来源：仓库根目录 [`VERSION`](../VERSION)，格式 `MAJOR.MINOR.PATCH`。
 
-`Sources/build.sh` 把它写入：
+`Sources/build.sh` 写入主 app 与 Widget appex 的 `CFBundleShortVersionString` / `CFBundleVersion`。
 
-- `ClaudeBar.app/Contents/Info.plist` → `CFBundleShortVersionString` / `CFBundleVersion`
-- Widget appex 的对应字段
+Git tag 必须是 `v` + 该文件内容（如 `1.8.0` → `v1.8.0`）。Release workflow 会校验不一致则失败。
 
-Git tag 必须是 `v` + 该文件内容，例如文件 `1.8.0` → tag `v1.8.0`。Release workflow 会校验不一致则失败。
-
-## 本地打包（不安装）
+## 本地验证打包
 
 ```bash
-AXON_SKIP_INSTALL=1 AXON_PACKAGE=1 bash Sources/build.sh
-ls -l .build/dist/Axon-$(tr -d '[:space:]' < VERSION)-macos-arm64.zip*
+make package
+ls -lh .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.*
+open .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.dmg
 ```
 
-`ditto -c -k --keepParent` 生成 zip，旁路 `.sha256`。zip 内仍是 `ClaudeBar.app`（bundle id `com.claudebar.app`），不要改名为 `Axon.app`。
-
-## 打 tag（GitHub Release）
+## 发版步骤
 
 1. `main` 处于要发布的提交（CI 绿）。
 2. 更新 `VERSION` 与 [CHANGELOG.md](CHANGELOG.md) 的 `## [x.y.z]` 段。
@@ -33,23 +49,15 @@ ls -l .build/dist/Axon-$(tr -d '[:space:]' < VERSION)-macos-arm64.zip*
 
 ```bash
 VERSION=$(tr -d '[:space:]' < VERSION)
-git tag -a "v${VERSION}" -m "Axon ${VERSION}"
+git tag -a "v${VERSION}" -m "ClaudeBar ${VERSION}"
 git push origin main
 git push origin "v${VERSION}"
 ```
 
-5. [`.github/workflows/release.yml`](../.github/workflows/release.yml) 在 `macos-26` 上构建、上传 zip 与 checksum，并创建 GitHub Release。
+5. [`.github/workflows/release.yml`](../.github/workflows/release.yml) 构建 DMG/zip、上传 artifact，并创建 GitHub Release。
 
 不要用 `v1.8` 这类短 tag，也不要移动已发布的 tag。
 
-## 安装说明（写给使用者）
-
-解压 → `ClaudeBar.app` 放到 `/Applications`。Gatekeeper：
-
-```bash
-xattr -cr /Applications/ClaudeBar.app
-```
-
 ## 手动触发
 
-Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，**不会**创建 GitHub Release（那一步只在 `v*` tag 上跑）。
+Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，**不会**创建 GitHub Release（那一步仅在 `v*` tag 上跑）。

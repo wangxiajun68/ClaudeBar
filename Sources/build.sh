@@ -1,4 +1,16 @@
 #!/bin/bash
+# Developer / CI build script — not an end-user installer.
+#
+#   bash Sources/build.sh
+#     → compile, ad-hoc sign, install to /Applications (local dev loop)
+#
+#   CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+#     → compile only → .build/ClaudeBar.app (CI)
+#
+#   CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
+#     → compile + release artifacts → .build/dist/*.dmg (+ .zip) + checksums
+#
+# End users install from GitHub Releases (DMG). See CONTRIBUTING.md.
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +39,10 @@ if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
     exit 1
 fi
 
-echo "=== Building $APP_NAME $VERSION ==="
+MACOS_MIN="${MACOS_MIN:-15.0}"
+MACOS_TARGET="arm64-apple-macos${MACOS_MIN}"
+
+echo "=== Building $APP_NAME $VERSION (macOS ${MACOS_MIN}+) ==="
 
 # Clean previous build
 rm -rf "$APP_BUNDLE"
@@ -58,7 +73,7 @@ swift_files=$(find "$SOURCES_DIR" -name "*.swift" | sort)
 swiftc \
     -o "$MACOS_DIR/$APP_NAME" \
     -sdk "$SDK_PATH" \
-    -target arm64-apple-macos26.0 \
+    -target "$MACOS_TARGET" \
     -framework SwiftUI \
     -framework AppKit \
     -framework WidgetKit \
@@ -79,9 +94,9 @@ cat > "$CONTENTS/Info.plist" << PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Axon</string>
+    <string>ClaudeBar</string>
     <key>CFBundleDisplayName</key>
-    <string>Axon</string>
+    <string>ClaudeBar</string>
     <key>CFBundleIdentifier</key>
     <string>com.claudebar.app</string>
     <key>CFBundleVersion</key>
@@ -93,7 +108,7 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <key>CFBundleExecutable</key>
     <string>ClaudeBar</string>
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>${MACOS_MIN}</string>
     <key>LSUIElement</key>
     <false/>
     <key>NSHighResolutionCapable</key>
@@ -126,7 +141,7 @@ swiftc \
     -module-name ClaudeBarWidget \
     -parse-as-library \
     -sdk "$SDK_PATH" \
-    -target arm64-apple-macos26.0 \
+    -target "$MACOS_TARGET" \
     -framework SwiftUI \
     -framework WidgetKit \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
@@ -147,7 +162,7 @@ cat > "$APPEX_CONTENTS/Info.plist" << WPLIST
     <key>CFBundleName</key>
     <string>ClaudeBarWidget</string>
     <key>CFBundleDisplayName</key>
-    <string>Axon Widget</string>
+    <string>ClaudeBar Widget</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
@@ -157,7 +172,7 @@ cat > "$APPEX_CONTENTS/Info.plist" << WPLIST
     <key>CFBundleExecutable</key>
     <string>ClaudeBarWidget</string>
     <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
+    <string>${MACOS_MIN}</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>MacOSX</string>
@@ -246,24 +261,44 @@ codesign --force --sign - --options runtime --entitlements "$ENT_DIR/app.plist" 
     "$APP_BUNDLE"
 echo "Signed OK"
 
-# --- Optional zip for GitHub Releases ---
-if [ "${AXON_PACKAGE:-}" = "1" ]; then
+# --- Release artifacts (DMG + zip) for GitHub Releases ---
+if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then
     DIST_DIR="$BUILD_DIR/dist"
     mkdir -p "$DIST_DIR"
-    ZIP_NAME="Axon-${VERSION}-macos-arm64.zip"
+    ARTIFACT_BASE="ClaudeBar-${VERSION}-macOS-arm64"
+
+    ZIP_NAME="${ARTIFACT_BASE}.zip"
     ZIP_PATH="$DIST_DIR/$ZIP_NAME"
-    rm -f "$ZIP_PATH" "$ZIP_PATH.sha256"
-    echo "=== Packaging $ZIP_NAME ==="
+    DMG_NAME="${ARTIFACT_BASE}.dmg"
+    DMG_PATH="$DIST_DIR/$DMG_NAME"
+    DMG_STAGING="$BUILD_DIR/dmg-staging"
+
+    rm -f "$ZIP_PATH" "$ZIP_PATH.sha256" "$DMG_PATH" "$DMG_PATH.sha256"
+    rm -rf "$DMG_STAGING"
+
+    echo "=== Packaging ${DMG_NAME} ==="
+    mkdir -p "$DMG_STAGING"
+    cp -R "$APP_BUNDLE" "$DMG_STAGING/"
+    ln -s /Applications "$DMG_STAGING/Applications"
+    hdiutil create -volname "ClaudeBar" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
+    rm -rf "$DMG_STAGING"
+    (cd "$DIST_DIR" && shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256")
+
+    echo "=== Packaging ${ZIP_NAME} ==="
     COPYFILE_DISABLE=1 ditto -c -k --norsrc --noextattr --keepParent "$APP_BUNDLE" "$ZIP_PATH"
     (cd "$DIST_DIR" && shasum -a 256 "$ZIP_NAME" | tee "$ZIP_NAME.sha256")
+
+    echo "Release artifacts:"
+    ls -lh "$DMG_PATH" "$ZIP_PATH"
 fi
 
 # --- Install to /Applications (single canonical copy) ---
-if [ "${AXON_SKIP_INSTALL:-}" = "1" ]; then
-    echo "=== Skipping install (AXON_SKIP_INSTALL=1) ==="
+if [ "${CLAUDEBAR_SKIP_INSTALL:-}" = "1" ]; then
+    echo "=== Skipping install (CLAUDEBAR_SKIP_INSTALL=1) ==="
     echo "Build cache: $APP_BUNDLE"
-    if [ "${AXON_PACKAGE:-}" = "1" ]; then
-        echo "Package:     $BUILD_DIR/dist/Axon-${VERSION}-macos-arm64.zip"
+    if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then
+        echo "Package:     $BUILD_DIR/dist/ClaudeBar-${VERSION}-macOS-arm64.dmg"
+        echo "             $BUILD_DIR/dist/ClaudeBar-${VERSION}-macOS-arm64.zip"
     fi
 else
     echo "=== Installing ==="

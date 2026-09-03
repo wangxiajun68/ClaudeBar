@@ -7,7 +7,6 @@ import SwiftUI
 struct CodexProviderEditorView: View {
     @ObservedObject var codexStore: CodexProviderStore
     @State private var model = CodexProviderEditorModel()
-    @State private var showPresets = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -27,6 +26,15 @@ struct CodexProviderEditorView: View {
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
+            model.clearSaveFlash()
+        }
+        .sheet(isPresented: $model.showModelImport) {
+            ModelImportSheet(
+                candidates: model.modelImportCandidates,
+                existingNames: model.existingModelNames,
+                onImport: { model.importSelectedModels($0) },
+                onCancel: { model.cancelModelImport() }
+            )
         }
     }
 
@@ -67,63 +75,18 @@ struct CodexProviderEditorView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
 
-            HStack(spacing: Theme.Space.s6) {
-                Button(action: { showPresets.toggle() }) { Image(systemName: "sparkles") }
-                    .buttonStyle(.glass).help("从预设添加")
-                Button(action: { model.importFromClaude() }) {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .buttonStyle(.glass)
-                .help("从 Claude 供应商导入密钥、地址与模型")
-                Button(action: { model.addNew() }) { Image(systemName: "plus") }
-                    .buttonStyle(.glass).help("添加供应商")
-                Button(action: { model.duplicateSelected() }) { Image(systemName: "doc.on.doc") }
-                    .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("复制")
-                Button(action: { model.deleteSelected() }) { Image(systemName: "trash") }
-                    .buttonStyle(.glass)
-                    .disabled(model.selectedID == nil).help("删除")
-                Spacer()
-            }
-            .padding(.horizontal, Theme.Space.s8 + 2).padding(.vertical, Theme.Space.s8)
+            ProviderEditorSidebar(
+                accent: Theme.codex,
+                canDuplicateOrDelete: model.selectedID != nil,
+                onNew: { model.addNew() },
+                onPreset: { model.addFromPreset($0) },
+                onDuplicate: { model.duplicateSelected() },
+                onDelete: { model.deleteSelected() },
+                onImportFromClaude: { model.importFromClaude() }
+            )
         }
         .frame(width: 220)
         .background(Theme.base1.opacity(0.45))
-        .overlay(alignment: .bottom) {
-            if showPresets { presetMenu }
-        }
-    }
-
-    private var presetMenu: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(CodexPreset.all, id: \.label) { preset in
-                Button(action: {
-                    model.addFromPreset(preset.provider)
-                    showPresets = false
-                }) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(preset.label).font(Theme.Font.body)
-                        Text(preset.provider.baseURL)
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, Theme.Space.s8).padding(.vertical, Theme.Space.s6)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color.clear))
-            }
-        }
-        .padding(Theme.Space.s6)
-        .frame(width: 220)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.base1)
-                .shadow(color: .black.opacity(0.25), radius: 10, y: 2)
-        )
-        .padding(Theme.Space.s8)
     }
 
     // MARK: - Detail
@@ -171,13 +134,7 @@ struct CodexProviderEditorView: View {
                     .labelsHidden()
                 }
                 EditorField(label: "推理强度") {
-                    Picker("", selection: Binding(
-                        get: { model.models.first(where: { $0.id == model.editingModelID })?.reasoningEffort ?? "" },
-                        set: { effort in
-                            if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
-                                model.models[idx].reasoningEffort = effort
-                            }
-                        })) {
+                    Picker("", selection: modelReasoningEffortBinding) {
                         Text("默认").tag("")
                         Text("none").tag("none")
                         Text("minimal").tag("minimal")
@@ -220,12 +177,34 @@ struct CodexProviderEditorView: View {
 
     private var modelConfigCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label("模型", systemImage: "cpu")
-                .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.bottom, Theme.Space.s12)
+            HStack(spacing: Theme.Space.s8) {
+                Label("模型", systemImage: "cpu")
+                    .font(Theme.Font.titleSmall)
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .fixedSize()
+                Spacer()
+                Button(action: { model.fetchModelsFromAPI() }) {
+                    if model.isFetchingModels {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("拉取模型", systemImage: "arrow.down.circle")
+                            .font(Theme.Font.caption)
+                    }
+                }
+                .adaptiveGlassButton()
+                .disabled(model.isFetchingModels || model.baseURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("请求 Base URL 下的 /models 接口，勾选后导入")
+            }
+            .padding(.bottom, Theme.Space.s12)
+            if let note = model.modelFetchMessage {
+                Text(note)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(note.contains("失败") || note.contains("鉴权") || note.contains("无法")
+                                    ? Theme.statusError : Theme.textSecondary)
+                    .lineLimit(2)
+                    .padding(.bottom, Theme.Space.s8)
+            }
             HStack(alignment: .top, spacing: 0) {
                 modelList
                     .frame(height: 220) // fixed: unbounded inner ScrollView was inflating card height
@@ -264,7 +243,7 @@ struct CodexProviderEditorView: View {
                     Image(systemName: "plus.circle.fill")
                         .font(Theme.Font.bodyLarge)
                 }
-                .buttonStyle(.glass)
+                .adaptiveGlassButton()
                 .disabled(model.newModelName.trimmingCharacters(in: .whitespaces).isEmpty)
                 .help("添加模型")
             }
@@ -274,20 +253,21 @@ struct CodexProviderEditorView: View {
     }
 
     @ViewBuilder private var modelDetail: some View {
-        if let idx = model.models.firstIndex(where: { $0.id == model.editingModelID }) {
+        if let editingID = model.editingModelID,
+           model.models.contains(where: { $0.id == editingID }) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
                 EditorField(label: "模型名称") {
-                    TextField("e.g. deepseek-chat", text: $model.models[idx].name)
+                    TextField("e.g. deepseek-chat", text: model.binding(for: editingID, keyPath: \.name))
                         .textFieldStyle(.roundedBorder)
                         .font(Theme.Font.microMono)
                 }
                 HStack(alignment: .top, spacing: Theme.Space.s16) {
                     EditorField(label: "上下文窗口") {
-                        TextField("400000", text: $model.models[idx].contextWindow)
+                        TextField("400000", text: model.binding(for: editingID, keyPath: \.contextWindow))
                             .textFieldStyle(.roundedBorder)
                     }
                     EditorField(label: "自动压缩阈值") {
-                        TextField("360000", text: $model.models[idx].autoCompactTokenLimit)
+                        TextField("360000", text: model.binding(for: editingID, keyPath: \.autoCompactTokenLimit))
                             .textFieldStyle(.roundedBorder)
                     }
                 }
@@ -297,6 +277,7 @@ struct CodexProviderEditorView: View {
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .id(editingID)
         } else {
             Text("请选择模型")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
@@ -347,6 +328,10 @@ struct CodexProviderEditorView: View {
                     Text(err)
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.statusError)
+                } else if model.isSaveFlashActive {
+                    Label("已保存", systemImage: "checkmark.circle.fill")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.statusBusy)
                 }
                 if let note = codexStore.importSummary {
                     Text(note)
@@ -365,16 +350,19 @@ struct CodexProviderEditorView: View {
                     model.save()
                 } label: {
                     if model.isSaving {
-                        ProgressView().scaleEffect(0.5)
+                        ProgressView().controlSize(.small)
+                    } else if model.isSaveFlashActive {
+                        Label("已保存", systemImage: "checkmark")
                     } else {
                         Text("保存")
                     }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Theme.codex)
-                .disabled(!model.canSave)
+                .adaptiveGlassButton(prominent: true)
+                .tint(model.isSaveFlashActive ? Theme.statusBusy : Theme.codex)
+                .disabled(!model.canSave || model.isSaving)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("保存供应商 (⌘S)")
+                .sensoryFeedback(.success, trigger: model.saveToken)
             }
             .padding(.horizontal, Theme.Space.s16 + Theme.Space.s4).padding(.vertical, Theme.Space.s12)
             .animation(Theme.Animation.bouncy, value: model.saveToken)
@@ -391,5 +379,12 @@ struct CodexProviderEditorView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var modelReasoningEffortBinding: Binding<String> {
+        if let editingID = model.editingModelID {
+            return model.binding(for: editingID, keyPath: \.reasoningEffort)
+        }
+        return .constant("")
     }
 }

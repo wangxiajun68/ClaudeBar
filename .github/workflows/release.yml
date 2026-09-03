@@ -32,19 +32,21 @@ jobs:
             fi
           fi
 
-      - name: Build and package
+      - name: Build release artifacts
         env:
-          AXON_SKIP_INSTALL: "1"
-          AXON_PACKAGE: "1"
+          CLAUDEBAR_SKIP_INSTALL: "1"
+          CLAUDEBAR_PACKAGE: "1"
         run: bash Sources/build.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Axon-${{ steps.version.outputs.version }}-macos-arm64
+          name: ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64
           path: |
-            .build/dist/Axon-${{ steps.version.outputs.version }}-macos-arm64.zip
-            .build/dist/Axon-${{ steps.version.outputs.version }}-macos-arm64.zip.sha256
+            .build/dist/ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64.dmg
+            .build/dist/ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64.dmg.sha256
+            .build/dist/ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64.zip
+            .build/dist/ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64.zip.sha256
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
@@ -52,17 +54,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          ZIP=".build/dist/Axon-${VERSION}-macos-arm64.zip"
-          SUM="${ZIP}.sha256"
+          BASE="ClaudeBar-${VERSION}-macOS-arm64"
+          DMG=".build/dist/${BASE}.dmg"
+          ZIP=".build/dist/${BASE}.zip"
           {
-            echo "macOS 26 · Apple Silicon (arm64) · ad-hoc 签名"
+            echo "## Install"
             echo
-            echo "解压后将 \`ClaudeBar.app\` 拖到 \`/Applications\`（菜单栏与窗口显示名为 Axon）。"
-            echo "若 Gatekeeper 拦截：\`xattr -cr /Applications/ClaudeBar.app\`。"
+            echo "1. Download **${BASE}.dmg** (recommended) or the \`.zip\` asset."
+            echo "2. Open the DMG and drag **ClaudeBar** into **Applications**."
+            echo "3. Launch from Applications or the menu bar."
             echo
-            echo "变更记录：[docs/CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/CHANGELOG.md)"
+            echo "**Requirements:** macOS 15+, Apple Silicon (arm64)."
+            echo
+            echo "This build is **ad-hoc signed** (not notarized). If Gatekeeper blocks it:"
+            echo "\`\`\`bash"
+            echo "xattr -cr /Applications/ClaudeBar.app"
+            echo "open /Applications/ClaudeBar.app"
+            echo "\`\`\`"
+            echo
+            echo "Checksums are attached as \`.sha256\` files."
+            echo
+            echo "## Changelog"
+            echo
+            echo "[docs/CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/v${VERSION}/docs/CHANGELOG.md)"
           } > /tmp/release-notes.md
           gh release create "$GITHUB_REF_NAME" \
-            --title "Axon ${VERSION}" \
+            --title "ClaudeBar ${VERSION}" \
             --notes-file /tmp/release-notes.md \
-            "$ZIP" "$SUM"
+            "$DMG" "${DMG}.sha256" "$ZIP" "${ZIP}.sha256"

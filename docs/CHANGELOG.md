@@ -6,10 +6,16 @@
 
 ## [Unreleased]
 
+### 文档与分发
+- 文档体系重写：统一索引、FAQ、CONTRIBUTING、SECURITY、Issue/PR 模板。
+- 用户安装路径改为 **GitHub Releases DMG**；`Sources/build.sh` 明确为开发者 / CI 专用。
+- Release workflow 产出 `ClaudeBar-<version>-macOS-arm64.dmg`（主）+ zip（备）+ `.sha256`。
+- 最低系统降至 **macOS 15+**；`adaptiveGlassButton()` 在 26+ 启用原生 Liquid Glass。
+
 ### 基础设施
-- GitHub Actions：`macos-26` CI（`AXON_SKIP_INSTALL=1`）；`v*` tag 打包 `Axon-<version>-macos-arm64.zip` 并创建 Release。
+- GitHub Actions：`macos-26` CI（`CLAUDEBAR_SKIP_INSTALL=1`）；`v*` tag 触发 Release 打包。
 - 版本号单一来源：仓库根目录 `VERSION`，由 `build.sh` 写入 Info.plist。
-- Issue / PR 模板、`SECURITY.md`、Dependabot（github-actions）、贡献指南中的分支约定。
+- Issue / PR 模板、`SECURITY.md`、Dependabot、贡献指南分支约定。
 
 ---
 

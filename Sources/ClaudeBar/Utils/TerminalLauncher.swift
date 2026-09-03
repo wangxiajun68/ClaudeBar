@@ -3,8 +3,9 @@ import Foundation
 
 /// Launching external terminal / editor actions shared by the menu-bar popup
 /// and the main-window Sessions page. Both surfaces let the user double-click
-/// a Claude Code session to resume it in a terminal, or double-click a Cursor
-/// session to open its workspace — the wiring lives here so the two views don't
+/// a Claude Code session to resume it in a terminal, double-click a Cursor
+/// session to open its workspace, or double-click a Codex session to open it
+/// in Codex Desktop / CLI — the wiring lives here so the two views don't
 /// drift apart (they previously carried two divergent copies of the same logic).
 ///
 /// Warp is preferred when installed: it opens a new window at the cwd via
@@ -25,7 +26,7 @@ enum TerminalLauncher {
     /// `sessionId` is a UUID from the session file, but it is validated to a
     /// safe charset anyway so a tampered file cannot inject shell syntax.
     static func resumeClaudeSession(cwd: String, sessionId: String) {
-        guard !cwd.isEmpty else { return }
+        guard !cwd.isEmpty, isSafePath(cwd) else { return }
         // Reject a sessionId that could break out of the shell quoting; real
         // session ids are plain UUID hex+dashes.
         guard !sessionId.contains(where: { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-".contains($0) == false }) else { return }
@@ -44,13 +45,39 @@ enum TerminalLauncher {
     /// Open a workspace folder in Cursor.app. No-op if Cursor isn't installed
     /// or the folder doesn't exist.
     static func openInCursor(cwd: String) {
-        guard !cwd.isEmpty,
+        guard !cwd.isEmpty, isSafePath(cwd),
               FileManager.default.fileExists(atPath: cwd) else { return }
         let cursorURL = URL(fileURLWithPath: "/Applications/Cursor.app")
         guard FileManager.default.fileExists(atPath: cursorURL.path) else { return }
         let folderURL = URL(fileURLWithPath: cwd)
         NSWorkspace.shared.open([folderURL], withApplicationAt: cursorURL,
                                 configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    /// Resume a Codex session: open `codex://threads/<sessionId>` in Codex
+    /// Desktop when the scheme is registered, otherwise run
+    /// `codex resume <sessionId>` in a terminal at `cwd`.
+    static func resumeCodexSession(cwd: String, sessionId: String) {
+        guard !sessionId.isEmpty,
+              !sessionId.contains(where: { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-".contains($0) == false }) else { return }
+
+        if let url = URL(string: "codex://threads/\(sessionId)"),
+           NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        guard !cwd.isEmpty, isSafePath(cwd) else { return }
+        let safeCwd = cwd
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let shellCmd = "cd \"\(safeCwd)\" && codex resume \(sessionId)"
+
+        if FileManager.default.fileExists(atPath: "/Applications/Warp.app") {
+            openInWarp(shellCmd: shellCmd, cwd: cwd)
+        } else {
+            runInAppleTerminal(shellCmd: shellCmd)
+        }
     }
 
     // MARK: - Warp
@@ -94,6 +121,14 @@ enum TerminalLauncher {
     }
 
     // MARK: - osascript runner
+
+    /// Reject paths that could break AppleScript string literals or inject shell syntax.
+    private static func isSafePath(_ path: String) -> Bool {
+        guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
+            return false
+        }
+        return true
+    }
 
     /// Run an AppleScript string via `/usr/bin/osascript` (args array — no
     /// shell interpolation, so the source cannot inject extra arguments).

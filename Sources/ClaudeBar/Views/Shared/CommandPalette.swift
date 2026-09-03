@@ -101,7 +101,7 @@ struct CommandPalette: View {
             Image(systemName: "magnifyingglass")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.accent)
-            TextField("搜索页面、会话、供应商", text: $query)
+            TextField("搜索页面、会话、模型", text: $query)
                 .font(Theme.Font.bodyLarge)
                 .foregroundColor(Theme.textPrimary)
                 .focused($searchFocused)
@@ -126,25 +126,33 @@ struct CommandPalette: View {
 
     private var resultsList: some View {
         ScrollView {
-            GlassEffectContainer(spacing: 2) {
-                LazyVStack(spacing: 2) {
-                    ForEach(filtered) { item in
-                        CommandRow(item: item, isSelected: selection == item.id) {
-                            select(item)
-                        }
-                    }
-                    if filtered.isEmpty {
-                        Text("无匹配结果")
-                            .font(Theme.Font.body)
-                            .foregroundColor(Theme.textTertiary())
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 28)
-                    }
+            if #available(macOS 26.0, *) {
+                GlassEffectContainer(spacing: 2) {
+                    resultsStack
                 }
-                .padding(8)
+            } else {
+                resultsStack
             }
         }
         .frame(maxHeight: 360)
+    }
+
+    private var resultsStack: some View {
+        LazyVStack(spacing: 2) {
+            ForEach(filtered) { item in
+                CommandRow(item: item, isSelected: selection == item.id) {
+                    select(item)
+                }
+            }
+            if filtered.isEmpty {
+                Text("无匹配结果")
+                    .font(Theme.Font.body)
+                    .foregroundColor(Theme.textTertiary())
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+            }
+        }
+        .padding(8)
     }
 
     // MARK: Items

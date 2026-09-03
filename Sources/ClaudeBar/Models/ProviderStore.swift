@@ -13,9 +13,6 @@ class ProviderStore: ObservableObject {
     @Published var collapsedProviderIDs: Set<UUID> = []
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
-    /// Cursor bubbles have no timestamps (upstream stopped writing after ~2026-03).
-    /// Shown separately so they never inflate the selected day/month total.
-    @Published var cursorLifetimeUsage: ModelUsage?
     @Published var usageLoading: Bool = false
     @Published var usagePeriod: UsagePeriod = .month {
         didSet { if usagePeriod != oldValue { refreshUsage(rescan: false) } }
@@ -510,6 +507,18 @@ class ProviderStore: ObservableObject {
 
     private var didUnifyWithPeer = false
 
+    /// Blank Claude provider with one placeholder model — ready to edit and save.
+    @MainActor
+    @discardableResult
+    func addBlankProvider() -> Provider {
+        let placeholder = ModelConfig(name: "model-name")
+        let p = Provider(name: "新供应商", models: [placeholder], activeModelID: placeholder.id)
+        providers.append(p)
+        saveProviders()
+        projectToPeer()
+        return p
+    }
+
     /// Drop a Claude-shaped preset (from `CodexPreset`) into the unified list.
     @MainActor
     func addFromCodexPreset(_ preset: CodexProvider) {
@@ -597,23 +606,19 @@ class ProviderStore: ObservableObject {
                 if UsageIndex.hasCachedData {
                     let quick = Self.queryUsage(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
-                    let cursor = CursorUsageStats.fetch()
                     await MainActor.run { [weak self] in
                         guard let self else { return }
                         self.usageStats = quick
                         self.usageDays = days
-                        self.cursorLifetimeUsage = cursor
                         self.usageLoading = false
                     }
                 }
 
                 if wantRescan {
                     UsageIndex.updateIndex()
-                    CursorUsageStats.refreshIfNeeded()
                 }
                 let final = Self.queryUsage(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
-                let cursor = CursorUsageStats.fetch()
 
                 let next: (again: Bool, rescan: Bool) = await MainActor.run {
                     if self.usageRefreshQueued {
@@ -634,7 +639,6 @@ class ProviderStore: ObservableObject {
                     guard let self else { return }
                     self.usageStats = final
                     self.usageDays = days
-                    self.cursorLifetimeUsage = cursor
                     self.usageLoading = false
                     self.writeWidgetSnapshot()
                 }

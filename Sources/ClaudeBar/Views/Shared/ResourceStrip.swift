@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 系统资源：标题数字为整机（全核 CPU、IOKit GPU、物理内存）。说明与色条为
-/// Axon / CC / Cursor / Codex 占整机的比例，剩余为其他进程。
+/// ClaudeBar / CC / Cursor / Codex 占整机的比例，剩余为其他进程。
 struct ResourceStrip: View {
     @ObservedObject var sampler = ProcessSampler.shared
     var dense: Bool = false
@@ -30,8 +30,7 @@ struct ResourceStrip: View {
                       value: String(format: "%.0f%%", sampler.host.gpu),
                       trail: sampler.trail.map(\.gpu),
                       tint: Theme.external,
-                      shares: gpuSegments,
-                      footnote: gpuFootnote)
+                      shares: gpuSegments)
                 meter("内存",
                       value: sampler.host.memoryLabel,
                       trail: sampler.trail.map(\.mem),
@@ -55,22 +54,21 @@ struct ResourceStrip: View {
 
     private var gpuSegments: [ShareSegment] {
         let attributed = sampler.shares.filter { $0.gpuShare > 0.005 }
-        if attributed.isEmpty {
-            return [ShareSegment(id: "host", label: "本机",
-                                 ratio: min(1, sampler.host.gpu / 100), tint: Theme.external)]
+        if !attributed.isEmpty {
+            return attributed.map { ShareSegment(id: $0.id, label: $0.label, ratio: $0.gpuShare, tint: tint(for: $0.id)) }
         }
-        return attributed.map { ShareSegment(id: $0.id, label: $0.label, ratio: $0.gpuShare, tint: tint(for: $0.id)) }
+        // Per-process GPU unavailable — show whole-machine usage only.
+        return [ShareSegment(id: "host", label: "本机",
+                           ratio: min(1, sampler.host.gpu / 100), tint: Theme.external)]
     }
 
-    private var gpuFootnote: String? {
+    private var canAttributeGPU: Bool {
         sampler.shares.contains(where: { $0.gpuShare > 0.005 })
-            ? nil
-            : "无法按进程拆分 GPU：跨进程统计需要 task_for_pid 权限"
     }
 
     private func tint(for id: String) -> Color {
         switch id {
-        case "axon": return Theme.textSecondary
+        case "claudeBar": return Theme.textSecondary
         case "cursor": return Theme.cursor
         case "claude": return Theme.claude
         case "codex": return Theme.codex
@@ -79,7 +77,7 @@ struct ResourceStrip: View {
     }
 
     private func meter(_ label: String, value: String, trail: [Double], tint: Color,
-                       shares: [ShareSegment], footnote: String? = nil) -> some View {
+                       shares: [ShareSegment]) -> some View {
         VStack(alignment: .leading, spacing: dense ? 3 : 5) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(label)
@@ -99,7 +97,7 @@ struct ResourceStrip: View {
             }
             .frame(height: dense ? 18 : 28)
             if !dense {
-                Text(caption(for: label, fallback: footnote))
+                Text(caption(for: label))
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
@@ -107,17 +105,17 @@ struct ResourceStrip: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help(helpText(footnote: footnote))
+        .help(helpText())
     }
 
     private enum CaptionKind { case cpu, gpu, mem }
 
-    private func caption(for meter: String, fallback: String?) -> String {
+    private func caption(for meter: String) -> String {
         switch meter {
         case "CPU": return familyCaption(kind: .cpu)
         case "GPU":
-            let named = familyCaption(kind: .gpu)
-            return named == "—" ? (fallback ?? "—") : named
+            if canAttributeGPU { return familyCaption(kind: .gpu) }
+            return "本机 \(Int(sampler.host.gpu.rounded()))%"
         default: return familyCaption(kind: .mem)
         }
     }
@@ -141,14 +139,13 @@ struct ResourceStrip: View {
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
-    private func helpText(footnote: String?) -> String {
+    private func helpText() -> String {
         var lines = sampler.shares.map { share -> String in
             let cpu = Int((share.cpuShare * 100).rounded())
             let mem = ProcessSampler.Snapshot(memoryBytes: share.memoryBytes).memoryLabel
             return "\(share.label)  CPU \(cpu)%  \(mem)"
         }
         lines.insert("本机  CPU \(Int(sampler.host.cpu.rounded()))%  GPU \(Int(sampler.host.gpu.rounded()))%  \(sampler.host.memoryLabel)", at: 0)
-        if let footnote { lines.append(footnote) }
         return lines.joined(separator: "\n")
     }
 }
@@ -218,6 +215,6 @@ struct SessionLoadChip: View {
             .lineLimit(1)
             .help(shared
                   ? "Cursor 为共享进程，显示整个应用的 CPU 与内存"
-                  : "该会话进程的 CPU 与内存。跨进程 GPU 需要 task_for_pid 权限，多数代理无法显示。")
+                  : "该会话进程的 CPU 与内存")
     }
 }

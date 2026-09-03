@@ -2,11 +2,12 @@ import SwiftUI
 
 extension Notification.Name {
     static let showMainWindow = Notification.Name("com.claudebar.showMainWindow")
+    static let openProvidersEditor = Notification.Name("com.claudebar.openProvidersEditor")
 }
 
 /// Menu-bar popup shell — pure composition. Content lives in `Views/Popup/`
 /// (PanelHeader, SessionsPanel, ProvidersPanel, UsagePanel), UI state in
-/// `PanelState`, window management in `ProviderEditorWindowController`.
+/// `PanelState`. Provider editing opens the main window.
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @ObservedObject var prefs = AppPreferences.shared
@@ -91,7 +92,7 @@ struct MenuBarView: View {
             iconButton("macwindow", help: "打开主窗口", color: Theme.accent) {
                 NotificationCenter.default.post(name: .showMainWindow, object: nil)
             }
-            iconButton("pencil.line", help: "编辑供应商", color: Theme.cursorAccent) { openEditor() }
+            iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
                 .disabled(!providerStore.hasSettingsFile)
             iconButton(prefs.idleNotifyEnabled ? "bell.fill" : "bell.slash",
@@ -120,7 +121,8 @@ struct MenuBarView: View {
     // MARK: - External Actions
 
     private func openEditor() {
-        ProviderEditorWindowController.shared.show(store: providerStore)
+        NotificationCenter.default.post(name: .showMainWindow, object: nil)
+        NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
     }
 
     private func openSettingsFile() {

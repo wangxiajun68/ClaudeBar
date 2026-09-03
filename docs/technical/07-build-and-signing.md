@@ -38,14 +38,29 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 5. 主 b
 3. **Widget 直接编译进 appex**：不经过主 app MacOS/ 的中间产物，避免 codesign 签到多余二进制。
 4. **不签 `--deep`**：App Group 容器等不需深签；自底向上显式签名更可控。
 
-## CI 与 zip
+## CI 与发行物
 
 ```bash
-AXON_SKIP_INSTALL=1 bash Sources/build.sh                 # .build/ClaudeBar.app
-AXON_SKIP_INSTALL=1 AXON_PACKAGE=1 bash Sources/build.sh  # + .build/dist/Axon-<VERSION>-macos-arm64.zip
+CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+# → .build/ClaudeBar.app
+
+CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
+# → .build/ClaudeBar.app
+# → .build/dist/ClaudeBar-{version}-macOS-arm64.dmg   （主发行物）
+# → .build/dist/ClaudeBar-{version}-macOS-arm64.zip   （辅助归档）
+# → 各文件的 .sha256 校验和
 ```
 
-跳过安装时不 `pkill`、不写 `/Applications`、不跑 `pluginkit`。GitHub Actions 必须走这条路径。版本字符串从仓库根目录 `VERSION` 注入 Info.plist。发布步骤见 [RELEASING.md](../RELEASING.md)。
+跳过安装时不 `pkill`、不写 `/Applications`、不跑 `pluginkit`。GitHub Actions 与发版流水线必须走上述路径。
+
+**DMG 打包（`CLAUDEBAR_PACKAGE=1` 时，`build.sh` 内自动执行）：**
+
+1. 在 `.build/dmg-staging/` 放入已签名的 `ClaudeBar.app`
+2. 创建指向 `/Applications` 的符号链接，供用户拖放安装
+3. `hdiutil create -volname "ClaudeBar" -srcfolder … -format UDZO` 生成压缩 DMG
+4. 对 DMG 与 zip 分别计算 `shasum -a 256`
+
+zip 由 `ditto -c -k` 生成，供脚本化下载或校验；**终端用户首选 DMG**。版本字符串从仓库根目录 `VERSION` 注入 Info.plist 与产物文件名。完整发版步骤见 [RELEASING.md](../RELEASING.md)。
 
 ## Widget 注册
 

@@ -57,20 +57,11 @@ final class UsageJSONStore {
         var cacheCreate: Int
     }
 
-    struct CursorRec: Codable {
-        var input: Int
-        var output: Int
-        var calls: Int
-        var dbVersion: Int32
-        var pageCount: Int64
-    }
-
     static let shared = UsageJSONStore()
 
     private let lock = NSLock()
     private var files: [String: FileRec] = [:]
     private var rollup: [String: RollupRec] = [:]
-    private var cursor: CursorRec?
     private var loaded = false
 
     func load() {
@@ -162,24 +153,10 @@ final class UsageJSONStore {
         return byDay.values.filter { $0.totalTokens > 0 }.sorted { $0.day < $1.day }
     }
 
-    func loadCursor() -> CursorRec? {
-        lock.lock(); defer { lock.unlock() }
-        loadLocked()
-        return cursor
-    }
-
-    func saveCursor(_ rec: CursorRec) {
-        lock.lock()
-        cursor = rec
-        persistCursorLocked()
-        lock.unlock()
-    }
-
     func reset() {
         lock.lock()
         files = [:]
         rollup = [:]
-        cursor = nil
         loaded = false
         lock.unlock()
     }
@@ -198,10 +175,6 @@ final class UsageJSONStore {
                 guard let row = try? dec.decode(RollupRec.self, from: Data(line.utf8)) else { continue }
                 rollup[Self.key(row)] = row
             }
-        }
-        if let data = try? Data(contentsOf: FilePaths.usageCursorJSON),
-           let rec = try? JSONDecoder().decode(CursorRec.self, from: data) {
-            cursor = rec
         }
         // Pre-cx_model rollups stamped every Codex turn as "codex". Drop the
         // Codex file rows so the next updateIndex re-parses the real slugs.
@@ -226,16 +199,6 @@ final class UsageJSONStore {
             }
         }
         try? Data(body.utf8).write(to: FilePaths.usageRollupJSONL, options: .atomic)
-        persistCursorLocked()
-    }
-
-    private func persistCursorLocked() {
-        guard let cursor else { return }
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(cursor) {
-            try? data.write(to: FilePaths.usageCursorJSON, options: .atomic)
-        }
     }
 
     private static func key(_ row: RollupRec) -> String {

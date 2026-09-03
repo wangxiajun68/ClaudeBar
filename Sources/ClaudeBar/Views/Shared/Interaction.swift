@@ -20,6 +20,26 @@ extension ButtonStyle where Self == PressableStyle {
     static var pressable: PressableStyle { PressableStyle() }
 }
 
+// MARK: - Adaptive glass buttons
+
+extension View {
+    /// macOS 26+: native Liquid Glass. Earlier: bordered fallback with the same API surface.
+    @ViewBuilder
+    func adaptiveGlassButton(prominent: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            if prominent {
+                buttonStyle(.glassProminent)
+            } else {
+                buttonStyle(.glass)
+            }
+        } else if prominent {
+            buttonStyle(.borderedProminent)
+        } else {
+            buttonStyle(.bordered)
+        }
+    }
+}
+
 // MARK: - HoverState
 
 /// Tracks pointer-in / pointer-out for a view, wrapped into a bindable

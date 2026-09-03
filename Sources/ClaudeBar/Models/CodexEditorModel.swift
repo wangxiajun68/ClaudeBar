@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// Editable mirror of a CodexModelConfig for the editor form.
 struct EditableCodexModel: Identifiable, Equatable {
@@ -28,9 +29,14 @@ final class CodexProviderEditorModel {
     var editingModelID: UUID?
     var newModelName = ""
     var isSaving = false
+    var isFetchingModels = false
+    var modelFetchMessage: String?
+    var showModelImport = false
+    var modelImportCandidates: [String] = []
     /// Monotonic token — each successful save bumps it; the view shows
     /// "Saved ✓" via a `.task(id:)` (see ProviderEditorView).
     var saveToken = 0
+    private(set) var saveFlashUntil: Date?
 
     private unowned var store: CodexProviderStore?
 
@@ -94,6 +100,11 @@ final class CodexProviderEditorModel {
             && !models.isEmpty && !isSaving
     }
 
+    var isSaveFlashActive: Bool {
+        guard let until = saveFlashUntil else { return false }
+        return until > Date()
+    }
+
     // MARK: - Model CRUD
 
     func addModel() {
@@ -109,11 +120,80 @@ final class CodexProviderEditorModel {
     func deleteModel(_ id: UUID) {
         models.removeAll { $0.id == id }
         if activeModelID == id { activeModelID = models.first?.id }
-        if editingModelID == id { editingModelID = models.first?.id }
+        sanitizeEditingSelection()
     }
 
     func setDefault(_ id: UUID) {
         activeModelID = id
+    }
+
+    func binding(for id: UUID, keyPath: WritableKeyPath<EditableCodexModel, String>) -> Binding<String> {
+        Binding(
+            get: { self.models.first(where: { $0.id == id })?[keyPath: keyPath] ?? "" },
+            set: { newValue in
+                guard let index = self.models.firstIndex(where: { $0.id == id }) else { return }
+                self.models[index][keyPath: keyPath] = newValue
+            }
+        )
+    }
+
+    private func sanitizeEditingSelection() {
+        if let id = editingModelID, models.contains(where: { $0.id == id }) { return }
+        editingModelID = activeModelID ?? models.first?.id
+    }
+
+    var existingModelNames: Set<String> {
+        Set(models.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty })
+    }
+
+    func fetchModelsFromAPI() {
+        guard !isFetchingModels else { return }
+        isFetchingModels = true
+        modelFetchMessage = nil
+        let url = baseURL
+        let key = apiKey
+        let wire = wireAPI
+        Task {
+            let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key, wireAPI: wire)
+            isFetchingModels = false
+            switch result {
+            case .success(let payload):
+                modelImportCandidates = payload.models
+                if payload.models.isEmpty {
+                    modelFetchMessage = "接口未返回模型"
+                } else {
+                    showModelImport = true
+                    modelFetchMessage = nil
+                }
+            case .failure(let message):
+                modelFetchMessage = message
+            }
+        }
+    }
+
+    func importSelectedModels(_ names: Set<String>) {
+        defer {
+            showModelImport = false
+            modelImportCandidates = []
+        }
+        guard !names.isEmpty else { return }
+        let existing = existingModelNames
+        var added = 0
+        for name in names.sorted() {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !existing.contains(trimmed.lowercased()) else { continue }
+            let item = EditableCodexModel(id: UUID(), name: trimmed)
+            models.append(item)
+            added += 1
+            if activeModelID == nil { activeModelID = item.id }
+        }
+        sanitizeEditingSelection()
+        modelFetchMessage = added > 0 ? "已导入 \(added) 个模型" : "所选模型均已存在"
+    }
+
+    func cancelModelImport() {
+        showModelImport = false
+        modelImportCandidates = []
     }
 
     // MARK: - Save
@@ -147,16 +227,25 @@ final class CodexProviderEditorModel {
 
         isSaving = false
         saveToken += 1
+        saveFlashUntil = Date().addingTimeInterval(2)
     }
 
     // MARK: - Provider CRUD (delegate to store)
 
     func addNew() {
         guard let store else { return }
-        let p = CodexProvider(name: "New Provider")
-        store.addProvider(p)
+        let p = store.addBlankProvider()
         selectedID = p.id
         loadSelected()
+    }
+
+    func focusProvider(id: UUID) {
+        selectedID = id
+        loadSelected()
+    }
+
+    func clearSaveFlash() {
+        saveFlashUntil = nil
     }
 
     func addFromPreset(_ preset: CodexProvider) {

@@ -8,7 +8,7 @@ import Combine
 ///
 /// Sampling runs off-main. Headline numbers are the **machine** (all-core
 /// CPU, IOKit GPU, physical memory). Per-agent chips still use one-core
-/// CPU and `phys_footprint`. Family shares (Axon / CC / Cursor / Codex)
+/// CPU and `phys_footprint`. Family shares (ClaudeBar / CC / Cursor / Codex)
 /// are those processes as a fraction of the machine, not of each other.
 final class ProcessSampler: ObservableObject {
     static let shared = ProcessSampler()
@@ -32,11 +32,11 @@ final class ProcessSampler: ObservableObject {
     }
 
     enum Family: String, CaseIterable {
-        case axon, claude, cursor, codex
+        case claudeBar, claude, cursor, codex
 
         var label: String {
             switch self {
-            case .axon: return "Axon"
+            case .claudeBar: return "ClaudeBar"
             case .claude: return "CC"
             case .cursor: return "Cursor"
             case .codex: return "Codex"
@@ -87,7 +87,7 @@ final class ProcessSampler: ObservableObject {
         var gpuShare: Double
     }
 
-    @Published var axon = Snapshot()
+    @Published var claudeBar = Snapshot()
     @Published var host = HostStats()
     @Published var byKey: [Key: Snapshot] = [:]
     @Published var shares: [Share] = []
@@ -172,10 +172,10 @@ final class ProcessSampler: ObservableObject {
         }
 
         let selfPID = getpid()
-        var axonSnap = Snapshot()
-        axonSnap.cpu = cpuPercent(pid: selfPID, now: now)
-        axonSnap.memoryBytes = physFootprint() ?? footprint(pid: selfPID)
-        axonSnap.gpu = gpuPercent(pid: selfPID, task: mach_task_self_, now: now)
+        var claudeBarSnap = Snapshot()
+        claudeBarSnap.cpu = cpuPercent(pid: selfPID, now: now)
+        claudeBarSnap.memoryBytes = physFootprint() ?? footprint(pid: selfPID)
+        claudeBarSnap.gpu = gpuPercent(pid: selfPID, task: mach_task_self_, now: now)
 
         let sysGPU = foreground ? IOKitGPU.utilization() : 0
         let hostSnap = HostStats(
@@ -223,11 +223,11 @@ final class ProcessSampler: ObservableObject {
         lastCPU = lastCPU.filter { live.contains($0.key) }
         lastGPU = lastGPU.filter { live.contains($0.key) }
 
-        let shares = Self.makeShares(axon: axonSnap, byKey: byKey, host: hostSnap, cores: cores)
+        let shares = Self.makeShares(claudeBar: claudeBarSnap, byKey: byKey, host: hostSnap, cores: cores)
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if self.axon != axonSnap { self.axon = axonSnap }
+            if self.claudeBar != claudeBarSnap { self.claudeBar = claudeBarSnap }
             if self.host != hostSnap { self.host = hostSnap }
             if self.byKey != byKey { self.byKey = byKey }
             if self.shares != shares { self.shares = shares }
@@ -246,9 +246,9 @@ final class ProcessSampler: ObservableObject {
     }
 
     /// Four family buckets as fractions of the machine.
-    private static func makeShares(axon: Snapshot, byKey: [Key: Snapshot],
+    private static func makeShares(claudeBar: Snapshot, byKey: [Key: Snapshot],
                                    host: HostStats, cores: Double) -> [Share] {
-        var buckets: [Family: Snapshot] = [.axon: axon]
+        var buckets: [Family: Snapshot] = [.claudeBar: claudeBar]
         for (key, snap) in byKey {
             buckets[key.family, default: Snapshot()].add(snap)
         }
@@ -256,7 +256,7 @@ final class ProcessSampler: ObservableObject {
         return Family.allCases.compactMap { family in
             guard let snap = buckets[family] else { return nil }
             let present = snap.cpu >= 0.3 || snap.memoryBytes > 2 * 1024 * 1024 || snap.gpu >= 0.3
-            guard present || family == .axon else { return nil }
+            guard present || family == .claudeBar else { return nil }
             return Share(
                 id: family.rawValue,
                 label: family.label,

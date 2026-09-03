@@ -119,25 +119,35 @@ enum CodexPreset {
         name: "Zhipu GLM", baseURL: "https://open.bigmodel.cn/api/coding/paas/v4", wireAPI: "chat",
         requiresOpenAIAuth: false,
         models: [CodexModelConfig(name: "glm-4.7")])
+    static let dashscope = CodexProvider(
+        name: "阿里百炼", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", wireAPI: "chat",
+        requiresOpenAIAuth: false,
+        models: [CodexModelConfig(name: "qwen3-coder-plus"), CodexModelConfig(name: "qwen-max")])
+    static let volcengine = CodexProvider(
+        name: "火山方舟", baseURL: "https://ark.cn-beijing.volces.com/api/v3", wireAPI: "chat",
+        requiresOpenAIAuth: false,
+        models: [CodexModelConfig(name: "doubao-seed-code-preview-251028")])
+    static let siliconflow = CodexProvider(
+        name: "硅基流动", baseURL: "https://api.siliconflow.cn/v1", wireAPI: "chat",
+        requiresOpenAIAuth: false,
+        models: [CodexModelConfig(name: "deepseek-ai/DeepSeek-V3")])
     static let openAI = CodexProvider(
         name: "OpenAI 官方", baseURL: "https://api.openai.com/v1", wireAPI: "responses",
         requiresOpenAIAuth: false,
         models: [CodexModelConfig(name: "gpt-5.2-codex")])
-    /// Aibox 中转的是 GLM 等 Chat Completions 模型。它的 `/v1/responses` 只能
-    /// 吃第一轮 `message`；第二轮回放 `function_call` 会 400
-    /// `untagged enum ResponseInput`。和官方 GLM / cc-switch Chat / Codex++
-    /// protocol_proxy 一样走 Chat。
-    static let aibox = CodexProvider(
-        name: "Aibox",
-        apiKey: "",
-        baseURL: "http://aibox.richaibox.com:2026/v1", wireAPI: "chat",
-        requiresOpenAIAuth: true,
-        models: [CodexModelConfig(name: "glm-5.3-flash",
-                                  contextWindow: "400000", autoCompactTokenLimit: "360000")])
     static let custom = CodexProvider(name: "自定义", baseURL: "", wireAPI: "responses", models: [])
 
+    /// Built-in templates shown in the provider editor. Fill in API Key after picking one.
     static var all: [(label: String, provider: CodexProvider)] {
-        [("Aibox", aibox), ("DeepSeek", deepseek), ("Kimi / Moonshot", moonshot), ("Zhipu GLM", glm),
-         ("OpenAI 官方", openAI), ("自定义", custom)]
+        [
+            ("DeepSeek", deepseek),
+            ("Kimi / Moonshot", moonshot),
+            ("阿里百炼", dashscope),
+            ("智谱 GLM", glm),
+            ("火山方舟", volcengine),
+            ("硅基流动", siliconflow),
+            ("OpenAI 官方", openAI),
+            ("自定义", custom),
+        ]
     }
 }

@@ -55,6 +55,7 @@ struct ExternalSessionCardView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.kind.displayName)，\(session.projectFolder)，\(isActive ? "运行中" : "空闲")")
+        .help("双击以在 Codex 中继续")
         .onTapGesture(count: 2) { onDoubleTap?() }
     }
 }

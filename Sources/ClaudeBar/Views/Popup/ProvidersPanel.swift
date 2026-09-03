@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Popup providers + current-config area: active config strip, provider rows,
-/// and the feedback toast inline slot.
+/// Popup model picker + optional current-config strip and feedback toast.
 struct ProvidersPanel: View {
     @EnvironmentObject var providerStore: ProviderStore
     @ObservedObject private var tests = ConnectivityTestCenter.shared
@@ -15,48 +14,41 @@ struct ProvidersPanel: View {
                 HairlineDivider()
             }
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("供应商")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, Theme.Space.s16).padding(.bottom, Theme.Space.s4)
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                SectionHeader(icon: "cpu", title: "模型")
+                    .padding(.horizontal, Theme.Space.s16)
 
                 TileGrid(.popupProvider) {
                     ForEach(providerStore.providers) { provider in
-                        ProviderTile(
-                            provider: provider,
-                            isActive: provider.id == providerStore.activeProviderID,
-                            currentModelName: providerStore.currentEnv?.ANTHROPIC_MODEL,
-                            onActivateModel: { modelID in
-                                providerStore.activateModel(providerID: provider.id, modelID: modelID)
-                                if let m = provider.models.first(where: { $0.id == modelID }) {
-                                    panel.showFeedback("\(provider.name) / \(m.name)")
+                        ForEach(provider.models) { model in
+                            PopupModelTile(
+                                provider: provider,
+                                model: model,
+                                isActive: isActiveModel(provider: provider, model: model),
+                                onActivate: {
+                                    providerStore.activateModel(providerID: provider.id, modelID: model.id)
+                                    panel.showFeedback("\(provider.name) / \(model.name)")
+                                },
+                                onToggleCapture: {
+                                    providerStore.setCaptureEnabled(
+                                        providerID: provider.id,
+                                        enabled: !provider.captureEnabled)
+                                },
+                                testOutcome: tests.outcome(
+                                    ConnectivityTestCenter.vendorModelKey(provider.id, model.id)),
+                                onTest: {
+                                    tests.testVendor(
+                                        id: provider.id,
+                                        claude: provider,
+                                        model: model,
+                                        codex: providerStore.peer?.providers.first { ProviderBridge.matches(provider, $0) })
                                 }
-                            },
-                            onToggleCapture: {
-                                providerStore.setCaptureEnabled(
-                                    providerID: provider.id,
-                                    enabled: !provider.captureEnabled)
-                            },
-                            testOutcome: tests.outcome(ConnectivityTestCenter.vendorKey(provider.id)),
-                            onTest: {
-                                tests.testVendor(
-                                    id: provider.id,
-                                    claude: provider,
-                                    model: ProvidersView.modelToTest(provider, envModel: providerStore.currentEnv?.ANTHROPIC_MODEL),
-                                    codex: providerStore.peer?.providers.first { ProviderBridge.matches(provider, $0) })
-                            },
-                            dense: true
-                        )
+                            )
+                        }
                     }
                 }
-                // Tile inner padding is s8 (dense), so a grid inset of s8 puts
-                // tile *text* on the same s16 edge as the section labels.
                 .padding(.horizontal, Theme.Space.s8)
 
-                // Feedback toast (render-only; lifecycle lives in the shell).
                 FeedbackToast(message: panel.feedbackMessage, tint: Theme.statusBusy)
                     .padding(.vertical, 2)
 
@@ -64,6 +56,11 @@ struct ProvidersPanel: View {
             }
             .padding(.horizontal, Theme.Space.s16).padding(.vertical, Theme.Space.s6)
         }
+    }
+
+    private func isActiveModel(provider: Provider, model: ModelConfig) -> Bool {
+        guard provider.id == providerStore.activeProviderID else { return false }
+        return model.name.caseInsensitiveCompare(providerStore.currentEnv?.ANTHROPIC_MODEL ?? "") == .orderedSame
     }
 
     // MARK: Current config strip
@@ -75,18 +72,18 @@ struct ProvidersPanel: View {
                     .fill(providerStore.activeProviderID != nil ? Theme.statusBusy : Theme.statusWarning)
                     .frame(width: 6, height: 6)
 
-                Text(providerStore.activeProvider?.name ?? "未保存的配置")
+                Text(providerStore.activeModel?.name ?? providerStore.activeProvider?.name ?? "未保存的配置")
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary.opacity(0.8))
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    .truncationMode(.middle)
 
-                if let model = providerStore.activeModel {
-                    Text("/ \(model.name)")
+                if let provider = providerStore.activeProvider, providerStore.activeModel != nil {
+                    Text("/ \(provider.name)")
                         .font(Theme.Font.micro)
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                 }
             }
 

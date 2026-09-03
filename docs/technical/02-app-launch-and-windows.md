@@ -45,7 +45,7 @@ struct ClaudeBarApp: App {
 
 `NavigationSplitView`，sidebar + detail（`.frame(minWidth: 900, minHeight: 600)`）：
 
-- **Sidebar**（`Theme.sidebarFill` + 玻璃背景）：brand 头（蓝色圆标 "A" + "Axon"）+ 5 项 `AppPage`（概览/会话/供应商/用量/设置）。每项 `SidebarRowButton`：图标 + 标签 + 实时计数 badge（会话/供应商页，`contentTransition(.numericText())`）；选中项为 accent 填充（`Theme.claude.opacity(0.18)`），hover 变亮。底部 footer：状态圆点（busy 蓝闲灰）+ "N 运行中/空闲"。
+- **Sidebar**（`Theme.sidebarFill` + 玻璃背景）：brand 头（`BrandMark` 应用图标 + "ClaudeBar"）+ 5 项 `AppPage`（概览/会话/供应商/用量/设置）。每项 `SidebarRowButton`：图标 + 标签 + 实时计数 badge（会话/供应商页，`contentTransition(.numericText())`）；选中项为 accent 填充（`Theme.claude.opacity(0.18)`），hover 变亮。底部 footer：状态圆点（busy 蓝闲灰）+ "N 运行中/空闲"。
 - **Detail**：按 `selectedPage` 切换 `DashboardView` / `SessionsView` / `ProvidersView` / `UsageView` / `SettingsView`，纯 opacity 过渡（`Theme.Motion.page`）。
 - **CommandPalette**（⌘K）：跨页面模糊搜索导航（隐藏 Button 承载 keyboardShortcut）。
 
