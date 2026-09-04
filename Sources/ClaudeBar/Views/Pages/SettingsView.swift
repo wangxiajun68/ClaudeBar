@@ -48,6 +48,14 @@ struct SettingsView: View {
                     }
                 }
 
+                group("风扇") {
+                    Text("通过 Apple SMC 读取转速并手动调速。逻辑参考 Stats；切换为手动后系统温控不再接管该风扇。")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .fixedSize(horizontal: false, vertical: true)
+                    FanControlSection()
+                }
+
                 group("本地代理") {
                     toggleRow(
                         "本地代理",

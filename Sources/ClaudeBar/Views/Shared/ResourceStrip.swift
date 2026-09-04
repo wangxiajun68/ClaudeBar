@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 系统资源：标题数字为整机（全核 CPU、IOKit GPU、物理内存）。说明与色条为
-/// ClaudeBar / CC / Cursor / Codex 占整机的比例，剩余为其他进程。
+/// 系统资源：标题数字为整机（全核 CPU、IOKit GPU、物理内存、温度）。
+/// 色条为 ClaudeBar / CC / Cursor / Codex 占整机的 CPU 与内存比例。
 struct ResourceStrip: View {
     @ObservedObject var sampler = ProcessSampler.shared
+    @ObservedObject private var fanMonitor = FanMonitor.shared
     var dense: Bool = false
 
     var body: some View {
@@ -22,27 +23,104 @@ struct ResourceStrip: View {
             }
             HStack(spacing: dense ? 10 : 16) {
                 meter("CPU",
-                      value: String(format: "%.0f%%", sampler.host.cpu),
+                      value: cpuValue,
                       trail: sampler.trail.map(\.cpu),
                       tint: Theme.claude,
-                      shares: cpuSegments)
+                      shares: cpuSegments,
+                      caption: cpuCaption,
+                      tempColor: cpuTempColor)
                 meter("GPU",
-                      value: String(format: "%.0f%%", sampler.host.gpu),
+                      value: gpuValue,
                       trail: sampler.trail.map(\.gpu),
                       tint: Theme.external,
-                      shares: gpuSegments)
+                      shares: gpuSegments,
+                      caption: gpuCaption,
+                      tempColor: gpuTempColor)
                 meter("内存",
                       value: sampler.host.memoryLabel,
                       trail: sampler.trail.map(\.mem),
                       tint: Theme.cursor,
-                      shares: memSegments)
+                      shares: memSegments,
+                      caption: memCaption)
+                meter("风扇",
+                      value: fanValue,
+                      trail: [],
+                      tint: Theme.claude,
+                      shares: [],
+                      caption: fanCaption,
+                      icon: "snowflake",
+                      iconAction: toggleFanMax,
+                      iconActive: fansAtMax,
+                      iconHelp: fansAtMax ? "恢复自动风速" : "最大风速",
+                      iconHelpDefault: "")
+            }
+        }
+        .onAppear {
+            if dense { ProcessSampler.shared.setScope(.popup, active: true) }
+            fanMonitor.start()
+        }
+        .onDisappear {
+            if dense { ProcessSampler.shared.setScope(.popup, active: false) }
+            fanMonitor.stop()
+        }
+    }
+
+    private var fanValue: String {
+        guard !fanMonitor.fans.isEmpty else { return "—" }
+        let rpm = fanMonitor.fans.map(\.rpm).reduce(0, +)
+        return "\(rpm) RPM"
+    }
+
+    private var fanCaption: String {
+        guard !fanMonitor.fans.isEmpty else { return "未检测到风扇" }
+        let manual = fanMonitor.fans.filter { !$0.mode.isAutomatic }.count
+        if manual > 0 { return "\(manual)/\(fanMonitor.fans.count) 手动" }
+        return fanMonitor.fans.map { "\($0.rpm)" }.joined(separator: " / ") + " rpm"
+    }
+
+    /// 雪花按钮：点击 = 全部风扇手动最大转速；再次点击 = 恢复自动。
+    private var fansAtMax: Bool {
+        guard !fanMonitor.fans.isEmpty else { return false }
+        return fanMonitor.fans.allSatisfy { !$0.mode.isAutomatic }
+    }
+
+    private func toggleFanMax() {
+        if fansAtMax {
+            fanMonitor.resetAllToAutomatic()
+        } else {
+            for fan in fanMonitor.fans {
+                fanMonitor.setManual(fan.id, rpm: fan.maxRPM)
             }
         }
     }
 
-    private var topCaption: String {
-        familyCaption(kind: .cpu)
+    private var cpuValue: String {
+        valueWithTemperature(
+            percent: sampler.host.cpu,
+            celsius: sampler.host.cpuTemperatureCelsius)
     }
+
+    private var gpuValue: String {
+        valueWithTemperature(
+            percent: sampler.host.gpu,
+            celsius: sampler.host.gpuTemperatureCelsius)
+    }
+
+    private func valueWithTemperature(percent: Double, celsius: Double?) -> String {
+        let base = String(format: "%.0f%%", percent)
+        guard let temp = sampler.host.temperatureLabel(celsius: celsius) else { return base }
+        return "\(base) · \(temp)"
+    }
+
+    /// 温度文字颜色：正常无色，≥75° amber，≥85° 红。
+    private func temperatureColor(_ celsius: Double?) -> Color? {
+        sampler.host.temperatureColor(celsius: celsius)
+    }
+
+    private var cpuTempColor: Color? { temperatureColor(sampler.host.cpuTemperatureCelsius) }
+    private var gpuTempColor: Color? { temperatureColor(sampler.host.gpuTemperatureCelsius) }
+
+    private var topCaption: String { familyCaption(kind: .cpu) }
 
     private var cpuSegments: [ShareSegment] {
         sampler.shares.map { ShareSegment(id: $0.id, label: $0.label, ratio: $0.cpuShare, tint: tint(for: $0.id)) }
@@ -53,17 +131,22 @@ struct ResourceStrip: View {
     }
 
     private var gpuSegments: [ShareSegment] {
-        let attributed = sampler.shares.filter { $0.gpuShare > 0.005 }
-        if !attributed.isEmpty {
-            return attributed.map { ShareSegment(id: $0.id, label: $0.label, ratio: $0.gpuShare, tint: tint(for: $0.id)) }
-        }
-        // Per-process GPU unavailable — show whole-machine usage only.
-        return [ShareSegment(id: "host", label: "本机",
-                           ratio: min(1, sampler.host.gpu / 100), tint: Theme.external)]
+        [ShareSegment(id: "host", label: "本机",
+                      ratio: min(1, sampler.host.gpu / 100), tint: Theme.external)]
     }
 
-    private var canAttributeGPU: Bool {
-        sampler.shares.contains(where: { $0.gpuShare > 0.005 })
+    private var cpuCaption: String { familyCaption(kind: .cpu) }
+    private var gpuCaption: String {
+        if let temp = sampler.host.temperatureLabel(celsius: sampler.host.gpuTemperatureCelsius) {
+            return "本机 \(Int(sampler.host.gpu.rounded()))% · \(temp)"
+        }
+        return "本机 \(Int(sampler.host.gpu.rounded()))%"
+    }
+
+    private var memCaption: String {
+        if sampler.host.memoryPressureLevel >= 4 { return "内存压力 · 严重" }
+        if sampler.host.memoryPressureLevel >= 2 { return "内存压力 · 偏高" }
+        return familyCaption(kind: .mem)
     }
 
     private func tint(for id: String) -> Color {
@@ -76,30 +159,61 @@ struct ResourceStrip: View {
         }
     }
 
-    private func meter(_ label: String, value: String, trail: [Double], tint: Color,
-                       shares: [ShareSegment]) -> some View {
+    private func meter(
+        _ label: String,
+        value: String,
+        trail: [Double],
+        tint: Color,
+        shares: [ShareSegment],
+        caption: String,
+        icon: String? = nil,
+        iconAction: (() -> Void)? = nil,
+        iconActive: Bool? = nil,
+        iconHelp: String? = nil,
+        iconHelpDefault: String = "",
+        tempColor: Color? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: dense ? 3 : 5) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(label)
-                    .font(Theme.Font.tileLabel)
-                    .foregroundColor(Theme.textSecondary)
+                HStack(spacing: 3) {
+                    if let icon {
+                        Button(action: iconAction ?? {}) {
+                            Image(systemName: icon)
+                                .font(.system(size: dense ? 11 : 14, weight: .medium))
+                                .foregroundColor(iconActive == true ? Theme.claude : Theme.textTertiary(0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .help(iconHelp ?? iconHelpDefault)
+                    }
+                    Text(label)
+                        .font(Theme.Font.tileLabel)
+                        .foregroundColor(Theme.textSecondary)
+                }
                 Spacer(minLength: 4)
                 Text(value)
                     .font(dense ? Theme.Font.captionMono : Theme.Font.tileMicroValue)
                     .monospacedDigit()
-                    .foregroundColor(Theme.textPrimary)
+                    // 值内含温度（"42% · 78°C"）；高温时整段变 amber/红。
+                    .foregroundColor(tempColor ?? Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             ZStack(alignment: .leading) {
-                HistoryRibbon(values: trail, tint: tint)
-                    .opacity(0.35)
-                ShareStack(segments: shares, height: dense ? 3 : 4)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
+                if label == "风扇" {
+                    // 概括处只读展示：实时转速条（不可拖），调速在设置界面。
+                    FanMiniBars(monitor: fanMonitor)
+                } else {
+                    HistoryRibbon(values: trail, tint: tint)
+                        .opacity(0.35)
+                    ShareStack(segments: shares, height: dense ? 3 : 4)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
             }
             .frame(height: dense ? 18 : 28)
             if !dense {
-                Text(caption(for: label))
+                Text(caption)
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
+                    .foregroundColor(label == "GPU" && tempColor != nil ? tempColor : Theme.textTertiary())
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -108,27 +222,13 @@ struct ResourceStrip: View {
         .help(helpText())
     }
 
-    private enum CaptionKind { case cpu, gpu, mem }
-
-    private func caption(for meter: String) -> String {
-        switch meter {
-        case "CPU": return familyCaption(kind: .cpu)
-        case "GPU":
-            if canAttributeGPU { return familyCaption(kind: .gpu) }
-            return "本机 \(Int(sampler.host.gpu.rounded()))%"
-        default: return familyCaption(kind: .mem)
-        }
-    }
+    private enum CaptionKind { case cpu, mem }
 
     private func familyCaption(kind: CaptionKind) -> String {
         let parts: [String] = sampler.shares.compactMap { share in
             switch kind {
             case .cpu:
                 let pct = share.cpuShare * 100
-                guard pct >= 0.4 else { return nil }
-                return "\(share.label) \(Int(pct.rounded()))%"
-            case .gpu:
-                let pct = share.gpuShare * 100
                 guard pct >= 0.4 else { return nil }
                 return "\(share.label) \(Int(pct.rounded()))%"
             case .mem:
@@ -145,8 +245,43 @@ struct ResourceStrip: View {
             let mem = ProcessSampler.Snapshot(memoryBytes: share.memoryBytes).memoryLabel
             return "\(share.label)  CPU \(cpu)%  \(mem)"
         }
-        lines.insert("本机  CPU \(Int(sampler.host.cpu.rounded()))%  GPU \(Int(sampler.host.gpu.rounded()))%  \(sampler.host.memoryLabel)", at: 0)
+        var hostLine = "本机  CPU \(Int(sampler.host.cpu.rounded()))%  GPU \(Int(sampler.host.gpu.rounded()))%  \(sampler.host.memoryLabel)"
+        if let cpuT = sampler.host.temperatureLabel(celsius: sampler.host.cpuTemperatureCelsius) {
+            hostLine += "  CPU \(cpuT)"
+        }
+        if let gpuT = sampler.host.temperatureLabel(celsius: sampler.host.gpuTemperatureCelsius) {
+            hostLine += "  GPU \(gpuT)"
+        }
+        lines.insert(hostLine, at: 0)
         return lines.joined(separator: "\n")
+    }
+}
+
+/// 风扇转速只读条：实时跟随轮询刷新（概括处展示用，调速在设置界面）。
+private struct FanMiniBars: View {
+    @ObservedObject var monitor: FanMonitor
+    var compact: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 2 : 3) {
+            ForEach(monitor.fans) { fan in
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Theme.textTertiary().opacity(0.25))
+                        Capsule()
+                            .fill(Theme.claude)
+                            .frame(width: max(2, geo.size.width * barRatio(fan)))
+                    }
+                }
+                .frame(height: compact ? 4 : 5)
+            }
+        }
+    }
+
+    private func barRatio(_ fan: FanInfo) -> Double {
+        let span = max(1, fan.maxRPM - fan.minRPM)
+        return min(1, max(0.02, Double(fan.rpm - fan.minRPM) / Double(span)))
     }
 }
 
@@ -175,7 +310,6 @@ private struct ShareStack: View {
     }
 }
 
-/// Filled area of the last N normalized samples (0...1).
 private struct HistoryRibbon: View {
     let values: [Double]
     let tint: Color
@@ -198,8 +332,7 @@ private struct HistoryRibbon: View {
     }
 }
 
-/// One-line CPU / memory (and GPU when the kernel gives us a task port).
-/// Observes the sampler itself so the parent tile doesn't redraw at 1 Hz.
+/// One-line CPU / memory for a tracked session or app family.
 struct SessionLoadChip: View {
     @ObservedObject private var sampler = ProcessSampler.shared
     let key: ProcessSampler.Key
@@ -216,5 +349,22 @@ struct SessionLoadChip: View {
             .help(shared
                   ? "Cursor 为共享进程，显示整个应用的 CPU 与内存"
                   : "该会话进程的 CPU 与内存")
+    }
+}
+
+/// Dashboard / sessions pages need attribution sampling while visible.
+struct ResourceMonitorScope: ViewModifier {
+    let scope: ProcessSampler.MonitorScope
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { ProcessSampler.shared.setScope(scope, active: true) }
+            .onDisappear { ProcessSampler.shared.setScope(scope, active: false) }
+    }
+}
+
+extension View {
+    func resourceMonitorScope(_ scope: ProcessSampler.MonitorScope) -> some View {
+        modifier(ResourceMonitorScope(scope: scope))
     }
 }

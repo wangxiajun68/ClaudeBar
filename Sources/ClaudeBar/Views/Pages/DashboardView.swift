@@ -15,6 +15,7 @@ struct DashboardView: View {
                 ResourceStrip()
                     .padding(Theme.Space.s16)
                     .sectionRules()
+                    .resourceMonitorScope(.dashboard)
                 metricRow
                 sessionOverview
                 usageTop

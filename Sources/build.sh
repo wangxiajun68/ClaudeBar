@@ -64,6 +64,16 @@ if [ -f "$MENUBAR_ICON" ]; then
     cp "$MENUBAR_ICON" "$RESOURCES_DIR/MenuBarIcon.png"
 fi
 
+# Privileged fan helper: tiny C binary, run via osascript admin prompt.
+FANCTL_SRC="$PROJECT_DIR/Sources/fanctl/fanctl.c"
+if [ -f "$FANCTL_SRC" ]; then
+    FANCTL_OUT="$RESOURCES_DIR/claudebar-fanctl"
+    clang -O2 -arch arm64 -arch x86_64 \
+        -framework IOKit -framework CoreFoundation \
+        -o "$FANCTL_OUT" "$FANCTL_SRC" 2>/dev/null \
+    && echo "Fan helper built: $FANCTL_OUT"
+fi
+
 # Compile Swift sources
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"

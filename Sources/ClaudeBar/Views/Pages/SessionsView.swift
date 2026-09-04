@@ -73,6 +73,7 @@ struct SessionsView: View {
             }
             .padding(Theme.Space.s24)
         }
+        .resourceMonitorScope(.sessions)
         .background(Theme.base0.opacity(0.30))
     }
 

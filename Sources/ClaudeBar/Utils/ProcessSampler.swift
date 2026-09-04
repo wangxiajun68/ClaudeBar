@@ -1,17 +1,23 @@
 import Foundation
 import Darwin
-import IOKit
 import AppKit
 import Combine
+import SwiftUI
 
 /// Live process and host meters for the 本机负载 strip and session chips.
 ///
-/// Sampling runs off-main. Headline numbers are the **machine** (all-core
-/// CPU, IOKit GPU, physical memory). Per-agent chips still use one-core
-/// CPU and `phys_footprint`. Family shares (ClaudeBar / CC / Cursor / Codex)
-/// are those processes as a fraction of the machine, not of each other.
+/// Sampling runs off-main. Headline numbers are machine-wide (all-core CPU,
+/// IOAccelerator GPU, physical memory, SMC / IOKit temperatures). Per-agent
+/// chips use single-core CPU % and `phys_footprint`. Family shares are
+/// fractions of the machine, not of each other.
 final class ProcessSampler: ObservableObject {
     static let shared = ProcessSampler()
+
+    enum MonitorScope: Hashable {
+        case popup
+        case dashboard
+        case sessions
+    }
 
     enum Key: Hashable {
         case pid(Int)
@@ -46,14 +52,7 @@ final class ProcessSampler: ObservableObject {
 
     struct Snapshot: Equatable {
         var cpu: Double = 0
-        var gpu: Double = 0
         var memoryBytes: UInt64 = 0
-
-        mutating func add(_ other: Snapshot) {
-            cpu += other.cpu
-            gpu += other.gpu
-            memoryBytes &+= other.memoryBytes
-        }
     }
 
     struct HostStats: Equatable {
@@ -62,11 +61,27 @@ final class ProcessSampler: ObservableObject {
         var memoryUsed: UInt64 = 0
         var memoryTotal: UInt64 = 0
         var coreCount: Int = 1
+        var cpuTemperatureCelsius: Double?
+        var gpuTemperatureCelsius: Double?
+        var memoryPressureLevel: Int = 0
 
         var memoryLabel: String {
             let used = ProcessSampler.Snapshot(memoryBytes: memoryUsed).memoryLabel
             let total = ProcessSampler.Snapshot(memoryBytes: memoryTotal).memoryLabel
             return "\(used) / \(total)"
+        }
+
+        func temperatureLabel(celsius: Double?) -> String? {
+            guard let celsius, celsius > 0 else { return nil }
+            return String(format: "%.0f°C", celsius.rounded())
+        }
+
+        /// 高温分级：<75 正常，75–84 偏高（amber），≥85 过热（red）。
+        func temperatureColor(celsius: Double?) -> Color? {
+            guard let celsius, celsius > 0 else { return nil }
+            if celsius >= 85 { return Theme.statusError }
+            if celsius >= 75 { return Theme.statusWarning }
+            return nil
         }
     }
 
@@ -76,35 +91,32 @@ final class ProcessSampler: ObservableObject {
         var mem: Double
     }
 
-    /// One product family's slice of the **machine**, not of the tracked set.
     struct Share: Equatable, Identifiable {
         var id: String
         var label: String
         var memoryBytes: UInt64
-        /// Fraction of all cores / physical RAM / GPU (0...1).
         var cpuShare: Double
         var memShare: Double
-        var gpuShare: Double
     }
 
-    @Published var claudeBar = Snapshot()
-    @Published var host = HostStats()
-    @Published var byKey: [Key: Snapshot] = [:]
-    @Published var shares: [Share] = []
-    @Published var trail: [Point] = []
+    @Published private(set) var claudeBar = Snapshot()
+    @Published private(set) var host = HostStats()
+    @Published private(set) var byKey: [Key: Snapshot] = [:]
+    @Published private(set) var shares: [Share] = []
+    @Published private(set) var trail: [Point] = []
 
     private let queue = DispatchQueue(label: "com.claudebar.proc", qos: .utility)
     private var timer: DispatchSourceTimer?
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
-    private var lastGPU: [pid_t: (nanojoules: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
     private var claudeRoots: [pid_t] = []
     private var index = ProcessIndex()
-    private var lastIndexAt: TimeInterval = 0
+    private var lastDiscoveryAt: TimeInterval = 0
     private let trailCap = 24
-    private let gpuFullWatts = 2.0
+    private let discoveryInterval: TimeInterval = 10
     private var live = false
     private var foreground = true
+    private var activeScopes: Set<MonitorScope> = []
     private var period: TimeInterval = 2.5
     private var scratch = ProcessScanScratch()
     private var activeObs: NSObjectProtocol?
@@ -122,7 +134,18 @@ final class ProcessSampler: ObservableObject {
         observeAppState()
     }
 
-    /// 1 Hz while a session is mid-turn; 2.5 s when idle; 6 s in background.
+    func setScope(_ scope: MonitorScope, active: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if active {
+                self.activeScopes.insert(scope)
+            } else {
+                self.activeScopes.remove(scope)
+            }
+            self.applyPeriod()
+        }
+    }
+
     func setLive(_ on: Bool) {
         queue.async { [weak self] in
             guard let self, self.live != on else { return }
@@ -132,7 +155,19 @@ final class ProcessSampler: ObservableObject {
     }
 
     func setAgentPIDs(_ pids: [Int]) {
-        queue.async { self.claudeRoots = pids.map { pid_t($0) } }
+        queue.async { [weak self] in
+            guard let self else { return }
+            let next = pids.map { pid_t($0) }
+            let changed = next != self.claudeRoots
+            self.claudeRoots = next
+            if changed {
+                self.lastDiscoveryAt = 0
+            }
+        }
+    }
+
+    private var wantsAttribution: Bool {
+        live || !activeScopes.isEmpty
     }
 
     private func observeAppState() {
@@ -154,9 +189,15 @@ final class ProcessSampler: ObservableObject {
 
     private func applyPeriod() {
         let next: TimeInterval
-        if !foreground { next = 6 }
-        else if live { next = 1 }
-        else { next = 2.5 }
+        if !wantsAttribution {
+            next = foreground ? 6 : 12
+        } else if !foreground {
+            next = 6
+        } else if live {
+            next = 1
+        } else {
+            next = 2.5
+        }
         guard abs(period - next) > 0.05 else { return }
         period = next
         timer?.schedule(deadline: .now() + next, repeating: next)
@@ -164,27 +205,41 @@ final class ProcessSampler: ObservableObject {
 
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - lastIndexAt >= period {
+        if wantsAttribution, now - lastDiscoveryAt >= discoveryInterval || lastDiscoveryAt == 0 {
             index = ProcessIndex.scan(claudeRoots: claudeRoots, scratch: &scratch)
-            lastIndexAt = now
+            lastDiscoveryAt = now
         } else {
             index.claudeRoots = claudeRoots
+        }
+
+        let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
+        let hostSnap = HostStats(
+            cpu: hostCPUPercent(),
+            gpu: gpu.utilization,
+            memoryUsed: hostMemoryUsed(),
+            memoryTotal: ProcessInfo.processInfo.physicalMemory,
+            coreCount: max(ProcessInfo.processInfo.processorCount, 1),
+            cpuTemperatureCelsius: foreground ? HardwareSensors.cpuTemperatureCelsius() : nil,
+            gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
+            memoryPressureLevel: HardwareSensors.memoryPressureLevel()
+        )
+
+        let memTotal = max(Double(hostSnap.memoryTotal), 1)
+        let point = Point(
+            cpu: min(1, hostSnap.cpu / 100),
+            gpu: min(1, hostSnap.gpu / 100),
+            mem: min(1, Double(hostSnap.memoryUsed) / memTotal)
+        )
+
+        guard wantsAttribution else {
+            publish(claudeBar: Snapshot(), host: hostSnap, byKey: [:], shares: [], point: point, livePIDs: [getpid()])
+            return
         }
 
         let selfPID = getpid()
         var claudeBarSnap = Snapshot()
         claudeBarSnap.cpu = cpuPercent(pid: selfPID, now: now)
         claudeBarSnap.memoryBytes = physFootprint() ?? footprint(pid: selfPID)
-        claudeBarSnap.gpu = gpuPercent(pid: selfPID, task: mach_task_self_, now: now)
-
-        let sysGPU = foreground ? IOKitGPU.utilization() : 0
-        let hostSnap = HostStats(
-            cpu: hostCPUPercent(),
-            gpu: sysGPU,
-            memoryUsed: hostMemoryUsed(),
-            memoryTotal: ProcessInfo.processInfo.physicalMemory,
-            coreCount: max(ProcessInfo.processInfo.processorCount, 1)
-        )
 
         var byKey: [Key: Snapshot] = [:]
         var claimed = Set<pid_t>()
@@ -202,33 +257,36 @@ final class ProcessSampler: ObservableObject {
         }
 
         for (cwd, pids) in index.codexByCwd {
-            let live = pids.filter { !claimed.contains($0) }
-            guard !live.isEmpty else { continue }
+            let livePIDs = pids.filter { !claimed.contains($0) }
+            guard !livePIDs.isEmpty else { continue }
             var group = Set<pid_t>()
-            for p in live { group.formUnion(index.descendants(of: p)) }
+            for pid in livePIDs { group.formUnion(index.descendants(of: pid)) }
             claimed.formUnion(group)
             byKey[.cwd(cwd)] = sum(pids: Array(group), now: now)
         }
 
-        let memTotal = max(Double(hostSnap.memoryTotal), 1)
+        var livePIDs = claimed
+        livePIDs.insert(selfPID)
+        lastCPU = lastCPU.filter { livePIDs.contains($0.key) }
+
         let cores = Double(hostSnap.coreCount)
-        let point = Point(
-            cpu: min(1, hostSnap.cpu / 100),
-            gpu: min(1, hostSnap.gpu / 100),
-            mem: min(1, Double(hostSnap.memoryUsed) / memTotal)
-        )
-
-        var live = claimed
-        live.insert(selfPID)
-        lastCPU = lastCPU.filter { live.contains($0.key) }
-        lastGPU = lastGPU.filter { live.contains($0.key) }
-
         let shares = Self.makeShares(claudeBar: claudeBarSnap, byKey: byKey, host: hostSnap, cores: cores)
+        publish(claudeBar: claudeBarSnap, host: hostSnap, byKey: byKey, shares: shares, point: point, livePIDs: livePIDs)
+    }
 
+    private func publish(
+        claudeBar: Snapshot,
+        host: HostStats,
+        byKey: [Key: Snapshot],
+        shares: [Share],
+        point: Point,
+        livePIDs: Set<pid_t>
+    ) {
+        _ = livePIDs
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if self.claudeBar != claudeBarSnap { self.claudeBar = claudeBarSnap }
-            if self.host != hostSnap { self.host = hostSnap }
+            if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
+            if self.host != host { self.host = host }
             if self.byKey != byKey { self.byKey = byKey }
             if self.shares != shares { self.shares = shares }
             var trail = self.trail
@@ -236,34 +294,37 @@ final class ProcessSampler: ObservableObject {
                abs(last.cpu - point.cpu) < 0.015,
                abs(last.gpu - point.gpu) < 0.015,
                abs(last.mem - point.mem) < 0.01 {
-                // Idle: keep the ribbon, skip the 1 Hz SwiftUI publish.
-            } else {
-                trail.append(point)
-                if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
-                self.trail = trail
+                return
             }
+            trail.append(point)
+            if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
+            self.trail = trail
         }
     }
 
-    /// Four family buckets as fractions of the machine.
-    private static func makeShares(claudeBar: Snapshot, byKey: [Key: Snapshot],
-                                   host: HostStats, cores: Double) -> [Share] {
+    private static func makeShares(
+        claudeBar: Snapshot,
+        byKey: [Key: Snapshot],
+        host: HostStats,
+        cores: Double
+    ) -> [Share] {
         var buckets: [Family: Snapshot] = [.claudeBar: claudeBar]
         for (key, snap) in byKey {
-            buckets[key.family, default: Snapshot()].add(snap)
+            buckets[key.family, default: Snapshot()].cpu += snap.cpu
+            buckets[key.family, default: Snapshot()].memoryBytes &+= snap.memoryBytes
         }
         let memTotal = max(Double(host.memoryTotal), 1)
         return Family.allCases.compactMap { family in
             guard let snap = buckets[family] else { return nil }
-            let present = snap.cpu >= 0.3 || snap.memoryBytes > 2 * 1024 * 1024 || snap.gpu >= 0.3
+            let present = snap.cpu >= 0.3 || snap.memoryBytes > 2 * 1024 * 1024
             guard present || family == .claudeBar else { return nil }
             return Share(
                 id: family.rawValue,
                 label: family.label,
                 memoryBytes: snap.memoryBytes,
                 cpuShare: min(1, (snap.cpu / cores) / 100),
-                memShare: min(1, Double(snap.memoryBytes) / memTotal),
-                gpuShare: min(1, snap.gpu / 100))
+                memShare: min(1, Double(snap.memoryBytes) / memTotal)
+            )
         }
     }
 
@@ -272,10 +333,6 @@ final class ProcessSampler: ObservableObject {
         for pid in pids {
             snap.cpu += cpuPercent(pid: pid, now: now)
             snap.memoryBytes &+= footprint(pid: pid)
-            if let task = taskPort(pid) {
-                snap.gpu += gpuPercent(pid: pid, task: task, now: now)
-                if pid != getpid() { mach_port_deallocate(mach_task_self_, task) }
-            }
         }
         return snap
     }
@@ -294,7 +351,6 @@ final class ProcessSampler: ObservableObject {
         return (Double(dTicks) / 1_000_000_000 / dt) * 100
     }
 
-    /// All-core utilization 0...100 from `HOST_CPU_LOAD_INFO` tick deltas.
     private func hostCPUPercent() -> Double {
         var info = host_cpu_load_info()
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.stride / MemoryLayout<integer_t>.stride)
@@ -319,7 +375,6 @@ final class ProcessSampler: ObservableObject {
         return Double(dUser + dSys + dNice) / Double(total) * 100
     }
 
-    /// App + wired + compressed pages. Capped at physical RAM.
     private func hostMemoryUsed() -> UInt64 {
         var vm = vm_statistics64()
         var count = mach_msg_type_number_t(
@@ -331,9 +386,15 @@ final class ProcessSampler: ObservableObject {
         }
         guard kr == KERN_SUCCESS else { return 0 }
         let page = UInt64(vm_kernel_page_size)
-        let used = (UInt64(vm.active_count) &+ UInt64(vm.wire_count) &+ UInt64(vm.compressor_page_count)) &* page
-        let total = ProcessInfo.processInfo.physicalMemory
-        return min(used, total)
+        let active = UInt64(vm.active_count) &* page
+        let inactive = UInt64(vm.inactive_count) &* page
+        let speculative = UInt64(vm.speculative_count) &* page
+        let wired = UInt64(vm.wire_count) &* page
+        let compressed = UInt64(vm.compressor_page_count) &* page
+        let purgeable = UInt64(vm.purgeable_count) &* page
+        let external = UInt64(vm.external_page_count) &* page
+        let used = active &+ inactive &+ speculative &+ wired &+ compressed &- purgeable &- external
+        return min(used, ProcessInfo.processInfo.physicalMemory)
     }
 
     private func footprint(pid: pid_t) -> UInt64 {
@@ -366,45 +427,6 @@ final class ProcessSampler: ObservableObject {
         guard kr == KERN_SUCCESS else { return nil }
         return info.phys_footprint
     }
-
-    // MARK: - GPU
-
-    private struct PowerInfoV2 {
-        var totalUser: UInt64 = 0
-        var totalSystem: UInt64 = 0
-        var interruptWakeups: UInt64 = 0
-        var platformIdleWakeups: UInt64 = 0
-        var gpuEnergy: UInt64 = 0
-        var taskEnergy: UInt64 = 0
-        var taskPtime: UInt64 = 0
-        var psetSwitches: UInt64 = 0
-    }
-    private static let taskPowerInfoV2: Int32 = 21
-
-    private func taskPort(_ pid: pid_t) -> mach_port_t? {
-        if pid == getpid() { return mach_task_self_ }
-        var task: mach_port_t = 0
-        guard task_for_pid(mach_task_self_, pid, &task) == KERN_SUCCESS, task != 0 else { return nil }
-        return task
-    }
-
-    private func gpuPercent(pid: pid_t, task: mach_port_t, now: TimeInterval) -> Double {
-        var info = PowerInfoV2()
-        var count = mach_msg_type_number_t(MemoryLayout<PowerInfoV2>.stride / MemoryLayout<natural_t>.stride)
-        let kr = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(task, task_flavor_t(Self.taskPowerInfoV2), $0, &count)
-            }
-        }
-        guard kr == KERN_SUCCESS else { return 0 }
-        let energy = info.gpuEnergy
-        defer { lastGPU[pid] = (energy, now) }
-        guard let prev = lastGPU[pid], now > prev.at else { return 0 }
-        let dt = now - prev.at
-        let dE = energy &- prev.nanojoules
-        let watts = Double(dE) / dt / 1_000_000_000
-        return max(0, min(100, (watts / gpuFullWatts) * 100))
-    }
 }
 
 extension ProcessSampler.Snapshot {
@@ -416,11 +438,9 @@ extension ProcessSampler.Snapshot {
     }
 
     var cpuLabel: String { String(format: "%.0f%%", cpu) }
-    var gpuLabel: String { String(format: "%.0f%%", gpu) }
 
     var loadLabel: String {
         if memoryBytes == 0 && cpu < 0.5 { return "—" }
-        if gpu >= 0.5 { return "\(cpuLabel) · \(memoryLabel) · GPU \(gpuLabel)" }
         return "\(cpuLabel) · \(memoryLabel)"
     }
 }
@@ -444,8 +464,8 @@ private struct ProcessIndex {
     func descendants(of root: pid_t) -> [pid_t] {
         var kids: [pid_t: [pid_t]] = [:]
         kids.reserveCapacity(parent.count)
-        for (child, p) in parent where child != p {
-            kids[p, default: []].append(child)
+        for (child, parentPID) in parent where child != parentPID {
+            kids[parentPID, default: []].append(child)
         }
         var out: [pid_t] = [root]
         var seen: Set<pid_t> = [root]
@@ -467,7 +487,7 @@ private struct ProcessIndex {
         var codex: [pid_t] = []
         idx.parent.reserveCapacity(pids.count)
         for pid in pids {
-            if let p = ppid(of: pid, scratch: &scratch) { idx.parent[pid] = p }
+            if let parentPID = ppid(of: pid, scratch: &scratch) { idx.parent[pid] = parentPID }
             let lower = processName(pid, scratch: &scratch).lowercased()
             if lower == "cursor" || lower.hasPrefix("cursor helper") {
                 cursor.append(pid)
@@ -543,7 +563,6 @@ private struct ProcessIndex {
         return nil
     }
 
-    /// `KERN_PROCARGS2` — only called for node processes, not the full table.
     private static func argvMentionsCodex(_ pid: pid_t, scratch: inout ProcessScanScratch) -> Bool {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -559,35 +578,5 @@ private struct ProcessIndex {
             return false
         }
         return text.localizedCaseInsensitiveContains("codex")
-    }
-}
-
-// MARK: - System GPU via IOAccelerator
-
-private enum IOKitGPU {
-    static func utilization() -> Double {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) == KERN_SUCCESS else {
-            return 0
-        }
-        defer { IOObjectRelease(iterator) }
-        var best = 0.0
-        var service = IOIteratorNext(iterator)
-        while service != 0 {
-            defer {
-                IOObjectRelease(service)
-                service = IOIteratorNext(iterator)
-            }
-            var props: Unmanaged<CFMutableDictionary>?
-            guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                  let dict = props?.takeRetainedValue() as? [String: Any],
-                  let stats = dict["PerformanceStatistics"] as? [String: Any] else { continue }
-            for key in ["Device Utilization %", "GPU Activity%", "Renderer Utilization %", "Tiler Utilization %"] {
-                if let n = stats[key] as? Double { best = max(best, n) }
-                else if let n = stats[key] as? Int { best = max(best, Double(n)) }
-                else if let n = stats[key] as? NSNumber { best = max(best, n.doubleValue) }
-            }
-        }
-        return max(0, min(100, best))
     }
 }
