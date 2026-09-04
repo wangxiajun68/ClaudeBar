@@ -40,6 +40,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .resumeSession, object: nil)
 
         store.refresh()
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(fanPermissionNeeded),
+            name: .fanPermissionNeeded, object: nil)
+    }
+
+    /// 风扇调速需要 root；弹窗引导用户安装特权辅助工具或打开系统设置。
+    @objc private func fanPermissionNeeded() {
+        let alert = NSAlert()
+        alert.messageText = "风扇调速需要管理员权限"
+        alert.informativeText = "调整风扇转速需要安装 ClaudeBar 特权辅助工具（输入一次管理员密码）。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "安装辅助工具")
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "取消")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            FanHelperInstaller.install()
+        case .alertSecondButtonReturn:
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+        default:
+            break
+        }
     }
 
     @objc private func resumeSession(_ note: Notification) {

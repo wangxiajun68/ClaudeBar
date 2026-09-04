@@ -117,14 +117,13 @@ final class MenuBarController: NSObject {
 
         panel.contentView = vibe
 
-        hosting.translatesAutoresizingMaskIntoConstraints = false
+        // Autoresizing 而非 Auto Layout 约束：macOS 26 上 NSHostingView 在显示周期内
+        // 触发 setNeedsUpdateConstraints 会抛 "may not modify constraints during layout"
+        // 并中止（点击菜单栏图标崩溃）。AutoresizingMask 同样铺满且不参与约束引擎。
+        hosting.autoresizingMask = [.width, .height]
+        hosting.frame = vibe.bounds
         vibe.addSubview(hosting)
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: vibe.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: vibe.trailingAnchor),
-            hosting.topAnchor.constraint(equalTo: vibe.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: vibe.bottomAnchor),
-        ])
+        vibe.autoresizesSubviews = true
         return panel
     }
 
