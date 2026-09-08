@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The five top-nav destinations.
 enum AppPage: String, CaseIterable, Identifiable {
-    case dashboard, sessions, providers, usage, traffic, settings
+    case dashboard, sessions, providers, usage, traffic, vpn, settings
     var id: String { rawValue }
 
     var label: String {
@@ -14,18 +14,20 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .providers: return "模型"
         case .usage: return "用量"
         case .traffic: return "流量"
+        case .vpn: return "VPN"
         case .settings: return "设置"
         }
     }
 
     var icon: String {
         switch self {
-        case .dashboard: return "dot.radiowaves.left.and.right"
-        case .sessions: return "antenna.radiowaves.left.and.right"
-        case .providers: return "server.rack"
-        case .usage: return "chart.bar.xaxis"
-        case .traffic: return "point.3.connected.trianglepath.dotted"
-        case .settings: return "gearshape"
+        case .dashboard: return "square.grid.2x2"
+        case .sessions: return "rectangle.stack"
+        case .providers: return "cube"
+        case .usage: return "chart.bar"
+        case .traffic: return "arrow.left.arrow.right"
+        case .vpn: return "globe"
+        case .settings: return "slider.horizontal.3"
         }
     }
 }
@@ -66,6 +68,9 @@ struct MainWindowView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
             navigate(to: .providers)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openVPNPage)) { _ in
+            navigate(to: .vpn)
         }
     }
 
@@ -156,6 +161,7 @@ struct MainWindowView: View {
                     case .providers: ProvidersView()
                     case .usage: UsageView()
                     case .settings: SettingsView()
+                    case .vpn: VPNView()
                     case .traffic: EmptyView()
                     }
                 }
@@ -200,18 +206,22 @@ struct TopNavTab: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 3) {
-                Text(page.label)
-                    .font(Theme.Font.body)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
-                    .lineLimit(1)
-                    .fixedSize()
+                HStack(spacing: 5) {
+                    AppGlyph(name: page.icon, size: 12)
+                        .foregroundColor(isSelected ? Theme.claude : rowColor)
+                    Text(page.label)
+                        .font(Theme.Font.body)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
                 Capsule()
                     .fill(isSelected ? Theme.claude : Color.clear)
-                    .frame(width: isSelected ? 24 : 0, height: 2)
+                    .frame(width: isSelected ? 22 : 0, height: 2)
                     .animation(Theme.Animation.smooth, value: isSelected)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             .padding(.top, 8)
             .contentShape(Rectangle())
             .background {

@@ -15,7 +15,9 @@ struct ConnectivityProbeButton: View {
                 HStack(spacing: Theme.Space.s6) {
                     if outcome.state == .running {
                         ProgressView()
+                            .progressViewStyle(.circular)
                             .controlSize(.small)
+                            .tint(tint)
                     } else {
                         Image(systemName: icon)
                     }
@@ -65,7 +67,10 @@ struct ConnectivityTileButton: View {
             Group {
                 if outcome.state == .running {
                     ProgressView()
+                        .progressViewStyle(.circular)
                         .controlSize(.mini)
+                        .tint(Theme.claude)
+                        .scaleEffect(0.85)
                         .frame(width: 22, height: 22)
                 } else {
                     Image(systemName: icon)

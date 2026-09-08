@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Popup panel header: brand mark + refresh.
+/// Popup panel header: brand mark + VPN chrome + refresh.
 struct PanelHeader: View {
     @EnvironmentObject var providerStore: ProviderStore
     var onFeedback: () -> Void
@@ -11,13 +11,12 @@ struct PanelHeader: View {
             Text("ClaudeBar")
                 .font(Theme.Font.titleSmall)
                 .foregroundColor(Theme.textPrimary)
-            Spacer()
+            VpnChromeCluster()
             Button(action: {
                 providerStore.refresh()
                 onFeedback()
             }) {
-                Image(systemName: "arrow.clockwise")
-                    .font(Theme.Font.bodySmall)
+                AppGlyph(name: "arrow.clockwise", size: 12)
                     .foregroundColor(Theme.textSecondary)
             }
             .adaptiveGlassButton()

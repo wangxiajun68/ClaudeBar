@@ -25,3 +25,7 @@ DerivedData/
 
 # Stray env-expansion leftover (literal directory named {{HOMEBREW_PREFIX}})
 /[{{][{]HOMEBREW_PREFIX[}][}]/
+
+# mihomo sidecar binary (~44MB); fetched by Sources/build.sh
+vendor/mihomo/mihomo
+vendor/mihomo/*.gz

@@ -341,7 +341,7 @@ class ProviderStore: ObservableObject {
 
     // MARK: - Activate
 
-    func activateModel(providerID: UUID, modelID: UUID) {
+    func activateModel(providerID: UUID, modelID: UUID, syncPeer: Bool = true) {
         guard let provider = providers.first(where: { $0.id == providerID }),
               let model = provider.models.first(where: { $0.id == modelID }) else { return }
 
@@ -349,19 +349,10 @@ class ProviderStore: ObservableObject {
         do {
             try SettingsManager.writeSettings(env: env)
         } catch {
-            // The settings file may now hold a partially-updated env (the
-            // write itself is atomic, but sibling fields written by an
-            // earlier activation could differ). Re-read from disk so the
-            // in-memory state always mirrors reality, and leave the old
-            // provider/model active since nothing was switched.
             currentEnv = SettingsManager.readSettings()
             errorMessage = "写入设置失败：\(error.localizedDescription)"
             return
         }
-        // Settings written successfully — now commit the UI state. Mutations
-        // are ordered so a hypothetical crash mid-way leaves at most a stale
-        // activeModelID on disk, never a settings file pointing at a model
-        // the store doesn't know about.
         activeProviderID = providerID
         currentEnv = env
 
@@ -371,6 +362,22 @@ class ProviderStore: ObservableObject {
         saveProviders()
         refreshBalance()
         syncPeerProxy()
+        if syncPeer {
+            Task { @MainActor in
+                self.peer?.activateMatching(claude: provider, model: model)
+            }
+        }
+    }
+
+    /// Mirror a Codex activation onto the matching Claude vendor/model.
+    func activateMatching(codex: CodexProvider, model: CodexModelConfig) {
+        guard let dest = providers.first(where: { ProviderBridge.matches($0, codex) }) else { return }
+        let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
+        guard let mid = dest.models.first(where: {
+            ProviderBridge.stripClaudeModelSuffix($0.name).caseInsensitiveCompare(slug) == .orderedSame
+        })?.id else { return }
+        if dest.id == activeProviderID, dest.activeModelID == mid { return }
+        activateModel(providerID: dest.id, modelID: mid, syncPeer: false)
     }
 
     /// Maps a provider/model pair onto the `settings.json` env block. All

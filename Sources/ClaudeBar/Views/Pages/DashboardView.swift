@@ -16,6 +16,7 @@ struct DashboardView: View {
                     .padding(Theme.Space.s16)
                     .sectionRules()
                     .resourceMonitorScope(.dashboard)
+                vpnStrip
                 metricRow
                 sessionOverview
                 usageTop
@@ -45,6 +46,13 @@ struct DashboardView: View {
         }
     }
 
+    // MARK: VPN strip
+
+    private var vpnStrip: some View {
+        VpnDashboardStrip { onNavigate(.vpn) }
+            .padding(.horizontal, Theme.Space.s16)
+    }
+
     // MARK: Metric tiles
 
     /// The four key numbers, one tile each.
@@ -66,6 +74,7 @@ struct DashboardView: View {
                 onNavigate(.usage)
             }
         }
+        .padding(.horizontal, Theme.Space.s16)
     }
 
     // MARK: Metric values
@@ -348,5 +357,93 @@ private struct OverviewTile: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.project)，\(row.busy ? "运行中" : "空闲")，上下文 \(row.contextLabel)")
         .accessibilityHint("在会话页查看")
+    }
+}
+
+/// Compact VPN readout on the dashboard: live node, rates, remaining
+/// traffic, exit IP — tap opens the VPN page.
+struct VpnDashboardStrip: View {
+    @ObservedObject private var manager = VpnManager.shared
+    @ObservedObject private var store = VpnSubscriptionStore.shared
+    @ObservedObject private var probe = VpnNetProbe.shared
+    var onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: Theme.Space.s16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("VPN")
+                        .font(Theme.Font.tileLabel)
+                        .foregroundColor(Theme.textSecondary)
+                    Text(statusText)
+                        .font(Theme.Font.bodySmall)
+                        .foregroundColor(Theme.textPrimary)
+                }
+                if manager.isRunning {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("速率")
+                            .font(Theme.Font.micro)
+                            .foregroundColor(Theme.textTertiary())
+                        Text("↓\(VpnFormat.rate(manager.speedDown))  ↑\(VpnFormat.rate(manager.speedUp))")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(Theme.external)
+                            .lineLimit(1)
+                            .frame(width: 204, alignment: .leading)
+                    }
+                    if let node = manager.liveLeafName {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("出口")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textTertiary())
+                            Text(node)
+                                .font(Theme.Font.caption)
+                                .foregroundColor(Theme.textPrimary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let info = probe.ipInfo {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("IP")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textTertiary())
+                            Text(info.ip)
+                                .font(Theme.Font.captionMono)
+                                .foregroundColor(Theme.textSecondary)
+                        }
+                    }
+                    if let sub = store.activeSubscription, sub.total > 0 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("剩余")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textTertiary())
+                            Text(VpnFormat.bytes(sub.remainingBytes))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(Theme.textPrimary)
+                                .frame(width: 64, alignment: .leading)
+                        }
+                    }
+                    Text("\(manager.traffic.activeConnections) 连接")
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textTertiary())
+                }
+                Spacer(minLength: 0)
+                AppGlyph(name: "chevron.right", size: 10)
+                    .foregroundColor(Theme.textTertiary())
+            }
+            .padding(Theme.Space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .panelCard()
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            if manager.isRunning { Task { await probe.refreshIP() } }
+        }
+    }
+
+    private var statusText: String {
+        if manager.isRunning { return "运行中 · 127.0.0.1:\(AppPreferences.shared.vpnMixedPort)" }
+        if case .starting = manager.state { return "启动中…" }
+        if case .failed = manager.state { return "异常" }
+        return "未启用"
     }
 }

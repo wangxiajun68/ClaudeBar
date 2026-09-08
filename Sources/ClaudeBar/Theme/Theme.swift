@@ -164,7 +164,7 @@ enum Theme {
         static func columns(_ preset: Preset) -> [GridItem] {
             switch preset {
             case .pageMetric:
-                Array(repeating: GridItem(.flexible(), spacing: Space.gridGapPage), count: 4)
+                Array(repeating: GridItem(.flexible(minimum: 0), spacing: Space.gridGapPage, alignment: .top), count: 4)
             case .pageSession:
                 [GridItem(.adaptive(minimum: 280), spacing: Space.gridGapPage, alignment: .top)]
             case .pageUsage, .pageProvider:
@@ -175,6 +175,12 @@ enum Theme {
                 [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
                  GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
             }
+        }
+
+        /// Equal-width mosaic columns that fill the row — no leftover gutter.
+        static func mosaic(columns: Int, spacing: CGFloat = 1) -> [GridItem] {
+            Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top),
+                  count: max(2, columns))
         }
     }
 
@@ -357,5 +363,24 @@ extension View {
             if bottom { HairlineDivider(inset: inset) }
         }
         .padding(.vertical, Theme.Space.s4)
+    }
+}
+
+// MARK: - Aligned glyphs
+
+/// One optical box for every SF Symbol in chrome (nav, rows, chips).
+/// Symbols sit in a 16×16 frame at 13pt medium / hierarchical so mixed
+/// outlines don't dance on the baseline.
+struct AppGlyph: View {
+    let name: String
+    var size: CGFloat = 13
+    var weight: SwiftUI.Font.Weight = .medium
+    var box: CGFloat = 16
+
+    var body: some View {
+        Image(systemName: name)
+            .font(.system(size: size, weight: weight))
+            .symbolRenderingMode(.hierarchical)
+            .frame(width: box, height: box, alignment: .center)
     }
 }

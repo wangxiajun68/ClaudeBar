@@ -77,7 +77,7 @@ struct UsageView: View {
                 }
 
                 if providerStore.usageDays.count > 1 {
-                    UsageRiver(days: providerStore.usageDays)
+                    UsageRiver(days: providerStore.usageDays, height: 128)
                         .padding(Theme.Space.s16)
                         .sectionRules()
                 }

@@ -355,7 +355,7 @@ struct TrafficView: View {
                             .buttonStyle(.plain)
                     }
                 }
-                .help("简洁：去掉 system / 脚手架。完整：按请求体顺序渲染全部消息与图片。")
+                .help("简洁：去掉 system / 脚手架。完整：按请求体顺序渲染全部消息、图片与请求头。")
             }
             Text(currentSummary.map { "\($0.providerName)  \($0.path)" } ?? "")
                 .font(Theme.Font.captionMono)
@@ -403,6 +403,9 @@ struct TrafficView: View {
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.statusWarning)
                         }
+                        if fullRender, let headers = detail?.requestHeadersJSON, !headers.isEmpty {
+                            requestHeadersSection(headers)
+                        }
                         if blocks.isEmpty {
                             Text(conversationQuery.isEmpty
                                  ? (fullRender ? "无法解析这条请求的正文。" : "这条请求没有可展示的对话正文。")
@@ -424,6 +427,22 @@ struct TrafficView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func requestHeadersSection(_ json: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            Text("请求头")
+                .font(Theme.Font.microSemibold)
+                .foregroundColor(Theme.textSecondary)
+            Text(json)
+                .font(Theme.Font.captionMono)
+                .foregroundColor(Theme.textPrimary.opacity(0.9))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
     }
 
     @ViewBuilder
@@ -488,6 +507,7 @@ struct TrafficView: View {
             || roleLabel(turn.role).lowercased().contains(query)
             || (Self.isSystemRole(turn.role) && "系统提示".contains(query))
             || (turn.role == "tool" && "工具调用".contains(query))
+            || (fullRender && detail?.requestHeadersJSON.lowercased().contains(query) == true)
     }
 
     private func groupedBlocks(_ turns: [(Int, CaptureTranscript.Turn)]) -> [ConvBlock] {

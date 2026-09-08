@@ -36,7 +36,7 @@ struct UsageModelTile: View {
                     .font(Theme.Font.captionMono)
                     .foregroundColor(color)
             }
-            ProportionBar(ratio: ratio, color: color, height: dense ? 5 : 7, corner: dense ? 2 : 3)
+            UsageStackBar(stat: stat, height: dense ? 6 : 8)
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageStats.formatTokens(stat.totalTokens))
                     .font(dense ? Theme.Font.tileMicroValue : Theme.Font.tileValueSmall)
@@ -85,6 +85,45 @@ struct UsageModelTile: View {
             }
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Stacked token anatomy for one model, same palette as UsageRiver.
+struct UsageStackBar: View {
+    let stat: ModelUsage
+    var height: CGFloat = 8
+
+    private var parts: [(Int, Color)] {
+        [
+            (stat.inputTokens, Theme.claude),
+            (stat.cacheReadTokens, Theme.external),
+            (stat.cacheCreationTokens, Theme.statusWarning),
+            (stat.outputTokens, Theme.cursor),
+        ]
+    }
+
+    private var total: Int {
+        max(parts.reduce(0) { $0 + $1.0 }, 1)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            HStack(spacing: 1) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                    if part.0 > 0 {
+                        part.1.opacity(0.88)
+                            .frame(width: max(2, geo.size.width * CGFloat(part.0) / CGFloat(total)))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+        }
+        .frame(height: height)
+        .background(
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(Theme.cardFill(0.07))
+        )
     }
 }
 

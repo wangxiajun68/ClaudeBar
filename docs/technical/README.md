@@ -20,6 +20,7 @@
 | 08 | [performance.md](08-performance.md) | 轮询、缓存、性能策略 | 优化性能 |
 | 09 | [file-index.md](09-file-index.md) | Swift 文件职责速查 | 快速定位代码 |
 | 10 | [extension-guide.md](10-extension-guide.md) | 扩展功能检查清单 | 加新能力前 |
+| 11 | [vpn.md](11-vpn.md) | mihomo sidecar、系统代理、测速 | 改 VPN 页 / 内核 |
 
 ---
 

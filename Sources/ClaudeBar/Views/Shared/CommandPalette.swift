@@ -183,7 +183,7 @@ struct CommandPalette: View {
         items += providerStore.providers.map { p in
             CommandItem(kind: .provider, title: p.name,
                         subtitle: p.activeModel?.name ?? "供应商",
-                        icon: "server.rack",
+                        icon: "cube",
                         tint: Theme.accent,
                         result: .provider(id: p.id))
         }
@@ -240,8 +240,7 @@ private struct CommandRow: View {
                     RoundedRectangle(cornerRadius: Theme.Radius.sm)
                         .fill(item.tint.opacity(isSelected ? 0.25 : 0.12))
                         .frame(width: 30, height: 30)
-                    Image(systemName: item.icon)
-                        .font(Theme.Font.bodySmall.weight(.semibold))
+                    AppGlyph(name: item.icon, size: 13, box: 16)
                         .foregroundColor(item.tint)
                 }
                 VStack(alignment: .leading, spacing: 1) {

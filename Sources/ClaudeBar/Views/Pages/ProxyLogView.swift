@@ -11,13 +11,14 @@ struct ProxyLogView: View {
     @State private var copied = false
 
     enum Filter: String, CaseIterable, Identifiable {
-        case all, claude, codex
+        case all, claude, codex, other
         var id: String { rawValue }
         var label: String {
             switch self {
             case .all: return "全部"
             case .claude: return "Claude"
             case .codex: return "Codex"
+            case .other: return "第三方"
             }
         }
     }
@@ -29,6 +30,7 @@ struct ProxyLogView: View {
             case .all: break
             case .claude: if row.source != .claude { return false }
             case .codex: if row.source != .codex { return false }
+            case .other: if row.source != .other { return false }
             }
             guard !q.isEmpty else { return true }
             return row.path.lowercased().contains(q)

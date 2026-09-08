@@ -21,33 +21,37 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），`NavigationSplitView`：
 
-- **Sidebar**：brand 头 + 6 项导航（图标 + 标签 + 实时计数 badge，`contentTransition(.numericText())`）；选中项为简单 accent 填充（`Theme.claude.opacity(0.18)`），hover 变亮。底部状态圆点 + "N 运行中/空闲"。
-- **Detail**：按 `selectedPage`（`AppPage`）切换 6 页，纯 opacity 过渡（`Theme.Motion.page`）。
+- **Sidebar**：brand 头 + 7 项导航（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置）；选中项为简单 accent 填充，hover 变亮。底部状态圆点 + "N 运行中/空闲"。
+- **Detail**：按 `selectedPage`（`AppPage`）切换 7 页。流量页首次打开后保持挂载，避免检查器重建卡顿。
 - **全局**：⌘K `CommandPalette`；关窗后 status item 保活。
 
-## 6 个 Pages
+## 7 个 Pages
 
-全部页面走**宫格（瓦片）布局**：数据域以等高瓦片网格呈现，网格列模板集中在 `Theme.GridLayout.Preset`（`TileGrid` 为唯一网格容器）。
+全部页面走**宫格（瓦片）布局**（流量检查器与 VPN 节点列表为领域专用布局）。网格列模板集中在 `Theme.GridLayout.Preset`。
 
 | 页面 | 要点 |
 |------|------|
-| **DashboardView** | 指标头行（4× `MetricTile`）→ 活跃会话总览（Claude / Cursor / Codex 色点）→ 用量 Top |
-| **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section；`SessionTileFull` 宫格，可展开子 agent 树，双击恢复 |
-| **ProvidersView** | Claude + Codex 供应商宫格；`ProviderEditorView` / `CodexProviderEditorView` 嵌入详情层 |
-| **UsageView** | 周期 chips + 日期导航 + `UsageModelTile` 宫格 |
-| **TrafficView** | 代理状态、请求捕获列表、对话 / 工具 / 原始 JSON 分栏；含 `ProxyLogView` 访问日志 |
-| **SettingsView** | Codex 本机代理开关与端口、连通性探测、配置文件快捷打开、空闲通知、版本信息 |
+| **DashboardView** | 指标头行 → 活跃会话总览 → 用量 Top；可跳转 VPN |
+| **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
+| **ProvidersView** | 侧栏标签为「模型」；Claude + Codex 供应商宫格 + 编辑器 |
+| **UsageView** | 周期 chips + `UsageRiver` 日柱 + `CacheAnatomyBar` + `UsageModelTile` |
+| **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
+| **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
+| **SettingsView** | 本机 LLM 代理、连通性、空闲通知、**风扇**（`FanControlSection`）、版本 |
 
 ## 共享交互层（`Views/Shared/`）
 
 - `Tile.swift`：`TileGrid` + `MetricTile` + `.tile()` modifier（与 `panelCard()` 同族的半透明表面，密度更高）。
-- `UsageBar.swift`：`UsageBarRow`、`UsageModelTile`、`MetricText`。
+- `UsageBar.swift`：`UsageModelTile`、`UsageStackBar`（平涂四色 anatomies）。
+- `UsageRiver.swift`：周期堆叠柱 + 悬停读数；`CacheAnatomyBar`。
+- `ResourceStrip`、`FanControlSection`：本机 CPU / GPU / 内存与 SMC 风扇。
+- `VpnTopChrome.swift`：仅菜单栏 popup 的 VPN 页头控件。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ConnectivityProbeButton`、`ProxyCurlExample`、`ResourceStrip`（ClaudeBar / CC / Cursor / Codex 资源占比）。
+- `ConnectivityProbeButton`、`ProxyCurlExample`。
 
 ## Theme 设计 token（`Theme/Theme.swift`）
 

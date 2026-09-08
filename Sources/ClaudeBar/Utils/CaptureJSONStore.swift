@@ -8,6 +8,7 @@ final class CaptureJSONStore {
         var rewritten: String
         var response: String
         var sse: String
+        var headers: String = ""
     }
 
     private struct IndexRow: Codable {
@@ -82,6 +83,7 @@ final class CaptureJSONStore {
     func begin(kind: CaptureKind, source: CaptureSource, provider: String,
                model: String, path: String, stream: Bool,
                requestJSON: String?, rewrittenJSON: String?,
+               requestHeadersJSON: String = "",
                preview: String) -> CaptureSummary {
         let id = nextId
         nextId += 1
@@ -96,7 +98,7 @@ final class CaptureJSONStore {
         let req = CaptureMedia.compact(requestJSON, captureID: id)
         let rew = CaptureMedia.compact(rewrittenJSON, captureID: id)
         writePayload(id, Payload(request: req, rewritten: rew,
-                                 response: "", sse: ""))
+                                 response: "", sse: "", headers: requestHeadersJSON))
         prune()
         persistIndex()
         return summary
@@ -128,7 +130,7 @@ final class CaptureJSONStore {
     func readPayload(_ id: Int64) -> Payload {
         guard let data = try? Data(contentsOf: payloadURL(id)),
               let p = try? JSONDecoder().decode(Payload.self, from: data) else {
-            return Payload(request: "", rewritten: "", response: "", sse: "")
+            return Payload(request: "", rewritten: "", response: "", sse: "", headers: "")
         }
         return p
     }

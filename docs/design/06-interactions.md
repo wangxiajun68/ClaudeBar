@@ -10,6 +10,7 @@
 3. `SettingsManager.writeSettings(env:)` 读旧 env，用 `preserve()` 合并（空值不覆盖已有值），保留 `permissions` 等顶层字段，写回 `~/.claude/settings.json`（并修复 JSONSerialization 转义的 `\/`）。
 4. 更新 `activeProviderID` / `activeModelID`，持久化 `providers.json`，刷新余额。
 5. popup 供应商区显示 `FeedbackToast`（如 "DeepSeek / deepseek-v4-pro"，2 秒后淡出）。
+6. 默认 `syncPeer: true`：若 Codex（或反向）有同名供应商与模型，对端也激活；列表文件仍分开。轮询里的重新激活使用 `syncPeer: false`。
 
 > **设计取舍（`preserve()` 不清空字段，B4）**：`writeSettings` 的 `preserve(newValue, existing)` 在新值为空且旧值非空时保留旧值，目的是"空预设不冲掉用户手填的 settings"。副作用是：从一个有 token 的 Provider 切到另一个未配置 token 的 Provider 时，旧 token 会残留在 `settings.json`。当前通过 `buildEnv()` 在切换时显式写入新 Provider 的 token 来覆盖此风险（激活的 Provider 总是把它的 token 写进去）。若未来需要"切换 Provider 必清旧 token"，需单独引入显式清除逻辑，而非改 `preserve()` 语义（那会破坏手填配置不被冲掉的承诺）。
 

@@ -100,7 +100,27 @@ Claude Code 的 busy 来自 `~/.claude/sessions/<pid>.json` 与 transcript 尾�
 
 ### Codex 报 stream disconnected？
 
-常见原因是上游 400（例如 tool call `arguments` 不是合法 JSON）。可查看访问日志与抓包页定位；必要时开新 Codex 会话。详见项目 Issue 讨论。
+常见原因是上游 400（例如 tool call `arguments` 不是合法 JSON）。可查看访问日志与抓包页定位；必要时开新 Codex 会话。
+
+---
+
+## VPN
+
+### 开启后系统设置里代理仍是关的？
+
+ClaudeBar 对 **Wi-Fi / 以太网** 写 `127.0.0.1` + mixed-port（默认 7890），并先关掉 PAC。若只看了 Thunderbolt 等未使用的服务，会误以为没写上。
+
+### 菜单栏图标变成白方块？
+
+旧版把带底色的 PNG 当模板用。当前 status item 使用矢量标；请安装本次构建后再看。
+
+### VPN 页提示没有内核？
+
+从源码构建时需要能访问 GitHub 下载 mihomo，或本地已有 `vendor/mihomo/mihomo`。用户 DMG 应已打进 `mihomo-core`。
+
+### 订阅流量 / 到期显示不出来？
+
+机场需在 HTTP 头返回 `subscription-userinfo`。请求使用 Clash Verge 风格 UA。
 
 ---
 

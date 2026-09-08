@@ -3,7 +3,7 @@
 > ClaudeBar 设计文档 · §1
 > 索引：[设计文档](README.md) · 相关：[顶层架构](02-architecture.md) · [文件结构](07-file-structure.md)
 
-ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**（CLI）、**Codex**（CLI / IDE）与 **Cursor**（IDE）的开发者。应用在一个统一界面里集中完成配置管理、会话观测与用量分析，并通过可选的本机代理打通 Codex 与多家上游协议差异。
+ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**（CLI）、**Codex**（CLI / IDE）与 **Cursor**（IDE）的开发者。应用在一个统一界面里集中完成配置管理、会话观测、用量分析，可选本机 LLM 代理，以及可选的本机 VPN（mihomo）。
 
 ## 定位
 
@@ -12,7 +12,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | 平台 | macOS 15+，Apple Silicon（`arm64`） |
 | 分发 | 终端用户从 [GitHub Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG 安装；见 [构建与分发](09-build-and-distribution.md) |
 | 激活策略 | `.regular`（Dock 图标 + 主窗口），同时保留菜单栏 status item 与非激活 popup |
-| 数据边界 | 读取本机 `~/.claude`、`~/.codex`、`~/.cursor`；不向用户未配置的上游发送流量 |
+| 数据边界 | 读取本机 `~/.claude`、`~/.codex`、`~/.cursor`；VPN 工作目录在 Application Support；不向用户未配置的上游发送 LLM 流量 |
 
 ## 三大能力
 
@@ -25,7 +25,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | Claude Code | `~/.claude/settings.json` |
 | Codex | `~/.codex/config.toml` + `~/.claude/claude-bar-codex-providers.json` |
 
-Claude 与 Codex 供应商通过 `ProviderBridge` 联动：在主窗口「供应商」页选择预设或编辑配置时，两侧同步激活；popup 面板提供快速切换入口。
+两侧**供应商列表独立**（不同 JSON）。激活时若对端存在同名供应商/模型，可按名称匹配联动（`activateModel(..., syncPeer:)`）；`reactivateActive` 不联动，避免轮询把对端改写掉。需要整份拷贝时到管理页手动「导入」。popup 提供快速切换入口。
 
 ### 2. 会话监控
 
@@ -53,12 +53,16 @@ Claude 与 Codex 供应商通过 `ProviderBridge` 联动：在主窗口「供应
 
 > ClaudeBar 不做模型推理。代理仅转发至用户已配置的上游，不把流量发到未授权的第三方。
 
+## VPN（可选）
+
+主窗口 **VPN** 页运行捆绑的 mihomo 内核：Clash 订阅、节点选择、延迟测试、系统代理或 TUN。工作目录 `~/Library/Application Support/ClaudeBar/vpn/`。实现见 [技术文档 §11](../technical/11-vpn.md)。
+
 ## 界面形态
 
 | 表面 | 职责 |
 |------|------|
-| 主窗口 | 旗舰交互面：`NavigationSplitView` + 6 个页面（概览 / 会话 / 供应商 / 用量 / 流量 / 设置），⌘K 命令面板 |
-| 菜单栏 popup | 560pt 非激活毛玻璃面板，快速查看配置、会话与用量摘要 |
+| 主窗口 | 旗舰交互面：`NavigationSplitView` + 7 个页面（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置），⌘K 命令面板 |
+| 菜单栏 popup | 560pt 非激活毛玻璃面板；页头 VPN chrome + 资源条；快速查看配置、会话与用量 |
 | Widget | 沙盒扩展，读取 App Group 快照渲染用量概览 |
 
 ## 目标用户
@@ -70,5 +74,5 @@ Claude 与 Codex 供应商通过 `ProviderBridge` 联动：在主窗口「供应
 ## 非目标
 
 - 不是 Claude Code、Codex 或 Cursor 的替代前端，不替用户与模型对话。
-- 不做模型推理或托管 API Key；密钥仅存本机配置文件。
+- 不做模型推理或托管 API Key；密钥仅存本机配置文件。订阅链接仅存本机 VPN 目录。
 - 不支持非 macOS 平台。

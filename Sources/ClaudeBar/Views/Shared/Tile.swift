@@ -83,6 +83,7 @@ struct MetricTile: View {
         if let action {
             Button(action: action) { content }
                 .buttonStyle(.pressable)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             content
         }
@@ -120,5 +121,6 @@ struct TileGrid<Content: View>: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: spacing, content: content)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

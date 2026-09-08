@@ -78,8 +78,7 @@ struct ActionChip: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(Theme.Font.bodySmall.weight(.semibold))
+            AppGlyph(name: systemImage, size: 12, box: 16)
                 .foregroundColor(tint)
                 .frame(width: 26, height: 26)
                 .background(
@@ -114,10 +113,8 @@ struct IconChip: View {
     @State private var hover = false
 
     var body: some View {
-        Image(systemName: systemImage)
-            .font(Theme.Font.systemIcon(size))
+        AppGlyph(name: systemImage, size: size, weight: .medium, box: tile)
             .foregroundColor(hover ? tint : tint.opacity(0.85))
-            .frame(width: tile, height: tile)
             .background {
                 RoundedRectangle(cornerRadius: corner)
                     .fill(tint.opacity(hover ? 0.22 : 0.06))

@@ -203,7 +203,7 @@ final class CodexProviderStore: ObservableObject {
     func reactivateActive() {
         guard let p = activeProvider else { return }
         let modelID = p.activeModelID ?? p.models.first?.id ?? UUID()
-        activate(providerID: p.id, modelID: modelID)
+        activate(providerID: p.id, modelID: modelID, syncPeer: false)
     }
 
     // MARK: - Activate
@@ -219,7 +219,7 @@ final class CodexProviderStore: ObservableObject {
         }
     }
 
-    func activate(providerID: UUID, modelID: UUID) {
+    func activate(providerID: UUID, modelID: UUID, syncPeer: Bool = true) {
         guard let provider = providers.first(where: { $0.id == providerID }),
               let model = provider.models.first(where: { $0.id == modelID }) ?? provider.models.first else { return }
 
@@ -228,9 +228,6 @@ final class CodexProviderStore: ObservableObject {
         let viaProxy = routingOn || captureOn
         let proxyBase: String? = viaProxy ? LocalProxyAddress.codexBase : nil
 
-        // Upstream must be in place before config.toml points Codex at the
-        // proxy. Capture flags come from the provider we're activating, not
-        // the previous active row.
         Task { @MainActor in
             if viaProxy { startProxy() }
             await proxyState.setUpstream(.init(
@@ -251,7 +248,21 @@ final class CodexProviderStore: ObservableObject {
             }
             save()
             syncProxyRuntime()
+            if syncPeer {
+                claudePeer?.activateMatching(codex: provider, model: model)
+            }
         }
+    }
+
+    /// Mirror a Claude activation onto the matching Codex vendor/model.
+    func activateMatching(claude: Provider, model: ModelConfig) {
+        guard let dest = providers.first(where: { ProviderBridge.matches(claude, $0) }) else { return }
+        let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
+        guard let mid = dest.models.first(where: {
+            $0.name.caseInsensitiveCompare(slug) == .orderedSame
+        })?.id else { return }
+        if dest.id == activeProviderID, dest.activeModelID == mid { return }
+        activate(providerID: dest.id, modelID: mid, syncPeer: false)
     }
 
     // MARK: - CRUD

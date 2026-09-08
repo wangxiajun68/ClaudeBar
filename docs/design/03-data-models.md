@@ -72,3 +72,7 @@
   "updatedAt": "2026-08-01T12:00:00Z"
 }
 ```
+
+## VPN 订阅（本机）
+
+订阅列表在 `~/Library/Application Support/ClaudeBar/vpn/subscriptions.json`，由 `VpnSubscriptionStore` 读写。**不要**把该文件或订阅 token 提交到 Git。
