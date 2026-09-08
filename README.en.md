@@ -5,7 +5,7 @@
   ClaudeBar
 </h1>
 
-macOS menu bar — multi-agent model switching, session monitoring, usage stats, and local LLM proxy capture.
+macOS menu bar — multi-agent model switching, session monitoring, usage stats, local LLM proxy capture, and optional VPN.
 
 ![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)![macOS 15+](https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white)![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)![MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -41,6 +41,7 @@ xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 
 ## Features
 
+- **VPN** — bundled mihomo: subscriptions, node select, delay tests, system proxy; live rates in the menu bar.
 - **Local LLM proxy** — forwards on `127.0.0.1`, bridges Chat / Responses. With traffic recording, inspect conversations, tool calls, images, and raw payloads.
 - **Model switching** — Claude Code and Codex keep separate provider lists; activation writes `settings.json` / `config.toml` independently. Copy configs only via explicit import in Manage.
 - **Sessions · usage · resources** — tri-agent session aggregation, token stats, CPU / GPU / memory attribution.
@@ -54,6 +55,7 @@ xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 
 | Goal                   | Path                                                                                                  |
 | ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| **VPN**                | **VPN** page → add subscription → enable system proxy; switch nodes from the menu bar |
 | **Capture traffic**    | Settings → local proxy → enable recording on a model card → **Traffic**                               |
 | **Switch model**       | **Models** page (Claude Code / Codex tabs) or menu-bar popup → activate → open a new terminal session |
 | **Resume session**     | **Sessions** page or popup → click a card                                                             |
@@ -72,6 +74,7 @@ xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 | Codex          | `~/.codex/`                                     | Read-only (writes `config.toml` on switch)   |
 | Cursor         | `~/Library/.../state.vscdb`                     | Read-only                                    |
 | Proxy captures | `~/Library/Application Support/ClaudeBar/logs/` | Written when recording is on                 |
+| VPN            | `~/Library/Application Support/ClaudeBar/vpn/`  | Subscriptions and core config (local only) |
 
 
 

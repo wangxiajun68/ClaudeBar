@@ -13,3 +13,6 @@
 | DeepSeek 余额请求失败 / 非 DeepSeek | `balanceText = nil`，不显示余额（popup 显示 "⋯" 加载态后回落为空） |
 | 通知权限被拒 | `NotificationService` 静默降级：不再请求、不发送通知，其余功能不受影响 |
 | Widget 读不到快照 | 先试 UserDefaults → App Group 文件 → `~/.claude` → Widget 沙盒容器，全部失败则显示诊断信息（`UD:nil F:N/-1B`） |
+| mihomo 二进制缺失 | VPN 状态 `missingCore`；重新 `make build` 以下载 sidecar |
+| 内核启动失败 | `VpnError` 写入 vpn.log / core.log；常见为 YAML 重复键或非法 CIDR |
+| 系统代理看起来没写上 | 回读看 Wi-Fi / Ethernet，不是服务列表第一行；关 PAC 后再开 HTTP 代理 |

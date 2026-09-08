@@ -23,6 +23,10 @@
 3. popup 加 `Views/Popup/` 区段、主窗口 `SessionsView` 加 section，`writeWidgetSnapshot` 加字段。
 4. `WidgetSnapshot` 加对应 summary 类型（`Widget/WidgetSnapshot.swift` 同步）。
 
+## 新增 VPN 探测站点或切换策略
+
+见 [11-vpn.md](11-vpn.md)。探测列表在 `VpnNetProbe`；failover 阈值在 `VpnManager.tickFailover`。不要把订阅 URL 写进仓库。
+
 ## 新增一类空闲通知
 1. `NotificationService` 加 `notifyIdle(...)` 变体与 category（如需独立动作）。
 2. `ProviderStore` 为该来源加一个 `IdleTransitionDetector<ID>` 实例并在刷新回调里 `detect`。

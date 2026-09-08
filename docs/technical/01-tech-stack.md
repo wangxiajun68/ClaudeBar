@@ -13,7 +13,7 @@
 | Widget | WidgetKit | `systemLarge` 尺寸，`StaticConfiguration` |
 | 数据 | Foundation Codable + JSONSerialization | 模型编码用 Codable；`settings.json` 读写用 JSONSerialization 以保留未知字段 |
 | 数据库 | SQLite3（系统库） | 只读访问 Cursor 的 `state.vscdb` |
-| 依赖 | **零第三方依赖** | 仅链接 `libsqlite3` 与系统框架（SwiftUI、AppKit、WidgetKit、CryptoKit、CoreServices、IOKit） |
+| 依赖 | **无 Swift 包管理器依赖** | 系统框架 + `libsqlite3`；VPN 另捆绑 mihomo 二进制（非 SPM） |
 | 构建 | `swiftc` + `bash` 脚本 | 无 Xcode 工程、无 SPM |
 | 最低系统 | macOS 15+，arm64 | 仅 Apple Silicon；`build.sh` 默认编译目标 `arm64-apple-macos15.0`（可用 `MACOS_MIN` 覆盖） |
 | 分发 | GitHub Releases **DMG** | 终端用户从 DMG 拖放安装；`Sources/build.sh` 仅供开发者与 CI |
@@ -26,7 +26,8 @@
 |----------|------|
 | （默认） | 编译、签名、安装到 `/Applications/ClaudeBar.app`，执行 `lsregister` / `pluginkit` |
 | `CLAUDEBAR_SKIP_INSTALL=1` | 仅产出 `.build/ClaudeBar.app`；不 `pkill`、不写 `/Applications`、不跑 `pluginkit`（**CI 必用**） |
-| `CLAUDEBAR_PACKAGE=1` | 在跳过安装前提下，额外打包 `.build/dist/ClaudeBar-{version}-macOS-arm64.dmg`（主发行物）、`.zip` 及 `.sha256` 校验和 |
+| `CLAUDEBAR_PACKAGE=1` | 在跳过安装前提下，额外打包 DMG / zip / sha256 |
+| `MIHOMO_SKIP_DOWNLOAD=1` | 不拉 GitHub 上的 mihomo，使用已有 `vendor/mihomo/mihomo` |
 
 **主 app 编译（摘录）：**
 
@@ -72,7 +73,8 @@ ClaudeBar.app/
     │   └── ClaudeBar              (主二进制)
     ├── Resources/
     │   ├── AppIcon.icns
-    │   └── MenuBarIcon.png
+    │   ├── MenuBarIcon.png          （构建仍拷贝；status item 用矢量 `MenuBarMark`）
+    │   └── mihomo-core            （VPN sidecar，build.sh 注入）
     └── PlugIns/
         └── ClaudeBarWidget.appex/
             └── Contents/

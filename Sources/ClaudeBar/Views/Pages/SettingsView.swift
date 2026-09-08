@@ -66,7 +66,13 @@ struct SettingsView: View {
                                 codexStore.syncProxyWithPreferences()
                                 codexStore.reactivateActive()
                             }),
-                        caption: "经本机代理转发请求，并在 Chat 与 Responses 之间转换协议。Codex、Claude Code 以外的 OpenAI 兼容客户端也可把 Base URL 指到下面的地址。请求日志在「流量 → 日志」；完整抓包需在供应商上开启流量记录。",
+                        caption: "经本机代理转发请求，并在 Chat 与 Responses 之间转换协议。Codex、Claude Code 以外的 OpenAI 兼容客户端也可把 Base URL 指到下面的地址。CC 与 Codex 的完整抓包由供应商上的「流量记录」控制。",
+                        tint: Theme.codex)
+                    Divider()
+                    toggleRow(
+                        "记录第三方流量",
+                        isOn: $prefs.proxyThirdPartyTrafficEnabled,
+                        caption: "将非 Claude Code / Codex 客户端经本地代理转发的请求写入「流量」页（检查器与日志），无需在供应商上开启流量记录。关闭后仍正常转发，只是不记入流量。",
                         tint: Theme.codex)
                     Divider()
                     row("端口") {
@@ -106,6 +112,38 @@ struct SettingsView: View {
                     }
                     Divider()
                     ProxyCurlExample(model: proxyCurlModel)
+                }
+
+                group("VPN 代理") {
+                    toggleRow(
+                        "VPN 代理",
+                        isOn: Binding(
+                            get: { prefs.vpnEnabled },
+                            set: { on in
+                                prefs.vpnEnabled = on
+                                VpnManager.shared.syncRuntime()
+                                if !on {
+                                    VpnProxyGuard.shared.stop()
+                                    VpnSystemProxyController.clearSystemProxy()
+                                }
+                            }),
+                        caption: "托管 mihomo 内核并接管系统流量。订阅、节点与系统代理 / TUN 在「VPN」页管理。",
+                        tint: Theme.claude)
+                    Divider()
+                    HStack(spacing: Theme.Space.s8) {
+                        Circle()
+                            .fill(vpnDotColor)
+                            .frame(width: 6, height: 6)
+                        Text(vpnStatusText)
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(Theme.textSecondary)
+                        Spacer()
+                        Button("打开 VPN 页") {
+                            NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                        }
+                        .adaptiveGlassButton()
+                        .tint(Theme.claude)
+                    }
                 }
 
                 group("连通性") {
@@ -282,6 +320,29 @@ struct SettingsView: View {
         codexStore.activeProvider?.activeModel?.name
             ?? providerStore.activeProvider?.activeModel?.name
             ?? ""
+    }
+
+    private var vpnDotColor: Color {
+        switch VpnManager.shared.state {
+        case .running: return Theme.external
+        case .starting: return Theme.claudeHi
+        case .idle, .missingCore: return Theme.statusIdle
+        case .failed: return Theme.statusError
+        }
+    }
+
+    private var vpnStatusText: String {
+        switch VpnManager.shared.state {
+        case .idle: return "VPN 未启用"
+        case .missingCore: return "缺少 mihomo 内核（详见 VPN 页）"
+        case .starting: return "内核启动中…"
+        case .running:
+            if let node = VpnManager.shared.activeNodeName {
+                return "VPN 运行中 · \(node)"
+            }
+            return "VPN 运行中 · 127.0.0.1:\(prefs.vpnMixedPort)"
+        case .failed(let msg): return "VPN 异常：\(msg)"
+        }
     }
 
     private var currentVendorCaption: String {

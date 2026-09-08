@@ -21,31 +21,59 @@ final class MenuBarController: NSObject {
         super.init()
     }
 
+    private var rateAccessory: VpnMenuBarRateView?
+    private var rateTickTask: Task<Void, Never>?
+
     func setup() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else {
             NSLog("[ClaudeBar] statusItem.button is nil — aborting")
             return
         }
-        button.image = Self.menuBarImage()
-        button.image?.isTemplate = true
+        button.image = MenuBarMark.image()
+        button.imagePosition = .imageLeft
+        button.title = ""
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         NSLog("[ClaudeBar] status item created OK")
+        installVpnRateDisplay(button: button)
     }
 
-    private static func menuBarImage() -> NSImage? {
-        guard let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
-            let fallback = NSImage(systemSymbolName: "circle.dashed", accessibilityDescription: "ClaudeBar")
-            fallback?.isTemplate = true
-            return fallback
+    /// ClashX-style: a 22pt-tall two-line accessory, not NSStatusBarButton's
+    /// attributedTitle (which cannot wrap, so ↓/↑ never updated visibly).
+    private func installVpnRateDisplay(button: NSStatusBarButton) {
+        let accessory = VpnMenuBarRateView()
+        rateAccessory = accessory
+        button.addSubview(accessory)
+        rateTickTask?.cancel()
+        rateTickTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.tickVpnRate()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
         }
-        image.isTemplate = true
-        // Optical size matches SF Symbols “medium” in the menu bar (~20pt).
-        image.size = NSSize(width: 20, height: 20)
-        return image
+    }
+
+    @MainActor
+    private func tickVpnRate() {
+        guard let button = statusItem.button, let accessory = rateAccessory else { return }
+        let running = VpnManager.shared.isRunning
+        if running {
+            button.image = nil
+            accessory.isHidden = false
+            accessory.update(
+                icon: MenuBarMark.image(side: 16),
+                down: VpnFormat.compact(VpnManager.shared.speedDown),
+                up: VpnFormat.compact(VpnManager.shared.speedUp))
+            accessory.frame = NSRect(x: 0, y: 1, width: VpnMenuBarRateView.fullWidth, height: 20)
+            statusItem.length = VpnMenuBarRateView.fullWidth + 6
+        } else {
+            accessory.isHidden = true
+            accessory.frame = .zero
+            button.image = MenuBarMark.image()
+            statusItem.length = NSStatusItem.squareLength
+        }
     }
 
     @objc private func statusItemClicked() {
@@ -197,4 +225,110 @@ final class MenuBarController: NSObject {
 private final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+/// 16pt tri-blade, transparent, template — the PNG has an opaque mint
+/// square, so `isTemplate` painted a solid block in the menu bar.
+enum MenuBarMark {
+    static func image(side: CGFloat = 18) -> NSImage {
+        let size = NSSize(width: side, height: side)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let cx = rect.midX
+            let cy = rect.midY
+            let armW = side * 0.16
+            let armLen = side * 0.38
+            let hub = side * 0.13
+            NSColor.black.setFill()
+            for i in 0..<3 {
+                let angle = CGFloat(i) * (2 * .pi / 3) - .pi / 2
+                let arm = NSBezierPath(
+                    roundedRect: NSRect(x: -armW / 2, y: hub * 0.2, width: armW, height: armLen),
+                    xRadius: armW / 2, yRadius: armW / 2)
+                var t = AffineTransform()
+                t.translate(x: cx, y: cy)
+                t.rotate(byRadians: angle)
+                arm.transform(using: t)
+                arm.fill()
+            }
+            NSBezierPath(ovalIn: NSRect(x: cx - hub, y: cy - hub, width: hub * 2, height: hub * 2)).fill()
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            let inner = hub * 0.42
+            NSBezierPath(ovalIn: NSRect(x: cx - inner, y: cy - inner, width: inner * 2, height: inner * 2)).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+}
+
+/// Icon + two-line rates. Arrows are SF Symbols; numbers are tabular, not
+/// unicode arrows glued to the digits.
+private final class VpnMenuBarRateView: NSView {
+    static let iconSide: CGFloat = 16
+    static let rateWidth: CGFloat = 40
+    static var fullWidth: CGFloat { iconSide + 4 + rateWidth }
+
+    private let iconView = NSImageView()
+    private let downLabel = VpnMenuBarRateView.makeLabel(primary: true)
+    private let upLabel = VpnMenuBarRateView.makeLabel(primary: false)
+    private let downArrow = VpnMenuBarRateView.makeArrow("arrow.down")
+    private let upArrow = VpnMenuBarRateView.makeArrow("arrow.up")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.contentTintColor = .labelColor
+        addSubview(iconView)
+        addSubview(downArrow)
+        addSubview(upArrow)
+        addSubview(downLabel)
+        addSubview(upLabel)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func update(icon: NSImage?, down: String, up: String) {
+        iconView.image = icon
+        downLabel.stringValue = down
+        upLabel.stringValue = up
+    }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
+    override var fittingSize: NSSize { intrinsicContentSize }
+
+    override func layout() {
+        super.layout()
+        let h = bounds.height
+        iconView.frame = NSRect(x: 0, y: (h - Self.iconSide) / 2, width: Self.iconSide, height: Self.iconSide)
+        let ax: CGFloat = Self.iconSide + 3
+        downArrow.frame = NSRect(x: ax, y: 10, width: 7, height: 9)
+        upArrow.frame = NSRect(x: ax, y: 1, width: 7, height: 9)
+        let nx = ax + 8
+        let nw = bounds.width - nx
+        downLabel.frame = NSRect(x: nx, y: 9, width: nw, height: 11)
+        upLabel.frame = NSRect(x: nx, y: 0, width: nw, height: 11)
+    }
+
+    private static func makeLabel(primary: Bool) -> NSTextField {
+        let f = NSTextField(labelWithString: "  0.0K")
+        f.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
+        f.textColor = primary ? .labelColor : .secondaryLabelColor
+        f.alignment = .right
+        f.lineBreakMode = .byClipping
+        f.drawsBackground = false
+        f.isBezeled = false
+        f.isEditable = false
+        return f
+    }
+
+    private static func makeArrow(_ name: String) -> NSImageView {
+        let v = NSImageView()
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        img?.isTemplate = true
+        v.image = img
+        v.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .semibold)
+        v.contentTintColor = name == "arrow.down" ? .labelColor : .secondaryLabelColor
+        v.imageScaling = .scaleProportionallyDown
+        return v
+    }
 }

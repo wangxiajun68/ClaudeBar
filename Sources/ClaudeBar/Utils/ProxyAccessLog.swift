@@ -4,8 +4,14 @@ import Combine
 /// Origin of a proxied request. Independent of capture enums so the access
 /// log can run when traffic recording is off.
 enum ProxyLogSource: String {
-    case claude, codex
-    var label: String { self == .claude ? "Claude" : "Codex" }
+    case claude, codex, other
+    var label: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .other: return "第三方"
+        }
+    }
 }
 
 enum ProxyLogKind: String {
@@ -303,15 +309,20 @@ final class ProxyLogTap {
     let id: UInt64
     private weak var store: ProxyAccessLog?
     private var finished = false
+    private let records: Bool
 
-    init(id: UInt64, store: ProxyAccessLog) {
+    init(id: UInt64, store: ProxyAccessLog?, records: Bool = true) {
         self.id = id
         self.store = store
+        self.records = records
     }
 
     func finish(status: Int, error: String? = nil) {
-        guard !finished else { return }
+        guard records, !finished else { return }
         finished = true
         store?.finish(id: id, status: status, error: error)
     }
+
+    /// Returned when third-party traffic recording is disabled.
+    static let noop = ProxyLogTap(id: 0, store: nil, records: false)
 }

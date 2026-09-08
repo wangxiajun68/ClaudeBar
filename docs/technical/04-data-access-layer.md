@@ -9,7 +9,8 @@
 
 - **Claude Code**：`~/.claude/settings.json`、`~/.claude/claude-bar-providers.json`（新）、`~/.claude/claude-bar-presets.json`（旧，迁移用）、`~/.claude/projects/`、`~/.claude/sessions/`。
 - **Cursor**：`~/.cursor/projects/`、`~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`。
-- **App Group**：`com.claudebar.app.widget`，快照文件 `claude-bar-widget-data.json`。
+- **App Group**：`com.claudebar.app.widget`。
+- **VPN**：`~/Library/Application Support/ClaudeBar/vpn/`（`config.yaml`、`subscriptions.json`、`core.log`、`vpn.log`）。订阅 token 只出现在此目录。
 
 `cursorProjectName(for:)` 复现 Cursor 的 cwd 编码：去前导 `/` 后把 `/` 换成 `-`（注意 Cursor **不**加前导 `-`，与 Claude Code 不同）。`cursorTranscriptURL(cwd:composerId:)` 拼出 `agent-transcripts/<composerId>/<composerId>.jsonl`。
 

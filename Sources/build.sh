@@ -74,6 +74,52 @@ if [ -f "$FANCTL_SRC" ]; then
     && echo "Fan helper built: $FANCTL_OUT"
 fi
 
+# mihomo core for the VPN module — clash-verge-rev style prebuild: auto-fetch
+# the latest mihomo release into vendor/mihomo, skip when the local copy is
+# already up to date. Set MIHOMO_SKIP_DOWNLOAD=1 to build without the core.
+MIHOMO_DIR="$PROJECT_DIR/vendor/mihomo"
+MIHOMO_BIN="$MIHOMO_DIR/mihomo"
+MIHOMO_VERSION_FILE="$MIHOMO_DIR/.version"
+if [ "${MIHOMO_SKIP_DOWNLOAD:-0}" != "1" ]; then
+    MIHOMO_VERSION_URL="https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt"
+    MIHOMO_URL_PREFIX="https://github.com/MetaCubeX/mihomo/releases/download"
+    # curl honors https_proxy / HTTPS_PROXY env vars when set.
+    MIHOMO_LATEST="$(curl -fsSL --connect-timeout 10 "$MIHOMO_VERSION_URL" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -z "$MIHOMO_LATEST" ]; then
+        # Offline or blocked: fall back to whatever is vendored / cached.
+        MIHOMO_LATEST="$(cat "$MIHOMO_VERSION_FILE" 2>/dev/null || true)"
+        if [ -z "$MIHOMO_LATEST" ]; then
+            echo "WARN: cannot reach github.com for mihomo version; building without core update."
+        fi
+    fi
+    if [ -n "$MIHOMO_LATEST" ] && [ ! -f "$MIHOMO_VERSION_FILE" -o "$(cat "$MIHOMO_VERSION_FILE" 2>/dev/null)" != "$MIHOMO_LATEST" -o ! -f "$MIHOMO_BIN" ]; then
+        echo "Fetching mihomo core $MIHOMO_LATEST (darwin-arm64)…"
+        mkdir -p "$MIHOMO_DIR"
+        MIHOMO_ASSET="mihomo-darwin-arm64-$MIHOMO_LATEST"
+        if curl -fSL --connect-timeout 15 -o "$MIHOMO_DIR/mihomo.gz" \
+            "$MIHOMO_URL_PREFIX/v$MIHOMO_LATEST/$MIHOMO_ASSET.gz" 2>/dev/null \
+           || curl -fSL --connect-timeout 15 -o "$MIHOMO_DIR/mihomo.gz" \
+            "$MIHOMO_URL_PREFIX/$MIHOMO_LATEST/$MIHOMO_ASSET.gz" 2>/dev/null; then
+            gunzip -f "$MIHOMO_DIR/mihomo.gz" && mv "$MIHOMO_DIR/mihomo" "$MIHOMO_BIN" \
+                && chmod +x "$MIHOMO_BIN" \
+                && echo "$MIHOMO_LATEST" > "$MIHOMO_VERSION_FILE" \
+                && echo "mihomo core $MIHOMO_LATEST fetched."
+        else
+            echo "WARN: mihomo download failed; keeping existing core (if any)."
+        fi
+    fi
+fi
+MIHOMO_SRC="$MIHOMO_BIN"
+if [ -f "$MIHOMO_SRC" ]; then
+    cp "$MIHOMO_SRC" "$RESOURCES_DIR/mihomo-core"
+    chmod +x "$RESOURCES_DIR/mihomo-core"
+    # Strip quarantine from the vendored copy so Gatekeeper lets it run.
+    xattr -c "$RESOURCES_DIR/mihomo-core" 2>/dev/null || true
+    echo "mihomo core bundled: $RESOURCES_DIR/mihomo-core"
+else
+    echo "NOTE: no mihomo core available — VPN core will not be bundled."
+fi
+
 # Compile Swift sources
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"

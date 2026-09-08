@@ -546,7 +546,7 @@ final class CodexProxyServer: @unchecked Sendable {
         }()
 
         let tap: CaptureTap?
-        if inspect, await state.captureAnthropic {
+        if inspect, await shouldCaptureAnthropic(request.headers) {
             tap = ProxyCaptureStore.shared.begin(
                 kind: .anthropic,
                 source: CaptureSource.infer(headers: request.headers, route: .claude),
@@ -555,7 +555,8 @@ final class CodexProxyServer: @unchecked Sendable {
                 path: request.path,
                 stream: wantsStream,
                 requestJSON: request.body.flatMap { String(data: $0, encoding: .utf8) },
-                rewrittenJSON: nil)
+                rewrittenJSON: nil,
+                requestHeaders: request.headers)
         } else {
             tap = nil
         }
@@ -682,7 +683,7 @@ final class CodexProxyServer: @unchecked Sendable {
     private func makeOpenAITap(kind: CaptureKind, request: HTTPRequest, json: [String: Any],
                                rewritten: Data, stream: Bool,
                                upstream: CodexProxyState.UpstreamEndpoint) async -> CaptureTap? {
-        guard await state.captureOpenAI else { return nil }
+        guard await shouldCaptureOpenAI(request.headers) else { return nil }
         return ProxyCaptureStore.shared.begin(
             kind: kind,
             source: CaptureSource.infer(headers: request.headers, route: .codex),
@@ -691,22 +692,48 @@ final class CodexProxyServer: @unchecked Sendable {
             path: request.path,
             stream: stream,
             requestJSON: request.body.flatMap { String(data: $0, encoding: .utf8) },
-            rewrittenJSON: String(data: rewritten, encoding: .utf8))
+            rewrittenJSON: String(data: rewritten, encoding: .utf8),
+            requestHeaders: request.headers)
     }
 
     /// Access log only — never the request/response body, just routing metadata.
     private func startLog(_ request: HTTPRequest, source: ProxyLogSource, kind: ProxyLogKind,
                           provider: String) -> ProxyLogTap {
+        guard shouldRecordTraffic(request.headers) else { return .noop }
         let peek = Self.peekJSON(request.body)
+        let resolved = resolveLogSource(request.headers, route: source)
         return ProxyAccessLog.shared.begin(
             method: request.method,
             path: request.path,
-            source: source,
+            source: resolved,
             kind: kind,
             provider: provider,
             model: peek.model,
             stream: peek.stream,
             bytesIn: request.body?.count ?? 0)
+    }
+
+    private func shouldRecordTraffic(_ headers: [String: String]) -> Bool {
+        guard CaptureSource.isThirdPartyClient(headers: headers) else { return true }
+        return AppPreferences.shared.proxyThirdPartyTrafficEnabled
+    }
+
+    /// CC/Codex 仍走供应商「流量记录」；第三方仅受设置里的「记录第三方流量」控制。
+    private func shouldCaptureOpenAI(_ headers: [String: String]) async -> Bool {
+        guard shouldRecordTraffic(headers) else { return false }
+        if CaptureSource.isThirdPartyClient(headers: headers) { return true }
+        return await state.captureOpenAI
+    }
+
+    private func shouldCaptureAnthropic(_ headers: [String: String]) async -> Bool {
+        guard shouldRecordTraffic(headers) else { return false }
+        if CaptureSource.isThirdPartyClient(headers: headers) { return true }
+        return await state.captureAnthropic
+    }
+
+    private func resolveLogSource(_ headers: [String: String], route: ProxyLogSource) -> ProxyLogSource {
+        if CaptureSource.isThirdPartyClient(headers: headers) { return .other }
+        return route
     }
 
     private static func peekJSON(_ body: Data?) -> (model: String, stream: Bool) {

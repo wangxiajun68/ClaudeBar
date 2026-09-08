@@ -3,7 +3,9 @@
 > ClaudeBar 技术文档 · §5
 > 相关：设计文档 [主窗口与设计系统](../design/05-main-window-and-theme.md) · [Popup 布局](../design/04-popup-layout.md) · 技术文档 [启动与窗口](02-app-launch-and-windows.md)
 
-ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/` 五文件，560pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 5 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 设计 token 与 `Views/Shared/` 组件层。
+ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，560pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 7 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
+
+## `Theme` — 设计 token 单点
 
 ## `Theme` — 设计 token 单点
 
@@ -17,14 +19,13 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/` �
 
 ## `MenuBarView` + `Views/Popup/` — 菜单栏 popup
 
-`MenuBarView` 是组合壳（宽 560pt 的 `VStack`），内容拆在 `Views/Popup/`：
+`MenuBarView` 是组合壳（宽 560pt 的 `VStack`）：
 
-- **PanelHeader.swift**（`PanelHeader`）：brand 圆标（busy 时 `symbolEffect(.pulse)`）+ 折叠按钮 + 刷新按钮。
-- **ProvidersPanel.swift**（`ProvidersPanel`）：当前配置条（状态点 + Provider 名/模型 + host + ¥余额，折叠态隐藏）→ PROVIDERS 区：`TileGrid(.popupProvider)` 2 列 `ProviderTile`，激活后 `FeedbackToast` 反馈。
-- **SessionsPanel.swift**（`SessionsPanelView`）：CLAUDE CODE / CURSOR 两个 section（`SectionHeader` 计数徽标），各用 `TileGrid(.popupSession)` 2 列渲染 `SessionCardView` / `CursorSessionCardView`（含 `HeartbeatSparkline`）；空态 `StandbyEmptyState`；最高 260pt，区内滚动。
-- **UsagePanel.swift**（`UsagePanel`）：周期 chips + 内联 DatePicker（`指定`）+ 日期导航 + `TileGrid(.popupUsage)` 每模型一个 `UsageModelTile`。
-- **PanelState.swift**（`PanelState`）：popup UI 状态——feedback 消息 + 单调 token（驱动壳层 `.task(id:)` 2s 自动消失）、`configCollapsed`（UserDefaults 持久化）。
-- **底部操作栏**（`MenuBarView.actionBar`）：刷新 / 打开主窗口（post `.showMainWindow`）/ 编辑供应商 / 打开 settings.json / 空闲通知开关（铃铛，切 `AppPreferences.idleNotifyEnabled`）/ 退出。
+- **PanelHeader**：Brand + **`VpnChromeCluster`（仅 popup）** + 刷新。
+- **ResourceStrip（dense）**：本机资源与风扇。
+- **ProvidersPanel / SessionsPanel / UsagePanel**：固定区高，避免互相挤压。
+- **PanelState**：feedback toast、折叠态。
+- **底部操作栏**：刷新 / 主窗口 / 编辑供应商 / settings.json / 空闲通知 / 退出。
 
 **视觉规范**：
 - 配色统一 `Theme` token（`textPrimary`/`textSecondary`/`textTertiary()`/`accent`/`statusBusy`/`cursorAccent`/`divider` 等）。

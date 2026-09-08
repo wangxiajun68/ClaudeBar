@@ -46,6 +46,12 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(codexProxyPort, forKey: "codexProxyPort") }
     }
 
+    /// When on, third-party clients (not Claude Code / Codex) proxied through the
+    /// local server are written to Traffic (access log + capture when enabled).
+    @Published var proxyThirdPartyTrafficEnabled: Bool {
+        didSet { UserDefaults.standard.set(proxyThirdPartyTrafficEnabled, forKey: "proxyThirdPartyTrafficEnabled") }
+    }
+
     /// When on, capture + usage use SQLite. When off, they append JSON/JSONL
     /// under Application Support/ClaudeBar/logs — no database is opened.
     @Published var databaseEnabled: Bool {
@@ -57,11 +63,58 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    // MARK: VPN 代理（mihomo 内核）— 与上面的 LLM 本地代理无关
+
+    /// 总开关：运行 mihomo 内核。
+    @Published var vpnEnabled: Bool {
+        didSet { UserDefaults.standard.set(vpnEnabled, forKey: "vpnEnabled") }
+    }
+    /// 接管 macOS 系统代理（networksetup）。
+    @Published var vpnSystemProxyEnabled: Bool {
+        didSet { UserDefaults.standard.set(vpnSystemProxyEnabled, forKey: "vpnSystemProxyEnabled") }
+    }
+    /// TUN 模式；关闭时恢复系统 DNS。
+    @Published var vpnTunEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(vpnTunEnabled, forKey: "vpnTunEnabled")
+            if !vpnTunEnabled {
+                Task { @MainActor in VpnTunDnsHelper.restoreSystemDNSIfNeeded() }
+            }
+        }
+    }
+    /// mihomo 混合端口（HTTP + SOCKS）。
+    @Published var vpnMixedPort: Int {
+        didSet { UserDefaults.standard.set(vpnMixedPort, forKey: "vpnMixedPort") }
+    }
+    /// 允许局域网设备使用本机代理。
+    @Published var vpnAllowLan: Bool {
+        didSet { UserDefaults.standard.set(vpnAllowLan, forKey: "vpnAllowLan") }
+    }
+    /// external-controller API 密钥（可空）。
+    @Published var vpnControllerSecret: String {
+        didSet { UserDefaults.standard.set(vpnControllerSecret, forKey: "vpnControllerSecret") }
+    }
+    /// 守卫循环：其他软件清除系统代理时自动恢复。
+    @Published var vpnGuardEnabled: Bool {
+        didSet { UserDefaults.standard.set(vpnGuardEnabled, forKey: "vpnGuardEnabled") }
+    }
+
     private init() {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
         codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
+        proxyThirdPartyTrafficEnabled = UserDefaults.standard.object(forKey: "proxyThirdPartyTrafficEnabled") as? Bool ?? true
         databaseEnabled = UserDefaults.standard.object(forKey: "databaseEnabled") as? Bool ?? true
+
+        // VPN proxy module (defined in Utils/VPNPreferences.swift).
+        let vpn = Self.vpnDefaults()
+        vpnEnabled = vpn["vpnEnabled"] as! Bool
+        vpnSystemProxyEnabled = vpn["vpnSystemProxyEnabled"] as! Bool
+        vpnTunEnabled = vpn["vpnTunEnabled"] as! Bool
+        vpnMixedPort = vpn["vpnMixedPort"] as! Int
+        vpnAllowLan = vpn["vpnAllowLan"] as! Bool
+        vpnControllerSecret = vpn["vpnControllerSecret"] as! String
+        vpnGuardEnabled = vpn["vpnGuardEnabled"] as! Bool
     }
 }

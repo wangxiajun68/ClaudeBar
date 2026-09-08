@@ -85,6 +85,34 @@ enum FilePaths {
     static var usageFilesJSON: URL { logsDir.appendingPathComponent("usage-files.json") }
     static var usageRollupJSONL: URL { logsDir.appendingPathComponent("usage-rollup.jsonl") }
 
+    // MARK: - VPN (mihomo core)
+
+    /// `~/Library/Application Support/ClaudeBar/vpn` — mihomo working dir.
+    static var vpnDir: URL {
+        let dir = appSupportDir.appendingPathComponent("vpn", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Runtime config handed to `mihomo -f`.
+    static var vpnConfigFile: URL { vpnDir.appendingPathComponent("config.yaml") }
+    /// Downloaded subscription YAMLs, keyed by id.
+    static var vpnProfilesDir: URL {
+        let dir = vpnDir.appendingPathComponent("profiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+    /// Subscription metadata (JSON, next to the YAMLs).
+    static var vpnSubscriptionsFile: URL { vpnDir.appendingPathComponent("subscriptions.json") }
+    /// Where users drop the mihomo binary (or where VpnCoreInstaller puts it).
+    static var vpnCoreBin: URL { vpnDir.appendingPathComponent("mihomo") }
+    /// Marker the privileged helper checks before enabling TUN.
+    static var vpnTunMarker: URL { vpnDir.appendingPathComponent("tun-enabled") }
+    /// VPN event + core stderr log.
+    static var vpnLogFile: URL { vpnDir.appendingPathComponent("vpn.log") }
+    /// Raw mihomo stdout/stderr stream (append-only).
+    static var vpnCoreLogFile: URL { vpnDir.appendingPathComponent("core.log") }
+
     // MARK: - Cursor
 
     /// `~/.cursor` — Cursor's user-data root (projects/, ai-tracking/, …).

@@ -3,6 +3,7 @@ import SwiftUI
 extension Notification.Name {
     static let showMainWindow = Notification.Name("com.claudebar.showMainWindow")
     static let openProvidersEditor = Notification.Name("com.claudebar.openProvidersEditor")
+    static let openVPNPage = Notification.Name("com.claudebar.openVPNPage")
 }
 
 /// Menu-bar popup shell — pure composition. Content lives in `Views/Popup/`
@@ -70,8 +71,8 @@ struct MenuBarView: View {
 
     private var missingSettingsView: some View {
         VStack(spacing: Theme.Space.s8) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(Theme.Font.bodyLarge).foregroundColor(Theme.statusWarning)
+            AppGlyph(name: "exclamationmark.triangle", size: 16, box: 20)
+                .foregroundColor(Theme.statusWarning)
             Text("未找到 settings.json")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
             Text("请先运行 Claude Code，然后刷新。")

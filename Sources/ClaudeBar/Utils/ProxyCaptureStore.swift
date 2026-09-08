@@ -30,6 +30,7 @@ struct CaptureDetail: Equatable {
     var rewrittenJSON: String
     var responseJSON: String
     var rawSSE: String
+    var requestHeadersJSON: String
     var turns: [CaptureTranscript.Turn]
     var toolCalls: [CaptureTranscript.ToolCall]
     var requestTruncated: Bool = false
@@ -69,21 +70,27 @@ enum CaptureSource: String {
         }
     }
 
-    /// Prefer User-Agent; fall back to the proxy route (Anthropic vs OpenAI).
-    static func infer(headers: [String: String], route: CaptureSource) -> CaptureSource {
+    /// Classify by User-Agent only. Unrecognized clients are third-party — never
+    /// inferred from the proxy route (OpenAI vs Anthropic path).
+    static func infer(headers: [String: String], route: CaptureSource = .other) -> CaptureSource {
+        if isClaudeClient(headers: headers) { return .claude }
+        if isCodexClient(headers: headers) { return .codex }
+        return .other
+    }
+
+    static func isClaudeClient(headers: [String: String]) -> Bool {
         let ua = (headers["user-agent"] ?? "").lowercased()
-        if ua.contains("claude-cli") || ua.contains("claude-code") || ua.contains("claude-user") {
-            return .claude
-        }
-        if ua.contains("codex") {
-            return .codex
-        }
-        if ua.contains("curl/") || ua.contains("httpie") || ua.contains("python-requests")
-            || ua.contains("httpx/") || ua.contains("openai-python") || ua.contains("openai/python")
-            || ua.contains("node-fetch") || ua.contains("got/") || ua.contains("axios") {
-            return .other
-        }
-        return route
+        return ua.contains("claude-cli") || ua.contains("claude-code") || ua.contains("claude-user")
+    }
+
+    static func isCodexClient(headers: [String: String]) -> Bool {
+        let ua = (headers["user-agent"] ?? "").lowercased()
+        return ua.contains("codex")
+    }
+
+    /// Any client that is not Claude Code or Codex (Cursor, curl, custom SDKs, …).
+    static func isThirdPartyClient(headers: [String: String]) -> Bool {
+        !isClaudeClient(headers: headers) && !isCodexClient(headers: headers)
     }
 }
 
@@ -158,21 +165,25 @@ final class ProxyCaptureStore {
     /// Start a capture. Returns nil if the active backend cannot persist.
     func begin(kind: CaptureKind, source: CaptureSource, provider: String,
                model: String, path: String, stream: Bool,
-               requestJSON: String?, rewrittenJSON: String?) -> CaptureTap? {
+               requestJSON: String?, rewrittenJSON: String?,
+               requestHeaders: [String: String]? = nil) -> CaptureTap? {
         lock.lock()
         defer { lock.unlock() }
         let preview = Self.preview(from: requestJSON)
+        let headersJSON = Self.encodeHeaders(requestHeaders)
         let summary: CaptureSummary
         if useDatabase {
             guard let created = beginSQL(kind: kind, source: source, provider: provider,
                                          model: model, path: path, stream: stream,
                                          requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
+                                         requestHeadersJSON: headersJSON,
                                          preview: preview) else { return nil }
             summary = created
         } else {
             summary = jsonStore.begin(kind: kind, source: source, provider: provider,
                                       model: model, path: path, stream: stream,
                                       requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
+                                      requestHeadersJSON: headersJSON,
                                       preview: preview)
         }
         let id = summary.id
@@ -282,6 +293,7 @@ final class ProxyCaptureStore {
             return makeDetail(id: id, summary: summary, request: payload.request,
                               rewritten: payload.rewritten, response: payload.response,
                               sse: includeRaw ? payload.sse : "",
+                              requestHeadersJSON: payload.headers,
                               includePayloads: includePayloads, includeTools: includeTools)
         }
         guard let db = connection() else { return nil }
@@ -290,14 +302,16 @@ final class ProxyCaptureStore {
             SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
                    c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
                    c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
-                   p.request_json, p.rewritten_json, p.response_json, p.raw_sse
+                   p.request_json, p.rewritten_json, p.response_json, p.raw_sse,
+                   COALESCE(p.request_headers, '')
             FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
             """
             : """
             SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
                    c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
                    c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
-                   p.request_json, p.rewritten_json, p.response_json, ''
+                   p.request_json, p.rewritten_json, p.response_json, '',
+                   COALESCE(p.request_headers, '')
             FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
             """
         var stmt: OpaquePointer?
@@ -309,11 +323,13 @@ final class ProxyCaptureStore {
         return makeDetail(id: id, summary: summary, request: request,
                           rewritten: text(stmt, 18), response: text(stmt, 19),
                           sse: includeRaw ? text(stmt, 20) : "",
+                          requestHeadersJSON: text(stmt, 21),
                           includePayloads: includePayloads, includeTools: includeTools)
     }
 
     private func makeDetail(id: Int64, summary: CaptureSummary,
                             request: String, rewritten: String, response: String, sse: String,
+                            requestHeadersJSON: String,
                             includePayloads: Bool, includeTools: Bool) -> CaptureDetail {
         let dir = CaptureMedia.mediaDir(captureID: id)
         var turns = CaptureTranscript.turns(from: request, mediaDir: dir)
@@ -327,6 +343,7 @@ final class ProxyCaptureStore {
             rewrittenJSON: includePayloads ? rewritten : "",
             responseJSON: includePayloads ? response : "",
             rawSSE: includePayloads ? sse : "",
+            requestHeadersJSON: includePayloads ? requestHeadersJSON : "",
             turns: turns,
             toolCalls: includeTools ? CaptureTranscript.toolCalls(request: request, response: response) : [],
             requestTruncated: request.contains("[truncated]"),
@@ -403,6 +420,7 @@ final class ProxyCaptureStore {
             );
             CREATE INDEX IF NOT EXISTS captures_started ON captures(started_at DESC);
             """, nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil)
         return db
     }
 
@@ -444,6 +462,7 @@ final class ProxyCaptureStore {
     private func beginSQL(kind: CaptureKind, source: CaptureSource, provider: String,
                           model: String, path: String, stream: Bool,
                           requestJSON: String?, rewrittenJSON: String?,
+                          requestHeadersJSON: String,
                           preview: String) -> CaptureSummary? {
         guard let db = connection() else { return nil }
         let now = iso(Date())
@@ -470,8 +489,8 @@ final class ProxyCaptureStore {
         let id = sqlite3_last_insert_rowid(db)
         let req = Self.truncate(CaptureMedia.compact(requestJSON, captureID: id), cap: payloadCap)
         let rew = Self.truncate(CaptureMedia.compact(rewrittenJSON, captureID: id), cap: payloadCap)
-        exec("INSERT INTO payloads (capture_id, request_json, rewritten_json) VALUES (?, ?, ?)",
-             args: [.int(id), .text(req), .text(rew)])
+        exec("INSERT INTO payloads (capture_id, request_json, rewritten_json, request_headers) VALUES (?, ?, ?, ?)",
+             args: [.int(id), .text(req), .text(rew), .text(requestHeadersJSON)])
         pruneLocked()
         return CaptureSummary(
             id: id, startedAt: Date(), endedAt: nil, firstTokenAt: nil,
@@ -669,6 +688,16 @@ final class ProxyCaptureStore {
     /// Last real user utterance, not Claude Code / Codex scaffolding.
     static func preview(from requestJSON: String?) -> String {
         CaptureTranscript.preview(from: requestJSON)
+    }
+
+    static func encodeHeaders(_ headers: [String: String]?) -> String {
+        guard let headers, !headers.isEmpty else { return "" }
+        let sorted = headers.sorted { $0.key < $1.key }
+        var obj: [String: String] = [:]
+        for (k, v) in sorted { obj[k] = v }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
     }
 
     static func clip(_ s: String) -> String {

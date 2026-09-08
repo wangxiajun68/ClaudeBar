@@ -20,6 +20,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         codexStore.claudePeer = store
         codexStore.load()
 
+        // VPN module: start the mihomo core if it was enabled last session,
+        // and restore the system proxy if we took it over.
+        if AppPreferences.shared.vpnEnabled {
+            VpnManager.shared.syncRuntime()
+            if AppPreferences.shared.vpnSystemProxyEnabled {
+                VpnProxyGuard.shared.start()
+            }
+        } else {
+            // A previous session may have died with the proxy still set.
+            VpnSystemProxyController.clearSystemProxy()
+        }
+
         let controller = MenuBarController(providerStore: store, codexProviderStore: codexStore)
         controller.setup()
         menuBarController = controller

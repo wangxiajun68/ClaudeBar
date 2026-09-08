@@ -18,8 +18,7 @@ struct SectionHeader: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s6) {
-            Image(systemName: icon)
-                .font(Theme.Font.micro)
+            AppGlyph(name: icon, size: 11)
                 .foregroundColor(Theme.textSecondary)
             Text(title)
                 .font(Theme.Font.microSemibold)
