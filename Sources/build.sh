@@ -2,7 +2,11 @@
 # Developer / CI build script — not an end-user installer.
 #
 #   bash Sources/build.sh
-#     → compile, ad-hoc sign, install to /Applications (local dev loop)
+#     → compile, sign with local "ClaudeBar Dev" cert (create if missing),
+#       install to /Applications
+#
+#   CODESIGN_IDENTITY="-" bash Sources/build.sh
+#     → force ad-hoc (CI default)
 #
 #   CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
 #     → compile only → .build/ClaudeBar.app (CI)
@@ -43,6 +47,26 @@ MACOS_MIN="${MACOS_MIN:-15.0}"
 MACOS_TARGET="arm64-apple-macos${MACOS_MIN}"
 
 echo "=== Building $APP_NAME $VERSION (macOS ${MACOS_MIN}+) ==="
+
+# Local builds use a stable self-signed identity so TCC (Screen Recording)
+# survives rebuilds. CI / explicit "-" stay ad-hoc.
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$CODESIGN_IDENTITY"
+elif [ -n "${CI:-}" ]; then
+    SIGN_IDENTITY="-"
+else
+    SIGN_IDENTITY="$(bash "$PROJECT_DIR/Sources/ensure-dev-cert.sh")"
+fi
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    echo "Signing identity: ad-hoc"
+else
+    echo "Signing identity: $SIGN_IDENTITY"
+    if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+        echo "ERROR: $SIGN_IDENTITY is not a trusted code-signing identity (CSSMERR_TP_NOT_TRUSTED)." >&2
+        echo "TCC will treat the app as unsigned and ask for Screen Recording on every rebuild." >&2
+        exit 1
+    fi
+fi
 
 # Clean previous build
 rm -rf "$APP_BUNDLE"
@@ -136,6 +160,8 @@ swiftc \
     -framework CryptoKit \
     -framework CoreServices \
     -framework IOKit \
+    -framework Carbon \
+    -framework ScreenCaptureKit \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
@@ -169,6 +195,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <false/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>区域截图需要屏幕录制权限，用于将选中区域复制到剪贴板。</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>NSAppTransportSecurity</key>
@@ -304,18 +332,21 @@ xattr -cr "$APP_BUNDLE"
 # Sign bottom-up (no --deep): appex binary -> appex bundle -> main binary.
 # The main binary is signed explicitly so its entitlements are embedded
 # before the bundle wrapper is sealed.
-codesign --force --sign - --options runtime --entitlements "$ENT_DIR/widget.plist" \
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/widget.plist" \
     "$APPEX_DIR/Contents/MacOS/ClaudeBarWidget"
-codesign --force --sign - --options runtime --entitlements "$ENT_DIR/widget.plist" \
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/widget.plist" \
     "$APPEX_DIR"
-codesign --force --sign - --options runtime --entitlements "$ENT_DIR/app.plist" \
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/app.plist" \
     "$MACOS_DIR/$APP_NAME"
 # IMPORTANT: pass --entitlements on the bundle wrapper too. Signing a bundle
 # re-seals the main executable; without --entitlements here codesign strips
 # the entitlements that were just embedded, leaving the main app with none.
-codesign --force --sign - --options runtime --entitlements "$ENT_DIR/app.plist" \
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/app.plist" \
     "$APP_BUNDLE"
-echo "Signed OK"
+echo "Signed OK ($SIGN_IDENTITY)"
+if [ "$SIGN_IDENTITY" != "-" ]; then
+    echo "Screen Recording TCC is bound to this certificate — rebuilds should not ask again."
+fi
 
 # --- Release artifacts (DMG + zip) for GitHub Releases ---
 if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then

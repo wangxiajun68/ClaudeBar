@@ -380,11 +380,20 @@ class ProviderStore: ObservableObject {
         activateModel(providerID: dest.id, modelID: mid, syncPeer: false)
     }
 
+    /// Re-apply the active Claude vendor (e.g. local-proxy toggle flipped).
+    func reactivateActive() {
+        guard let p = activeProvider else { return }
+        let mid = p.activeModelID ?? p.models.first?.id
+        guard let mid else { return }
+        activateModel(providerID: p.id, modelID: mid, syncPeer: false)
+    }
+
     /// Maps a provider/model pair onto the `settings.json` env block. All
     /// `ANTHROPIC_DEFAULT_*_MODEL` aliases carry the chosen model name so
     /// subagent/background traffic is routed to the same endpoint.
     private func buildEnv(from provider: Provider, model: ModelConfig) -> EnvConfig {
-        let base = provider.captureEnabled ? LocalProxyAddress.claudeBase : provider.baseURL
+        let base = (AppPreferences.shared.codexRoutingEnabled || provider.captureEnabled)
+            ? LocalProxyAddress.claudeBase : provider.baseURL
         return EnvConfig(
             ANTHROPIC_AUTH_TOKEN: provider.authToken,
             ANTHROPIC_BASE_URL: base,

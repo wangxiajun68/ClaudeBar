@@ -123,6 +123,25 @@ struct TrafficView: View {
             Text(codexStore.proxyRunning ? "代理已启用" : "代理未启用")
                 .font(Theme.Font.captionMono)
                 .foregroundColor(Theme.textSecondary)
+            if codexStore.proxyRunning {
+                if let p = codexStore.activeProvider {
+                    Text("·")
+                        .foregroundColor(Theme.textTertiary())
+                    Text("Codex \(p.name)")
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                let tp = codexStore.resolvedThirdPartyOpenAI()
+                if let tp, tp.id != codexStore.activeProviderID {
+                    Text("·")
+                        .foregroundColor(Theme.textTertiary())
+                    Text("第三方 \(tp.name)")
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
         }
         .padding(.horizontal, Theme.Space.s16)
         .padding(.top, Theme.Space.s16)

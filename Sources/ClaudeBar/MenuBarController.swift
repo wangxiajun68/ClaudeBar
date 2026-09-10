@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+extension NSColor {
+    convenience init(hex: UInt, opacity: CGFloat = 1.0) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255.0,
+                  green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+                  blue: CGFloat(hex & 0xFF) / 255.0,
+                  alpha: opacity)
+    }
+}
+
 /// Owns the menu-bar status item and a manually-positioned panel that hosts
 /// the SwiftUI menu. The panel is centered horizontally on the screen (its
 /// vertical center axis) just below the menu bar, instead of being anchored
@@ -265,19 +274,29 @@ enum MenuBarMark {
 /// unicode arrows glued to the digits.
 private final class VpnMenuBarRateView: NSView {
     static let iconSide: CGFloat = 16
-    static let rateWidth: CGFloat = 40
+    /// Sized for the widest compact rate, `999.9K` (7 chars at 9.5pt
+    /// monospaced digits ≈ 41pt) — anything narrower lets three-digit rates
+    /// paint past the capsule backing.
+    static let rateWidth: CGFloat = 46
     static var fullWidth: CGFloat { iconSide + 4 + rateWidth }
 
     private let iconView = NSImageView()
-    private let downLabel = VpnMenuBarRateView.makeLabel(primary: true)
-    private let upLabel = VpnMenuBarRateView.makeLabel(primary: false)
+    private let downLabel = VpnMenuBarRateView.makeLabel()
+    private let upLabel = VpnMenuBarRateView.makeLabel()
     private let downArrow = VpnMenuBarRateView.makeArrow("arrow.down")
     private let upArrow = VpnMenuBarRateView.makeArrow("arrow.up")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        wantsLayer = true
+        // Fixed dark capsule behind the digits — the menu bar is translucent,
+        // so wallpaper can be any brightness. A constant dark backing keeps
+        // white digits readable without guessing the background.
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.32).cgColor
+        layer?.cornerRadius = 5
+        layer?.masksToBounds = true
         iconView.imageScaling = .scaleProportionallyDown
-        iconView.contentTintColor = .labelColor
+        iconView.contentTintColor = .white
         addSubview(iconView)
         addSubview(downArrow)
         addSubview(upArrow)
@@ -291,6 +310,33 @@ private final class VpnMenuBarRateView: NSView {
         iconView.image = icon
         downLabel.stringValue = down
         upLabel.stringValue = up
+        // Contrast follows the system appearance (labelColor flips with light/
+        // dark menu bar), so it stays readable over any wallpaper. Add a soft
+        // dark shadow for light wallpaper + light mode, where black text on a
+        // translucent strip still needs separation.
+        let downColor = Self.rateColor(down)
+        let upColor = Self.rateColor(up)
+        downLabel.textColor = downColor
+        upLabel.textColor = upColor
+        downArrow.contentTintColor = downColor
+        upArrow.contentTintColor = upColor
+    }
+
+    /// Bright activity → full-strength label; idle → dimmed. Both track the
+    /// system appearance, which is what the translucent menu bar matches.
+    private static func rateColor(_ text: String) -> NSColor {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let value = Double(trimmed.dropLast(1)) ?? 0 // strip unit letter
+        let unit = trimmed.last.map(String.init) ?? ""
+        let kb: Double
+        switch unit {
+        case "G": kb = value * 1024 * 1024
+        case "M": kb = value * 1024
+        default: kb = value
+        }
+        if kb < 1 { return NSColor.white.withAlphaComponent(0.45) }   // ~0 — idle
+        if kb < 1024 { return NSColor.white.withAlphaComponent(0.75) } // < 1 MB
+        return .white                                                 // busy
     }
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
@@ -309,10 +355,10 @@ private final class VpnMenuBarRateView: NSView {
         upLabel.frame = NSRect(x: nx, y: 0, width: nw, height: 11)
     }
 
-    private static func makeLabel(primary: Bool) -> NSTextField {
+    private static func makeLabel() -> NSTextField {
         let f = NSTextField(labelWithString: "  0.0K")
         f.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
-        f.textColor = primary ? .labelColor : .secondaryLabelColor
+        f.textColor = NSColor.white.withAlphaComponent(0.45)
         f.alignment = .right
         f.lineBreakMode = .byClipping
         f.drawsBackground = false
@@ -327,7 +373,7 @@ private final class VpnMenuBarRateView: NSView {
         img?.isTemplate = true
         v.image = img
         v.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .semibold)
-        v.contentTintColor = name == "arrow.down" ? .labelColor : .secondaryLabelColor
+        v.contentTintColor = NSColor.white.withAlphaComponent(0.45)
         v.imageScaling = .scaleProportionallyDown
         return v
     }

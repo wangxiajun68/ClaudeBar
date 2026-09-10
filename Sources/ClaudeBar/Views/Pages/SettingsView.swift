@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var tests = ConnectivityTestCenter.shared
+    @ObservedObject private var screenshotHotKey = ScreenshotHotKey.shared
 
     var body: some View {
         ScrollView {
@@ -25,6 +26,23 @@ struct SettingsView: View {
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 180)
+                    }
+                }
+
+                group("截图") {
+                    toggleRow(
+                        "区域截图 ⌘⇧A",
+                        isOn: $prefs.screenshotHotkeyEnabled,
+                        caption: "全局拉框截图并复制到剪贴板。运行时会占用 Finder「前往 → 应用程序」。首次使用需在系统设置 → 隐私与安全性 → 屏幕录制中允许 ClaudeBar。")
+                    if let err = screenshotHotKey.lastError, prefs.screenshotHotkeyEnabled {
+                        Text(err + "。关闭占用该键的截图软件后，重新打开此开关。")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.statusError)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if prefs.screenshotHotkeyEnabled && screenshotHotKey.isRegistered {
+                        Text("热键已注册。")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.external)
                     }
                 }
 
@@ -65,8 +83,9 @@ struct SettingsView: View {
                                 prefs.codexRoutingEnabled = on
                                 codexStore.syncProxyWithPreferences()
                                 codexStore.reactivateActive()
+                                providerStore.reactivateActive()
                             }),
-                        caption: "经本机代理转发请求，并在 Chat 与 Responses 之间转换协议。Codex、Claude Code 以外的 OpenAI 兼容客户端也可把 Base URL 指到下面的地址。CC 与 Codex 的完整抓包由供应商上的「流量记录」控制。",
+                        caption: "开启后，Claude Code 与 Codex 分别按「模型」页当前供应商转发；其他客户端走下面的第三方上游。完整抓包仍由各供应商的「流量记录」控制。",
                         tint: Theme.codex)
                     Divider()
                     toggleRow(
@@ -88,11 +107,16 @@ struct SettingsView: View {
                         Circle()
                             .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
                             .frame(width: 6, height: 6)
-                        Text(codexStore.proxyRunning
-                             ? "已启用  127.0.0.1:\(prefs.codexProxyPort)"
-                             : "未启用")
+                        Text(ProxyUpstreamPickers.statusLine(
+                            codex: codexStore.activeProvider,
+                            claude: providerStore.activeProvider,
+                            thirdOpenAI: codexStore.resolvedThirdPartyOpenAI(),
+                            thirdAnthropic: codexStore.resolvedThirdPartyAnthropic(),
+                            running: codexStore.proxyRunning,
+                            port: prefs.codexProxyPort))
                             .font(Theme.Font.captionMono)
                             .foregroundColor(Theme.textSecondary)
+                            .lineLimit(2)
                         Spacer()
                         if let err = codexStore.errorMessage {
                             Text(err)
@@ -101,6 +125,8 @@ struct SettingsView: View {
                                 .lineLimit(1)
                         }
                     }
+                    Divider()
+                    ProxyUpstreamPickers()
                     Divider()
                     ConnectivityProbeButton(
                         title: "检测代理",
@@ -317,7 +343,8 @@ struct SettingsView: View {
     }
 
     private var proxyCurlModel: String {
-        codexStore.activeProvider?.activeModel?.name
+        codexStore.resolvedThirdPartyOpenAI()?.activeModel?.name
+            ?? codexStore.activeProvider?.activeModel?.name
             ?? providerStore.activeProvider?.activeModel?.name
             ?? ""
     }

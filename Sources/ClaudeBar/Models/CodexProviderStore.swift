@@ -138,7 +138,8 @@ final class CodexProviderStore: ObservableObject {
         let openaiCapture = activeProvider?.captureEnabled ?? false
         let anthropicCapture = claude?.captureEnabled ?? false
         let viaOpenAI = prefs.codexRoutingEnabled || openaiCapture
-        let need = viaOpenAI || anthropicCapture
+        let viaAnthropic = prefs.codexRoutingEnabled || anthropicCapture
+        let need = viaOpenAI || viaAnthropic
 
         if need {
             startProxy()
@@ -155,13 +156,26 @@ final class CodexProviderStore: ObservableObject {
             }
             await proxyState.setCaptureOpenAI(openaiCapture)
 
-            if anthropicCapture, let c = claude {
+            if viaAnthropic, let c = claude {
                 await proxyState.setAnthropic(.init(
                     baseURL: c.baseURL, apiKey: c.authToken, name: c.name))
             } else {
                 await proxyState.setAnthropic(nil)
             }
             await proxyState.setCaptureAnthropic(anthropicCapture)
+
+            if let p = self.resolvedThirdPartyOpenAI() {
+                await proxyState.setThirdPartyOpenAI(.init(
+                    baseURL: p.baseURL, apiKey: p.apiKey, wireAPI: p.wireAPI, name: p.name))
+            } else {
+                await proxyState.setThirdPartyOpenAI(nil)
+            }
+            if let c = self.resolvedThirdPartyAnthropic() {
+                await proxyState.setThirdPartyAnthropic(.init(
+                    baseURL: c.baseURL, apiKey: c.authToken, name: c.name))
+            } else {
+                await proxyState.setThirdPartyAnthropic(nil)
+            }
         }
     }
 
@@ -170,6 +184,20 @@ final class CodexProviderStore: ObservableObject {
 
     var activeProvider: CodexProvider? {
         providers.first { $0.id == activeProviderID }
+    }
+
+    /// Third-party OpenAI picker; `nil` id follows the active Codex vendor.
+    func resolvedThirdPartyOpenAI() -> CodexProvider? {
+        let id = AppPreferences.shared.proxyThirdPartyOpenAIProviderID
+        if let id, let p = providers.first(where: { $0.id == id }) { return p }
+        return activeProvider
+    }
+
+    func resolvedThirdPartyAnthropic() -> Provider? {
+        let id = AppPreferences.shared.proxyThirdPartyAnthropicProviderID
+        let claude = claudePeer?.providers ?? []
+        if let id, let p = claude.first(where: { $0.id == id }) { return p }
+        return claude.first { $0.id == claudePeer?.activeProviderID }
     }
 
     func startProxy() {
@@ -196,6 +224,7 @@ final class CodexProviderStore: ObservableObject {
         stopProxy()
         syncProxyRuntime()
         reactivateActive()
+        claudePeer?.reactivateActive()
     }
 
     /// Re-apply the current active provider/model (rewrites config.toml with
@@ -223,9 +252,7 @@ final class CodexProviderStore: ObservableObject {
         guard let provider = providers.first(where: { $0.id == providerID }),
               let model = provider.models.first(where: { $0.id == modelID }) ?? provider.models.first else { return }
 
-        let routingOn = AppPreferences.shared.codexRoutingEnabled
-        let captureOn = provider.captureEnabled
-        let viaProxy = routingOn || captureOn
+        let viaProxy = AppPreferences.shared.codexRoutingEnabled || provider.captureEnabled
         let proxyBase: String? = viaProxy ? LocalProxyAddress.codexBase : nil
 
         Task { @MainActor in
@@ -233,7 +260,7 @@ final class CodexProviderStore: ObservableObject {
             await proxyState.setUpstream(.init(
                 baseURL: provider.baseURL, apiKey: provider.apiKey,
                 wireAPI: provider.wireAPI, name: provider.name))
-            await proxyState.setCaptureOpenAI(captureOn)
+            await proxyState.setCaptureOpenAI(provider.captureEnabled)
             do {
                 try CodexConfigWriter.write(provider: provider, model: model, key: activeKey, proxyBaseURL: proxyBase)
                 try CodexConfigWriter.writeAuth(apiKey: provider.apiKey, preserveOfficialLogin: provider.preserveOfficialLogin)

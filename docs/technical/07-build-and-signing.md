@@ -5,7 +5,13 @@
 
 ## 签名流程
 
-ad-hoc 签名（`codesign -s -`，无 Team ID），**自底向上、不用 `--deep`**：
+**本机开发**用钥匙串里的自签身份 `ClaudeBar Dev`（`Sources/ensure-dev-cert.sh` 在缺失时创建，并把它设为登录钥匙串里的 code-signing trust root）。
+
+证书如果是 `CSSMERR_TP_NOT_TRUSTED`，`codesign` 仍能签上，但内核 / TCC 会把 App 当成未签名，屏幕录制绑到每次重编译都变的 CDHash，于是每次都要授权。`find-identity -v` 里必须能看到这张证（不要带 `CSSMERR`）。指定要求绑定证书根哈希，同一张证的重编译保持授权。哈希钉在 `~/Library/Application Support/ClaudeBar/dev-codesign-identity`。
+
+**CI** 无该证书，继续 ad-hoc（`codesign -s -`）。可用 `CODESIGN_IDENTITY=-` 强制 ad-hoc。
+
+自底向上、不用 `--deep`：
 
 ```bash
 xattr -cr "$APP_BUNDLE"                        # 1. 清扩展属性（关键！）

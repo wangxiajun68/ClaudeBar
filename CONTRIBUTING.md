@@ -28,7 +28,7 @@
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
 cd ClaudeBar
-make build      # 编译、ad-hoc 签名、安装到 /Applications
+make build      # 编译、本机自签「ClaudeBar Dev」、安装到 /Applications
 ```
 
 | 命令 | 作用 |
@@ -46,6 +46,8 @@ CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
 ```
 
 VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该文件再设 `MIHOMO_SKIP_DOWNLOAD=1`。
+
+本机签名：构建脚本会创建并**信任** **ClaudeBar Dev**（`security find-identity -v` 里不能带 `CSSMERR_TP_NOT_TRUSTED`）。未信任的自签等于没签，屏幕录制会每次重编译都问。CI 仍用 ad-hoc（`CODESIGN_IDENTITY=-`）。换新证书后系统会再问一次屏幕录制。钥匙串若弹访问，选「始终允许」。
 
 改代码后若界面未更新：`killall ClaudeBar && open /Applications/ClaudeBar.app`。
 

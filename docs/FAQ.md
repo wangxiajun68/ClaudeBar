@@ -96,7 +96,15 @@ Claude Code 的 busy 来自 `~/.claude/sessions/<pid>.json` 与 transcript 尾�
 
 ### 流量页没有记录？
 
-在对应供应商上启用「流量记录」后，Anthropic / OpenAI 形态请求会出现在检查器中。流式响应随接收进度更新。
+在对应供应商上启用「流量记录」后，Anthropic / OpenAI 形态请求会出现在检查器中。流式响应随接收进度更新。第三方请求还受设置里「记录第三方流量」控制。
+
+### 第三方客户端和 Codex 不是同一家供应商？
+
+设置 → 本地代理：Claude Code / Codex 只读显示「模型」页当前选择；**第三方 OpenAI / Anthropic** 可另选供应商，不会改写 `~/.codex` 或 `settings.json`。默认「与 Codex / Claude Code 相同」。
+
+### 第三方报 model_not_found / 无可用渠道？
+
+代理只替换上游地址和密钥，请求里的 `model` 仍以客户端为准。请把第三方上游切到实际提供该模型的渠道，或把客户端模型名改成该渠道已配置的名字。
 
 ### Codex 报 stream disconnected？
 
@@ -121,6 +129,21 @@ ClaudeBar 对 **Wi-Fi / 以太网** 写 `127.0.0.1` + mixed-port（默认 7890�
 ### 订阅流量 / 到期显示不出来？
 
 机场需在 HTTP 头返回 `subscription-userinfo`。请求使用 Clash Verge 风格 UA。
+
+---
+
+## 截图
+
+### ⌘⇧A 没反应？
+
+1. 设置 → 截图 → 开关打开，且提示「热键已注册」。若提示被占用，先退出 iShot / PixPin 等占用 ⌘⇧A 的软件。
+2. 系统设置 → 隐私与安全性 → 屏幕录制 → 允许 ClaudeBar，然后重按一次。
+3. 悬停会吸附窗口边；拖拽为自定义区域。确定后用 **复制 / 保存 / 钉住**，可用红框 / 圆圈 / 箭头 / 画笔标注。Esc 取消，Return / ⌘C 复制，⌘S 保存，空格全屏。
+4. 从源码反复编译时若每次都要重新授权：确认本机签名是已信任的 **ClaudeBar Dev**（`security find-identity -v` 不应出现 `CSSMERR_TP_NOT_TRUSTED`），不要用 ad-hoc。发行 DMG 换构建后仍可能问一次。
+
+### Finder 里 ⌘⇧A 打不开「应用程序」？
+
+ClaudeBar 运行时会占用该组合。关掉设置里的「区域截图」即可还给 Finder。
 
 ---
 

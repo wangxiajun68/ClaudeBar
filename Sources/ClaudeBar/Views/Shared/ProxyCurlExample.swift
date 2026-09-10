@@ -22,7 +22,7 @@ struct ProxyCurlExample: View {
                     .tint(Theme.codex)
                     .fixedSize()
             }
-            Text("其他 OpenAI 兼容客户端把 Base URL 设为 \(LocalProxyAddress.openaiRoot) 即可走当前激活的供应商。本地 Bearer 任意填写，密钥由代理注入。")
+            Text("其他客户端把 Base URL 设为 \(LocalProxyAddress.openaiRoot) 即走「第三方 OpenAI」上游。本地 Bearer 任意填写，密钥由代理注入。请求里的 model 仍以客户端为准。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .fixedSize(horizontal: false, vertical: true)
