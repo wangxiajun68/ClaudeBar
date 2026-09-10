@@ -130,18 +130,20 @@ final class CodexProxyServer: @unchecked Sendable {
             return
         }
 
+        let thirdParty = CaptureSource.isThirdPartyClient(headers: request.headers)
         let openaiKind: ProxyLogKind = path.hasSuffix("/chat/completions") ? .openaiChat : .openaiResponses
+        let upstream = await state.openaiUpstream(thirdParty: thirdParty)
         let openaiTap = startLog(
             request, source: .codex, kind: openaiKind,
-            provider: await state.upstream?.name ?? "")
+            provider: upstream?.name ?? "")
         defer { openaiTap.finish(status: 0, error: "interrupted") }
 
-        guard let upstream = await state.upstream, !upstream.baseURL.isEmpty else {
+        guard let upstream, !upstream.baseURL.isEmpty else {
             openaiTap.finish(status: 502, error: "no upstream configured")
             let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
             if acceptSSE {
                 await write(connection, data: sseHead())
-                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "本地代理没有已激活的上游。请在设置中配置 Codex 供应商。"))
+                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "本地代理没有已激活的上游。请在「模型」页选择 Codex 供应商，或在设置里为第三方指定 OpenAI 上游。"))
             } else {
                 await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
                         body: Data(#"{"error":{"message":"no upstream configured"}}"#.utf8))
@@ -521,15 +523,16 @@ final class CodexProxyServer: @unchecked Sendable {
     /// client headers (`x-api-key`, `anthropic-version`, `anthropic-beta`) pass
     /// through so official and `/anthropic` gateways keep working.
     private func forwardAnthropic(_ connection: NWConnection, request: HTTPRequest, inspect: Bool) async {
+        let thirdParty = CaptureSource.isThirdPartyClient(headers: request.headers)
         let log = startLog(
             request, source: .claude, kind: request.path.hasSuffix("/models") ? .models : .anthropic,
-            provider: await state.anthropic?.name ?? "")
+            provider: await state.anthropicUpstream(thirdParty: thirdParty)?.name ?? "")
         defer { log.finish(status: 0, error: "interrupted") }
 
-        guard let upstream = await state.anthropic else {
+        guard let upstream = await state.anthropicUpstream(thirdParty: thirdParty) else {
             log.finish(status: 502, error: "no anthropic upstream")
             await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
-                    body: Data(#"{"error":{"message":"no anthropic upstream — enable capture on the active provider"}}"#.utf8))
+                    body: Data(#"{"error":{"message":"no anthropic upstream — 请在「模型」页选择 Claude Code 供应商，或在设置里为第三方指定 Anthropic 上游"}}"#.utf8))
             connection.cancel()
             return
         }
@@ -752,8 +755,10 @@ final class CodexProxyServer: @unchecked Sendable {
 
     private func serveHealth(_ connection: NWConnection) async {
         var obj: [String: Any] = ["ok": true]
-        if let name = await state.upstream?.name { obj["openai_upstream"] = name }
-        if let name = await state.anthropic?.name { obj["anthropic_upstream"] = name }
+        if let name = await state.upstream?.name { obj["codex_upstream"] = name }
+        if let name = await state.anthropic?.name { obj["claude_upstream"] = name }
+        if let name = await state.thirdPartyOpenAI?.name { obj["third_party_openai"] = name }
+        if let name = await state.thirdPartyAnthropic?.name { obj["third_party_anthropic"] = name }
         let body = (try? JSONSerialization.data(withJSONObject: obj))
             ?? Data(#"{"ok":true}"#.utf8)
         await respond(connection, status: "200 OK", contentType: "application/json", body: body)

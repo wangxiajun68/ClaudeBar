@@ -50,6 +50,8 @@ actor CodexProxyState {
 
     private(set) var upstream: UpstreamEndpoint?
     private(set) var anthropic: AnthropicUpstream?
+    private(set) var thirdPartyOpenAI: UpstreamEndpoint?
+    private(set) var thirdPartyAnthropic: AnthropicUpstream?
     private(set) var captureOpenAI = false
     private(set) var captureAnthropic = false
 
@@ -61,6 +63,26 @@ actor CodexProxyState {
         anthropic = e
     }
 
+    func setThirdPartyOpenAI(_ e: UpstreamEndpoint?) {
+        thirdPartyOpenAI = e
+    }
+
+    func setThirdPartyAnthropic(_ e: AnthropicUpstream?) {
+        thirdPartyAnthropic = e
+    }
+
     func setCaptureOpenAI(_ on: Bool) { captureOpenAI = on }
     func setCaptureAnthropic(_ on: Bool) { captureAnthropic = on }
+
+    /// Codex CLI uses `upstream`; unrecognized User-Agents use the third-party
+    /// OpenAI vendor, falling back to Codex when that picker is "follow Codex".
+    func openaiUpstream(thirdParty: Bool) -> UpstreamEndpoint? {
+        if thirdParty { return thirdPartyOpenAI ?? upstream }
+        return upstream
+    }
+
+    func anthropicUpstream(thirdParty: Bool) -> AnthropicUpstream? {
+        if thirdParty { return thirdPartyAnthropic ?? anthropic }
+        return anthropic
+    }
 }

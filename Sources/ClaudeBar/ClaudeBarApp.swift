@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store.refresh()
 
+        ScreenshotHotKey.shared.startIfEnabled()
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(fanPermissionNeeded),
             name: .fanPermissionNeeded, object: nil)

@@ -52,6 +52,26 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(proxyThirdPartyTrafficEnabled, forKey: "proxyThirdPartyTrafficEnabled") }
     }
 
+    /// Third-party OpenAI traffic (`/chat/completions`, `/responses`). `nil`
+    /// follows the active Codex vendor. Otherwise a Codex-list provider id.
+    @Published var proxyThirdPartyOpenAIProviderID: UUID? {
+        didSet {
+            UserDefaults.standard.set(
+                proxyThirdPartyOpenAIProviderID?.uuidString ?? "",
+                forKey: "proxyThirdPartyOpenAIProviderID")
+        }
+    }
+
+    /// Third-party Anthropic traffic (`/messages`). `nil` follows the active
+    /// Claude Code vendor.
+    @Published var proxyThirdPartyAnthropicProviderID: UUID? {
+        didSet {
+            UserDefaults.standard.set(
+                proxyThirdPartyAnthropicProviderID?.uuidString ?? "",
+                forKey: "proxyThirdPartyAnthropicProviderID")
+        }
+    }
+
     /// When on, capture + usage use SQLite. When off, they append JSON/JSONL
     /// under Application Support/ClaudeBar/logs — no database is opened.
     @Published var databaseEnabled: Bool {
@@ -99,12 +119,24 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(vpnGuardEnabled, forKey: "vpnGuardEnabled") }
     }
 
+    /// Global ⌘⇧A region screenshot (Carbon hotkey).
+    @Published var screenshotHotkeyEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(screenshotHotkeyEnabled, forKey: "screenshotHotkeyEnabled")
+            if didSetReady { ScreenshotHotKey.shared.setEnabled(screenshotHotkeyEnabled) }
+        }
+    }
+
+    private var didSetReady = false
+
     private init() {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
         codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
         proxyThirdPartyTrafficEnabled = UserDefaults.standard.object(forKey: "proxyThirdPartyTrafficEnabled") as? Bool ?? true
+        proxyThirdPartyOpenAIProviderID = Self.uuid(from: "proxyThirdPartyOpenAIProviderID")
+        proxyThirdPartyAnthropicProviderID = Self.uuid(from: "proxyThirdPartyAnthropicProviderID")
         databaseEnabled = UserDefaults.standard.object(forKey: "databaseEnabled") as? Bool ?? true
 
         // VPN proxy module (defined in Utils/VPNPreferences.swift).
@@ -116,5 +148,13 @@ final class AppPreferences: ObservableObject {
         vpnAllowLan = vpn["vpnAllowLan"] as! Bool
         vpnControllerSecret = vpn["vpnControllerSecret"] as! String
         vpnGuardEnabled = vpn["vpnGuardEnabled"] as! Bool
+        screenshotHotkeyEnabled = UserDefaults.standard.object(forKey: "screenshotHotkeyEnabled") as? Bool ?? true
+        didSetReady = true
+    }
+
+    private static func uuid(from key: String) -> UUID? {
+        let s = UserDefaults.standard.string(forKey: key) ?? ""
+        guard !s.isEmpty else { return nil }
+        return UUID(uuidString: s)
     }
 }

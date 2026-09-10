@@ -8,22 +8,32 @@
 
 ## [Unreleased]
 
+---
+
+## [1.10.0] — 2026-09-10
+
+VPN、区域截图、本地代理三路上游，以及本机自签后屏幕录制授权可保持。
+
 ### 新增
 
 - **VPN**：内置 mihomo sidecar；订阅、节点选择、延迟测试、系统代理 / TUN、连通性探测；出口连续 `i/o timeout` 时自动切到延迟更好的 HY2 / KR。
+- **区域截图**：全局 ⌘⇧A 拉框（复制 / 保存 / 钉住 / 标注），需屏幕录制权限。运行时占用 Finder「前往 → 应用程序」。
 - 菜单栏在 VPN 运行时显示双行 ↓/↑ 速率；popup 页头含 VPN 启停与节点选择（主窗口不重复该 chrome）。
+- **本地代理三路上游**：Claude Code 与 Codex 各跟「模型」页当前供应商；第三方 OpenAI / Anthropic 可另选供应商，不改写 `settings.json` / `config.toml`。
 
 ### 变更
 
-- 主窗口侧栏增加 **VPN**（共 7 页：概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置）。
+- 主窗口增加 **VPN** 页（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置）。
 - 用量周期图改为平涂堆叠柱（无空槽网格）；悬停显示当天。
-- 设置页风扇控制与资源条风扇读数（SMC，已随 1.9.0 硬件提交；文档于此对齐）。
+- 本机开发签名改为钥匙串身份 **ClaudeBar Dev**（须信任为 code-signing 根），避免每次重编译都要重新授权屏幕录制。CI 仍为 ad-hoc。
+- 设置页展示 CC / Codex 当前上游，并为第三方提供独立选择器。
 
 ### 修复
 
 - 控制器 API 不走系统代理，避免经 mixed-port 死锁。
 - 系统代理回读使用 Wi-Fi / Ethernet，不再信任 `listallnetworkservices` 第一行。
 - 菜单栏模板图标改为矢量三叶标：带薄荷绿底的 PNG 在 `isTemplate` 下会整块变白。
+- 截图：Esc 可退出；全屏覆盖层不再被菜单栏挤偏导致发糊与画框偏移。
 
 ---
 
@@ -244,7 +254,8 @@ Claude / Codex 供应商独立选择；流量简洁视图默认折叠工具与�
 - `build.sh` 用 `swiftc` + shell 构建（无 Xcode 工程）。
 - Pencil 原型 `ClaudeBar.pen` 与应用图标资源。
 
-[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.10.0
 [1.9.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.9.0
 [1.8.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.8.0
 

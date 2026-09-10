@@ -11,7 +11,7 @@
 | `ProviderEditorWindowController.swift` | 编辑器独立 NSWindow |
 | `Models/ProviderStore.swift` | Claude 状态中枢；`activateModel(..., syncPeer:)` |
 | `Models/CodexProviderStore.swift` | Codex 状态中枢 + 本机代理生命周期 |
-| `Models/AppPreferences.swift` | 空闲通知、代理端口、VPN mixed-port / 系统代理 / TUN 等 |
+| `Models/AppPreferences.swift` | 空闲通知、代理端口、第三方上游、VPN mixed-port / 系统代理 / TUN 等 |
 | `Utils/FilePaths.swift` | Claude / Codex / Cursor / App Group / `vpnDir` |
 | `Utils/VpnManager.swift` | mihomo 进程、测速、流量流、超时 failover |
 | `Utils/VpnHTTP.swift` | 控制器 HTTP，禁用系统代理 |
@@ -19,6 +19,8 @@
 | `Utils/VpnSystemProxyController.swift` | `networksetup` + Guard + TUN DNS |
 | `Utils/VpnNetProbe.swift` | 连通性探测 |
 | `Utils/FanMonitor.swift` | SMC 风扇 / 温度 |
+| `Utils/ScreenshotHotKey.swift` | Carbon 全局 ⌘⇧A |
+| `Utils/ScreenshotOverlay.swift` | ScreenCaptureKit 拉框截图 |
 | `Theme/Theme.swift` | 设计 token |
 | `Views/MainWindowView.swift` | 7 页 `AppPage`；流量页常驻 |
 | `Views/MenuBarView.swift` | popup 壳：Header + ResourceStrip + 三区 |
@@ -26,5 +28,7 @@
 | `Views/Shared/VpnTopChrome.swift` | 仅 popup 的 VPN chrome |
 | `Views/Shared/UsageRiver.swift` | 用量日柱 |
 | `Views/Shared/FanControlSection.swift` | 设置页风扇 |
+| `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理：CC/Codex 只读 + 第三方上游选择 |
+| `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo |
