@@ -126,6 +126,13 @@ enum CodexProxyTransform {
            choice["type"] as? String == "namespace" {
             out["tool_choice"] = "auto"
         }
+        // Same strict-gateway rule as the Chat path: a request with no tools
+        // may not carry `tool_choice` ("tools must be set"). Codex's
+        // auto-compact turn sends `tools: []` + `tool_choice: "auto"`.
+        if (out["tools"] as? [Any])?.isEmpty ?? true {
+            out.removeValue(forKey: "tool_choice")
+            out.removeValue(forKey: "parallel_tool_calls")
+        }
         return out
     }
 
@@ -921,6 +928,18 @@ enum CodexProxyTransform {
                   choice["type"] as? String != "namespace" {
             chat["tool_choice"] = choice
         }
+        // Strict OpenAI-compatible upstreams (Aibox, vLLM, enterprise
+        // gateways) reject `tool_choice` without a non-empty `tools` array:
+        // "When using `tool_choice`, `tools` must be set." Codex's
+        // auto-compact turn is the request that hits this — it ships
+        // `tools: []` plus `tool_choice: "auto"` (a normal turn carries the
+        // full tool list), so compaction 400s on every retry. cc-switch
+        // drops both fields when the converted tool list is empty
+        // (`responses_request_to_chat_drops_tool_choice_when_no_tools`).
+        if chatTools.isEmpty {
+            chat.removeValue(forKey: "tool_choice")
+            chat.removeValue(forKey: "parallel_tool_calls")
+        }
         if let effort = (out["reasoning"] as? [String: Any])?["effort"] as? String {
             chat["reasoning_effort"] = effort
         }
@@ -972,9 +991,10 @@ enum CodexProxyTransform {
         }
     }
 
-    /// prompt_tokens↔input_tokens, completion_tokens↔output_tokens; fill
-    /// details with 0; if usage is present but lacks the core counts, delete it
-    /// (Codex requires the three core numbers when usage is present).
+    /// prompt_tokens↔input_tokens, completion_tokens↔output_tokens; carry
+    /// cached_tokens through and default only the missing detail blocks; if
+    /// usage is present but lacks the core counts, delete it (Codex requires
+    /// the three core numbers when usage is present).
     static func normalizeUsage(_ response: inout [String: Any]) {
         guard var usage = response["usage"] as? [String: Any] else { return }
         if let input = usage["prompt_tokens"] { usage["input_tokens"] = input }
@@ -988,7 +1008,13 @@ enum CodexProxyTransform {
             let o = (usage["output_tokens"] as? NSNumber)?.intValue ?? 0
             usage["total_tokens"] = i + o
         }
-        if usage["input_tokens_details"] == nil { usage["input_tokens_details"] = ["cached_tokens": 0] }
+        if usage["input_tokens_details"] == nil {
+            // Chat-shaped usage reports cache hits as prompt_tokens_details;
+            // carry the count over instead of zeroing it (Codex's /status
+            // cache-hit rate reads this field).
+            let cached = ((usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? NSNumber)?.intValue ?? 0
+            usage["input_tokens_details"] = ["cached_tokens": cached]
+        }
         if usage["output_tokens_details"] == nil { usage["output_tokens_details"] = ["reasoning_tokens": 0] }
         response["usage"] = usage
     }
@@ -1082,7 +1108,14 @@ enum CodexProxyTransform {
             let input = (u["input_tokens"] as? NSNumber)?.intValue ?? 0
             let output = (u["output_tokens"] as? NSNumber)?.intValue ?? 0
             u["total_tokens"] = (u["total_tokens"] as? NSNumber)?.intValue ?? input + output
-            u["input_tokens_details"] = ["cached_tokens": 0]
+            // Preserve the upstream's cached-token count — hardcoding 0 makes
+            // Codex's /status cache-hit rate always read 0% on Chat upstreams
+            // (DeepSeek/Qwen report it as prompt_tokens_details.cached_tokens,
+            // same shape the Anthropic side already keeps).
+            let cached = ((u["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? NSNumber)?.intValue
+                ?? ((u["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? NSNumber)?.intValue
+                ?? 0
+            u["input_tokens_details"] = ["cached_tokens": cached]
             u["output_tokens_details"] = ["reasoning_tokens": 0]
             resp["usage"] = u
             events.append(contentsOf: completedEvents(state: &state, response: resp))

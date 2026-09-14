@@ -783,8 +783,10 @@ private final class SnipCanvas: NSView {
 
         // Draw the crop + marks into a fresh 8-bit RGBA bitmap at native
         // resolution. (Drawing into the rep decoded from tiffRepresentation
-        // silently no-ops on 16-bit HDR reps.) CG space is top-down, so
-        // selection-relative y-up marks need a flip + scale into crop pixels.
+        // silently no-ops on 16-bit HDR reps.) A bitmap CGContext's origin is
+        // bottom-left (y-up) — the same space as the selection-relative mark
+        // coords — so after scaling into crop pixels the paths drop in with
+        // no extra flip. Flipping here used to mirror every mark vertically.
         let w = sliced.width, h = sliced.height
         guard let ctx = CGContext(
             data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -793,8 +795,6 @@ private final class SnipCanvas: NSView {
         else { return NSImage(cgImage: sliced, size: NSSize(width: sel.width, height: sel.height)) }
         ctx.draw(sliced, in: CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: CGFloat(w) / max(sel.width, 1), y: CGFloat(h) / max(sel.height, 1))
-        ctx.translateBy(x: 0, y: sel.height)
-        ctx.scaleBy(x: 1, y: -1)
         let color = Self.markColor
         ctx.setStrokeColor(CGColor(srgbRed: color.redComponent, green: color.greenComponent,
                                    blue: color.blueComponent, alpha: 1))

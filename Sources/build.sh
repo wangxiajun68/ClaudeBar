@@ -150,7 +150,13 @@ echo "Using SDK: $SDK_PATH"
 
 swift_files=$(find "$SOURCES_DIR" -name "*.swift" | sort)
 
-swiftc \
+# -O + -whole-module-optimization: without any optimization flag swiftc
+# defaults to -Onone, which leaves every layout witness thunk, value witness
+# and cross-file call uninlined. The app is an always-resident menu-bar
+# process whose SwiftUI layout path is the hot loop, so the 1.5x difference is
+# measurable in the profile (see docs/technical/08-performance.md).
+# All sources are passed in one invocation, so WMO is free here.
+swiftc -O -whole-module-optimization \
     -o "$MACOS_DIR/$APP_NAME" \
     -sdk "$SDK_PATH" \
     -target "$MACOS_TARGET" \
@@ -166,6 +172,10 @@ swiftc \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
     $swift_files
+
+# Drop local symbols from the shipped binary (16 MB → 7 MB). `-x` keeps the
+# global/undefined symbols the dynamic linker needs. Must run before codesign.
+strip -x "$MACOS_DIR/$APP_NAME" 2>/dev/null || true
 
 echo "Binary created: $MACOS_DIR/$APP_NAME"
 
@@ -220,7 +230,7 @@ mkdir -p "$APPEX_CONTENTS/MacOS"
 # executable and made codesign --deep sign an extra artifact).
 widget_files=$(find "$WIDGET_DIR" -name "*.swift" | sort)
 
-swiftc \
+swiftc -O -whole-module-optimization \
     -o "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" \
     -module-name ClaudeBarWidget \
     -parse-as-library \
@@ -232,6 +242,8 @@ swiftc \
     -Xlinker -application_extension \
     -Xlinker -e -Xlinker _NSExtensionMain \
     $widget_files
+
+strip -x "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" 2>/dev/null || true
 
 echo "Widget binary: $APPEX_CONTENTS/MacOS/ClaudeBarWidget"
 
