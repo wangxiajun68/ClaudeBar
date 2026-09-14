@@ -163,14 +163,21 @@ final class ProxyCaptureStore {
     // MARK: - Proxy API (any thread)
 
     /// Start a capture. Returns nil if the active backend cannot persist.
+    ///
+    /// `preview` and `encodeHeaders` parse the request body to find the last
+    /// user utterance and to pretty-print headers. Both are pure functions of
+    /// `requestJSON` / `requestHeaders`, so they run *before* taking the lock
+    /// — holding the recursive lock across two full JSON parses of a
+    /// multi-MB body (a screenshot request peaks at 40–100 MB) stalled every
+    /// other capture thread for the duration.
     func begin(kind: CaptureKind, source: CaptureSource, provider: String,
                model: String, path: String, stream: Bool,
                requestJSON: String?, rewrittenJSON: String?,
                requestHeaders: [String: String]? = nil) -> CaptureTap? {
-        lock.lock()
-        defer { lock.unlock() }
         let preview = Self.preview(from: requestJSON)
         let headersJSON = Self.encodeHeaders(requestHeaders)
+        lock.lock()
+        defer { lock.unlock() }
         let summary: CaptureSummary
         if useDatabase {
             guard let created = beginSQL(kind: kind, source: source, provider: provider,

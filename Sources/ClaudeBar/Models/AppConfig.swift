@@ -16,6 +16,12 @@ enum AppConfig {
     /// When every session is idle the transcript tails do not change; poll slower.
     static let sessionPollIdleInterval: TimeInterval = 5
 
+    /// Poll cadence when no window or popup is on screen. The session scan,
+    /// Cursor DB read, and Codex directory walk are pure file I/O whose
+    /// results nobody can see — 15s keeps idle notifications and the widget
+    /// fresh without paying the full scan cost every 2.5s in the background.
+    static let sessionPollHiddenInterval: TimeInterval = 15
+
     /// Number of busy/idle samples kept per session for the heartbeat
     /// sparkline. At the default 2.5s poll this covers the last minute.
     static let heartbeatLength = 24

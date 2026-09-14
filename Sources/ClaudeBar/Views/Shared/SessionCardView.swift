@@ -126,12 +126,14 @@ private struct AgentChordLines: View {
                     // Tall lines get a faint glow via a blurred underlay.
                     // Static (no animation) — blur layers are expensive to
                     // keep live; the underlay only changes with `running`.
+                    // Pre-composited low-alpha capsule instead of `.blur`:
+                    // a live blur offscreen-renders a new layer per bar, and
+                    // at 2.5 opacity the result is visually indistinguishable.
                     .background {
                         if isRunning {
                             Capsule()
-                                .fill(Theme.statusBusy.opacity(0.35))
-                                .frame(height: 20)
-                                .blur(radius: 2.5)
+                                .fill(Theme.statusBusy.opacity(0.12))
+                                .frame(width: 4.5, height: 24)
                         }
                     }
             }

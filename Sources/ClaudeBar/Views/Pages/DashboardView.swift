@@ -289,18 +289,34 @@ private struct OverviewStatusDot: View {
 /// A stroke ring that breathes in and out for as long as it is on screen.
 /// Removed entirely (not merely faded) when the session goes idle — mirrors
 /// SessionsView's BusyPulseRing.
+///
+/// The animation is also dropped when no window is visible: a
+/// `repeatForever` on a hidden window keeps the display link and the whole
+/// render graph awake for a pulse nobody can see.
 private struct BusyPulseRing: View {
     let color: Color
     @State private var phase = false
+    @State private var allowed = UIWakePolicy.shouldAnimate
 
     var body: some View {
         Circle()
             .strokeBorder(color.opacity(0.4), lineWidth: 3)
-            .scaleEffect(phase ? 1.7 : 1)
-            .opacity(phase ? 0.5 : 0.2)
+            .scaleEffect(allowed && phase ? 1.7 : 1)
+            .opacity(allowed && phase ? 0.5 : 0.2)
             .onAppear { phase = true }
             .onDisappear { phase = false }
-            .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: phase)
+            .onReceive(UIWakePolicy.changes) { _ in
+                // A `repeatForever` only (re)starts on an actual value change,
+                // so flip `phase` across a turn to re-arm the pulse when a
+                // window appears again.
+                allowed = UIWakePolicy.shouldAnimate
+                phase = false
+                DispatchQueue.main.async { phase = allowed }
+            }
+            .animation(allowed
+                       ? Theme.Animation.pulse.repeatForever(autoreverses: true)
+                       : .default,
+                       value: phase)
     }
 }
 

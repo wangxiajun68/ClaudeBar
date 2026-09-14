@@ -754,7 +754,13 @@ final class VpnManager: ObservableObject {
                 if self.isRunning {
                     await self.pollConnections()
                 }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                // The connection list is only rendered on the 流量 / VPN
+                // pages and in the popup. With nothing on screen there is no
+                // reason to hit the controller every 2s; the /traffic stream
+                // (which feeds the menu-bar rates) is a push and keeps its
+                // cadence regardless.
+                let interval: UInt64 = UIWakePolicy.hasVisibleWindow ? 2 : 10
+                try? await Task.sleep(nanoseconds: interval * 1_000_000_000)
             }
         }
         let sizeNum = try? FileManager.default.attributesOfItem(
@@ -843,8 +849,10 @@ final class VpnManager: ObservableObject {
         if !prefs.vpnControllerSecret.isEmpty {
             req.setValue("Bearer \(prefs.vpnControllerSecret)", forHTTPHeaderField: "Authorization")
         }
+        // Shared session (see VpnHTTP.session) — explicitly NOT invalidated
+        // here: `invalidateAndCancel` on a cached session tears it down for
+        // every other caller and forces the next poll to rebuild the pool.
         let session = VpnHTTP.session()
-        defer { session.invalidateAndCancel() }
         do {
             let (bytes, response) = try await session.bytes(for: req)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

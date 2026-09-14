@@ -20,13 +20,21 @@ enum WidgetSnapshotWriter {
     /// widget timelines. Returns early when the payload is byte-identical to
     /// the previous write, so the poll cadence does not hammer disk or
     /// `WidgetCenter` with unchanged data.
+    ///
+    /// `updatedAt` is stamped with `Date()` on every build, so a raw byte
+    /// comparison never matched and every poll wrote four files plus a
+    /// timeline reload. Compare on a normalized copy instead — the timestamp
+    /// is metadata about when we *would* have written, not content.
     @discardableResult
     static func write(_ snapshot: WidgetSnapshot, deduplicatingAgainst lastData: Data?) -> Data? {
+        var normalized = snapshot
+        normalized.updatedAt = Date(timeIntervalSince1970: 0)
+        guard let key = try? JSONEncoder().encode(normalized) else { return lastData }
+        guard key != lastData else { return lastData }
         guard let data = try? JSONEncoder().encode(snapshot) else { return lastData }
-        guard data != lastData else { return data }
         persist(data)
         WidgetCenter.shared.reloadAllTimelines()
-        return data
+        return key
     }
 
     private static func persist(_ data: Data) {

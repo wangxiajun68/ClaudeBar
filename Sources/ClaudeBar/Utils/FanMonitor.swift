@@ -37,12 +37,17 @@ final class FanMonitor: ObservableObject {
 
     func refresh() {
         if isUserAdjusting { return } // 拖动时不刷新，松手后恢复
-        smcAvailable = SMCController.shared.isConnected
-        guard smcAvailable else {
-            fans = []
+        let available = SMCController.shared.isConnected
+        if smcAvailable != available { smcAvailable = available }
+        guard available else {
+            // 无 SMC：仅在状态真的变化时发布，避免每 2s 让资源区重渲一次。
+            if !fans.isEmpty { fans = [] }
             return
         }
-        fans = SMCController.shared.loadFans()
+        let next = SMCController.shared.loadFans()
+        // 转速是无条件发布的定时器结果，绝大多数 tick 数值不变 —— 加
+        // Equatable 守卫，与 ProviderStore 的既有模式一致。
+        if next != fans { fans = next }
     }
 
     /// 拖动开始/结束（由滑杆的 onEditingChanged 调用）。

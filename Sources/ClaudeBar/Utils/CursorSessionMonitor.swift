@@ -109,6 +109,11 @@ struct CursorSessionMonitor {
     /// Cap on sessions returned, to keep the panel scannable.
     private static let maxDisplay = 14
 
+    /// Row cap for the sub-composer scan (see `fetchSubagents`). Sub-composers
+    /// only ever attach to one of the ≤14 displayed parents, so a few hundred
+    /// recent rows is far more than enough.
+    private static let subagentQueryLimit: Int32 = 200
+
     /// All live Cursor sessions: parses composer heads, drops stale ones,
     /// enriches with transcript activity, sorts busy-first then by recency.
     static func fetchActive() -> [CursorSessionInfo] {
@@ -198,12 +203,25 @@ struct CursorSessionMonitor {
     /// Fetch all non-archived sub-composers and group them under their parent
     /// composer id. Only parents in `parentIDs` are kept (others have no
     /// visible session to attach to).
+    ///
+    /// The parent id lives inside the `value` JSON blob, so the grouping
+    /// filter can only run after parsing — but an unbounded scan parsed every
+    /// non-archived sub-composer in the DB on every 2.5s poll. Bound it by
+    /// recency (a sub-composer of a session in the 3-day window is itself
+    /// recent) and cap the row count.
     private static func fetchSubagents(db: OpaquePointer, parentIDs: Set<String>) -> [String: [CursorSubagentInfo]] {
         var map: [String: [CursorSubagentInfo]] = [:]
-        let sql = "SELECT value FROM composerHeaders WHERE isArchived = 0 AND isSubagent = 1"
+        let cutoff = Date().timeIntervalSince1970 * 1000 - recencyWindowMs
+        let sql = """
+            SELECT value FROM composerHeaders
+            WHERE isArchived = 0 AND isSubagent = 1 AND recency >= ?
+            ORDER BY recency DESC
+            LIMIT \(subagentQueryLimit)
+            """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
         defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, cutoff)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let value = CursorDB.textColumn(stmt, 0),

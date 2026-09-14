@@ -42,10 +42,6 @@ struct MainWindowView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
-    /// Traffic inspector keeps multi-MB payloads in memory; remounting it on
-    /// every tab switch is what makes 流量 feel stuck. Stay mounted after
-    /// the first visit.
-    @State private var trafficMounted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,37 +149,30 @@ struct MainWindowView: View {
     @ViewBuilder
     private var detailView: some View {
         ZStack {
-            if selectedPage != .traffic {
-                Group {
-                    switch selectedPage ?? .dashboard {
-                    case .dashboard: DashboardView(onNavigate: navigate(to:))
-                    case .sessions: SessionsView()
-                    case .providers: ProvidersView()
-                    case .usage: UsageView()
-                    case .settings: SettingsView()
-                    case .vpn: VPNView()
-                    case .traffic: EmptyView()
-                    }
+            Group {
+                switch selectedPage ?? .dashboard {
+                case .dashboard: DashboardView(onNavigate: navigate(to:))
+                case .sessions: SessionsView()
+                case .providers: ProvidersView()
+                case .usage: UsageView()
+                case .settings: SettingsView()
+                case .vpn: VPNView()
+                // Mounted only while selected. The expensive inspector state
+                // lives in TrafficPageState, so re-entry is instant without
+                // keeping an invisible copy of the page alive — that resident
+                // copy was re-laying out the log console ~170×/s while hidden.
+                case .traffic: TrafficView()
                 }
-                .id(selectedPage)
-                .transition(.opacity)
             }
-            if trafficMounted {
-                TrafficView()
-                    .opacity(selectedPage == .traffic ? 1 : 0)
-                    .allowsHitTesting(selectedPage == .traffic)
-                    .accessibilityHidden(selectedPage != .traffic)
-            }
+            // The traffic page skips the page fade: animating a freshly
+            // mounted inspector is the hitch, not the mount.
+            .id(selectedPage)
+            .transition(selectedPage == .traffic ? .identity : .opacity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: selectedPage) { _, page in
-            if page == .traffic { trafficMounted = true }
-        }
     }
 
-    /// Traffic skips the page fade — animating a rebuilt inspector is the hitch.
     private func navigate(to page: AppPage) {
-        if page == .traffic { trafficMounted = true }
         if page == .traffic || selectedPage == .traffic {
             selectedPage = page
         } else {

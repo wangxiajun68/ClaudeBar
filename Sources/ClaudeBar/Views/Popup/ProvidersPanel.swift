@@ -109,7 +109,10 @@ struct ProvidersPanel: View {
                 .padding(.horizontal, Theme.Space.s8)
 
             ScrollView {
-                VStack(spacing: Theme.Space.s4) {
+                // Lazy, not a plain VStack: the provider × model grid is
+                // eagerly built in full at every popup open otherwise, which
+                // is the bulk of the popup's mount cost with many vendors.
+                LazyVStack(spacing: Theme.Space.s4) {
                     content()
                 }
                 .padding(.horizontal, Theme.Space.s4)

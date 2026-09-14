@@ -66,9 +66,13 @@ struct UsageRiver: View {
                         switch phase {
                         case .active(let loc):
                             let i = Int(loc.x / geo.size.width * CGFloat(max(days.count, 1)))
-                            hoverIndex = min(max(i, 0), max(days.count - 1, 0))
+                            let next = min(max(i, 0), max(days.count - 1, 0))
+                            // Only re-draw when the hovered column changes:
+                            // onContinuousHover fires per mouse-move event, and
+                            // every assignment re-runs the 4-band spline pass.
+                            if hoverIndex != next { hoverIndex = next }
                         case .ended:
-                            hoverIndex = nil
+                            if hoverIndex != nil { hoverIndex = nil }
                         }
                     }
 
