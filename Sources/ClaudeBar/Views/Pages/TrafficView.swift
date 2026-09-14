@@ -1,28 +1,118 @@
 import AppKit
 import SwiftUI
 
+/// Everything the inspector would otherwise lose when it unmounts.
+///
+/// The page used to stay mounted forever (`opacity(0)` when another tab was
+/// selected) purely so re-entering it did not re-read multi-MB payloads from
+/// SQLite. Keeping it mounted meant its body re-evaluated on every catalog /
+/// live-stream publish even while invisible — the single largest idle-CPU
+/// item in the app. Owning the expensive state here instead lets the view
+/// unmount for real and come back instantly.
+final class TrafficPageState: ObservableObject {
+    @Published var selectedID: Int64?
+    @Published var filter: TrafficView.TrafficFilter = .all
+    @Published var query = ""
+    @Published var detail: CaptureDetail?
+    @Published var tab: TrafficView.TrafficTab = .conversation
+    @Published var rawSlice: TrafficView.RawSlice = .request
+    @Published var rawCopied = false
+    @Published var mode: TrafficView.TrafficMode = .inspector
+    @Published var fullTurns: [CaptureTranscript.Turn] = []
+    @Published var conversationQuery = ""
+    @Published var expandedBlocks: Set<String> = []
+    @Published var displayBlocks: [ConvBlock] = []
+    @Published var historyCount = 0
+    @Published var loadingDetail = false
+    /// Guards out-of-order async detail loads; survives remount so a load
+    /// started before unmount still lands correctly.
+    var loadGen = 0
+
+    /// The list selection the inspector should show. Mirrors the old
+    /// computed property so remounting restores exactly what was on screen.
+    func currentSummary(in records: [CaptureSummary], filtered: [CaptureSummary]) -> CaptureSummary? {
+        records.first(where: { $0.id == selectedID }) ?? filtered.first
+    }
+}
+
 /// Live proxy capture inspector: request list + conversation that fills the pane.
 struct TrafficView: View {
     @ObservedObject private var catalog = ProxyCaptureStore.shared.catalog
     @ObservedObject private var streams = ProxyCaptureStore.shared.streams
     @EnvironmentObject var codexStore: CodexProviderStore
-    @State private var selectedID: Int64?
-    @State private var filter: TrafficFilter = .all
-    @State private var query = ""
-    @State private var detail: CaptureDetail?
-    @State private var tab: TrafficTab = .conversation
-    @State private var rawSlice: RawSlice = .request
+    /// Owned by MainWindowController — survives this view's mount/unmount.
+    @EnvironmentObject var state: TrafficPageState
     @StateObject private var jsonFold = JSONFoldControl()
-    @State private var rawCopied = false
-    @State private var mode: TrafficMode = .inspector
     @AppStorage("trafficFullRender") private var fullRender = false
-    @State private var fullTurns: [CaptureTranscript.Turn] = []
-    @State private var conversationQuery = ""
-    @State private var expandedBlocks: Set<String> = []
-    @State private var displayBlocks: [ConvBlock] = []
-    @State private var historyCount = 0
-    @State private var loadingDetail = false
-    @State private var loadGen = 0
+
+    // The state below lives on `state`; these computed accessors keep the
+    // body readable and the mutation sites unchanged.
+    private var selectedID: Int64? {
+        get { state.selectedID }
+        nonmutating set { state.selectedID = newValue }
+    }
+    private var filter: TrafficFilter {
+        get { state.filter }
+        nonmutating set { state.filter = newValue }
+    }
+    private var query: String {
+        get { state.query }
+        nonmutating set { state.query = newValue }
+    }
+    private var detail: CaptureDetail? {
+        get { state.detail }
+        nonmutating set { state.detail = newValue }
+    }
+    private var tab: TrafficTab {
+        get { state.tab }
+        nonmutating set { state.tab = newValue }
+    }
+    private var rawSlice: RawSlice {
+        get { state.rawSlice }
+        nonmutating set { state.rawSlice = newValue }
+    }
+    private var rawCopied: Bool {
+        get { state.rawCopied }
+        nonmutating set { state.rawCopied = newValue }
+    }
+    private var mode: TrafficMode {
+        get { state.mode }
+        nonmutating set { state.mode = newValue }
+    }
+    private var fullTurns: [CaptureTranscript.Turn] {
+        get { state.fullTurns }
+        nonmutating set { state.fullTurns = newValue }
+    }
+    private var conversationQuery: String {
+        get { state.conversationQuery }
+        nonmutating set { state.conversationQuery = newValue }
+    }
+    private var expandedBlocks: Set<String> {
+        get { state.expandedBlocks }
+        nonmutating set { state.expandedBlocks = newValue }
+    }
+    private var displayBlocks: [ConvBlock] {
+        get { state.displayBlocks }
+        nonmutating set { state.displayBlocks = newValue }
+    }
+    private var historyCount: Int {
+        get { state.historyCount }
+        nonmutating set { state.historyCount = newValue }
+    }
+    private var loadingDetail: Bool {
+        get { state.loadingDetail }
+        nonmutating set { state.loadingDetail = newValue }
+    }
+
+    private var queryBinding: Binding<String> {
+        Binding(get: { state.query }, set: { state.query = $0 })
+    }
+    private var conversationQueryBinding: Binding<String> {
+        Binding(get: { state.conversationQuery }, set: { state.conversationQuery = $0 })
+    }
+    private var rawSliceBinding: Binding<RawSlice> {
+        Binding(get: { state.rawSlice }, set: { state.rawSlice = $0 })
+    }
 
     enum TrafficMode: String, CaseIterable, Identifiable {
         case inspector, log
@@ -83,7 +173,7 @@ struct TrafficView: View {
     }
 
     private var currentSummary: CaptureSummary? {
-        catalog.records.first(where: { $0.id == selectedID }) ?? filtered.first
+        state.currentSummary(in: catalog.records, filtered: filtered)
     }
 
     var body: some View {
@@ -227,7 +317,7 @@ struct TrafficView: View {
             .padding(.top, Theme.Space.s12)
             .padding(.bottom, Theme.Space.s8)
 
-            TextField("模型 / 供应商", text: $query)
+            TextField("模型 / 供应商", text: queryBinding)
                 .textFieldStyle(.roundedBorder)
                 .font(Theme.Font.bodySmall)
                 .padding(.horizontal, Theme.Space.s12)
@@ -393,7 +483,7 @@ struct TrafficView: View {
                 Image(systemName: "magnifyingglass")
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textTertiary())
-                TextField("搜索对话、工具、系统提示", text: $conversationQuery)
+                TextField("搜索对话、工具、系统提示", text: conversationQueryBinding)
                     .textFieldStyle(.plain)
                     .font(Theme.Font.bodySmall)
                 if !conversationQuery.isEmpty {
@@ -624,7 +714,7 @@ struct TrafficView: View {
     private var rawPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s8) {
-                Picker("", selection: $rawSlice) {
+                Picker("", selection: rawSliceBinding) {
                     ForEach(RawSlice.allCases) { s in
                         Text(s.label).tag(s)
                     }
@@ -846,14 +936,14 @@ struct TrafficView: View {
             loadingDetail = false
             return
         }
-        loadGen += 1
-        let gen = loadGen
+        state.loadGen += 1
+        let gen = state.loadGen
         loadingDetail = displayBlocks.isEmpty
         DispatchQueue.global(qos: .userInitiated).async {
             let d = ProxyCaptureStore.shared.detail(
                 id: id, includeRaw: raw, includePayloads: raw, includeTools: tools)
             DispatchQueue.main.async {
-                guard gen == loadGen else { return }
+                guard gen == state.loadGen else { return }
                 detail = d
                 loadingDetail = false
                 if fullRender { rebuildFullTurns() }
@@ -907,7 +997,9 @@ private struct CaptureThumb: View {
     }
 }
 
-private enum ConvBlock: Identifiable {
+/// One rendered conversation row. Internal (not private) because
+/// `TrafficPageState` caches the built list across the view's unmount.
+enum ConvBlock: Identifiable {
     case single(index: Int, turn: CaptureTranscript.Turn)
     case group(id: String, title: String, subtitle: String,
                items: [(offset: Int, turn: CaptureTranscript.Turn)])

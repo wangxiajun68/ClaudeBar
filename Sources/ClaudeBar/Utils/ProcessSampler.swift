@@ -118,9 +118,12 @@ final class ProcessSampler: ObservableObject {
     private var foreground = true
     private var activeScopes: Set<MonitorScope> = []
     private var period: TimeInterval = 2.5
+    private var timerSuspended = false
     private var scratch = ProcessScanScratch()
     private var activeObs: NSObjectProtocol?
     private var resignObs: NSObjectProtocol?
+
+    private var visibilityCancel: AnyCancellable?
 
     func start() {
         queue.async { [weak self] in
@@ -130,8 +133,30 @@ final class ProcessSampler: ObservableObject {
             t.setEventHandler { [weak self] in self?.tick() }
             t.resume()
             self.timer = t
+            // A suspend may have been recorded before the timer existed
+            // (start() runs off-main while UIWakePolicy can fire immediately).
+            if self.timerSuspended { self.setTimerSuspended(true) }
         }
         observeAppState()
+        // Nothing on screen and nobody to attribute to: the sampler's whole
+        // output (CPU %, GPU, memory, SMC temperature sweep) has no consumer.
+        // Suspend it rather than sampling a machine no one is watching.
+        visibilityCancel = UIWakePolicy.observe { [weak self] in
+            guard let self else { return }
+            self.queue.async { self.applyPeriod() }
+        }
+    }
+
+    /// Suspend / resume the sampling timer. `timer` is created once on the
+    /// private queue and only ever touched there. Creation already resumed
+    /// once, so a single matching `resume()` restores it.
+    private func setTimerSuspended(_ suspended: Bool) {
+        guard let timer else { return }
+        if suspended {
+            timer.suspend()
+        } else {
+            timer.resume()
+        }
     }
 
     func setScope(_ scope: MonitorScope, active: Bool) {
@@ -188,6 +213,15 @@ final class ProcessSampler: ObservableObject {
     }
 
     private func applyPeriod() {
+        // No consumer: no visible window and no session to attribute to.
+        let shouldSuspend = !wantsAttribution && !UIWakePolicy.hasVisibleWindow
+        if shouldSuspend != timerSuspended {
+            timerSuspended = shouldSuspend
+            setTimerSuspended(shouldSuspend)
+            if shouldSuspend { return }
+        }
+        guard !timerSuspended else { return }
+
         let next: TimeInterval
         if !wantsAttribution {
             next = foreground ? 6 : 12
@@ -243,6 +277,10 @@ final class ProcessSampler: ObservableObject {
 
         var byKey: [Key: Snapshot] = [:]
         var claimed = Set<pid_t>()
+
+        // One pid→children pass for the whole tick; `descendants` is called
+        // once per session root below.
+        index.buildChildIndex()
 
         for root in claudeRoots {
             let group = index.descendants(of: root)
@@ -461,11 +499,25 @@ private struct ProcessIndex {
     var codexByCwd: [String: [pid_t]] = [:]
     var parent: [pid_t: pid_t] = [:]
 
-    func descendants(of root: pid_t) -> [pid_t] {
-        var kids: [pid_t: [pid_t]] = [:]
-        kids.reserveCapacity(parent.count)
+    /// pid → children, built once per tick. `descendants` is called for every
+    /// root (one per session); rebuilding this dictionary per call was O(roots
+    /// × processes) inside the 1s busy-path sample.
+    private var kids: [pid_t: [pid_t]]? = nil
+
+    mutating func buildChildIndex() {
+        var map: [pid_t: [pid_t]] = [:]
+        map.reserveCapacity(parent.count)
         for (child, parentPID) in parent where child != parentPID {
-            kids[parentPID, default: []].append(child)
+            map[parentPID, default: []].append(child)
+        }
+        kids = map
+    }
+
+    func descendants(of root: pid_t) -> [pid_t] {
+        guard let kids else {
+            var index = self
+            index.buildChildIndex()
+            return index.descendants(of: root)
         }
         var out: [pid_t] = [root]
         var seen: Set<pid_t> = [root]

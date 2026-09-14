@@ -9,6 +9,13 @@ struct ProxyLogView: View {
     @State private var filter: Filter = .all
     @State private var query = ""
     @State private var copied = false
+    /// Filtering is O(rows × 4 lowercased()) and used to run in every `body`
+    /// evaluation — including the ones the scroll animation drove. Cache it
+    /// and recompute only when an input actually changes.
+    @State private var filtered: [ProxyLogEntry] = []
+    /// The console auto-scrolls to the tail exactly once per mount; a
+    /// re-entrant `onAppear` (LazyVStack rebuilds) used to fire it forever.
+    @State private var didInitialScroll = false
 
     enum Filter: String, CaseIterable, Identifiable {
         case all, claude, codex, other
@@ -23,9 +30,9 @@ struct ProxyLogView: View {
         }
     }
 
-    private var filtered: [ProxyLogEntry] {
+    private func recomputeFiltered() {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return log.entries.filter { row in
+        filtered = log.entries.filter { row in
             switch filter {
             case .all: break
             case .claude: if row.source != .claude { return false }
@@ -52,6 +59,10 @@ struct ProxyLogView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.base0.opacity(0.35))
+        .onAppear { recomputeFiltered() }
+        .onChange(of: log.entries) { _, _ in recomputeFiltered() }
+        .onChange(of: filter) { _, _ in recomputeFiltered() }
+        .onChange(of: query) { _, _ in recomputeFiltered() }
     }
 
     private var toolbar: some View {
@@ -113,7 +124,9 @@ struct ProxyLogView: View {
                         Text(row.consoleLine)
                             .font(Theme.Font.console)
                             .foregroundColor(color(for: row))
-                            .textSelection(.enabled)
+                            // No per-row .textSelection(.enabled): 500 rows of
+                            // selectable text laid out on every content rebuild
+                            // is the expensive path. Copy-all covers the need.
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, Theme.Space.s16)
                             .padding(.vertical, 3)
@@ -124,8 +137,19 @@ struct ProxyLogView: View {
                 }
                 .padding(.vertical, Theme.Space.s8)
             }
-            .onAppear { scrollToEnd(proxy) }
-            .onChange(of: log.entries.last?.id) { _, _ in scrollToEnd(proxy) }
+            .onAppear {
+                guard !didInitialScroll else { return }
+                didInitialScroll = true
+                scrollToEnd(proxy, animated: false)
+            }
+            .onChange(of: log.entries.last?.id) { _, _ in
+                // Only chase the tail while this view is actually on screen;
+                // an off-screen page has no reason to animate its scroll
+                // position (that loop used to run at 170 scrolls/s with the
+                // page hidden behind opacity(0)).
+                guard UIWakePolicy.hasVisibleMainWindow else { return }
+                scrollToEnd(proxy, animated: true)
+            }
         }
     }
 
@@ -137,10 +161,15 @@ struct ProxyLogView: View {
         return Theme.textPrimary
     }
 
-    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+    /// `animated: false` for the one-shot jump on mount — `withAnimation` here
+    /// turns every appended line into a scroll transaction, which re-evaluates
+    /// the content closure and re-enters `onAppear` on the rebuilt LazyVStack.
+    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let last = filtered.last else { return }
         DispatchQueue.main.async {
-            withAnimation(Theme.Motion.page) {
+            if animated {
+                withAnimation(Theme.Motion.page) { proxy.scrollTo(last.id, anchor: .bottom) }
+            } else {
                 proxy.scrollTo(last.id, anchor: .bottom)
             }
         }

@@ -130,11 +130,13 @@ final class ProxyAccessLog: ObservableObject {
             status: 0,
             error: nil)
         rows.append(entry)
+        var dropped = 0
         if rows.count > limit {
-            rows.removeFirst(rows.count - limit)
+            dropped = rows.count - limit
+            rows.removeFirst(dropped)
         }
         lock.unlock()
-        publish()
+        publishAppended(entry, droppedFirst: dropped)
         return ProxyLogTap(id: id, store: self)
     }
 
@@ -154,7 +156,7 @@ final class ProxyAccessLog: ObservableObject {
         row.error = error.flatMap { Self.clip($0, 240) }.flatMap { $0.isEmpty ? nil : $0 }
         rows[idx] = row
         lock.unlock()
-        publish()
+        publishUpdated(row)
         appendJSONL(row)
         scheduleCompact()
     }
@@ -176,6 +178,29 @@ final class ProxyAccessLog: ObservableObject {
             let snapshot = self.rows
             self.lock.unlock()
             self.entries = snapshot
+        }
+    }
+
+    /// Incremental variants. `publish()` copied the whole 500-row array under
+    /// the lock and reassigned it on every single request — two full copies
+    /// per forwarded call, plus a 500-element array diff for SwiftUI. Appending
+    /// or patching one row is all the UI actually needs.
+    private func publishAppended(_ row: ProxyLogEntry, droppedFirst: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if droppedFirst > 0, self.entries.count >= droppedFirst {
+                self.entries.removeFirst(droppedFirst)
+            }
+            self.entries.append(row)
+        }
+    }
+
+    private func publishUpdated(_ row: ProxyLogEntry) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let i = self.entries.firstIndex(where: { $0.id == row.id }) {
+                self.entries[i] = row
+            }
         }
     }
 

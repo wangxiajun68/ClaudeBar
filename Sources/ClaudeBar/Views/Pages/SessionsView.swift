@@ -40,20 +40,31 @@ private struct PulsingStatusDot: View {
 
 /// A stroke ring that breathes in and out for as long as it is on screen.
 /// Removed entirely (not merely faded) when the session goes idle.
+/// Animation also stops while no window is visible — see DashboardView's
+/// BusyPulseRing.
 private struct BusyPulseRing: View {
     let color: Color
     var big: Bool = false
     var compact: Bool = false
     @State private var phase = false
+    @State private var allowed = UIWakePolicy.shouldAnimate
 
     var body: some View {
         Circle()
             .strokeBorder(color.opacity(0.4), lineWidth: compact ? 2 : (big ? 4 : 3))
-            .scaleEffect(phase ? (compact ? 1.8 : 1.7) : 1)
-            .opacity(phase ? 0.5 : 0.2)
+            .scaleEffect(allowed && phase ? (compact ? 1.8 : 1.7) : 1)
+            .opacity(allowed && phase ? 0.5 : 0.2)
             .onAppear { phase = true }
             .onDisappear { phase = false }
-            .animation(Theme.Animation.pulse.repeatForever(autoreverses: true), value: phase)
+            .onReceive(UIWakePolicy.changes) { _ in
+                allowed = UIWakePolicy.shouldAnimate
+                phase = false
+                DispatchQueue.main.async { phase = allowed }
+            }
+            .animation(allowed
+                       ? Theme.Animation.pulse.repeatForever(autoreverses: true)
+                       : .default,
+                       value: phase)
     }
 }
 

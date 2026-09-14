@@ -74,6 +74,7 @@ class ProviderStore: ObservableObject {
         refreshUsage(rescan: true)
         refreshSessions()
         startSessionPolling()
+        observeVisibility()
         ProcessSampler.shared.start()
         ProcessSampler.shared.setLive(anySessionBusy)
         startUsageWatcher()
@@ -280,9 +281,35 @@ class ProviderStore: ObservableObject {
 
     private func startSessionPolling() {
         sessionTimer?.invalidate()
-        let interval = anySessionBusy ? AppConfig.sessionPollInterval : AppConfig.sessionPollIdleInterval
+        let interval: TimeInterval
+        if !UIWakePolicy.hasVisibleWindow {
+            interval = AppConfig.sessionPollHiddenInterval
+        } else {
+            interval = anySessionBusy ? AppConfig.sessionPollInterval : AppConfig.sessionPollIdleInterval
+        }
         sessionTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.refreshSessions()
+        }
+    }
+
+    /// Re-arm the poll timer when a window appears or disappears. Called once
+    /// from `refresh()`; `UIWakePolicy` drops duplicate transitions itself.
+    private var visibilityCancel: AnyCancellable?
+
+    private func observeVisibility() {
+        guard visibilityCancel == nil else { return }
+        visibilityCancel = UIWakePolicy.observe { [weak self] in
+            guard let self else { return }
+            self.startSessionPolling()
+            // The FSEvents stream feeds the usage index. With no window on
+            // screen the re-index is pure background cost; stop the stream
+            // and let the next visible poll rescan.
+            if UIWakePolicy.hasVisibleWindow {
+                self.startUsageWatcher()
+            } else {
+                UsageFSWatcher.stop()
+            }
+            self.writeWidgetSnapshot()
         }
     }
     // Note: the timer only *triggers* on the main run loop; the actual scan

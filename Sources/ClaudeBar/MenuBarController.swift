@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 extension NSColor {
     convenience init(hex: UInt, opacity: CGFloat = 1.0) {
@@ -31,8 +32,10 @@ final class MenuBarController: NSObject {
     }
 
     private var rateAccessory: VpnMenuBarRateView?
-    private var rateTickTask: Task<Void, Never>?
+    private var rateCancel: AnyCancellable?
+    private var lastRateKey: String?
 
+    @MainActor
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else {
@@ -51,17 +54,22 @@ final class MenuBarController: NSObject {
 
     /// ClashX-style: a 22pt-tall two-line accessory, not NSStatusBarButton's
     /// attributedTitle (which cannot wrap, so ↓/↑ never updated visibly).
+    ///
+    /// Event-driven, not a 1 Hz timer: the old loop re-rasterized the icon and
+    /// rebuilt two `NSImage`s every second even with the VPN stopped. Rate
+    /// changes come from `VpnManager`'s own publishes, and the menu-bar image
+    /// is only redrawn when a displayed value actually changes.
+    @MainActor
     private func installVpnRateDisplay(button: NSStatusBarButton) {
         let accessory = VpnMenuBarRateView()
         rateAccessory = accessory
         button.addSubview(accessory)
-        rateTickTask?.cancel()
-        rateTickTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                self?.tickVpnRate()
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+        rateCancel = VpnManager.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                MainActor.assumeIsolated { self?.tickVpnRate() }
             }
-        }
+        tickVpnRate()
     }
 
     @MainActor
@@ -69,15 +77,21 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button, let accessory = rateAccessory else { return }
         let running = VpnManager.shared.isRunning
         if running {
+            let down = VpnFormat.compact(VpnManager.shared.speedDown)
+            let up = VpnFormat.compact(VpnManager.shared.speedUp)
+            // Both rates unchanged → the accessory already shows them; skip
+            // the icon rasterization and label re-layout entirely.
+            let key = "\(down)|\(up)"
+            guard key != lastRateKey else { return }
+            lastRateKey = key
             button.image = nil
             accessory.isHidden = false
-            accessory.update(
-                icon: MenuBarMark.image(side: 16),
-                down: VpnFormat.compact(VpnManager.shared.speedDown),
-                up: VpnFormat.compact(VpnManager.shared.speedUp))
+            accessory.update(icon: MenuBarMark.image(side: 16), down: down, up: up)
             accessory.frame = NSRect(x: 0, y: 1, width: VpnMenuBarRateView.fullWidth, height: 20)
             statusItem.length = VpnMenuBarRateView.fullWidth + 6
         } else {
+            guard lastRateKey != nil else { return }
+            lastRateKey = nil
             accessory.isHidden = true
             accessory.frame = .zero
             button.image = MenuBarMark.image()
@@ -97,32 +111,54 @@ final class MenuBarController: NSObject {
     // MARK: - Show / Hide
 
     private func show() {
+        // Rebuild the hosting view on open rather than keeping a hidden one
+        // alive. An ordered-out panel still owns a live SwiftUI graph: its
+        // 2s fan poll, 1 Hz VPN chart and body re-evaluation all keep running
+        // for a window nobody can see. The panel and vibrancy container are
+        // reused, so only the content is remade (~50–150 ms).
+        if hostingView == nil { makeHostingView() }
+        guard let hosting = hostingView else { return }
         let panel = self.panel ?? makePanel()
         self.panel = panel
+        // Size to the new content first: sizeAndPosition reads fittingSize.
+        if let content = panel.contentView {
+            hosting.frame = content.bounds
+            content.addSubview(hosting)
+        }
         sizeAndPosition(panel)
         panel.orderFrontRegardless()
         panel.makeKey()
         isOpen = true
+        UIWakePolicy.setPopupOpen(true)
         installMonitors()
     }
 
     private func hide() {
         panel?.orderOut(nil)
+        hostingView?.removeFromSuperview()
+        hostingView = nil
         isOpen = false
+        UIWakePolicy.setPopupOpen(false)
         removeMonitors()
     }
 
     // MARK: - Panel
 
-    private func makePanel() -> NSPanel {
+    private func makeHostingView() {
         let rootView = AnyView(
             MenuBarView()
                 .environmentObject(providerStore)
                 .environmentObject(codexProviderStore)
         )
         let hosting = NSHostingView(rootView: rootView)
+        // Autoresizing 而非 Auto Layout 约束：macOS 26 上 NSHostingView 在显示周期内
+        // 触发 setNeedsUpdateConstraints 会抛 "may not modify constraints during layout"
+        // 并中止（点击菜单栏图标崩溃）。AutoresizingMask 同样铺满且不参与约束引擎。
+        hosting.autoresizingMask = [.width, .height]
         hostingView = hosting
+    }
 
+    private func makePanel() -> NSPanel {
         let panel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
                                  styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
                                  backing: .buffered, defer: false)
@@ -153,13 +189,6 @@ final class MenuBarController: NSObject {
         vibe.layer?.masksToBounds = true
 
         panel.contentView = vibe
-
-        // Autoresizing 而非 Auto Layout 约束：macOS 26 上 NSHostingView 在显示周期内
-        // 触发 setNeedsUpdateConstraints 会抛 "may not modify constraints during layout"
-        // 并中止（点击菜单栏图标崩溃）。AutoresizingMask 同样铺满且不参与约束引擎。
-        hosting.autoresizingMask = [.width, .height]
-        hosting.frame = vibe.bounds
-        vibe.addSubview(hosting)
         vibe.autoresizesSubviews = true
         return panel
     }
@@ -239,7 +268,23 @@ private final class KeyablePanel: NSPanel {
 /// 16pt tri-blade, transparent, template — the PNG has an opaque mint
 /// square, so `isTemplate` painted a solid block in the menu bar.
 enum MenuBarMark {
+    /// The mark is a pure function of `side` and only two sizes are ever
+    /// asked for, but `NSImage(size:flipped:)` re-runs the whole bezier
+    /// rasterization on each call (and the menu-bar update path calls it
+    /// every second while the VPN is up).
+    private static var cache: [CGFloat: NSImage] = [:]
+    private static let cacheLock = NSLock()
+
     static func image(side: CGFloat = 18) -> NSImage {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let hit = cache[side] { return hit }
+        let made = make(side: side)
+        cache[side] = made
+        return made
+    }
+
+    private static func make(side: CGFloat) -> NSImage {
         let size = NSSize(width: side, height: side)
         let image = NSImage(size: size, flipped: false) { rect in
             let cx = rect.midX

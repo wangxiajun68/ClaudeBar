@@ -12,7 +12,12 @@ enum VpnSystemProxyController {
         "127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, localhost, *.local, *.crashlytics.com, <local>"
 
     /// All enabled network services (Wi-Fi, Ethernet, …).
-    static func networkServices() -> [String] {
+    ///
+    /// `nonisolated`: spawns `networksetup` and blocks on its output, so it
+    /// must be callable from a background task (the guard loop reads the
+    /// current proxy state off-main; see `VpnProxyGuard.check`). Pure process
+    /// I/O + string parsing, no shared state.
+    nonisolated static func networkServices() -> [String] {
         let result = Process.runAndRead("/usr/sbin/networksetup", args: ["-listallnetworkservices"])
         guard result.status == 0 else { return [] }
         return result.output.split(separator: "\n")
@@ -23,13 +28,13 @@ enum VpnSystemProxyController {
     /// Wi-Fi / Ethernet first. `listallnetworkservices` often lists
     /// Thunderbolt Bridge before the interface the user actually uses, so
     /// the guard must not treat the first row as truth.
-    static func preferredServices() -> [String] {
+    nonisolated static func preferredServices() -> [String] {
         let all = networkServices()
         let hot = all.filter { isPreferredService($0) }
         return hot.isEmpty ? all : hot
     }
 
-    static func isPreferredService(_ name: String) -> Bool {
+    nonisolated static func isPreferredService(_ name: String) -> Bool {
         let n = name.lowercased()
         return n.contains("wi-fi") || n.contains("wifi") || n.contains("airport")
             || n.contains("ethernet") || n.contains("以太网")
@@ -84,7 +89,7 @@ enum VpnSystemProxyController {
         return false
     }
 
-    static func parseWebProxy(_ service: String) -> (host: String, port: String, enabled: Bool)? {
+    nonisolated static func parseWebProxy(_ service: String) -> (host: String, port: String, enabled: Bool)? {
         let result = Process.runAndRead("/usr/sbin/networksetup", args: ["-getwebproxy", service])
         var host: String?, port: String?, enabled = false
         for line in result.output.split(separator: "\n") {
@@ -117,7 +122,7 @@ enum VpnSystemProxyController {
     }
 
     /// Read back HTTP proxy on Wi-Fi / Ethernet — used by the guard loop.
-    static func currentHTTPProxy() -> (host: String, port: String)? {
+    nonisolated static func currentHTTPProxy() -> (host: String, port: String)? {
         for service in preferredServices() {
             if let p = parseWebProxy(service), p.enabled {
                 return (p.host, p.port)
@@ -149,15 +154,23 @@ final class VpnProxyGuard {
         timer = nil
     }
 
+    /// Read the current proxy off the main thread. `networksetup` spawn plus
+    /// its blocking read is 15–40 ms of pure main-thread stall every 10 s
+    /// (measured 4–6% of main-thread samples); the guard only *acts* when the
+    /// value is wrong, which is rare — so only the compare needs the results.
     private func check() {
         let prefs = AppPreferences.shared
         guard prefs.vpnEnabled, prefs.vpnSystemProxyEnabled, prefs.vpnGuardEnabled,
               VpnManager.shared.isRunning else { return }
-        let current = VpnSystemProxyController.currentHTTPProxy()
         let expected = "127.0.0.1"
         let port = "\(prefs.vpnMixedPort)"
-        if current?.host != expected || current?.port != port {
-            VpnSystemProxyController.applySystemProxy(port: prefs.vpnMixedPort)
+        let mixedPort = prefs.vpnMixedPort
+        Task.detached(priority: .utility) {
+            let current = VpnSystemProxyController.currentHTTPProxy()
+            guard current?.host != expected || current?.port != port else { return }
+            await MainActor.run {
+                VpnSystemProxyController.applySystemProxy(port: mixedPort)
+            }
         }
     }
 }

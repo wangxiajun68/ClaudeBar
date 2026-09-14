@@ -84,6 +84,24 @@ struct ExternalSessionMonitor {
     /// `rollout-<ts>-<uuid>.jsonl`. Line 1 is `session_meta` (cwd), and
     /// `turn_context` records carry the model. The transcript filename
     /// embeds the session UUID.
+    /// Parsed head/tail fields for one rollout file, keyed by mtime+size.
+    /// The 32 KB head read + 48 KB tail read + JSON scan ran for every file
+    /// inside the 30-day window on every 2.5s poll, even though a file being
+    /// appended to keeps everything before its last line unchanged. An
+    /// untouched file now costs one `attributesOfItem` call.
+    private struct CodexFileCache {
+        var mtime: TimeInterval
+        var size: Int
+        var cwd: String
+        var model: String
+        var contextUsed: Int
+        var contextLimit: Int
+    }
+    private static var codexFileCache: [String: CodexFileCache] = [:]
+    /// `fetchActive` is called from detached tasks and polls can overlap, so
+    /// every cache access goes through this.
+    private static let codexCacheLock = NSLock()
+
     private static func fetchCodex() -> [ExternalSessionInfo] {
         let root = ExternalAgentKind.codex.rootDir
         let now = Date().timeIntervalSince1970
@@ -92,6 +110,13 @@ struct ExternalSessionMonitor {
         // 3 most recent months so a long Codex history never walks the whole
         // tree.
         let cutoff = now - ExternalAgentKind.codex.recencyWindow
+
+        // Files that aged out of the window can never be reported again.
+        codexCacheLock.lock()
+        if !codexFileCache.isEmpty {
+            codexFileCache = codexFileCache.filter { $0.value.mtime >= cutoff }
+        }
+        codexCacheLock.unlock()
 
         var results: [ExternalSessionInfo] = []
         let fm = FileManager.default
@@ -108,26 +133,20 @@ struct ExternalSessionMonitor {
                     for file in files where file.hasSuffix(".jsonl") {
                         let path = "\(dayPath)/\(file)"
                         guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
-                        let head = readHead(path: path, bytes: 32_000)
-                        let cwd = head.field(forKey: "\"cwd\":\"")
-                        // Prefer the turn_context model; fall back to any "model"
-                        // occurrence (session_meta has none, turn_context always
-                        // appears within the first turns).
-                        let model = head.field(forKey: "\"model\":\"")
+                        let parsed = codexFields(path: path, meta: meta)
                         let base = (file as NSString).deletingPathExtension
                         let sessionId = String(base.suffix(36))
-                        let ctx = readCodexContext(path: path)
                         results.append(ExternalSessionInfo(
                             kind: .codex,
                             sessionId: sessionId,
-                            cwd: cwd,
+                            cwd: parsed.cwd,
                             startedAt: meta.mtime * 1000,
                             updatedAt: meta.mtime * 1000,
-                            model: model,
+                            model: parsed.model,
                             isAlive: true,
                             isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow,
-                            contextTokens: ctx.used,
-                            contextLimit: ctx.limit
+                            contextTokens: parsed.contextUsed,
+                            contextLimit: parsed.contextLimit
                         ))
                     }
                 }
@@ -137,6 +156,32 @@ struct ExternalSessionMonitor {
             if results.count > 400 { break yearLoop }
         }
         return results
+    }
+
+    /// Head/tail fields for `path`, re-reading only when mtime or size moved.
+    private static func codexFields(path: String, meta: (mtime: TimeInterval, size: Int)) -> CodexFileCache {
+        codexCacheLock.lock()
+        let hit = codexFileCache[path].flatMap { cached -> CodexFileCache? in
+            cached.mtime == meta.mtime && cached.size == meta.size ? cached : nil
+        }
+        codexCacheLock.unlock()
+        if let hit { return hit }
+        let head = readHead(path: path, bytes: 32_000)
+        let ctx = readCodexContext(path: path)
+        let entry = CodexFileCache(
+            mtime: meta.mtime,
+            size: meta.size,
+            cwd: head.field(forKey: "\"cwd\":\""),
+            // Prefer the turn_context model; fall back to any "model"
+            // occurrence (session_meta has none, turn_context always
+            // appears within the first turns).
+            model: head.field(forKey: "\"model\":\""),
+            contextUsed: ctx.used,
+            contextLimit: ctx.limit)
+        codexCacheLock.lock()
+        codexFileCache[path] = entry
+        codexCacheLock.unlock()
+        return entry
     }
 
     // MARK: Helpers
