@@ -26,10 +26,13 @@
 
 The main window is a dashboard: CPU die, GPU bars, memory tank, disk, Wi-Fi / Bluetooth, left and right fans — then the active vendor, live sessions, and tokens. The menu-bar popup is the same facts, compressed: three chips to switch CC / Codex / VPN, then living sessions and a monthly heatmap.
 
-| Main window | Menu bar |
-| :---------: | :------: |
-| ![Dashboard](docs/screenshots/main-window.png) | ![Menu-bar popup](docs/screenshots/menubar-popup.png) |
-| Ice / graphite tiles. Color lives in the charts. | Click the icon. Switch, inspect, leave. No window required. |
+**Main window** · Ice / graphite tiles. Color lives in the charts.
+
+![Dashboard](docs/screenshots/main-window.png)
+
+**Menu bar** · Click the icon. Switch, inspect, leave. No window required.
+
+![Menu-bar popup](docs/screenshots/menubar-popup.png)
 
 ## Why it exists
 
