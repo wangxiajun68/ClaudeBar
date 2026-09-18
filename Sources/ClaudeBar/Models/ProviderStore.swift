@@ -13,6 +13,12 @@ class ProviderStore: ObservableObject {
     @Published var collapsedProviderIDs: Set<UUID> = []
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
+    /// The same two aggregates split by origin (Claude Code / Codex /
+    /// third-party). Feeds the per-model source ring and the source-tinted
+    /// river; `usageStats`/`usageDays` stay the flat totals everything else
+    /// already reads.
+    @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
+    @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
     @Published var usagePeriod: UsagePeriod = .month {
         didSet { if usagePeriod != oldValue { refreshUsage(rescan: false) } }
@@ -334,11 +340,15 @@ class ProviderStore: ObservableObject {
         // reconciled state (a single save, after all mutations below).
         guard let env = currentEnv else { return }
         if LocalProxyAddress.isLoopback(env.ANTHROPIC_BASE_URL) {
-            let captureOn = providers.first(where: { $0.id == activeProviderID })?.captureEnabled ?? false
-            if !captureOn, let id = activeProviderID,
-               let p = providers.first(where: { $0.id == id }),
-               let m = p.activeModel {
-                activateModel(providerID: p.id, modelID: m.id)
+            // A loopback URL is only correct while the active vendor's own
+            // 流量记录 switch is on. Anything else (the global 本地代理 toggle,
+            // a vendor switched off, a vendor we can no longer resolve) means
+            // the real URL belongs back in the file. Mirrors
+            // `CodexProviderStore.load()`.
+            let active = providers.first { $0.id == activeProviderID }
+            let expectedLoopback = active?.captureEnabled ?? false
+            if !expectedLoopback, let active, let model = active.activeModel {
+                activateModel(providerID: active.id, modelID: model.id, syncPeer: false)
             }
             return
         }
@@ -418,9 +428,14 @@ class ProviderStore: ObservableObject {
     /// Maps a provider/model pair onto the `settings.json` env block. All
     /// `ANTHROPIC_DEFAULT_*_MODEL` aliases carry the chosen model name so
     /// subagent/background traffic is routed to the same endpoint.
+    ///
+    /// The address written is the vendor's **original** base URL unless this
+    /// vendor's own 流量记录 switch is on. The Anthropic path is a pure
+    /// passthrough in the local proxy — it rewrites nothing — so the global
+    /// 本地代理 toggle alone is not a reason to put a loopback URL in a
+    /// user-visible config file.
     private func buildEnv(from provider: Provider, model: ModelConfig) -> EnvConfig {
-        let base = (AppPreferences.shared.codexRoutingEnabled || provider.captureEnabled)
-            ? LocalProxyAddress.claudeBase : provider.baseURL
+        let base = provider.captureEnabled ? LocalProxyAddress.claudeBase : provider.baseURL
         return EnvConfig(
             ANTHROPIC_AUTH_TOKEN: provider.authToken,
             ANTHROPIC_BASE_URL: base,
@@ -596,11 +611,15 @@ class ProviderStore: ObservableObject {
 
                 if UsageIndex.hasCachedData {
                     let quick = Self.queryUsage(in: interval)
+                    let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
+                    let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                     await MainActor.run { [weak self] in
                         guard let self else { return }
                         self.usageStats = quick
+                        self.usageBySource = quickSources
                         self.usageDays = days
+                        self.usageDaysBySource = daysBySource
                         self.usageLoading = false
                     }
                 }
@@ -609,7 +628,9 @@ class ProviderStore: ObservableObject {
                     UsageIndex.updateIndex()
                 }
                 let final = Self.queryUsage(in: interval)
+                let finalSources = Self.queryUsageBySource(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
+                let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
 
                 let next: (again: Bool, rescan: Bool) = await MainActor.run {
                     if self.usageRefreshQueued {
@@ -629,7 +650,9 @@ class ProviderStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.usageStats = final
+                    self.usageBySource = finalSources
                     self.usageDays = days
+                    self.usageDaysBySource = daysBySource
                     self.usageLoading = false
                     self.writeWidgetSnapshot()
                 }
@@ -640,6 +663,10 @@ class ProviderStore: ObservableObject {
 
     private static func queryUsage(in interval: DateInterval) -> [ModelUsage] {
         UsageIndex.fetch(in: interval)
+    }
+
+    private static func queryUsageBySource(in interval: DateInterval) -> [UsageSource: [ModelUsage]] {
+        UsageIndex.fetchBySource(in: interval)
     }
 
     private var usageWatcherStarted = false

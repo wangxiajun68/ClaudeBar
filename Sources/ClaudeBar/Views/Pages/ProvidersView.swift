@@ -44,7 +44,7 @@ struct ProvidersView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.base0.opacity(0.35))
+        .background(Theme.bgPrimary)
         .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
             showEditor = true
         }
@@ -60,19 +60,15 @@ struct ProvidersView: View {
 
     private var gridHeader: some View {
         HStack(alignment: .center, spacing: Theme.Space.s12) {
-            Text("模型")
-                .font(Theme.Font.titleLarge)
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-                .fixedSize()
+            PageTitle(title: "模型")
             HStack(spacing: Theme.Space.s4) {
                 ForEach(Stack.allCases) { s in
                     let on = stack == s
                     Button(s.label) { stackRaw = s.rawValue }
                         .font(Theme.Font.caption)
-                        .foregroundColor(on ? .white : Theme.textSecondary)
+                        .foregroundColor(on ? s.tint : Theme.textSecondary)
                         .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(on ? s.tint.opacity(0.45) : Theme.cardFill(0.08)))
+                        .background(Capsule().fill(on ? s.tint.opacity(0.12) : Theme.cardFill(0.06)))
                         .buttonStyle(.plain)
                 }
             }

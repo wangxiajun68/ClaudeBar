@@ -27,8 +27,8 @@ struct PlainDumpView: NSViewRepresentable {
         tv.backgroundColor = .clear
         tv.textContainerInset = NSSize(width: 10, height: 10)
         tv.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        tv.textColor = NSColor(white: 0.90, alpha: 1)
-        tv.insertionPointColor = .white
+        tv.textColor = NSColor(srgbRed: 28/255, green: 28/255, blue: 30/255, alpha: 1)
+        tv.insertionPointColor = NSColor.labelColor
         tv.isHorizontallyResizable = false
         tv.isVerticallyResizable = true
         tv.autoresizingMask = [.width]

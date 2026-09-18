@@ -68,7 +68,7 @@ struct ProxyUpstreamPickers: View {
                 Text(title)
                     .font(Theme.Font.body)
                     .foregroundColor(Theme.textPrimary)
-                Spacer(minLength: Theme.Space.s12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if empty {
                     Button("去添加") {
                         NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
@@ -81,6 +81,8 @@ struct ProxyUpstreamPickers: View {
                         .font(Theme.Font.bodySmall)
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 240, alignment: .trailing)
                 }
             }
             .frame(minHeight: 22)
@@ -104,11 +106,12 @@ struct ProxyUpstreamPickers: View {
                 Text(title)
                     .font(Theme.Font.body)
                     .foregroundColor(Theme.textPrimary)
-                Spacer(minLength: Theme.Space.s12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if providers.isEmpty {
                     Text("无供应商")
                         .font(Theme.Font.bodySmall)
                         .foregroundColor(Theme.textTertiary())
+                        .frame(width: 240, alignment: .trailing)
                 } else {
                     Picker("", selection: selection) {
                         Text(followLabel).tag(Optional<UUID>.none)
@@ -118,7 +121,7 @@ struct ProxyUpstreamPickers: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .frame(maxWidth: 280)
+                    .frame(width: 240, alignment: .trailing)
                     .tint(tint)
                 }
             }

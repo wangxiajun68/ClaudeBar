@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - Color(hex:)
 
@@ -15,40 +16,50 @@ extension Color {
 
 // MARK: - Theme
 
-/// Design tokens for ClaudeBar: translucent **Liquid Glass** surfaces over a
-/// neutral near-black backdrop. The palette is deliberately near-monochrome —
-/// a single cool accent (soft blue = Claude Code) and a secondary violet
-/// (Cursor) do the identity work, and color is reserved for state (busy /
-/// warning / error). Hierarchy comes from typography and weight, not from
-/// color on every element.
+/// Design tokens for ClaudeBar: a light **status sheet**.
+///
+/// THESIS: the popup is a CatStatus-class instrument — white cards on ice,
+/// hero numbers, charts that carry color. It refuses tinted-glass admin tiles.
+/// OWN-WORLD: ice canvas #EEF3F8, white raised cards, SF Rounded metrics,
+/// mint alive, purple heatmap, color only in data.
+/// STORY: glance the machine, pick a model, resume a session.
+/// FIRST VIEWPORT: switcher HUD, one-line machine KPIs, then models / sessions / usage.
+/// FORM: iOS widget / CatStatus craft, user-pinned.
+/// FINISH: unreviewed and undocumented is unfinished; this build ends with
+/// the finish review, the verdict, and DESIGN.md
 enum Theme {
-    // MARK: Foundation (neutral near-black — no color cast)
-    static let base0 = Color(hex: 0x0D0D11)     // window backdrop tint
-    static let base1 = Color(hex: 0x15151B)     // sidebar / elevated
-    static let base2 = Color(hex: 0x1E2026)     // card glass tint reference
-    static let base3 = Color(hex: 0x292C34)     // hover / elevated
-    static let base4 = Color(hex: 0x353A45)     // highest
+    // MARK: Foundation — ice in light, graphite in dark
+    static var isDark: Bool { AppPreferences.shared.isDark }
 
-    static let bgPrimary = base0
-    static let bgSecondary = base1
-    static let bgTertiary = base2
-    static let bgOverlay = base3
+    static var bgPrimary: Color { isDark ? Color(hex: 0x16181C) : Color(hex: 0xEEF3F8) }
+    static var bgSecondary: Color { isDark ? Color(hex: 0x1E2228) : Color(hex: 0xF7FAFC) }
+    static var bgTertiary: Color { cardSurface }
+    static var bgOverlay: Color { isDark ? Color(hex: 0x2A3038) : Color(hex: 0xE4EBF2) }
+    static var cardSurface: Color { isDark ? Color(hex: 0x252A31) : Color.white }
 
-    // MARK: Signals (soft blue = Claude · violet = Cursor · teal = external)
-    static let claude = Color(hex: 0x4F8EF7)    // soft blue — Claude Code
-    static let claudeHi = Color(hex: 0x79ABF9)  // light blue — busy/active
-    static let cursor = Color(hex: 0xA78BFA)    // soft violet — Cursor
-    static let cursorHi = Color(hex: 0xC0ACFC)  // light violet
-    static let codex = Color(hex: 0xE8E3DC)     // warm porcelain — Codex
+    static var base0: Color { bgPrimary }
+    static var base1: Color { bgSecondary }
+    static var base2: Color { cardSurface }
+    static var base3: Color { bgOverlay }
+    static var base4: Color { isDark ? Color(hex: 0x3A424C) : Color(hex: 0xC5D0DC) }
 
-    /// Teal — Codex sessions. A third
-    /// hue so the newest session family reads as its own source at a glance
-    /// while staying inside the muted palette.
-    static let external = Color(hex: 0x46C58F)
-    static let externalHi = Color(hex: 0x6FD9AD)
+    // MARK: Signals (green = load · blue = GPU · amber = memory · violet = usage)
+    static let claude = Color(hex: 0x3D7DFF)
+    static let claudeHi = Color(hex: 0x5B9CFF)
+    static let cursor = Color(hex: 0x8B7CFF)
+    static let cursorHi = Color(hex: 0xA99BFF)
+    static let codex = Color(hex: 0x6B7280)
+
+    static let chartGreen = Color(hex: 0x34C759)
+    static let chartBlue = Color(hex: 0x5B9CFF)
+    static let chartAmber = Color(hex: 0xFF9F0A)
+    static let chartPurple = Color(hex: 0xBF5AF2)
+
+    static let external = Color(hex: 0x30D158)
+    static let externalHi = Color(hex: 0x64E07A)
 
     static let accent = claude
-    static let accentDim = Color(hex: 0x3A6FD1)
+    static let accentDim = Color(hex: 0x2B62D6)
     static let cursorAccent = cursor
 
     /// Session-kind hue — blue for Claude, violet for Cursor.
@@ -57,23 +68,37 @@ enum Theme {
     }
 
     // MARK: Text
-    static let textPrimary = Color(hex: 0xF5F5F7)   // Apple white
-    static let textSecondary = Color(hex: 0xA1A1A6) // Apple gray
-    static func textTertiary(_ opacity: Double = 0.4) -> Color { .white.opacity(opacity) }
+    static var textPrimary: Color { isDark ? Color(hex: 0xF5F5F7) : Color(hex: 0x1C1C1E) }
+    static var textSecondary: Color { isDark ? Color(hex: 0xA8ADB4) : Color(hex: 0x6E6E73) }
+    static func textTertiary(_ opacity: Double = 0.38) -> Color {
+        isDark ? Color.white.opacity(min(1, opacity + 0.18)) : Color.black.opacity(opacity)
+    }
 
-    // MARK: Semantic (desaturated — reserved for state only)
+    // MARK: Semantic
     static let statusBusy = claude
     static let statusActive = cursor
-    static let statusIdle = Color(hex: 0x8A8F98)
-    static let statusWarning = Color(hex: 0xE0A13C) // soft amber
-    static let statusError = Color(hex: 0xE46464)   // soft red
-    static let statusSuccess = Color(hex: 0x46C58F) // soft green
+    static let statusIdle = Color(hex: 0x8E8E93)
+    static let statusWarning = Color(hex: 0xFF9F0A)
+    static let statusError = Color(hex: 0xFF3B30)
+    static let statusSuccess = Color(hex: 0x34C759)
 
     // MARK: Surfaces
-    static let divider = Color.white.opacity(0.09)
-    static let hairline = Color.white.opacity(0.10)
-    static func cardFill(_ opacity: Double = 0.06) -> Color { .white.opacity(opacity) }
-    static let sidebarFill = base1.opacity(0.35)
+    static var divider: Color { isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08) }
+    static var hairline: Color { divider }
+    static func cardFill(_ opacity: Double = 0.04) -> Color {
+        isDark ? Color.white.opacity(min(1, opacity * 2.4)) : Color.black.opacity(opacity)
+    }
+    static var sidebarFill: Color { bgSecondary }
+
+    static var windowNSColor: NSColor {
+        isDark
+            ? NSColor(srgbRed: 22/255, green: 24/255, blue: 28/255, alpha: 1)
+            : NSColor(srgbRed: 238/255, green: 243/255, blue: 248/255, alpha: 1)
+    }
+
+    static var nsAppearance: NSAppearance {
+        NSAppearance(named: isDark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
+    }
 
     // MARK: Spacing (8pt grid)
     enum Space {
@@ -81,22 +106,23 @@ enum Theme {
         static let s4: CGFloat = 4
         static let s6: CGFloat = 6
         static let s8: CGFloat = 8
+        static let s10: CGFloat = 10
         static let s12: CGFloat = 12
         static let s16: CGFloat = 16
         static let s24: CGFloat = 24
         static let s32: CGFloat = 32
-        /// Grid gap — popup density (2-col tiles in the 560pt panel).
-        static let gridGap: CGFloat = 6
+        /// Grid gap — popup density (2-col tiles in the 400pt panel).
+        static let gridGap: CGFloat = 8
         /// Grid gap — main-window pages (tile grids).
-        static let gridGapPage: CGFloat = 12
+        static let gridGapPage: CGFloat = 10
     }
 
     // MARK: Corner radii
     enum Radius {
-        static let sm: CGFloat = 6
-        static let md: CGFloat = 10
-        static let lg: CGFloat = 14
-        static let xl: CGFloat = 18
+        static let sm: CGFloat = 8
+        static let md: CGFloat = 12
+        static let lg: CGFloat = 16
+        static let xl: CGFloat = 20
     }
 
     // MARK: Typography
@@ -123,8 +149,9 @@ enum Theme {
         static let captionMono = SwiftUI.Font.caption.monospaced()
         static let labelSection = SwiftUI.Font.caption.weight(.semibold)
 
-        static let displayMetric = SwiftUI.Font.title.weight(.semibold)
-        static let displayMetricSmall = SwiftUI.Font.title3.weight(.semibold)
+        static let displayMetric = SwiftUI.Font.system(size: 28, weight: .semibold, design: .rounded)
+        static let displayMetricSmall = SwiftUI.Font.system(size: 24, weight: .semibold, design: .rounded)
+        static let displayHero = SwiftUI.Font.system(size: 22, weight: .bold, design: .rounded)
 
         // Popup-density aliases — still system styles, one step smaller where needed.
         static let rowTitle = SwiftUI.Font.subheadline.weight(.medium)
@@ -140,10 +167,10 @@ enum Theme {
             SwiftUI.Font.system(size: size)
         }
 
-        static let tileValue = SwiftUI.Font.title2.weight(.semibold)
-        static let tileValueSmall = SwiftUI.Font.title3.weight(.semibold)
-        static let tileMicroValue = SwiftUI.Font.subheadline.weight(.semibold).monospaced()
-        static let tileLabel = SwiftUI.Font.caption.weight(.semibold)
+        static let tileValue = SwiftUI.Font.system(size: 28, weight: .semibold, design: .rounded)
+        static let tileValueSmall = SwiftUI.Font.system(size: 22, weight: .semibold, design: .rounded)
+        static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit()
+        static let tileLabel = SwiftUI.Font.system(size: 11, weight: .semibold)
         static let tileDetail = SwiftUI.Font.caption2
     }
 
@@ -159,6 +186,7 @@ enum Theme {
             case popupSession    // 2-col popup
             case popupProvider   // 2-col popup
             case popupUsage      // 2-col popup
+            case pageSetting     // settings control tiles
         }
 
         static func columns(_ preset: Preset) -> [GridItem] {
@@ -169,11 +197,25 @@ enum Theme {
                 [GridItem(.adaptive(minimum: 280), spacing: Space.gridGapPage, alignment: .top)]
             case .pageUsage, .pageProvider:
                 [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
-            case .popupSession, .popupProvider, .popupUsage:
-                // Top-aligned cells: tiles in a row share a baseline instead
-                // of floating at differing centers.
+            case .pageSetting:
+                [GridItem(.adaptive(minimum: 200), spacing: Space.gridGapPage, alignment: .top)]
+            case .popupProvider, .popupUsage:
                 [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
                  GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
+            case .popupSession:
+                [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
+            }
+        }
+
+        /// Equal-height grid: fixed column count, or adaptive from a minimum width.
+        static func equalRow(_ preset: Preset) -> (fixed: Int?, minWidth: CGFloat) {
+            switch preset {
+            case .pageMetric: return (4, 0)
+            case .pageSession: return (nil, 280)
+            case .pageUsage, .pageProvider: return (nil, 240)
+            case .pageSetting: return (nil, 200)
+            case .popupProvider, .popupUsage: return (2, 0)
+            case .popupSession: return (1, 0)
             }
         }
 
@@ -195,11 +237,11 @@ enum Theme {
     /// Muted cool tones — blue, violet, teal, amber, coral.
     static func barColor(for model: String) -> Color {
         let palette: [Color] = [
-            Color(hex: 0x4F8EF7),  // blue
-            Color(hex: 0xA78BFA),  // violet
-            Color(hex: 0x46C58F),  // teal
-            Color(hex: 0xE0A13C),  // amber
-            Color(hex: 0xE46464),  // coral
+            chartBlue,
+            chartPurple,
+            chartGreen,
+            chartAmber,
+            statusError,
         ]
         return palette[djb2(model) % palette.count]
     }
@@ -234,7 +276,7 @@ enum Theme {
 struct ShadowCardModifier: ViewModifier {
     var radius: CGFloat = 12
     var y: CGFloat = 4
-    var opacity: Double = 0.35
+    var opacity: Double = 0.08
 
     func body(content: Content) -> some View {
         content
@@ -244,7 +286,7 @@ struct ShadowCardModifier: ViewModifier {
 }
 
 extension View {
-    func shadowCard(radius: CGFloat = 12, y: CGFloat = 4, opacity: Double = 0.35) -> some View {
+    func shadowCard(radius: CGFloat = 12, y: CGFloat = 4, opacity: Double = 0.08) -> some View {
         modifier(ShadowCardModifier(radius: radius, y: y, opacity: opacity))
     }
 }
@@ -254,27 +296,27 @@ extension View {
 /// The primary content surface: translucent fill with a hairline border.
 /// On macOS 26+, toolbar buttons use native Liquid Glass via `adaptiveGlassButton()`.
 struct PanelCardModifier: ViewModifier {
-    var radius: CGFloat = Theme.Radius.md
-    var fill: Double = 0.07
+    var radius: CGFloat = Theme.Radius.lg
+    var fill: Double = 1
+    var tint: Color? = nil
 
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: radius)
-                    .fill(Color.white.opacity(fill))
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(tint?.opacity(0.10) ?? Theme.cardSurface)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Theme.hairline, lineWidth: 1)
             }
+            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
     }
 }
 
 extension View {
-    /// Flat card fill — same silhouette as Liquid Glass, without the per-tile
-    /// backdrop-filter (which allocated ~100 MB of GPU textures in the main window).
-    func panelCard(radius: CGFloat = Theme.Radius.md, fill: Double = 0.07) -> some View {
-        modifier(PanelCardModifier(radius: radius, fill: fill))
+    func panelCard(radius: CGFloat = Theme.Radius.lg, fill: Double = 1, tint: Color? = nil) -> some View {
+        modifier(PanelCardModifier(radius: radius, fill: fill, tint: tint))
     }
 }
 
@@ -292,16 +334,8 @@ struct ActiveTileEdge: ViewModifier {
         content
             .background {
                 if isActive {
-                    RoundedRectangle(cornerRadius: corner)
-                        .fill(Theme.claude.opacity(0.10))
-                }
-            }
-            .overlay(alignment: .leading) {
-                if isActive {
-                    Rectangle()
-                        .fill(selected ? Theme.claude : Theme.claude.opacity(0.45))
-                        .frame(width: 2)
-                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .fill(Theme.chartGreen.opacity(0.10))
                 }
             }
     }
@@ -382,5 +416,51 @@ struct AppGlyph: View {
             .font(.system(size: size, weight: weight))
             .symbolRenderingMode(.hierarchical)
             .frame(width: box, height: box, alignment: .center)
+    }
+}
+
+/// CatStatus-style icon well: tinted rounded square, not a naked SF Symbol.
+struct GlyphWell: View {
+    let name: String
+    var tint: Color = Theme.textSecondary
+    var size: CGFloat = 22
+
+    var body: some View {
+        Image(systemName: name)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .fill(Theme.cardFill(0.06))
+            )
+    }
+}
+
+/// Status capsule used on metric cards (18核 / 正常 / RPM).
+struct StatusPill: View {
+    let label: String
+    var tint: Color = Theme.textSecondary
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundColor(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(tint.opacity(0.12)))
+    }
+}
+
+/// Page heading used by every main-window destination.
+struct PageTitle: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(Theme.Font.displayHero)
+            .foregroundColor(Theme.textPrimary)
+            .lineLimit(1)
+            .fixedSize()
     }
 }

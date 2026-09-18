@@ -1,4 +1,40 @@
 import Foundation
+import SwiftUI
+
+/// Where a token came from. Claude Code and Codex are read from their own
+/// transcripts; anything else only ever appears through the local proxy and is
+/// aggregated from proxied requests.
+enum UsageSource: String, CaseIterable, Identifiable {
+    case claude, codex, thirdParty
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex"
+        case .thirdParty: return "第三方"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .claude: return "CC"
+        case .codex: return "Codex"
+        case .thirdParty: return "第三方"
+        }
+    }
+
+    /// Same hues the Traffic page's source chip uses, so a source keeps one
+    /// color across the app.
+    var color: Color {
+        switch self {
+        case .claude: return Theme.claude
+        case .codex: return Theme.codex
+        case .thirdParty: return Theme.cursor
+        }
+    }
+}
 
 /// Granularity for usage aggregation.
 enum UsagePeriod: String, CaseIterable, Identifiable {
@@ -10,6 +46,14 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
         case .month: return "月"
         case .year: return "年"
         case .custom: return "自定义"
+        }
+    }
+
+    /// Two-character label so the popup period strip cannot wrap.
+    var compactLabel: String {
+        switch self {
+        case .custom: return "自定"
+        default: return label
         }
     }
 }
@@ -37,8 +81,15 @@ struct ModelUsage: Identifiable {
     /// All prompt-side tokens processed (fresh input + cache read + cache creation).
     var totalInputTokens: Int { inputTokens + cacheReadTokens + cacheCreationTokens }
     var totalTokens: Int { totalInputTokens + outputTokens }
+    var isZero: Bool { calls == 0 && totalTokens == 0 }
 
     /// Cache-hit share of prompt-side tokens (Claude Code / Codex).
+    ///
+    /// The denominator is the full prompt side (`input + read + create`) and
+    /// the numerator is the cached portion. That reads correctly for both
+    /// sources only because each is stored with **disjoint** buckets: for
+    /// Claude, `input_tokens` excludes the cache fields; for Codex, the parser
+    /// subtracts `cached_input_tokens` from `input_tokens` before storing.
     var cacheHitRate: Double {
         let denom = totalInputTokens
         guard denom > 0 else { return 0 }

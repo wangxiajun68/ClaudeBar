@@ -7,7 +7,6 @@ struct VPNView: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var store = VpnSubscriptionStore.shared
     @ObservedObject private var prefs = AppPreferences.shared
-    @ObservedObject private var probe = VpnNetProbe.shared
 
     @State private var testingAll = false
     @State private var testingNode: String?
@@ -20,6 +19,7 @@ struct VPNView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                PageTitle(title: "VPN")
                 overview
                 VpnSubscriptionSection()
                 nodeGroup
@@ -27,7 +27,7 @@ struct VPNView: View {
             }
             .padding(Theme.Space.s16)
         }
-        .background(Theme.base0.opacity(0.30))
+        .background(Theme.bgPrimary)
         .onAppear {
             portDraft = String(prefs.vpnMixedPort)
             if selectedGroup == nil {
@@ -40,8 +40,8 @@ struct VPNView: View {
             selectedGroup = manager.primaryGroup?.name ?? orderedGroups.first?.name
         }
         .onChange(of: manager.isRunning) { _, on in
-            if on { Task { await probe.refreshIP() } }
-            else { probe.reset() }
+            if on { Task { await VpnNetProbe.shared.refreshIP() } }
+            else { VpnNetProbe.shared.reset() }
         }
     }
 
@@ -50,10 +50,21 @@ struct VPNView: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 0) {
             overviewHeader
+            if manager.isRunning, manager.livePath.count >= 2 {
+                HairlineDivider()
+                Text(manager.livePath.joined(separator: " › "))
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, Theme.Space.s12)
+                    .padding(.vertical, 5)
+                    .help("当前出站路径")
+            }
             HairlineDivider()
-            overviewStats
+            VPNTrafficStrip()
             HairlineDivider()
-            overviewProbes
+            VPNProbeRow()
             if case .failed(let msg) = manager.state {
                 HairlineDivider()
                 errorLine(msg)
@@ -74,7 +85,11 @@ struct VPNView: View {
 
     private var overviewHeader: some View {
         HStack(spacing: Theme.Space.s8) {
-            statusBadge
+            if manager.state == .starting {
+                OrbitLoader(size: 22, caption: "", spinning: true)
+            } else {
+                GlyphWell(name: statusIcon, tint: statusColor, size: 22)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(statusHeadline)
                     .font(Theme.Font.body)
@@ -119,7 +134,11 @@ struct VPNView: View {
             flagChip("局域网", icon: "wifi", isOn: $prefs.vpnAllowLan) {
                 if manager.isRunning { manager.reloadConfig() }
             }
-            Button {
+            SparkleCta(
+                title: isEffectivelyOn ? "停止" : "启动",
+                spinning: manager.state == .starting,
+                kind: isEffectivelyOn ? .stop : .go
+            ) {
                 if isEffectivelyOn {
                     prefs.vpnEnabled = false
                 } else {
@@ -128,133 +147,11 @@ struct VPNView: View {
                 }
                 manager.syncRuntime()
                 syncSystemProxy()
-            } label: {
-                Label(isEffectivelyOn ? "停止" : "启动",
-                      systemImage: isEffectivelyOn ? "stop.fill" : "play.fill")
             }
-            .adaptiveGlassButton(prominent: true)
-            .tint(isEffectivelyOn ? Theme.statusError : Theme.claude)
             .disabled(manager.state == .missingCore)
         }
         .padding(.horizontal, Theme.Space.s12)
         .padding(.vertical, Theme.Space.s8)
-    }
-
-    private var overviewStats: some View {
-        HStack(spacing: Theme.Space.s16) {
-                VpnSpeedChart(history: manager.speedHistory)
-                    .frame(width: 148, height: 44)
-                    .opacity(manager.isRunning ? 1 : 0.35)
-                compactStat("↓", VpnFormat.rate(manager.speedDown), Theme.external, width: 86,
-                            help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
-                compactStat("↑", VpnFormat.rate(manager.speedUp), Theme.claudeHi, width: 86,
-                            help: "内核 mixed-port 实时上行，不是订阅额度。")
-                compactStat("↓累计", VpnFormat.bytes(manager.traffic.totalDown), Theme.textPrimary, width: 64)
-                compactStat("↑累计", VpnFormat.bytes(manager.traffic.totalUp), Theme.textPrimary, width: 64)
-                compactStat("连接", VpnFormat.connections(manager.traffic.activeConnections), Theme.textPrimary, width: 36)
-                Spacer(minLength: 0)
-                Text(manager.coreVersion.map { "mihomo \($0)" } ?? " ")
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.textTertiary())
-                    .frame(minWidth: 88, alignment: .trailing)
-                    .opacity(manager.coreVersion == nil ? 0 : 1)
-        }
-        .padding(.horizontal, Theme.Space.s12)
-        .padding(.vertical, Theme.Space.s8)
-        .opacity(manager.isRunning ? 1 : 0.45)
-    }
-
-    private func compactStat(_ label: String, _ value: String, _ tint: Color, width: CGFloat,
-                             help: String? = nil) -> some View {
-        let body = VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(Theme.Font.micro)
-                .foregroundColor(Theme.textTertiary())
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(tint)
-                .lineLimit(1)
-                .frame(width: width, alignment: .leading)
-        }
-        return Group {
-            if let help { body.help(help) } else { body }
-        }
-    }
-
-    private var overviewProbes: some View {
-        HStack(alignment: .center, spacing: Theme.Space.s8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: Theme.Space.s6) {
-                    ForEach(probe.sites) { site in
-                        Button {
-                            Task { await probe.test(id: site.id) }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(site.name)
-                                    .foregroundColor(Theme.textSecondary)
-                                Text(siteDelayLabel(site.delay))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(siteDelayColor(site.delay))
-                                    .frame(width: 36, alignment: .trailing)
-                            }
-                            .font(Theme.Font.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                        }
-                        .buttonStyle(.pressable)
-                        .disabled(!manager.isRunning || probe.testingAll)
-                    }
-                }
-            }
-            Button(probe.testingAll ? "…" : "测速") {
-                Task { await probe.testAll() }
-            }
-            .adaptiveGlassButton()
-            .disabled(!manager.isRunning || probe.testingAll)
-
-            Spacer(minLength: 8)
-
-            Button {
-                Task { await probe.refreshIP() }
-            } label: {
-                HStack(spacing: 6) {
-                    if let info = probe.ipInfo {
-                        Text(countryFlag(info.countryCode))
-                        Text(info.ip)
-                            .font(Theme.Font.captionMono)
-                            .textSelection(.enabled)
-                        Text([info.country, info.city, info.isp].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .foregroundColor(Theme.textTertiary())
-                            .lineLimit(1)
-                    } else {
-                        Text(probe.ipLoading ? "查询出口…" : (probe.ipError ?? "出口 IP"))
-                            .foregroundColor(Theme.textTertiary())
-                    }
-                }
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(!manager.isRunning || probe.ipLoading)
-            .help("刷新出口 IP")
-        }
-        .padding(.horizontal, Theme.Space.s12)
-        .padding(.vertical, Theme.Space.s8)
-    }
-    private var statusBadge: some View {
-        ZStack {
-            Circle()
-                .stroke(statusColor.opacity(0.22), lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: isEffectivelyOn ? 1 : 0.22)
-                .stroke(statusColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            AppGlyph(name: statusIcon, size: 10)
-                .foregroundColor(statusColor)
-        }
-        .frame(width: 22, height: 22)
-        .accessibilityHidden(true)
     }
 
     private func flagChip(_ title: String, icon: String, isOn: Binding<Bool>,
@@ -318,47 +215,30 @@ struct VPNView: View {
         .padding(.vertical, Theme.Space.s6)
     }
 
-    private func siteDelayLabel(_ delay: Int?) -> String {
-        switch delay {
-        case nil: return "—"
-        case -1: return "…"
-        case -2, 0: return "超时"
-        case let ms?: return String(format: "%4d", min(max(ms, 0), 9999))
-        }
-    }
-
-    private func siteDelayColor(_ delay: Int?) -> Color {
-        switch delay {
-        case nil, -1: return Theme.textTertiary()
-        case -2, 0: return Theme.statusError
-        case let ms? where ms < 200: return Theme.statusSuccess
-        case let ms? where ms < 800: return Theme.claudeHi
-        default: return Theme.statusError
-        }
-    }
-
-    private func countryFlag(_ code: String) -> String {
-        let cc = code.uppercased()
-        guard cc.count == 2,
-              cc.unicodeScalars.allSatisfy({ CharacterSet.uppercaseLetters.contains($0) }) else {
-            return "🌐"
-        }
-        return String(cc.unicodeScalars.map { Character(UnicodeScalar(127397 + $0.value)!) })
-    }
     // MARK: Node mosaic
 
     private var nodeGroup: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: Theme.Space.s8) {
-                sectionLabel("节点")
+                sectionLabel("节点", icon: "square.grid.2x2")
                 Spacer(minLength: 0)
                 if manager.isRunning, let group = currentGroup {
-                    Button(testingAll ? "测速中…" : "测速") {
+                    Button {
                         Task {
                             testingAll = true
                             await manager.testGroupDelay(group: group.name)
                             testingAll = false
                         }
+                    } label: {
+                        ZStack {
+                            Text("测速")
+                                .opacity(testingAll ? 0 : 1)
+                            if testingAll {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            }
+                        }
+                        .frame(width: 52, height: 22)
                     }
                     .adaptiveGlassButton()
                     .disabled(testingAll || testingNode != nil)
@@ -487,7 +367,6 @@ struct VPNView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 52)
         .background(live ? Theme.claude.opacity(0.16) : Theme.base1.opacity(0.72))
-        .animation(.easeOut(duration: 0.15), value: live)
         .contextMenu {
             Button("测速此节点") { testOne(nodeName) }
         }
@@ -497,28 +376,25 @@ struct VPNView: View {
         Button {
             testOne(nodeName)
         } label: {
-            Group {
+            ZStack {
                 if testing {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .controlSize(.mini)
                         .tint(Theme.claude)
-                        .scaleEffect(0.85)
-                        .frame(width: 14, height: 14)
                 } else if let delay, delay == 0 {
                     Text("超时")
                         .foregroundColor(Theme.statusError)
                 } else if let delay {
-                    Text("\(delay)")
+                    Text("\(min(delay, 9999))")
                         .foregroundColor(delayColor(delay))
                 } else {
                     Text("测")
                         .foregroundColor(Theme.textTertiary())
                 }
             }
-            .font(.system(.caption, design: .monospaced))
-            .frame(width: 36, alignment: .trailing)
-            .padding(.horizontal, 4)
+            .font(.system(.caption, design: .monospaced).monospacedDigit())
+            .frame(width: 40, height: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -555,18 +431,14 @@ struct VPNView: View {
         DisclosureGroup(isExpanded: $logsOpen) {
             VpnLogConsole(lines: manager.logLines)
         } label: {
-            sectionLabel("日志")
+            sectionLabel("日志", icon: "text.alignleft")
         }
     }
 
     // MARK: Helpers
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Font.labelSection)
-            .foregroundColor(Theme.textSecondary)
-            .textCase(.uppercase)
-            .tracking(0.6)
+    private func sectionLabel(_ text: String, icon: String) -> some View {
+        SectionHeader(icon: icon, title: text, tint: Theme.claude)
     }
 
     private var mosaicColumnCount: Int {
@@ -654,8 +526,175 @@ struct VPNView: View {
             if prefs.vpnGuardEnabled { VpnProxyGuard.shared.start() }
         } else {
             VpnProxyGuard.shared.stop()
-            VpnSystemProxyController.clearSystemProxy()
+            VpnSystemProxyController.clearSystemProxyAsync()
         }
+    }
+}
+
+// MARK: - Isolated traffic strip (observes rates, not the mosaic)
+
+private struct VPNTrafficStrip: View {
+    @ObservedObject private var manager = VpnManager.shared
+    @ObservedObject private var rates = VpnLiveRates.shared
+
+    var body: some View {
+        HStack(spacing: Theme.Space.s16) {
+            VpnSpeedChart(history: rates.speedHistory)
+                .frame(width: 148, height: 44)
+                .opacity(manager.isRunning ? 1 : 0.35)
+            compactStat("↓", VpnFormat.rate(rates.speedDown), Theme.external, width: 86,
+                        help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
+            compactStat("↑", VpnFormat.rate(rates.speedUp), Theme.claudeHi, width: 86,
+                        help: "内核 mixed-port 实时上行，不是订阅额度。")
+            compactStat("↓累计", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: 64)
+            compactStat("↑累计", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: 64)
+            compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: 36)
+            Spacer(minLength: 0)
+            Text(manager.coreVersion.map { "mihomo \($0)" } ?? " ")
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textTertiary())
+                .frame(minWidth: 88, alignment: .trailing)
+                .opacity(manager.coreVersion == nil ? 0 : 1)
+        }
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
+        .opacity(manager.isRunning ? 1 : 0.45)
+    }
+
+    private func compactStat(_ label: String, _ value: String, _ tint: Color, width: CGFloat,
+                             help: String? = nil) -> some View {
+        let body = VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textTertiary())
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(tint)
+                .lineLimit(1)
+                .frame(width: width, alignment: .leading)
+        }
+        return Group {
+            if let help { body.help(help) } else { body }
+        }
+    }
+}
+
+/// Site probes + 测速 + exit IP. Isolated so delay ticks do not rebuild the mosaic.
+/// 测速 is a fixed 52pt slot; IP is a fixed 168pt trailing slot — the old
+/// HStack reflowed whenever the IP string or "测速"/"…" swapped width.
+private struct VPNProbeRow: View {
+    @ObservedObject private var manager = VpnManager.shared
+    @ObservedObject private var probe = VpnNetProbe.shared
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.Space.s8) {
+            Button {
+                Task { await probe.testAll() }
+            } label: {
+                ZStack {
+                    Text("测速")
+                        .opacity(probe.testingAll ? 0 : 1)
+                    if probe.testingAll {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .frame(width: 52, height: 22)
+            }
+            .adaptiveGlassButton()
+            .disabled(!manager.isRunning || probe.testingAll)
+            .help("测试站点连通性")
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .center, spacing: Theme.Space.s6) {
+                    ForEach(probe.sites) { site in
+                        Button {
+                            Task { await probe.test(id: site.id) }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(site.name)
+                                    .foregroundColor(Theme.textSecondary)
+                                Text(siteDelayLabel(site.delay))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(siteDelayColor(site.delay))
+                                    .frame(width: 36, alignment: .trailing)
+                            }
+                            .font(Theme.Font.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                        }
+                        .buttonStyle(.pressable)
+                        .disabled(!manager.isRunning || probe.testingAll)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Button {
+                Task { await probe.refreshIP() }
+            } label: {
+                HStack(spacing: 6) {
+                    if probe.ipLoading {
+                        ProgressView().controlSize(.mini)
+                    }
+                    if let info = probe.ipInfo {
+                        Text(countryFlag(info.countryCode))
+                        Text(info.ip)
+                            .font(Theme.Font.captionMono)
+                            .textSelection(.enabled)
+                    } else {
+                        Text(probe.ipError ?? "出口 IP")
+                            .foregroundColor(Theme.textTertiary())
+                    }
+                }
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+                .frame(width: 168, alignment: .trailing)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!manager.isRunning)
+            .help(ipHelp)
+        }
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
+    }
+
+    private var ipHelp: String {
+        if let info = probe.ipInfo {
+            let geo = [info.country, info.city, info.isp].filter { !$0.isEmpty }.joined(separator: " · ")
+            return geo.isEmpty ? "刷新出口 IP" : geo
+        }
+        return "刷新出口 IP"
+    }
+
+    private func siteDelayLabel(_ delay: Int?) -> String {
+        switch delay {
+        case nil: return "—"
+        case -1: return "…"
+        case -2, 0: return "超时"
+        case let ms?: return String(format: "%4d", min(max(ms, 0), 9999))
+        }
+    }
+
+    private func siteDelayColor(_ delay: Int?) -> Color {
+        switch delay {
+        case nil, -1: return Theme.textTertiary()
+        case -2, 0: return Theme.statusError
+        case let ms? where ms < 200: return Theme.statusSuccess
+        case let ms? where ms < 800: return Theme.claudeHi
+        default: return Theme.statusError
+        }
+    }
+
+    private func countryFlag(_ code: String) -> String {
+        let cc = code.uppercased()
+        guard cc.count == 2,
+              cc.unicodeScalars.allSatisfy({ CharacterSet.uppercaseLetters.contains($0) }) else {
+            return "🌐"
+        }
+        return String(cc.unicodeScalars.map { Character(UnicodeScalar(127397 + $0.value)!) })
     }
 }
 

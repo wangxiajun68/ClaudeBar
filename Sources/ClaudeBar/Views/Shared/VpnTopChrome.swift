@@ -41,11 +41,11 @@ struct VpnNodeMenu: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                     .fill(manager.isRunning ? Theme.claude.opacity(0.14) : Theme.cardFill(0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                     .strokeBorder(manager.isRunning ? Theme.claude.opacity(0.4) : Theme.hairline, lineWidth: 1)
             )
         }
@@ -66,7 +66,7 @@ struct VpnNodeMenu: View {
     }
 }
 
-private struct VpnNodePickerPanel: View {
+struct VpnNodePickerPanel: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var prefs = AppPreferences.shared
     @Binding var isPresented: Bool
@@ -183,7 +183,7 @@ private struct VpnNodePickerPanel: View {
             prefs.vpnEnabled = false
             manager.syncRuntime()
             VpnProxyGuard.shared.stop()
-            VpnSystemProxyController.clearSystemProxy()
+            VpnSystemProxyController.clearSystemProxyAsync()
             isPresented = false
         } else {
             prefs.vpnEnabled = true
@@ -246,18 +246,19 @@ struct VpnLiveDelayTestButton: View {
 /// Stretching dual sparkline + numeric ↓/↑ — popup header only.
 struct VpnRateStrip: View {
     @ObservedObject private var manager = VpnManager.shared
+    @ObservedObject private var rates = VpnLiveRates.shared
     var height: CGFloat = 28
     var showNumeric: Bool = true
 
     var body: some View {
         HStack(spacing: 8) {
-            VpnSpeedChart(history: manager.speedHistory)
+            VpnSpeedChart(history: rates.speedHistory)
                 .frame(minWidth: 80, maxWidth: .infinity, minHeight: height, maxHeight: height)
             if showNumeric {
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text("↓\(VpnFormat.compact(manager.speedDown))")
+                    Text("↓\(VpnFormat.compact(rates.speedDown))")
                         .foregroundColor(Theme.external)
-                    Text("↑\(VpnFormat.compact(manager.speedUp))")
+                    Text("↑\(VpnFormat.compact(rates.speedUp))")
                         .foregroundColor(Theme.claudeHi)
                 }
                 .font(.system(size: 10, design: .monospaced).weight(.semibold))

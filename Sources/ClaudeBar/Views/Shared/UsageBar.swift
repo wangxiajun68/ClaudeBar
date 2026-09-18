@@ -10,8 +10,12 @@ struct UsageModelTile: View {
     let maxTokens: Int
     /// Popup density: smaller fonts, tighter padding.
     var dense: Bool = false
+    /// Where this model's tokens came from, in display order. Non-empty makes
+    /// the tile open a ring popover on click; empty leaves it inert.
+    var sourceSlices: [SourceRing.Slice] = []
 
     @State private var isHovered = false
+    @State private var showSourceRing = false
 
     private var ratio: Double { maxTokens > 0 ? Double(stat.totalTokens) / Double(maxTokens) : 0 }
     private var color: Color { Theme.barColor(for: stat.model) }
@@ -21,37 +25,38 @@ struct UsageModelTile: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s6) {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: Theme.Space.s6) {
                 Circle()
                     .fill(color)
-                    .frame(width: dense ? 5 : 6, height: dense ? 5 : 6)
+                    .frame(width: dense ? 6 : 8, height: dense ? 6 : 8)
                 Text(stat.model)
                     .font(dense ? Theme.Font.rowTitle : Theme.Font.bodySmall)
-                    .foregroundColor(Theme.textPrimary.opacity(isHovered ? 1 : 0.85))
+                    .foregroundColor(Theme.textPrimary.opacity(isHovered ? 1 : 0.9))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text("\(Int((ratio * 100).rounded()))%")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(color)
+                StatusPill(label: "\(Int((ratio * 100).rounded()))%", tint: color)
+                if !sourceSlices.isEmpty {
+                    Image(systemName: "chart.pie")
+                        .font(Theme.Font.tileDetail)
+                        .foregroundColor(Theme.textTertiary(isHovered ? 0.9 : 0.4))
+                }
             }
-            UsageStackBar(stat: stat, height: dense ? 6 : 8)
+            UsageStackBar(stat: stat, height: dense ? 7 : 10)
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageStats.formatTokens(stat.totalTokens))
-                    .font(dense ? Theme.Font.tileMicroValue : Theme.Font.tileValueSmall)
+                    .font(dense ? Theme.Font.tileValueSmall : Theme.Font.displayMetricSmall)
                     .monospacedDigit()
                     .foregroundColor(Theme.textPrimary)
                     .contentTransition(.numericText())
                     .animation(Theme.Animation.smooth, value: stat.totalTokens)
                 Spacer(minLength: 8)
                 if hasCache {
-                    Text("缓存命中 \(stat.cacheHitPercent)%")
-                        .font(dense ? Theme.Font.tileDetail : Theme.Font.captionMono)
-                        .monospacedDigit()
-                        .foregroundColor(color)
-                        .lineLimit(1)
-                        .fixedSize()
+                    StatusPill(
+                        label: "缓存 \(stat.cacheHitPercent)%",
+                        tint: stat.cacheHitPercent >= 50 ? Theme.statusSuccess : color
+                    )
                 }
             }
             Text(detailLine)
@@ -62,14 +67,44 @@ struct UsageModelTile: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(hovered: isHovered, dense: dense)
         .hoverState($isHovered)
         .animation(Theme.Animation.smooth, value: isHovered)
+        .contentShape(Rectangle())
+        .onTapGesture { if !sourceSlices.isEmpty { showSourceRing = true } }
+        .popover(isPresented: $showSourceRing, arrowEdge: .bottom) {
+            sourceRingPopover
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(hasCache
             ? "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) tokens，缓存命中 \(stat.cacheHitPercent)%"
             : "\(stat.model)，\(UsageStats.formatTokens(stat.totalTokens)) Token")
+    }
+
+    /// Where this model's tokens came from. Opens on click — the ring is the
+    /// only place the CC / Codex / 第三方 split is legible per model.
+    private var sourceRingPopover: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            Text(stat.model)
+                .font(Theme.Font.rowTitle)
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            HStack(alignment: .center, spacing: Theme.Space.s16) {
+                SourceRing(slices: sourceSlices,
+                           centerValue: UsageStats.formatTokens(stat.totalTokens),
+                           centerCaption: "总用量")
+                SourceRingLegend(slices: sourceSlices)
+                    .frame(width: 168)
+            }
+            Text(detailLine)
+                .font(Theme.Font.tileDetail)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+        }
+        .padding(Theme.Space.s12)
+        .frame(width: 330)
     }
 
     private var detailLine: String {
@@ -117,11 +152,11 @@ struct UsageStackBar: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: height / 2, style: .continuous))
         }
         .frame(height: height)
         .background(
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
+            RoundedRectangle(cornerRadius: height / 2, style: .continuous)
                 .fill(Theme.cardFill(0.07))
         )
     }

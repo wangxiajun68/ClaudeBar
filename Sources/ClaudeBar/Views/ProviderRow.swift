@@ -65,14 +65,6 @@ struct ProviderTile: View {
         .padding(dense ? Theme.Space.s8 : Theme.Space.s12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(hovered: isHovered, dense: dense)
-        .overlay(alignment: .leading) {
-            if isActive {
-                Rectangle()
-                    .fill(accent)
-                    .frame(width: 2)
-                    .clipShape(RoundedRectangle(cornerRadius: 1))
-            }
-        }
         .hoverState($isHovered)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(provider.name)，\(isActive ? "当前" : "未激活")，\(provider.models.count) 个模型")
@@ -132,11 +124,7 @@ struct ProviderTile: View {
                     .truncationMode(.tail)
                 Spacer()
                 if isActive {
-                    Text("当前")
-                        .font(Theme.Font.microMedium)
-                        .foregroundColor(Theme.statusBusy)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
+                    StatusPill(label: "当前", tint: accent)
                         .transition(.scale.combined(with: .opacity))
                 }
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -241,23 +229,19 @@ struct PopupModelTile: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s6) {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(alignment: .top, spacing: Theme.Space.s4) {
                 Button(action: onActivate) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: Theme.Space.s4) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: Theme.Space.s6) {
                             Text(model.name)
-                                .font(Theme.Font.rowTitle)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .foregroundColor(Theme.textPrimary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 2)
                             if isActive {
-                                Text("当前")
-                                    .font(Theme.Font.microMedium)
-                                    .foregroundColor(Theme.statusBusy)
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Capsule().fill(Theme.statusBusy.opacity(0.15)))
+                                StatusPill(label: "当前", tint: accent)
                             }
                         }
                         Text(provider.name)
@@ -275,17 +259,11 @@ struct PopupModelTile: View {
                 captureToggle
             }
         }
-        .padding(Theme.Space.s8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered, dense: true)
-        .overlay(alignment: .leading) {
-            if isActive {
-                Rectangle()
-                    .fill(accent)
-                    .frame(width: 2)
-                    .clipShape(RoundedRectangle(cornerRadius: 1))
-            }
-        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(isActive ? Theme.chartGreen.opacity(0.10) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .hoverState($isHovered)
         .accessibilityLabel("\(model.name)，\(provider.name)，\(isActive ? "当前" : "未激活")")
     }
@@ -293,9 +271,13 @@ struct PopupModelTile: View {
     private var captureToggle: some View {
         Button(action: onToggleCapture) {
             Image(systemName: "dot.radiowaves.left.and.right")
-                .font(Theme.Font.bodySmall.weight(.semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(provider.captureEnabled ? Theme.external : Theme.textTertiary(0.4))
                 .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(provider.captureEnabled ? Theme.chartGreen.opacity(0.16) : Theme.cardFill(0.06))
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -8,7 +8,7 @@ import AppKit
 /// The bypass list matches clash-verge's macOS default.
 @MainActor
 enum VpnSystemProxyController {
-    static let defaultBypass =
+    nonisolated static let defaultBypass =
         "127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, localhost, *.local, *.crashlytics.com, <local>"
 
     /// All enabled network services (Wi-Fi, Ethernet, …).
@@ -44,11 +44,20 @@ enum VpnSystemProxyController {
     /// Point HTTP / HTTPS / SOCKS at 127.0.0.1:<port> on every service.
     /// PAC / auto-discovery are cleared first; `-setwebproxy` gets `off` as
     /// the authenticated flag so macOS does not leave a stale PAC URL.
+    ///
+    /// Spawns many `networksetup` processes. Must not run on the main actor —
+    /// that was the start/stop hitch (tens of blocking waits per toggle).
     static func applySystemProxy(port: Int) {
+        Task.detached(priority: .userInitiated) {
+            let msg = applySystemProxyNow(port: port)
+            await MainActor.run { VpnManager.shared.log(msg) }
+        }
+    }
+
+    nonisolated static func applySystemProxyNow(port: Int) -> String {
         let services = networkServices()
         if services.isEmpty {
-            VpnManager.shared.log("系统代理：没有可用网络服务")
-            return
+            return "系统代理：没有可用网络服务"
         }
         var failed = 0
         for service in services {
@@ -68,18 +77,21 @@ enum VpnSystemProxyController {
                 if r.status != 0 { failed += 1 }
             }
         }
-        if !isOurHTTPProxyEnabled(port: port) {
-            VpnManager.shared.log("系统代理回读失败，重试一次")
+        if !isOurHTTPProxyEnabledNow(port: port) {
             for service in preferredServices() {
                 _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setwebproxy", service, "127.0.0.1", "\(port)", "off"])
                 _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setwebproxystate", service, "on"])
             }
         }
-        let ok = isOurHTTPProxyEnabled(port: port)
-        VpnManager.shared.log("系统代理已写入 127.0.0.1:\(port)（\(services.count) 个服务\(failed > 0 ? "，失败 \(failed)" : "")，回读 \(ok ? "成功" : "失败")）")
+        let ok = isOurHTTPProxyEnabledNow(port: port)
+        return "系统代理已写入 127.0.0.1:\(port)（\(services.count) 个服务\(failed > 0 ? "，失败 \(failed)" : "")，回读 \(ok ? "成功" : "失败")）"
     }
 
     static func isOurHTTPProxyEnabled(port: Int) -> Bool {
+        isOurHTTPProxyEnabledNow(port: port)
+    }
+
+    nonisolated static func isOurHTTPProxyEnabledNow(port: Int) -> Bool {
         let portStr = "\(port)"
         for service in preferredServices() {
             if let p = parseWebProxy(service), p.enabled, p.host == "127.0.0.1", p.port == portStr {
@@ -107,17 +119,28 @@ enum VpnSystemProxyController {
     }
 
     /// Clear the proxy on every service and restore DNS if TUN hijacked it.
+    /// Quit path stays synchronous so the proxy is gone before the process dies.
     static func clearSystemProxy() {
+        clearSystemProxyNow()
+    }
+
+    static func clearSystemProxyAsync() {
+        Task.detached(priority: .userInitiated) {
+            clearSystemProxyNow()
+        }
+    }
+
+    nonisolated static func clearSystemProxyNow() {
         for service in networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setautoproxystate", service, "off"])
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setwebproxystate", service, "off"])
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setsecurewebproxystate", service, "off"])
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setsocksfirewallproxystate", service, "off"])
         }
-        VpnTunDnsHelper.restoreSystemDNSIfNeeded()
+        VpnTunDnsHelper.restoreSystemDNSNow()
     }
 
-    private static func bypassDomains() -> [String] {
+    nonisolated private static func bypassDomains() -> [String] {
         defaultBypass.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
@@ -168,9 +191,8 @@ final class VpnProxyGuard {
         Task.detached(priority: .utility) {
             let current = VpnSystemProxyController.currentHTTPProxy()
             guard current?.host != expected || current?.port != port else { return }
-            await MainActor.run {
-                VpnSystemProxyController.applySystemProxy(port: mixedPort)
-            }
+            let msg = VpnSystemProxyController.applySystemProxyNow(port: mixedPort)
+            await MainActor.run { VpnManager.shared.log(msg) }
         }
     }
 }
@@ -182,7 +204,6 @@ final class VpnProxyGuard {
 /// resolver while fake-ip is active — what clash-verge's set_dns.sh does.
 /// We reuse the app's existing privileged-helper pattern (setuid fanctl) for
 /// this: the helper binary runs networksetup as root.
-@MainActor
 enum VpnTunDnsHelper {
     static let helperPath = "/usr/local/bin/claudebar-fanctl" // existing setuid helper host
     static let dnsMarker = FilePaths.vpnDir.appendingPathComponent(".original_dns")
@@ -191,6 +212,10 @@ enum VpnTunDnsHelper {
     /// resolvers clash-verge scripts/set_dns.sh sets.
     static func setSystemDNS() {
         guard AppPreferences.shared.vpnTunEnabled else { return }
+        Task.detached(priority: .userInitiated) { setSystemDNSNow() }
+    }
+
+    nonisolated static func setSystemDNSNow() {
         saveOriginalDNSIfNeeded()
         for service in VpnSystemProxyController.networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "223.5.5.5", "119.29.29.29"])
@@ -199,6 +224,10 @@ enum VpnTunDnsHelper {
     }
 
     static func restoreSystemDNSIfNeeded() {
+        Task.detached(priority: .userInitiated) { restoreSystemDNSNow() }
+    }
+
+    nonisolated static func restoreSystemDNSNow() {
         guard FileManager.default.fileExists(atPath: dnsMarker.path) else { return }
         for service in VpnSystemProxyController.networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "Empty"])
@@ -207,7 +236,7 @@ enum VpnTunDnsHelper {
         try? FileManager.default.removeItem(at: FilePaths.vpnTunMarker)
     }
 
-    private static func saveOriginalDNSIfNeeded() {
+    nonisolated private static func saveOriginalDNSIfNeeded() {
         guard !FileManager.default.fileExists(atPath: dnsMarker.path) else { return }
         let services = VpnSystemProxyController.networkServices()
         guard let first = services.first else { return }

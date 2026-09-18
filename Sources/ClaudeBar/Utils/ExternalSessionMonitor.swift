@@ -7,6 +7,12 @@ import Foundation
 /// session file touched within `recencyWindow` is alive, and one touched
 /// within `busyWindow` is considered mid-turn (its writer is actively
 /// appending).
+///
+/// Codex fans work out to **sub-agents**: each gets its own rollout file whose
+/// first `session_meta` record carries `parent_thread_id` + `thread_source:
+/// "subagent"` + an `agent_nickname`. Those files are otherwise
+/// indistinguishable from a user session (same cwd, same model), which is why
+/// an ungrouped list shows dozens of near-identical cards.
 struct ExternalSessionInfo: Identifiable, Equatable {
     var id: String { "\(kind.rawValue):\(sessionId)" }
     let kind: ExternalAgentKind
@@ -19,6 +25,26 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     var isActive: Bool           // touched within busyWindow → working
     var contextTokens: Int = 0
     var contextLimit: Int = 0
+
+    /// Parent thread id when this rollout is a sub-agent (nil for user
+    /// sessions). Set from `session_meta.parent_thread_id`.
+    var parentThreadId: String? = nil
+    /// `session_meta.thread_source` — `"user"` or `"subagent"`.
+    var threadSource: String = ""
+    /// Sub-agent display name (`"Darwin"`, `"Curie"`, …); empty for user
+    /// sessions.
+    var agentNickname: String = ""
+    /// Spawn depth from `source.subagent.thread_spawn.depth` (0 when absent).
+    var spawnDepth: Int = 0
+
+    var isSubagent: Bool { parentThreadId != nil || threadSource == "subagent" }
+
+    /// Card title: the sub-agent's nickname when there is one, else the
+    /// project folder.
+    var displayName: String {
+        if !agentNickname.isEmpty { return agentNickname }
+        return projectFolder.isEmpty ? kind.displayName : projectFolder
+    }
 
     var projectFolder: String { (cwd as NSString).lastPathComponent }
 
@@ -96,6 +122,10 @@ struct ExternalSessionMonitor {
         var model: String
         var contextUsed: Int
         var contextLimit: Int
+        var parentThreadId: String?
+        var threadSource: String
+        var agentNickname: String
+        var spawnDepth: Int
     }
     private static var codexFileCache: [String: CodexFileCache] = [:]
     /// `fetchActive` is called from detached tasks and polls can overlap, so
@@ -146,7 +176,11 @@ struct ExternalSessionMonitor {
                             isAlive: true,
                             isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow,
                             contextTokens: parsed.contextUsed,
-                            contextLimit: parsed.contextLimit
+                            contextLimit: parsed.contextLimit,
+                            parentThreadId: parsed.parentThreadId,
+                            threadSource: parsed.threadSource,
+                            agentNickname: parsed.agentNickname,
+                            spawnDepth: parsed.spawnDepth
                         ))
                     }
                 }
@@ -168,6 +202,7 @@ struct ExternalSessionMonitor {
         if let hit { return hit }
         let head = readHead(path: path, bytes: 32_000)
         let ctx = readCodexContext(path: path)
+        let spawn = codexSpawnInfo(head: head)
         let entry = CodexFileCache(
             mtime: meta.mtime,
             size: meta.size,
@@ -177,11 +212,50 @@ struct ExternalSessionMonitor {
             // appears within the first turns).
             model: head.field(forKey: "\"model\":\""),
             contextUsed: ctx.used,
-            contextLimit: ctx.limit)
+            contextLimit: ctx.limit,
+            parentThreadId: spawn.parentThreadId,
+            threadSource: spawn.threadSource,
+            agentNickname: spawn.nickname,
+            spawnDepth: spawn.depth)
         codexCacheLock.lock()
         codexFileCache[path] = entry
         codexCacheLock.unlock()
         return entry
+    }
+
+    /// Parent/child fields from the head's **first** `session_meta` record —
+    /// line 1 of every rollout, and the only record that carries the parent
+    /// link. A sub-agent rollout embeds its parent's own `session_meta` as
+    /// line 2, so this looks **only** at line 1: scanning onward for
+    /// `session_meta` would find the parent's record and mistake a sub-agent
+    /// for a user session.
+    ///
+    /// The record can exceed the 32 KB head read (`base_instructions` are
+    /// large), in which case it fails to parse and the file reads as a user
+    /// session — the same fallback the cwd/model scans already take.
+    private static func codexSpawnInfo(head: String) -> (parentThreadId: String?, threadSource: String, nickname: String, depth: Int) {
+        let empty: (parentThreadId: String?, threadSource: String, nickname: String, depth: Int) = (nil, "", "", 0)
+        guard let firstLine = head.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first,
+              firstLine.contains("\"session_meta\""),
+              let data = firstLine.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["type"] as? String == "session_meta",
+              let payload = obj["payload"] as? [String: Any] else { return empty }
+
+        let threadSource = (payload["thread_source"] as? String) ?? ""
+        var nickname = (payload["agent_nickname"] as? String) ?? ""
+        var depth = 0
+        var parent = payload["parent_thread_id"] as? String
+        if let source = payload["source"] as? [String: Any],
+           let subagent = source["subagent"] as? [String: Any],
+           let threadSpawn = subagent["thread_spawn"] as? [String: Any] {
+            if let d = threadSpawn["depth"] as? Int { depth = d }
+            else if let d = threadSpawn["depth"] as? Double { depth = Int(d) }
+            if nickname.isEmpty, let n = threadSpawn["agent_nickname"] as? String { nickname = n }
+            if parent == nil, let p = threadSpawn["parent_thread_id"] as? String { parent = p }
+        }
+        if parent?.isEmpty == true { parent = nil }
+        return (parent, threadSource, nickname, depth)
     }
 
     // MARK: Helpers

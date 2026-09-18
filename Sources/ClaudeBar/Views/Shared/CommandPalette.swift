@@ -47,7 +47,7 @@ struct CommandPalette: View {
             if isPresented {
                 ZStack {
                     // Dimmed backdrop — click to dismiss.
-                    Color.black.opacity(0.35)
+                    Color.black.opacity(0.18)
                         .ignoresSafeArea()
                         .onTapGesture { dismiss() }
                         .transition(.opacity)
@@ -60,13 +60,13 @@ struct CommandPalette: View {
                     .frame(width: 460)
                     .background {
                         RoundedRectangle(cornerRadius: Theme.Radius.xl)
-                            .fill(Theme.base1)
+                            .fill(Theme.cardSurface)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: Theme.Radius.xl)
-                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                            .strokeBorder(Theme.hairline, lineWidth: 1)
                     }
-                    .shadowCard(radius: 30, y: 16, opacity: 0.5)
+                    .shadowCard(radius: 24, y: 12, opacity: 0.12)
                     .scaleEffect(isPresented ? 1 : 0.92)
                     .opacity(isPresented ? 1 : 0)
                     .offset(y: isPresented ? 0 : 8)
@@ -265,7 +265,7 @@ private struct CommandRow: View {
             .padding(.vertical, 8)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .fill(isSelected ? Theme.accent.opacity(0.2) : (isHovered ? Theme.cardFill(0.06) : Color.clear))
+                    .fill(isSelected ? Theme.accent.opacity(0.10) : (isHovered ? Theme.cardFill(0.06) : Color.clear))
             }
             .contentShape(Rectangle())
         }

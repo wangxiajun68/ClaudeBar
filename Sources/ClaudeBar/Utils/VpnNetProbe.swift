@@ -48,6 +48,7 @@ final class VpnNetProbe: ObservableObject {
         sites = Self.defaultSites
         ipInfo = nil
         ipError = nil
+        ipLoading = false
     }
 
     func testAll() async {
@@ -70,13 +71,31 @@ final class VpnNetProbe: ObservableObject {
         }
     }
 
-    func refreshIP() async {
+    /// Look up the egress IP through mixed-port.
+    ///
+    /// `afterNodeSwitch` waits for the tunnel to actually move before the
+    /// first attempt — otherwise ipify/ip-api race the old exit or fail
+    /// while CONNECT is resetting.
+    func refreshIP(afterNodeSwitch: Bool = false) async {
         ipLoading = true
         ipError = nil
+        if afterNodeSwitch {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
         let port = VpnManager.shared.mixedPortIfRunning
-        if let info = await Self.fetchIP(proxyPort: port) {
-            ipInfo = info
-        } else {
+        let attempts = afterNodeSwitch ? 4 : 3
+        for attempt in 0..<attempts {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
+            }
+            if let info = await Self.fetchIP(proxyPort: port) {
+                ipInfo = info
+                ipError = nil
+                ipLoading = false
+                return
+            }
+        }
+        if ipInfo == nil {
             ipError = port == nil ? "内核未运行" : "无法取得出口 IP"
         }
         ipLoading = false
@@ -107,41 +126,110 @@ final class VpnNetProbe: ObservableObject {
         }
     }
 
-    private static let ipEndpoints = [
-        "https://api.ip.sb/geoip",
-        "https://ipwho.is/",
-        "https://get.geojs.io/v1/ip/geo.json",
+    /// Mix of JSON geo APIs and plain-text echo servers. Several of the
+    /// previous three (ip.sb / ipwho.is / geojs) sit behind Cloudflare and
+    /// 403 the clash-verge UA through mixed-port, which is why the card
+    /// so often showed "无法取得出口 IP".
+    private static let ipEndpoints: [IPEndpoint] = [
+        IPEndpoint(url: "http://ip-api.com/json/?fields=status,query,country,countryCode,regionName,city,isp,as", json: true),
+        IPEndpoint(url: "https://api.ipify.org?format=json", json: true),
+        IPEndpoint(url: "https://ifconfig.co/json", json: true),
+        IPEndpoint(url: "https://ipinfo.io/json", json: true),
+        IPEndpoint(url: "https://api.ip.sb/geoip", json: true),
+        IPEndpoint(url: "https://ipwho.is/", json: true),
+        IPEndpoint(url: "https://get.geojs.io/v1/ip/geo.json", json: true),
+        IPEndpoint(url: "https://icanhazip.com", json: false),
+        IPEndpoint(url: "https://api64.ipify.org?format=json", json: true),
+        IPEndpoint(url: "https://ifconfig.me/ip", json: false),
     ]
 
+    private struct IPEndpoint {
+        let url: String
+        let json: Bool
+    }
+
+    /// Browser-like UA: IP echo services rate-limit or 403 `clash-verge/*`.
+    private static let ipUA =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+
     static func fetchIP(proxyPort: Int?) async -> VpnIPInfo? {
-        let session = VpnHTTP.session(proxyPort: proxyPort)
-        for url in ipEndpoints {
-            guard let u = URL(string: url) else { continue }
-            var req = URLRequest(url: u)
-            req.timeoutInterval = 8
-            req.setValue(VpnHTTP.clashVergeUA, forHTTPHeaderField: "User-Agent")
-            guard let (data, response) = try? await session.data(for: req),
-                  let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
-            if let info = parseIP(obj), !info.ip.isEmpty { return info }
+        await withTaskGroup(of: VpnIPInfo?.self) { group in
+            for endpoint in ipEndpoints {
+                group.addTask {
+                    await fetchOne(endpoint, proxyPort: proxyPort)
+                }
+            }
+            for await info in group {
+                if let info, !info.ip.isEmpty {
+                    group.cancelAll()
+                    return info
+                }
+            }
+            return nil
         }
-        return nil
+    }
+
+    private static func fetchOne(_ endpoint: IPEndpoint, proxyPort: Int?) async -> VpnIPInfo? {
+        guard let u = URL(string: endpoint.url) else { return nil }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 5
+        req.setValue(ipUA, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        let session = VpnHTTP.session(proxyPort: proxyPort)
+        guard let (data, response) = try? await session.data(for: req),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              !data.isEmpty
+        else { return nil }
+        if endpoint.json,
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return parseIP(obj)
+        }
+        return parsePlainIP(data)
+    }
+
+    private static func parsePlainIP(_ data: Data) -> VpnIPInfo? {
+        guard let raw = String(data: data, encoding: .utf8) else { return nil }
+        let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let ip = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isIPAddress(ip) else { return nil }
+        return VpnIPInfo(ip: ip)
+    }
+
+    private static func isIPAddress(_ s: String) -> Bool {
+        if s.contains(":") {
+            return s.count >= 3 && s.count <= 45 && !s.contains(" ")
+        }
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard let n = Int(part), (0...255).contains(n) else { return false }
+            return true
+        }
     }
 
     private static func parseIP(_ obj: [String: Any]) -> VpnIPInfo? {
+        if let status = obj["status"] as? String, status.lowercased() == "fail" { return nil }
+        if let success = obj["success"] as? Bool, success == false { return nil }
         let loc = obj["location"] as? [String: Any]
         let conn = obj["connection"] as? [String: Any]
-        let asnRaw = obj["asn"]
+        let asnRaw = obj["asn"] ?? obj["as"]
         let asn: Int
         if let n = asnRaw as? Int { asn = n }
-        else if let s = asnRaw as? String { asn = Int(s.replacingOccurrences(of: "AS", with: "")) ?? 0 }
-        else { asn = JSONCoerce.intVal(conn?["asn"]) }
-        let ip = (obj["ip"] as? String) ?? ""
-        guard !ip.isEmpty else { return nil }
+        else if let s = asnRaw as? String {
+            let digits = s.replacingOccurrences(of: "AS", with: "").split(separator: " ").first.map(String.init) ?? s
+            asn = Int(digits) ?? 0
+        } else { asn = JSONCoerce.intVal(conn?["asn"]) }
+        let ip = (obj["ip"] as? String)
+            ?? (obj["query"] as? String)
+            ?? (obj["ipAddress"] as? String)
+            ?? (obj["ip_address"] as? String)
+            ?? ""
+        let trimmed = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isIPAddress(trimmed) else { return nil }
         return VpnIPInfo(
-            ip: ip,
+            ip: trimmed,
             country: (obj["country"] as? String) ?? (obj["country_name"] as? String)
                 ?? (loc?["country"] as? String) ?? "",
             countryCode: {
@@ -151,9 +239,11 @@ final class VpnNetProbe: ObservableObject {
                     ?? ""
                 return raw.count == 2 ? raw : ""
             }(),
-            region: (obj["region"] as? String) ?? (loc?["state"] as? String) ?? "",
+            region: (obj["region"] as? String) ?? (obj["regionName"] as? String)
+                ?? (loc?["state"] as? String) ?? "",
             city: (obj["city"] as? String) ?? (loc?["city"] as? String) ?? "",
             isp: (obj["organization"] as? String) ?? (obj["isp"] as? String)
+                ?? (obj["org"] as? String)
                 ?? (conn?["org"] as? String) ?? (conn?["isp"] as? String)
                 ?? (obj["organization_name"] as? String) ?? "",
             asn: asn)

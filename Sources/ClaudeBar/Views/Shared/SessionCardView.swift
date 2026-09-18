@@ -19,37 +19,42 @@ struct SessionCardView: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Circle()
-                    .fill(isBusy ? Theme.statusBusy : Color.gray.opacity(0.5))
+                    .fill(isBusy ? Theme.statusBusy : Color.gray.opacity(0.45))
                     .frame(width: 6, height: 6)
                 Text(session.projectFolder.isEmpty ? "session" : session.projectFolder)
-                    .font(Theme.Font.rowTitle)
-                    .foregroundColor(Theme.textPrimary.opacity(0.9))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer()
-                Text(session.contextLabel)
-                    .font(Theme.Font.microMono.weight(.medium))
-                    .foregroundColor(ctxColor.opacity(0.9))
-                    .lineLimit(1)
+                StatusPill(
+                    label: isBusy ? "运行中" : "空闲",
+                    tint: isBusy ? Theme.statusBusy : Theme.statusIdle
+                )
             }
 
-            // Always rendered (dimmed when no data) so every card in the
-            // grid row keeps the same height regardless of context data.
-            ContextBar(ratio: ratio, height: 3)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(session.contextLabel)
+                    .font(Theme.Font.tileMicroValue)
+                    .foregroundColor(ctxColor)
+                    .lineLimit(1)
+                Spacer()
+                SessionLoadChip(key: .pid(session.pid), compact: true)
+            }
+
+            ContextBar(ratio: ratio, height: 4)
                 .opacity(session.contextTokens > 0 ? 1 : 0.25)
 
             HStack(alignment: .top, spacing: 6) {
-                VStack(alignment: .leading, spacing: 3) {
-                    // Always render the activity line (space-reserved when
-                    // empty) so the card height doesn't jitter between polls.
+                VStack(alignment: .leading, spacing: 2) {
                     Text(session.currentActivity.isEmpty ? " " : session.currentActivity)
-                        .font(Theme.Font.microMono)
-                        .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary(0.55))
-                        .lineLimit(1)
+                        .font(Theme.Font.micro)
+                        .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.75) : Theme.textTertiary(0.55))
+                        .lineLimit(2)
 
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         if hasAgents {
                             Text("⚙\(session.subagents.count + session.workflows.reduce(0) { $0 + $1.agents.count })")
                                 .font(Theme.Font.micro)
@@ -57,12 +62,11 @@ struct SessionCardView: View {
                         }
                         if !session.model.isEmpty {
                             Text(session.model)
-                                .font(Theme.Font.microMono)
+                                .font(Theme.Font.micro)
                                 .foregroundColor(Theme.textTertiary(0.55))
                                 .lineLimit(1)
                         }
                         Spacer()
-                        SessionLoadChip(key: .pid(session.pid), compact: true)
                         if let heartbeat {
                             HeartbeatSparkline(trail: heartbeat)
                         }
@@ -74,28 +78,18 @@ struct SessionCardView: View {
                 Spacer(minLength: 0)
             }
             .overlay(alignment: .topTrailing) {
-                // Subagent chord: one vertical line per live subagent —
-                // taller and glowing while running, dim stub when done.
-                // Overlaid (not stacked) so the card height stays stable.
                 if runningAgents > 0 {
                     AgentChordLines(running: runningAgents, total: agentTotal)
-                        .frame(height: 22)
+                        .frame(height: 18)
                         .offset(x: 0, y: 2)
                         .transition(.opacity)
                 }
             }
         }
-        .padding(.horizontal, 7).padding(.vertical, 5)
+        .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(Theme.Animation.smooth, value: runningAgents)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isBusy ? Theme.statusBusy.opacity(isHovered ? 0.16 : 0.10) : Color.white.opacity(0.05))
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isBusy ? Theme.statusBusy.opacity(isHovered ? 0.55 : 0.35) : Theme.hairline, lineWidth: 1)
-        )
+        .tile(hovered: isHovered, dense: true)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

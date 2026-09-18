@@ -1,150 +1,112 @@
 import SwiftUI
 
-/// Popup usage area: period chips, date navigation, and per-model tiles in a
-/// fixed-height scroll region (2 columns × 2 rows visible).
+/// Popup usage: heatmap + source triad + token mix + model bars. Model
+/// tokens only — VPN quota lives on the VPN page.
 struct UsagePanel: View {
     @EnvironmentObject var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
 
-    /// Popup usage grid: one dense tile row height and how many rows stay visible.
-    enum Layout {
-        static let tileRowHeight: CGFloat = 78
-        static let visibleRows: CGFloat = 2
-        static var gridHeight: CGFloat {
-            tileRowHeight * visibleRows + Theme.Space.gridGap * (visibleRows - 1)
-        }
-        /// Chips + date nav + vertical padding (excludes optional date picker).
-        static let headerHeight: CGFloat = 60
-        static let datePickerHeight: CGFloat = 30
-        static func totalHeight(showingDatePicker: Bool) -> CGFloat {
-            headerHeight + (showingDatePicker ? datePickerHeight : 0) + gridHeight
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s4) {
-            periodChips
-                .padding(.horizontal, Theme.Space.s16)
-                .padding(.bottom, 2)
-
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+            header
             if showCustomDatePicker {
                 DatePicker("", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
                     .datePickerStyle(.compact)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, Theme.Space.s16)
-                    .padding(.bottom, 2)
                     .transition(.opacity)
             }
-
-            dateNav
-                .padding(.horizontal, Theme.Space.s16)
-                .padding(.bottom, 2)
-
-            ScrollView {
-                if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                    StandbyEmptyState(label: "暂无用量")
-                        .padding(.horizontal, Theme.Space.s8)
-                        .padding(.bottom, Theme.Space.s4)
-                } else {
-                    TileGrid(.popupUsage) {
-                        ForEach(providerStore.usageStats) { stat in
-                            UsageModelTile(stat: stat, maxTokens: providerStore.maxUsageTokens, dense: true)
-                                .frame(height: Layout.tileRowHeight, alignment: .top)
-                        }
-                    }
-                    .padding(.horizontal, Theme.Space.s8)
-                    .padding(.bottom, Theme.Space.s4)
+            UsageHeatmap(
+                days: providerStore.usageDays,
+                period: providerStore.usagePeriod,
+                reference: providerStore.usageReferenceDate,
+                compact: true,
+                onSelectDay: { date in
+                    providerStore.usagePeriod = .day
+                    providerStore.usageReferenceDate = date
+                },
+                onSelectMonth: { date in
+                    providerStore.usagePeriod = .month
+                    providerStore.usageReferenceDate = date
                 }
-            }
-            .frame(height: Layout.gridHeight)
-        }
-        .padding(.vertical, Theme.Space.s6)
-    }
+            )
 
-    // MARK: Period chips
-
-    private var periodChips: some View {
-        HStack(spacing: Theme.Space.s4) {
-            ForEach(UsagePeriod.allCases) { period in
-                let isOn = providerStore.usagePeriod == period
-                Button(action: {
-                    if period == .custom {
-                        withAnimation(Theme.Animation.bouncy) { showCustomDatePicker.toggle() }
-                        providerStore.usagePeriod = .custom
-                    } else {
-                        showCustomDatePicker = false
-                        providerStore.usagePeriod = period
-                        providerStore.usageReferenceDate = Date()
-                    }
-                }) {
-                    Text(period.label)
-                        .font(Theme.Font.microSemibold)
-                        .foregroundColor(isOn ? .white : Theme.textSecondary)
-                        .padding(.horizontal, 7).padding(.vertical, 2.5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(isOn ? Theme.accent.opacity(0.3) : Color.white.opacity(0.05))
-                        )
+            EqualRowGrid(spacing: 10, minColumnWidth: 0, fixedColumns: 2) {
+                SourceTriad(totals: providerStore.usageTotalBySource)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("构成")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textTertiary())
+                    TokenMixStrip(stats: providerStore.usageStats, compact: true)
+                    UsageDaySpark(days: providerStore.usageDays)
                 }
-                .buttonStyle(.pressable)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            Spacer()
-        }
-    }
 
-    // MARK: Date navigation
-
-    private var dateNav: some View {
-        HStack(spacing: Theme.Space.s6) {
-            Image(systemName: "chart.bar.xaxis")
-                .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-            Button(action: { shiftUsage(-1) }) {
-                Image(systemName: "chevron.left")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.textTertiary(0.5))
-                    .frame(width: 14, height: 14)
-            }
-            .adaptiveGlassButton()
-            .help("上一个\(providerStore.usagePeriod.label)")
-
-            Text(periodLabel)
-                .font(Theme.Font.microSemibold)
-                .foregroundColor(Theme.textTertiary(0.6))
-                .lineLimit(1)
-
-            Button(action: { shiftUsage(1) }) {
-                Image(systemName: "chevron.right")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.textTertiary(0.5))
-                    .frame(width: 14, height: 14)
-            }
-            .adaptiveGlassButton()
-            .help("下一个\(providerStore.usagePeriod.label)")
-
-            Spacer(minLength: Theme.Space.s8)
-            if providerStore.usageLoading {
-                ProgressView().scaleEffect(0.5).frame(width: 10, height: 10)
-                    .frame(width: 64, alignment: .trailing)
+            if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
+                Text("暂无用量")
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textTertiary())
             } else {
-                Text(providerStore.totalUsageLabel)
-                    .font(Theme.Font.microMedium)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textTertiary(0.6))
-                    .frame(width: 64, alignment: .trailing)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: providerStore.totalUsageLabel)
+                ForEach(Array(providerStore.usageStats.prefix(3))) { stat in
+                    QuotaRow(
+                        title: stat.model,
+                        subtitle: "\(stat.calls) 次",
+                        used: share(of: stat),
+                        remainingLabel: UsageStats.formatTokens(stat.totalTokens),
+                        trailing: "用量 \(Int((share(of: stat) * 100).rounded()))%",
+                        mode: .share
+                    )
+                }
             }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         }
     }
 
-    private func shiftUsage(_ amount: Int) {
-        providerStore.usageReferenceDate = UsageStats.shift(
-            providerStore.usagePeriod, reference: providerStore.usageReferenceDate, by: amount
-        )
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("用量")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            Text(periodCaption)
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            PeriodTabs(period: providerStore.usagePeriod, compact: true, onSelect: selectPeriod)
+            Button(action: { providerStore.refreshUsage(rescan: true) }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("重新统计本周期用量")
+        }
     }
 
-    private var periodLabel: String {
-        UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+    private var periodCaption: String {
+        let label = UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+        if providerStore.usageLoading { return label }
+        return "\(label) · \(providerStore.totalUsageLabel)"
+    }
+
+    private func share(of stat: ModelUsage) -> Double {
+        let peak = max(providerStore.maxUsageTokens, 1)
+        return min(1, Double(stat.totalTokens) / Double(peak))
+    }
+
+    private func selectPeriod(_ period: UsagePeriod) {
+        if period == .custom {
+            withAnimation(Theme.Animation.smooth) { showCustomDatePicker.toggle() }
+            providerStore.usagePeriod = .custom
+        } else {
+            showCustomDatePicker = false
+            providerStore.usagePeriod = period
+            providerStore.usageReferenceDate = Date()
+        }
     }
 }

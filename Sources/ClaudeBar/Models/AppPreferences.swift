@@ -1,5 +1,27 @@
 import Foundation
 import Combine
+import AppKit
+import SwiftUI
+
+/// Light / dark canvas. Not “follow system” — the ice sheet and the night
+/// sheet are two authored palettes, switched on purpose.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case light, dark
+    var id: String { rawValue }
+    var label: String { self == .light ? "浅色" : "深色" }
+    var colorScheme: ColorScheme { self == .dark ? .dark : .light }
+}
+
+extension Notification.Name {
+    static let appearanceDidChange = Notification.Name("com.claudebar.appearanceDidChange")
+}
+
+enum AppearanceSync {
+    static func apply() {
+        NSApp.appearance = Theme.nsAppearance
+        NotificationCenter.default.post(name: .appearanceDidChange, object: nil)
+    }
+}
 
 /// Token magnitude style for `UsageStats.formatTokens` output.
 enum TokenUnitStyle: String {
@@ -34,6 +56,15 @@ final class AppPreferences: ObservableObject {
     @Published var tokenUnitStyle: TokenUnitStyle {
         didSet { UserDefaults.standard.set(tokenUnitStyle.rawValue, forKey: "tokenUnitStyle") }
     }
+
+    @Published var appearance: AppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: "appearanceMode")
+            if didSetReady { AppearanceSync.apply() }
+        }
+    }
+
+    var isDark: Bool { appearance == .dark }
 
     /// Route Codex traffic through the local compatibility proxy (fixes
     /// openai/codex#23186 — MCP namespace tools unusable on generic backends).
@@ -79,6 +110,7 @@ final class AppPreferences: ObservableObject {
             UserDefaults.standard.set(databaseEnabled, forKey: "databaseEnabled")
             ProxyCaptureStore.shared.reloadPersistence()
             UsageIndex.reloadPersistence()
+            ProxyUsageStore.shared.reset()
             NotificationCenter.default.post(name: .persistenceModeDidChange, object: nil)
         }
     }
@@ -131,6 +163,7 @@ final class AppPreferences: ObservableObject {
 
     private init() {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
+        appearance = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: "appearanceMode") ?? "") ?? .light
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
         codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721

@@ -58,7 +58,7 @@ struct ProxyLogView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.base0.opacity(0.35))
+        .background(Theme.bgPrimary)
         .onAppear { recomputeFiltered() }
         .onChange(of: log.entries) { _, _ in recomputeFiltered() }
         .onChange(of: filter) { _, _ in recomputeFiltered() }
@@ -71,9 +71,9 @@ struct ProxyLogView: View {
                 let on = filter == f
                 Button(f.label) { filter = f }
                     .font(Theme.Font.caption)
-                    .foregroundColor(on ? .white : Theme.textSecondary)
+                    .foregroundColor(on ? Theme.claude : Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Capsule().fill(on ? Theme.claude.opacity(0.35) : Theme.cardFill(0.06)))
+                    .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
                     .buttonStyle(.plain)
             }
             TextField("路径 / 模型 / 供应商", text: $query)

@@ -20,13 +20,17 @@ final class UsageJSONStore {
         var cxIn: Int
         var cxOut: Int
         var cxCached: Int
+        /// Last cumulative `total_token_usage.total_tokens` for a Codex file —
+        /// the dedupe key for re-emitted `token_count` records across an
+        /// append boundary. Mirrors the SQLite `cx_total` column.
+        var cxTotal: Int
         var cxModel: String
 
         init(mtime: Double, size: Int, offset: Int, headHash: Int64,
-             cxIn: Int, cxOut: Int, cxCached: Int, cxModel: String = "") {
+             cxIn: Int, cxOut: Int, cxCached: Int, cxTotal: Int = 0, cxModel: String = "") {
             self.mtime = mtime; self.size = size; self.offset = offset
             self.headHash = headHash; self.cxIn = cxIn; self.cxOut = cxOut
-            self.cxCached = cxCached; self.cxModel = cxModel
+            self.cxCached = cxCached; self.cxTotal = cxTotal; self.cxModel = cxModel
         }
 
         init(from decoder: Decoder) throws {
@@ -38,11 +42,12 @@ final class UsageJSONStore {
             cxIn = try c.decode(Int.self, forKey: .cxIn)
             cxOut = try c.decode(Int.self, forKey: .cxOut)
             cxCached = try c.decode(Int.self, forKey: .cxCached)
+            cxTotal = try c.decodeIfPresent(Int.self, forKey: .cxTotal) ?? 0
             cxModel = try c.decodeIfPresent(String.self, forKey: .cxModel) ?? ""
         }
 
         private enum CodingKeys: String, CodingKey {
-            case mtime, size, offset, headHash, cxIn, cxOut, cxCached, cxModel
+            case mtime, size, offset, headHash, cxIn, cxOut, cxCached, cxTotal, cxModel
         }
     }
 
@@ -122,11 +127,13 @@ final class UsageJSONStore {
         persistLocked()
     }
 
-    func fetch(startDay: String, endDay: String) -> [ModelUsage] {
+    func fetch(startDay: String, endDay: String, pathPrefix: String? = nil) -> [ModelUsage] {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var byModel: [String: ModelUsage] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay && !row.path.hasPrefix("openclaw") {
+        for row in rollup.values where row.day >= startDay && row.day <= endDay
+            && !row.path.hasPrefix("openclaw")
+            && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
             var u = byModel[row.model] ?? ModelUsage(model: row.model)
             u.calls += row.calls
             u.inputTokens += row.input
@@ -138,11 +145,13 @@ final class UsageJSONStore {
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
 
-    func fetchDaily(startDay: String, endDay: String) -> [DayUsage] {
+    func fetchDaily(startDay: String, endDay: String, pathPrefix: String? = nil) -> [DayUsage] {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var byDay: [String: DayUsage] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay && !row.path.hasPrefix("openclaw") {
+        for row in rollup.values where row.day >= startDay && row.day <= endDay
+            && !row.path.hasPrefix("openclaw")
+            && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
             var d = byDay[row.day] ?? DayUsage(day: row.day)
             d.inputTokens += row.input
             d.outputTokens += row.output
@@ -179,7 +188,14 @@ final class UsageJSONStore {
         // Pre-cx_model rollups stamped every Codex turn as "codex". Drop the
         // Codex file rows so the next updateIndex re-parses the real slugs.
         let stale = rollup.values.contains { $0.path.hasPrefix("codex:") && $0.model.lowercased() == "codex" }
-        if stale {
+        // Pre-cx_total rows double-counted cached input and re-emitted
+        // token_count records, and carry no cumulative stamp to dedupe
+        // against. A Codex file row with usage but no stamp predates it.
+        let unprefixed = files.contains { key, rec in
+            key.hasPrefix("codex:") && rec.cxTotal == 0
+                && (rec.cxIn + rec.cxOut + rec.cxCached) > 0
+        }
+        if stale || unprefixed {
             files = files.filter { !$0.key.hasPrefix("codex:") }
             rollup = rollup.filter { !$0.value.path.hasPrefix("codex:") }
             persistLocked()

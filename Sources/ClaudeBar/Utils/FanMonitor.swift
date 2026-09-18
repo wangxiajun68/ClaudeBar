@@ -1,14 +1,15 @@
 import Foundation
-import Combine
+import Observation
 
 @MainActor
-final class FanMonitor: ObservableObject {
+@Observable
+final class FanMonitor {
     static let shared = FanMonitor()
 
-    @Published private(set) var fans: [FanInfo] = []
-    @Published private(set) var smcAvailable = false
-    @Published private(set) var lastError: String?
-    @Published private(set) var helperInstalled = FanHelperInstaller.isInstalled()
+    var fans: [FanInfo] = []
+    var smcAvailable = false
+    var lastError: String?
+    var helperInstalled = FanHelperInstaller.isInstalled()
 
     private var timer: Timer?
     private var subscribers = 0

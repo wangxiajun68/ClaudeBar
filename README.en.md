@@ -6,83 +6,95 @@
 </h1>
 
 <p align="center">
-  <strong>One menu bar for your entire AI workbench.</strong><br>
-  VPN · Local LLM proxy · Multi-agent model switching · Session & usage monitoring — always one click away in the macOS menu bar.
+  <strong>One click in the menu bar. The whole AI pipeline, in your hand.</strong><br>
+  Switch models · watch sessions · count tokens · run VPN · inspect traffic — all from the macOS menu bar.
 </p>
 
-![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)![macOS 15+](https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white)![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)![MIT](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <a href="https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml"><img src="https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><img src="https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release" alt="Release"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white" alt="macOS 15+">
+  <img src="https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white" alt="Swift 5.9+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+</p>
 
-**[Download latest release](https://github.com/wangxiajun68/ClaudeBar/releases/latest)**
+<p align="center">
+  <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><strong>Download latest →</strong></a>
+</p>
 
-## Why ClaudeBar
+## Interface
 
-AI-assisted development increasingly depends on a pile of separate tools: a VPN client, a packet inspector, a model switcher, a session browser — each with its own window, tray icon, and startup cost, all serving the same workflow.
+The main window is a dashboard: CPU die, GPU bars, memory tank, disk, Wi-Fi / Bluetooth, left and right fans — then the active vendor, live sessions, and tokens. The menu-bar popup is the same facts, compressed: three chips to switch CC / Codex / VPN, then living sessions and a monthly heatmap.
 
-**ClaudeBar collapses them into a single menu-bar app.** It lives in the menu bar, takes no dock or window space, and is always one click away: switch Claude Code / Codex providers and models, bring up or inspect a VPN tunnel, review every frame of traffic through the local proxy, and browse sessions and token usage across three tools — without launching anything else or leaving your terminal.
+| Main window | Menu bar |
+| :---------: | :------: |
+| ![Dashboard](docs/screenshots/main-window.png) | ![Menu-bar popup](docs/screenshots/menubar-popup.png) |
+| Ice / graphite tiles. Color lives in the charts. | Click the icon. Switch, inspect, leave. No window required. |
 
-In one sentence: **keep the infrastructure in the menu bar, keep your attention on the work.**
+## Why it exists
 
-## What it does
+Running Claude Code, Codex, and Cursor at once usually means a pile of other apps: a VPN client, a proxy inspector, a model switcher, a session list. Each one owns a tray icon. Each context switch pulls you out of the terminal.
 
-- **VPN** — bundled mihomo: subscriptions, node select, delay tests, system proxy; live rates in the menu bar.
-- **Local LLM proxy** — forwards on `127.0.0.1`, bridges Chat / Responses. Claude Code and Codex each use their selected vendor; third-party clients can pick a different upstream. With traffic recording, inspect conversations, tool calls, images, and raw payloads.
-- **Region screenshot** — ⌘⇧A to copy / save / pin a snip.
-- **Model switching** — Claude Code and Codex keep separate provider lists; activation writes `settings.json` / `config.toml` independently. Copy configs only via explicit import in Manage.
-- **Sessions · usage · resources** — tri-agent session aggregation, token stats, CPU / GPU / memory attribution.
-- **Menu-bar popup** — switch models, scan sessions, check resources and usage without opening the main window.
-- **Desktop widget** — today's token total and active sessions at a glance.
+ClaudeBar folds that pile into **one** menu-bar app. It stays in the top bar; the main window opens when you want the dashboard. Click, do the thing, go back to the code.
 
-## Screenshots
+## Six jobs
 
-![Traffic inspector](docs/screenshots/traffic.png)
+**Switch.** Claude Code and Codex keep separate vendor lists. Activation writes `~/.claude/settings.json` and `~/.codex/config.toml` independently. The popup has three chips: CC, Codex, VPN node.
 
-*Traffic inspector · compact view: consecutive tool calls and system prompts are collapsed by default, with keyword search.*
+**Forward.** A local proxy on `127.0.0.1` (default 15721) bridges Chat and Responses. Claude Code and Codex follow the model you just activated; third-party clients can pick a different upstream without rewriting those two files. Turn on capture and the **Traffic** page shows conversations, tool calls, images, and raw frames.
 
-| Main window                                      | Menu-bar popup                                        | Desktop widget                         |
-| ------------------------------------------------ | ----------------------------------------------------- | -------------------------------------- |
-| ![Main window](docs/screenshots/main-window.png) | ![Menu-bar popup](docs/screenshots/menubar-popup.png) | ![Widget](docs/screenshots/widget.png) |
+**Tunnel.** Bundled mihomo: subscriptions, node pick, delay tests, system proxy / TUN. Live ↓↑ rates sit in the menu bar. The outbound path is a breadcrumb (`Japan › telecom`), not a decorative metro line.
 
-## Quick start
+**Scene.** Sessions collect Claude Code, Cursor, Codex, and other CLIs onto one card: context bar, current tool, heartbeat, CPU / memory. Double-click to resume in the terminal or Cursor.
 
-| Goal                   | Path                                                                                                  |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| **VPN**                | **VPN** page → add subscription → enable system proxy; switch nodes from the menu bar |
-| **Capture traffic**    | Settings → local proxy → enable recording on a model card → **Traffic**                               |
-| **Switch model**       | **Models** page (Claude Code / Codex tabs) or menu-bar popup → activate → open a new terminal session |
-| **Resume session**     | **Sessions** page or popup → click a card                                                             |
-| **Global search**      | `⌘K` on any page — search pages / sessions / models                                                   |
-| **Third-party client** | Base URL → `http://127.0.0.1:<port>/v1`; Settings → Local proxy to pick a third-party upstream |
-| **Region screenshot**  | ⌘⇧A (can be disabled in Settings) |
+**Usage.** Model tokens only. Day / month / year heatmap, CC / Codex / third-party columns, input · cache-hit · write · output mix. VPN quota stays on the VPN page.
+
+**Machine.** A 2×3 grid: load, temps in the CPU / GPU captions, disk fill, Wi-Fi / Bluetooth / ethernet, two clickable fans (auto / max). Light is ice `#EEF3F8`. Dark is graphite `#16181C`. Neither follows system appearance.
+
+Also: ⌘⇧A region screenshot (copy / save / pin), ⌘K to jump to a page / session / model, and a desktop widget for today's tokens.
+
+## How to
+
+| You want to… | Go here |
+| --- | --- |
+| Change model | Menu-bar CC / Codex chip, or **Models**. Open a new terminal session for it to stick. |
+| Change node | Menu-bar VPN chip, or the **VPN** mosaic. |
+| See if a chat hit the proxy | Settings → local proxy → enable capture on the model card → **Traffic** |
+| Point a third-party client at the same upstream | Base URL `http://127.0.0.1:<port>/v1`; pick a third-party vendor in Settings |
+| Resume the session you just left | **Sessions** page or popup card |
+| Grab a rectangle of the screen | ⌘⇧A (can be disabled in Settings) |
 
 ## Install
 
-Requires **macOS 15+** and Apple Silicon (`arm64`). Download the DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) and drag it to Applications.
+**macOS 15+**, Apple Silicon. Download the DMG from [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) and drop it on Applications.
 
-If Gatekeeper blocks the app:
+If Gatekeeper blocks it:
 
 ```bash
 xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 ```
 
-## Data & privacy
+## What it touches
 
-ClaudeBar follows a read-first principle: apart from the explicit write-back when switching models, it never modifies your tools' data.
+Read-first. The only writes into other tools are the ones you trigger by switching a model.
 
-| Source         | Path                                            | Access                                       |
-| -------------- | ----------------------------------------------- | -------------------------------------------- |
-| Claude Code    | `~/.claude/`                                    | Read-only (writes `settings.json` on switch) |
-| Codex          | `~/.codex/`                                     | Read-only (writes `config.toml` on switch)   |
-| Cursor         | `~/Library/.../state.vscdb`                     | Read-only                                    |
-| Proxy captures | `~/Library/Application Support/ClaudeBar/logs/` | Written when recording is on                 |
-| VPN            | `~/Library/Application Support/ClaudeBar/vpn/`  | Subscriptions and core config (local only)   |
+| Who | Path | Access |
+| --- | --- | --- |
+| Claude Code | `~/.claude/` | Read; writes `settings.json` on switch |
+| Codex | `~/.codex/` | Read; writes `config.toml` on switch |
+| Cursor | `~/Library/.../state.vscdb` | Read-only |
+| Proxy captures | `~/Library/Application Support/ClaudeBar/logs/` | Written when recording is on |
+| VPN | `~/Library/Application Support/ClaudeBar/vpn/` | Subscriptions and core config, local only |
 
 ## Build from source
 
 ```bash
-git clone https://github.com/wangxiajun68/ClaudeBar.git && cd ClaudeBar && make build
+git clone https://github.com/wangxiajun68/ClaudeBar.git
+cd ClaudeBar
+make build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) · [docs/VERSIONING.md](docs/VERSIONING.md) · [docs/RELEASING.md](docs/RELEASING.md) · [docs/CHANGELOG.md](docs/CHANGELOG.md) · [FAQ](docs/FAQ.md)
+[Contributing](CONTRIBUTING.md) · [Versioning](docs/VERSIONING.md) · [Releasing](docs/RELEASING.md) · [Changelog](docs/CHANGELOG.md) · [FAQ](docs/FAQ.md)
 
 ## License
 

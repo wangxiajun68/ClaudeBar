@@ -13,29 +13,22 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
                 ResourceStrip()
-                    .padding(Theme.Space.s16)
-                    .sectionRules()
                     .resourceMonitorScope(.dashboard)
-                vpnStrip
+                VpnPowerCard(opensVPNPage: true)
                 metricRow
                 sessionOverview
                 usageTop
             }
             .padding(Theme.Space.s24)
         }
-        .background(Theme.base0.opacity(0.30))
+        .background(Theme.bgPrimary)
     }
 
     // MARK: Title
 
     private var titleBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("概览")
-                .font(Theme.Font.titleLarge)
-                .tracking(Theme.Tracking.titleLarge)
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-                .fixedSize()
+            PageTitle(title: "概览")
             Spacer()
             Button(action: { providerStore.refresh() }) {
                 Label("刷新", systemImage: "arrow.clockwise")
@@ -46,35 +39,32 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: VPN strip
-
-    private var vpnStrip: some View {
-        VpnDashboardStrip { onNavigate(.vpn) }
-            .padding(.horizontal, Theme.Space.s16)
-    }
-
     // MARK: Metric tiles
 
     /// The four key numbers, one tile each.
     private var metricRow: some View {
         TileGrid(.pageMetric) {
             MetricTile(label: "活跃配置", value: activeConfigLabel,
-                       detail: providerStore.currentEnv?.ANTHROPIC_MODEL ?? "") {
+                       detail: providerStore.currentEnv?.ANTHROPIC_MODEL ?? "",
+                       icon: "cube", pill: "当前") {
                 onNavigate(.providers)
             }
-            MetricTile(label: "余额", value: balanceValue, detail: "") {
+            MetricTile(label: "余额", value: balanceValue, detail: "",
+                       icon: "yensign.circle") {
                 onNavigate(.providers)
             }
             MetricTile(label: "会话", value: sessionValue,
-                       detail: "\(runningCount) 运行中 · \(totalSessionCount) 活动") {
+                       detail: "\(runningCount) 运行中 · \(totalSessionCount) 活动",
+                       icon: "rectangle.stack",
+                       pill: runningCount > 0 ? "运行中" : "空闲") {
                 onNavigate(.sessions)
             }
             MetricTile(label: "Token 总量", value: tokenTotalValue,
-                       detail: UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)) {
+                       detail: UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate),
+                       icon: "chart.bar") {
                 onNavigate(.usage)
             }
         }
-        .padding(.horizontal, Theme.Space.s16)
     }
 
     // MARK: Metric values
@@ -124,19 +114,17 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack {
                 Text("活跃会话")
-                    .font(Theme.Font.titleSmall)
-                    .tracking(Theme.Tracking.titleSmall)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .fixedSize()
                 Spacer()
-                Text("\(runningCount) 运行中 / \(totalSessionCount) 活动")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textSecondary)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: runningCount)
+                StatusPill(
+                    label: "\(runningCount) 运行中 / \(totalSessionCount)",
+                    tint: runningCount > 0 ? Theme.claude : Theme.statusIdle
+                )
             }
-            .padding(.horizontal, Theme.Space.s16)
+            .padding(.horizontal, Theme.Space.s4)
 
             let rows = overviewRows.prefix(8)
             if rows.isEmpty {
@@ -151,7 +139,6 @@ struct DashboardView: View {
                         OverviewTile(row: row) { onNavigate(.sessions) }
                     }
                 }
-                .padding(.horizontal, Theme.Space.s16)
                 if overviewRows.count > 8 {
                     Button(action: { onNavigate(.sessions) }) {
                         Label("查看全部 \(overviewRows.count) 个会话", systemImage: "arrow.right")
@@ -159,13 +146,12 @@ struct DashboardView: View {
                     }
                     .buttonStyle(.plain)
                     .tint(Theme.accent)
-                    .padding(.horizontal, Theme.Space.s16)
                     .padding(.vertical, Theme.Space.s8)
                 }
             }
         }
-        .padding(.vertical, Theme.Space.s8)
-        .sectionRules()
+        .padding(Theme.Space.s16)
+        .panelCard()
     }
 
     /// Unified view-model for one overview tile (Claude or Cursor).
@@ -236,9 +222,8 @@ struct DashboardView: View {
     private var usageTop: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             HStack {
-                Text("用量排行")
-                    .font(Theme.Font.titleSmall)
-                    .tracking(Theme.Tracking.titleSmall)
+                Text("用量")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .fixedSize()
@@ -247,20 +232,37 @@ struct DashboardView: View {
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
             }
+            UsageHeatmap(
+                days: providerStore.usageDays,
+                period: providerStore.usagePeriod,
+                reference: providerStore.usageReferenceDate,
+                onSelectDay: { date in
+                    providerStore.usagePeriod = .day
+                    providerStore.usageReferenceDate = date
+                },
+                onSelectMonth: { date in
+                    providerStore.usagePeriod = .month
+                    providerStore.usageReferenceDate = date
+                }
+            )
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 StandbyEmptyState(label: "暂无用量")
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 12)
             } else {
                 TileGrid(.pageUsage) {
-                    ForEach(Array(providerStore.usageStats.prefix(5).enumerated()), id: \.element.id) { _, stat in
-                        UsageModelTile(stat: stat, maxTokens: maxUsageTokens)
+                    ForEach(Array(providerStore.usageStats.prefix(4))) { stat in
+                        UsageModelCard(
+                            stat: stat,
+                            slices: providerStore.usageSourceSlices(for: stat),
+                            share: Double(stat.totalTokens) / Double(maxUsageTokens)
+                        )
                     }
                 }
             }
         }
         .padding(Theme.Space.s16)
-        .sectionRules()
+        .panelCard()
     }
 
     private var maxUsageTokens: Int {
@@ -286,37 +288,16 @@ private struct OverviewStatusDot: View {
     }
 }
 
-/// A stroke ring that breathes in and out for as long as it is on screen.
-/// Removed entirely (not merely faded) when the session goes idle — mirrors
-/// SessionsView's BusyPulseRing.
-///
-/// The animation is also dropped when no window is visible: a
-/// `repeatForever` on a hidden window keeps the display link and the whole
-/// render graph awake for a pulse nobody can see.
+/// Static halo for a busy session. A `repeatForever` pulse kept a display
+/// link running for every live tile and hitching scroll.
 private struct BusyPulseRing: View {
     let color: Color
-    @State private var phase = false
-    @State private var allowed = UIWakePolicy.shouldAnimate
 
     var body: some View {
         Circle()
-            .strokeBorder(color.opacity(0.4), lineWidth: 3)
-            .scaleEffect(allowed && phase ? 1.7 : 1)
-            .opacity(allowed && phase ? 0.5 : 0.2)
-            .onAppear { phase = true }
-            .onDisappear { phase = false }
-            .onReceive(UIWakePolicy.changes) { _ in
-                // A `repeatForever` only (re)starts on an actual value change,
-                // so flip `phase` across a turn to re-arm the pulse when a
-                // window appears again.
-                allowed = UIWakePolicy.shouldAnimate
-                phase = false
-                DispatchQueue.main.async { phase = allowed }
-            }
-            .animation(allowed
-                       ? Theme.Animation.pulse.repeatForever(autoreverses: true)
-                       : .default,
-                       value: phase)
+            .strokeBorder(color.opacity(0.35), lineWidth: 2)
+            .scaleEffect(1.7)
+            .opacity(0.45)
     }
 }
 
@@ -331,24 +312,28 @@ private struct OverviewTile: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(row.tint)
-                        .frame(width: 6, height: 6)
+                HStack(spacing: 8) {
                     OverviewStatusDot(tint: row.tint, isBusy: row.busy)
                     Text(row.project)
-                        .font(Theme.Font.bodySmall)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Text(row.updated)
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
+                    StatusPill(
+                        label: row.busy ? "运行中" : "空闲",
+                        tint: row.busy ? row.tint : Theme.statusIdle
+                    )
                 }
-                SessionLoadChip(key: row.load, shared: row.loadShared)
-                ContextBar(ratio: row.contextRatio)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(row.contextRatio > 0 ? row.contextLabel : "—")
+                        .font(Theme.Font.tileValueSmall)
+                        .foregroundColor(row.contextRatio > 0 ? Theme.contextColor(row.contextRatio) : Theme.textTertiary())
+                        .lineLimit(1)
+                    Spacer()
+                    SessionLoadChip(key: row.load, shared: row.loadShared)
+                }
+                ContextBar(ratio: row.contextRatio, height: 6)
                     .opacity(row.contextRatio > 0 ? 1 : 0.25)
                 HStack {
                     Text(row.activity.isEmpty ? " " : row.activity)
@@ -357,16 +342,16 @@ private struct OverviewTile: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer()
-                    Text(row.contextRatio > 0 ? row.contextLabel : "—")
-                        .font(Theme.Font.captionMono)
-                        .foregroundColor(row.contextRatio > 0 ? Theme.contextColor(row.contextRatio) : Theme.textTertiary())
+                    Text(row.updated)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .tile(tint: row.busy ? row.tint : nil, hovered: isHovered)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .tile(hovered: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverState($isHovered)
@@ -380,75 +365,68 @@ private struct OverviewTile: View {
 /// traffic, exit IP — tap opens the VPN page.
 struct VpnDashboardStrip: View {
     @ObservedObject private var manager = VpnManager.shared
+    @ObservedObject private var rates = VpnLiveRates.shared
     @ObservedObject private var store = VpnSubscriptionStore.shared
     @ObservedObject private var probe = VpnNetProbe.shared
     var onOpen: () -> Void
 
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: Theme.Space.s16) {
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    GlyphWell(name: "globe", tint: Theme.external, size: 22)
                     Text("VPN")
                         .font(Theme.Font.tileLabel)
                         .foregroundColor(Theme.textSecondary)
-                    Text(statusText)
-                        .font(Theme.Font.bodySmall)
-                        .foregroundColor(Theme.textPrimary)
+                    Spacer()
+                    StatusPill(
+                        label: manager.isRunning ? "运行中" : (failed ? "异常" : "未启用"),
+                        tint: manager.isRunning ? Theme.statusSuccess : (failed ? Theme.statusError : Theme.statusIdle)
+                    )
                 }
-                if manager.isRunning {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("速率")
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textTertiary())
-                        Text("↓\(VpnFormat.rate(manager.speedDown))  ↑\(VpnFormat.rate(manager.speedUp))")
-                            .font(.system(.caption, design: .monospaced))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(statusHero)
+                        .font(Theme.Font.displayMetricSmall)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                    if manager.isRunning {
+                        Text("↓\(VpnFormat.rate(rates.speedDown))  ↑\(VpnFormat.rate(rates.speedUp))")
+                            .font(Theme.Font.tileMicroValue)
                             .foregroundColor(Theme.external)
                             .lineLimit(1)
-                            .frame(width: 204, alignment: .leading)
                     }
-                    if let node = manager.liveLeafName {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("出口")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textTertiary())
-                            Text(node)
-                                .font(Theme.Font.caption)
-                                .foregroundColor(Theme.textPrimary)
-                                .lineLimit(1)
-                        }
+                    Spacer()
+                }
+                HStack(spacing: 12) {
+                    if manager.isRunning, let node = manager.liveLeafName {
+                        Text(node)
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textPrimary)
+                            .lineLimit(1)
                     }
-                    if let info = probe.ipInfo {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("IP")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textTertiary())
-                            Text(info.ip)
-                                .font(Theme.Font.captionMono)
-                                .foregroundColor(Theme.textSecondary)
-                        }
+                    if manager.isRunning, let info = probe.ipInfo {
+                        Text(info.ip)
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(Theme.textSecondary)
                     }
-                    if let sub = store.activeSubscription, sub.total > 0 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("剩余")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textTertiary())
-                            Text(VpnFormat.bytes(sub.remainingBytes))
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(Theme.textPrimary)
-                                .frame(width: 64, alignment: .leading)
-                        }
+                    if manager.isRunning, let sub = store.activeSubscription, sub.total > 0 {
+                        Text("剩余 \(VpnFormat.bytes(sub.remainingBytes))")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textSecondary)
                     }
-                    Text("\(manager.traffic.activeConnections) 连接")
-                        .font(Theme.Font.captionMono)
+                    if manager.isRunning {
+                        Text("\(rates.traffic.activeConnections) 连接")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textTertiary())
+                    }
+                    Spacer(minLength: 0)
+                    AppGlyph(name: "chevron.right", size: 10)
                         .foregroundColor(Theme.textTertiary())
                 }
-                Spacer(minLength: 0)
-                AppGlyph(name: "chevron.right", size: 10)
-                    .foregroundColor(Theme.textTertiary())
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .panelCard()
+            .tile()
         }
         .buttonStyle(.plain)
         .onAppear {
@@ -456,8 +434,13 @@ struct VpnDashboardStrip: View {
         }
     }
 
-    private var statusText: String {
-        if manager.isRunning { return "运行中 · 127.0.0.1:\(AppPreferences.shared.vpnMixedPort)" }
+    private var failed: Bool {
+        if case .failed = manager.state { return true }
+        return false
+    }
+
+    private var statusHero: String {
+        if manager.isRunning { return "127.0.0.1:\(AppPreferences.shared.vpnMixedPort)" }
         if case .starting = manager.state { return "启动中…" }
         if case .failed = manager.state { return "异常" }
         return "未启用"

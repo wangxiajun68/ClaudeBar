@@ -2,6 +2,12 @@
 .build/
 build/
 
+# Swiftc leftovers dropped at repo root
+/*.abi.json
+/*.swiftdoc
+/*.swiftmodule
+/*.swiftsourceinfo
+
 # macOS
 .DS_Store
 *.swp
@@ -22,6 +28,7 @@ DerivedData/
 
 # Accidental screenshots dropped at repo root
 /screenshot-*.png
+/ClaudeBar-*.png
 
 # Stray env-expansion leftover (literal directory named {{HOMEBREW_PREFIX}})
 /[{{][{]HOMEBREW_PREFIX[}][}]/

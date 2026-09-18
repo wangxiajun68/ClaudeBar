@@ -1,5 +1,8 @@
 import Foundation
 import IOKit
+import Darwin
+import CoreWLAN
+import IOBluetooth
 
 // MARK: - Host accelerator (GPU utilization + temperature)
 
@@ -111,5 +114,77 @@ enum HardwareSensors {
         var size = MemoryLayout.size(ofValue: level)
         sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0)
         return level
+    }
+
+    static func bootDisk() -> (used: UInt64, total: UInt64) {
+        var fs = statfs()
+        guard statfs("/", &fs) == 0 else { return (0, 1) }
+        let bsize = UInt64(fs.f_bsize)
+        let total = max(UInt64(fs.f_blocks) * bsize, 1)
+        let free = UInt64(fs.f_bavail) * bsize
+        return (total - min(free, total), total)
+    }
+
+    struct LinkStatus: Equatable {
+        var wifiOn = false
+        var wifiName = ""
+        var wifiRSSI = 0
+        var bluetoothOn = false
+        var wiredOn = false
+    }
+
+    /// Bluetooth controller power state.
+    ///
+    /// This is a privacy-gated read, but there is no TCC-free alternative:
+    /// every route to the radio's power state on macOS 26 goes through
+    /// CoreBluetooth. `IOBluetoothHostController.powerState` does, and so does
+    /// the older-looking `IOBluetoothPreferenceGetControllerPowerState` — that
+    /// one bridges to `+[IOBluetoothCoreBluetoothCoordinator sharedInstance]`,
+    /// which boots a CoreBluetooth session. Nor is IOKit a way out:
+    /// `IOBluetoothHCIController` carries no `IOPowerManagement`, and while
+    /// `AppleBluetoothModule` does, its `CurrentPowerState` reflects the
+    /// module's clock/reset state, not the user's Bluetooth toggle — it stays
+    /// 1 even with Bluetooth switched off, so it cannot answer this question.
+    ///
+    /// So the bundle declares `NSBluetoothAlwaysUsageDescription` and we use the
+    /// documented API. The consequence to know about: without that key TCC does
+    /// not merely deny the read, it aborts the process
+    /// (`Termination Namespace: TCC`), from a background queue, taking the whole
+    /// app down mid-poll. With the key present a denial is just `powerState ==
+    /// off`, which the UI already renders as 蓝牙 关.
+    private static func bluetoothPowerState() -> Bool {
+        (IOBluetoothHostController.default()?.powerState.rawValue ?? 0) != 0
+    }
+
+    static func linkStatus() -> LinkStatus {
+        var status = LinkStatus()
+        let wifi = CWWiFiClient.shared().interface()
+        status.wifiOn = wifi?.powerOn() ?? false
+        if let ssid = wifi?.ssid(), !ssid.isEmpty {
+            status.wifiName = ssid
+        }
+        let rssi = Int(wifi?.rssiValue() ?? 0)
+        status.wifiRSSI = rssi < 0 ? rssi : 0
+        status.bluetoothOn = bluetoothPowerState()
+        status.wiredOn = wiredInterfaceUp(excluding: wifi?.interfaceName)
+        return status
+    }
+
+    private static func wiredInterfaceUp(excluding wifiName: String?) -> Bool {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else { return false }
+        defer { freeifaddrs(ifaddr) }
+        var ptr = ifaddr
+        while let p = ptr {
+            defer { ptr = p.pointee.ifa_next }
+            let flags = Int32(p.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0, (flags & IFF_LOOPBACK) == 0 else { continue }
+            let name = String(cString: p.pointee.ifa_name)
+            if let wifiName, name == wifiName { continue }
+            if name.hasPrefix("utun") || name.hasPrefix("awdl") || name.hasPrefix("llw")
+                || name.hasPrefix("bridge") || name.hasPrefix("ap") { continue }
+            if name.hasPrefix("en") { return true }
+        }
+        return false
     }
 }
