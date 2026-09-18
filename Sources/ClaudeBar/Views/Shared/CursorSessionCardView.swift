@@ -17,56 +17,53 @@ struct CursorSessionCardView: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Circle()
-                    .fill(isActive ? Theme.cursorAccent : Color.gray.opacity(0.5))
+                    .fill(isActive ? Theme.cursorAccent : Color.gray.opacity(0.45))
                     .frame(width: 6, height: 6)
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
-                    .font(Theme.Font.rowTitle)
-                    .foregroundColor(Theme.textPrimary.opacity(0.9))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer()
-                Text(session.contextLabel)
-                    .font(Theme.Font.microMono.weight(.medium))
-                    .foregroundColor(accentColor.opacity(0.9))
+                StatusPill(
+                    label: isActive ? "运行中" : "空闲",
+                    tint: isActive ? Theme.cursorAccent : Theme.statusIdle
+                )
             }
 
-            // Always rendered (dimmed when no data) so every card in the
-            // grid row keeps the same height regardless of context data.
-            ContextBar(ratio: ratio, height: 3)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(session.contextLabel)
+                    .font(Theme.Font.tileMicroValue)
+                    .foregroundColor(accentColor)
+                Spacer()
+                SessionLoadChip(key: .cursor, compact: true, shared: true)
+            }
+
+            ContextBar(ratio: ratio, height: 4)
                 .opacity(session.contextPercent >= 0 ? 1 : 0.25)
 
-            // Always render the activity line (space-reserved when empty)
-            // so both cards in a grid row have equal height.
             Text(session.currentActivity.isEmpty ? " " : session.currentActivity)
-                .font(Theme.Font.microMono)
-                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.65) : Theme.textTertiary())
-                .lineLimit(1)
+                .font(Theme.Font.micro)
+                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
+                .lineLimit(2)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 if hasAgents {
                     Text("⚙\(session.subagents.count)")
                         .font(Theme.Font.micro)
                         .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
                 }
                 Spacer()
-                SessionLoadChip(key: .cursor, compact: true, shared: true)
                 Text(session.relativeUpdated)
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             }
         }
-        .padding(.horizontal, 7).padding(.vertical, 5)
+        .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Theme.cursorAccent.opacity(isHovered ? 0.16 : 0.10) : Color.white.opacity(0.05))
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isActive ? Theme.cursorAccent.opacity(isHovered ? 0.55 : 0.35) : Theme.hairline, lineWidth: 1)
-        )
+        .tile(hovered: isHovered, dense: true)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

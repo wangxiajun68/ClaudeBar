@@ -187,32 +187,28 @@ struct TrafficView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.base0.opacity(0.35))
+        .background(Theme.bgPrimary)
     }
 
     private var modeBar: some View {
         HStack(spacing: Theme.Space.s8) {
-            Text("流量")
-                .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.textPrimary)
+            PageTitle(title: "流量")
             HStack(spacing: Theme.Space.s4) {
                 ForEach(TrafficMode.allCases) { m in
                     let on = mode == m
                     Button(m.label) { mode = m }
-                        .font(Theme.Font.caption)
-                        .foregroundColor(on ? .white : Theme.textSecondary)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().fill(on ? Theme.claude.opacity(0.35) : Theme.cardFill(0.06)))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(on ? Theme.claudeHi : Theme.textSecondary)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(on ? Theme.claude.opacity(0.22) : Theme.cardFill(0.06)))
                         .buttonStyle(.plain)
                 }
             }
             Spacer()
-            Circle()
-                .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
-                .frame(width: 6, height: 6)
-            Text(codexStore.proxyRunning ? "代理已启用" : "代理未启用")
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textSecondary)
+            StatusPill(
+                label: codexStore.proxyRunning ? "代理已启用" : "代理未启用",
+                tint: codexStore.proxyRunning ? Theme.statusSuccess : Theme.statusIdle
+            )
             if codexStore.proxyRunning {
                 if let p = codexStore.activeProvider {
                     Text("·")
@@ -248,7 +244,7 @@ struct TrafficView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.base0.opacity(0.35))
+        .background(Theme.bgPrimary)
         .onChange(of: selectedID) { _, id in
             tab = .conversation
             conversationQuery = ""
@@ -296,9 +292,9 @@ struct TrafficView: View {
                     let on = filter == f
                     Button(f.label) { filter = f }
                         .font(Theme.Font.caption)
-                        .foregroundColor(on ? .white : Theme.textSecondary)
+                        .foregroundColor(on ? Theme.claude : Theme.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().fill(on ? Theme.claude.opacity(0.35) : Theme.cardFill(0.06)))
+                        .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
                         .buttonStyle(.plain)
                 }
                 Spacer()
@@ -344,7 +340,8 @@ struct TrafficView: View {
                             TrafficRow(
                                 rec: rec,
                                 preview: catalog.livePreview[rec.id],
-                                selected: selectedID == rec.id
+                                selected: selectedID == rec.id,
+                                onInterrupt: { interrupt($0) }
                             )
                             .onTapGesture { selectedID = rec.id }
                         }
@@ -355,7 +352,7 @@ struct TrafficView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(Theme.base1.opacity(0.35))
+        .background(Theme.bgSecondary)
     }
 
     // MARK: - Detail
@@ -378,7 +375,7 @@ struct TrafficView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Theme.base0.opacity(0.2))
+            .background(Theme.bgPrimary)
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
                 Text("流量检查器")
@@ -417,6 +414,12 @@ struct TrafficView: View {
                 Text(rec.state.rawValue.uppercased())
                     .font(Theme.Font.badgeMono)
                     .foregroundColor(stateColor(rec.state))
+                if rec.isLive {
+                    ActionChip(systemImage: "stop.fill", tint: Theme.statusError,
+                               help: "中断这次对话：断开客户端连接并停止上游请求") {
+                        interrupt(rec)
+                    }
+                }
             }
             HStack(spacing: Theme.Space.s16) {
                 compactStat("耗时", duration(rec))
@@ -458,9 +461,9 @@ struct TrafficView: View {
                         let on = fullRender == full
                         Button(full ? "完整" : "简洁") { fullRender = full }
                             .font(Theme.Font.caption)
-                            .foregroundColor(on ? .white : Theme.textSecondary)
+                            .foregroundColor(on ? Theme.claude : Theme.textSecondary)
                             .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Capsule().fill(on ? Theme.claude.opacity(0.45) : Theme.cardFill(0.08)))
+                            .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
                             .buttonStyle(.plain)
                     }
                 }
@@ -874,6 +877,12 @@ struct TrafficView: View {
         }
     }
 
+    /// Hard-stop one in-flight call from the traffic page. No-op once the call
+    /// has finished (the registry entry is retired in `CaptureTap.finish`).
+    private func interrupt(_ rec: CaptureSummary) {
+        ProxyInflight.shared.cancel(captureID: rec.id)
+    }
+
     private func rebuildFullTurns() {
         let raw = detail?.requestJSON
         guard detail?.payloadsLoaded == true, raw != nil else {
@@ -1016,6 +1025,7 @@ private struct TrafficRow: View {
     let rec: CaptureSummary
     let preview: String?
     let selected: Bool
+    let onInterrupt: (CaptureSummary) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1030,6 +1040,12 @@ private struct TrafficRow: View {
                     Text("实时")
                         .font(Theme.Font.badgeMono)
                         .foregroundColor(Theme.claudeHi)
+                    // The row itself is a tap target for selection, so the chip
+                    // sits above it and swallows its own clicks.
+                    ActionChip(systemImage: "stop.fill", tint: Theme.statusError,
+                               help: "中断这次对话：断开客户端连接并停止上游请求") {
+                        onInterrupt(rec)
+                    }
                 }
                 Text(rec.startedAt.formatted(date: .omitted, time: .shortened))
                     .font(Theme.Font.captionMono)

@@ -6,59 +6,55 @@ extension Notification.Name {
     static let openVPNPage = Notification.Name("com.claudebar.openVPNPage")
 }
 
-/// Menu-bar popup shell — pure composition. Content lives in `Views/Popup/`
-/// (PanelHeader, SessionsPanel, ProvidersPanel, UsagePanel), UI state in
-/// `PanelState`. Provider editing opens the main window.
+/// Menu-bar popup shell — switcher HUD, one-line machine KPIs, then
+/// the three working surfaces (models / sessions / usage).
 struct MenuBarView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
 
-    /// Fixed section heights so model/usage grids never squeeze sessions.
     private enum SectionHeight {
-        static let providers: CGFloat = 200
-        static let sessions: CGFloat = 240
-        static let usage: CGFloat = UsagePanel.Layout.totalHeight(showingDatePicker: false)
+        /// Cap only — the card hugs live sessions instead of leaving a blank well.
+        static let sessions: CGFloat = 280
+        static let usage: CGFloat = 320
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PanelHeader(onFeedback: {
-                panel.showFeedback("已刷新")
-            })
+        VStack(alignment: .leading, spacing: 6) {
+            PanelHeader(panel: panel)
+                .appearLift()
 
-            Divider().background(Theme.divider)
-
-            ResourceStrip(dense: true)
-                .padding(.horizontal, Theme.Space.s16)
-                .padding(.vertical, Theme.Space.s8)
-
-            Divider().background(Theme.divider)
+            MachineKpiStrip()
+                .appearLift(delay: 0.04)
 
             if !providerStore.hasSettingsFile && codexStore.providers.isEmpty {
                 missingSettingsView
+                    .appearLift(delay: 0.08)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    ProvidersPanel(panel: panel)
-                        .frame(height: SectionHeight.providers)
+                sessionsPanel
+                    .frame(maxHeight: SectionHeight.sessions, alignment: .top)
+                    .panelCard()
+                    .appearLift(delay: 0.08)
 
-                    Divider().background(Theme.divider)
-
-                    sessionsPanel
-                        .frame(height: SectionHeight.sessions)
-
-                    Divider().background(Theme.divider)
-
-                    UsagePanel()
-                        .frame(height: SectionHeight.usage)
-                }
+                UsagePanel()
+                    .frame(minHeight: 260, maxHeight: SectionHeight.usage, alignment: .top)
+                    .panelCard()
+                    .appearLift(delay: 0.12)
             }
 
             actionBar
+                .appearLift(delay: 0.16)
         }
-        .frame(width: 560)
-        // Auto-dismiss the toast 2s after the latest showFeedback call.
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+        .frame(width: 400)
+        .background(Theme.bgPrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .ignoresSafeArea()
+        .preferredColorScheme(prefs.appearance.colorScheme)
+        .id(prefs.appearance)
         .task(id: panel.feedbackToken) {
             guard panel.feedbackToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -66,8 +62,6 @@ struct MenuBarView: View {
             withAnimation(Theme.Animation.smooth) { panel.feedbackMessage = nil }
         }
     }
-
-    // MARK: - Missing Settings
 
     private var missingSettingsView: some View {
         VStack(spacing: Theme.Space.s8) {
@@ -81,14 +75,9 @@ struct MenuBarView: View {
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity)
         .panelCard()
-        .padding(Theme.Space.s16)
     }
 
-    // MARK: - Sessions (forwarded)
-
     private var sessionsPanel: some View { SessionsPanelView() }
-
-    // MARK: - Action Bar
 
     private var actionBar: some View {
         HStack(spacing: Theme.Space.s4) {
@@ -108,12 +97,17 @@ struct MenuBarView: View {
                 prefs.idleNotifyEnabled.toggle()
                 panel.showFeedback(prefs.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")
             }
+            iconButton(prefs.appearance == .dark ? "sun.max" : "moon",
+                       help: prefs.appearance == .dark ? "切换浅色" : "切换深色",
+                       color: Theme.textSecondary) {
+                prefs.appearance = prefs.appearance == .dark ? .light : .dark
+            }
             Spacer()
             iconButton("power", help: "退出", color: Theme.statusError) {
                 NSApplication.shared.terminate(nil)
             }
         }
-        .padding(.horizontal, Theme.Space.s12).padding(.vertical, Theme.Space.s6)
+        .padding(.top, 2)
     }
 
     private func iconButton(_ icon: String, help: String, color: Color,
@@ -125,8 +119,6 @@ struct MenuBarView: View {
         .help(help)
     }
 
-    // MARK: - External Actions
-
     private func openEditor() {
         NotificationCenter.default.post(name: .showMainWindow, object: nil)
         NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
@@ -136,4 +128,3 @@ struct MenuBarView: View {
         NSWorkspace.shared.open(FilePaths.settingsFile)
     }
 }
-

@@ -6,26 +6,20 @@ import WidgetKit
 /// visually consistent with the main app. Mirrors the values in
 /// `Sources/ClaudeBar/Theme/Theme.swift`.
 private enum WidgetTheme {
-    // Foundation (luminous dark, matching the main app's macOS 26 glass world)
-    static let bgPrimary = Color(hex: 0x0D0D11)
-    static let bgSecondary = Color(hex: 0x15151B)
-    // Signals: soft blue = Claude Code
-    static let accent = Color(hex: 0x4F8EF7)
-    static let accentDim = Color(hex: 0x3A6FD1)
-    static let claudeHi = Color(hex: 0x79ABF9)
-    // Text
-    static let textPrimary = Color(hex: 0xF5F5F7)
-    static let textSecondary = Color(hex: 0xA1A1A6)
-    static func textTertiary(_ opacity: Double = 0.4) -> Color { .white.opacity(opacity) }
-    // Semantic
-    static let statusBusy = Color(hex: 0x4F8EF7)
-    static let statusIdle = Color(hex: 0x8A8F98)
-    static let statusWarning = Color(hex: 0xE0A13C)
-    static let statusError = Color(hex: 0xE46464)
-    // Cursor identity (violet)
-    static let cursorAccent = Color(hex: 0xA78BFA)
-    // Surfaces
-    static func cardFill(_ opacity: Double = 0.06) -> Color { .white.opacity(opacity) }
+    static let bgPrimary = Color(hex: 0xEEF3F8)
+    static let bgSecondary = Color(hex: 0xF7FAFC)
+    static let accent = Color(hex: 0x3D7DFF)
+    static let accentDim = Color(hex: 0x2B62D6)
+    static let claudeHi = Color(hex: 0x5B9CFF)
+    static let textPrimary = Color(hex: 0x1C1C1E)
+    static let textSecondary = Color(hex: 0x6E6E73)
+    static func textTertiary(_ opacity: Double = 0.38) -> Color { .black.opacity(opacity) }
+    static let statusBusy = Color(hex: 0x3D7DFF)
+    static let statusIdle = Color(hex: 0x8E8E93)
+    static let statusWarning = Color(hex: 0xFF9F0A)
+    static let statusError = Color(hex: 0xFF3B30)
+    static let cursorAccent = Color(hex: 0x8B7CFF)
+    static func cardFill(_ opacity: Double = 0.06) -> Color { .black.opacity(opacity) }
 
     /// Context-health color using the SAME thresholds as the main app (0.6 / 0.85).
     static func contextColor(_ ratio: Double) -> Color {
@@ -42,11 +36,11 @@ private enum WidgetTheme {
 
     static func barColor(for model: String) -> Color {
         let palette: [Color] = [
-            Color(hex: 0x4F8EF7),
-            Color(hex: 0xA78BFA),
-            Color(hex: 0x46C58F),
-            Color(hex: 0xE0A13C),
-            Color(hex: 0xE46464),
+            Color(hex: 0x5B9CFF),
+            Color(hex: 0xBF5AF2),
+            Color(hex: 0x34C759),
+            Color(hex: 0xFF9F0A),
+            Color(hex: 0xFF3B30),
         ]
         // djb2 — stable across launches/processes so Widget matches the main
         // app's tint for the same model (String.hashValue is NOT stable).

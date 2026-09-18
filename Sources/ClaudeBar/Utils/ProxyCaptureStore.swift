@@ -98,6 +98,11 @@ enum CaptureState: String {
     case pending, streaming, done, error, aborted
 }
 
+extension CaptureSummary {
+    /// Still in flight — no terminal state yet. Drives the interrupt button.
+    var isLive: Bool { state == .pending || state == .streaming }
+}
+
 struct CaptureLive: Equatable {
     var content = ""
     var reasoning = ""
@@ -194,6 +199,9 @@ final class ProxyCaptureStore {
                                       preview: preview)
         }
         let id = summary.id
+        // Registered before the tap escapes, so an interrupt tap that lands
+        // while the proxy is still connecting upstream is not lost.
+        let inflight = ProxyInflight.shared.open(captureID: id)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.catalog.records.insert(summary, at: 0)
@@ -202,7 +210,8 @@ final class ProxyCaptureStore {
             }
             if stream { self.streams.live[id] = CaptureLive() }
         }
-        return CaptureTap(id: id, kind: kind, store: self)
+        return CaptureTap(id: id, kind: kind, source: source, modelName: model,
+                          store: self, inflight: inflight)
     }
 
     func markStreaming(_ id: Int64) {
@@ -225,7 +234,8 @@ final class ProxyCaptureStore {
         scheduleFlush()
     }
 
-    func finish(_ id: Int64, state: CaptureState, status: Int, error: String?,
+    func finish(_ id: Int64, source: CaptureSource, model: String,
+                state: CaptureState, status: Int, error: String?,
                 assembler: CaptureAssembler, rawSSE: String?) {
         let ended = Date()
         if useDatabase {
@@ -287,6 +297,16 @@ final class ProxyCaptureStore {
                     self.catalog.livePreview.removeValue(forKey: id)
                 }
             }
+        }
+        // Durable third-party token rollup. Capture rows are capped at 120 and
+        // carry no period breakdown, so the usage ring reads this instead.
+        if source == .other {
+            ProxyUsageStore.shared.record(
+                model: assembler.model.isEmpty ? model : assembler.model,
+                at: ended,
+                input: assembler.promptTokens ?? 0,
+                output: assembler.completionTokens ?? 0,
+                cacheRead: assembler.cacheReadTokens ?? 0)
         }
     }
 
@@ -716,7 +736,15 @@ final class ProxyCaptureStore {
 final class CaptureTap {
     let id: Int64
     let kind: CaptureKind
+    /// Origin of the request — the durable third-party rollup is written from
+    /// here, where the value is known without a lookup.
+    let source: CaptureSource
+    /// Model name from the request body (the upstream may report a different
+    /// one, which the assembler prefers when it has it).
+    let modelName: String
     private weak var store: ProxyCaptureStore?
+    /// Lifetime token for the interrupt button; retired in `finish`.
+    private let inflight: ProxyInflight.Handle?
     var assembler = CaptureAssembler()
     private var raw: [Data] = []
     private var rawBytes = 0
@@ -724,11 +752,31 @@ final class CaptureTap {
     private var firstToken = false
     private var startedStreaming = false
 
-    init(id: Int64, kind: CaptureKind, store: ProxyCaptureStore) {
+    init(id: Int64, kind: CaptureKind, source: CaptureSource, modelName: String,
+         store: ProxyCaptureStore, inflight: ProxyInflight.Handle? = nil) {
         self.id = id
         self.kind = kind
+        self.source = source
+        self.modelName = modelName
         self.store = store
+        self.inflight = inflight
     }
+
+    /// Hand the proxy the client-side teardown: close the loopback connection
+    /// with no terminal frame, so Claude Code / Codex see the turn cut instead
+    /// of a finished response.
+    func attachClientAbort(_ abort: @escaping () -> Void) {
+        inflight?.attachAbort(abort)
+    }
+
+    /// Hand the proxy the upstream-side teardown, once the request exists.
+    func attachUpstreamAbort(_ cancel: @escaping () -> Void) {
+        inflight?.attachUpstream(cancel)
+    }
+
+    /// True when the user has already interrupted this call — the proxy checks
+    /// before opening an upstream request that would be thrown away.
+    var isInterrupted: Bool { inflight?.isCancelled ?? false }
 
     func noteStreaming() {
         guard !startedStreaming else { return }
@@ -769,8 +817,13 @@ final class CaptureTap {
     }
 
     func finish(state: CaptureState, status: Int, error: String?) {
+        // The call is over (finished or torn down); retire the interrupt handle
+        // so a stale tap cannot reach a dead connection.
+        if let inflight { ProxyInflight.shared.close(inflight) }
         let sse = raw.isEmpty ? nil : String(data: raw.reduce(into: Data(), { $0.append($1) }), encoding: .utf8)
-        store?.finish(id, state: state, status: status, error: error, assembler: assembler, rawSSE: sse)
+        store?.finish(id, source: source, model: modelName,
+                      state: state, status: status, error: error,
+                      assembler: assembler, rawSSE: sse)
     }
 
     func ingestAnthropicMessage(_ json: [String: Any]) {

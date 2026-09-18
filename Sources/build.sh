@@ -168,6 +168,8 @@ swiftc -O -whole-module-optimization \
     -framework IOKit \
     -framework Carbon \
     -framework ScreenCaptureKit \
+    -framework CoreWLAN \
+    -framework IOBluetooth \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
@@ -207,6 +209,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
     <string>区域截图需要屏幕录制权限，用于将选中区域复制到剪贴板。</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>用于在资源条中显示蓝牙开关状态。</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>NSAppTransportSecurity</key>

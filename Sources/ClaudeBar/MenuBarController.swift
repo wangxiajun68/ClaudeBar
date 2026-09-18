@@ -34,6 +34,7 @@ final class MenuBarController: NSObject {
     private var rateAccessory: VpnMenuBarRateView?
     private var rateCancel: AnyCancellable?
     private var lastRateKey: String?
+    private var appearanceObs: NSObjectProtocol?
 
     @MainActor
     func setup() {
@@ -50,6 +51,11 @@ final class MenuBarController: NSObject {
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         NSLog("[ClaudeBar] status item created OK")
         installVpnRateDisplay(button: button)
+        appearanceObs = NotificationCenter.default.addObserver(
+            forName: .appearanceDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyPanelAppearance()
+        }
     }
 
     /// ClashX-style: a 22pt-tall two-line accessory, not NSStatusBarButton's
@@ -64,8 +70,9 @@ final class MenuBarController: NSObject {
         let accessory = VpnMenuBarRateView()
         rateAccessory = accessory
         button.addSubview(accessory)
-        rateCancel = VpnManager.shared.objectWillChange
+        rateCancel = VpnLiveRates.shared.objectWillChange
             .receive(on: DispatchQueue.main)
+            .merge(with: VpnManager.shared.objectWillChange.receive(on: DispatchQueue.main))
             .sink { [weak self] in
                 MainActor.assumeIsolated { self?.tickVpnRate() }
             }
@@ -77,8 +84,8 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button, let accessory = rateAccessory else { return }
         let running = VpnManager.shared.isRunning
         if running {
-            let down = VpnFormat.compact(VpnManager.shared.speedDown)
-            let up = VpnFormat.compact(VpnManager.shared.speedUp)
+            let down = VpnFormat.compact(VpnLiveRates.shared.speedDown)
+            let up = VpnFormat.compact(VpnLiveRates.shared.speedUp)
             // Both rates unchanged → the accessory already shows them; skip
             // the icon rasterization and label re-layout entirely.
             let key = "\(down)|\(up)"
@@ -158,38 +165,40 @@ final class MenuBarController: NSObject {
         hostingView = hosting
     }
 
+    private func applyPanelAppearance() {
+        let fill = Theme.windowNSColor
+        panel?.appearance = Theme.nsAppearance
+        panel?.backgroundColor = .clear
+        panel?.isOpaque = false
+        panel?.contentView?.layer?.backgroundColor = fill.cgColor
+        panel?.contentView?.layer?.cornerRadius = 22
+        panel?.contentView?.layer?.cornerCurve = .continuous
+        panel?.contentView?.layer?.masksToBounds = true
+    }
+
     private func makePanel() -> NSPanel {
-        let panel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
-                                 styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+        let panel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400),
+                                 styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
                                  backing: .buffered, defer: false)
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.isMovable = false
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        // Translucent: the vibrancy view paints the background, not the panel.
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
-        panel.appearance = NSAppearance(named: .vibrantDark)
+        panel.appearance = Theme.nsAppearance
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
-        // Frosted-glass backdrop (macOS vibrancy). `.menu` matches the
-        // material used by system menu-bar dropdowns.
-        let vibe = NSVisualEffectView()
-        vibe.material = .menu
-        vibe.blendingMode = .behindWindow
-        vibe.state = .followsWindowActiveState
-        vibe.wantsLayer = true
-        vibe.layer?.cornerRadius = 10
-        vibe.layer?.masksToBounds = true
+        let host = NSView()
+        host.wantsLayer = true
+        host.layer?.backgroundColor = Theme.windowNSColor.cgColor
+        host.layer?.cornerRadius = 22
+        host.layer?.cornerCurve = .continuous
+        host.layer?.masksToBounds = true
 
-        panel.contentView = vibe
-        vibe.autoresizesSubviews = true
+        panel.contentView = host
+        host.autoresizesSubviews = true
         return panel
     }
 
@@ -202,7 +211,7 @@ final class MenuBarController: NSObject {
         guard let screen = NSScreen.screens.first else { return }
         guard let hosting = hostingView else { return }
         let fit = hosting.fittingSize
-        let width = max(560, fit.width)
+        let width = max(400, fit.width)
         let height = max(200, min(fit.height, screen.visibleFrame.height - 8))
 
         // Horizontal: center on the icon. The status-item button lives in its
@@ -287,27 +296,25 @@ enum MenuBarMark {
     private static func make(side: CGFloat) -> NSImage {
         let size = NSSize(width: side, height: side)
         let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.set()
+            let stroke = max(1.4, side * 0.14)
+            let r = side * 0.30
             let cx = rect.midX
-            let cy = rect.midY
-            let armW = side * 0.16
-            let armLen = side * 0.38
-            let hub = side * 0.13
-            NSColor.black.setFill()
-            for i in 0..<3 {
-                let angle = CGFloat(i) * (2 * .pi / 3) - .pi / 2
-                let arm = NSBezierPath(
-                    roundedRect: NSRect(x: -armW / 2, y: hub * 0.2, width: armW, height: armLen),
-                    xRadius: armW / 2, yRadius: armW / 2)
-                var t = AffineTransform()
-                t.translate(x: cx, y: cy)
-                t.rotate(byRadians: angle)
-                arm.transform(using: t)
-                arm.fill()
-            }
-            NSBezierPath(ovalIn: NSRect(x: cx - hub, y: cy - hub, width: hub * 2, height: hub * 2)).fill()
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            let inner = hub * 0.42
-            NSBezierPath(ovalIn: NSRect(x: cx - inner, y: cy - inner, width: inner * 2, height: inner * 2)).fill()
+            let cy = rect.midY + side * 0.07
+            let ring = NSBezierPath(ovalIn: NSRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2))
+            ring.lineWidth = stroke
+            ring.stroke()
+            let barH = max(1.35, side * 0.11)
+            let barW = side * 0.78
+            let bar = NSBezierPath(
+                roundedRect: NSRect(
+                    x: (side - barW) / 2,
+                    y: side * 0.07,
+                    width: barW,
+                    height: barH),
+                xRadius: barH / 2,
+                yRadius: barH / 2)
+            bar.fill()
             return true
         }
         image.isTemplate = true
@@ -379,9 +386,9 @@ private final class VpnMenuBarRateView: NSView {
         case "M": kb = value * 1024
         default: kb = value
         }
-        if kb < 1 { return NSColor.white.withAlphaComponent(0.45) }   // ~0 — idle
-        if kb < 1024 { return NSColor.white.withAlphaComponent(0.75) } // < 1 MB
-        return .white                                                 // busy
+        if kb < 1 { return NSColor.labelColor.withAlphaComponent(0.45) }
+        if kb < 1024 { return NSColor.labelColor.withAlphaComponent(0.75) }
+        return .labelColor
     }
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
@@ -403,7 +410,7 @@ private final class VpnMenuBarRateView: NSView {
     private static func makeLabel() -> NSTextField {
         let f = NSTextField(labelWithString: "  0.0K")
         f.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
-        f.textColor = NSColor.white.withAlphaComponent(0.45)
+        f.textColor = NSColor.labelColor.withAlphaComponent(0.45)
         f.alignment = .right
         f.lineBreakMode = .byClipping
         f.drawsBackground = false
@@ -418,7 +425,7 @@ private final class VpnMenuBarRateView: NSView {
         img?.isTemplate = true
         v.image = img
         v.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 7, weight: .semibold)
-        v.contentTintColor = NSColor.white.withAlphaComponent(0.45)
+        v.contentTintColor = NSColor.labelColor.withAlphaComponent(0.45)
         v.imageScaling = .scaleProportionallyDown
         return v
     }

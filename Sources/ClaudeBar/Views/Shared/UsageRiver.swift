@@ -181,13 +181,13 @@ struct UsageRiver: View {
             var cross = Path()
             cross.move(to: CGPoint(x: x, y: 0))
             cross.addLine(to: CGPoint(x: x, y: size.height))
-            ctx.stroke(cross, with: .color(Color.white.opacity(0.22)),
+            ctx.stroke(cross, with: .color(Theme.textTertiary(0.22)),
                        style: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
 
             let topY = size.height - min(min(cumulative[i] / peak, 1), 1) * size.height
             let dot = Path(ellipseIn: CGRect(x: x - 3, y: topY - 3, width: 6, height: 6))
-            ctx.fill(dot, with: .color(Theme.base0))
-            ctx.stroke(dot, with: .color(.white), lineWidth: 1.2)
+            ctx.fill(dot, with: .color(Theme.cardSurface))
+            ctx.stroke(dot, with: .color(Theme.textPrimary), lineWidth: 1.2)
         }
     }
 

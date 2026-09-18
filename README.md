@@ -6,83 +6,95 @@
 </h1>
 
 <p align="center">
-  <strong>一个菜单栏，装下你的整个 AI 工作台。</strong><br>
-  VPN · 本地 LLM 代理 · 多 Agent 模型切换 · 会话与用量监控 — 常驻 macOS 顶栏，即点即用。
+  <strong>点一下菜单栏，整条 AI 流水线都在手里。</strong><br>
+  切模型 · 看会话 · 量 Token · 管 VPN · 拦流量 — 全部住在 macOS 顶栏。
 </p>
 
-![CI](https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg)![Release](https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release)![macOS 15+](https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white)![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white)![MIT](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <a href="https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml"><img src="https://github.com/wangxiajun68/ClaudeBar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><img src="https://img.shields.io/github/v/release/wangxiajun68/ClaudeBar?include_prereleases&label=release" alt="Release"></a>
+  <img src="https://img.shields.io/badge/macOS-15%2B-black?logo=apple&logoColor=white" alt="macOS 15+">
+  <img src="https://img.shields.io/badge/Swift-5.9%2B-orange?logo=swift&logoColor=white" alt="Swift 5.9+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+</p>
 
-**[下载最新版](https://github.com/wangxiajun68/ClaudeBar/releases/latest)**
-
-## 为什么需要 ClaudeBar
-
-AI 编程工作流正在被越来越多的独立工具割裂：VPN 客户端、抓包代理、模型切换器、会话查看器……每个都有自己的窗口、托盘图标和启动成本，而它们服务的其实是同一段工作流。
-
-**ClaudeBar 把这些工具收敛进一个菜单栏应用。** 常驻顶栏、零窗口占用，任何时刻点击图标即可：切换 Claude Code / Codex 的供应商与模型、拉起或检查 VPN 隧道、查看本机代理转发的每一帧对话、浏览三端会话与 Token 用量 —— 全部不需要单独启动任何工具，也不打断当前终端里的工作。
-
-一句话：**让基础设施退到菜单栏，把注意力还给工作本身。**
-
-## 它能做什么
-
-- **VPN** — 捆绑 mihomo：订阅、选节点、测延迟、系统代理；菜单栏显示实时速率。
-- **LLM 本地代理** — `127.0.0.1` 转发请求，Chat / Responses 协议桥接。Claude Code 与 Codex 各走当前供应商；第三方可另选上游。开启流量记录后可检查对话、工具调用、图片与原始报文。
-- **区域截图** — ⌘⇧A 拉框复制 / 保存 / 钉住。
-- **模型切换** — Claude Code 与 Codex 各自维护供应商与模型，互不同步；一键激活分别写回 `settings.json` / `config.toml`。需要拷贝时到管理页手动导入。
-- **会话 · 用量 · 资源** — 三端会话聚合、Token 日/月统计、CPU / GPU / 内存归因。
-- **菜单栏 Popup** — 模型切换、会话巡检、资源概览与用量，无需打开主窗口。
-- **桌面 Widget** — 当日 Token 总量与活跃会话一览。
+<p align="center">
+  <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><strong>下载最新版 →</strong></a>
+</p>
 
 ## 界面
 
-![流量检查器](docs/screenshots/traffic.png)
+概览是一块仪表盘：CPU 芯片、GPU 柱、内存液面、硬盘、Wi-Fi / 蓝牙、左右风扇；下面是当前供应商、会话和 Token。菜单栏则是同一套事实的压缩版 — 三格切换 CC / Codex / VPN，再往下是活着的会话和当月热力。
 
-*流量检查器 · 简洁视图：连续工具调用与系统提示默认折叠，可按关键词搜索对话。*
+| 主窗口 | 菜单栏 |
+| :----: | :----: |
+| ![主窗口概览](docs/screenshots/main-window.png) | ![菜单栏 popup](docs/screenshots/menubar-popup.png) |
+| 冰面 / 石墨宫格。颜色只出现在图表里。 | 点图标即出。切模型、巡会话、看用量，不用开窗口。 |
 
-| 主窗口                                      | 菜单栏 Popup                                  | 桌面 Widget                           |
-| ---------------------------------------- | ------------------------------------------ | ----------------------------------- |
-| ![主窗口](docs/screenshots/main-window.png) | ![菜单栏](docs/screenshots/menubar-popup.png) | ![小组件](docs/screenshots/widget.png) |
+## 它解决什么
 
-## 快速上手
+Claude Code、Codex、Cursor 同时在跑的时候，工作流会被拆成一堆独立工具：VPN 客户端、抓包代理、模型切换器、会话列表。每个都占一个托盘图标，切一次就要离开终端。
 
-| 场景        | 路径                                                        |
-| --------- | --------------------------------------------------------- |
-| **VPN**   | **VPN** 页添加订阅并开启系统代理；菜单栏可切换节点 |
-| **抓包调试**  | 设置 → 本地代理 → 模型卡开流量记录 → **流量**                             |
-| **切换模型**  | **模型** 页分栏选择 Claude Code / Codex，或菜单栏 popup 点击激活 → 新开终端会话 |
-| **恢复会话**  | **会话** 页或 popup 点击卡片                                      |
-| **全局跳转**  | 任意页面 `⌘K` 搜索页面 / 会话 / 模型                                  |
-| **第三方接入** | Base URL → `http://127.0.0.1:<port>/v1`；设置 → 本地代理 可另选第三方上游          |
-| **区域截图**  | ⌘⇧A（设置里可关） |
+ClaudeBar 把这些收进**一个**菜单栏应用。顶栏常驻，主窗口按需打开。点一下就能做刚才那件事，然后回去写代码。
+
+## 六件事
+
+**切换。** Claude Code 与 Codex 各有一份供应商。激活分别写回 `~/.claude/settings.json` 和 `~/.codex/config.toml`，互不覆盖。菜单栏三格：CC、Codex、VPN 节点。
+
+**转发。** 本机代理听 `127.0.0.1`（默认 15721），Chat / Responses 互转。Claude Code 与 Codex 跟当前模型走；第三方客户端可另选上游，不改那两份配置文件。开了流量记录，对话、工具调用、图片和原始报文都在「流量」页。
+
+**隧道。** 捆绑 mihomo。订阅、选节点、测延迟、系统代理 / TUN。菜单栏显示 ↓↑ 实时速率；出站路径是 `日本 › 电信` 这种面包屑，不是装饰线。
+
+**现场。** 会话页把 Claude Code、Cursor、Codex 和其他 CLI 收成一张牌：上下文条、当前工具、心跳、CPU / 内存。双击卡片就能在终端或 Cursor 里接上。
+
+**用量。** 只统计模型 Token。日 / 月 / 年热力图、CC / Codex / 第三方来源柱、输入·命中·写入·输出构成。VPN 剩余流量留在 VPN 页，不混进来。
+
+**本机。** 概览 2×3：负载、温度写在 CPU / GPU 说明里、硬盘占用、Wi-Fi / 蓝牙 / 有线、两只可点的风扇（自动 / 最大）。浅色是冰 `#EEF3F8`，深色是石墨 `#16181C`，不跟系统外观走。
+
+另外：⌘⇧A 区域截图（复制 / 保存 / 钉住），⌘K 跳页面 / 会话 / 模型，桌面 Widget 看当日 Token。
+
+## 怎么用
+
+| 你想… | 走这里 |
+| --- | --- |
+| 换模型 | 菜单栏 CC / Codex 格，或主窗口 **模型** 页。新开一个终端会话才生效。 |
+| 换节点 | 菜单栏 VPN 格，或 **VPN** 页马赛克。 |
+| 看对话有没有打到代理 | 设置 → 本地代理 → 模型卡打开流量记录 → **流量** |
+| 让第三方走同一条上游 | Base URL `http://127.0.0.1:<端口>/v1`，设置里给第三方另选供应商 |
+| 接上刚才那次会话 | **会话** 页或 popup 里点卡片 |
+| 截一块屏幕 | ⌘⇧A（设置可关） |
 
 ## 安装
 
-需要 **macOS 15+**、Apple Silicon (`arm64`)。从 [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG，拖入 Applications。
+**macOS 15+**，Apple Silicon。从 [Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG，拖进 Applications。
 
-Gatekeeper 拦截时：
+Gatekeeper 拦住时：
 
 ```bash
 xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
 ```
 
-## 数据与隐私
+## 它碰哪些文件
 
-ClaudeBar 以「只读优先」原则访问你的配置：除切换模型时的显式写回外，不修改任何工具的数据。
+只读优先。除了你主动切换模型，不会改各工具自己的数据。
 
-| 来源          | 路径                                              | 访问                       |
-| ----------- | ----------------------------------------------- | ------------------------ |
-| Claude Code | `~/.claude/`                                    | 只读（切换时写 `settings.json`） |
-| Codex       | `~/.codex/`                                     | 只读（切换时写 `config.toml`）   |
-| Cursor      | `~/Library/.../state.vscdb`                     | 只读                       |
-| 代理抓包        | `~/Library/Application Support/ClaudeBar/logs/` | 流量记录时写入                  |
-| VPN         | `~/Library/Application Support/ClaudeBar/vpn/`  | 订阅与内核配置（仅本机）             |
+| 谁 | 路径 | 权限 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/` | 读；切换时写 `settings.json` |
+| Codex | `~/.codex/` | 读；切换时写 `config.toml` |
+| Cursor | `~/Library/.../state.vscdb` | 只读 |
+| 代理抓包 | `~/Library/Application Support/ClaudeBar/logs/` | 开了流量记录才写 |
+| VPN | `~/Library/Application Support/ClaudeBar/vpn/` | 订阅与内核配置，只留本机 |
 
 ## 从源码构建
 
 ```bash
-git clone https://github.com/wangxiajun68/ClaudeBar.git && cd ClaudeBar && make build
+git clone https://github.com/wangxiajun68/ClaudeBar.git
+cd ClaudeBar
+make build
 ```
 
-贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md) · 版本与发版见 [docs/VERSIONING.md](docs/VERSIONING.md)、[docs/RELEASING.md](docs/RELEASING.md) · 更新日志见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · 排障见 [FAQ](docs/FAQ.md)
+[贡献](CONTRIBUTING.md) · [版本](docs/VERSIONING.md) · [发版](docs/RELEASING.md) · [更新日志](docs/CHANGELOG.md) · [FAQ](docs/FAQ.md)
 
 ## License
 

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct FanControlSection: View {
-    @ObservedObject private var monitor = FanMonitor.shared
+    private let monitor = FanMonitor.shared
     @State private var draftRPM: [Int: Double] = [:]
     @State private var editingFan: Int?
 

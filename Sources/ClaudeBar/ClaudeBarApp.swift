@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // window management for the new main window. The menu-bar status item
         // and its non-activating popup panel work regardless of this policy.
         NSApp.setActivationPolicy(.regular)
+        AppearanceSync.apply()
 
         let store = ProviderStore()
         providerStore = store

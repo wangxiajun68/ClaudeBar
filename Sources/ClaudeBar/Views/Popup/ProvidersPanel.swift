@@ -8,7 +8,7 @@ struct ProvidersPanel: View {
     var panel: PanelState
 
     var body: some View {
-        HStack(alignment: .top, spacing: Theme.Space.s8) {
+        HStack(alignment: .top, spacing: Theme.Space.gridGap) {
             stackColumn(title: "Claude Code", icon: "cpu", tint: Theme.claude) {
                 ForEach(providerStore.providers) { provider in
                     ForEach(provider.models) { model in
@@ -39,11 +39,6 @@ struct ProvidersPanel: View {
                     }
                 }
             }
-
-            Rectangle()
-                .fill(Theme.divider)
-                .frame(width: 1)
-                .padding(.vertical, Theme.Space.s4)
 
             stackColumn(title: "Codex", icon: "chevron.left.forwardslash.chevron.right", tint: Theme.codex) {
                 if codexStore.providers.isEmpty {
@@ -87,14 +82,11 @@ struct ProvidersPanel: View {
                 }
             }
         }
-        .padding(.horizontal, Theme.Space.s8)
-        .padding(.vertical, Theme.Space.s6)
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
         .overlay(alignment: .bottom) {
-            VStack(spacing: 0) {
-                FeedbackToast(message: panel.feedbackMessage, tint: Theme.statusBusy)
-                    .padding(.bottom, 2)
-                HairlineDivider()
-            }
+            FeedbackToast(message: panel.feedbackMessage, tint: Theme.statusBusy)
+                .padding(.bottom, 2)
         }
     }
 
@@ -112,7 +104,7 @@ struct ProvidersPanel: View {
                 // Lazy, not a plain VStack: the provider × model grid is
                 // eagerly built in full at every popup open otherwise, which
                 // is the bulk of the popup's mount cost with many vendors.
-                LazyVStack(spacing: Theme.Space.s4) {
+                LazyVStack(spacing: 0) {
                     content()
                 }
                 .padding(.horizontal, Theme.Space.s4)

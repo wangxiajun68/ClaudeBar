@@ -20,6 +20,72 @@ final class CodexProxyServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "claudebar.proxy")
     private var listener: NWListener?
 
+    /// Set on the connection's task when the user interrupts that *specific*
+    /// call from the traffic page. `handle()` reads it when deciding whether to
+    /// seal the capture as `.aborted` or as a plain upstream failure.
+    /// Set for the duration of one connection's `handle()` call, carrying that
+    /// connection's interrupt state. `handle()` reads it when deciding whether
+    /// to seal the capture as `.aborted` or as a plain upstream failure.
+    @TaskLocal private static var interruptFlag: InterruptFlag?
+
+    /// Cancel plumbing for one connection, shared with the traffic page.
+    ///
+    /// The page cancels the *capture handle*; the handle reaches back here to
+    /// (a) flag the connection so `handle()` reports `.aborted`, and (b) close
+    /// the loopback socket so the client sees the turn cut mid-stream.
+    private final class InterruptFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var interrupted = false
+        private let abort: () -> Void
+
+        init(abort: @escaping () -> Void) { self.abort = abort }
+
+        /// Called from `ProxyInflight.Handle.cancel`, possibly before the
+        /// upstream request exists. `abort` closes the client socket there and
+        /// then; the upstream task is cancelled separately, when it is built.
+        func cancel() {
+            lock.lock()
+            guard !interrupted else { lock.unlock(); return }
+            interrupted = true
+            lock.unlock()
+            abort()
+        }
+
+        var isInterrupted: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return interrupted
+        }
+    }
+
+    /// True when this connection was interrupted from the traffic page.
+    private static func wasInterrupted() -> Bool {
+        interruptFlag?.isInterrupted ?? false
+    }
+
+    /// Wire a capture's interrupt handle to this connection. Called right after
+    /// `begin` so the button works for the whole life of the call, including
+    /// the window before the upstream request is issued.
+    private func bindInterrupt(_ tap: CaptureTap?, connection: NWConnection) {
+        guard let tap, let flag = Self.interruptFlag else { return }
+        tap.attachClientAbort {
+            flag.cancel()
+            connection.cancel()
+        }
+    }
+
+    /// Attach the upstream data task so an interrupt kills the request too.
+    /// Called as soon as `URLSession` hands one back.
+    private static func attachUpstream(_ tap: CaptureTap?, task: URLSessionDataTask) {
+        tap?.attachUpstreamAbort { task.cancel() }
+    }
+
+    /// Raised before issuing an upstream request when the interrupt already
+    /// landed — the connection is gone, so the request would be pure waste.
+    private static func throwIfInterrupted(_ tap: CaptureTap?) throws {
+        if wasInterrupted() || tap?.isInterrupted == true { throw URLError(.cancelled) }
+    }
+
     /// Ephemeral session that does not advertise gzip. URLSession.shared
     /// sets `Accept-Encoding: gzip` and can hold the first SSE event until
     /// the decoder sees a flush — Claude Code then reports "streaming
@@ -74,9 +140,14 @@ final class CodexProxyServer: @unchecked Sendable {
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
         // One task per connection; all socket I/O for this connection stays
-        // inside this task (plus the connection.send calls it issues).
+        // inside this connection's task. The interrupt flag rides along as a
+        // task-local so `handle()`'s catch arm can tell "user interrupted" from
+        // "upstream failed" without any shared lookup.
+        let flag = InterruptFlag { connection.cancel() }
         Task { [weak self] in
-            await self?.handle(connection)
+            await Self.$interruptFlag.withValue(flag) {
+                await self?.handle(connection)
+            }
         }
     }
 
@@ -183,19 +254,25 @@ final class CodexProxyServer: @unchecked Sendable {
                     // of messages works, turn 2 replays function_call and the
                     // untagged ResponseInput enum 400s. Codex++ protocol_proxy
                     // and cc-switch Chat both convert instead of forwarding.
-                    guard CodexProxyTransform.isResponseInputReject(error) else { throw error }
+                    guard CodexProxyTransform.isResponseInputReject(error),
+                          !Self.wasInterrupted() else { throw error }
                     try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
                 }
             }
         } catch {
             openaiTap.finish(status: Self.statusFromProxyError(error),
-                             error: error.localizedDescription)
-            let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
-            if acceptSSE {
-                await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "上游请求失败：\(error.localizedDescription)"))
-            } else {
-                await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
-                        body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
+                             error: Self.wasInterrupted() ? "已中断" : error.localizedDescription)
+            // Interrupt = hard stop. The client socket is already down (the
+            // abort hook closed it), so there is nothing to answer; writing a
+            // synthesized failure here would only race that teardown.
+            if !Self.wasInterrupted() {
+                let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
+                if acceptSSE {
+                    await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "上游请求失败：\(error.localizedDescription)"))
+                } else {
+                    await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
+                            body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
+                }
             }
         }
         connection.cancel()
@@ -219,6 +296,7 @@ final class CodexProxyServer: @unchecked Sendable {
             if capState != .error { log.finish(status: statusCode) }
         }
         let upstreamURL = chatCompletionsURL(upstream.baseURL)
+        bindInterrupt(tap, connection: connection)
 
         do {
             if wantsStream {
@@ -229,7 +307,9 @@ final class CodexProxyServer: @unchecked Sendable {
                 req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
                 req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 req.httpBody = outData
+                try Self.throwIfInterrupted(tap)
                 let (bytes, response) = try await Self.upstreamSession.bytes(for: req)
+                Self.attachUpstream(tap, task: bytes.task)
                 let http = response as? HTTPURLResponse
                 statusCode = http?.statusCode ?? 200
                 let ctype = http?.value(forHTTPHeaderField: "Content-Type") ?? "text/event-stream"
@@ -258,7 +338,10 @@ final class CodexProxyServer: @unchecked Sendable {
                 }
                 if !batch.isEmpty { await write(connection, data: batch) }
             } else {
-                let (data, status) = try await postJSON(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+                try Self.throwIfInterrupted(tap)
+                let (data, status) = try await postJSON(
+                    url: upstreamURL, apiKey: upstream.apiKey, body: outData,
+                    onTask: { Self.attachUpstream(tap, task: $0) })
                 statusCode = Int(status) ?? 200
                 if statusCode >= 400 {
                     capState = .error
@@ -270,9 +353,18 @@ final class CodexProxyServer: @unchecked Sendable {
                 await respond(connection, status: "\(statusCode) \(reason)", contentType: "application/json", body: data)
             }
         } catch {
-            capState = .error
-            capError = error.localizedDescription
-            statusCode = Self.statusFromProxyError(error)
+            if Self.wasInterrupted() {
+                // User interrupt, not an upstream fault: the capture keeps the
+                // partial stream and reads as aborted, and the access line is
+                // sealed with no status rather than a synthesized 502.
+                capState = .aborted
+                capError = "已中断"
+                statusCode = 0
+            } else {
+                capState = .error
+                capError = error.localizedDescription
+                statusCode = Self.statusFromProxyError(error)
+            }
             throw error
         }
     }
@@ -305,17 +397,20 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: capState, status: statusCode, error: capError)
             // Leave the access log pending on error so handle() can retry
             // Responses→Chat without sealing the line as a 400.
-            if capState != .error { log.finish(status: statusCode) }
+            if capState != .error { log.finish(status: statusCode, error: capState == .aborted ? capError : nil) }
         }
 
         let upstreamURL = joinURL(upstream.baseURL, path: request.path)
+        bindInterrupt(tap, connection: connection)
 
         do {
         if wantsStream {
             // Connect upstream *before* writing the SSE head to Codex, so a
             // ResponseInput 400 can be retried as Chat without corrupting the
             // client stream.
-            let lines = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+            try Self.throwIfInterrupted(tap)
+            let (lines, task) = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+            Self.attachUpstream(tap, task: task)
             await write(connection, data: sseHead())
             var sawTerminal = false
             var sawCreated = false
@@ -362,7 +457,10 @@ final class CodexProxyServer: @unchecked Sendable {
             let synth = CodexProxyTransform.synthesizeLifecycle(sawCreated: sawCreated, sawTerminal: sawTerminal, lastSequence: lastSequence)
             if !synth.isEmpty { await write(connection, data: synth) }
         } else {
-            let (data, status) = try await postJSON(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+            try Self.throwIfInterrupted(tap)
+            let (data, status) = try await postJSON(
+                url: upstreamURL, apiKey: upstream.apiKey, body: outData,
+                onTask: { Self.attachUpstream(tap, task: $0) })
             statusCode = Int(status) ?? 200
             var out: [String: Any] = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             out = CodexProxyTransform.rewriteResponsesEvent(out, registry: registry)
@@ -372,9 +470,18 @@ final class CodexProxyServer: @unchecked Sendable {
             await respond(connection, status: "\(status) OK", contentType: "application/json", body: fixed)
         }
         } catch {
-            capState = .error
-            capError = error.localizedDescription
-            statusCode = Self.statusFromProxyError(error)
+            if Self.wasInterrupted() {
+                // User interrupt, not an upstream fault: the capture keeps the
+                // partial stream and reads as aborted, and the access line is
+                // sealed with no status rather than a synthesized 502.
+                capState = .aborted
+                capError = "已中断"
+                statusCode = 0
+            } else {
+                capState = .error
+                capError = error.localizedDescription
+                statusCode = Self.statusFromProxyError(error)
+            }
             throw error
         }
     }
@@ -395,14 +502,17 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: capState, status: statusCode, error: capError)
             // Leave the access log pending on error so handle() can retry
             // Responses→Chat without sealing the line as a 400.
-            if capState != .error { log.finish(status: statusCode) }
+            if capState != .error { log.finish(status: statusCode, error: capState == .aborted ? capError : nil) }
         }
         // Always hit /chat/completions when bridging — posting a Chat body
         // to /v1/responses is how the original 400 happens.
         let upstreamURL = chatCompletionsURL(upstream.baseURL)
+        bindInterrupt(tap, connection: connection)
 
         do {
-        let chatLines = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+        try Self.throwIfInterrupted(tap)
+        let (chatLines, chatTask) = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
+        Self.attachUpstream(tap, task: chatTask)
         await write(connection, data: sseHead())
         var streamState = CodexProxyTransform.ChatStreamState()
         streamState.registry = registry
@@ -440,17 +550,28 @@ final class CodexProxyServer: @unchecked Sendable {
         }
         await write(connection, data: CodexProxyTransform.sseRaw("[DONE]"))
         } catch {
-            capState = .error
-            capError = error.localizedDescription
-            statusCode = Self.statusFromProxyError(error)
+            if Self.wasInterrupted() {
+                // User interrupt, not an upstream fault: the capture keeps the
+                // partial stream and reads as aborted, and the access line is
+                // sealed with no status rather than a synthesized 502.
+                capState = .aborted
+                capError = "已中断"
+                statusCode = 0
+            } else {
+                capState = .error
+                capError = error.localizedDescription
+                statusCode = Self.statusFromProxyError(error)
+            }
             throw error
         }
     }
 
     // MARK: - Upstream I/O
 
-    /// Stream an upstream SSE response as decoded `data:` payload lines.
-    private func streamSSE(url: URL, apiKey: String, body: Data) async throws -> AsyncLineSequence<URLSession.AsyncBytes> {
+    /// Stream an upstream SSE response as decoded `data:` payload lines, along
+    /// with the underlying task so the caller can cancel it on interrupt.
+    private func streamSSE(url: URL, apiKey: String, body: Data) async throws
+        -> (lines: AsyncLineSequence<URLSession.AsyncBytes>, task: URLSessionDataTask) {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -474,19 +595,35 @@ final class CodexProxyServer: @unchecked Sendable {
             throw NSError(domain: "CodexProxy", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: message])
         }
-        return bytes.lines
+        return (bytes.lines, bytes.task)
     }
 
-    private func postJSON(url: URL, apiKey: String, body: Data) async throws -> (Data, String) {
+    /// Non-stream upstream call. `onTask` receives the data task the moment it
+    /// exists, before the body has been read, so an interrupt can cancel it.
+    private func postJSON(url: URL, apiKey: String, body: Data,
+                          onTask: ((URLSessionDataTask) -> Void)? = nil) async throws -> (Data, String) {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let (data, response) = try await Self.upstreamSession.data(for: req)
+        let (data, response) = try await Self.upstreamSession.data(for: req, delegate: onTask.map(InterruptWatcher.init))
         let status = (response as? HTTPURLResponse).map { "\($0.statusCode)" } ?? "200"
         return (data, status)
+    }
+
+    /// Bridges `URLSession.data(for:delegate:)` to a raw-task callback. The
+    /// per-task delegate is the only hook that fires before the body arrives,
+    /// which is what makes a non-stream request interruptible.
+    private final class InterruptWatcher: NSObject, URLSessionTaskDelegate {
+        private let onTask: (URLSessionDataTask) -> Void
+        init(_ onTask: @escaping (URLSessionDataTask) -> Void) { self.onTask = onTask }
+
+        func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+            guard let dataTask = task as? URLSessionDataTask else { return }
+            onTask(dataTask)
+        }
     }
 
     private func joinURL(_ base: String, path: String) -> URL {
@@ -566,14 +703,18 @@ final class CodexProxyServer: @unchecked Sendable {
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
+        var userInterrupted = false
         defer {
             tap?.finish(state: capState, status: statusCode, error: capError)
+            // An interrupt is not an upstream fault — log it with no status
+            // rather than a synthesized 502.
             if capState == .error {
                 log.finish(status: statusCode >= 400 ? statusCode : 502, error: capError)
             } else {
-                log.finish(status: statusCode)
+                log.finish(status: statusCode, error: userInterrupted ? capError : nil)
             }
         }
+        bindInterrupt(tap, connection: connection)
 
         var req = URLRequest(url: joinAnthropic(upstream.baseURL, path: request.path))
         req.httpMethod = request.method
@@ -588,7 +729,9 @@ final class CodexProxyServer: @unchecked Sendable {
 
         do {
             if wantsStream {
+                try Self.throwIfInterrupted(tap)
                 let (bytes, response) = try await Self.upstreamSession.bytes(for: req)
+                Self.attachUpstream(tap, task: bytes.task)
                 guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
                 statusCode = http.statusCode
                 let ctype = http.value(forHTTPHeaderField: "Content-Type") ?? "text/event-stream"
@@ -604,7 +747,9 @@ final class CodexProxyServer: @unchecked Sendable {
                 }
                 try await pipeAnthropicSSE(bytes, to: connection, tap: tap)
             } else {
-                let (data, response) = try await Self.upstreamSession.data(for: req)
+                try Self.throwIfInterrupted(tap)
+                let (data, response) = try await Self.upstreamSession.data(
+                    for: req, delegate: InterruptWatcher { Self.attachUpstream(tap, task: $0) })
                 let http = response as? HTTPURLResponse
                 statusCode = http?.statusCode ?? 200
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -619,11 +764,18 @@ final class CodexProxyServer: @unchecked Sendable {
                               contentType: ctype, body: data)
             }
         } catch {
-            capState = .error
-            capError = error.localizedDescription
-            if !(wantsStream) {
-                await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
-                        body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
+            if Self.wasInterrupted() {
+                capState = .aborted
+                capError = "已中断"
+                statusCode = 0
+                userInterrupted = true
+            } else {
+                capState = .error
+                capError = error.localizedDescription
+                if !(wantsStream) {
+                    await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
+                            body: Data("{\"error\":{\"message\":\"\(error.localizedDescription)\"}}".utf8))
+                }
             }
         }
         connection.cancel()

@@ -13,9 +13,18 @@ final class MainWindowController {
     /// Outlives the traffic page's mount — see `TrafficPageState`.
     let trafficState = TrafficPageState()
 
+    private var appearanceObs: NSObjectProtocol?
+
     init(providerStore: ProviderStore, codexProviderStore: CodexProviderStore) {
         self.providerStore = providerStore
         self.codexProviderStore = codexProviderStore
+        appearanceObs = NotificationCenter.default.addObserver(
+            forName: .appearanceDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.window?.appearance = Theme.nsAppearance
+            self.window?.backgroundColor = Theme.windowNSColor
+        }
     }
 
     /// Bring the window to the front, creating it on first call or recreating
@@ -83,11 +92,9 @@ final class MainWindowController {
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("ClaudeBarMainWindow")
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = Theme.nsAppearance
         window.collectionBehavior = [.fullScreenAuxiliary]
-        // Opaque fill: a full-window NSVisualEffectView plus per-tile
-        // glassEffect was ~100 MB of GPU backing stores on a Retina window.
-        window.backgroundColor = NSColor(srgbRed: 13/255, green: 13/255, blue: 17/255, alpha: 1)
+        window.backgroundColor = Theme.windowNSColor
         window.isOpaque = true
         window.hasShadow = true
         window.contentView = hosting

@@ -75,7 +75,7 @@ final class VpnSubscriptionStore: ObservableObject {
         try? data.write(to: FilePaths.vpnSubscriptionsFile, options: .atomic)
     }
 
-    private func profileURL(_ id: UUID) -> URL {
+    func profileURL(_ id: UUID) -> URL {
         FilePaths.vpnProfilesDir.appendingPathComponent(id.uuidString + ".yaml")
     }
 

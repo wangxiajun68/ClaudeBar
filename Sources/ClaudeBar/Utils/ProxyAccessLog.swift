@@ -98,6 +98,20 @@ final class ProxyAccessLog: ObservableObject {
     private var nextID: UInt64 = 1
     private let limit = 500
     private let iso = ISO8601DateFormatter()
+
+    /// Every write to `proxyLogFile` runs here. One writer means the JSONL
+    /// append and the whole-file compaction can never interleave on the same
+    /// path, and it keeps the cooperative pool from blocking on disk I/O.
+    private let ioQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.io", qos: .utility)
+    /// `ioQueue`-only state, deliberately not lock-guarded.
+    ///
+    /// This used to be read and replaced from whichever cooperative thread
+    /// finished a request first. Two overlapping calls both did
+    /// `compactWork = work`, and the released-then-swapped strong reference
+    /// was deallocated twice — the crash landed in
+    /// `ProxyAccessLog.scheduleCompact` → `swift_deallocClassInstance` →
+    /// `objc_destructInstance`, faulting on a garbage isa. Confining the item
+    /// to one serial queue removes the shared reference entirely.
     private var compactWork: DispatchWorkItem?
 
     private init() {
@@ -157,8 +171,7 @@ final class ProxyAccessLog: ObservableObject {
         rows[idx] = row
         lock.unlock()
         publishUpdated(row)
-        appendJSONL(row)
-        scheduleCompact()
+        scheduleWrite(row)
     }
 
     func clear() {
@@ -166,7 +179,7 @@ final class ProxyAccessLog: ObservableObject {
         rows = []
         lock.unlock()
         publish()
-        try? FileManager.default.removeItem(at: FilePaths.proxyLogFile)
+        ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }
     }
 
     // MARK: - Internals
@@ -220,6 +233,19 @@ final class ProxyAccessLog: ObservableObject {
         return rows
     }
 
+    // MARK: - Disk I/O (ioQueue only)
+
+    /// One finished row → append + a debounced compaction check, both queued
+    /// on the single writer. Hop off the caller's thread so a request's
+    /// completion never waits on `open`/`write`/`close`.
+    private func scheduleWrite(_ row: ProxyLogEntry) {
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.appendJSONL(row)
+            self.scheduleCompact()
+        }
+    }
+
     private func appendJSONL(_ row: ProxyLogEntry) {
         guard let data = encode(row) else { return }
         let url = FilePaths.proxyLogFile
@@ -234,11 +260,13 @@ final class ProxyAccessLog: ObservableObject {
         }
     }
 
+    /// Debounce: each finished call pushes the rewrite out another 2s, so a
+    /// burst of traffic compacts once at the end instead of per request.
     private func scheduleCompact() {
         compactWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.compactIfNeeded() }
         compactWork = work
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2, execute: work)
+        ioQueue.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
     private func compactIfNeeded() {
@@ -333,6 +361,10 @@ final class ProxyAccessLog: ObservableObject {
 final class ProxyLogTap {
     let id: UInt64
     private weak var store: ProxyAccessLog?
+    /// `finish` is reached from nested defer/catch arms on the connection's
+    /// task and can also be raced by a teardown path, so the once-only flag is
+    /// lock-guarded rather than a bare `Bool`.
+    private let lock = NSLock()
     private var finished = false
     private let records: Bool
 
@@ -343,8 +375,13 @@ final class ProxyLogTap {
     }
 
     func finish(status: Int, error: String? = nil) {
-        guard records, !finished else { return }
+        lock.lock()
+        guard records, !finished else {
+            lock.unlock()
+            return
+        }
         finished = true
+        lock.unlock()
         store?.finish(id: id, status: status, error: error)
     }
 

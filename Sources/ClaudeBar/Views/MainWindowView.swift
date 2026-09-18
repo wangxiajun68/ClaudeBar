@@ -40,6 +40,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 /// the chrome reads as one calm strip instead of a heavy left column.
 struct MainWindowView: View {
     @EnvironmentObject var providerStore: ProviderStore
+    @ObservedObject private var prefs = AppPreferences.shared
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
 
@@ -50,6 +51,9 @@ struct MainWindowView: View {
             detailView
         }
         .frame(minWidth: 900, minHeight: 600)
+        .background(Theme.bgPrimary)
+        .preferredColorScheme(prefs.appearance.colorScheme)
+        .id(prefs.appearance)
         // ⌘K command palette — instant fuzzy search across pages, sessions,
         // and providers.
         .overlay { CommandPalette(isPresented: $showCommandPalette) { result in
@@ -100,20 +104,15 @@ struct MainWindowView: View {
             liveStatus
         }
         .padding(.horizontal, Theme.Space.s16)
-        .frame(height: 48)
-        // Flat translucent fill, not glassEffect: a full-width live blur is
-        // re-composited on every 2.5s poll publish and is the single most
-        // expensive layer in the window. A static fill reads the same over
-        // the near-black backdrop at a fraction of the GPU cost.
-        .background(Theme.base1.opacity(0.55))
+        .frame(height: 52)
+        .background(Theme.cardSurface)
     }
 
     private var brand: some View {
         HStack(spacing: Theme.Space.s8) {
-            BrandMark(size: 22)
+            BrandMark(size: 24)
             Text("ClaudeBar")
-                .font(Theme.Font.titleSmall)
-                .tracking(Theme.Tracking.titleSmall)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundColor(Theme.textPrimary)
         }
     }
@@ -125,14 +124,10 @@ struct MainWindowView: View {
     }
 
     private var liveStatus: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(isBusy ? Theme.claudeHi : Theme.statusIdle)
-                .frame(width: 6, height: 6)
-            Text(currentLabel)
-                .font(Theme.Font.captionMono)
-                .foregroundColor(isBusy ? Theme.claudeHi : Theme.textSecondary)
-        }
+        StatusPill(
+            label: currentLabel,
+            tint: isBusy ? Theme.claudeHi : Theme.statusIdle
+        )
     }
 
     private var currentLabel: String {
@@ -167,9 +162,13 @@ struct MainWindowView: View {
             // The traffic page skips the page fade: animating a freshly
             // mounted inspector is the hitch, not the mount.
             .id(selectedPage)
-            .transition(selectedPage == .traffic ? .identity : .opacity)
+            .transition(selectedPage == .traffic ? .identity : .asymmetric(
+                insertion: .opacity.combined(with: .offset(y: 8)),
+                removal: .opacity
+            ))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bgPrimary)
     }
 
     private func navigate(to page: AppPage) {
@@ -194,31 +193,24 @@ struct TopNavTab: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                HStack(spacing: 5) {
-                    AppGlyph(name: page.icon, size: 12)
-                        .foregroundColor(isSelected ? Theme.claude : rowColor)
-                    Text(page.label)
-                        .font(Theme.Font.body)
-                        .fontWeight(isSelected ? .semibold : .regular)
-                        .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                Capsule()
-                    .fill(isSelected ? Theme.claude : Color.clear)
-                    .frame(width: isSelected ? 22 : 0, height: 2)
-                    .animation(Theme.Animation.smooth, value: isSelected)
+            HStack(spacing: 6) {
+                AppGlyph(name: page.icon, size: 12)
+                    .foregroundColor(isSelected ? Theme.claudeHi : rowColor)
+                Text(page.label)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? Theme.textPrimary : rowColor)
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .background {
-                if isHovered && !isSelected {
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.cardFill(0.05))
-                }
+                Capsule()
+                    .fill(isSelected
+                          ? Theme.claude.opacity(0.12)
+                          : (isHovered ? Theme.cardFill(0.06) : Color.clear))
             }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .hoverState($isHovered)

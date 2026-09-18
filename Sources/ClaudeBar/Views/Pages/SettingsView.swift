@@ -1,8 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// Settings: grouped modules with a shared row geometry — label leading,
-/// control trailing, caption under the row. Width is capped so columns align.
+/// Settings as a 宫格 of control tiles — one concern per cell, same grammar
+/// as the dashboard metric grid.
 struct SettingsView: View {
     @EnvironmentObject var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
@@ -12,159 +12,142 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s32) {
-                Text("设置")
-                    .font(Theme.Font.titleLarge)
-                    .foregroundColor(Theme.textPrimary)
+            VStack(alignment: .leading, spacing: Theme.Space.s24) {
+                PageTitle(title: "设置")
 
-                group("外观") {
-                    row("Token 单位") {
+                section("外观", icon: "paintpalette") {
+                    SettingTile(icon: "circle.lefthalf.filled", title: "主题",
+                                caption: "浅色冰面或深色石墨。") {
+                        Picker("", selection: $prefs.appearance) {
+                            ForEach(AppearanceMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 140)
+                        .labelsHidden()
+                    }
+                    SettingTile(icon: "textformat.123", title: "Token 单位",
+                                caption: "用量数字的量级写法。") {
                         Picker("", selection: $prefs.tokenUnitStyle) {
                             ForEach([TokenUnitStyle.chinese, .metric], id: \.self) { style in
                                 Text(style.label).tag(style)
                             }
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 180)
+                        .frame(width: 140)
+                        .labelsHidden()
                     }
                 }
 
-                group("截图") {
-                    toggleRow(
-                        "区域截图 ⌘⇧A",
-                        isOn: $prefs.screenshotHotkeyEnabled,
-                        caption: "全局拉框截图并复制到剪贴板。运行时会占用 Finder「前往 → 应用程序」。首次使用需在系统设置 → 隐私与安全性 → 屏幕录制中允许 ClaudeBar。")
-                    if let err = screenshotHotKey.lastError, prefs.screenshotHotkeyEnabled {
-                        Text(err + "。关闭占用该键的截图软件后，重新打开此开关。")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.statusError)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if prefs.screenshotHotkeyEnabled && screenshotHotKey.isRegistered {
-                        Text("热键已注册。")
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.external)
+                section("截图与通知", icon: "bell") {
+                    SettingTile(icon: "camera", title: "区域截图 ⌘⇧A",
+                                caption: screenshotCaption) {
+                        Toggle("", isOn: $prefs.screenshotHotkeyEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.claude)
+                    }
+                    SettingTile(icon: "bell", title: "空闲通知",
+                                caption: "会话由运行转为空闲时发送系统通知。") {
+                        Toggle("", isOn: $prefs.idleNotifyEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.claude)
                     }
                 }
 
-                group("通知") {
-                    toggleRow(
-                        "空闲通知",
-                        isOn: $prefs.idleNotifyEnabled,
-                        caption: "会话由运行转为空闲时发送系统通知。")
-                }
-
-                group("存储") {
-                    toggleRow(
-                        "SQLite 存储",
-                        isOn: $prefs.databaseEnabled,
-                        caption: prefs.databaseEnabled
-                            ? "流量记录与用量统计写入 SQLite。关闭后改用 JSON / JSONL 文件，两者互不迁移。"
-                            : "已关闭。流量记录写入 logs/captures；用量统计写入 logs/usage-*。重新开启不会自动导入。")
-                    Divider()
-                    fileRow("~/Library/Application Support/ClaudeBar/logs") {
-                        NSWorkspace.shared.open(FilePaths.logsDir)
+                section("存储", icon: "internaldrive") {
+                    SettingTile(icon: "cylinder", title: "SQLite 存储",
+                                caption: prefs.databaseEnabled
+                                ? "流量与用量写入 SQLite。关闭后改用 JSON，互不迁移。"
+                                : "已关闭。重新开启不会自动导入。") {
+                        Toggle("", isOn: $prefs.databaseEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.claude)
+                    }
+                    SettingTile(icon: "folder", title: "日志目录",
+                                caption: "~/Library/Application Support/ClaudeBar/logs") {
+                        Button("打开") { NSWorkspace.shared.open(FilePaths.logsDir) }
+                            .adaptiveGlassButton()
                     }
                 }
 
-                group("风扇") {
-                    Text("通过 Apple SMC 读取转速并手动调速。逻辑参考 Stats；切换为手动后系统温控不再接管该风扇。")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .fixedSize(horizontal: false, vertical: true)
-                    FanControlSection()
-                }
-
-                group("本地代理") {
-                    toggleRow(
-                        "本地代理",
-                        isOn: Binding(
+                section("本地代理", icon: "network", tint: Theme.codex) {
+                    SettingTile(icon: "network", title: "本地代理",
+                                caption: "Claude Code 与 Codex 按「模型」页当前供应商转发。",
+                                tint: Theme.codex) {
+                        Toggle("", isOn: Binding(
                             get: { prefs.codexRoutingEnabled },
                             set: { on in
                                 prefs.codexRoutingEnabled = on
                                 codexStore.syncProxyWithPreferences()
                                 codexStore.reactivateActive()
                                 providerStore.reactivateActive()
-                            }),
-                        caption: "开启后，Claude Code 与 Codex 分别按「模型」页当前供应商转发；其他客户端走下面的第三方上游。完整抓包仍由各供应商的「流量记录」控制。",
-                        tint: Theme.codex)
-                    Divider()
-                    toggleRow(
-                        "记录第三方流量",
-                        isOn: $prefs.proxyThirdPartyTrafficEnabled,
-                        caption: "将非 Claude Code / Codex 客户端经本地代理转发的请求写入「流量」页（检查器与日志），无需在供应商上开启流量记录。关闭后仍正常转发，只是不记入流量。",
-                        tint: Theme.codex)
-                    Divider()
-                    row("端口") {
+                            }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Theme.codex)
+                    }
+                    SettingTile(icon: "waveform", title: "记录第三方流量",
+                                caption: "非 CC / Codex 客户端经本地代理的请求写入「流量」页。",
+                                tint: Theme.codex) {
+                        Toggle("", isOn: $prefs.proxyThirdPartyTrafficEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.codex)
+                    }
+                    SettingTile(icon: "number", title: "端口",
+                                caption: proxyStatusCaption,
+                                tint: Theme.codex) {
                         TextField("15721", text: Binding(
                             get: { String(prefs.codexProxyPort) },
                             set: { v in prefs.codexProxyPort = Int(v) ?? prefs.codexProxyPort }))
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
+                            .frame(width: 88)
                             .multilineTextAlignment(.trailing)
                             .onSubmit { codexStore.restartProxyAndReactivate() }
                     }
-                    HStack(spacing: Theme.Space.s8) {
-                        Circle()
-                            .fill(codexStore.proxyRunning ? Theme.external : Theme.statusIdle)
-                            .frame(width: 6, height: 6)
-                        Text(ProxyUpstreamPickers.statusLine(
-                            codex: codexStore.activeProvider,
-                            claude: providerStore.activeProvider,
-                            thirdOpenAI: codexStore.resolvedThirdPartyOpenAI(),
-                            thirdAnthropic: codexStore.resolvedThirdPartyAnthropic(),
-                            running: codexStore.proxyRunning,
-                            port: prefs.codexProxyPort))
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.textSecondary)
-                            .lineLimit(2)
-                        Spacer()
-                        if let err = codexStore.errorMessage {
-                            Text(err)
-                                .font(Theme.Font.caption)
-                                .foregroundColor(Theme.statusError)
-                                .lineLimit(1)
+                    SettingTile(icon: "wifi", title: "检测代理",
+                                caption: "本机是否正在监听指定端口。",
+                                tint: Theme.codex) {
+                        ConnectivityTileButton(
+                            outcome: tests.outcome(ConnectivityTestCenter.proxyKey),
+                            helpIdle: "检测本机代理") {
+                            tests.testProxy(port: prefs.codexProxyPort, running: codexStore.proxyRunning)
                         }
                     }
-                    Divider()
-                    ProxyUpstreamPickers()
-                    Divider()
-                    ConnectivityProbeButton(
-                        title: "检测代理",
-                        help: "检测本机代理是否正在监听指定端口。",
-                        outcome: tests.outcome(ConnectivityTestCenter.proxyKey),
-                        tint: Theme.codex
-                    ) {
-                        tests.testProxy(port: prefs.codexProxyPort, running: codexStore.proxyRunning)
-                    }
-                    Divider()
-                    ProxyCurlExample(model: proxyCurlModel)
                 }
 
-                group("VPN 代理") {
-                    toggleRow(
-                        "VPN 代理",
-                        isOn: Binding(
+                ProxyUpstreamPickers()
+                    .padding(Theme.Space.s12)
+                    .panelCard()
+
+                ProxyCurlExample(model: proxyCurlModel)
+                    .padding(Theme.Space.s12)
+                    .panelCard()
+
+                section("VPN 代理", icon: "globe") {
+                    SettingTile(icon: "globe", title: "VPN 代理",
+                                caption: "托管 mihomo 并接管系统流量。节点在「VPN」页。") {
+                        Toggle("", isOn: Binding(
                             get: { prefs.vpnEnabled },
                             set: { on in
                                 prefs.vpnEnabled = on
                                 VpnManager.shared.syncRuntime()
                                 if !on {
                                     VpnProxyGuard.shared.stop()
-                                    VpnSystemProxyController.clearSystemProxy()
+                                    VpnSystemProxyController.clearSystemProxyAsync()
                                 }
-                            }),
-                        caption: "托管 mihomo 内核并接管系统流量。订阅、节点与系统代理 / TUN 在「VPN」页管理。",
-                        tint: Theme.claude)
-                    Divider()
-                    HStack(spacing: Theme.Space.s8) {
-                        Circle()
-                            .fill(vpnDotColor)
-                            .frame(width: 6, height: 6)
-                        Text(vpnStatusText)
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.textSecondary)
-                        Spacer()
-                        Button("打开 VPN 页") {
+                            }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Theme.claude)
+                    }
+                    SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
+                                caption: "订阅、节点、系统代理与 TUN。") {
+                        Button("打开") {
                             NotificationCenter.default.post(name: .openVPNPage, object: nil)
                         }
                         .adaptiveGlassButton()
@@ -172,77 +155,54 @@ struct SettingsView: View {
                     }
                 }
 
-                group("连通性") {
-                    VStack(alignment: .leading, spacing: Theme.Space.s6) {
-                        Text("当前供应商")
-                            .font(Theme.Font.body)
-                            .foregroundColor(Theme.textPrimary)
-                        Text(currentVendorCaption)
-                            .font(Theme.Font.caption)
-                            .foregroundColor(Theme.textTertiary())
-                            .fixedSize(horizontal: false, vertical: true)
+                section("连通性", icon: "antenna.radiowaves.left.and.right") {
+                    SettingTile(icon: "cpu", title: "检测 Claude Code",
+                                caption: currentCCCaption) {
+                        ConnectivityTileButton(
+                            outcome: activeVendorOutcome,
+                            helpIdle: "向当前 Claude Code 供应商发送最短请求") {
+                            guard let p = providerStore.activeProvider else { return }
+                            tests.testVendor(id: p.id, claude: p, model: p.activeModel, codex: nil)
+                        }
                     }
-                    ConnectivityProbeButton(
-                        title: "检测 Claude Code",
-                        help: "向当前 Claude Code 供应商发送一次最短 Anthropic Messages 请求。",
-                        outcome: activeVendorOutcome,
-                        disabled: providerStore.activeProvider == nil
-                    ) {
-                        guard let p = providerStore.activeProvider else { return }
-                        tests.testVendor(
-                            id: p.id,
-                            claude: p,
-                            model: p.activeModel,
-                            codex: nil)
-                    }
-                    ConnectivityProbeButton(
-                        title: "检测 Codex",
-                        help: "向当前 Codex 供应商发送一次最短 Chat / Responses 请求。",
-                        outcome: activeCodexOutcome,
-                        tint: Theme.codex,
-                        disabled: codexStore.activeProvider == nil
-                    ) {
-                        guard let p = codexStore.activeProvider else { return }
-                        tests.testVendor(
-                            id: p.id,
-                            claude: p.asDisplayProvider,
-                            model: p.activeModel.map { ModelConfig(id: $0.id, name: $0.name) },
-                            codex: p)
+                    SettingTile(icon: "terminal", title: "检测 Codex",
+                                caption: currentCodexCaption, tint: Theme.codex) {
+                        ConnectivityTileButton(
+                            outcome: activeCodexOutcome,
+                            helpIdle: "向当前 Codex 供应商发送最短请求") {
+                            guard let p = codexStore.activeProvider else { return }
+                            tests.testVendor(
+                                id: p.id,
+                                claude: p.asDisplayProvider,
+                                model: p.activeModel.map { ModelConfig(id: $0.id, name: $0.name) },
+                                codex: p)
+                        }
                     }
                 }
 
-                group("配置文件") {
-                    fileRow("~/.claude/settings.json") {
-                        NSWorkspace.shared.open(FilePaths.settingsFile)
-                    }
-                    .disabled(!fileExists(FilePaths.settingsFile))
-                    Divider()
-                    fileRow("~/.claude/claude-bar-providers.json") {
-                        NSWorkspace.shared.open(FilePaths.presetsFile)
-                    }
-                    .disabled(!fileExists(FilePaths.presetsFile))
-                    Divider()
-                    fileRow("~/.codex/config.toml") {
-                        NSWorkspace.shared.open(FilePaths.codexConfigFile)
-                    }
-                    .disabled(!fileExists(FilePaths.codexConfigFile))
-                    Divider()
-                    fileRow("~/.codex/auth.json") {
-                        NSWorkspace.shared.open(FilePaths.codexAuthFile)
-                    }
-                    .disabled(!fileExists(FilePaths.codexAuthFile))
-                    Divider()
-                    fileRow("~/.claude/claude-bar-codex-providers.json") {
-                        NSWorkspace.shared.open(FilePaths.codexProvidersFile)
-                    }
-                    .disabled(!fileExists(FilePaths.codexProvidersFile))
+                VStack(alignment: .leading, spacing: Theme.Space.s10) {
+                    SectionHeader(icon: "fanblades", title: "风扇", tint: Theme.claude)
+                    FanControlSection()
+                        .padding(Theme.Space.s12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .panelCard()
                 }
 
-                group("关于") {
-                    infoRow("名称", "ClaudeBar")
-                    infoRow("版本", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
-                    infoRow("构建", "swiftc · ad-hoc")
-                    infoRow("系统要求", "macOS 15")
+                section("配置文件", icon: "doc.text") {
+                    fileTile("~/.claude/settings.json", FilePaths.settingsFile)
+                    fileTile("~/.claude/claude-bar-providers.json", FilePaths.presetsFile)
+                    fileTile("~/.codex/config.toml", FilePaths.codexConfigFile)
+                    fileTile("~/.codex/auth.json", FilePaths.codexAuthFile)
+                    fileTile("~/.claude/claude-bar-codex-providers.json", FilePaths.codexProvidersFile)
+                }
+
+                section("关于", icon: "info.circle") {
+                    SettingTile(icon: "app", title: "ClaudeBar",
+                                caption: "macOS 15 · swiftc") {
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                            .font(Theme.Font.captionMono)
+                            .foregroundColor(Theme.textSecondary)
+                    }
                 }
 
                 Button(role: .destructive) {
@@ -254,92 +214,35 @@ struct SettingsView: View {
                 .adaptiveGlassButton(prominent: true)
                 .tint(Theme.statusError)
             }
-            .frame(maxWidth: 560, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
             .padding(Theme.Space.s24)
         }
-        .background(Theme.base0.opacity(0.35))
+        .background(Theme.bgPrimary)
     }
 
-    // MARK: - Modules
-
-    private func group<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            Text(title)
-                .font(Theme.Font.labelSection)
-                .foregroundColor(Theme.textSecondary)
-                .textCase(.uppercase)
-                .tracking(0.6)
-            VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                content()
-            }
-            .padding(Theme.Space.s16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .panelCard()
+    private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,
+                                  @ViewBuilder content: @escaping () -> C) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s10) {
+            SectionHeader(icon: icon, title: title, tint: tint)
+            TileGrid(.pageSetting) { content() }
         }
     }
 
-    private func row<C: View>(_ title: String, @ViewBuilder control: () -> C) -> some View {
-        HStack(alignment: .center, spacing: Theme.Space.s16) {
-            Text(title)
-                .font(Theme.Font.body)
-                .foregroundColor(Theme.textPrimary)
-            Spacer(minLength: Theme.Space.s12)
-            control()
-        }
-        .frame(minHeight: 22)
-    }
-
-    private func toggleRow(_ title: String, isOn: Binding<Bool>, caption: String,
-                           tint: Color = Theme.claude) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s6) {
-            Toggle(isOn: isOn) {
-                Text(title)
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.textPrimary)
-            }
-            .toggleStyle(.switch)
-            .tint(tint)
-            Text(caption)
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textTertiary())
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func fileRow(_ path: String, action: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: Theme.Space.s16) {
-            Text(path)
-                .font(Theme.Font.bodySmall)
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: Theme.Space.s12)
-            Button("打开", action: action)
+    private func fileTile(_ path: String, _ url: URL) -> some View {
+        SettingTile(icon: "doc", title: (path as NSString).lastPathComponent, caption: path) {
+            Button("打开") { NSWorkspace.shared.open(url) }
                 .adaptiveGlassButton()
-                .tint(Theme.claude)
-                .fixedSize()
+                .disabled(!FileManager.default.fileExists(atPath: url.path))
         }
-        .frame(minHeight: 22)
     }
 
-    private func infoRow(_ key: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(key)
-                .font(Theme.Font.bodySmall)
-                .foregroundColor(Theme.textSecondary)
-            Spacer()
-            Text(value)
-                .font(Theme.Font.bodySmall)
-                .monospacedDigit()
-                .foregroundColor(Theme.textPrimary.opacity(0.85))
-                .lineLimit(1)
+    private var screenshotCaption: String {
+        if let err = screenshotHotKey.lastError, prefs.screenshotHotkeyEnabled {
+            return err + "。关闭占用该键的截图软件后，重新打开此开关。"
         }
-        .frame(minHeight: 20)
-    }
-
-    private func fileExists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+        if prefs.screenshotHotkeyEnabled && screenshotHotKey.isRegistered {
+            return "热键已注册。首次使用需允许屏幕录制。"
+        }
+        return "全局拉框截图并复制到剪贴板。"
     }
 
     private var proxyCurlModel: String {
@@ -349,41 +252,38 @@ struct SettingsView: View {
             ?? ""
     }
 
-    private var vpnDotColor: Color {
-        switch VpnManager.shared.state {
-        case .running: return Theme.external
-        case .starting: return Theme.claudeHi
-        case .idle, .missingCore: return Theme.statusIdle
-        case .failed: return Theme.statusError
-        }
+    private var proxyStatusCaption: String {
+        ProxyUpstreamPickers.statusLine(
+            codex: codexStore.activeProvider,
+            claude: providerStore.activeProvider,
+            thirdOpenAI: codexStore.resolvedThirdPartyOpenAI(),
+            thirdAnthropic: codexStore.resolvedThirdPartyAnthropic(),
+            running: codexStore.proxyRunning,
+            port: prefs.codexProxyPort)
     }
 
     private var vpnStatusText: String {
         switch VpnManager.shared.state {
         case .idle: return "VPN 未启用"
-        case .missingCore: return "缺少 mihomo 内核（详见 VPN 页）"
-        case .starting: return "内核启动中…"
-        case .running:
-            if let node = VpnManager.shared.activeNodeName {
-                return "VPN 运行中 · \(node)"
-            }
-            return "VPN 运行中 · 127.0.0.1:\(prefs.vpnMixedPort)"
-        case .failed(let msg): return "VPN 异常：\(msg)"
+        case .missingCore: return "缺少内核"
+        case .starting: return "内核启动中"
+        case .running: return "VPN 运行中"
+        case .failed: return "VPN 异常"
         }
     }
 
-    private var currentVendorCaption: String {
-        var parts: [String] = []
+    private var currentCCCaption: String {
         if let p = providerStore.activeProvider {
-            parts.append("Claude Code：\(p.name) · \(p.activeModel?.name ?? "—")")
+            return "\(p.name) · \(p.activeModel?.name ?? "—")"
         }
+        return "尚未激活 Claude Code 模型"
+    }
+
+    private var currentCodexCaption: String {
         if let p = codexStore.activeProvider {
-            parts.append("Codex：\(p.name) · \(p.activeModel?.name ?? "—")")
+            return "\(p.name) · \(p.activeModel?.name ?? "—")"
         }
-        if parts.isEmpty {
-            return "尚未激活模型。请先在「模型」页分别选择 Claude Code 与 Codex。"
-        }
-        return parts.joined(separator: "\n")
+        return "尚未激活 Codex 模型"
     }
 
     private var activeVendorOutcome: ConnectivityOutcome {
@@ -400,5 +300,39 @@ struct SettingsView: View {
             return tests.outcome(ConnectivityTestCenter.vendorModelKey(p.id, m.id))
         }
         return tests.outcome(ConnectivityTestCenter.vendorKey(p.id))
+    }
+}
+
+/// One settings control: icon + title + caption, control in the top trailing slot.
+struct SettingTile<Control: View>: View {
+    let icon: String
+    let title: String
+    var caption: String = ""
+    var tint: Color = Theme.claude
+    @ViewBuilder var control: () -> Control
+    @State private var hovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                GlyphWell(name: icon, tint: tint, size: 22)
+                Spacer(minLength: 4)
+                control()
+            }
+            .frame(height: 28)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+            Text(caption.isEmpty ? " " : caption)
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(2)
+                .frame(minHeight: 32, maxHeight: 32, alignment: .topLeading)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .tile(hovered: hovered)
+        .hoverState($hovered)
     }
 }

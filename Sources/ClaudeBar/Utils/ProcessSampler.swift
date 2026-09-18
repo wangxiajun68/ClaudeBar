@@ -3,6 +3,7 @@ import Darwin
 import AppKit
 import Combine
 import SwiftUI
+import Observation
 
 /// Live process and host meters for the 本机负载 strip and session chips.
 ///
@@ -10,7 +11,12 @@ import SwiftUI
 /// IOAccelerator GPU, physical memory, SMC / IOKit temperatures). Per-agent
 /// chips use single-core CPU % and `phys_footprint`. Family shares are
 /// fractions of the machine, not of each other.
-final class ProcessSampler: ObservableObject {
+///
+/// `@Observable` so a session chip that only reads `byKey` is not redrawn
+/// when host CPU ticks — the old `ObservableObject` broadcast was the
+/// dashboard's largest scroll hitch.
+@Observable
+final class ProcessSampler {
     static let shared = ProcessSampler()
 
     enum MonitorScope: Hashable {
@@ -64,6 +70,24 @@ final class ProcessSampler: ObservableObject {
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
         var memoryPressureLevel: Int = 0
+        var diskUsed: UInt64 = 0
+        var diskTotal: UInt64 = 1
+        var wifiOn: Bool = false
+        var wifiName: String = ""
+        var wifiRSSI: Int = 0
+        var bluetoothOn: Bool = false
+        var wiredOn: Bool = false
+
+        var diskPercent: Double {
+            guard diskTotal > 0 else { return 0 }
+            return Double(diskUsed) / Double(diskTotal) * 100
+        }
+
+        var diskLabel: String {
+            let used = ProcessSampler.Snapshot(memoryBytes: diskUsed).memoryLabel
+            let total = ProcessSampler.Snapshot(memoryBytes: diskTotal).memoryLabel
+            return "\(used) / \(total)"
+        }
 
         var memoryLabel: String {
             let used = ProcessSampler.Snapshot(memoryBytes: memoryUsed).memoryLabel
@@ -99,11 +123,11 @@ final class ProcessSampler: ObservableObject {
         var memShare: Double
     }
 
-    @Published private(set) var claudeBar = Snapshot()
-    @Published private(set) var host = HostStats()
-    @Published private(set) var byKey: [Key: Snapshot] = [:]
-    @Published private(set) var shares: [Share] = []
-    @Published private(set) var trail: [Point] = []
+    var claudeBar = Snapshot()
+    var host = HostStats()
+    var byKey: [Key: Snapshot] = [:]
+    var shares: [Share] = []
+    var trail: [Point] = []
 
     private let queue = DispatchQueue(label: "com.claudebar.proc", qos: .utility)
     private var timer: DispatchSourceTimer?
@@ -136,14 +160,20 @@ final class ProcessSampler: ObservableObject {
             // A suspend may have been recorded before the timer existed
             // (start() runs off-main while UIWakePolicy can fire immediately).
             if self.timerSuspended { self.setTimerSuspended(true) }
+            // Apply the launch-time visibility state: the observer only fires
+            // on *changes*, so a launch with no visible window would otherwise
+            // sample forever at the default cadence.
+            self.applyPeriod()
         }
         observeAppState()
         // Nothing on screen and nobody to attribute to: the sampler's whole
         // output (CPU %, GPU, memory, SMC temperature sweep) has no consumer.
         // Suspend it rather than sampling a machine no one is watching.
-        visibilityCancel = UIWakePolicy.observe { [weak self] in
-            guard let self else { return }
-            self.queue.async { self.applyPeriod() }
+        if visibilityCancel == nil {
+            visibilityCancel = UIWakePolicy.observe { [weak self] in
+                guard let self else { return }
+                self.queue.async { self.applyPeriod() }
+            }
         }
     }
 
@@ -247,6 +277,8 @@ final class ProcessSampler: ObservableObject {
         }
 
         let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
+        let disk = HardwareSensors.bootDisk()
+        let links = HardwareSensors.linkStatus()
         let hostSnap = HostStats(
             cpu: hostCPUPercent(),
             gpu: gpu.utilization,
@@ -255,7 +287,14 @@ final class ProcessSampler: ObservableObject {
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
             cpuTemperatureCelsius: foreground ? HardwareSensors.cpuTemperatureCelsius() : nil,
             gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
-            memoryPressureLevel: HardwareSensors.memoryPressureLevel()
+            memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
+            diskUsed: disk.used,
+            diskTotal: disk.total,
+            wifiOn: links.wifiOn,
+            wifiName: links.wifiName,
+            wifiRSSI: links.wifiRSSI,
+            bluetoothOn: links.bluetoothOn,
+            wiredOn: links.wiredOn
         )
 
         let memTotal = max(Double(hostSnap.memoryTotal), 1)
@@ -323,15 +362,24 @@ final class ProcessSampler: ObservableObject {
         _ = livePIDs
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            var host = host
+            host.cpu = host.cpu.rounded()
+            host.gpu = host.gpu.rounded()
+            host.memoryUsed = (host.memoryUsed / 1_048_576) * 1_048_576
+            host.diskUsed = (host.diskUsed / 1_048_576) * 1_048_576
+            host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
+            if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
+            if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
+
             if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
             if self.host != host { self.host = host }
             if self.byKey != byKey { self.byKey = byKey }
             if self.shares != shares { self.shares = shares }
             var trail = self.trail
             if let last = trail.last,
-               abs(last.cpu - point.cpu) < 0.015,
-               abs(last.gpu - point.gpu) < 0.015,
-               abs(last.mem - point.mem) < 0.01 {
+               abs(last.cpu - point.cpu) < 0.02,
+               abs(last.gpu - point.gpu) < 0.02,
+               abs(last.mem - point.mem) < 0.015 {
                 return
             }
             trail.append(point)

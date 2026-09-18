@@ -12,12 +12,51 @@ struct PressableStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(Theme.Animation.bouncy, value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
     }
 }
 
 extension ButtonStyle where Self == PressableStyle {
     static var pressable: PressableStyle { PressableStyle() }
+}
+
+/// Uiverse 3D press: translate down 1pt, collapse the drop shadow.
+/// No scaleEffect — scale reflows neighbors and is what made the 测速
+/// button jump in a row of variable-width chips.
+struct UiversePressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .offset(y: configuration.isPressed ? 1 : 0)
+            .shadow(color: .black.opacity(configuration.isPressed ? 0 : 0.08),
+                    radius: configuration.isPressed ? 0 : 2, y: configuration.isPressed ? 0 : 1)
+            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == UiversePressStyle {
+    static var uiversePress: UiversePressStyle { UiversePressStyle() }
+}
+
+/// One-shot lift on appear. Delay is staggered so stacked popup sections
+/// cascade without animating every inner cell (that would hitch scroll).
+struct AppearLift: ViewModifier {
+    var delay: Double = 0
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 8)
+            .onAppear {
+                withAnimation(Theme.Animation.smooth.delay(delay)) { shown = true }
+            }
+    }
+}
+
+extension View {
+    func appearLift(delay: Double = 0) -> some View {
+        modifier(AppearLift(delay: delay))
+    }
 }
 
 // MARK: - Adaptive glass buttons
@@ -50,9 +89,7 @@ struct HoverState: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { hovering in
-                if isHovered != hovering {
-                    withAnimation(Theme.Animation.bouncy) { isHovered = hovering }
-                }
+                if isHovered != hovering { isHovered = hovering }
             }
     }
 }
@@ -69,6 +106,11 @@ extension View {
 /// A compact circular icon button used as the hover-revealed action on rows.
 /// Carries its own hover highlight so it feels like a distinct target rather
 /// than part of the card surface.
+///
+/// `.plain` alone gives the button no hit shape: the tappable area is the
+/// *rendered glyph* (icon strokes plus the 26×26 background), so clicks land
+/// on the transparent corners and fall through to whatever is behind. Wrapping
+/// the label in a `contentShape` makes the whole tile a target.
 struct ActionChip: View {
     let systemImage: String
     let tint: Color
@@ -89,11 +131,12 @@ struct ActionChip: View {
                     Circle()
                         .strokeBorder(tint.opacity(hover ? 0.5 : 0.25), lineWidth: 1)
                 )
-                .scaleEffect(hover ? 1.08 : 1)
+            .scaleEffect(hover ? 1.08 : 1)
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(Theme.Animation.bouncy) { hover = hovering }
+            hover = hovering
         }
         .help(help)
     }
@@ -106,22 +149,23 @@ struct ActionChip: View {
 /// menu-bar popup's action bar and small icon buttons.
 struct IconChip: View {
     let systemImage: String
-    var tint: Color = .white
+    var tint: Color = Theme.textSecondary
     var size: CGFloat = 12
     var tile: CGFloat = 24
-    var corner: CGFloat = 5
+    var corner: CGFloat = Theme.Radius.sm
     @State private var hover = false
 
     var body: some View {
         AppGlyph(name: systemImage, size: size, weight: .medium, box: tile)
             .foregroundColor(hover ? tint : tint.opacity(0.85))
             .background {
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(tint.opacity(hover ? 0.22 : 0.06))
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(tint.opacity(hover ? 0.22 : 0.10))
             }
-            .scaleEffect(hover ? 1.08 : 1)
+            .scaleEffect(hover ? 1.06 : 1)
+            .animation(Theme.Motion.state, value: hover)
             .onHover { hovering in
-                withAnimation(Theme.Animation.bouncy) { hover = hovering }
+                hover = hovering
             }
     }
 }

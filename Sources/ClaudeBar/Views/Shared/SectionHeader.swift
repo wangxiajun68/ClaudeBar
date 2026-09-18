@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// De-emphasized eyebrow section header: small icon + uppercase micro label,
-/// with an optional live count on the right. Counts roll via
-/// `contentTransition(.numericText())`; the eyebrow stays quiet — the data
-/// carries the weight.
+/// Section heading: tinted glyph well + title, optional live count.
 struct SectionHeader: View {
     let icon: String
     let title: String
-    /// Accent used for the icon's pulsing state.
-    var tint: Color = Theme.claude
+    /// Accent used for the icon well.
+    var tint: Color = Theme.textSecondary
     var count: Int? = nil
     /// Second component of the count, e.g. busy/active split ("● 1B · 2I").
     var activeCount: Int? = nil
@@ -17,12 +14,11 @@ struct SectionHeader: View {
     var emptyLabel: String = "无"
 
     var body: some View {
-        HStack(spacing: Theme.Space.s6) {
-            AppGlyph(name: icon, size: 11)
-                .foregroundColor(Theme.textSecondary)
+        HStack(spacing: Theme.Space.s8) {
+            GlyphWell(name: icon, tint: tint, size: 18)
             Text(title)
-                .font(Theme.Font.microSemibold)
-                .foregroundColor(Theme.textSecondary)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
             Spacer(minLength: 0)
@@ -37,16 +33,16 @@ struct SectionHeader: View {
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             } else if let activeCount {
-                Text("● \(activeCount)\(activeSymbol) · \(count - activeCount)I")
-                    .font(Theme.Font.microMedium)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textSecondary)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: activeCount)
-                    .animation(Theme.Animation.smooth, value: count)
+                StatusPill(
+                    label: "\(activeCount)\(activeSymbol) · \(count - activeCount)I",
+                    tint: activeCount > 0 ? tint : Theme.textSecondary
+                )
+                .contentTransition(.numericText())
+                .animation(Theme.Animation.smooth, value: activeCount)
+                .animation(Theme.Animation.smooth, value: count)
             } else {
                 Text("\(count)")
-                    .font(Theme.Font.microMedium)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(Theme.textSecondary)
                     .contentTransition(.numericText())
