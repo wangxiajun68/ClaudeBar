@@ -26,10 +26,13 @@
 
 概览是一块仪表盘：CPU 芯片、GPU 柱、内存液面、硬盘、Wi-Fi / 蓝牙、左右风扇；下面是当前供应商、会话和 Token。菜单栏则是同一套事实的压缩版 — 三格切换 CC / Codex / VPN，再往下是活着的会话和当月热力。
 
-| 主窗口 | 菜单栏 |
-| :----: | :----: |
-| ![主窗口概览](docs/screenshots/main-window.png) | ![菜单栏 popup](docs/screenshots/menubar-popup.png) |
-| 冰面 / 石墨宫格。颜色只出现在图表里。 | 点图标即出。切模型、巡会话、看用量，不用开窗口。 |
+**主窗口** · 冰面 / 石墨宫格。颜色只出现在图表里。
+
+![主窗口概览](docs/screenshots/main-window.png)
+
+**菜单栏** · 点图标即出。切模型、巡会话、看用量，不用开窗口。
+
+![菜单栏 popup](docs/screenshots/menubar-popup.png)
 
 ## 它解决什么
 
