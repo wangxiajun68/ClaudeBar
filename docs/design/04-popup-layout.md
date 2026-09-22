@@ -3,7 +3,7 @@
 > ClaudeBar 设计文档 · §4
 > 相关：[主窗口与设计系统](05-main-window-and-theme.md) · 技术文档 [视图层](../technical/05-view-layer.md)
 
-面板宽 560pt，垂直自适应（最高占满屏幕可见区）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `ResourceStrip` / `VpnChromeCluster`。从上到下：
+面板宽 560pt，垂直自适应（最高占满屏幕可见区）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `ResourceStrip`。从上到下：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -17,7 +17,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarRateView`），不占用 popup 高度。主窗口不放 `VpnChromeCluster`。
+VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarRateView`），不占用 popup 高度。popup 内的 VPN 入口是 `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`）。
 
 > settings.json 缺失且 Codex 列表为空时，供应商/会话/用量替换为「未找到 settings.json」警告卡；资源条与 VPN 页头仍在。
 
@@ -29,14 +29,15 @@ VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarR
 - **Cursor 卡片**：双击用 Cursor.app 打开该 workspace。
 - 空态显示 `StandbyEmptyState`（"no signals" / "no cursor signals"）。
 
-## 供应商瓦片
+## 模型切换
 
-供应商区不再使用可折叠行，而是 `TileGrid(.popupProvider)` 2 列宫格，每格一个 `ProviderTile`（`Views/ProviderRow.swift`）：
+popup 内不铺供应商宫格：`PanelHeader` 的 Claude Code / Codex chip 打开 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
+
+主窗口的供应商宫格（`TileGrid` + `ProviderTile`，`Views/ProviderRow.swift`）是另一条路径，见 [design/05](05-main-window-and-theme.md)：
 
 - 瓦片头：Provider 名 + 活跃胶囊（激活瓦片左缘 2px accent 竖条）。
 - 活跃模型行（case-insensitive 匹配 `ANTHROPIC_MODEL`）+ 模型总数。
 - 多模型 Provider 瓦片带 chevron，点击在瓦片内展开模型行（hairline 分隔），每行独立可选；默认收起以保证网格行高一致。
-- 激活模型后弹出 `FeedbackToast` 反馈（如 "DeepSeek / deepseek-v4-pro"，2 秒淡出）。
 
 ## 用量区
 
@@ -48,4 +49,4 @@ VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarR
 
 ## 底部操作栏
 
-`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、编辑供应商（`ProviderEditorWindowController`）、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、退出。
+`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、退出。

@@ -29,9 +29,13 @@ enum WidgetSnapshotWriter {
     static func write(_ snapshot: WidgetSnapshot, deduplicatingAgainst lastData: Data?) -> Data? {
         var normalized = snapshot
         normalized.updatedAt = Date(timeIntervalSince1970: 0)
-        guard let key = try? JSONEncoder().encode(normalized) else { return lastData }
+        // One encoder, two encodes: the first for the dedup key, the second
+        // only when the payload actually changed. Both used to build a fresh
+        // `JSONEncoder` per call on the main actor, every poll.
+        let encoder = JSONEncoder()
+        guard let key = try? encoder.encode(normalized) else { return lastData }
         guard key != lastData else { return lastData }
-        guard let data = try? JSONEncoder().encode(snapshot) else { return lastData }
+        guard let data = try? encoder.encode(snapshot) else { return lastData }
         persist(data)
         WidgetCenter.shared.reloadAllTimelines()
         return key
@@ -40,8 +44,13 @@ enum WidgetSnapshotWriter {
     private static func persist(_ data: Data) {
         // 1. App Group container (or ~/.claude fallback — see FilePaths).
         try? data.write(to: FilePaths.widgetSnapshotFile, options: .atomic)
-        // 2. ~/.claude/
-        try? data.write(to: FilePaths.claudeDir.appendingPathComponent(AppConfig.widgetSnapshotFileName), options: .atomic)
+        // 2. ~/.claude/ — only when it is a different path from #1. The
+        // `widgetSnapshotFile` fallback *is* `~/.claude/...`, so an
+        // unsandboxed or unsigned run wrote the same file twice per poll.
+        let legacy = FilePaths.claudeDir.appendingPathComponent(AppConfig.widgetSnapshotFileName)
+        if legacy.path != FilePaths.widgetSnapshotFile.path {
+            try? data.write(to: legacy, options: .atomic)
+        }
         // 3. Widget's own sandbox container (sandboxed widget can read this).
         let widgetContainer = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Containers/\(AppConfig.widgetBundleID)/Data/\(AppConfig.widgetSnapshotFileName)")

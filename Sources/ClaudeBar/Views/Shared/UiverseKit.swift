@@ -271,6 +271,14 @@ struct AuroraSparkline: View {
     var tint: Color = Theme.chartGreen
     var live: Bool = false
 
+    /// A `live` sparkline pulses its head dot at 12 Hz. `live` is a caller
+    /// decision (VPN running, stream in flight) but on its own it is not
+    /// enough: the schedule has to stop when nothing is on screen, or an
+    /// always-resident menu-bar app keeps animating a window nobody can see.
+    @State private var uiIsLive = UIWakePolicy.hasVisibleWindow
+
+    private var pulsing: Bool { live && uiIsLive }
+
     var body: some View {
         GeometryReader { geo in
             let pts = points(in: geo.size)
@@ -286,8 +294,9 @@ struct AuroraSparkline: View {
                 strokePath(pts)
                     .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 if let last = pts.last {
-                    if live {
-                        TimelineView(.animation(minimumInterval: 1.0 / 12.0)) { timeline in
+                    if pulsing {
+                        TimelineView(.animation(minimumInterval: 1.0 / 12.0,
+                                                paused: !pulsing)) { timeline in
                             let p = 0.5 + 0.5 * sin(timeline.date.timeIntervalSinceReferenceDate * 2.4)
                             Circle()
                                 .fill(tint.opacity(0.14 + 0.16 * p))
@@ -302,6 +311,9 @@ struct AuroraSparkline: View {
                         .position(last)
                 }
             }
+        }
+        .onReceive(UIWakePolicy.changes) { _ in
+            uiIsLive = UIWakePolicy.hasVisibleWindow
         }
         .accessibilityHidden(true)
     }
@@ -346,129 +358,6 @@ struct AuroraSparkline: View {
     }
 }
 
-/// Split metrics + sparkline. Ice-canvas reading of the dark Monthly Balance card.
-struct AuroraBalanceCard: View {
-    var icon: String = "chart.bar"
-    var title: String
-    var subtitle: String
-    var leftLabel: String
-    var leftValue: String
-    var leftDelta: String = ""
-    var leftTint: Color = Theme.chartGreen
-    var rightLabel: String
-    var rightValue: String
-    var rightDelta: String = ""
-    var rightTint: Color = Theme.statusError
-    var series: [Double]
-    var live: Bool = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                GlyphWell(name: icon, tint: leftTint, size: 22)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    Text(subtitle)
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 0) {
-                metric(leftLabel, leftValue, leftDelta, leftTint)
-                Rectangle()
-                    .fill(Theme.hairline)
-                    .frame(width: 1)
-                    .padding(.vertical, 2)
-                metric(rightLabel, rightValue, rightDelta, rightTint)
-                    .padding(.leading, 16)
-            }
-            AuroraSparkline(values: series, tint: leftTint, live: live)
-                .frame(height: 56)
-        }
-    }
-
-    private func metric(_ label: String, _ value: String, _ delta: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(Theme.Font.micro)
-                .foregroundColor(Theme.textTertiary())
-            Text(value)
-                .font(Theme.Font.displayMetricSmall)
-                .monospacedDigit()
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
-                .contentTransition(.numericText())
-            if !delta.isEmpty {
-                Text(delta)
-                    .font(Theme.Font.microMedium)
-                    .foregroundColor(tint)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Metro path (station dots)
-
-struct MetroPath: View {
-    let stations: [String]
-    var current: String?
-
-    @State private var hover: String?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(stations.enumerated()), id: \.offset) { i, name in
-                station(name)
-                if i < stations.count - 1 {
-                    Rectangle()
-                        .fill(Theme.statusError.opacity(0.85))
-                        .frame(height: 3)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .frame(minHeight: 28)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("路径 " + stations.joined(separator: " → "))
-    }
-
-    private func station(_ name: String) -> some View {
-        let live = name == (current ?? stations.last)
-        let over = hover == name
-        return ZStack {
-            if over {
-                Text(name)
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Theme.statusError, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .offset(y: -16)
-                    .zIndex(2)
-            }
-            Circle()
-                .fill(Color.white)
-                .overlay(
-                    Circle().stroke(Color.black.opacity(0.82), lineWidth: over ? 3 : (live ? 2 : 1.5))
-                )
-                .frame(width: over ? 14 : 11, height: over ? 14 : 11)
-                .shadow(color: live ? Theme.statusError.opacity(0.35) : .clear, radius: 3)
-        }
-        .frame(width: 18, height: 28)
-        .onHover { hovering in
-            hover = hovering ? name : (hover == name ? nil : hover)
-        }
-        .help(name)
-        .animation(Theme.Motion.state, value: over)
-    }
-}
-
 // MARK: - Source stack (Damn good card overlapping circles)
 
 struct SourceStack: View {
@@ -503,7 +392,7 @@ struct SourceStack: View {
                 }
             }
             if scan, !items.isEmpty {
-                ScanLine()
+                ScanLine(active: scan)
                     .frame(width: 1, height: 36)
             }
         }
@@ -518,8 +407,18 @@ struct SourceStack: View {
 }
 
 private struct ScanLine: View {
+    /// Same contract as the other gated schedules in this file: the parent
+    /// stops rendering the line when it is not scanning, and `active` keeps
+    /// the schedule itself paused so an in-flight hover-out cannot leave a
+    /// 20 Hz display link behind.
+    var active: Bool
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { timeline in
+        // 20 Hz while the card is hovered. Every other 20 Hz schedule in this
+        // kit carries `paused:`, and this one is worse than they are: it has
+        // no stop condition at all, so leaving the pointer on a usage card
+        // pinned a display link for as long as the app ran.
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !active)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: 1.6) / 1.6
             Capsule()

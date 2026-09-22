@@ -1,12 +1,11 @@
 import Foundation
+import SQLite3
 
 // MARK: - Model
 
-/// A live Codex CLI/Desktop session. Codex does not write PID files like
-/// Claude Code, so liveness and busy-ness are both **recency-based**: a
-/// session file touched within `recencyWindow` is alive, and one touched
-/// within `busyWindow` is considered mid-turn (its writer is actively
-/// appending).
+/// A retained Codex CLI/Desktop session. Archive membership comes from the
+/// desktop index; the latest rollout lifecycle event separately tracks busy
+/// state. Without an index, recent rollout files are the compatibility fallback.
 ///
 /// Codex fans work out to **sub-agents**: each gets its own rollout file whose
 /// first `session_meta` record carries `parent_thread_id` + `thread_source:
@@ -79,14 +78,13 @@ enum ExternalAgentKind: String, CaseIterable {
     var icon: String { "chevron.left.forwardslash.chevron.right" }
 
     var rootDir: String {
-        FileManager.default.homeDirectoryForCurrentUser.path + "/.codex/sessions"
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"]
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
+        return URL(fileURLWithPath: home).appendingPathComponent("sessions").path
     }
 
-    /// A session counts as "alive" (surfaced in the list) while its
-    /// transcript was touched this recently. There is no PID file, so
-    /// recency is the only liveness signal. 30 days covers history browsing;
-    /// sessions sort most-recent-first so old ones never crowd the top.
-    var recencyWindow: TimeInterval { 30 * 86400 }
+    /// Bound only the legacy fallback scan when no readable index exists.
+    var recencyWindow: TimeInterval { 24 * 3600 }
 
     /// Codex appends token_count events continuously while a turn is in
     /// flight — they land within seconds of each other.
@@ -126,6 +124,7 @@ struct ExternalSessionMonitor {
         var threadSource: String
         var agentNickname: String
         var spawnDepth: Int
+        var hasOpenTask: Bool?
     }
     private static var codexFileCache: [String: CodexFileCache] = [:]
     /// `fetchActive` is called from detached tasks and polls can overlap, so
@@ -135,6 +134,7 @@ struct ExternalSessionMonitor {
     private static func fetchCodex() -> [ExternalSessionInfo] {
         let root = ExternalAgentKind.codex.rootDir
         let now = Date().timeIntervalSince1970
+        if let indexed = indexedCodexSessions(now: now) { return indexed }
         // A session is only surfaced if its file was touched within the
         // recency window. Codex nests by year/month/day; cap the walk at the
         // 3 most recent months so a long Codex history never walks the whole
@@ -164,6 +164,14 @@ struct ExternalSessionMonitor {
                         let path = "\(dayPath)/\(file)"
                         guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
                         let parsed = codexFields(path: path, meta: meta)
+                        guard parsed.parentThreadId == nil, parsed.threadSource != "subagent",
+                              parsed.spawnDepth == 0 else { continue }
+                        // `task_complete` is the authoritative end of a Codex
+                        // task, including dispatched sub-agents. Old rollout
+                        // formats without lifecycle events get only the brief
+                        // writer-recency fallback instead of lingering for days.
+                        let isRunning = parsed.hasOpenTask
+                            ?? (now - meta.mtime <= ExternalAgentKind.codex.busyWindow)
                         let base = (file as NSString).deletingPathExtension
                         let sessionId = String(base.suffix(36))
                         results.append(ExternalSessionInfo(
@@ -174,7 +182,7 @@ struct ExternalSessionMonitor {
                             updatedAt: meta.mtime * 1000,
                             model: parsed.model,
                             isAlive: true,
-                            isActive: now - meta.mtime <= ExternalAgentKind.codex.busyWindow,
+                            isActive: isRunning,
                             contextTokens: parsed.contextUsed,
                             contextLimit: parsed.contextLimit,
                             parentThreadId: parsed.parentThreadId,
@@ -190,6 +198,87 @@ struct ExternalSessionMonitor {
             if results.count > 400 { break yearLoop }
         }
         return results
+    }
+
+    private struct IndexedThread {
+        let id: String
+        let path: String
+        let cwd: String
+        let created: Double
+        let updated: Double
+    }
+    private static let indexLock = NSLock()
+    private static var indexReadAt = Date.distantPast
+    private static var indexRows: [IndexedThread]?
+
+    /// Archive membership comes from the desktop index, not rollout recency.
+    /// Cache only membership; the rollout cache still updates live turn state.
+    private static func indexedCodexSessions(now: TimeInterval) -> [ExternalSessionInfo]? {
+        indexLock.lock()
+        defer { indexLock.unlock() }
+        if Date().timeIntervalSince(indexReadAt) >= 10 {
+            indexRows = readThreadIndex()
+            indexReadAt = Date()
+        }
+        guard let rows = indexRows else { return nil }
+        let paths = Set(rows.map(\.path))
+        codexCacheLock.lock()
+        codexFileCache = codexFileCache.filter { paths.contains($0.key) }
+        codexCacheLock.unlock()
+        return rows.compactMap { row -> ExternalSessionInfo? in
+            let meta = fileMeta(path: row.path, cutoff: 0)
+            let parsed = meta.map { codexFields(path: row.path, meta: $0) }
+            guard parsed?.parentThreadId == nil, parsed?.threadSource != "subagent",
+                  (parsed?.spawnDepth ?? 0) == 0 else { return nil }
+            let updated = meta?.mtime ?? row.updated
+            return ExternalSessionInfo(
+                kind: .codex, sessionId: row.id,
+                cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
+                startedAt: row.created * 1000, updatedAt: updated * 1000,
+                model: parsed?.model ?? "", isAlive: true,
+                isActive: parsed?.hasOpenTask ?? (now - updated <= ExternalAgentKind.codex.busyWindow),
+                contextTokens: parsed?.contextUsed ?? 0, contextLimit: parsed?.contextLimit ?? 0,
+                parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",
+                agentNickname: parsed?.agentNickname ?? "", spawnDepth: parsed?.spawnDepth ?? 0)
+        }
+    }
+
+    private static func readThreadIndex() -> [IndexedThread]? {
+        let home = URL(fileURLWithPath: ExternalAgentKind.codex.rootDir).deletingLastPathComponent()
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: home.path)) ?? []
+        let candidates = files.filter { $0.hasPrefix("state_") && $0.hasSuffix(".sqlite") }
+            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+        guard let file = candidates.first else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(home.appendingPathComponent(file).path, &db,
+                              SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 200)
+        var stmt: OpaquePointer?
+        let sql = "SELECT id, rollout_path, cwd, created_at, updated_at, source FROM threads WHERE archived = 0 ORDER BY updated_at DESC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        var rows: [IndexedThread] = []
+        func string(_ column: Int32) -> String {
+            guard let value = sqlite3_column_text(stmt, column) else { return "" }
+            return String(cString: value)
+        }
+        var step = sqlite3_step(stmt)
+        while step == SQLITE_ROW {
+            // The indexed source survives large/truncated session_meta lines.
+            let source = string(5)
+            let object = source.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }
+            let isChild = source.lowercased().contains("subagent")
+                || (object as? [String: Any])?["subagent"] != nil
+            if isChild { step = sqlite3_step(stmt); continue }
+            rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
+                                      created: sqlite3_column_double(stmt, 3), updated: sqlite3_column_double(stmt, 4)))
+            step = sqlite3_step(stmt)
+        }
+        return step == SQLITE_DONE ? rows : nil
     }
 
     /// Head/tail fields for `path`, re-reading only when mtime or size moved.
@@ -216,7 +305,8 @@ struct ExternalSessionMonitor {
             parentThreadId: spawn.parentThreadId,
             threadSource: spawn.threadSource,
             agentNickname: spawn.nickname,
-            spawnDepth: spawn.depth)
+            spawnDepth: spawn.depth,
+            hasOpenTask: ctx.hasOpenTask)
         codexCacheLock.lock()
         codexFileCache[path] = entry
         codexCacheLock.unlock()
@@ -285,32 +375,63 @@ struct ExternalSessionMonitor {
     }
 
     /// Tail `token_count` — `last_token_usage.total_tokens` vs `model_context_window`.
-    private static func readCodexContext(path: String) -> (used: Int, limit: Int) {
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0) }
+    /// Latest window fill from the tail of a rollout.
+    ///
+    /// Two things this has to get right, both learned from the real corpus:
+    ///
+    /// 1. **`last_token_usage`, not `total_token_usage`.** The monitor used to
+    ///    read `total_token_usage.total_tokens` as "context used". That field
+    ///    is the thread's *cumulative billing* total — it keeps growing across
+    ///    the whole session (measured up to 201 M against a 475 k window) — so
+    ///    every long session reported a context ratio far past 100 %. The
+    ///    window fill is `last_token_usage.total_tokens`, exactly as
+    ///    `UsageIndex.parseCodex` reads it; this now matches
+    ///    (`used ≤ limit` on 255/257 files, the other two are at 100 %).
+    /// 2. **Lossy decode.** The tail read starts at an arbitrary byte offset,
+    ///    so the first character is usually a split multi-byte sequence and
+    ///    strict UTF-8 decoding of the whole window fails — which silently
+    ///    discarded the newest lines on 59 of 291 local rollouts. Decode
+    ///    lossily and let the first (partial) line fail to parse.
+    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?) {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil) }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(48_000, size))
-        guard let data = try? handle.readToEnd(),
-              let text = String(data: data, encoding: .utf8) else { return (0, 0) }
+        guard let data = try? handle.readToEnd() else { return (0, 0, nil) }
+        let text = String(decoding: data, as: UTF8.self)
         var used = 0, limit = 0
+        var hasOpenTask: Bool?
         for line in text.split(separator: "\n") {
-            guard line.contains("token_count"),
+            guard line.contains("\"type\":\"event_msg\""),
                   let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  obj["type"] as? String == "event_msg",
                   let payload = obj["payload"] as? [String: Any],
-                  payload["type"] as? String == "token_count",
+                  let eventType = payload["type"] as? String else { continue }
+            if eventType == "task_started" {
+                hasOpenTask = true
+                continue
+            }
+            if eventType == "task_complete" || eventType == "turn_aborted" {
+                hasOpenTask = false
+                continue
+            }
+            guard eventType == "token_count",
                   let info = payload["info"] as? [String: Any] else { continue }
             if let w = info["model_context_window"] as? Int { limit = w }
             else if let w = info["model_context_window"] as? Double { limit = Int(w) }
-            let last = (info["last_token_usage"] as? [String: Any])
-                ?? (info["total_token_usage"] as? [String: Any])
-            if let last {
+            if let last = info["last_token_usage"] as? [String: Any] {
                 let total = JSONCoerce.intVal(last["total_tokens"])
                 let input = JSONCoerce.intVal(last["input_tokens"])
-                    + JSONCoerce.intVal(last["cached_input_tokens"])
                 used = total > 0 ? total : input
+            } else if let cum = info["total_token_usage"] as? [String: Any] {
+                // No per-turn record anywhere in the window: fall back to the
+                // cumulative total, clipped so a thread that outgrew its
+                // window cannot render as "412 %".
+                let total = JSONCoerce.intVal(cum["total_tokens"])
+                used = limit > 0 ? min(total, limit) : total
             }
         }
-        return (used, limit)
+        return (used, limit, hasOpenTask)
     }
 }
 

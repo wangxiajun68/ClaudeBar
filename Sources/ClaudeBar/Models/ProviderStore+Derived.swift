@@ -61,16 +61,13 @@ extension ProviderStore {
         for session in alive where session.isSubagent {
             if let parent = session.parentThreadId { childrenOf[parent, default: []].append(session) }
         }
-        let parentIDs = Set(alive.map(\.sessionId))
         func roots() -> [ExternalSessionInfo] {
-            alive.filter { session in
-                guard session.isSubagent else { return true }
-                guard let parent = session.parentThreadId else { return true }
-                return !parentIDs.contains(parent)
-            }
+            // Orphaned or completed helpers must never become main cards.
+            alive.filter { !$0.isSubagent }
         }
         func build(_ session: ExternalSessionInfo, depth: Int) -> ExternalSessionNode {
             let children = (childrenOf[session.sessionId] ?? [])
+                .filter(\.isActive)
                 .sorted { $0.updatedAt > $1.updatedAt }
                 .map { build($0, depth: depth + 1) }
             return ExternalSessionNode(session: session, depth: depth, children: children)

@@ -22,12 +22,19 @@ enum ConnectivityProbe {
     /// GET `http://127.0.0.1:<port>/health` (falls back to `/v1/health`).
     static func proxy(port: Int) async -> Hit {
         let started = Date()
+        let token = CodexProxyServer.configuredToken
         for path in ["/health", "/v1/health"] {
             guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { continue }
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
             req.timeoutInterval = 4
             req.cachePolicy = .reloadIgnoringLocalCacheData
+            // /health is behind the same token as everything else — an
+            // unauthenticated health endpoint is a free "what is this port"
+            // for any scanner, so the probe presents the token too.
+            if !token.isEmpty {
+                req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
             do {
                 let (data, response) = try await session.data(for: req)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0

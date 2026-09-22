@@ -177,8 +177,11 @@ final class UsageJSONStore {
            let obj = try? JSONDecoder().decode([String: FileRec].self, from: data) {
             files = obj
         }
-        if let data = try? Data(contentsOf: FilePaths.usageRollupJSONL),
-           let text = String(data: data, encoding: .utf8) {
+        // Lossy decode: the rollup is append-only JSONL and its last line can
+        // legitimately be half-written (the app was killed mid-append). Strict
+        // decoding threw away every other line with it.
+        if let data = try? Data(contentsOf: FilePaths.usageRollupJSONL) {
+            let text = String(decoding: data, as: UTF8.self)
             let dec = JSONDecoder()
             for line in text.split(whereSeparator: \.isNewline) {
                 guard let row = try? dec.decode(RollupRec.self, from: Data(line.utf8)) else { continue }

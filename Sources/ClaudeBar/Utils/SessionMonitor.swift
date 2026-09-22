@@ -160,10 +160,15 @@ struct SessionMonitor {
         let fileSize = (try? handle.seekToEnd()) ?? 0
         let readSize = min(96_000, fileSize)
         try? handle.seek(toOffset: fileSize - readSize)
-        guard let tailData = try? handle.readToEnd(),
-              let tail = String(data: tailData, encoding: .utf8) else {
+        guard let tailData = try? handle.readToEnd() else {
             return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false)
         }
+        // Lossy decode: the tail read starts at a byte offset that usually
+        // lands inside a multi-byte character, and a strict decode then fails
+        // for the *whole* window — measured on 31 of 600 local transcripts,
+        // each one silently reporting 0 context tokens. A lossy decode keeps
+        // every line but the partial first one.
+        let tail = String(decoding: tailData, as: UTF8.self)
 
         var lastContext = 0
         var lastModel = ""
@@ -291,10 +296,12 @@ struct SessionMonitor {
         let size = (try? handle.seekToEnd()) ?? 0
         let readSize = min(32_000, size)
         try? handle.seek(toOffset: size - readSize)
-        guard let tailData = try? handle.readToEnd(),
-              let tail = String(data: tailData, encoding: .utf8) else {
+        guard let tailData = try? handle.readToEnd() else {
             return ("", false)
         }
+        // Lossy decode — see `readContext` for why a strict one drops the
+        // whole tail on a mid-character seek.
+        let tail = String(decoding: tailData, as: UTF8.self)
 
         var lastActivity = ""
         var lastToolUseLine = -1

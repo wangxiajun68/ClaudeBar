@@ -17,19 +17,26 @@ struct CursorSessionCardView: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(isActive ? Theme.cursorAccent : Color.gray.opacity(0.45))
+                    .fill(isActive ? Theme.cursorAccent : Theme.Ink.idle)
                     .frame(width: 6, height: 6)
                 Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(Theme.Font.section)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer()
+                if hasAgents {
+                    Label("\(session.subagents.count)", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
+                        .labelStyle(.titleAndIcon)
+                }
                 StatusPill(
                     label: isActive ? "运行中" : "空闲",
-                    tint: isActive ? Theme.cursorAccent : Theme.statusIdle
+                    tint: isActive ? Theme.cursorAccent : Theme.statusIdle,
+                    ink: isActive ? Theme.Ink.cursor : Theme.Ink.idle
                 )
             }
 
@@ -37,32 +44,23 @@ struct CursorSessionCardView: View {
                 Text(session.contextLabel)
                     .font(Theme.Font.tileMicroValue)
                     .foregroundColor(accentColor)
-                Spacer()
+                ContextBar(ratio: ratio, height: 3)
+                    .opacity(session.contextPercent >= 0 ? 1 : 0.25)
+                    .frame(maxWidth: .infinity)
                 SessionLoadChip(key: .cursor, compact: true, shared: true)
-            }
-
-            ContextBar(ratio: ratio, height: 4)
-                .opacity(session.contextPercent >= 0 ? 1 : 0.25)
-
-            Text(session.currentActivity.isEmpty ? " " : session.currentActivity)
-                .font(Theme.Font.micro)
-                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
-                .lineLimit(2)
-
-            HStack(spacing: 6) {
-                if hasAgents {
-                    Text("⚙\(session.subagents.count)")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(runningAgents > 0 ? Theme.statusBusy : Theme.textTertiary())
-                }
-                Spacer()
                 Text(session.relativeUpdated)
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             }
+
+            Text(session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity)
+                .font(Theme.Font.micro)
+                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
+                .lineLimit(1)
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .tile(hovered: isHovered, dense: true)
         .hoverState($isHovered)
         .contentShape(Rectangle())

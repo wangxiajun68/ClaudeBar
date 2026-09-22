@@ -21,9 +21,9 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 `MenuBarView` 是组合壳（宽 560pt 的 `VStack`）：
 
-- **PanelHeader**：Brand + **`VpnChromeCluster`（仅 popup）** + 刷新。
+- **PanelHeader**：Brand + 模型/VPN 切换 chip（`HeaderSwitchChip` + `VpnNodePickerPanel`）+ 刷新。
 - **ResourceStrip（dense）**：本机资源与风扇。
-- **ProvidersPanel / SessionsPanel / UsagePanel**：固定区高，避免互相挤压。
+- **SessionsPanel / UsagePanel**：固定区高，避免互相挤压。Provider 宫格只存在于主窗口（popup 的模型切换在 `PanelHeader` 的 chip 里）。
 - **PanelState**：feedback toast、折叠态。
 - **底部操作栏**：刷新 / 主窗口 / 编辑供应商 / settings.json / 空闲通知 / 退出。
 
@@ -37,17 +37,17 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - Claude 会话：`TerminalLauncher.resumeClaudeSession(cwd:sessionId:)` → 优先 Warp（`/Applications/Warp.app` 存在时），否则 Terminal。Warp 路径：`NSWorkspace.open` 打开 cwd + 后台 `osascript` 注入 `claude --resume <sessionId>` 并回车。Terminal 路径：`do script`。
 - Cursor 会话：`TerminalLauncher.openInCursor(cwd:)` 或 `NSWorkspace` 打开 Cursor.app + cwd。
 
-编辑器窗口由 `ProviderEditorWindowController`（根目录）管理——单例持有 NSWindow，关闭时清理引用；popup 底部按钮与主窗口供应商页共用同一 `ProviderEditorView`。
+编辑器由主窗口的「模型」页承载（`ProvidersView` 嵌入 `ProviderEditorView`）；popup 底部的编辑按钮只负责 post `.openProvidersEditor` 切页，不再持有自己的 NSWindow。
 
 ## `ProviderTile` / `ProviderRow`（`Views/ProviderRow.swift`）
 
 - `ProviderTile`：供应商宫格瓦片（popup 2 列与主窗口自适应网格共用，`dense` 切换密度）。瓦片头 = Provider 名 + 活跃胶囊 + chevron；激活瓦片左缘 2px accent 竖条（`ActiveTileEdge` 风格）。收起时瓦片等高（网格行整齐）；chevron 展开后瓦片内列出模型行（hairline 分隔），每行独立可选。模型名匹配用 case-insensitive（settings.json 大小写可能不同）。
-- `ProviderRow`：保留的单 Provider 折叠行实现（`isSingleModel` 整行可点选；多模型 `expandableHeader` + `modelRow`）。popup 当前主用 `ProviderTile`。
+- `PopupModelTile`：popup 模型选择列表的一行（`PopupModelTile` 定义同文件；popup 的模型切换走 `PanelHeader` 的 chip → `ModelSwitchList`，不走 2 列宫格）。
 - `formatContext`：`200000 → 200K`、`1000000 → 1M`。
 
 ## `ProviderEditorView` — 编辑视图
 
-popup 底部「编辑供应商」按钮经 `ProviderEditorWindowController` 弹出独立 `NSWindow`（760×520），主窗口「供应商」页（`ProvidersView`）也嵌入同一 `ProviderEditorView`，共用一套编辑逻辑。表单状态在 `ProviderEditorModel`（`@Observable`，`Models/ProviderEditorModel.swift`，含 `EditableModel` 本地副本、校验与保存 spinner）。左 220pt Provider 列表（`List(selection:)` + 增/删/复制），右侧 master-detail：
+编辑器视图没有独立窗口：popup 底部「编辑供应商」按钮 post `.openProvidersEditor`，主窗口切到「模型」页并嵌入 `ProviderEditorView`，共用同一 `ProviderEditorModel`（`@Observable`，`Models/ProviderEditorModel.swift`，含 `EditableModel` 本地副本、校验与保存 spinner）。左 220pt Provider 列表（`List(selection:)` + 增/删/复制），右侧 master-detail：
 - **Provider Configuration**：Name / API Key / Base URL。
 - **Model Configuration**：左 170pt 模型列表（回车或点 + 添加，右键设默认 / 删除），右模型详情（Name / Context Tokens / Auto Compact Window / Disable Compact / Disable Experimental Betas）。
 - 底部 Save 按钮（⌘S），保存后 "Saved ✓" 反馈 2 秒。保存激活 Provider 时触发 `activateModel` 应用变更。

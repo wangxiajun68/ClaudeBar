@@ -55,7 +55,7 @@ struct FanControlSection: View {
                     if let err = monitor.lastError {
                         Text(err)
                             .font(Theme.Font.caption)
-                            .foregroundColor(Theme.statusError)
+                            .foregroundColor(Theme.Ink.error)
                             .padding(.top, 6)
                     }
                 }

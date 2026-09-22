@@ -14,14 +14,15 @@ struct SessionsPanelView: View {
         let empty = claude.isEmpty && cursor.isEmpty && externalKinds.isEmpty
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: 7) {
                 if empty {
                     StandbyEmptyState(label: "暂无会话")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                 } else {
                     if !claude.isEmpty {
-                        section(title: "Claude Code", icon: "rectangle.connected.to.line.below", tint: Theme.claude) {
+                        section(title: "Claude Code", icon: "rectangle.connected.to.line.below",
+                                tint: Theme.claude, ink: Theme.Ink.claude) {
                             ForEach(claude) { session in
                                 SessionCardView(session: session, heartbeat: providerStore.heartbeats[session.pid]) {
                                     resumeInTerminal(session)
@@ -30,7 +31,8 @@ struct SessionsPanelView: View {
                         }
                     }
                     if !cursor.isEmpty {
-                        section(title: "Cursor", icon: "cursorarrow.rays", tint: Theme.cursor) {
+                        section(title: "Cursor", icon: "cursorarrow.rays",
+                                tint: Theme.cursor, ink: Theme.Ink.cursor) {
                             ForEach(cursor) { session in
                                 CursorSessionCardView(session: session) { openInCursor(session) }
                             }
@@ -43,24 +45,25 @@ struct SessionsPanelView: View {
             }
             .padding(.bottom, 4)
         }
-        .padding(.top, 8)
+        .padding(.vertical, 7)
     }
 
     private func section<Content: View>(title: String, icon: String, tint: Color,
+                                        ink: Color,
                                         @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(icon: icon, title: title, tint: tint)
+        Section {
+            content()
                 .padding(.horizontal, 10)
-            VStack(spacing: 6) {
-                content()
-            }
-            .padding(.horizontal, 10)
+        } header: {
+            SectionHeader(icon: icon, title: title, tint: tint, ink: ink)
+                .padding(.horizontal, 10)
         }
     }
 
     private func externalBlock(kind: ExternalAgentKind) -> some View {
         let tree = providerStore.externalSessionTree(kind: kind)
-        return section(title: kind.displayName, icon: kind.icon, tint: Theme.external) {
+        return section(title: kind.displayName, icon: kind.icon,
+                       tint: Theme.external, ink: Theme.Ink.success) {
             ForEach(tree) { node in
                 ExternalSessionCardView(session: node.session,
                                         descendantCount: node.descendantCount,

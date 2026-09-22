@@ -83,7 +83,7 @@ final class VpnNetProbe: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         let port = VpnManager.shared.mixedPortIfRunning
-        let attempts = afterNodeSwitch ? 4 : 3
+        let attempts = afterNodeSwitch ? 2 : 1
         for attempt in 0..<attempts {
             if attempt > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
@@ -107,7 +107,7 @@ final class VpnNetProbe: ObservableObject {
         var req = URLRequest(url: target)
         req.httpMethod = "HEAD"
         req.timeoutInterval = 10
-        req.setValue(VpnHTTP.clashVergeUA, forHTTPHeaderField: "User-Agent")
+        req.setValue(ipUA, forHTTPHeaderField: "User-Agent")
         let session = VpnHTTP.session(proxyPort: proxyPort)
         let start = Date()
         do {
@@ -126,21 +126,17 @@ final class VpnNetProbe: ObservableObject {
         }
     }
 
-    /// Mix of JSON geo APIs and plain-text echo servers. Several of the
-    /// previous three (ip.sb / ipwho.is / geojs) sit behind Cloudflare and
-    /// 403 the clash-verge UA through mixed-port, which is why the card
-    /// so often showed "无法取得出口 IP".
+    /// Clash Verge `IP_CHECK_SERVICES`, then two plain echo servers.
+    /// Tried one at a time. Firing all of them together through the current
+    /// node filled its connection slots and every request timed out.
     private static let ipEndpoints: [IPEndpoint] = [
-        IPEndpoint(url: "http://ip-api.com/json/?fields=status,query,country,countryCode,regionName,city,isp,as", json: true),
-        IPEndpoint(url: "https://api.ipify.org?format=json", json: true),
-        IPEndpoint(url: "https://ifconfig.co/json", json: true),
-        IPEndpoint(url: "https://ipinfo.io/json", json: true),
         IPEndpoint(url: "https://api.ip.sb/geoip", json: true),
+        IPEndpoint(url: "https://ipapi.co/json", json: true),
         IPEndpoint(url: "https://ipwho.is/", json: true),
         IPEndpoint(url: "https://get.geojs.io/v1/ip/geo.json", json: true),
+        IPEndpoint(url: "http://ip-api.com/json/?fields=status,query,country,countryCode,regionName,city,isp,as", json: true),
+        IPEndpoint(url: "https://api.ipify.org?format=json", json: true),
         IPEndpoint(url: "https://icanhazip.com", json: false),
-        IPEndpoint(url: "https://api64.ipify.org?format=json", json: true),
-        IPEndpoint(url: "https://ifconfig.me/ip", json: false),
     ]
 
     private struct IPEndpoint {
@@ -153,26 +149,18 @@ final class VpnNetProbe: ObservableObject {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     static func fetchIP(proxyPort: Int?) async -> VpnIPInfo? {
-        await withTaskGroup(of: VpnIPInfo?.self) { group in
-            for endpoint in ipEndpoints {
-                group.addTask {
-                    await fetchOne(endpoint, proxyPort: proxyPort)
-                }
+        for endpoint in ipEndpoints.prefix(4) {
+            if let info = await fetchOne(endpoint, proxyPort: proxyPort), !info.ip.isEmpty {
+                return info
             }
-            for await info in group {
-                if let info, !info.ip.isEmpty {
-                    group.cancelAll()
-                    return info
-                }
-            }
-            return nil
         }
+        return nil
     }
 
     private static func fetchOne(_ endpoint: IPEndpoint, proxyPort: Int?) async -> VpnIPInfo? {
         guard let u = URL(string: endpoint.url) else { return nil }
         var req = URLRequest(url: u)
-        req.timeoutInterval = 5
+        req.timeoutInterval = 6
         req.setValue(ipUA, forHTTPHeaderField: "User-Agent")
         req.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         let session = VpnHTTP.session(proxyPort: proxyPort)

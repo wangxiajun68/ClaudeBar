@@ -44,8 +44,11 @@ final class CaptureJSONStore {
     func load() {
         summaries = []
         nextId = 1
-        if let data = try? Data(contentsOf: FilePaths.captureIndexFile),
-           let text = String(data: data, encoding: .utf8) {
+        // Lossy decode (see UsageJSONStore.load): a truncated or partially
+        // flushed JSONL must not cost the whole index — the per-line decode
+        // below already skips anything that does not parse.
+        if let data = try? Data(contentsOf: FilePaths.captureIndexFile) {
+            let text = String(decoding: data, as: UTF8.self)
             let dec = JSONDecoder()
             for line in text.split(whereSeparator: \.isNewline) {
                 guard let row = try? dec.decode(IndexRow.self, from: Data(line.utf8)),

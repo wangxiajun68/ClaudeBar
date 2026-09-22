@@ -3,6 +3,7 @@ import IOKit
 import Darwin
 import CoreWLAN
 import IOBluetooth
+import SystemConfiguration
 
 // MARK: - Host accelerator (GPU utilization + temperature)
 
@@ -133,6 +134,86 @@ enum HardwareSensors {
         var wiredOn = false
     }
 
+    /// The internal battery, for the 电量 mark on the 连接 card.
+    ///
+    /// `BatteryInstalled` is the load-bearing field, not `CurrentCapacity == 0`.
+    /// A Mac mini, a Mac Studio or a MacBook in some service states has an
+    /// `AppleSmartBattery` node with no pack behind it, and reporting that as
+    /// "0 %" would be a flat-battery alarm about a machine that has no battery.
+    /// The mark is simply not drawn in that case, the same way the headset marks
+    /// are not drawn when no headset is on the link.
+    ///
+    /// `IsCharging` and `ExternalConnected` are separate claims and are kept
+    /// separate here: a Mac on a charger that is holding at 100 % is *connected*
+    /// but not *charging*, and the tile says 已接通 rather than 充电中 for it.
+    struct BatteryStatus: Equatable {
+        var installed = false
+        var percent = 0
+        var charging = false
+        var externalPower = false
+        var chargingWatts: Double?
+        var inputWatts: Double?
+        var systemWatts: Double?
+        var batteryWatts: Double? // Positive = charging, negative = discharging.
+        var powerIsEstimated = false
+    }
+
+    static func batteryStatus() -> BatteryStatus {
+        var status = BatteryStatus()
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard service != 0 else { return status }
+        defer { IOObjectRelease(service) }
+
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let dict = props?.takeRetainedValue() as? [String: Any] else { return status }
+
+        status.installed = (dict["BatteryInstalled"] as? Bool) ?? ((dict["BatteryInstalled"] as? NSNumber)?.boolValue ?? false)
+        guard status.installed else { return status }
+
+        // `CurrentCapacity` is already a 0–100 percentage on every Mac this app
+        // supports; `MaxCapacity` is 100 alongside it, and dividing by it was
+        // how the older API produced the same number with more ways to be wrong.
+        if let raw = (dict["CurrentCapacity"] as? NSNumber)?.intValue {
+            status.percent = max(0, min(100, raw))
+        } else if let current = (dict["AppleRawCurrentCapacity"] as? NSNumber)?.doubleValue,
+                  let maxCapacity = (dict["AppleRawMaxCapacity"] as? NSNumber)?.doubleValue,
+                  maxCapacity > 0 {
+            status.percent = max(0, min(100, Int((current / maxCapacity * 100).rounded())))
+        } else {
+            status.installed = false
+        }
+        status.charging = (dict["IsCharging"] as? NSNumber)?.boolValue ?? false
+        status.externalPower = (dict["ExternalConnected"] as? NSNumber)?.boolValue ?? false
+        // AppleSmartBattery PowerTelemetryData publishes milliwatts. Decode
+        // signed values explicitly: discharge may arrive as unsigned two's complement.
+        func watts(_ value: Any?, signed: Bool = false) -> Double? {
+            guard let number = value as? NSNumber else { return nil }
+            let raw = signed ? Double(Int64(bitPattern: number.uint64Value)) : number.doubleValue
+            let result = raw / 1000
+            guard result.isFinite, abs(result) <= 500, signed || result >= 0 else { return nil }
+            return result
+        }
+        if let telemetry = dict["PowerTelemetryData"] as? [String: Any] {
+            status.inputWatts = watts(telemetry["SystemPowerIn"])
+            status.systemWatts = watts(telemetry["SystemLoad"])
+            status.batteryWatts = watts(telemetry["BatteryPower"], signed: true)
+        }
+        if status.batteryWatts == nil,
+           let current = (dict["InstantAmperage"] ?? dict["Amperage"]) as? NSNumber,
+           let voltage = (dict["Voltage"] as? NSNumber)?.doubleValue {
+            let milliamps = Double(Int64(bitPattern: current.uint64Value))
+            if abs(milliamps) < 30_000, voltage > 0, voltage < 30_000 {
+                status.batteryWatts = milliamps * voltage / 1_000_000
+                status.powerIsEstimated = true
+            }
+        }
+        if let battery = status.batteryWatts, battery > 0 {
+            status.chargingWatts = battery
+        }
+        return status
+    }
+
     /// Bluetooth controller power state.
     ///
     /// This is a privacy-gated read, but there is no TCC-free alternative:
@@ -151,7 +232,9 @@ enum HardwareSensors {
     /// not merely deny the read, it aborts the process
     /// (`Termination Namespace: TCC`), from a background queue, taking the whole
     /// app down mid-poll. With the key present a denial is just `powerState ==
-    /// off`, which the UI already renders as 蓝牙 关.
+    /// off`. The 连接 card no longer draws a Bluetooth-radio mark, but the
+    /// status is still sampled: a Mac with neither Wi-Fi nor Ethernet still
+    /// reports 本机 when the radio is on.
     private static func bluetoothPowerState() -> Bool {
         (IOBluetoothHostController.default()?.powerState.rawValue ?? 0) != 0
     }
@@ -166,25 +249,63 @@ enum HardwareSensors {
         let rssi = Int(wifi?.rssiValue() ?? 0)
         status.wifiRSSI = rssi < 0 ? rssi : 0
         status.bluetoothOn = bluetoothPowerState()
-        status.wiredOn = wiredInterfaceUp(excluding: wifi?.interfaceName)
+        status.wiredOn = wiredInterfaceActive(excluding: wifi?.interfaceName)
         return status
     }
 
-    private static func wiredInterfaceUp(excluding wifiName: String?) -> Bool {
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else { return false }
-        defer { freeifaddrs(ifaddr) }
-        var ptr = ifaddr
-        while let p = ptr {
-            defer { ptr = p.pointee.ifa_next }
-            let flags = Int32(p.pointee.ifa_flags)
-            guard (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0, (flags & IFF_LOOPBACK) == 0 else { continue }
-            let name = String(cString: p.pointee.ifa_name)
-            if let wifiName, name == wifiName { continue }
-            if name.hasPrefix("utun") || name.hasPrefix("awdl") || name.hasPrefix("llw")
-                || name.hasPrefix("bridge") || name.hasPrefix("ap") { continue }
-            if name.hasPrefix("en") { return true }
+    /// Is an **Ethernet cable plugged in** — not "does an `en*` interface
+    /// exist", which is what this used to ask and why unplugging the cable
+    /// changed nothing on screen.
+    ///
+    /// Two independent facts have to be true, and neither alone is sufficient:
+    ///
+    /// 1. **The interface is a real Ethernet port.** `SCNetworkInterface` says
+    ///    so from the hardware port list. `name.hasPrefix("en")` does *not*:
+    ///    on Apple silicon `en1`/`en2`/`en3` are the Thunderbolt ports and
+    ///    `en4`–`en6` are USB-Ethernet adapters that exist whether or not
+    ///    anything is plugged into them. All of them pass `IFF_RUNNING`.
+    /// 2. **It has carrier.** `IFF_UP | IFF_RUNNING` is a property of the
+    ///    *driver*, and a USB NIC with no cable still reports both. The carrier
+    ///    state lives in the dynamic store's `Link` entry, which is the same
+    ///    source System Settings reads: `Active` is true only with a live link.
+    ///
+    /// Thunderbolt Ethernet (a dock with a live cable) stays in scope.
+    /// Thunderbolt *Bridge*, iPhone USB, Bluetooth PAN and similar "Ethernet-
+    /// typed but not a cable" ports are skipped: they made this Mac look wired
+    /// — and the old USB-plug glyph look like it was charging — when it was
+    /// not. `bridge`/`utun`/`awdl`/`llw`/`ap` are excluded by type already.
+    ///
+    /// Carrier is the only "on" signal. A missing Link entry is treated as off
+    /// rather than guessed from the default route: that fallback lit unused
+    /// Thunderbolt ports.
+    private static func wiredInterfaceActive(excluding wifiName: String?) -> Bool {
+        let store = SCDynamicStoreCreate(nil, "ClaudeBar.wired" as CFString, nil, nil)
+        let wired = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] ?? []
+        for interface in wired {
+            guard let type = SCNetworkInterfaceGetInterfaceType(interface) as String?,
+                  type == (kSCNetworkInterfaceTypeEthernet as String),
+                  let bsd = SCNetworkInterfaceGetBSDName(interface) as String?,
+                  !bsd.isEmpty, bsd != wifiName,
+                  isPhysicalEthernet(interface) else { continue }
+            if let store, carrierState(store: store, bsd: bsd) == true {
+                return true
+            }
         }
         return false
+    }
+
+    /// Ethernet-typed ports that are not a cable in the wall / dock.
+    private static func isPhysicalEthernet(_ interface: SCNetworkInterface) -> Bool {
+        let name = (SCNetworkInterfaceGetLocalizedDisplayName(interface) as String?) ?? ""
+        let folded = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let skip = ["bridge", "桥接", "iphone", "ipad", "bluetooth pan", "蓝牙网络"]
+        return !skip.contains { folded.contains($0) }
+    }
+
+    private static func carrierState(store: SCDynamicStore, bsd: String) -> Bool? {
+        let key = "State:/Network/Interface/\(bsd)/Link" as CFString
+        guard let value = SCDynamicStoreCopyValue(store, key) as? [String: Any],
+              let active = value["Active"] else { return nil }
+        return (active as? NSNumber)?.boolValue ?? (active as? Bool)
     }
 }

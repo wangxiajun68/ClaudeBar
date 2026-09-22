@@ -28,6 +28,9 @@ struct WidgetEntry: TimelineEntry {
         date: Date(),
         snapshot: WidgetSnapshot(
             todayTotalTokens: 0,
+            usagePeriodLabel: nil,
+            unitStyle: nil,
+            isDark: nil,
             modelBreakdown: [],
             activeProviderName: "—",
             activeModelName: "—",
@@ -36,7 +39,8 @@ struct WidgetEntry: TimelineEntry {
             busySessionCount: 0,
             sessions: [],
             cursorSessions: [],
-            updatedAt: Date()
+            externalSessions: [],
+            updatedAt: .distantPast
         )
     )
 }
@@ -53,47 +57,10 @@ struct WidgetProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<WidgetEntry>) -> Void) {
-        let entry = loadEntry() ?? diagnosticEntry()
+        let entry = loadEntry() ?? .placeholder
         let nextUpdate = Date().addingTimeInterval(30)
         let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
         completion(timeline)
-    }
-
-    /// Diagnostic: returns an entry that SHOWS what went wrong
-    private func diagnosticEntry() -> WidgetEntry {
-        var diag = ""
-
-        // Check UserDefaults
-        if let shared = UserDefaults(suiteName: WidgetFilePaths.appGroupID) {
-            let data = shared.data(forKey: "widgetSnapshot")
-            diag += "UD:\(data?.count ?? -1)B "
-        } else {
-            diag += "UD:nil "
-        }
-
-        // Check container
-        if let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: WidgetFilePaths.appGroupID) {
-            let url = container.appendingPathComponent("claude-bar-widget-data.json")
-            let exists = FileManager.default.fileExists(atPath: url.path)
-            let size = (try? Data(contentsOf: url))?.count ?? -1
-            diag += "F:\(exists ? "Y" : "N")/\(size)B"
-        } else {
-            diag += "Container:nil"
-        }
-
-        // Use non-zero values so the widget doesn't show "empty state"
-        return WidgetEntry(date: Date(), snapshot: WidgetSnapshot(
-            todayTotalTokens: 1,
-            modelBreakdown: [],
-            activeProviderName: diag,
-            activeModelName: "diagnostic",
-            balanceText: nil,
-            totalSessionCount: 1,
-            busySessionCount: 0,
-            sessions: [],
-            cursorSessions: [],
-            updatedAt: Date()
-        ))
     }
 
     private func loadEntry() -> WidgetEntry? {

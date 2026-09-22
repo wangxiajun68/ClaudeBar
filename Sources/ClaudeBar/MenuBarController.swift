@@ -49,7 +49,6 @@ final class MenuBarController: NSObject {
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
-        NSLog("[ClaudeBar] status item created OK")
         installVpnRateDisplay(button: button)
         appearanceObs = NotificationCenter.default.addObserver(
             forName: .appearanceDidChange, object: nil, queue: .main
@@ -77,6 +76,23 @@ final class MenuBarController: NSObject {
                 MainActor.assumeIsolated { self?.tickVpnRate() }
             }
         tickVpnRate()
+    }
+
+    /// The accessory is owned by AppKit, not by ARC: `removeFromSuperview` on
+    /// a view reachable only from the status-bar button's subview list drops
+    /// the last owning reference while `rateAccessory` — a plain strong
+    /// property — keeps a dangling pointer to it, and `tickVpnRate()` would
+    /// then write through freed memory. Call this before dropping anything
+    /// that can tear the status item down, and before `setup()` builds a new
+    /// one; `installVpnRateDisplay` re-creates it.
+    @MainActor
+    func teardownVpnRateDisplay() {
+        rateCancel?.cancel()
+        rateCancel = nil
+        guard let accessory = rateAccessory else { return }
+        accessory.removeFromSuperview()
+        rateAccessory = nil
+        lastRateKey = nil
     }
 
     @MainActor
@@ -199,6 +215,9 @@ final class MenuBarController: NSObject {
 
         panel.contentView = host
         host.autoresizesSubviews = true
+        panel.onCancel = { [weak self] in
+            MainActor.assumeIsolated { self?.hide() }
+        }
         return panel
     }
 
@@ -269,9 +288,31 @@ final class MenuBarController: NSObject {
 
 /// Borderless panel that is allowed to become the key window (so SwiftUI
 /// alerts and controls work) without activating the application.
+///
+/// Esc closes it. The panel is on the highest-frequency surface of the app and
+/// the only dismissal was a mouse-down outside, so a keyboard user had to move
+/// the pointer and click. `cancelOperation` is what AppKit sends along the
+/// responder chain for Esc; SwiftUI does not consume it for a plain panel.
 private final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // 53 = Escape. Some key paths deliver `keyDown` without the
+        // `cancelOperation` interpretation, so handle it explicitly and only
+        // forward what we did not consume.
+        if event.keyCode == 53 {
+            onCancel?()
+            return
+        }
+        super.keyDown(with: event)
+    }
 }
 
 /// 16pt tri-blade, transparent, template — the PNG has an opaque mint

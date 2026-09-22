@@ -1,5 +1,7 @@
 import Foundation
 import Network
+import Security
+import Darwin
 
 /// Local HTTP/1.1 proxy between Codex and the configured upstream
 /// (cc-switch-style local routing; fixes openai/codex#23186).
@@ -102,9 +104,24 @@ final class CodexProxyServer: @unchecked Sendable {
 
     /// Monotonic SSE sequence numbers are per-stream (CodexProxyTransform
     /// handles them); server-level state is only the listener.
-    init(port: UInt16, state: CodexProxyState) {
+
+    /// Per-run bearer token. Every accepted connection must present it, and a
+    /// caller that presents *its own* credential for the upstream no longer
+    /// reaches the proxy's injected key.
+    ///
+    /// `requiredInterfaceType` below is not a bind restriction — it only
+    /// constrains which interface the listener prefers. The live socket is a
+    /// wildcard `*:<port>` (verified with `lsof`), so the only thing standing
+    /// between a LAN peer and this key-injecting proxy is the macOS
+    /// application firewall, which is a user setting and off on plenty of
+    /// machines. Advisory locking plus mode 0600 is what keeps other local
+    /// users off the token file; it is a same-user secret, not a root secret.
+    private let tokenPath: URL
+
+    init(port: UInt16, state: CodexProxyState, tokenPath: URL = FilePaths.proxyTokenFile) {
         self.port = port
         self.state = state
+        self.tokenPath = tokenPath
     }
 
     var isRunning: Bool { listener != nil }
@@ -117,9 +134,21 @@ final class CodexProxyServer: @unchecked Sendable {
             throw NSError(domain: "CodexProxy", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "invalid proxy port \(port)"])
         }
-        // Restrict to loopback — the proxy injects upstream API keys.
+        // Keep the interface hint, but bind explicitly: `requiredLocalEndpoint`
+        // is the one that actually holds the listener to loopback. Without it
+        // NWListener publishes 0.0.0.0/:: and a LAN client can reach the proxy.
         parameters.requiredInterfaceType = .loopback
-        let listener = try NWListener(using: parameters, on: portValue)
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: portValue)
+        _ = try Self.loadOrCreateToken(at: tokenPath)
+        // Config repair belongs here rather than in the caller: the token only
+        // exists once this has run, and a `config.toml` written before the
+        // token requirement (or by a build that has since moved which table it
+        // manages) leaves threads pinned to a proxy table holding
+        // `PROXY_MANAGED` — every turn 401s until the file is rewritten.
+        for table in CodexConfigWriter.healProxyTokens(proxyBaseURL: "http://127.0.0.1:\(port)/v1") {
+            print("[CodexProxy] refreshed proxy token in [\(table)]")
+        }
+        let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }
@@ -151,12 +180,112 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
+    // MARK: - Auth
+
+    /// Bearer token gating every connection (the `/health` probe included —
+    /// an unauthenticated health check tells a scanner exactly what it wants
+    /// to know).
+    ///
+    /// The token exists so that a local process cannot *use* this proxy, not
+    /// to hide it: a same-user process reads the file directly. It closes the
+    /// drive-by case — an npm/pip postinstall, an editor extension, another
+    /// app — that would otherwise get the active provider's key by sending any
+    /// request. `O_EXCL` + `O_NOFOLLOW` keep a pre-planted file or symlink
+    /// from being adopted as the token, and `0600` keeps other local users off
+    /// the path.
+    static let tokenByteCount = 32
+
+    static func loadOrCreateToken(at url: URL) throws -> String {
+        if let existing = try? String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           existing.count >= tokenByteCount {
+            return existing
+        }
+
+        var bytes = [UInt8](repeating: 0, count: tokenByteCount)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw NSError(domain: "CodexProxy", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "SecRandomCopyBytes failed"])
+        }
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+
+        let fd = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        }
+        if fd >= 0 {
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            try? handle.write(contentsOf: Data(token.utf8))
+        } else if errno == EEXIST {
+            // Lost a race with another launch — the winner's token is the
+            // live one, and it is also what Codex's config.toml now carries.
+            if let raced = try? String(contentsOf: url, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines), !raced.isEmpty {
+                return raced
+            }
+        }
+        return token
+    }
+
+    /// The credential this proxy is configured with, for writing into
+    /// Codex's `config.toml`. Reads the same file `start()` seeds.
+    static var configuredToken: String {
+        (try? loadOrCreateToken(at: FilePaths.proxyTokenFile)) ?? ""
+    }
+
+    /// `Authorization: Bearer <token>`, or `x-api-key: <token>`.
+    ///
+    /// A request that carries the active provider's own key in either header
+    /// is not trusted to skip the check: the proxy injects that key, so
+    /// presenting it is not proof of anything. Anything else must match the
+    /// token, and the injected credential is never written back out.
+    private func isAuthorized(_ request: HTTPRequest) -> Bool {
+        guard let expected = try? Self.loadOrCreateToken(at: tokenPath) else { return false }
+        if let auth = request.headers["authorization"],
+           auth.hasPrefix("Bearer "),
+           Self.constantTimeEquals(String(auth.dropFirst("Bearer ".count)), expected) {
+            return true
+        }
+        if let key = request.headers["x-api-key"],
+           Self.constantTimeEquals(key, expected) {
+            return true
+        }
+        return false
+    }
+
+    /// Length-checked, branch-free comparison — the token is not a secret the
+    /// timing of which matters much, but a comparison that short-circuits on
+    /// the first differing byte is a habit worth not shipping.
+    private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<x.count { diff |= x[i] ^ y[i] }
+        return diff == 0
+    }
+
+    private func denyUnauthorized(_ connection: NWConnection, request: HTTPRequest) async {
+        let miss = startLog(request, source: .codex, kind: .other, provider: "")
+        miss.finish(status: 401, error: "unauthorized")
+        await respond(connection, status: "401 Unauthorized", contentType: "application/json",
+                      body: Data(#"{"error":{"message":"missing or invalid proxy token; see ClaudeBar 设置 → 本地代理"}}"#.utf8))
+        connection.cancel()
+    }
+
     // MARK: - Connection handling
 
     private func handle(_ connection: NWConnection) async {
         // 1. Read until end of headers, then content-length body bytes.
         guard let request = await readRequest(connection) else {
             connection.cancel()
+            return
+        }
+
+        // 1b. Authenticate before any routing, so an unauthorized caller
+        // cannot probe which upstreams exist and never reaches the key
+        // injector in `forwardAnthropic` / `forwardNativeChat`.
+        guard isAuthorized(request) else {
+            await denyUnauthorized(connection, request: request)
             return
         }
 
@@ -181,6 +310,11 @@ final class CodexProxyServer: @unchecked Sendable {
                     await forwardAnthropic(connection, request: request, inspect: false)
                     return
                 }
+                // Served from the on-disk model catalog ClaudeBar writes
+                // (`CodexModelCatalog.readJSON()`), not forwarded upstream —
+                // so there is no token to strip from the client's headers.
+                // An empty catalog therefore reads as "no models", which is
+                // the file-missing case, not an upstream failure.
                 let tap = startLog(request, source: .codex, kind: .models, provider: "")
                 await serveModels(connection)
                 tap.finish(status: 200)
@@ -288,18 +422,22 @@ final class CodexProxyServer: @unchecked Sendable {
         let tap = await makeOpenAITap(
             kind: .openaiChat, request: request, json: json,
             rewritten: outData, stream: wantsStream, upstream: upstream)
+        var tokens = TokenTotals()
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
         defer {
             tap?.finish(state: capState, status: statusCode, error: capError)
-            if capState != .error { log.finish(status: statusCode) }
+            if capState != .error { log.finish(status: statusCode, tokens: tokens) }
         }
         let upstreamURL = chatCompletionsURL(upstream.baseURL)
         bindInterrupt(tap, connection: connection)
 
         do {
             if wantsStream {
+                // Sends no client headers at all: this upstream is a
+                // third-party one, and the only credential it should ever see
+                // is the proxy's injected key.
                 var req = URLRequest(url: upstreamURL)
                 req.httpMethod = "POST"
                 req.setValue("Bearer \(upstream.apiKey)", forHTTPHeaderField: "Authorization")
@@ -330,6 +468,8 @@ final class CodexProxyServer: @unchecked Sendable {
                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces).data(using: .utf8),
                        let delta = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] {
                         tap?.applyChat(delta)
+                        tokens.applyChat(delta)
+                        log.note(tokens: tokens)
                     }
                     if line.isEmpty || batch.count >= 4096 {
                         await write(connection, data: batch)
@@ -348,6 +488,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     capError = String(data: data, encoding: .utf8)
                 } else if let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     tap?.applyChat(parsed)
+                    tokens.applyChat(parsed)
                 }
                 let reason = statusCode >= 400 ? "Error" : "OK"
                 await respond(connection, status: "\(statusCode) \(reason)", contentType: "application/json", body: data)
@@ -390,6 +531,7 @@ final class CodexProxyServer: @unchecked Sendable {
         let tap = await makeOpenAITap(
             kind: .openaiResponses, request: request, json: json,
             rewritten: outData, stream: wantsStream, upstream: upstream)
+        var tokens = TokenTotals()
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
@@ -397,7 +539,11 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: capState, status: statusCode, error: capError)
             // Leave the access log pending on error so handle() can retry
             // Responses→Chat without sealing the line as a 400.
-            if capState != .error { log.finish(status: statusCode, error: capState == .aborted ? capError : nil) }
+            if capState != .error {
+                log.finish(status: statusCode,
+                           error: capState == .aborted ? capError : nil,
+                           tokens: tokens)
+            }
         }
 
         let upstreamURL = joinURL(upstream.baseURL, path: request.path)
@@ -445,6 +591,8 @@ final class CodexProxyServer: @unchecked Sendable {
                     }
                     ev = CodexProxyTransform.rewriteResponsesEvent(ev, registry: registry)
                     tap?.applyResponses(ev)
+                    tokens.applyResponses(ev)
+                    log.note(tokens: tokens)
                     await write(connection, data: CodexProxyTransform.sse(ev))
                 } else {
                     await write(connection, data: CodexProxyTransform.sseRaw(event))
@@ -466,6 +614,7 @@ final class CodexProxyServer: @unchecked Sendable {
             out = CodexProxyTransform.rewriteResponsesEvent(out, registry: registry)
             CodexProxyTransform.normalizeUsage(&out)
             tap?.applyResponses(out)
+            tokens.applyResponses(out)
             let fixed = (try? JSONSerialization.data(withJSONObject: out)) ?? data
             await respond(connection, status: "\(status) OK", contentType: "application/json", body: fixed)
         }
@@ -495,6 +644,7 @@ final class CodexProxyServer: @unchecked Sendable {
         let tap = await makeOpenAITap(
             kind: .openaiChat, request: request, json: json,
             rewritten: outData, stream: true, upstream: upstream)
+        var tokens = TokenTotals()
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
@@ -502,7 +652,11 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: capState, status: statusCode, error: capError)
             // Leave the access log pending on error so handle() can retry
             // Responses→Chat without sealing the line as a 400.
-            if capState != .error { log.finish(status: statusCode, error: capState == .aborted ? capError : nil) }
+            if capState != .error {
+                log.finish(status: statusCode,
+                           error: capState == .aborted ? capError : nil,
+                           tokens: tokens)
+            }
         }
         // Always hit /chat/completions when bridging — posting a Chat body
         // to /v1/responses is how the original 400 happens.
@@ -526,6 +680,8 @@ final class CodexProxyServer: @unchecked Sendable {
                   let delta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
             tap?.applyChat(delta)
+            tokens.applyChat(delta)
+            log.note(tokens: tokens)
             let events = CodexProxyTransform.chatDeltaToResponsesEvents(delta, state: &streamState)
 
             for ev in events {
@@ -700,6 +856,7 @@ final class CodexProxyServer: @unchecked Sendable {
         } else {
             tap = nil
         }
+        var tokens = TokenTotals()
         var capState = CaptureState.done
         var capError: String?
         var statusCode = 200
@@ -709,9 +866,12 @@ final class CodexProxyServer: @unchecked Sendable {
             // An interrupt is not an upstream fault — log it with no status
             // rather than a synthesized 502.
             if capState == .error {
-                log.finish(status: statusCode >= 400 ? statusCode : 502, error: capError)
+                log.finish(status: statusCode >= 400 ? statusCode : 502,
+                           error: capError, tokens: tokens)
             } else {
-                log.finish(status: statusCode, error: userInterrupted ? capError : nil)
+                log.finish(status: statusCode,
+                           error: userInterrupted ? capError : nil,
+                           tokens: tokens)
             }
         }
         bindInterrupt(tap, connection: connection)
@@ -722,7 +882,10 @@ final class CodexProxyServer: @unchecked Sendable {
         req.timeoutInterval = 600
         copyClientHeaders(request.headers, onto: &req)
         req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        if request.headers["authorization"] == nil, request.headers["x-api-key"] == nil, !upstream.apiKey.isEmpty {
+        // Always inject. The client presented the proxy token in whichever
+        // header it had room for, so "the client sent a credential" no longer
+        // means "the client brought its own upstream key".
+        if !upstream.apiKey.isEmpty {
             req.setValue(upstream.apiKey, forHTTPHeaderField: "x-api-key")
             req.setValue("Bearer \(upstream.apiKey)", forHTTPHeaderField: "Authorization")
         }
@@ -745,7 +908,7 @@ final class CodexProxyServer: @unchecked Sendable {
                     connection.cancel()
                     return
                 }
-                try await pipeAnthropicSSE(bytes, to: connection, tap: tap)
+                try await pipeAnthropicSSE(bytes, to: connection, tap: tap, log: log, tokens: &tokens)
             } else {
                 try Self.throwIfInterrupted(tap)
                 let (data, response) = try await Self.upstreamSession.data(
@@ -754,6 +917,7 @@ final class CodexProxyServer: @unchecked Sendable {
                 statusCode = http?.statusCode ?? 200
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                     tap?.ingestAnthropicMessage(json)
+                    tokens.applyAnthropicMessage(json)
                 }
                 if statusCode >= 400 {
                     capState = .error
@@ -781,9 +945,36 @@ final class CodexProxyServer: @unchecked Sendable {
         connection.cancel()
     }
 
+    /// Headers a client may pass through to the upstream. Everything else is
+    /// dropped, not merely overridden.
+    ///
+    /// Two reasons this is an allowlist rather than a skip-list:
+    ///   * the client's `Authorization` is the *proxy token* (the client
+    ///     stores the proxy token where it would have stored an API key), so
+    ///     forwarding it hands the token to a third-party upstream; and
+    ///   * the credentials below are the proxy's to set. A client-chosen
+    ///     upstream key must not survive the hop, or the injector's "only when
+    ///     the client sent neither header" rule reopens the hole the token
+    ///     closes.
+    private static let forwardedHeaderAllowlist: Set<String> = [
+        "content-type", "accept", "user-agent",
+        "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
+        "openai-beta", "openai-organization", "openai-project", "x-stainless-arch",
+        "x-stainless-lang", "x-stainless-os", "x-stainless-package-version",
+        "x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-retry-count",
+        "x-request-id", "idempotency-key",
+    ]
+
+    /// Headers that must never be copied, whatever else changes — the two the
+    /// proxy owns the credential for, plus the token itself.
+    private static let credentialHeaders: Set<String> = [
+        "authorization", "x-api-key", "proxy-authorization", "cookie",
+    ]
+
     private func copyClientHeaders(_ headers: [String: String], onto req: inout URLRequest) {
-        let skip: Set<String> = ["host", "connection", "content-length", "transfer-encoding", "accept-encoding"]
-        for (key, value) in headers where !skip.contains(key) {
+        for (key, value) in headers {
+            guard Self.forwardedHeaderAllowlist.contains(key),
+                  !Self.credentialHeaders.contains(key) else { continue }
             req.setValue(value, forHTTPHeaderField: key)
         }
     }
@@ -795,7 +986,13 @@ final class CodexProxyServer: @unchecked Sendable {
 
     /// Forward SSE as complete events. Flush on each blank line so Claude
     /// Code sees `message_start` immediately instead of a half-frame.
-    private func pipeAnthropicSSE(_ bytes: URLSession.AsyncBytes, to connection: NWConnection, tap: CaptureTap?) async throws {
+    ///
+    /// `tokens` (and `log`) are updated on the way through, so the access-log
+    /// console carries token counts even when traffic recording is off and
+    /// there is no capture tap.
+    private func pipeAnthropicSSE(_ bytes: URLSession.AsyncBytes, to connection: NWConnection,
+                                  tap: CaptureTap?, log: ProxyLogTap,
+                                  tokens: inout TokenTotals) async throws {
         var parser = LineSSEParser()
         var batch = Data()
         batch.reserveCapacity(4096)
@@ -810,6 +1007,8 @@ final class CodexProxyServer: @unchecked Sendable {
             if let ev = parser.push(line: line), !ev.done, let json = ev.json {
                 let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
                 tap?.applyAnthropic(event: name, json: json)
+                tokens.applyAnthropic(event: name, json: json)
+                log.note(tokens: tokens)
             }
         }
         if !batch.isEmpty {
@@ -819,6 +1018,8 @@ final class CodexProxyServer: @unchecked Sendable {
         if let ev = parser.finish(), !ev.done, let json = ev.json {
             let name = ev.name.isEmpty ? ((json["type"] as? String) ?? "") : ev.name
             tap?.applyAnthropic(event: name, json: json)
+            tokens.applyAnthropic(event: name, json: json)
+            log.note(tokens: tokens)
         }
     }
 

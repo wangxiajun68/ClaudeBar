@@ -231,10 +231,79 @@ enum CodexProxyTransform {
     private static let toolImagePlaceholder =
         "[Tool returned an image — see the following user message]"
 
+    /// Stands in for an image we refuse to forward. Left in place of the
+    /// payload so the model still learns an image was there — its abrupt
+    /// absence reads as an empty tool result — without the bytes going out.
+    private static let incompleteImageNote = "[image omitted — incomplete data URI]"
+
     private static let dataImageRegex: NSRegularExpression = {
         try! NSRegularExpression(
             pattern: #"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\n\r]+"#)
     }()
+
+    /// Whether an inline image is worth forwarding.
+    ///
+    /// The regex above (and any structured `input_image`) matches on the
+    /// *character set* of the payload, so it happily captures a base64 blob
+    /// that was cut short — a tool output clipped mid-line, a console echo of
+    /// a data URI quoting only its head. Strict gateways do not: they run the
+    /// payload through a validating decoder and 400 the entire turn
+    /// (`Non-base64 digit found`, `Failed to load image: image file is
+    /// truncated`). Worse, the request is replayed on every retry, so one
+    /// clipped image poisons the thread until the turn is aborted.
+    ///
+    /// So the payload has to survive both checks the upstream applies:
+    /// a full base64 quantum, and a container that ends where it says it does
+    /// (a PNG missing its `IEND` chunk still decodes cleanly, which is why
+    /// decodability alone is not enough).
+    static func isUsableImageURL(_ url: String) -> Bool {
+        // Anything that is not an inline payload — an https URL, a Codex
+        // `file_id` — is the upstream's to resolve. Nothing to judge here.
+        guard url.hasPrefix("data:") else { return true }
+        guard let comma = url.firstIndex(of: ",") else { return false }
+        let header = url[..<comma].lowercased()
+        // Non-base64 data URIs (an inline SVG, say) are passed through as the
+        // upstream receives them today.
+        guard header.hasPrefix("data:image/"), header.hasSuffix(";base64") else { return true }
+
+        // `Data(base64Encoded:)` rejects embedded newlines, but the capture
+        // regex admits them, so whitespace has to come out first. Almost every
+        // payload is newline-free, and this runs on every replayed screenshot
+        // — megabytes, twenty times a turn — so the scan decides the shape and
+        // only the unusual case pays for a copy.
+        let payload = url[url.index(after: comma)...]
+        let needsCleaning = !(payload.utf8.withContiguousStorageIfAvailable { buffer in
+            // A payload with no ASCII whitespace and no non-ASCII byte cannot
+            // be changed by the filter, so it can skip the copy. Non-ASCII is
+            // treated as "might be whitespace" (every whitespace scalar above
+            // 0x20 but U+0085/U+00A0 is multibyte in UTF-8, so this is the
+            // cheap direction to be wrong in — it only costs the copy, never a
+            // missed clean).
+            buffer.allSatisfy { $0 != 0x09 && $0 != 0x0A && $0 != 0x0B && $0 != 0x0C
+                                 && $0 != 0x0D && $0 != 0x20 && $0 < 0x80 }
+        } ?? false)
+        let cleaned = needsCleaning
+            ? String(payload).filter { !$0.isWhitespace }
+            : String(payload)
+        guard !cleaned.isEmpty, cleaned.utf8.count % 4 == 0,
+              let data = Data(base64Encoded: cleaned) else { return false }
+        return hasIntactContainer(data, mime: header)
+    }
+
+    /// Whether the decoded bytes carry the container's own end marker.
+    private static func hasIntactContainer(_ data: Data, mime: String) -> Bool {
+        if mime.contains("png") {
+            // `IEND` is always the final chunk, so it lands in the tail.
+            return String(decoding: data.suffix(64), as: UTF8.self).contains("IEND")
+        }
+        if mime.contains("jpeg") || mime.contains("jpg") {
+            return data.suffix(2) == Data([0xFF, 0xD9])
+        }
+        if mime.contains("gif") { return data.last == 0x3B }
+        // WebP/AVIF/BMP: no cheap terminal check. Decodability is all we have;
+        // better to forward a complete-looking payload than drop a good one.
+        return true
+    }
 
     private struct ExtractedImage {
         var url: String
@@ -328,17 +397,20 @@ enum CodexProxyTransform {
                 if !s.isEmpty { texts.append(s) }
                 return
             }
-            for m in matches {
-                guard let r = Range(m.range, in: s) else { continue }
-                let url = String(s[r])
-                    .replacingOccurrences(of: "\n", with: "")
-                    .replacingOccurrences(of: "\r", with: "")
-                images.append(ExtractedImage(url: url, detail: nil))
-            }
             var leftover = s
+            // Reverse order so an edit at a later match never shifts the
+            // UTF-16 offsets of the ranges still to be processed.
             for m in matches.reversed() {
                 guard let r = Range(m.range, in: leftover) else { continue }
-                leftover.removeSubrange(r)
+                let url = String(leftover[r])
+                    .replacingOccurrences(of: "\n", with: "")
+                    .replacingOccurrences(of: "\r", with: "")
+                if isUsableImageURL(url) {
+                    images.append(ExtractedImage(url: url, detail: nil))
+                    leftover.removeSubrange(r)
+                } else {
+                    leftover.replaceSubrange(r, with: incompleteImageNote)
+                }
             }
             let rest = leftover.trimmingCharacters(in: .whitespacesAndNewlines)
             if !rest.isEmpty && rest != "[]" && rest != "{}" {
@@ -359,18 +431,24 @@ enum CodexProxyTransform {
         return (text, images)
     }
 
-    private static func extractImage(from part: [String: Any]) -> ExtractedImage? {
+    /// The image payload a content part claims to carry, before any judgement.
+    /// `extractImage` returns nil for this part when the payload is unusable;
+    /// this says the part *was* an image, which is what the caller needs to
+    /// tell "dropped a bad image" apart from "not an image at all".
+    private static func imageCandidateURL(in part: [String: Any]) -> String? {
         let type = part["type"] as? String
         let typed = type == "input_image" || type == "image_url" || type == "image"
-        let url: String?
-        if typed {
-            url = imageURL(in: part) ?? (part["file_id"] as? String)
-        } else if let u = imageURL(in: part), u.hasPrefix("data:image") {
-            url = u
-        } else {
-            return nil
-        }
-        guard let url, !url.isEmpty else { return nil }
+        if typed { return imageURL(in: part) ?? (part["file_id"] as? String) }
+        guard let u = imageURL(in: part), u.hasPrefix("data:image") else { return nil }
+        return u
+    }
+
+    private static func extractImage(from part: [String: Any]) -> ExtractedImage? {
+        guard let url = imageCandidateURL(in: part), !url.isEmpty else { return nil }
+        // A structured `input_image` is not automatically a safe one: Codex
+        // replays whatever `view_image` produced, and a run that was cut short
+        // leaves the same clipped payload the regex path trips over.
+        guard isUsableImageURL(url) else { return nil }
         let detail = (part["detail"] as? String)
             ?? (part["image_url"] as? [String: Any]).flatMap { $0["detail"] as? String }
         return ExtractedImage(url: url, detail: detail)
@@ -421,6 +499,10 @@ enum CodexProxyTransform {
             if let img = extractImage(from: part) {
                 flushText()
                 parts.append(chatImagePart(img))
+            } else if imageCandidateURL(in: part) != nil {
+                // Image-shaped, but not one we can forward (see
+                // `isUsableImageURL`). Keep the turn alive and say so.
+                textBuf.append(incompleteImageNote)
             } else if let t = (part["text"] as? String)
                         ?? (part["input_text"] as? String)
                         ?? (part["refusal"] as? String) {
@@ -507,6 +589,13 @@ enum CodexProxyTransform {
             appendText(s)
         } else if let arr = d["content"] as? [[String: Any]] {
             var buf = ""
+            /// An image we refuse to forward is noted in the text instead of
+            /// being dropped — same reasoning as the tool-output path: the
+            /// model is told an image was present, without the bytes going out.
+            func noteIncompleteImage() {
+                if !buf.isEmpty { buf += "\n" }
+                buf += incompleteImageNote
+            }
             for part in arr {
                 let t = part["type"] as? String
                 if t == "input_image" || t == "image_url" {
@@ -514,9 +603,13 @@ enum CodexProxyTransform {
                     if let url = (part["image_url"] as? String)
                         ?? (part["image_url"] as? [String: Any]).flatMap({ $0["url"] as? String })
                         ?? (part["file_id"] as? String) {
-                        var img: [String: Any] = ["type": "input_image", "image_url": url]
-                        if let detail = part["detail"] as? String { img["detail"] = detail }
-                        parts.append(img)
+                        if isUsableImageURL(url) {
+                            var img: [String: Any] = ["type": "input_image", "image_url": url]
+                            if let detail = part["detail"] as? String { img["detail"] = detail }
+                            parts.append(img)
+                        } else {
+                            noteIncompleteImage()
+                        }
                     }
                     continue
                 }

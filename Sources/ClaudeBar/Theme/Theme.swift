@@ -82,6 +82,28 @@ enum Theme {
     static let statusError = Color(hex: 0xFF3B30)
     static let statusSuccess = Color(hex: 0x34C759)
 
+    // MARK: Ink — the signal hues as *text*
+    //
+    // The signal colors above are fill colors (bars, dots, gauge arcs, pill
+    // washes). Painted as glyphs on the ice canvas they measure 1.8–3.4:1
+    // (`claude` 3.37 · `chartGreen` 1.99 · `chartAmber` 1.84 · `statusIdle`
+    // 2.92), well under the 4.5:1 WCAG AA floor for body text — an amber
+    // "unavailable" or a green "enabled" was genuinely hard to read.
+    //
+    // `Ink` holds the same six signals darkened for light mode and lightened
+    // for dark mode, all ≥ 4.5:1 against every surface they sit on
+    // (`bgPrimary` / `cardSurface` / `bgOverlay`). Use `Theme.x` for anything
+    // that is *shape*, `Theme.Ink.x` for anything that is *text or a glyph*.
+    enum Ink {
+        static var claude: Color { isDark ? Color(hex: 0x6EA8FF) : Color(hex: 0x1D4FB8) }
+        static var cursor: Color { isDark ? Color(hex: 0xC08BFF) : Color(hex: 0x7A34B8) }
+        static var codex: Color { isDark ? Color(hex: 0xA8ADB4) : Color(hex: 0x5F6368) }
+        static var success: Color { isDark ? Color(hex: 0x30D158) : Color(hex: 0x1B7F3A) }
+        static var warning: Color { isDark ? Color(hex: 0xFFB340) : Color(hex: 0x8A4B00) }
+        static var error: Color { isDark ? Color(hex: 0xFF6B61) : Color(hex: 0xB3261C) }
+        static var idle: Color { isDark ? Color(hex: 0xA8ADB4) : Color(hex: 0x5A5A5E) }
+    }
+
     // MARK: Surfaces
     static var divider: Color { isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08) }
     static var hairline: Color { divider }
@@ -114,7 +136,7 @@ enum Theme {
         /// Grid gap — popup density (2-col tiles in the 400pt panel).
         static let gridGap: CGFloat = 8
         /// Grid gap — main-window pages (tile grids).
-        static let gridGapPage: CGFloat = 10
+        static let gridGapPage: CGFloat = 14
     }
 
     // MARK: Corner radii
@@ -172,6 +194,15 @@ enum Theme {
         static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit()
         static let tileLabel = SwiftUI.Font.system(size: 11, weight: .semibold)
         static let tileDetail = SwiftUI.Font.caption2
+        /// Nav tabs, card titles, settings titles — one size so chrome doesn't drift.
+        static let chrome = SwiftUI.Font.system(size: 13, weight: .medium, design: .rounded)
+        static let chromeEmph = SwiftUI.Font.system(size: 13, weight: .semibold, design: .rounded)
+        static let brand = SwiftUI.Font.system(size: 16, weight: .semibold, design: .rounded)
+        static let section = SwiftUI.Font.system(size: 12, weight: .semibold, design: .rounded)
+        static let eyebrow = SwiftUI.Font.system(size: 10, weight: .semibold, design: .rounded)
+        static let meta = SwiftUI.Font.system(size: 10, weight: .regular, design: .rounded)
+        static let kpi = SwiftUI.Font.system(size: 9, weight: .medium, design: .rounded)
+        static let pill = SwiftUI.Font.system(size: 11, weight: .medium, design: .rounded)
     }
 
     // MARK: Grid column templates
@@ -233,6 +264,15 @@ enum Theme {
         return statusError
     }
 
+    /// `contextColor` as readable text — the context label ("48.2k / 200k")
+    /// is text, and the raw hues are 1.8–3.4:1 on the light canvas. The bar
+    /// itself keeps `contextColor`.
+    static func contextInk(_ ratio: Double) -> Color {
+        if ratio < 0.6 { return Ink.claude }
+        if ratio < 0.85 { return Ink.warning }
+        return Ink.error
+    }
+
     // MARK: Usage bar palette (hash-stable per model name)
     /// Muted cool tones — blue, violet, teal, amber, coral.
     static func barColor(for model: String) -> Color {
@@ -242,6 +282,21 @@ enum Theme {
             chartGreen,
             chartAmber,
             statusError,
+        ]
+        return palette[djb2(model) % palette.count]
+    }
+
+    /// The same per-model hue as readable text, index-aligned with
+    /// `barColor(for:)`. A usage tile paints the model's share as a bar *and*
+    /// as a "38 %" pill; the bar wants `barColor`, the pill wants this one
+    /// (the raw hues land at 1.8–3.4:1 on the light canvas).
+    static func barInk(for model: String) -> Color {
+        let palette: [Color] = [
+            Ink.claude,
+            Ink.cursor,
+            Ink.success,
+            Ink.warning,
+            Ink.error,
         ]
         return palette[djb2(model) % palette.count]
     }
@@ -305,12 +360,12 @@ struct PanelCardModifier: ViewModifier {
             .background {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(tint?.opacity(0.10) ?? Theme.cardSurface)
+                    .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Theme.hairline, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
     }
 }
 
@@ -419,33 +474,44 @@ struct AppGlyph: View {
     }
 }
 
-/// CatStatus-style icon well: tinted rounded square, not a naked SF Symbol.
+/// A small machined well: semantic mark, inset edge, interaction-led motion.
 struct GlyphWell: View {
     let name: String
     var tint: Color = Theme.textSecondary
     var size: CGFloat = 22
+    var engaged = false
 
     var body: some View {
-        Image(systemName: name)
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundColor(tint)
+        SignatureGlyph(name: name, tint: tint, size: size * 0.64, engaged: engaged)
             .frame(width: size, height: size)
-            .background(
-                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-                    .fill(Theme.cardFill(0.06))
-            )
+            .background {
+                RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+                    .fill(tint.opacity(engaged ? 0.14 : 0.07))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+                    .strokeBorder(tint.opacity(engaged ? 0.3 : 0.14), lineWidth: 0.75)
+            }
+            .accessibilityHidden(true)
     }
 }
 
 /// Status capsule used on metric cards (18核 / 正常 / RPM).
+///
+/// The fill is a 12 % wash of `tint` while the text is `tint` itself, so every
+/// call site hands in a *shape* hue and inherits 1.8–3.4:1 text. `ink` is the
+/// readable counterpart: pass the matching `Theme.Ink.x` when the pill is a
+/// state readout (运行中 / 正常 / 已启用), and leave it nil for a pill whose
+/// tint was already chosen as ink.
 struct StatusPill: View {
     let label: String
     var tint: Color = Theme.textSecondary
+    var ink: Color? = nil
 
     var body: some View {
         Text(label)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundColor(tint)
+            .font(Theme.Font.pill)
+            .foregroundColor(ink ?? tint)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(Capsule().fill(tint.opacity(0.12)))
@@ -455,12 +521,20 @@ struct StatusPill: View {
 /// Page heading used by every main-window destination.
 struct PageTitle: View {
     let title: String
+    @State private var hovered = false
 
     var body: some View {
-        Text(title)
-            .font(Theme.Font.displayHero)
-            .foregroundColor(Theme.textPrimary)
-            .lineLimit(1)
-            .fixedSize()
+        HStack(spacing: 10) {
+            GlyphWell(name: PageIdentity.symbol(title), tint: PageIdentity.ink(title),
+                      size: 34, engaged: hovered)
+            Text(title)
+                .font(Theme.Font.displayHero)
+                .tracking(Theme.Tracking.titleSmall)
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .onHover { hovered = $0 }
+        .accessibilityAddTraits(.isHeader)
     }
 }

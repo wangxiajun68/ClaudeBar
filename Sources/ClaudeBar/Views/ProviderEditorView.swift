@@ -67,9 +67,12 @@ struct ProviderEditorView: View {
                     .font(Theme.Font.bodySmall)
             }
             .adaptiveGlassButton()
-            Text("管理供应商")
-                .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.textPrimary)
+            HStack(spacing: 8) {
+                GlyphWell(name: "cube", tint: Theme.Ink.cursor, size: 26)
+                Text("管理供应商")
+                    .font(Theme.Font.chromeEmph)
+            }
+            .foregroundColor(Theme.textPrimary)
             Spacer()
         }
         .padding(.horizontal, Theme.Space.s16)
@@ -103,7 +106,7 @@ struct ProviderEditorView: View {
                         Spacer(minLength: Theme.Space.s8)
                         if provider.id == providerStore.activeProviderID {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(Theme.Font.bodySmall).foregroundColor(Theme.statusBusy)
+                                .font(Theme.Font.bodySmall).foregroundColor(Theme.Ink.claude)
                                 .transition(.scale.combined(with: .opacity))
                         }
                     }
@@ -121,7 +124,8 @@ struct ProviderEditorView: View {
                 onPreset: { model.addFromPreset($0) },
                 onDuplicate: { model.duplicateSelected() },
                 onDelete: { model.deleteSelected() },
-                onImportFromClaude: { model.importFromCodex() }
+                onImportFromClaude: { model.importFromCodex() },
+                selectedName: model.selected?.name ?? ""
             )
         }
         .frame(width: 220)
@@ -302,7 +306,7 @@ struct ProviderEditorView: View {
                 if isDefault {
                     Text("默认")
                         .font(Theme.Font.microSemibold)
-                        .foregroundColor(Theme.statusWarning)
+                        .foregroundColor(Theme.Ink.warning)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(Theme.statusWarning.opacity(0.15)))
                         .transition(.scale.combined(with: .opacity))
@@ -332,11 +336,11 @@ struct ProviderEditorView: View {
                 if let err = model.duplicateModelError {
                     Text(err)
                         .font(Theme.Font.caption)
-                        .foregroundColor(Theme.statusError)
+                        .foregroundColor(Theme.Ink.error)
                 } else if model.isSaveFlashActive {
                     Label("已保存", systemImage: "checkmark.circle.fill")
                         .font(Theme.Font.caption)
-                        .foregroundColor(Theme.statusBusy)
+                        .foregroundColor(Theme.Ink.claude)
                         .transition(.opacity.combined(with: .scale))
                 }
                 Spacer()
@@ -390,7 +394,7 @@ struct EditorField<Content: View>: View {
             if let error {
                 Text(error)
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
+                    .foregroundColor(Theme.Ink.error)
                     .transition(.opacity)
             }
         }

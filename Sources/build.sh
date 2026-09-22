@@ -48,6 +48,37 @@ MACOS_TARGET="arm64-apple-macos${MACOS_MIN}"
 
 echo "=== Building $APP_NAME $VERSION (macOS ${MACOS_MIN}+) ==="
 
+# --- Source coverage assertions ---
+# Both targets are compiled by globbing `find … -name '*.swift'`, so a file
+# that is missing, misnamed, or sitting in the wrong directory does not fail
+# the build — it just silently is not in the binary (a whole feature can go
+# missing without a single diagnostic). Assert the structural invariants that
+# a glob cannot express.
+require_file() {
+    if [ ! -f "$1" ]; then
+        echo "ERROR: expected source missing: $1" >&2
+        exit 1
+    fi
+}
+# The widget target compiles WidgetSnapshot.swift through a symlink into the
+# app's Models directory; a broken link compiles *nothing* there and the
+# widget would silently fail to decode every snapshot.
+require_file "$SOURCES_DIR/Models/WidgetSnapshot.swift"
+require_file "$SOURCES_DIR/Models/ProviderStore.swift"
+require_file "$SOURCES_DIR/Theme/Theme.swift"
+require_file "$WIDGET_DIR/WidgetViews.swift"
+require_file "$WIDGET_DIR/WidgetProvider.swift"
+if [ ! -e "$WIDGET_DIR/WidgetSnapshot.swift" ]; then
+    echo "ERROR: $WIDGET_DIR/WidgetSnapshot.swift is a broken or missing symlink" >&2
+    exit 1
+fi
+# The shared snapshot contract must be the SAME file on both sides, or the
+# widget and the app drift apart with no compiler error to catch it.
+if ! [ "$WIDGET_DIR/WidgetSnapshot.swift" -ef "$SOURCES_DIR/Models/WidgetSnapshot.swift" ]; then
+    echo "ERROR: $WIDGET_DIR/WidgetSnapshot.swift no longer resolves to $SOURCES_DIR/Models/WidgetSnapshot.swift" >&2
+    exit 1
+fi
+
 # Local builds use a stable self-signed identity so TCC (Screen Recording)
 # survives rebuilds. CI / explicit "-" stay ad-hoc.
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
@@ -149,6 +180,10 @@ SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"
 
 swift_files=$(find "$SOURCES_DIR" -name "*.swift" | sort)
+if [ -z "$swift_files" ]; then
+    echo "ERROR: no app sources found under $SOURCES_DIR" >&2
+    exit 1
+fi
 
 # -O + -whole-module-optimization: without any optimization flag swiftc
 # defaults to -Onone, which leaves every layout witness thunk, value witness
@@ -170,6 +205,7 @@ swiftc -O -whole-module-optimization \
     -framework ScreenCaptureKit \
     -framework CoreWLAN \
     -framework IOBluetooth \
+    -framework ServiceManagement \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
@@ -211,6 +247,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <string>区域截图需要屏幕录制权限，用于将选中区域复制到剪贴板。</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>用于在资源条中显示蓝牙开关状态。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用于在连接卡片中显示当前 Wi-Fi 网络名称与信号强度。macOS 将 Wi-Fi 名称视为可用于定位的信息，因此读取它需要此授权；ClaudeBar 只读取名称与信号，不会定位。</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>NSAppTransportSecurity</key>
@@ -233,6 +271,10 @@ mkdir -p "$APPEX_CONTENTS/MacOS"
 # which previously left a stray ClaudeBarWidget binary alongside the main app
 # executable and made codesign --deep sign an extra artifact).
 widget_files=$(find "$WIDGET_DIR" -name "*.swift" | sort)
+if [ -z "$widget_files" ]; then
+    echo "ERROR: no widget sources found under $WIDGET_DIR" >&2
+    exit 1
+fi
 
 swiftc -O -whole-module-optimization \
     -o "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" \

@@ -7,10 +7,11 @@ import SwiftUI
 /// and cards — the small 0.96 scale keeps the press subtle.
 struct PressableStyle: ButtonStyle {
     var scale: CGFloat = 0.96
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? scale : 1)
             .opacity(configuration.isPressed ? 0.85 : 1)
             .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
     }
@@ -42,13 +43,15 @@ extension ButtonStyle where Self == UiversePressStyle {
 struct AppearLift: ViewModifier {
     var delay: Double = 0
     @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
             .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 8)
+            .offset(y: shown || reduceMotion ? 0 : 8)
             .onAppear {
-                withAnimation(Theme.Animation.smooth.delay(delay)) { shown = true }
+                guard !shown else { return }
+                withAnimation(reduceMotion ? nil : Theme.Animation.smooth.delay(delay)) { shown = true }
             }
     }
 }
@@ -139,6 +142,8 @@ struct ActionChip: View {
             hover = hovering
         }
         .help(help)
+        // `.help` renders a tooltip only; VoiceOver needs the label.
+        .accessibilityLabel(help)
     }
 }
 
@@ -156,16 +161,17 @@ struct IconChip: View {
     @State private var hover = false
 
     var body: some View {
-        AppGlyph(name: systemImage, size: size, weight: .medium, box: tile)
-            .foregroundColor(hover ? tint : tint.opacity(0.85))
+        SignatureGlyph(name: systemImage, tint: hover ? tint : tint.opacity(0.85),
+                       size: size + 4, engaged: hover)
+            .frame(width: tile, height: tile)
             .background {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(tint.opacity(hover ? 0.22 : 0.10))
+                    .fill(tint.opacity(hover ? 0.16 : 0.07))
             }
-            .scaleEffect(hover ? 1.06 : 1)
-            .animation(Theme.Motion.state, value: hover)
-            .onHover { hovering in
-                hover = hovering
+            .overlay {
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .strokeBorder(tint.opacity(hover ? 0.3 : 0.12), lineWidth: 0.75)
             }
+            .onHover { hover = $0 }
     }
 }

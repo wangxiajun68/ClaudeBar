@@ -2,16 +2,40 @@ import SwiftUI
 
 /// Hover-revealed action chips: fade + slide in and accept hits only while
 /// the parent tile is hovered.
+/// Trailing action chips on a session tile.
+///
+/// They stay transparent until hover — the affordance emerges from the tile
+/// instead of competing with the status line — but "invisible to a mouse"
+/// must not mean "unreachable": a keyboard or VoiceOver user can't hover, so
+/// the chips also reveal while they hold focus.
+///
+/// Two signals, because neither alone is enough:
+/// - `@Environment(\.accessibilityVoiceOverEnabled)` — the label exposes the
+///   chips to VoiceOver even while they are transparent; without it the
+///   controls simply do not exist in the accessibility tree.
+/// - `@FocusState` — the chips become fully visible once keyboard focus
+///   lands on one of them, so tabbing through announces them on screen too.
 private struct SessionActionChips<Content: View>: View {
     let isHovered: Bool
     @ViewBuilder let content: () -> Content
 
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @FocusState private var focused: Bool
+
+    /// Visible when hovered, focused, or assistive tech is listening. VoiceOver
+    /// reveals *and* keeps them hittable — a control it can announce but not
+    /// operate would be worse than one it never sees.
+    private var revealed: Bool { isHovered || focused || voiceOver }
+
     var body: some View {
-        HStack(spacing: 4) { content() }
-            .opacity(isHovered ? 1 : 0)
-            .offset(x: isHovered ? 0 : 10)
-            .allowsHitTesting(isHovered)
-            .animation(Theme.Animation.smooth, value: isHovered)
+        HStack(spacing: 4) {
+            content()
+                .focused($focused)
+        }
+        .opacity(revealed ? 1 : 0)
+        .offset(x: revealed ? 0 : 10)
+        .allowsHitTesting(revealed)
+        .animation(Theme.Animation.smooth, value: revealed)
     }
 }
 
@@ -23,7 +47,7 @@ private struct PulsingStatusDot: View {
 
     var body: some View {
         Circle()
-            .fill(isOn ? color : Theme.statusIdle.opacity(0.55))
+            .fill(isOn ? color : Theme.Ink.idle)
             .frame(width: big ? 8 : 6, height: big ? 8 : 6)
             .overlay {
                 if isOn {
@@ -167,7 +191,9 @@ struct SessionsView: View {
     private func sectionContainer<C: View>(title: String, icon: String, count: Int, active: Int,
                                             @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            SectionHeader(icon: icon, title: title, tint: Theme.claude, count: count, activeCount: active)
+            SectionHeader(icon: icon, title: title, tint: Theme.claude,
+                          ink: Theme.Ink.claude,
+                          count: count, activeCount: active)
             content()
         }
     }
@@ -192,7 +218,7 @@ private struct ActivityLine: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(isBusy ? color : Theme.statusIdle.opacity(0.5))
+                .fill(isBusy ? color : Theme.Ink.idle)
                 .frame(width: 4, height: 4)
                 .overlay {
                     if isBusy { BusyPulseRing(color: color, big: false, compact: true) }
@@ -228,7 +254,9 @@ private struct SessionTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
-                StatusPill(label: isBusy ? "运行中" : "空闲", tint: isBusy ? Theme.statusBusy : Theme.statusIdle)
+                StatusPill(label: isBusy ? "运行中" : "空闲",
+                           tint: isBusy ? Theme.statusBusy : Theme.statusIdle,
+                           ink: isBusy ? Theme.Ink.claude : Theme.Ink.idle)
             }
 
             // Context block and activity line are always rendered (dimmed
@@ -238,7 +266,7 @@ private struct SessionTileFull: View {
                 HStack {
                     Text(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
-                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()
@@ -351,7 +379,7 @@ private struct SessionTileFull: View {
             Text("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
                 .lineLimit(1)
             if wf.runningCount > 0 {
-                Text("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.statusBusy)
+                Text("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
             }
             Spacer()
         }
@@ -378,7 +406,9 @@ private struct CursorTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
-                StatusPill(label: isActive ? "运行中" : "空闲", tint: isActive ? Theme.cursorAccent : Theme.statusIdle)
+                StatusPill(label: isActive ? "运行中" : "空闲",
+                           tint: isActive ? Theme.cursorAccent : Theme.statusIdle,
+                           ink: isActive ? Theme.Ink.cursor : Theme.Ink.idle)
             }
 
             // Space-reserved context + activity lines — see SessionTileFull.
@@ -386,7 +416,7 @@ private struct CursorTileFull: View {
                 HStack {
                     Text(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
-                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()
@@ -507,14 +537,16 @@ private struct ExternalSessionTile: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
-                    StatusPill(label: isActive ? "运行中" : "空闲", tint: isActive ? Theme.external : Theme.statusIdle)
+                    StatusPill(label: isActive ? "运行中" : "空闲",
+                                tint: isActive ? Theme.external : Theme.statusIdle,
+                                ink: isActive ? Theme.Ink.success : Theme.Ink.idle)
                 }
 
                 VStack(alignment: .leading, spacing: Theme.Space.s4) {
                     HStack {
                         Text(session.contextLabel)
                             .font(Theme.Font.tileValueSmall)
-                            .foregroundColor(Theme.contextColor(session.contextRatio))
+                            .foregroundColor(Theme.contextInk(session.contextRatio))
                             .lineLimit(1)
                             .fixedSize()
                         Spacer()
@@ -659,12 +691,15 @@ private struct ExternalSessionGridCard: View {
                 Spacer(minLength: 4)
                 if !swarmAgents.isEmpty {
                     Button { showSwarm = true } label: {
-                        StatusPill(label: "⋯\(swarmAgents.count)", tint: Theme.externalHi)
+                        StatusPill(label: "⋯\(swarmAgents.count)", tint: Theme.externalHi,
+                                ink: Theme.Ink.success)
                     }
                     .buttonStyle(.plain)
                     .help("查看 \(swarmAgents.count) 个子 agent")
                 }
-                StatusPill(label: isActive ? "运行中" : "空闲", tint: isActive ? Theme.external : Theme.statusIdle)
+                StatusPill(label: isActive ? "运行中" : "空闲",
+                                tint: isActive ? Theme.external : Theme.statusIdle,
+                                ink: isActive ? Theme.Ink.success : Theme.Ink.idle)
             }
 
             // Context + recency, space-reserved so cards in a row stay level.
@@ -672,7 +707,7 @@ private struct ExternalSessionGridCard: View {
                 HStack {
                     Text(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
-                        .foregroundColor(Theme.contextColor(session.contextRatio))
+                        .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()

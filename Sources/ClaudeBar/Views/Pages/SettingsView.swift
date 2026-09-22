@@ -9,11 +9,37 @@ struct SettingsView: View {
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @ObservedObject private var screenshotHotKey = ScreenshotHotKey.shared
+    @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.s24) {
                 PageTitle(title: "设置")
+
+                // First section: it is the only setting that decides whether the
+                // app is running at all; the rest are grouped by module weight.
+                section("启动", icon: "power") {
+                    SettingTile(icon: "power", title: "开机自启",
+                                caption: launchCaption) {
+                        Toggle("", isOn: Binding(
+                            get: { launchAtLogin.isOn },
+                            // `Binding(get:set:)` rather than `$prefs.x`: the
+                            // setter has to talk to SMAppService, and the value
+                            // read back after that is the system's, not the
+                            // one that was asked for.
+                            set: { on in launchAtLogin.setEnabled(on) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Theme.claude)
+                    }
+                    if launchAtLogin.needsApproval {
+                        SettingTile(icon: "hand.raised", title: "等待系统允许",
+                                    caption: "「系统设置 → 通用 → 登录项」中允许 ClaudeBar。") {
+                            Button("打开") { LaunchAtLogin.openLoginItemsSettings() }
+                                .adaptiveGlassButton()
+                        }
+                    }
+                }
 
                 section("外观", icon: "paintpalette") {
                     SettingTile(icon: "circle.lefthalf.filled", title: "主题",
@@ -103,7 +129,18 @@ struct SettingsView: View {
                                 tint: Theme.codex) {
                         TextField("15721", text: Binding(
                             get: { String(prefs.codexProxyPort) },
-                            set: { v in prefs.codexProxyPort = Int(v) ?? prefs.codexProxyPort }))
+                            set: { v in
+                                // Commit on focus loss / submit, not per
+                                // keystroke: the binding used to write
+                                // UserDefaults on every character, so typing
+                                // "15721" published 1, 15, 157, 1572, 15721
+                                // and re-rendered every reader of the pref —
+                                // and an intermediate value like "1" is a
+                                // valid-looking port that nothing validates.
+                                guard v != String(prefs.codexProxyPort),
+                                      let port = Int(v), (1024...65535).contains(port) else { return }
+                                prefs.codexProxyPort = port
+                            }))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 88)
                             .multilineTextAlignment(.trailing)
@@ -227,11 +264,32 @@ struct SettingsView: View {
         }
     }
 
+    /// Existence is measured once per render pass, not once per tile.
+    ///
+    /// `fileTile` used to call `fileExists` inline in its body, so five
+    /// synchronous `stat`s ran on the main thread every time this page
+    /// re-evaluated — and the page observes four observable objects, so that
+    /// is often. One `contentsOfDirectory` over the two directories covers all
+    /// five paths (and is what makes the state refreshable when a file appears
+    /// or is deleted while the page is open).
+    private static func existingFileNames() -> Set<String> {
+        var names = Set<String>()
+        let fm = FileManager.default
+        for dir in [FilePaths.claudeDir, FilePaths.codexDir] {
+            guard let entries = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
+            names.formUnion(entries)
+        }
+        return names
+    }
+
+    private var presentFiles: Set<String> { Self.existingFileNames() }
+
     private func fileTile(_ path: String, _ url: URL) -> some View {
-        SettingTile(icon: "doc", title: (path as NSString).lastPathComponent, caption: path) {
+        let name = (path as NSString).lastPathComponent
+        return SettingTile(icon: "doc", title: name, caption: path) {
             Button("打开") { NSWorkspace.shared.open(url) }
                 .adaptiveGlassButton()
-                .disabled(!FileManager.default.fileExists(atPath: url.path))
+                .disabled(!presentFiles.contains(name))
         }
     }
 
@@ -243,6 +301,16 @@ struct SettingsView: View {
             return "热键已注册。首次使用需允许屏幕录制。"
         }
         return "全局拉框截图并复制到剪贴板。"
+    }
+
+    /// The login item's own state is the caption — there is no remembered
+    /// preference to fall back on (see `LaunchAtLogin`), so whatever the system
+    /// reports is what gets said. An ad-hoc-signed build reporting `.notFound`
+    /// has to read as a failure, not as "on".
+    private var launchCaption: String {
+        if let err = launchAtLogin.lastError { return err }
+        if launchAtLogin.isOn { return "登录时自动启动。可在「系统设置 → 通用 → 登录项」更改。" }
+        return "登录时自动启动 ClaudeBar。"
     }
 
     private var proxyCurlModel: String {
@@ -315,20 +383,21 @@ struct SettingTile<Control: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                GlyphWell(name: icon, tint: tint, size: 22)
+                GlyphWell(name: icon, tint: tint, size: 28, engaged: hovered)
                 Spacer(minLength: 4)
                 control()
+                    .controlSize(.small)
             }
-            .frame(height: 28)
+            .frame(height: 32)
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(Theme.Font.chromeEmph)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
             Text(caption.isEmpty ? " " : caption)
                 .font(Theme.Font.caption)
-                .foregroundColor(Theme.textTertiary())
-                .lineLimit(2)
-                .frame(minHeight: 32, maxHeight: 32, alignment: .topLeading)
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(3)
+                .frame(minHeight: 42, alignment: .topLeading)
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

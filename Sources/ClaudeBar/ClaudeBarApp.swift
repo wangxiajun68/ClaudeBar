@@ -56,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ScreenshotHotKey.shared.startIfEnabled()
 
+        // Re-read the login item so the Settings toggle reflects the system
+        // rather than a remembered value. Also re-runs on every activation, so
+        // a change made in System Settings shows up on return.
+        LaunchAtLogin.shared.refresh()
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(fanPermissionNeeded),
             name: .fanPermissionNeeded, object: nil)
@@ -108,6 +113,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    /// Tear-down that has to happen while the process is still alive.
+    ///
+    /// There was no termination hook at all: quitting left the mihomo core
+    /// running as an orphan (PPID 1) with the TUN marker and the system proxy
+    /// still applied, and the next launch spawned a second core on the same
+    /// ports. `VpnManager.reapOrphanCore()` covers the crash case; this covers
+    /// the ordinary Quit menu item.
+    func applicationWillTerminate(_ notification: Notification) {
+        // Detach the rate accessory first: it hangs off the status-bar button
+        // and its `objectWillChange` sink can fire during the rest of teardown.
+        menuBarController?.teardownVpnRateDisplay()
+        if AppPreferences.shared.vpnEnabled {
+            VpnManager.shared.stopCore()
+        }
+        ScreenshotHotKey.shared.stop()
     }
 }
 

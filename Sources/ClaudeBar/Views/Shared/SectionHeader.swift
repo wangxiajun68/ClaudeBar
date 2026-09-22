@@ -1,11 +1,18 @@
 import SwiftUI
 
 /// Section heading: tinted glyph well + title, optional live count.
+///
+/// `tint` is a *shape* hue (glyph well, dot). The count pill renders as text,
+/// so it uses `ink` when one is supplied — the raw signal hues are 1.8–3.4:1
+/// on the light canvas.
 struct SectionHeader: View {
     let icon: String
     let title: String
     /// Accent used for the icon well.
     var tint: Color = Theme.textSecondary
+    /// Readable counterpart of `tint` for the count pill. Defaults to `tint`
+    /// so a call site that already picked an ink color keeps working.
+    var ink: Color? = nil
     var count: Int? = nil
     /// Second component of the count, e.g. busy/active split ("● 1B · 2I").
     var activeCount: Int? = nil
@@ -17,7 +24,7 @@ struct SectionHeader: View {
         HStack(spacing: Theme.Space.s8) {
             GlyphWell(name: icon, tint: tint, size: 18)
             Text(title)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(Theme.Font.section)
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
@@ -35,7 +42,8 @@ struct SectionHeader: View {
             } else if let activeCount {
                 StatusPill(
                     label: "\(activeCount)\(activeSymbol) · \(count - activeCount)I",
-                    tint: activeCount > 0 ? tint : Theme.textSecondary
+                    tint: activeCount > 0 ? tint : Theme.textSecondary,
+                    ink: activeCount > 0 ? (ink ?? tint) : Theme.textSecondary
                 )
                 .contentTransition(.numericText())
                 .animation(Theme.Animation.smooth, value: activeCount)

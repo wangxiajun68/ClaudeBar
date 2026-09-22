@@ -4,6 +4,19 @@ struct BalanceFetcher {
     struct BalanceResult {
         let balance: String
         let currency: String
+
+        /// Ready-to-display string. Callers used to prepend `¥` themselves,
+        /// which printed the symbol twice for the common DeepSeek response
+        /// ("¥12.34 CNY") and mislabelled every other currency as yuan.
+        var display: String {
+            currency.uppercased() == "CNY" ? "¥\(balance)" : "\(balance) \(currency)"
+        }
+    }
+
+    static func supports(_ baseURL: String) -> Bool {
+        guard let url = URL(string: baseURL), url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else { return false }
+        return host == "api.deepseek.com"
     }
 
     /// Fetch DeepSeek balance. Returns nil for non-DeepSeek URLs or on failure.
@@ -15,9 +28,9 @@ struct BalanceFetcher {
         guard !authToken.isEmpty,
               let base = URL(string: baseURL),
               let host = base.host?.lowercased(),
-              host.contains("deepseek.com") else { return nil }
+              supports(baseURL) else { return nil }
 
-        guard let url = URL(string: "user/balance", relativeTo: base),
+        guard let url = URL(string: "https://api.deepseek.com/user/balance"),
               url.host?.lowercased() == host else { return nil }
 
         var request = URLRequest(url: url)

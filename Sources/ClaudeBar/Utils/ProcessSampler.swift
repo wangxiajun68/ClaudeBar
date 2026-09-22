@@ -77,6 +77,15 @@ final class ProcessSampler {
         var wifiRSSI: Int = 0
         var bluetoothOn: Bool = false
         var wiredOn: Bool = false
+        var batteryPercent: Int = 0
+        var batteryInstalled: Bool = false
+        var batteryCharging: Bool = false
+        var batteryExternalPower: Bool = false
+        var batteryChargingWatts: Double?
+        var powerInputWatts: Double?
+        var powerSystemWatts: Double?
+        var powerBatteryWatts: Double?
+        var powerIsEstimated = false
 
         var diskPercent: Double {
             guard diskTotal > 0 else { return 0 }
@@ -279,6 +288,14 @@ final class ProcessSampler {
         let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
         let disk = HardwareSensors.bootDisk()
         let links = HardwareSensors.linkStatus()
+        // Read on *every* tier, not just the foreground one. The 电量 mark is
+        // permanent (`ConnectLaneRow` draws it whether or not a pack is fitted),
+        // so a background-tier sample that left it at 0 would repaint the tile
+        // with a flat battery on the first popup tick. It is one
+        // `IORegistryEntryCreateCFProperties` on an already-matched service —
+        // cheaper than the GPU and temperature reads beside it, which *are*
+        // still tiered because they are the expensive ones.
+        let battery = HardwareSensors.batteryStatus()
         let hostSnap = HostStats(
             cpu: hostCPUPercent(),
             gpu: gpu.utilization,
@@ -294,7 +311,16 @@ final class ProcessSampler {
             wifiName: links.wifiName,
             wifiRSSI: links.wifiRSSI,
             bluetoothOn: links.bluetoothOn,
-            wiredOn: links.wiredOn
+            wiredOn: links.wiredOn,
+            batteryPercent: battery.percent,
+            batteryInstalled: battery.installed,
+            batteryCharging: battery.charging,
+            batteryExternalPower: battery.externalPower,
+            batteryChargingWatts: battery.chargingWatts,
+            powerInputWatts: battery.inputWatts,
+            powerSystemWatts: battery.systemWatts,
+            powerBatteryWatts: battery.batteryWatts,
+            powerIsEstimated: battery.powerIsEstimated
         )
 
         let memTotal = max(Double(hostSnap.memoryTotal), 1)

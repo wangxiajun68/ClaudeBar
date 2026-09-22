@@ -44,6 +44,9 @@ final class VpnSubscriptionStore: ObservableObject {
 
     @Published var subscriptions: [VpnSubscription] = []
     @Published var activeID: UUID? = nil
+    /// Which card's nodes are on screen. Distinct from `activeID`: looking
+    /// does not reload the core. Nil means the active subscription.
+    @Published var browsingID: UUID? = nil
     @Published var errorMessage: String? = nil
     @Published var isUpdating = false
 
@@ -67,6 +70,7 @@ final class VpnSubscriptionStore: ObservableObject {
               let file = try? JSONDecoder().decode(VpnSubscriptionsFile.self, from: data) else { return }
         subscriptions = file.subscriptions
         activeID = file.activeID
+        browsingID = file.activeID
     }
 
     func save() {
@@ -108,7 +112,7 @@ final class VpnSubscriptionStore: ObservableObject {
             if activeID == nil { activeID = stored.id }
             save()
         } catch {
-            await updateError("下载订阅失败：\(error.localizedDescription)")
+            await updateError(error.localizedDescription)
         }
     }
 
@@ -121,7 +125,12 @@ final class VpnSubscriptionStore: ObservableObject {
 
     func setActive(_ id: UUID?) {
         activeID = id
+        browsingID = id
         save()
+    }
+
+    func browse(_ id: UUID) {
+        browsingID = id
     }
 
     /// Re-download and refresh metadata; returns true on success.
@@ -130,7 +139,7 @@ final class VpnSubscriptionStore: ObservableObject {
         guard let sub = subscriptions.first(where: { $0.id == id }) else { return false }
         await updateError(nil)
         do {
-            let (text, headers) = try await downloadProfile(url: sub.url)
+            let (text, headers) = try await downloadProfile(url: sub.url, floorNodes: sub.nodeCount)
             guard Self.validateProfile(text) else {
                 await updateError("订阅返回内容无效。")
                 return false
@@ -143,7 +152,7 @@ final class VpnSubscriptionStore: ObservableObject {
             save()
             return true
         } catch {
-            await updateError("更新订阅失败：\(error.localizedDescription)")
+            await updateError(error.localizedDescription)
             return false
         }
     }
@@ -214,47 +223,84 @@ final class VpnSubscriptionStore: ObservableObject {
 
     // MARK: Download
 
-    private func downloadProfile(url: String) async throws -> (body: String, headers: [AnyHashable: Any]) {
-        guard let comps = URLComponents(string: url), let target = comps.url else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: target)
-        request.timeoutInterval = 30
-        request.setValue(VpnHTTP.clashVergeUA, forHTTPHeaderField: "User-Agent")
-        // Airports only emit extra headers when the client looks like Clash Verge.
-        request.setValue("text/plain, text/yaml, application/octet-stream, */*", forHTTPHeaderField: "Accept")
+    /// Airports key the body off User-Agent, and off whether the request
+    /// arrived through a proxy. Direct `mihomo/*` / `clash.meta` returns the
+    /// full list. The same URL through the mixed port or the system proxy is
+    /// a Cloudflare 403, or HTTP 200 with a single placeholder node and a
+    /// fake 1 GB quota. That 200 is a failed fetch: do not save it.
+    /// Clash Verge tries a proxy only after direct fails; here that fallback
+    /// is what produced the stub, so subscription downloads stay direct.
+    private static let subscriptionUserAgents = [
+        VpnHTTP.mihomoUA,
+        "clash.meta",
+        "ClashforWindows/0.20.39",
+        VpnHTTP.clashVergeUA,
+    ]
 
-        let session = VpnHTTP.session(proxyPort: manager?.mixedPortIfRunning)
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        let body = try Self.text(from: data, response: http)
-        return (body, http.allHeaderFields)
+    private func downloadProfile(url: String, floorNodes: Int = 0) async throws -> (body: String, headers: [AnyHashable: Any]) {
+        guard let target = URL(string: url) else { throw URLError(.badURL) }
+        struct Candidate {
+            var body: String
+            var headers: [AnyHashable: Any]
+            var nodes: Int
+        }
+        var best: Candidate?
+        var last = VpnProfileError.http(0, "无法连接")
+        for ua in Self.subscriptionUserAgents {
+            do {
+                let (body, headers) = try await Self.fetchProfile(url: target, proxyPort: nil, userAgent: ua)
+                guard Self.validateProfile(body) else {
+                    last = VpnProfileError.http(0, "订阅内容不是 Clash 配置")
+                    continue
+                }
+                let nodes = Self.countProxies(in: body)
+                let providers = body.contains("proxy-providers:")
+                if nodes < 2 && !providers {
+                    last = VpnProfileError.placeholder(nodes)
+                    continue
+                }
+                let candidate = Candidate(body: body, headers: headers, nodes: nodes)
+                if best == nil || nodes > (best?.nodes ?? 0) { best = candidate }
+                let asFullAsBefore = floorNodes < 8 || nodes + 2 >= floorNodes
+                if nodes >= 8 && asFullAsBefore {
+                    return (body, headers)
+                }
+            } catch let error as VpnProfileError {
+                last = error
+            } catch {
+                last = VpnProfileError.http(0, error.localizedDescription)
+            }
+        }
+        if let best {
+            if floorNodes >= 8, best.nodes < max(2, floorNodes / 5) {
+                throw VpnProfileError.shrunk(got: best.nodes, had: floorNodes)
+            }
+            return (best.body, best.headers)
+        }
+        throw last
     }
 
-    /// HEAD first (cheap userinfo); fall back to GET. Body is nil on HEAD.
-    private func downloadHeaders(url: String) async throws -> (headers: [AnyHashable: Any], body: String?) {
-        guard let comps = URLComponents(string: url), let target = comps.url else {
-            throw URLError(.badURL)
-        }
-        let session = VpnHTTP.session(proxyPort: manager?.mixedPortIfRunning)
-        func request(_ method: String) -> URLRequest {
-            var r = URLRequest(url: target)
-            r.httpMethod = method
-            r.timeoutInterval = 20
-            r.setValue(VpnHTTP.clashVergeUA, forHTTPHeaderField: "User-Agent")
-            r.setValue("text/plain, text/yaml, application/octet-stream, */*", forHTTPHeaderField: "Accept")
-            return r
-        }
-        if let (headData, headResp) = try? await session.data(for: request("HEAD")),
-           let http = headResp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-           Self.userInfoRaw(from: http.allHeaderFields) != nil {
-            _ = headData
-            return (http.allHeaderFields, nil)
-        }
-        let (data, response) = try await session.data(for: request("GET"))
+    private static func fetchProfile(url: URL, proxyPort: Int?, userAgent: String) async throws -> (body: String, headers: [AnyHashable: Any]) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 45
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/plain, text/yaml, application/octet-stream, */*", forHTTPHeaderField: "Accept")
+        let session = VpnHTTP.session(proxyPort: proxyPort)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        let body = try? Self.text(from: data, response: http)
-        return (http.allHeaderFields, body)
+        guard (200..<300).contains(http.statusCode) else {
+            let snippet = String(decoding: data.prefix(80), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw VpnProfileError.http(http.statusCode, snippet)
+        }
+        return (try text(from: data, response: http), http.allHeaderFields)
+    }
+
+    /// Quota headers use the same direct fetch as the node list. Going out
+    /// through the mixed port is what attached the 1 GB placeholder quota.
+    private func downloadHeaders(url: String) async throws -> (headers: [AnyHashable: Any], body: String?) {
+        let (body, headers) = try await downloadProfile(url: url)
+        return (headers, body)
     }
 
     private static func text(from data: Data, response: HTTPURLResponse) throws -> String {
@@ -264,14 +310,18 @@ final class VpnSubscriptionStore: ObservableObject {
         // Airports may serve base64-encoded node lists instead of YAML.
         let raw = String(decoding: data, as: UTF8.self)
         if raw.contains("proxies:") || raw.contains("proxy-providers:") { return raw }
-        if let decoded = VpnBase64.decode(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-           decoded.contains("proxies:") {
-            return
-                """
-                # Converted from base64 node list by ClaudeBar
-                proxies:
-                \(VpnNodeListConverter.toYAMLProxies(decoded) ?? "")
-                """
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let decoded = VpnBase64.decode(trimmed)
+        if let decoded, decoded.contains("proxies:") || decoded.contains("proxy-providers:") {
+            return decoded
+        }
+        let list = decoded ?? raw
+        if let yaml = VpnNodeListConverter.toYAMLProxies(list) {
+            return """
+            # Converted from a share-link list by ClaudeBar
+            proxies:
+            \(yaml)
+            """
         }
         return raw
     }
@@ -372,38 +422,35 @@ final class VpnSubscriptionStore: ObservableObject {
         }
     }
 
-    /// Count proxy entries under the top-level `proxies:` key. Handles both
-    /// inline (`- {name: …}` / `- name: …`) and split style:
+    /// Count proxy entries under the top-level `proxies:` key. Handles indented
+    /// lists and the column-0 form many airports ship:
     ///   proxies:
-    ///     -
-    ///       name: HK-1
-    /// (each bare `-` line starts one entry).
+    ///   - name: HK-1
+    ///     type: vless
+    /// A standalone `---` / `...` document marker is not an entry.
     static func countProxies(in yaml: String) -> Int {
         var counting = false
-        var indent = 0
         var n = 0
-        for line in yaml.split(separator: "\n") {
+        for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if !counting {
-                if line.hasPrefix("proxies:") { counting = true; indent = 0 }
+                if trimmed == "proxies:" || trimmed.hasPrefix("proxies:") { counting = true }
                 continue
             }
-            if trimmed.isEmpty { continue }
+            if trimmed.isEmpty || trimmed == "---" || trimmed == "..." { continue }
+            let lineIndent = line.prefix { $0 == " " || $0 == "\t" }.count
             let isListItem = trimmed.hasPrefix("-")
-            let lineIndent = line.count - line.drop { $0 == " " }.count
-            if !isListItem && lineIndent <= indent {
-                break // next top-level key — proxies section ended
-            }
-            if isListItem {
-                if lineIndent == 0 { break } // safety: a top-level list isn't proxies
-                if n == 0 { indent = lineIndent }
-                // A new entry: inline item, or a bare "-" (fields on following lines)
-                if trimmed.hasPrefix("- ") || trimmed == "-" || trimmed.hasPrefix("-{") {
-                    n += 1
-                }
+            if !isListItem && lineIndent == 0 { break }
+            if isListItem && (trimmed.hasPrefix("- ") || trimmed == "-" || trimmed.hasPrefix("-{")) {
+                n += 1
             }
         }
         return n
+    }
+
+    func preview(for id: UUID) -> VpnProfilePreview {
+        guard let text = profileText(id) else { return VpnProfilePreview() }
+        return VpnProfilePreview.parse(text)
     }
 
     private static func defaultName(from url: String) -> String {
@@ -412,6 +459,113 @@ final class VpnSubscriptionStore: ObservableObject {
 
     private func updateError(_ msg: String?) async {
         await MainActor.run { errorMessage = msg }
+    }
+}
+
+/// Node names read from a saved profile, so a card can be inspected without
+/// reloading mihomo. Live delay and selection still require that profile to
+/// be the one the core is running.
+struct VpnProfilePreview: Equatable {
+    struct Group: Identifiable, Equatable {
+        var id: String { name }
+        var name: String
+        var nodes: [String]
+    }
+
+    var groups: [Group] = []
+    var proxyNames: [String] = []
+
+    static func parse(_ yaml: String) -> VpnProfilePreview {
+        enum Section { case none, proxies, groups }
+        var section = Section.none
+        var proxies: [String] = []
+        var groups: [Group] = []
+        var current: Group?
+        var listingMembers = false
+
+        func closeGroup() {
+            if let current { groups.append(current) }
+            current = nil
+            listingMembers = false
+        }
+
+        for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed == "---" || trimmed == "..." { continue }
+            let indent = line.prefix { $0 == " " || $0 == "\t" }.count
+            if indent == 0 && !trimmed.hasPrefix("-") {
+                closeGroup()
+                if trimmed == "proxies:" || trimmed.hasPrefix("proxies:") {
+                    section = .proxies
+                } else if trimmed == "proxy-groups:" || trimmed.hasPrefix("proxy-groups:") {
+                    section = .groups
+                } else {
+                    section = .none
+                }
+                continue
+            }
+            switch section {
+            case .proxies:
+                if let name = Self.proxyName(trimmed) { proxies.append(name) }
+            case .groups:
+                if trimmed.hasPrefix("- name:") || trimmed.hasPrefix("-name:") {
+                    closeGroup()
+                    current = Group(name: Self.scalar(trimmed), nodes: [])
+                } else if current != nil {
+                    if trimmed == "proxies:" || trimmed.hasPrefix("proxies:") {
+                        let rest = trimmed.dropFirst("proxies:".count)
+                            .trimmingCharacters(in: .whitespaces)
+                        if rest.hasPrefix("[") {
+                            current?.nodes = Self.flowList(String(rest))
+                            listingMembers = false
+                        } else {
+                            listingMembers = true
+                        }
+                    } else if listingMembers, trimmed.hasPrefix("- ") {
+                        current?.nodes.append(Self.unquote(String(trimmed.dropFirst(2))))
+                    } else if listingMembers, !trimmed.hasPrefix("-") {
+                        listingMembers = false
+                    }
+                }
+            case .none:
+                break
+            }
+        }
+        closeGroup()
+        return VpnProfilePreview(groups: groups, proxyNames: proxies)
+    }
+
+    private static func proxyName(_ trimmed: String) -> String? {
+        if trimmed.hasPrefix("- name:") || trimmed.hasPrefix("-name:") {
+            let name = scalar(trimmed)
+            return name.isEmpty ? nil : name
+        }
+        guard trimmed.hasPrefix("- {"), trimmed.contains("name:") else { return nil }
+        guard let range = trimmed.range(of: "name:") else { return nil }
+        var rest = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        if let comma = rest.firstIndex(of: ",") { rest = String(rest[..<comma]) }
+        rest.removeAll { $0 == "}" }
+        let name = unquote(String(rest))
+        return name.isEmpty ? nil : name
+    }
+
+    private static func scalar(_ line: String) -> String {
+        guard let idx = line.firstIndex(of: ":") else { return "" }
+        return unquote(String(line[line.index(after: idx)...]))
+    }
+
+    private static func unquote(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("\"") || s.hasPrefix("'") { s.removeFirst() }
+        if s.hasSuffix("\"") || s.hasSuffix("'") { s.removeLast() }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func flowList(_ raw: String) -> [String] {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("[") { s.removeFirst() }
+        if s.hasSuffix("]") { s.removeLast() }
+        return s.split(separator: ",").map { unquote(String($0)) }.filter { !$0.isEmpty }
     }
 }
 
@@ -528,6 +682,10 @@ enum VpnConfigBuilder {
                     || t.hasPrefix("skip-auth-prefixes:")
                     || t.hasPrefix("authentication:")
             }
+            // `---` ends the YAML document. We prepend our own header, so a
+            // leading document marker would make mihomo load only the header
+            // and drop every proxy that follows.
+            if t == "---" || t == "..." { continue }
             if top && (t.hasPrefix("external-controller") || t.hasPrefix("secret:")
                         || t.hasPrefix("mode:") || t.hasPrefix("log-level:") || t.hasPrefix("ipv6:")
                         || t.hasPrefix("mixed-port:") || t.hasPrefix("allow-lan:")
@@ -565,6 +723,97 @@ enum VpnConfigBuilder {
         s = s.replacingOccurrences(of: "    - \"2001:4860:4860::8888\"\n", with: "")
         s = s.replacingOccurrences(of: "    - 8.8.8.8\n", with: "    - 223.5.5.5\n")
         return s
+    }
+}
+
+/// Seeds `geosite.dat` before mihomo parses the profile. A `GEOSITE` rule
+/// makes the core download that file from GitHub during startup, before the
+/// controller API exists, so a direct TLS timeout becomes "内核启动超时".
+enum VpnGeodata {
+    static func ensureGeoSite(profileText: String?) async -> String? {
+        guard let profileText,
+              profileText.range(of: "GEOSITE,", options: .caseInsensitive) != nil else { return nil }
+        let dest = FilePaths.vpnDir.appendingPathComponent("geosite.dat")
+        if usable(dest) { return nil }
+        if let note = copyInstalled(to: dest) { return note }
+        if let note = await download(to: dest) { return note }
+        return "缺少 GeoSite.dat。内核会在接口起来前直连 GitHub 下载，启动会超时。"
+    }
+
+    private static func usable(_ url: URL) -> Bool {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return size > 500_000
+    }
+
+    /// Clash Verge already keeps MetaCubeX's geosite next to its core.
+    private static func copyInstalled(to dest: URL) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let relatives = [
+            "Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/geosite.dat",
+            "Library/Application Support/clash-verge/geosite.dat",
+        ]
+        for rel in relatives {
+            let src = home.appendingPathComponent(rel)
+            guard usable(src) else { continue }
+            try? FileManager.default.removeItem(at: dest)
+            do {
+                try FileManager.default.copyItem(at: src, to: dest)
+                return "已使用本机 Clash Verge 的 GeoSite.dat"
+            } catch {
+                continue
+            }
+        }
+        return nil
+    }
+
+    private static func download(to dest: URL) async -> String? {
+        guard let url = URL(string: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat") else {
+            return nil
+        }
+        var ports: [Int?] = []
+        var seen = Set<Int>()
+        for port in [7890, VpnHTTP.systemHTTPProxyPort()] {
+            guard let port, seen.insert(port).inserted else { continue }
+            ports.append(port)
+        }
+        ports.append(nil)
+        for port in ports {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 25
+            guard let (tmp, response) = try? await VpnHTTP.session(proxyPort: port).download(for: request),
+                  let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  usable(tmp) else { continue }
+            try? FileManager.default.removeItem(at: dest)
+            guard (try? FileManager.default.moveItem(at: tmp, to: dest)) != nil else { continue }
+            return "已下载 GeoSite.dat"
+        }
+        return nil
+    }
+}
+
+enum VpnProfileError: LocalizedError {
+    case http(Int, String)
+    /// A 200 that is much smaller than the profile already on disk.
+    case shrunk(got: Int, had: Int)
+    /// HTTP 200 whose body is the airport's one-node placeholder.
+    case placeholder(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case let .shrunk(got, had):
+            return "机场这次只返回 \(got) 个节点（原来 \(had) 个）。已保留原来的节点，没有覆盖。"
+        case let .placeholder(nodes):
+            return "订阅只返回了 \(nodes) 个节点。这是失败的占位响应，没有写入。"
+        case let .http(status, snippet):
+            if snippet.contains("1005") {
+                return "订阅被 Cloudflare 拒绝（1005）。直连、系统代理和本机 Clash 端口都没有拿到节点。"
+            }
+            if status == 0 {
+                return "下载订阅失败：\(snippet)"
+            }
+            let extra = snippet.isEmpty ? "" : " \(snippet)"
+            return "下载订阅失败（HTTP \(status)）。\(extra)"
+        }
     }
 }
 

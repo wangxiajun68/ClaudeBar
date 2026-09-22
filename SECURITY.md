@@ -39,9 +39,25 @@ ClaudeBar 是**纯本地**应用：读取本机配置与会话文件，**不上�
 | Codex rollout | 只读（切换时写 `config.toml` / `auth.json`） | `~/.codex/` |
 | 供应商列表 | 读写 | `~/.claude/claude-bar-*.json` |
 | 用量索引 / 日志 | 读写 | `~/Library/Application Support/ClaudeBar/` |
-| Codex 本地代理 | 仅 `127.0.0.1` | 用户显式开启；勿暴露到公网 |
+| Codex 本地代理 | 仅 `127.0.0.1`，**令牌鉴权** | 用户显式开启；勿暴露到公网 |
 
 构建产物（DMG / zip）**不包含**任何用户密钥。请勿将个人 `~/.claude`、`~/.codex` 目录提交进 Git 仓库。
+
+### 本地代理的鉴权
+
+本地代理会**注入当前供应商的 API key**，因此它对本机任何进程都是一个凭据入口。它有三层约束：
+
+1. `NWListener` 用 `requiredLocalEndpoint` 绑定 `127.0.0.1`（`requiredInterfaceType` 只是接口偏好，不是绑定地址）；
+2. 每个连接必须带本机令牌 —— `~/Library/Application Support/ClaudeBar/proxy-token`（0600，`O_EXCL | O_NOFOLLOW` 创建），`Authorization: Bearer <token>` 或 `x-api-key: <token>`；
+3. 客户端自带的 `Authorization` / `x-api-key` / `Cookie` 等**不会**透传给上游 —— 代理始终注入自己的上游凭据，不采用客户端的。
+
+令牌是**同用户**级别的秘密：同用户的进程能直接读文件。它挡的是「顺手用一下」这一类（装依赖时跑的 postinstall 脚本、编辑器插件、别的 App 到 `127.0.0.1` 上乱试），不是同用户下的恶意代码 —— 后者本来就能读你所有的配置文件。
+
+写密钥的文件一律 `0600`，写入后重设权限（`.atomic` 会换 inode）：`~/.claude/settings.json`、`~/.claude/claude-bar-providers.json`、`~/.claude/claude-bar-codex-providers.json`、`proxy-token`。抓包库中的请求头会**脱敏**（`authorization` / `x-api-key` / `cookie` → `…`）。
+
+### 特权辅助工具
+
+风扇调速与 TUN 下的 DNS 需要 root，走 `claudebar-fanctl`（setuid root）。安装时会先 `codesign --verify --strict` 校验待安装的内置副本，校验失败即拒绝安装 —— 应用包可被当前用户写入，不校验就等于把「用户可写文件 → root 执行」当成特性。helper 自身启动即校验 `geteuid() == 0`，并把风扇编号钳制到 SMC 上报的 `FNum` 范围内。
 
 ---
 

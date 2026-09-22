@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>       // geteuid
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 
@@ -186,33 +187,70 @@ static int set_auto(io_connect_t conn, int fan) {
     return 3;
 }
 
+static int fanctl_main(int argc, char **argv);
+
+/// Fan ids come from the SMC's own `FNum`, never from the caller.
+#define VALID_FAN(x) ((x) >= 0 && (x) < fanCount)
+
 int main(int argc, char **argv) {
+    // Root check FIRST, before touching IOKit.
+    //
+    // The install puts this binary at 4755 (setuid root) so the app can change
+    // fan speed without a password prompt. Real setuid semantics — the process
+    // keeps the real uid and takes the effective uid — are not a property this
+    // binary can rely on: whether the setuid bit is honoured for a copied
+    // binary depends on cache/volume state, and the app also invokes the helper
+    // from paths where it is an ordinary 0755 file. Refusing to run as an
+    // unprivileged user is the check that makes those cases fail closed
+    // instead of failing as "the SMC call mysteriously failed".
+    if (geteuid() != 0) {
+        fprintf(stderr, "claudebar-fanctl must run as root (setuid install required)\n");
+        return 77;
+    }
+    // NOTE: do not try to route this through `dispatch_sync(dispatch_get_main_queue(), …)`.
+    // There is no run loop draining the main queue in this program, and the
+    // call aborts with SIGTRAP (verified) rather than running inline.
+    return fanctl_main(argc, argv);
+}
+
+static int fanctl_main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: fanctl set|auto|autoall|status ...\n"); return 64; }
     io_connect_t conn = smc_open();
     if (!conn) { fprintf(stderr, "cannot open AppleSMC\n"); return 1; }
 
+    // Valid fan indices come from the SMC, not from the caller. Everything
+    // below clamps `fan` into [0, FNum) before it is formatted into a key:
+    // an unbounded id reached `snprintf("F%dMd", fan)`, which truncates
+    // silently in `char key[8]` and writes whatever key it lands on.
+    const int fanCount = (int)get_value(conn, "FNum");
+
     if (!strcmp(argv[1], "set") && argc == 4) {
         int fan = atoi(argv[2]), rpm = atoi(argv[3]);
+        if (!VALID_FAN(fan)) { fprintf(stderr, "invalid fan id %d (0..%d)\n", fan, fanCount - 1); return 64; }
+        if (rpm < 0) rpm = 0;
+        if (rpm > 12000) rpm = 12000;
         int rc = set_rpm(conn, fan, rpm);
         if (rc) fprintf(stderr, "set failed rc=%d\n", rc);
         IOServiceClose(conn);
         return rc;
     }
     if (!strcmp(argv[1], "auto") && argc == 3) {
-        int rc = set_auto(conn, atoi(argv[2]));
+        int fan = atoi(argv[2]);
+        if (!VALID_FAN(fan)) { fprintf(stderr, "invalid fan id %d (0..%d)\n", fan, fanCount - 1); return 64; }
+        int rc = set_auto(conn, fan);
         if (rc) fprintf(stderr, "auto failed rc=%d\n", rc);
         IOServiceClose(conn);
         return rc;
     }
     if (!strcmp(argv[1], "autoall")) {
-        int n = (int)get_value(conn, "FNum");
+        int n = fanCount;
         int rc = 0;
         for (int i = 0; i < n; i++) { int r = set_auto(conn, i); if (r) rc = r; }
         IOServiceClose(conn);
         return rc;
     }
     if (!strcmp(argv[1], "status")) {
-        int n = (int)get_value(conn, "FNum");
+        int n = fanCount;
         printf("{\"fans\":[");
         for (int i = 0; i < n; i++) {
             char key[8];

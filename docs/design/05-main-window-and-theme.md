@@ -34,7 +34,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | **DashboardView** | 指标头行 → 活跃会话总览 → 用量 Top；可跳转 VPN |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
 | **ProvidersView** | 侧栏标签为「模型」；Claude + Codex 供应商宫格 + 编辑器 |
-| **UsageView** | 周期 chips + `UsageRiver` 日柱 + `CacheAnatomyBar` + `UsageModelTile` |
+| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + `UsageModelTile` |
 | **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
 | **SettingsView** | 本机 LLM 代理、连通性、空闲通知、**风扇**（`FanControlSection`）、版本 |
@@ -43,9 +43,10 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 - `Tile.swift`：`TileGrid` + `MetricTile` + `.tile()` modifier（与 `panelCard()` 同族的半透明表面，密度更高）。
 - `UsageBar.swift`：`UsageModelTile`、`UsageStackBar`（平涂四色 anatomies）。
-- `UsageRiver.swift`：周期堆叠柱 + 悬停读数；`CacheAnatomyBar`。
+- `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
+- `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` / `MetricTile` 的 `ink:` 参数即此。
 - `ResourceStrip`、`FanControlSection`：本机 CPU / GPU / 内存与 SMC 风扇。
-- `VpnTopChrome.swift`：仅菜单栏 popup 的 VPN 页头控件。
+- `VpnTopChrome.swift`：`VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle`（popup 与卡片共用）。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。

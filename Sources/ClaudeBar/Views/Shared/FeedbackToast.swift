@@ -9,9 +9,10 @@ struct FeedbackToast: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s6) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(tint)
+                .accessibilityHidden(true)
             Text(message ?? "")
                 .font(Theme.Font.microMedium)
                 .foregroundColor(Theme.textSecondary)
@@ -20,7 +21,14 @@ struct FeedbackToast: View {
         }
         .padding(.horizontal, Theme.Space.s16)
         .padding(.vertical, Theme.Space.s8)
+        .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(tint.opacity(0.22), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
         .opacity(message == nil ? 0 : 1)
+        .accessibilityHidden(message == nil)
         .animation(Theme.Animation.smooth, value: message)
         .accessibilityLabel(message ?? "")
     }

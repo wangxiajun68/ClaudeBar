@@ -18,12 +18,14 @@ struct TileModifier: ViewModifier {
                     .fill(tint == nil
                           ? Theme.cardSurface
                           : tint!.opacity(hovered ? 0.14 : 0.09))
+                    .shadow(color: .black.opacity(hovered ? 0.06 : 0.04),
+                            radius: hovered ? 8 : 5, y: 1)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
+                    .strokeBorder(hovered ? (tint ?? Theme.Ink.claude).opacity(0.28) : Theme.hairline,
+                                  lineWidth: 1)
             }
-            .shadow(color: .black.opacity(hovered ? 0.06 : 0.04), radius: hovered ? 8 : 5, y: 1)
     }
 }
 
@@ -45,9 +47,13 @@ struct MetricTile: View {
     var detail: String = ""
     var tint: Color? = nil
     var icon: String? = nil
+    var instrumentIcon: InstrumentGlyph.Kind? = nil
     var pill: String? = nil
+    /// Readable counterpart of `tint` for the pill text; see `StatusPill`.
+    var pillInk: Color? = nil
     var valueFont: SwiftUI.Font = Theme.Font.displayMetricSmall
     var dense: Bool = false
+    var quotaWindows: [CodexQuotaWindow] = []
     var action: (() -> Void)? = nil
 
     @State private var isHovered = false
@@ -55,8 +61,11 @@ struct MetricTile: View {
     var body: some View {
         let content = VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
-                if let icon {
-                    GlyphWell(name: icon, tint: Theme.textSecondary, size: dense ? 20 : 22)
+                if let instrumentIcon {
+                    InstrumentBadge(kind: instrumentIcon, size: dense ? 22 : 26,
+                                    tint: tint ?? Theme.Ink.claude, engaged: isHovered)
+                } else if let icon {
+                    GlyphWell(name: icon, tint: tint ?? Theme.Ink.claude, size: dense ? 20 : 22, engaged: isHovered)
                 }
                 Text(label)
                     .font(Theme.Font.tileLabel)
@@ -64,18 +73,24 @@ struct MetricTile: View {
                     .foregroundColor(Theme.textSecondary)
                 Spacer(minLength: 4)
                 if let pill {
-                    StatusPill(label: pill, tint: tint ?? Theme.statusSuccess)
+                    StatusPill(label: pill,
+                               tint: tint ?? Theme.statusSuccess,
+                               ink: pillInk ?? (tint == nil ? Theme.Ink.success : tint))
                 }
             }
-            Text(value)
-                .font(Theme.Font.displayMetricSmall)
-                .monospacedDigit()
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .minimumScaleFactor(0.5)
-                .contentTransition(.numericText())
-                .animation(Theme.Animation.smooth, value: value)
+            if quotaWindows.isEmpty {
+                Text(value)
+                    .font(Theme.Font.displayMetricSmall)
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .minimumScaleFactor(0.5)
+                    .contentTransition(.numericText())
+                    .animation(Theme.Animation.smooth, value: value)
+            } else {
+                CodexQuotaGauges(windows: quotaWindows, compact: false)
+            }
             Text(detail.isEmpty ? " " : detail)
                 .font(Theme.Font.tileDetail)
                 .foregroundColor(Theme.textTertiary())
@@ -110,6 +125,7 @@ struct TileGrid<Content: View>: View {
     private let fixedColumns: Int?
     private let minColumnWidth: CGFloat
     private let spacing: CGFloat
+    private var virtualized = false
     @ViewBuilder let content: () -> Content
 
     init(_ preset: Theme.GridLayout.Preset,
@@ -118,6 +134,7 @@ struct TileGrid<Content: View>: View {
         let spec = Theme.GridLayout.equalRow(preset)
         self.fixedColumns = spec.fixed
         self.minColumnWidth = spec.minWidth
+        if case .pageSession = preset { self.virtualized = true }
         switch preset {
         case .pageMetric, .pageSession, .pageUsage, .pageProvider, .pageSetting:
             self.spacing = spacing ?? Theme.Space.gridGapPage
@@ -136,10 +153,25 @@ struct TileGrid<Content: View>: View {
     }
 
     var body: some View {
-        EqualRowGrid(spacing: spacing, minColumnWidth: minColumnWidth, fixedColumns: fixedColumns) {
-            content()
+        Group {
+            if virtualized {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
+                    content()
+                }
+            } else {
+                EqualRowGrid(spacing: spacing, minColumnWidth: minColumnWidth, fixedColumns: fixedColumns) {
+                    content()
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var columns: [GridItem] {
+        if let fixedColumns {
+            return Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top), count: max(1, fixedColumns))
+        }
+        return [GridItem(.adaptive(minimum: max(1, minColumnWidth)), spacing: spacing, alignment: .top)]
     }
 }
 
@@ -151,25 +183,51 @@ struct EqualRowGrid: Layout {
     var minColumnWidth: CGFloat
     var fixedColumns: Int?
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct MeasurementKey: Hashable {
+        let width: CGFloat
+        let columns: Int
+        let spacing: CGFloat
+    }
+
+    // Reuse each proposal's row heights during placement. SwiftUI clears
+    // this cache through updateCache when a cell's content changes.
+    struct Cache {
+        var measurements: [MeasurementKey: [CGFloat]] = [:]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.measurements.removeAll(keepingCapacity: true)
+    }
+
+    private func heights(for width: CGFloat, subviews: Subviews, cache: inout Cache) -> [CGFloat] {
+        let cols = columnCount(for: width)
+        let key = MeasurementKey(width: width, columns: cols, spacing: spacing)
+        if let heights = cache.measurements[key] { return heights }
+        let result = rowHeights(subviews: subviews, columns: cols,
+                                colW: columnWidth(container: width, columns: cols))
+        cache.measurements[key] = result
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         // SwiftUI proposes `.infinity` width whenever the parent is greedy
         // (`.frame(maxWidth: .infinity)`), and a non-finite width makes the
         // column math produce NaN/∞, which traps on `Int(...)`. Collapse
         // non-finite proposals to 0 so we lay out one column instead.
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 0
-        let cols = columnCount(for: width)
-        let colW = columnWidth(container: width, columns: cols)
-        let heights = rowHeights(subviews: subviews, columns: cols, colW: colW)
+        let heights = heights(for: width, subviews: subviews, cache: &cache)
         let rows = heights.count
         let height = heights.reduce(0, +) + spacing * CGFloat(max(rows - 1, 0))
         return CGSize(width: width, height: height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         let container = bounds.width.isFinite ? bounds.width : 0
         let cols = columnCount(for: container)
         let colW = columnWidth(container: container, columns: cols)
-        let heights = rowHeights(subviews: subviews, columns: cols, colW: colW)
+        let heights = heights(for: container, subviews: subviews, cache: &cache)
         var y = bounds.minY
         for (row, height) in heights.enumerated() {
             for col in 0..<cols {

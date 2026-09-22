@@ -42,6 +42,80 @@ struct LineSSEParser {
     }
 }
 
+/// Token usage as one upstream call reported it.
+///
+/// Fed from the same events the capture assembler consumes, so the access-log
+/// console can show token counts whether or not traffic recording is on — with
+/// recording off there is no capture tap at all, and the console is the only
+/// surface left.
+///
+/// Buckets are kept as the upstream reported them: Anthropic counts cache
+/// reads as their own bucket, while OpenAI-shaped responses report cached
+/// input *inside* `input`. `total` sums the three as displayed, matching the
+/// usage ring's `ModelUsage.totalTokens`.
+struct TokenTotals: Equatable {
+    var input: Int?
+    var output: Int?
+    var cacheRead: Int?
+
+    var isEmpty: Bool { input == nil && output == nil && cacheRead == nil }
+
+    /// `nil` when the upstream never reported usage — an interrupted stream, a
+    /// gateway that omits the field. Distinct from a real zero.
+    var total: Int? { isEmpty ? nil : (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) }
+
+    mutating func applyChat(_ event: [String: Any]) {
+        guard let usage = event["usage"] as? [String: Any] else { return }
+        input = intValue(usage["prompt_tokens"]) ?? input
+        output = intValue(usage["completion_tokens"]) ?? output
+        if let details = usage["prompt_tokens_details"] as? [String: Any] {
+            cacheRead = intValue(details["cached_tokens"]) ?? cacheRead
+        }
+    }
+
+    /// `response.usage` on streamed events; the top level on a non-streaming
+    /// response body, which `CodexProxyTransform.normalizeUsage` leaves there.
+    mutating func applyResponses(_ event: [String: Any]) {
+        let usage = ((event["response"] as? [String: Any])?["usage"] as? [String: Any])
+            ?? (event["usage"] as? [String: Any])
+        guard let usage else { return }
+        input = intValue(usage["input_tokens"]) ?? intValue(usage["prompt_tokens"]) ?? input
+        output = intValue(usage["output_tokens"]) ?? intValue(usage["completion_tokens"]) ?? output
+        if let details = usage["input_tokens_details"] as? [String: Any] {
+            cacheRead = intValue(details["cached_tokens"]) ?? cacheRead
+        }
+    }
+
+    mutating func applyAnthropic(event: String, json: [String: Any]) {
+        switch event {
+        case "message_start":
+            applyAnthropicUsage((json["message"] as? [String: Any])?["usage"] as? [String: Any])
+        case "message_delta":
+            applyAnthropicUsage(json["usage"] as? [String: Any])
+        default:
+            break
+        }
+    }
+
+    /// A whole non-streaming Messages response — usage sits at its top level.
+    mutating func applyAnthropicMessage(_ message: [String: Any]) {
+        applyAnthropicUsage(message["usage"] as? [String: Any])
+    }
+
+    private mutating func applyAnthropicUsage(_ usage: [String: Any]?) {
+        guard let usage else { return }
+        input = intValue(usage["input_tokens"]) ?? input
+        output = intValue(usage["output_tokens"]) ?? output
+        cacheRead = intValue(usage["cache_read_input_tokens"]) ?? cacheRead
+    }
+
+    private func intValue(_ any: Any?) -> Int? {
+        if let n = any as? NSNumber { return n.intValue }
+        if let i = any as? Int { return i }
+        return nil
+    }
+}
+
 /// Assembled assistant payload used by the Traffic page (content / thinking /
 /// tools / usage). Protocol-specific `apply` methods share this buffer.
 struct CaptureAssembler {
@@ -50,10 +124,12 @@ struct CaptureAssembler {
     var model = ""
     var id = ""
     var finish = ""
-    var promptTokens: Int?
-    var completionTokens: Int?
-    var cacheReadTokens: Int?
+    var tokens = TokenTotals()
     var tools: [Tool] = []
+
+    var promptTokens: Int? { tokens.input }
+    var completionTokens: Int? { tokens.output }
+    var cacheReadTokens: Int? { tokens.cacheRead }
 
     struct Tool: Equatable {
         var id: String
@@ -66,7 +142,7 @@ struct CaptureAssembler {
     mutating func applyChat(_ parsed: [String: Any]) {
         if let m = parsed["model"] as? String, !m.isEmpty { model = m }
         if let i = parsed["id"] as? String, !i.isEmpty { id = i }
-        if let usage = parsed["usage"] as? [String: Any] { ingestChatUsage(usage) }
+        tokens.applyChat(parsed)
 
         let choice = (parsed["choices"] as? [[String: Any]])?.first ?? [:]
         if let reason = choice["finish_reason"] as? String { finish = reason }
@@ -85,8 +161,8 @@ struct CaptureAssembler {
         if let resp = parsed["response"] as? [String: Any] {
             if let m = resp["model"] as? String, !m.isEmpty { model = m }
             if let i = resp["id"] as? String, !i.isEmpty { id = i }
-            if let usage = resp["usage"] as? [String: Any] { ingestResponsesUsage(usage) }
         }
+        tokens.applyResponses(parsed)
         if type.hasSuffix("output_text.delta") {
             if let d = parsed["delta"] as? String { content += d }
         } else if type.contains("reasoning") && type.hasSuffix(".delta") {
@@ -110,10 +186,8 @@ struct CaptureAssembler {
                 tools.append(Tool(id: itemID, name: name, arguments: (item["arguments"] as? String) ?? ""))
             }
         } else if type == "response.completed" {
-            if let resp = parsed["response"] as? [String: Any],
-               let usage = resp["usage"] as? [String: Any] {
-                ingestResponsesUsage(usage)
-            }
+            // Usage for this event was already folded in above, from
+            // `response.usage`.
         }
     }
 
@@ -124,8 +198,8 @@ struct CaptureAssembler {
             if let msg = json["message"] as? [String: Any] {
                 id = (msg["id"] as? String) ?? id
                 model = (msg["model"] as? String) ?? model
-                if let usage = msg["usage"] as? [String: Any] { ingestAnthropicUsage(usage) }
             }
+            tokens.applyAnthropic(event: type, json: json)
         case "content_block_start":
             if let block = json["content_block"] as? [String: Any],
                (block["type"] as? String) == "tool_use" {
@@ -142,7 +216,7 @@ struct CaptureAssembler {
                 if !tools.isEmpty { tools[tools.count - 1].arguments += t }
             }
         case "message_delta":
-            if let usage = json["usage"] as? [String: Any] { ingestAnthropicUsage(usage) }
+            tokens.applyAnthropic(event: type, json: json)
             if let delta = json["delta"] as? [String: Any],
                let reason = delta["stop_reason"] as? String {
                 finish = reason
@@ -191,33 +265,5 @@ struct CaptureAssembler {
         if !tid.isEmpty { tools[index].id = tid }
         if !name.isEmpty { tools[index].name += name }
         if !args.isEmpty { tools[index].arguments += args }
-    }
-
-    private mutating func ingestChatUsage(_ usage: [String: Any]) {
-        promptTokens = intVal(usage["prompt_tokens"]) ?? promptTokens
-        completionTokens = intVal(usage["completion_tokens"]) ?? completionTokens
-        if let details = usage["prompt_tokens_details"] as? [String: Any] {
-            cacheReadTokens = intVal(details["cached_tokens"]) ?? cacheReadTokens
-        }
-    }
-
-    private mutating func ingestResponsesUsage(_ usage: [String: Any]) {
-        promptTokens = intVal(usage["input_tokens"]) ?? intVal(usage["prompt_tokens"]) ?? promptTokens
-        completionTokens = intVal(usage["output_tokens"]) ?? intVal(usage["completion_tokens"]) ?? completionTokens
-        if let details = usage["input_tokens_details"] as? [String: Any] {
-            cacheReadTokens = intVal(details["cached_tokens"]) ?? cacheReadTokens
-        }
-    }
-
-    private mutating func ingestAnthropicUsage(_ usage: [String: Any]) {
-        promptTokens = intVal(usage["input_tokens"]) ?? promptTokens
-        completionTokens = intVal(usage["output_tokens"]) ?? completionTokens
-        cacheReadTokens = intVal(usage["cache_read_input_tokens"]) ?? cacheReadTokens
-    }
-
-    private func intVal(_ any: Any?) -> Int? {
-        if let n = any as? NSNumber { return n.intValue }
-        if let i = any as? Int { return i }
-        return nil
     }
 }
