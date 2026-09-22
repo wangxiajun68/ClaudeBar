@@ -35,6 +35,8 @@
 
 各路写入均为 best-effort，一路失败不阻塞其他路。
 
+**载荷自描述**：Widget 进程有自己的 `UserDefaults.standard`（App 的 domain 对它是隐形的），也无法导入 `Theme` / `AppPreferences`，因此「这个 token 总量属于哪个周期」「用万/亿还是 K/M/B」「当前是深色还是浅色」都随快照下发（`usagePeriodLabel` / `unitStyle` / `isDark`，均为可选字段，旧快照仍可解码）。三者在 App 侧变化（切周期、改单位、切外观）时会主动重推一次快照，否则要等下一次会话轮询写出的快照发生变化——全空闲时可能永远不写。同一份 `WidgetSnapshot.swift` 通过符号链接被两个 target 编译（`Sources/Widget/WidgetSnapshot.swift`），`build.sh` 会断言该链接仍指向 App 侧同一文件。
+
 > **diff 优化（B6）**：2.5s 轮询会反复调用 `writeWidgetSnapshot()`。`WidgetSnapshotWriter.write(_:deduplicatingAgainst:)` 缓存上次 snapshot 的 JSON `Data`，仅当新 `Data != lastSnapshotData` 时才执行四路写入 + `WidgetCenter.shared.reloadAllTimelines()`。Apple 建议仅数据变化时重载 timeline——无 diff 时每 2.5s 无意义重载会浪费磁盘 I/O 与 widget 刷新配额。已删除原 `shared.synchronize()`（现代 macOS 自动同步，已弃用）。
 
 ## `SessionMonitor` — Claude Code 会话

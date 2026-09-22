@@ -17,16 +17,18 @@ struct PresetPickerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            Text("选择供应商预设")
-                .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.textPrimary)
+            HStack(spacing: 10) {
+                GlyphWell(name: "cube", tint: Theme.Ink.cursor, size: 30)
+                Text("选择供应商预设")
+                    .font(Theme.Font.titleMedium)
+                    .foregroundColor(Theme.textPrimary)
+            }
 
             Text("只需填写 API Key，地址与协议已预置。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
 
-            TextField("搜索预设", text: $filter)
-                .textFieldStyle(.roundedBorder)
+            InstrumentSearchField(prompt: "搜索预设", text: $filter)
 
             List {
                 ForEach(filtered, id: \.label) { preset in

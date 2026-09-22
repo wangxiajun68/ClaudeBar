@@ -14,6 +14,13 @@ final class MainWindowController {
     let trafficState = TrafficPageState()
 
     private var appearanceObs: NSObjectProtocol?
+    /// Window-scoped observers registered by `observeVisibility(of:)`. Every
+    /// `showWindow()` after the user closes the window builds a fresh
+    /// `NSWindow`, and `addObserver(forName:object:queue:using:)` returns a
+    /// token that is **not** auto-removed — without holding and removing them
+    /// the old window's five blocks stay registered with the center (and keep
+    /// the closed window alive) for every close/reopen cycle.
+    private var windowObservers: [NSObjectProtocol] = []
 
     init(providerStore: ProviderStore, codexProviderStore: CodexProviderStore) {
         self.providerStore = providerStore
@@ -49,6 +56,12 @@ final class MainWindowController {
     /// app burns ~60% of a core on scans whose results nobody is looking at.
     private func observeVisibility(of window: NSWindow) {
         let center = NotificationCenter.default
+        // Drop the previous window's registrations first (see
+        // `windowObservers`); `window` is captured weakly below, but the
+        // observer *blocks* would still pile up one set per reopen.
+        for token in windowObservers { center.removeObserver(token) }
+        windowObservers.removeAll()
+
         let sync: () -> Void = { [weak window] in
             guard let window else { return }
             UIWakePolicy.setMainWindowVisible(window.isVisible && !window.isMiniaturized)
@@ -59,11 +72,11 @@ final class MainWindowController {
             NSWindow.didDeminiaturizeNotification,
             NSWindow.didChangeOcclusionStateNotification,
         ] {
-            center.addObserver(forName: name, object: window, queue: .main) { _ in sync() }
+            windowObservers.append(center.addObserver(forName: name, object: window, queue: .main) { _ in sync() })
         }
-        center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+        windowObservers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
             UIWakePolicy.setMainWindowVisible(false)
-        }
+        })
         // isVisible is not yet true at this point in makeKeyAndOrderFront's
         // cycle on some launches; re-assert after the order-front settles.
         DispatchQueue.main.async { sync() }

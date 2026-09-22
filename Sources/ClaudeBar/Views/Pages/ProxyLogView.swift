@@ -76,9 +76,7 @@ struct ProxyLogView: View {
                     .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
                     .buttonStyle(.plain)
             }
-            TextField("路径 / 模型 / 供应商", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .font(Theme.Font.bodySmall)
+            InstrumentSearchField(prompt: "路径 / 模型 / 供应商", text: $query)
                 .frame(maxWidth: 240)
             Spacer()
             Text("\(filtered.count)")
@@ -92,7 +90,7 @@ struct ProxyLogView: View {
                     .buttonStyle(.plain)
                 Button("清空") { log.clear() }
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
+                    .foregroundColor(Theme.Ink.error)
                     .buttonStyle(.plain)
             }
         }
@@ -106,7 +104,7 @@ struct ProxyLogView: View {
                 .font(Theme.Font.body)
                 .foregroundColor(Theme.textSecondary)
             Text(codexStore.proxyRunning
-                 ? "代理已启用。每次转发会在此留下一行（方法、路径、状态、耗时），不记录请求体或响应体。"
+                 ? "代理已启用。每次转发会在此留下一行（方法、路径、状态、耗时、令牌用量），不记录请求体或响应体。"
                  : "启用本地代理或供应商上的流量记录后，转发请求会显示在这里。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
@@ -121,18 +119,31 @@ struct ProxyLogView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered) { row in
-                        Text(row.consoleLine)
-                            .font(Theme.Font.console)
-                            .foregroundColor(color(for: row))
-                            // No per-row .textSelection(.enabled): 500 rows of
-                            // selectable text laid out on every content rebuild
-                            // is the expensive path. Copy-all covers the need.
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, Theme.Space.s16)
-                            .padding(.vertical, 3)
-                            .background(row.id == filtered.last?.id && row.isPending
-                                        ? Theme.cardFill(0.04) : Color.clear)
-                            .id(row.id)
+                        HStack(alignment: .top, spacing: 0) {
+                            Text(row.consoleBody)
+                                .font(Theme.Font.console)
+                                .foregroundColor(color(for: row))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            // Token column, right-aligned: a new row's counts
+                            // appear here the moment its usage event lands,
+                            // without the metadata line reflowing.
+                            Text(row.tokenField)
+                                .font(Theme.Font.console)
+                                .foregroundColor(Theme.textTertiary())
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                        }
+                        .help(row.consoleLine)
+                        // No per-row .textSelection(.enabled): 500 rows of
+                        // selectable text laid out on every content rebuild
+                        // is the expensive path. Copy-all covers the need.
+                        .padding(.horizontal, Theme.Space.s16)
+                        .padding(.vertical, 3)
+                        .background(row.id == filtered.last?.id && row.isPending
+                                    ? Theme.cardFill(0.04) : Color.clear)
+                        .id(row.id)
                     }
                 }
                 .padding(.vertical, Theme.Space.s8)

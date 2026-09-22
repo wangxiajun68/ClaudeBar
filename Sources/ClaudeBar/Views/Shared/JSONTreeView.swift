@@ -184,7 +184,7 @@ struct JSONTreeView: View {
                         if truncated > 0 {
                             Text("共 \(events.count + truncated) 个事件，显示最后 \(events.count) 个")
                                 .font(Theme.Font.caption)
-                                .foregroundColor(Theme.statusWarning)
+                                .foregroundColor(Theme.Ink.warning)
                                 .padding(.bottom, 4)
                         }
                         ForEach(events) { ev in

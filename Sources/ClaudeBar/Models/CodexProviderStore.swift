@@ -19,9 +19,13 @@ final class CodexProviderStore: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var proxyRunning: Bool = false
     @Published var importSummary: String? = nil
+    @Published var quotaWindows: [CodexQuotaWindow] = []
+    @Published var quotaLoading = false
+    @Published var quotaNote: String? = nil
 
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
+    private var quotaTask: Task<Void, Never>?
     /// Weak back-ref so proxy lifecycle can see Claude capture flags.
     weak var claudePeer: ProviderStore?
 
@@ -126,6 +130,10 @@ final class CodexProviderStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
         try? data.write(to: FilePaths.codexProvidersFile, options: .atomic)
+        // Holds every Codex provider's `apiKey`. `.atomic` replaces the inode,
+        // so re-apply 0600 after each write.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: FilePaths.codexProvidersFile.path)
     }
 
     // MARK: - Local routing proxy
@@ -200,15 +208,42 @@ final class CodexProviderStore: ObservableObject {
         return claude.first { $0.id == claudePeer?.activeProviderID }
     }
 
-    func startProxy() {
-        guard proxyServer == nil else { proxyRunning = true; return }
+    /// Start the proxy. Returns whether it is listening.
+    ///
+    /// The result is load-bearing: `activate()` writes `config.toml` pointing
+    /// Codex at `127.0.0.1:<port>` and replaces `base_url`/`experimental_
+    /// bearer_token` with proxy values. Committing that while `start()` failed
+    /// (port already taken, a "port" the listener rejects) leaves Codex aimed
+    /// at a dead loopback address with the real credentials no longer in the
+    /// file, and nothing repairs it until the next `load()`.
+    @discardableResult
+    func startProxy() -> Bool {
+        guard proxyServer == nil else { proxyRunning = true; return true }
         let server = CodexProxyServer(port: UInt16(clamping: AppPreferences.shared.codexProxyPort), state: proxyState)
         do {
             try server.start()
             proxyServer = server
             proxyRunning = true
+            // The token reads back from disk, so it exists by now; make sure
+            // whatever `config.toml` points at the proxy carries it. Older
+            // builds wrote `PROXY_MANAGED` there, which the token check now
+            // rejects, so a launch that never re-activates must heal itself.
+            if let active = activeProvider {
+                let model = active.models.first(where: { $0.id == active.activeModelID })
+                    ?? active.models.first
+                if let model,
+                   CodexConfigWriter.usesProxy(proxyBaseURL: LocalProxyAddress.codexBase),
+                   !CodexConfigWriter.bearerIsProxyToken() {
+                    try? CodexConfigWriter.write(provider: active, model: model,
+                                                 key: activeKey,
+                                                 proxyBaseURL: LocalProxyAddress.codexBase)
+                }
+            }
+            return true
         } catch {
             errorMessage = "启动本地代理失败：\(error.localizedDescription)"
+            proxyRunning = false
+            return false
         }
     }
 
@@ -235,6 +270,42 @@ final class CodexProviderStore: ObservableObject {
         activate(providerID: p.id, modelID: modelID, syncPeer: false)
     }
 
+    /// Point Codex at the HTTP-only official provider and leave the ChatGPT
+    /// login in `auth.json` in place. The vendor list stays; a later activate
+    /// writes the third-party overlay again.
+    func restoreOfficial() {
+        do {
+            try CodexConfigWriter.restoreOfficial()
+            try CodexConfigWriter.restoreOfficialAuth()
+        } catch {
+            errorMessage = "还原官方配置失败：\(error.localizedDescription)"
+            return
+        }
+        errorMessage = nil
+        activeProviderID = nil
+        save()
+        syncProxyRuntime()
+    }
+
+    /// ChatGPT subscription windows (5 小时 / 7 天), read through the
+    /// authenticated Codex App Server account API.
+    func refreshQuota() {
+        // `load()` is immediately followed by `ProviderStore.refresh()` at
+        // launch, and refresh can also be tapped repeatedly. Never spawn two
+        // app-server instances for the same account query: their completion
+        // order previously let a transient failure overwrite valid windows.
+        guard quotaTask == nil else { return }
+        quotaLoading = true
+        quotaTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.quotaTask = nil }
+            let snapshot = await CodexQuotaFetcher.fetch()
+            self.quotaWindows = snapshot.windows
+            self.quotaNote = snapshot.note
+            self.quotaLoading = false
+        }
+    }
+
     // MARK: - Activate
 
     func setCaptureEnabled(providerID: UUID, enabled: Bool) {
@@ -252,11 +323,41 @@ final class CodexProviderStore: ObservableObject {
         guard let provider = providers.first(where: { $0.id == providerID }),
               let model = provider.models.first(where: { $0.id == modelID }) ?? provider.models.first else { return }
 
+        // Serialize activations. Two of them issued back to back (a tile tap,
+        // plus the mirrored `claudePeer?.activateMatching` that
+        // `setCaptureEnabled`/`load()` also trigger) interleave at the first
+        // `await`, and the *last* writer wins — which can be the one that
+        // computed `viaProxy` before the other changed the proxy's state, so
+        // `config.toml` ends up pointing at a stopped proxy. The token makes
+        // the loser of that race fail loudly instead of silently, but the
+        // reentrancy itself is worth removing.
+        guard activationTask == nil else {
+            pendingActivation = (providerID, modelID, syncPeer)
+            return
+        }
+
         let viaProxy = AppPreferences.shared.codexRoutingEnabled || provider.captureEnabled
         let proxyBase: String? = viaProxy ? LocalProxyAddress.codexBase : nil
 
-        Task { @MainActor in
-            if viaProxy { startProxy() }
+        activationTask = Task { @MainActor in
+            defer {
+                activationTask = nil
+                if let next = pendingActivation {
+                    pendingActivation = nil
+                    activate(providerID: next.0, modelID: next.1, syncPeer: next.2)
+                }
+            }
+            if viaProxy, !startProxy() {
+                // Do not write a proxy URL we cannot serve: keep the vendor's
+                // real endpoint and credentials in config.toml and surface the
+                // failure instead.
+                errorMessage = "本地代理未启动，已保留直连配置：\(errorMessage ?? "")"
+                await proxyState.setUpstream(.init(
+                    baseURL: provider.baseURL, apiKey: provider.apiKey,
+                    wireAPI: provider.wireAPI, name: provider.name))
+                await proxyState.setCaptureOpenAI(provider.captureEnabled)
+                return
+            }
             await proxyState.setUpstream(.init(
                 baseURL: provider.baseURL, apiKey: provider.apiKey,
                 wireAPI: provider.wireAPI, name: provider.name))
@@ -266,7 +367,6 @@ final class CodexProviderStore: ObservableObject {
                 try CodexConfigWriter.writeAuth(apiKey: provider.apiKey, preserveOfficialLogin: provider.preserveOfficialLogin)
             } catch {
                 errorMessage = "写入 Codex 配置失败：\(error.localizedDescription)"
-                load()
                 return
             }
             activeProviderID = providerID
@@ -280,6 +380,9 @@ final class CodexProviderStore: ObservableObject {
             }
         }
     }
+
+    private var activationTask: Task<Void, Never>?
+    private var pendingActivation: (UUID, UUID, Bool)?
 
     /// Mirror a Claude activation onto the matching Codex vendor/model.
     func activateMatching(claude: Provider, model: ModelConfig) {

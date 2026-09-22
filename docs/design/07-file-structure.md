@@ -12,7 +12,6 @@ ClaudeBar/
 │   │   ├── ClaudeBarApp.swift            ← AppDelegate（.regular 激活策略；@main App 壳）
 │   │   ├── MenuBarController.swift       ← NSStatusItem + NSPanel（菜单栏 popup）
 │   │   ├── MainWindowController.swift    ← NSWindow 主窗口（1120×720）
-│   │   ├── ProviderEditorWindowController.swift
 │   │   ├── Theme/Theme.swift             ← 设计 token 单点
 │   │   ├── Models/
 │   │   │   ├── Provider.swift / CodexProvider.swift
@@ -36,8 +35,8 @@ ClaudeBar/
 │   │       ├── MainWindowView.swift      ← NavigationSplitView（sidebar 7 项）
 │   │       ├── MenuBarView.swift         ← popup 组合壳
 │   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Usage / Traffic / VPN / Settings
-│   │       ├── Shared/                  ← Tile / UsageRiver / VpnTopChrome / FanControlSection / …
-│   │       └── Popup/                    ← PanelHeader / ProvidersPanel / SessionsPanel / UsagePanel / PanelState
+│   │       ├── Shared/                  ← Tile / UsageBar / VpnTopChrome / FanControlSection / …
+│   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
 │   └── Widget/
 ├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载
 ├── docs/

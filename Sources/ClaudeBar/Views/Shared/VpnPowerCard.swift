@@ -20,10 +20,10 @@ struct VpnPowerCard: View {
                     if starting {
                         OrbitLoader(size: 44, caption: "…", spinning: true)
                     } else {
-                        NestedOrbit(on: manager.isRunning)
-                        Text(manager.isRunning ? "开" : "关")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(manager.isRunning ? Theme.chartGreen : Theme.textSecondary)
+                        InstrumentGlyph(kind: .vpn,
+                                        tint: Theme.chartGreen,
+                                        detailed: true,
+                                        active: manager.isRunning)
                     }
                 }
                 .frame(width: 44, height: 44)
@@ -41,7 +41,8 @@ struct VpnPowerCard: View {
                     VStack(alignment: .trailing, spacing: 4) {
                         StatusPill(
                             label: manager.isRunning ? "运行中" : (starting ? "启动中" : "未启用"),
-                            tint: manager.isRunning ? Theme.chartGreen : (starting ? Theme.claudeHi : Theme.statusIdle)
+                            tint: manager.isRunning ? Theme.chartGreen : (starting ? Theme.claudeHi : Theme.statusIdle),
+                            ink: manager.isRunning ? Theme.Ink.success : (starting ? Theme.Ink.claude : Theme.Ink.idle)
                         )
                         if manager.isRunning {
                             Text("↓\(VpnFormat.rate(rates.speedDown))  ↑\(VpnFormat.rate(rates.speedUp))")

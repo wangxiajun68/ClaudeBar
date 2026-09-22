@@ -12,7 +12,6 @@ struct VpnSubscriptionSection: View {
     @State private var editor: SubEditor?
     @State private var busyID: UUID?
     @State private var queryingAll = false
-    @State private var copiedID: UUID?
     @State private var hoverID: UUID?
 
     var body: some View {
@@ -47,7 +46,7 @@ struct VpnSubscriptionSection: View {
             if let err = store.errorMessage {
                 Text(err)
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
+                    .foregroundColor(Theme.Ink.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -86,22 +85,15 @@ struct VpnSubscriptionSection: View {
         }
     }
 
-    /// Switch the running core to `sub`.
-    ///
-    /// Two things used to make this look broken:
-    ///  - the tap target was the name label only, so clicks elsewhere on the
-    ///    card did nothing;
-    ///  - `reloadConfig()` bails out when the module toggle is off, which
-    ///    silently defeats a switch that was otherwise accepted. Selecting a
-    ///    subscription is an explicit "use this", so turn the module on first
-    ///    when the core isn't running — same as flipping the main switch.
+    /// Reload the core onto `sub`. Card taps only browse; this button is the
+    /// switch. Turning the module on here matches the main power control, so
+    /// a stopped core still comes up with the system proxy.
     private func activate(_ sub: VpnSubscription) {
-        guard sub.id != store.activeID, busyID == nil else { return }
+        guard busyID == nil else { return }
+        store.browse(sub.id)
+        guard sub.id != store.activeID || !manager.isRunning else { return }
         store.setActive(sub.id)
         if !manager.isRunning {
-            // Same as flipping the main switch: turn the module on and let it
-            // take over the system proxy, otherwise the core would come up
-            // with nothing routed through it.
             prefs.vpnEnabled = true
             prefs.vpnSystemProxyEnabled = true
         }
@@ -110,132 +102,115 @@ struct VpnSubscriptionSection: View {
 
     private func card(_ sub: VpnSubscription) -> some View {
         let active = sub.id == store.activeID
+        let browsing = (store.browsingID ?? store.activeID) == sub.id
         let busy = busyID == sub.id
         let hovered = hoverID == sub.id
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Selection affordance rather than a button: the whole card is
-                // the target (see the tap gesture below). A button scoped to
-                // just the name meant clicks on the rest of the row — the URL,
-                // the traffic line, the padding — silently did nothing, which
-                // reads exactly like "the app won't switch subscriptions".
+        let runningHere = active && manager.isRunning
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
                 Circle()
-                    .fill(active ? Theme.claude : Theme.textTertiary().opacity(hovered ? 0.7 : 0.35))
+                    .fill(active ? Theme.claude : Theme.textTertiary().opacity(0.4))
                     .frame(width: 6, height: 6)
-                    .frame(width: 10, height: 10)
-                Text(sub.name)
-                    .font(Theme.Font.bodySmall)
-                    .foregroundColor(Theme.textPrimary)
-                if active {
-                    StatusPill(label: "使用中", tint: Theme.claude)
-                } else if hovered {
-                    Text("点击启用")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textSecondary)
-                }
-                Spacer(minLength: 0)
-                Text("\(sub.nodeCount) 节点")
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.textTertiary())
-            }
-
-            trafficRow(sub)
-
-            HStack(spacing: 6) {
-                Text(sub.url)
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(Theme.textTertiary())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-                ActionChip(systemImage: copiedID == sub.id ? "checkmark" : "doc.on.doc",
-                           tint: Theme.textSecondary, help: "复制订阅链接") {
-                    store.copyURL(sub.id)
-                    copiedID = sub.id
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                        if copiedID == sub.id { copiedID = nil }
-                    }
-                }
-                if let home = sub.homeURL, let u = URL(string: home) {
-                    ActionChip(systemImage: "safari", tint: Theme.textSecondary, help: "打开机场主页") {
-                        NSWorkspace.shared.open(u)
-                    }
-                }
-                ActionChip(systemImage: "pencil", tint: Theme.textSecondary, help: "编辑名称与链接") {
-                    editor = .edit(sub)
-                }
-                ActionChip(systemImage: "info.circle", tint: Theme.textSecondary, help: "查询剩余流量与有效期") {
-                    Task {
-                        busyID = sub.id
-                        _ = await store.queryInfo(sub.id)
-                        busyID = nil
-                    }
-                }
-                .disabled(busy || queryingAll)
-                ActionChip(systemImage: "arrow.clockwise", tint: Theme.textSecondary, help: "更新节点配置") {
-                    Task {
-                        busyID = sub.id
-                        if await store.refresh(sub.id), store.activeID == sub.id {
-                            manager.reloadConfig()
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(sub.name)
+                            .font(Theme.Font.bodySmall)
+                            .foregroundColor(Theme.textPrimary)
+                            .lineLimit(1)
+                        if active {
+                            StatusPill(label: "使用中", tint: Theme.claude, ink: Theme.Ink.claude)
+                        } else if browsing {
+                            Text("查看中")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textSecondary)
                         }
-                        busyID = nil
+                        Text("\(sub.nodeCount) 节点")
+                            .font(Theme.Font.micro)
+                            .foregroundColor(Theme.textTertiary())
+                    }
+                    Text(trafficSummary(sub))
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button(runningHere ? "使用中" : (active ? "启动" : "使用")) {
+                    activate(sub)
+                }
+                .adaptiveGlassButton(prominent: !runningHere)
+                .tint(Theme.claude)
+                .disabled(runningHere || busy)
+                .help(runningHere ? "内核正在用这份订阅" : "切换内核到这份订阅并启动")
+                cardTools(sub, busy: busy)
+            }
+            if sub.total > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.textTertiary().opacity(0.18))
+                        Capsule()
+                            .fill(barColor(sub.usedRatio))
+                            .frame(width: max(4, geo.size.width * sub.usedRatio))
                     }
                 }
-                .disabled(busy || queryingAll)
-                .opacity(busy ? 0.5 : 1)
-                ActionChip(systemImage: "trash", tint: Theme.statusError, help: "删除") {
-                    pendingDelete = sub
-                }
+                .frame(height: 3)
             }
         }
-        .padding(Theme.Space.s12)
-        .tile(tint: active ? Theme.claude : nil, hovered: hovered)
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, 8)
+        .tile(tint: browsing ? Theme.claude : nil, hovered: hovered)
         .contentShape(Rectangle())
         .onHover { inside in
             if inside { hoverID = sub.id }
             else if hoverID == sub.id { hoverID = nil }
         }
-        .onTapGesture { activate(sub) }
-        .help(active ? "当前使用的订阅" : "点击切换到「\(sub.name)」")
+        .onTapGesture { store.browse(sub.id) }
+        .help("查看「\(sub.name)」的节点。切换出口请点「使用」。")
         .opacity(busy ? 0.85 : 1)
     }
 
-    private func trafficRow(_ sub: VpnSubscription) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: Theme.Space.s12) {
-                labeled("剩余", sub.total > 0 ? VpnFormat.bytes(sub.remainingBytes) : "未查询")
-                labeled("已用", sub.total > 0
-                        ? "\(VpnFormat.bytes(sub.usedBytes)) / \(VpnFormat.bytes(sub.total))"
-                        : "—")
-                labeled("有效期", expireText(sub))
-                if let updated = sub.lastUpdated {
-                    labeled("查询于", Self.stamp.string(from: updated))
-                }
-                Spacer(minLength: 0)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.textTertiary().opacity(0.18))
-                    Capsule()
-                        .fill(barColor(sub.usedRatio))
-                        .frame(width: max(4, geo.size.width * sub.usedRatio))
+    private func cardTools(_ sub: VpnSubscription, busy: Bool) -> some View {
+        HStack(spacing: 2) {
+            ActionChip(systemImage: "arrow.clockwise", tint: Theme.textSecondary, help: "更新节点配置") {
+                Task {
+                    busyID = sub.id
+                    if await store.refresh(sub.id), store.activeID == sub.id {
+                        manager.reloadConfig()
+                    }
+                    busyID = nil
                 }
             }
-            .frame(height: 4)
-            .opacity(sub.total > 0 ? 1 : 0.35)
+            .disabled(busy || queryingAll)
+            ActionChip(systemImage: "info.circle", tint: Theme.textSecondary, help: "查询剩余流量与有效期") {
+                Task {
+                    busyID = sub.id
+                    _ = await store.queryInfo(sub.id)
+                    busyID = nil
+                }
+            }
+            .disabled(busy || queryingAll)
+            Menu {
+                Button("复制订阅链接") { store.copyURL(sub.id) }
+                if let home = sub.homeURL, let u = URL(string: home) {
+                    Button("打开机场主页") { NSWorkspace.shared.open(u) }
+                }
+                Button("编辑名称与链接") { editor = .edit(sub) }
+                Button("删除", role: .destructive) { pendingDelete = sub }
+            } label: {
+                AppGlyph(name: "ellipsis", size: 12)
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 22, height: 22)
+            .help("复制、编辑、删除")
         }
     }
 
-    private func labeled(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title)
-                .font(Theme.Font.micro)
-                .foregroundColor(Theme.textTertiary())
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
-        }
+    private func trafficSummary(_ sub: VpnSubscription) -> String {
+        if sub.total <= 0 { return "流量未查询 · \(expireText(sub))" }
+        return "剩余 \(VpnFormat.bytes(sub.remainingBytes)) · 已用 \(VpnFormat.bytes(sub.usedBytes))/\(VpnFormat.bytes(sub.total)) · \(expireText(sub))"
     }
 
     private func expireText(_ sub: VpnSubscription) -> String {
@@ -274,12 +249,6 @@ struct VpnSubscriptionSection: View {
     private static let day: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MM-dd HH:mm"
         return f
     }()
 }

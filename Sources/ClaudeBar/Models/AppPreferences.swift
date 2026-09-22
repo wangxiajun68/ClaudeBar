@@ -173,14 +173,18 @@ final class AppPreferences: ObservableObject {
         databaseEnabled = UserDefaults.standard.object(forKey: "databaseEnabled") as? Bool ?? true
 
         // VPN proxy module (defined in Utils/VPNPreferences.swift).
+        // `as?` with a fallback rather than `as!`: this dictionary is built
+        // inline today, but the cast sits in `init()`, i.e. *before any UI
+        // exists* — a future `[String: Any]` from JSON or UserDefaults would
+        // trap on launch with no window and no message.
         let vpn = Self.vpnDefaults()
-        vpnEnabled = vpn["vpnEnabled"] as! Bool
-        vpnSystemProxyEnabled = vpn["vpnSystemProxyEnabled"] as! Bool
-        vpnTunEnabled = vpn["vpnTunEnabled"] as! Bool
-        vpnMixedPort = vpn["vpnMixedPort"] as! Int
-        vpnAllowLan = vpn["vpnAllowLan"] as! Bool
-        vpnControllerSecret = vpn["vpnControllerSecret"] as! String
-        vpnGuardEnabled = vpn["vpnGuardEnabled"] as! Bool
+        vpnEnabled = vpn["vpnEnabled"] as? Bool ?? false
+        vpnSystemProxyEnabled = vpn["vpnSystemProxyEnabled"] as? Bool ?? false
+        vpnTunEnabled = vpn["vpnTunEnabled"] as? Bool ?? false
+        vpnMixedPort = vpn["vpnMixedPort"] as? Int ?? 7890
+        vpnAllowLan = vpn["vpnAllowLan"] as? Bool ?? false
+        vpnControllerSecret = vpn["vpnControllerSecret"] as? String ?? ""
+        vpnGuardEnabled = vpn["vpnGuardEnabled"] as? Bool ?? true
         screenshotHotkeyEnabled = UserDefaults.standard.object(forKey: "screenshotHotkeyEnabled") as? Bool ?? true
         didSetReady = true
     }

@@ -100,7 +100,7 @@ struct CommandPalette: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.accent)
+                .foregroundColor(Theme.Ink.claude)
             TextField("搜索页面、会话、模型", text: $query)
                 .font(Theme.Font.bodyLarge)
                 .foregroundColor(Theme.textPrimary)
@@ -117,6 +117,8 @@ struct CommandPalette: View {
                         .foregroundColor(Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .help("清除搜索")
+                .accessibilityLabel("清除搜索")
             }
         }
         .padding(14)
@@ -257,7 +259,7 @@ private struct CommandRow: View {
                 if isSelected {
                     Image(systemName: "return")
                         .font(Theme.Font.badgeMono.weight(.bold))
-                        .foregroundColor(Theme.accent.opacity(0.8))
+                        .foregroundColor(Theme.Ink.claude)
                         .symbolEffect(.bounce, value: isSelected)
                 }
             }

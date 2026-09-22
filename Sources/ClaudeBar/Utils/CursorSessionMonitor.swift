@@ -282,10 +282,12 @@ struct CursorSessionMonitor {
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(readSize, size))
-        guard let tailData = try? handle.readToEnd(),
-              let tail = String(data: tailData, encoding: .utf8) else {
+        guard let tailData = try? handle.readToEnd() else {
             return (0, "", false)
         }
+        // Lossy decode — a strict one fails for the whole window whenever the
+        // seek landed mid-character (see `SessionMonitor.readContext`).
+        let tail = String(decoding: tailData, as: UTF8.self)
 
         var msgCount = 0
         var lastActivity = ""

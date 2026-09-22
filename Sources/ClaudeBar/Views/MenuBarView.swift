@@ -4,6 +4,7 @@ extension Notification.Name {
     static let showMainWindow = Notification.Name("com.claudebar.showMainWindow")
     static let openProvidersEditor = Notification.Name("com.claudebar.openProvidersEditor")
     static let openVPNPage = Notification.Name("com.claudebar.openVPNPage")
+    static let openHelpPage = Notification.Name("com.claudebar.openHelpPage")
 }
 
 /// Menu-bar popup shell — switcher HUD, one-line machine KPIs, then
@@ -13,10 +14,11 @@ struct MenuBarView: View {
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
+    @State private var confirmRestore = false
 
     private enum SectionHeight {
         /// Cap only — the card hugs live sessions instead of leaving a blank well.
-        static let sessions: CGFloat = 280
+        static let sessions: CGFloat = 250
         static let usage: CGFloat = 320
     }
 
@@ -49,7 +51,7 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 10)
-        .frame(width: 400)
+        .frame(width: 424)
         .background(Theme.bgPrimary)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .ignoresSafeArea()
@@ -66,7 +68,7 @@ struct MenuBarView: View {
     private var missingSettingsView: some View {
         VStack(spacing: Theme.Space.s8) {
             AppGlyph(name: "exclamationmark.triangle", size: 16, box: 20)
-                .foregroundColor(Theme.statusWarning)
+                .foregroundColor(Theme.Ink.warning)
             Text("未找到 settings.json")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
             Text("请先运行 Claude Code，然后刷新。")
@@ -87,6 +89,28 @@ struct MenuBarView: View {
             }
             iconButton("macwindow", help: "打开主窗口", color: Theme.accent) {
                 NotificationCenter.default.post(name: .showMainWindow, object: nil)
+            }
+            iconButton("questionmark.circle", help: "帮助", color: Theme.textSecondary) {
+                // Window first, then the page: the same order the providers
+                // editor uses, so the window exists before it is asked to route.
+                NotificationCenter.default.post(name: .showMainWindow, object: nil)
+                NotificationCenter.default.post(name: .openHelpPage, object: nil)
+            }
+            iconButton("arrow.uturn.backward", help: "还原官方配置", color: Theme.textSecondary) {
+                confirmRestore = true
+            }
+            .confirmationDialog("还原官方配置", isPresented: $confirmRestore, titleVisibility: .visible) {
+                Button("还原 Claude Code") {
+                    providerStore.restoreOfficial()
+                    panel.showFeedback("Claude Code 已还原为官方")
+                }
+                Button("还原 Codex") {
+                    codexStore.restoreOfficial()
+                    panel.showFeedback("Codex 已还原为官方")
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("去掉第三方中转覆盖。供应商列表不删，新开会话后生效。")
             }
             iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
@@ -117,6 +141,9 @@ struct MenuBarView: View {
         }
         .buttonStyle(.pressable)
         .help(help)
+        // `.help` is only a tooltip — without an explicit label VoiceOver
+        // reads the symbol name ("arrow.clockwise").
+        .accessibilityLabel(help)
     }
 
     private func openEditor() {

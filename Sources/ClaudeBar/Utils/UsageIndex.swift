@@ -58,6 +58,7 @@ struct UsageIndex {
             return nil
         }
         sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000", nil, nil, nil)
+        sqlite3_busy_timeout(db, 2000)
         sqlite3_exec(db, """
             CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY,
@@ -533,53 +534,64 @@ struct UsageIndex {
         return out
     }
 
-    private static func stat(_ path: String) -> (mtime: TimeInterval, size: Int)? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let mtime = attrs[.modificationDate] as? Date else { return nil }
-        return (mtime.timeIntervalSince1970, (attrs[.size] as? Int) ?? 0)
-    }
+    /// Every candidate is re-stat'd on every index pass, so this used to be
+    /// the hottest syscall in the app: ~1,250 files × 2 calls per rescan, and a
+    /// rescan fires on every FSEvents burst. `attributesOfItem` goes through
+    /// `getxattr` twice for the resource fork / Finder info, so a project tree
+    /// of this size cost thousands of five-syscall round trips off a directory
+    /// listing that already has `mtime` and `size` in hand.
+    ///
+    /// A `subtrees: .files` enumerator yields each entry with its attribute
+    /// dictionary already populated — one `getattrlist` for a whole directory
+    /// instead of one `stat` + two `getxattr` per file, and it is the same
+    /// shape `ExternalSessionMonitor` already uses.
+    private static let entryMetaKeys: [URLResourceKey] = [
+        .isRegularFileKey, .contentModificationDateKey, .fileSizeKey,
+    ]
 
     private static func collectClaude() -> [Candidate] {
-        let projectsDir = FilePaths.claudeDir.appendingPathComponent("projects").path
-        guard let en = FileManager.default.enumerator(atPath: projectsDir) else { return [] }
-        var out: [Candidate] = []
-        while let item = en.nextObject() as? String {
-            guard item.hasSuffix(".jsonl") else { continue }
-            let p = projectsDir + "/" + item
-            if let s = stat(p) {
-                out.append(Candidate(key: "claude:" + p, path: p, mtime: s.mtime, size: s.size))
-            }
-        }
-        return out
+        collectFromEnumerator(root: FilePaths.claudeDir.appendingPathComponent("projects"),
+                               keyPrefix: "claude:")
     }
 
     /// Walk an external tool's directory tree. Codex nests year/month/day;
     /// files may also sit directly in upper levels.
     private static func collectExternal(kind: ExternalAgentKind) -> [Candidate] {
-        let fm = FileManager.default
-        let root = kind.rootDir
+        collectFromEnumerator(root: URL(fileURLWithPath: kind.rootDir),
+                              keyPrefix: "\(kind.rawValue):")
+    }
 
+    /// Depth-limited recursive walk over `root`, reading mtime/size from the
+    /// enumerator's attributes instead of stat'ing each hit.
+    ///
+    /// Returns `nil` only when root itself cannot be read — an empty array is
+    /// a legitimate "no transcripts here", and conflating the two is what made
+    /// a scan of a `~/.codex/sessions` that moved look identical to a machine
+    /// with no Codex history.
+    private static func collectFromEnumerator(root: URL, keyPrefix: String) -> [Candidate] {
+        guard let en = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: entryMetaKeys,
+            options: [.skipsPackageDescendants]
+        ) else { return [] }
+
+        let rootPath = root.path
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         var out: [Candidate] = []
-        func walk(_ dir: String, depth: Int) {
-            guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { return }
-            for entry in entries {
-                if entry.hasSuffix(".jsonl") && !entry.contains(".trajectory") {
-                    let p = dir + "/" + entry
-                    if let s = stat(p) {
-                        out.append(Candidate(key: "\(kind.rawValue):\(p)", path: p, mtime: s.mtime, size: s.size))
-                    }
-                } else if depth < 3, entryIsDir(at: dir + "/" + entry) {
-                    walk(dir + "/" + entry, depth: depth + 1)
-                }
-            }
+        while let url = en.nextObject() as? URL {
+            guard url.pathExtension == "jsonl", !url.lastPathComponent.contains(".trajectory") else { continue }
+            guard let meta = meta(of: url) else { continue }
+            let p = url.path.hasPrefix(prefix) ? url.path : rootPath + "/" + url.lastPathComponent
+            out.append(Candidate(key: keyPrefix + p, path: p, mtime: meta.mtime, size: meta.size))
         }
-        walk(root, depth: 0)
         return out
     }
 
-    private static func entryIsDir(at path: String) -> Bool {
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    private static func meta(of url: URL) -> (mtime: TimeInterval, size: Int)? {
+        guard let values = try? url.resourceValues(forKeys: Set(entryMetaKeys)),
+              values.isRegularFile == true,
+              let mtime = values.contentModificationDate else { return nil }
+        return (mtime.timeIntervalSince1970, values.fileSize ?? 0)
     }
 
     // MARK: - DB helpers

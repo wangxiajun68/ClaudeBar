@@ -157,9 +157,19 @@ struct TrafficView: View {
         }
     }
 
-    private var filtered: [CaptureSummary] {
+    /// Filtering is O(rows × 3 `lowercased()`) and used to run in every `body`
+    /// evaluation — including the ones the 0.1 s-debounced live-stream publish
+    /// drives while anything is streaming. Cache it, exactly as `ProxyLogView`
+    /// already does, and recompute only when an input changes.
+    @State private var filteredCache: [CaptureSummary] = []
+    /// `clearAll` deletes every captured request and its payload — the only
+    /// copy, no undo — and it used to be a single click on a plain text
+    /// button. The VPN module already confirms its destructive action.
+    @State private var confirmClear = false
+
+    private func recomputeFiltered() {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return catalog.records.filter { rec in
+        filteredCache = catalog.records.filter { rec in
             switch filter {
             case .all: break
             case .anthropic: if rec.kind != .anthropic { return false }
@@ -171,6 +181,8 @@ struct TrafficView: View {
                 || rec.preview.lowercased().contains(q)
         }
     }
+
+    private var filtered: [CaptureSummary] { filteredCache }
 
     private var currentSummary: CaptureSummary? {
         state.currentSummary(in: catalog.records, filtered: filtered)
@@ -207,7 +219,8 @@ struct TrafficView: View {
             Spacer()
             StatusPill(
                 label: codexStore.proxyRunning ? "代理已启用" : "代理未启用",
-                tint: codexStore.proxyRunning ? Theme.statusSuccess : Theme.statusIdle
+                tint: codexStore.proxyRunning ? Theme.statusSuccess : Theme.statusIdle,
+                ink: codexStore.proxyRunning ? Theme.Ink.success : Theme.Ink.idle
             )
             if codexStore.proxyRunning {
                 if let p = codexStore.activeProvider {
@@ -264,6 +277,7 @@ struct TrafficView: View {
             rebuildConversation()
         }
         .onChange(of: catalog.records.count) { _, _ in
+            recomputeFiltered()
             if selectedID == nil { selectedID = filtered.first?.id }
         }
         .onChange(of: currentSummary?.state) { _, state in
@@ -279,7 +293,21 @@ struct TrafficView: View {
             }
         }
         .onAppear {
+            recomputeFiltered()
             if selectedID == nil { selectedID = filtered.first?.id }
+        }
+        .onChange(of: filter) { _, _ in recomputeFiltered() }
+        .onChange(of: query) { _, _ in recomputeFiltered() }
+        .alert("清空全部抓包？", isPresented: $confirmClear) {
+            Button("清空", role: .destructive) {
+                ProxyCaptureStore.shared.clearAll()
+                selectedID = nil
+                detail = nil
+                recomputeFiltered()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将删除 \(catalog.records.count) 条记录及其请求 / 响应正文，无法恢复。")
         }
     }
 
@@ -299,23 +327,17 @@ struct TrafficView: View {
                 }
                 Spacer()
                 if !catalog.records.isEmpty {
-                    Button("清空") {
-                        ProxyCaptureStore.shared.clearAll()
-                        selectedID = nil
-                        detail = nil
-                    }
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
-                    .buttonStyle(.plain)
+                    Button("清空") { confirmClear = true }
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.Ink.error)
+                        .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, Theme.Space.s12)
             .padding(.top, Theme.Space.s12)
             .padding(.bottom, Theme.Space.s8)
 
-            TextField("模型 / 供应商", text: queryBinding)
-                .textFieldStyle(.roundedBorder)
-                .font(Theme.Font.bodySmall)
+            InstrumentSearchField(prompt: "模型 / 供应商", text: queryBinding)
                 .padding(.horizontal, Theme.Space.s12)
                 .padding(.bottom, Theme.Space.s8)
 
@@ -433,7 +455,7 @@ struct TrafficView: View {
             if let err = rec.error, rec.state == .error || rec.state == .aborted {
                 Text(err)
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.statusError)
+                    .foregroundColor(Theme.Ink.error)
                     .lineLimit(2)
             }
         }
@@ -498,6 +520,8 @@ struct TrafficView: View {
                             .foregroundColor(Theme.textTertiary())
                     }
                     .buttonStyle(.plain)
+                    .help("清除搜索")
+                    .accessibilityLabel("清除搜索")
                 }
             }
             .padding(.horizontal, Theme.Space.s16)
@@ -513,7 +537,7 @@ struct TrafficView: View {
                         if detail?.requestTruncated == true {
                             Text("请求体超过 \(CaptureMedia.payloadCapLabel) 已截断。完整渲染可能不完整。")
                                 .font(Theme.Font.caption)
-                                .foregroundColor(Theme.statusWarning)
+                                .foregroundColor(Theme.Ink.warning)
                         }
                         if fullRender, let headers = detail?.requestHeadersJSON, !headers.isEmpty {
                             requestHeadersSection(headers)
@@ -690,7 +714,7 @@ struct TrafficView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(t.name.isEmpty ? t.id : t.name)
                             .font(Theme.Font.microMono)
-                            .foregroundColor(Theme.cursor)
+                            .foregroundColor(Theme.Ink.cursor)
                         if !t.arguments.isEmpty {
                             Text(t.arguments)
                                 .font(Theme.Font.captionMono)
@@ -790,7 +814,7 @@ struct TrafficView: View {
                 if live {
                     Text("实时")
                         .font(Theme.Font.badgeMono)
-                        .foregroundColor(Theme.claudeHi)
+                        .foregroundColor(Theme.Ink.claude)
                 }
             }
             ForEach(Array(images.enumerated()), id: \.offset) { _, img in
@@ -835,7 +859,7 @@ struct TrafficView: View {
     private func protocolBadge(_ kind: CaptureKind) -> some View {
         Text(kind.label)
             .font(Theme.Font.badgeMono)
-            .foregroundColor(kind == .anthropic ? Theme.claude : Theme.codex)
+            .foregroundColor(kind == .anthropic ? Theme.Ink.claude : Theme.Ink.codex)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill((kind == .anthropic ? Theme.claude : Theme.codex).opacity(0.15)))
     }
@@ -1039,7 +1063,7 @@ private struct TrafficRow: View {
                 if rec.state == .streaming || rec.state == .pending {
                     Text("实时")
                         .font(Theme.Font.badgeMono)
-                        .foregroundColor(Theme.claudeHi)
+                        .foregroundColor(Theme.Ink.claude)
                     // The row itself is a tap target for selection, so the chip
                     // sits above it and swallows its own clicks.
                     ActionChip(systemImage: "stop.fill", tint: Theme.statusError,

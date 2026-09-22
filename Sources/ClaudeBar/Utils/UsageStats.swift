@@ -19,21 +19,34 @@ struct UsageStats {
     }
 
     /// Human-readable label for the period, e.g. "2026-07-30", "JULY 2026", "2026".
+    ///
+    /// Formatters are cached: this is called from `body` (dashboard, usage page
+    /// and the popup header), so building one per call allocated on every
+    /// layout pass of the densest views in the app. They are only ever touched
+    /// on the main actor, which is where every caller renders.
+    private static var labelFormatters: [String: DateFormatter] = [:]
+
+    /// Cached `DateFormatter` for a fixed pattern, in the app's zh_CN locale.
+    /// Shared with the heatmap tooltips, which build one per cell.
+    static func formatter(_ format: String) -> DateFormatter {
+        labelFormatters[format] ?? {
+            let made = DateFormatter()
+            made.locale = Locale(identifier: "zh_CN")
+            made.timeZone = TimeZone.current
+            made.dateFormat = format
+            labelFormatters[format] = made
+            return made
+        }()
+    }
+
     static func label(for period: UsagePeriod, reference: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.timeZone = TimeZone.current
+        let format: String
         switch period {
-        case .day, .custom:
-            f.dateFormat = "yyyy年M月d日"
-            return f.string(from: reference)
-        case .month:
-            f.dateFormat = "yyyy年M月"
-            return f.string(from: reference)
-        case .year:
-            f.dateFormat = "yyyy年"
-            return f.string(from: reference)
+        case .day, .custom: format = "yyyy年M月d日"
+        case .month: format = "yyyy年M月"
+        case .year: format = "yyyy年"
         }
+        return formatter(format).string(from: reference)
     }
 
     /// Shift the reference date by one unit of the current period (±1).
@@ -47,12 +60,6 @@ struct UsageStats {
         case .year:
             return cal.date(byAdding: .year, value: amount, to: reference) ?? reference
         }
-    }
-
-    /// Query cost is O(interval rollup rows). Call `UsageIndex.updateIndex()`
-    /// separately when transcripts may have changed.
-    static func fetch(in interval: DateInterval) -> [ModelUsage] {
-        UsageIndex.fetch(in: interval)
     }
 
     // MARK: - Formatting

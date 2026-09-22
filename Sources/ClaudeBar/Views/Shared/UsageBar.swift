@@ -36,7 +36,9 @@ struct UsageModelTile: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                StatusPill(label: "\(Int((ratio * 100).rounded()))%", tint: color)
+                StatusPill(label: "\(Int((ratio * 100).rounded()))%",
+                           tint: color,
+                           ink: Theme.barInk(for: stat.model))
                 if !sourceSlices.isEmpty {
                     Image(systemName: "chart.pie")
                         .font(Theme.Font.tileDetail)
@@ -55,7 +57,8 @@ struct UsageModelTile: View {
                 if hasCache {
                     StatusPill(
                         label: "缓存 \(stat.cacheHitPercent)%",
-                        tint: stat.cacheHitPercent >= 50 ? Theme.statusSuccess : color
+                        tint: stat.cacheHitPercent >= 50 ? Theme.statusSuccess : color,
+                        ink: stat.cacheHitPercent >= 50 ? Theme.Ink.success : Theme.barInk(for: stat.model)
                     )
                 }
             }

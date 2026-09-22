@@ -10,26 +10,26 @@ struct PanelHeader: View {
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject private var prefs = AppPreferences.shared
     @ObservedObject private var vpn = VpnManager.shared
-    @ObservedObject private var rates = VpnLiveRates.shared
     var panel: PanelState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             statusRow
-            HStack(spacing: 1) {
+            EqualRowGrid(spacing: 1, minColumnWidth: 0, fixedColumns: 3) {
                 HeaderSwitchChip(
                     eyebrow: "CC",
                     title: ccModel,
                     subtitle: ccVendor,
-                    tint: Theme.claude
+                    tint: Theme.claude, ink: Theme.Ink.claude
                 ) { _ in
                     ModelSwitchList(kind: .claude, panel: panel)
                 }
                 HeaderSwitchChip(
                     eyebrow: "Codex",
                     title: codexModel,
-                    subtitle: codexVendor,
-                    tint: Theme.codex
+                    subtitle: codexSubtitle,
+                    quotaWindows: codexStore.quotaWindows,
+                    tint: Theme.codex, ink: Theme.Ink.codex
                 ) { _ in
                     ModelSwitchList(kind: .codex, panel: panel)
                 }
@@ -37,7 +37,8 @@ struct PanelHeader: View {
                     eyebrow: "VPN",
                     title: vpnTitle,
                     subtitle: vpnSubtitle,
-                    tint: vpn.isRunning ? Theme.chartGreen : Theme.textSecondary
+                    tint: vpn.isRunning ? Theme.chartGreen : Theme.textSecondary,
+                    ink: vpn.isRunning ? Theme.Ink.success : Theme.textSecondary
                 ) { isPresented in
                     VpnNodePickerPanel(isPresented: isPresented)
                 }
@@ -56,10 +57,10 @@ struct PanelHeader: View {
     private var statusRow: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(runningCount > 0 ? Theme.chartGreen : Theme.statusIdle)
+                .fill(runningCount > 0 ? Theme.chartGreen : Theme.Ink.idle)
                 .frame(width: 6, height: 6)
             Text(runningCount > 0 ? "\(runningCount) 会话" : "空闲")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .font(Theme.Font.section)
                 .foregroundColor(Theme.textPrimary)
             statusDot
             Text(proxyFact)
@@ -68,10 +69,7 @@ struct PanelHeader: View {
                 .lineLimit(1)
             if vpn.isRunning {
                 statusDot
-                Text("↓\(VpnFormat.compact(rates.speedDown)) ↑\(VpnFormat.compact(rates.speedUp))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
+                HeaderTrafficRates()
             }
             Spacer(minLength: 4)
             Button {
@@ -81,6 +79,7 @@ struct PanelHeader: View {
             }
             .buttonStyle(.plain)
             .help("打开主窗口")
+            .accessibilityLabel("打开主窗口")
             Button {
                 providerStore.refresh()
                 panel.showFeedback("已刷新")
@@ -89,6 +88,7 @@ struct PanelHeader: View {
             }
             .buttonStyle(.plain)
             .help("刷新")
+            .accessibilityLabel("刷新")
         }
     }
 
@@ -128,6 +128,17 @@ struct PanelHeader: View {
         codexStore.activeProvider?.name ?? "添加供应商"
     }
 
+    /// Rate-limit windows under the model name. Vendor stays when the
+    /// ChatGPT usage call has not returned yet.
+    private var codexSubtitle: String {
+        let windows = codexStore.quotaWindows
+        if windows.isEmpty {
+            if codexStore.quotaLoading { return "额度…" }
+            return codexStore.quotaNote ?? codexVendor
+        }
+        return windows.map { "\($0.label)已用 \($0.usedText)" }.joined(separator: " · ")
+    }
+
     private var vpnTitle: String {
         if vpn.state == .starting { return "启动中…" }
         if vpn.isRunning { return vpn.liveLeafName ?? "代理" }
@@ -150,7 +161,11 @@ private struct HeaderSwitchChip<Popover: View>: View {
     let eyebrow: String
     let title: String
     let subtitle: String
+    var quotaWindows: [CodexQuotaWindow] = []
+    /// Chip accent — also drives the eyebrow, which is text.
     var tint: Color
+    /// Readable counterpart of `tint` for the eyebrow; see `StatusPill`.
+    var ink: Color? = nil
     @ViewBuilder var popover: (Binding<Bool>) -> Popover
 
     @State private var open = false
@@ -160,27 +175,31 @@ private struct HeaderSwitchChip<Popover: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 2) {
                     Text(eyebrow)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundColor(tint)
+                        .font(Theme.Font.eyebrow)
+                        .foregroundColor(ink ?? tint)
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundColor(Theme.textTertiary())
                 }
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(Theme.Font.section)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if quotaWindows.isEmpty {
+                    Text(subtitle)
+                        .font(Theme.Font.meta)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    CodexQuotaGauges(windows: quotaWindows)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Theme.cardSurface)
             .contentShape(Rectangle())
         }
@@ -219,7 +238,7 @@ private struct ModelSwitchList: View {
                     NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(Theme.claude)
+                .foregroundColor(Theme.Ink.claude)
                 .padding(12)
             } else {
                 ScrollView {
@@ -241,7 +260,7 @@ private struct ModelSwitchList: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: row.active ? "checkmark" : "")
                                             .font(.system(size: 9, weight: .semibold))
-                                            .foregroundColor(Theme.claude)
+                                            .foregroundColor(Theme.Ink.claude)
                                             .frame(width: 12)
                                         Text(row.title)
                                             .font(Theme.Font.caption)
@@ -317,5 +336,17 @@ private struct ModelSwitchList: View {
         case .codex:
             codexStore.activate(providerID: row.providerID, modelID: row.modelID)
         }
+    }
+}
+
+/// Only the small rate label observes the traffic stream.
+private struct HeaderTrafficRates: View {
+    @ObservedObject private var rates = VpnLiveRates.shared
+
+    var body: some View {
+        Text("↓\(VpnFormat.compact(rates.speedDown)) ↑\(VpnFormat.compact(rates.speedUp))")
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(Theme.textSecondary)
+            .lineLimit(1)
     }
 }

@@ -29,6 +29,7 @@ struct UsageView: View {
                         }
                         .buttonStyle(.plain)
                         .help("重新统计本周期用量")
+                        .accessibilityLabel("重新统计本周期用量")
                     }
 
                     HStack(spacing: 8) {

@@ -10,24 +10,45 @@ enum LocalProxyAddress {
     static var codexBase: String { openaiRoot }
 
     /// OpenAI Chat Completions — the wire most third-party clients speak.
-    /// The proxy injects the active Codex provider key; `Bearer local` is a dummy
-    /// so SDKs that require a token still send the request.
+    /// The proxy injects the active Codex provider key; the bearer here is the
+    /// proxy's own token (read from disk, same file Codex's config.toml gets),
+    /// so a copied command works without the user hunting for it.
     static func chatCompletionsCurl(model: String) -> String {
         let safe = model.isEmpty ? "model-id" : model
             .replacingOccurrences(of: "'", with: "")
             .replacingOccurrences(of: "\"", with: "")
         let body = #"{"model":"\#(safe)","messages":[{"role":"user","content":"ping"}]}"#
+        let token = CodexProxyServer.configuredToken
         return """
         curl -sS \(openaiRoot)/chat/completions \\
           -H 'Content-Type: application/json' \\
-          -H 'Authorization: Bearer local' \\
+          -H 'Authorization: Bearer \(token)' \\
           -d '\(body)'
         """
     }
 
+    /// Is `url` addressed at this machine's loopback interface?
+    ///
+    /// Parsed, not substring-matched. The old test was
+    /// `contains("127.0.0.1") || contains("localhost")`, which answers yes for
+    /// `https://deepseek.com/redirect?to=127.0.0.1` and
+    /// `https://localhost.example.com/v1` — a remote vendor would have been
+    /// mistaken for our own proxy (the balance fetch then skipped the request,
+    /// and provider reconciliation rewrote the file). Compare the *host*
+    /// component instead, with the scheme optional because a base URL may be
+    /// written as a bare `127.0.0.1:15721`.
     static func isLoopback(_ url: String) -> Bool {
-        let s = url.lowercased()
-        return s.contains("127.0.0.1") || s.contains("localhost")
+        let s = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return false }
+        let normalized = s.contains("://") ? s : "http://" + s
+        guard let host = URLComponents(string: normalized)?.host?.lowercased() else {
+            return false
+        }
+        // `host` keeps IPv6 brackets ("[::1]").
+        let bare = host.hasPrefix("[") && host.hasSuffix("]")
+            ? String(host.dropFirst().dropLast())
+            : host
+        return bare == "127.0.0.1" || bare == "localhost" || bare == "::1"
     }
 }
 

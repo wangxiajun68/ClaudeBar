@@ -5,8 +5,9 @@ import Foundation
 /// if we don't, `/version` `/traffic` `/proxies` loop through mixed-port
 /// and the UI looks like the proxy is dead.
 enum VpnHTTP {
-    /// Airports inspect UA and only attach `subscription-userinfo` for Clash Verge.
+    /// Some airports 403 `clash-verge/*` and answer `mihomo/*` with the full list.
     static let clashVergeUA = "clash-verge/v2.4.3"
+    static let mihomoUA = "mihomo/1.19.31"
 
     /// Cached per (proxyPort, direct?) shape. Every `/connections` poll used to
     /// build a fresh `URLSession` and most call sites never invalidated it, so
@@ -17,6 +18,16 @@ enum VpnHTTP {
     private static var cache: [Int: URLSession] = [:]
     /// Sentinel key for the direct (proxy-less) session.
     private static let directKey = -1
+
+    /// macOS system HTTP proxy port, when the user has one enabled.
+    /// Subscription hosts often 403 the machine's own IP (Cloudflare 1005)
+    /// while Clash Verge succeeds because it fetches through its core.
+    static func systemHTTPProxyPort() -> Int? {
+        guard let raw = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any],
+              (raw["HTTPEnable"] as? Int) == 1,
+              let port = raw["HTTPPort"] as? Int, port > 0 else { return nil }
+        return port
+    }
 
     static func session(proxyPort: Int? = nil) -> URLSession {
         let key = proxyPort ?? directKey
@@ -43,10 +54,14 @@ enum VpnHTTP {
                 "SOCKSEnable": 0,
             ]
         } else {
+            // Subscription fetches use this shape. A PAC or the system proxy
+            // (often our own mixed port) makes some airports answer with a
+            // one-node placeholder instead of the real list.
             config.connectionProxyDictionary = [
                 "HTTPEnable": 0,
                 "HTTPSEnable": 0,
                 "SOCKSEnable": 0,
+                "ProxyAutoConfigEnable": 0,
             ]
         }
         return URLSession(configuration: config)

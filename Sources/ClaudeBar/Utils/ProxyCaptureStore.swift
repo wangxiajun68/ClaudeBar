@@ -292,12 +292,22 @@ final class ProxyCaptureStore {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self else { return }
-                if self.catalog.records.first(where: { $0.id == id })?.state != .streaming {
+                // A row that was pruned out of the 120-entry window while the
+                // call was in flight is gone from `records`, so `?? .streaming`
+                // was needed here: `nil != .streaming` is true and the buffers
+                // were dropped for a capture whose detail view is still open.
+                guard let row = self.catalog.records.first(where: { $0.id == id }) else { return }
+                if row.state != .streaming {
                     self.streams.live.removeValue(forKey: id)
                     self.catalog.livePreview.removeValue(forKey: id)
                 }
             }
         }
+        // Cap the two live maps. They are keyed by capture id and the row
+        // window is 120, but a burst of `begin`s that never reach `finish`
+        // (interrupted streams, a client that vanishes) would otherwise leave
+        // entries with no owner: nothing else ever removes them.
+        evictStaleLiveBuffers(keeping: id)
         // Durable third-party token rollup. Capture rows are capped at 120 and
         // carry no period breakdown, so the usage ring reads this instead.
         if source == .other {
@@ -417,6 +427,10 @@ final class ProxyCaptureStore {
             return nil
         }
         sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000; PRAGMA foreign_keys=ON", nil, nil, nil)
+        // The app is the only writer, but a backup agent or a `sqlite3` shell
+        // holding a lock made every capture write fail instantly with
+        // SQLITE_BUSY and vanish without a message. Match CursorDB's 2s.
+        sqlite3_busy_timeout(db, 2000)
         sqlite3_exec(db, """
             CREATE TABLE IF NOT EXISTS captures (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -463,6 +477,7 @@ final class ProxyCaptureStore {
         if useDatabase {
             _ = connection()
             recoverOrphans()
+            pruneLocked()
             return loadListUnlocked()
         }
         jsonStore.load()
@@ -547,12 +562,102 @@ final class ProxyCaptureStore {
     }
 
     private func pruneLocked() {
+        // Payloads are deleted explicitly rather than by the `ON DELETE
+        // CASCADE` on the table. `PRAGMA foreign_keys` is per-connection and
+        // is not guaranteed to be on for every handle that reaches this store
+        // (verified: with the pragma off the capture row disappears and its
+        // multi-hundred-KB payload row stays forever, in a table the UI no
+        // longer shows). Doing it here makes the invariant independent of a
+        // connection-level setting, and the DELETE is cheap because
+        // `capture_id` is the payloads primary key.
+        exec("""
+            DELETE FROM payloads WHERE capture_id NOT IN (
+                SELECT id FROM captures ORDER BY id DESC LIMIT \(listLimit)
+            )
+            """, args: [])
         exec("""
             DELETE FROM captures WHERE id NOT IN (
                 SELECT id FROM captures ORDER BY id DESC LIMIT \(listLimit)
             )
             """, args: [])
+        // The media directories (base64-decoded screenshots, a few hundred KB
+        // each) are keyed by capture id and are only removed by `delete(_:)`.
+        // The JSON backend removes them in its own prune; this one used to
+        // leave every one of them on disk forever. Daemon turns spend most of
+        // their time under a retention window this kills.
+        if Date().timeIntervalSince(lastMediaSweep) > 300 {
+            lastMediaSweep = Date()
+            sweepOrphanMedia()
+        }
+        // `pruneLocked` frees pages but nothing ever returns them to the
+        // filesystem: `proxy-capture.db` measured 84 MB with 20,581 pages on
+        // the freelist and two live rows. auto_vacuum cannot be enabled on an
+        // existing database, so reclaim opportunistically — VACUUM is a
+        // full-file rewrite, so only run it when a real amount is reclaimable.
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "PRAGMA freelist_count", -1, &stmt, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_int64(stmt, 0) > Self.vacuumThresholdPages {
+                sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+                execRaw("VACUUM")
+            }
+        }
         if let db { sqlite3_exec(db, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil) }
+    }
+
+    /// Pages that must be reclaimable before a `VACUUM` full-file rewrite is
+    /// worth its cost (4096-byte pages → ~32 MB).
+    private static let vacuumThresholdPages: Int64 = 8_192
+
+    private var lastMediaSweep = Date.distantPast
+
+    /// Remove `logs/captures/<id>/` for ids that no longer have a capture row.
+    ///
+    /// A capture that *streams its media* (the ids in `capturePayloadsDir` are
+    /// created by `CaptureMedia` while the request is being written) hits this
+    /// store as `begin` → media dir created → row pruned by a later `begin`.
+    /// Directories are capped by age as well, so a crash between the two
+    /// cannot leave an unreferenced tree behind indefinitely.
+    private func sweepOrphanMedia() {
+        let fm = FileManager.default
+        let root = FilePaths.capturePayloadsDir
+        guard let entries = try? fm.contentsOfDirectory(at: root,
+                                                        includingPropertiesForKeys: [.contentModificationDateKey],
+                                                        options: [.skipsHiddenFiles]) else { return }
+        let live = Set(currentLiveIDs())
+        let cutoff = Date().addingTimeInterval(-86_400)
+        for dir in entries where dir.hasDirectoryPath {
+            let name = dir.lastPathComponent
+            let id = Int64(name) ?? -1
+            var keep = live.contains(id)
+            if !keep,
+               let mtime = (try? dir.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+               mtime > cutoff {
+                // Recently written but not (yet) in the list — a capture that
+                // started between the query and the sweep. Keep it.
+                keep = true
+            }
+            if !keep { try? fm.removeItem(at: dir) }
+        }
+    }
+
+    private func currentLiveIDs() -> [Int64] {
+        if useDatabase, let db, let rows = loadListIDs(db) { return rows }
+        return jsonStore.summaries.map(\.id)
+    }
+
+    private func loadListIDs(_ db: OpaquePointer) -> [Int64]? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT id FROM captures", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        var ids: [Int64] = []
+        while sqlite3_step(stmt) == SQLITE_ROW { ids.append(sqlite3_column_int64(stmt, 0)) }
+        return ids
+    }
+
+    private func execRaw(_ sql: String) {
+        guard let db else { return }
+        sqlite3_exec(db, sql, nil, nil, nil)
     }
 
     private enum Bind {
@@ -701,6 +806,22 @@ final class ProxyCaptureStore {
         DispatchQueue.main.async { [weak self] in self?.patchMain(id, mutate) }
     }
 
+    /// Keep `streams.live` / `catalog.livePreview` bounded to the ids the list
+    /// still shows, plus the one that just finished.
+    ///
+    /// Both maps are only otherwise removed by `delete`, `clearAll`,
+    /// `reloadPersistence`, and the delayed check in `finish` — so a capture
+    /// that is pruned (or never finishes) leaves a `CaptureLive` buffer behind
+    /// for the life of the process.
+    private func evictStaleLiveBuffers(keeping id: Int64) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let live = Set(self.catalog.records.map(\.id)).union([id])
+            self.streams.live = self.streams.live.filter { live.contains($0.key) }
+            self.catalog.livePreview = self.catalog.livePreview.filter { live.contains($0.key) }
+        }
+    }
+
     private func patchMain(_ id: Int64, _ mutate: (inout CaptureSummary) -> Void) {
         guard let idx = catalog.records.firstIndex(where: { $0.id == id }) else { return }
         mutate(&catalog.records[idx])
@@ -717,11 +838,25 @@ final class ProxyCaptureStore {
         CaptureTranscript.preview(from: requestJSON)
     }
 
+    /// Headers for the capture inspector, with credentials removed.
+    ///
+    /// This ran through the whole inbound header map, so a third-party client
+    /// that authenticated *to the proxy* had its own credential — and anything
+    /// else it sent, cookies included — serialized into `payloads.request_
+    /// request_headers`. The proxy no longer forwards client credentials
+    /// upstream, and the inspector has no use for them, so they never reach
+    /// disk. The proxy's own token is redacted too: it is the credential the
+    /// app hands out in the curl example.
+    private static let redactedHeaderKeys: Set<String> = [
+        "authorization", "x-api-key", "proxy-authorization", "cookie", "set-cookie",
+    ]
+
     static func encodeHeaders(_ headers: [String: String]?) -> String {
         guard let headers, !headers.isEmpty else { return "" }
-        let sorted = headers.sorted { $0.key < $1.key }
         var obj: [String: String] = [:]
-        for (k, v) in sorted { obj[k] = v }
+        for (k, v) in headers {
+            obj[k] = redactedHeaderKeys.contains(k.lowercased()) ? "…" : v
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { return "" }
         return text
@@ -820,7 +955,9 @@ final class CaptureTap {
         // The call is over (finished or torn down); retire the interrupt handle
         // so a stale tap cannot reach a dead connection.
         if let inflight { ProxyInflight.shared.close(inflight) }
-        let sse = raw.isEmpty ? nil : String(data: raw.reduce(into: Data(), { $0.append($1) }), encoding: .utf8)
+        // Lossy: this is upstream SSE bytes, which the gateway may split
+        // mid-codepoint. A strict decode dropped the entire raw body.
+        let sse = raw.isEmpty ? nil : String(decoding: raw.reduce(into: Data(), { $0.append($1) }), as: UTF8.self)
         store?.finish(id, source: source, model: modelName,
                       state: state, status: status, error: error,
                       assembler: assembler, rawSSE: sse)

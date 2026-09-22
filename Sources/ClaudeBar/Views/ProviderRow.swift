@@ -12,6 +12,12 @@ struct ProviderTile: View {
     var testOutcome: ConnectivityOutcome = .idle
     var onTest: (() -> Void)? = nil
     var accent: Color = Theme.claude
+    /// Readable counterpart of `accent` for the "当前" capsule; see
+    /// `StatusPill`. Defaults to the accent itself so an existing call site
+    /// that already passes an ink color keeps its look.
+    var accentInk: Color? = nil
+
+    private var accentInkResolved: Color { accentInk ?? accent }
 
     /// Popup density: tighter fonts/padding, single-column model list.
     var dense: Bool = false
@@ -81,13 +87,19 @@ struct ProviderTile: View {
         .disabled(provider.models.isEmpty)
     }
 
+    private var captureHelp: String {
+        provider.captureEnabled
+            ? "关闭流量记录，请求直连上游"
+            : "启用流量记录，请求将显示在「流量」页"
+    }
+
     private var captureToggle: some View {
         Button {
             onToggleCapture?()
         } label: {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(Theme.Font.bodySmall.weight(.semibold))
-                .foregroundColor(provider.captureEnabled ? Theme.external : Theme.textTertiary(0.4))
+            SignatureGlyph(name: "dot.radiowaves.left.and.right",
+                           tint: provider.captureEnabled ? Theme.Ink.success : Theme.textSecondary,
+                           size: 17, engaged: provider.captureEnabled)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
@@ -124,7 +136,7 @@ struct ProviderTile: View {
                     .truncationMode(.tail)
                 Spacer()
                 if isActive {
-                    StatusPill(label: "当前", tint: accent)
+                    StatusPill(label: "当前", tint: accent, ink: accentInkResolved)
                         .transition(.scale.combined(with: .opacity))
                 }
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -135,7 +147,7 @@ struct ProviderTile: View {
             }
             Text(activeModelName ?? " ")
                 .font(dense ? Theme.Font.microMono : Theme.Font.captionMono)
-                .foregroundColor(isActive ? accent : Theme.textTertiary())
+                .foregroundColor(isActive ? accentInkResolved : Theme.textTertiary())
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +188,7 @@ struct ProviderTile: View {
                 }
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(Theme.Font.microSemibold).foregroundColor(Theme.statusBusy)
+                        .font(Theme.Font.microSemibold).foregroundColor(Theme.Ink.claude)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -201,7 +213,7 @@ struct ProviderTile: View {
 
     private func radioIndicator(isSelected: Bool) -> some View {
         ZStack {
-            Circle().strokeBorder(isSelected ? accent : Theme.statusIdle.opacity(0.4), lineWidth: 1.5)
+            Circle().strokeBorder(isSelected ? accent : Theme.Ink.idle, lineWidth: 1.5)
                 .frame(width: 13, height: 13)
             if isSelected {
                 Circle().fill(accent).frame(width: 7, height: 7)
@@ -225,6 +237,10 @@ struct PopupModelTile: View {
     var testOutcome: ConnectivityOutcome = .idle
     let onTest: () -> Void
     var accent: Color = Theme.claude
+    /// Readable counterpart of `accent`; see `ProviderTile.accentInk`.
+    var accentInk: Color? = nil
+
+    private var accentInkResolved: Color { accentInk ?? accent }
 
     @State private var isHovered = false
 
@@ -241,7 +257,7 @@ struct PopupModelTile: View {
                                 .truncationMode(.middle)
                             Spacer(minLength: 2)
                             if isActive {
-                                StatusPill(label: "当前", tint: accent)
+                                StatusPill(label: "当前", tint: accent, ink: accentInkResolved)
                             }
                         }
                         Text(provider.name)
@@ -268,11 +284,17 @@ struct PopupModelTile: View {
         .accessibilityLabel("\(model.name)，\(provider.name)，\(isActive ? "当前" : "未激活")")
     }
 
+    private var captureHelp: String {
+        provider.captureEnabled
+            ? "关闭流量记录，请求直连上游"
+            : "启用流量记录，请求将显示在「流量」页"
+    }
+
     private var captureToggle: some View {
         Button(action: onToggleCapture) {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(provider.captureEnabled ? Theme.external : Theme.textTertiary(0.4))
+                .foregroundColor(provider.captureEnabled ? Theme.Ink.success : Theme.textTertiary(0.4))
                 .frame(width: 22, height: 22)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -281,8 +303,7 @@ struct PopupModelTile: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(provider.captureEnabled
-              ? "关闭流量记录，请求直连上游"
-              : "启用流量记录，请求将显示在「流量」页")
+        .help(captureHelp)
+        .accessibilityLabel(captureHelp)
     }
 }

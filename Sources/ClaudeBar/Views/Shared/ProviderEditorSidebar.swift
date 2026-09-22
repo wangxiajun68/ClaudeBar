@@ -9,8 +9,12 @@ struct ProviderEditorSidebar: View {
     var onDuplicate: () -> Void
     var onDelete: () -> Void
     var onImportFromClaude: (() -> Void)? = nil
+    /// Name of the selected provider, shown in the delete confirmation. Empty
+    /// keeps the generic wording.
+    var selectedName: String = ""
 
     @State private var showPresetPicker = false
+    @State private var confirmDelete = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -48,13 +52,15 @@ struct ProviderEditorSidebar: View {
                 .adaptiveGlassButton()
                 .disabled(!canDuplicateOrDelete)
                 .help("复制")
+                .accessibilityLabel("复制")
 
-                Button(role: .destructive, action: onDelete) {
+                Button(role: .destructive) { confirmDelete = true } label: {
                     Image(systemName: "trash")
                 }
                 .adaptiveGlassButton()
                 .disabled(!canDuplicateOrDelete)
                 .help("删除")
+                .accessibilityLabel("删除")
             }
         }
         .padding(.horizontal, Theme.Space.s8 + 2)
@@ -67,6 +73,18 @@ struct ProviderEditorSidebar: View {
                 },
                 onCancel: { showPresetPicker = false }
             )
+        }
+        // Destructive and irreversible (there is no undo), in the same window
+        // where the VPN module already asks before removing a subscription.
+        // The model-row "删除" in the detail pane stays immediate — it drops
+        // one model from an unsaved form.
+        .alert("删除供应商？", isPresented: $confirmDelete) {
+            Button("删除", role: .destructive) { onDelete() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(selectedName.isEmpty
+                 ? "该供应商及其模型配置将被移除。"
+                 : "将移除「\(selectedName)」及其模型配置。")
         }
     }
 }

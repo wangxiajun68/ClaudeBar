@@ -157,6 +157,7 @@ final class ProxyUsageStore {
             return nil
         }
         sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-500", nil, nil, nil)
+        sqlite3_busy_timeout(db, 2000)
         sqlite3_exec(db, """
             CREATE TABLE IF NOT EXISTS usage (
                 day TEXT NOT NULL,

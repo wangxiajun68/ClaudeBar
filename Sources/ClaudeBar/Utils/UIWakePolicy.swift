@@ -59,8 +59,9 @@ enum UIWakePolicy {
         subject.send()
     }
 
-    /// The popup is a panel, not the main window: `NSApplication` still
-    /// reports `isActive` while it is the key window. Used to decide whether
-    /// animations may run.
+    /// Whether any animation may run. This is the gate the silently-animating
+    /// views were missing: `SoftRotor`, `AuroraSparkline` and `ScanLine` all
+    /// kept a 12–20 Hz display link alive in a hidden window because they
+    /// keyed off a caller-supplied flag instead of "is anything on screen".
     static var shouldAnimate: Bool { hasVisibleWindow }
 }

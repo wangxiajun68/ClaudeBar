@@ -52,9 +52,12 @@ struct CodexProviderEditorView: View {
                     .font(Theme.Font.bodySmall)
             }
             .adaptiveGlassButton()
-            Text("管理 Codex 供应商")
-                .font(Theme.Font.titleSmall)
-                .foregroundColor(Theme.textPrimary)
+            HStack(spacing: 8) {
+                GlyphWell(name: "cube", tint: Theme.Ink.cursor, size: 26)
+                Text("管理 Codex 供应商")
+                    .font(Theme.Font.chromeEmph)
+            }
+            .foregroundColor(Theme.textPrimary)
             Spacer()
         }
         .padding(.horizontal, Theme.Space.s16)
@@ -88,7 +91,7 @@ struct CodexProviderEditorView: View {
                         Spacer(minLength: Theme.Space.s8)
                         if provider.id == codexStore.activeProviderID {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(Theme.Font.bodySmall).foregroundColor(Theme.statusBusy)
+                                .font(Theme.Font.bodySmall).foregroundColor(Theme.Ink.claude)
                                 .transition(.scale.combined(with: .opacity))
                         }
                     }
@@ -106,7 +109,8 @@ struct CodexProviderEditorView: View {
                 onPreset: { model.addFromPreset($0) },
                 onDuplicate: { model.duplicateSelected() },
                 onDelete: { model.deleteSelected() },
-                onImportFromClaude: { model.importFromClaude() }
+                onImportFromClaude: { model.importFromClaude() },
+                selectedName: model.selected?.name ?? ""
             )
         }
         .frame(width: 220)
@@ -321,7 +325,7 @@ struct CodexProviderEditorView: View {
                 if isDefault {
                     Text("默认")
                         .font(Theme.Font.microSemibold)
-                        .foregroundColor(Theme.statusWarning)
+                        .foregroundColor(Theme.Ink.warning)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(Theme.statusWarning.opacity(0.15)))
                         .transition(.scale.combined(with: .opacity))
@@ -351,11 +355,11 @@ struct CodexProviderEditorView: View {
                 if let err = model.duplicateModelError {
                     Text(err)
                         .font(Theme.Font.caption)
-                        .foregroundColor(Theme.statusError)
+                        .foregroundColor(Theme.Ink.error)
                 } else if model.isSaveFlashActive {
                     Label("已保存", systemImage: "checkmark.circle.fill")
                         .font(Theme.Font.caption)
-                        .foregroundColor(Theme.statusBusy)
+                        .foregroundColor(Theme.Ink.claude)
                 }
                 if let note = codexStore.importSummary {
                     Text(note)
@@ -366,7 +370,7 @@ struct CodexProviderEditorView: View {
                 if let err = codexStore.errorMessage {
                     Text(err)
                         .font(Theme.Font.caption)
-                        .foregroundColor(Theme.statusError)
+                        .foregroundColor(Theme.Ink.error)
                         .lineLimit(1)
                 }
                 Spacer()

@@ -8,7 +8,15 @@ class ProviderStore: ObservableObject {
     @Published var hasSettingsFile: Bool = false
     @Published var errorMessage: String? = nil
     @Published var importSummary: String? = nil
+    struct SupplierBalance: Identifiable, Equatable {
+        let id: UUID
+        let name: String
+        var amount: String?
+        var failed = false
+    }
+    @Published var supplierBalances: [SupplierBalance] = []
     @Published var balanceText: String? = nil
+    private var balanceTask: Task<Void, Never>?
     @Published var balanceLoading: Bool = false
     @Published var collapsedProviderIDs: Set<UUID> = []
     @Published var usageStats: [ModelUsage] = []
@@ -77,6 +85,7 @@ class ProviderStore: ObservableObject {
         currentEnv = SettingsManager.readSettings()
         loadProviders()
         refreshBalance()
+        peer?.refreshQuota()
         refreshUsage(rescan: true)
         refreshSessions()
         startSessionPolling()
@@ -84,6 +93,7 @@ class ProviderStore: ObservableObject {
         ProcessSampler.shared.start()
         ProcessSampler.shared.setLive(anySessionBusy)
         startUsageWatcher()
+        observeAppearance()
         writeWidgetSnapshot()
         syncPeerProxy()
     }
@@ -132,19 +142,17 @@ class ProviderStore: ObservableObject {
             if !heartbeats.isEmpty { heartbeats = [:] }
             return
         }
-        var changed = false
+        var next = heartbeats
         for (pid, busy) in samples {
-            var trail = heartbeats[pid] ?? []
+            var trail = next[pid] ?? []
             trail.append(busy)
             if trail.count > Self.heartbeatLength { trail.removeFirst(trail.count - Self.heartbeatLength) }
-            if trail != heartbeats[pid] { changed = true }
-            heartbeats[pid] = trail
+            next[pid] = trail
         }
-        // Prune trails for sessions that have died.
         let live = Set(samples.keys)
-        let pruned = heartbeats.filter { live.contains($0.key) }
-        if pruned.count != heartbeats.count { changed = true }
-        if changed { heartbeats = pruned }
+        next = next.filter { live.contains($0.key) }
+        // Publish once per changed snapshot, never once per dictionary write.
+        if next != heartbeats { heartbeats = next }
     }
 
     /// Diff this poll's busy states against the last poll's. A session that
@@ -184,7 +192,14 @@ class ProviderStore: ObservableObject {
         if anySessionBusy != busy {
             anySessionBusy = busy
             startSessionPolling()
-            ProcessSampler.shared.setLive(busy)
+            // The 1 Hz tier exists to make the popup's resource strip feel
+            // live, and Codex "active" is pure recency (a 90 s window off the
+            // rollout file's mtime) that a long turn keeps refreshed — so a
+            // single Codex run pinned the sampler at 1 Hz for the whole turn
+            // with nothing on screen watching it. Keep `anySessionBusy`
+            // accurate for the menu-bar icon and the poll cadence; only the
+            // 1 Hz *sampling* rate follows visibility.
+            ProcessSampler.shared.setLive(busy && UIWakePolicy.hasVisibleWindow)
         }
     }
 
@@ -307,6 +322,11 @@ class ProviderStore: ObservableObject {
         visibilityCancel = UIWakePolicy.observe { [weak self] in
             guard let self else { return }
             self.startSessionPolling()
+            // `setLive` is visibility-gated (see refreshAnyBusy): re-assert it
+            // on every transition, or a transition that does not change
+            // `anySessionBusy` would leave the sampler at the background tier
+            // with the popup now open.
+            ProcessSampler.shared.setLive(self.anySessionBusy && UIWakePolicy.hasVisibleWindow)
             // The FSEvents stream feeds the usage index. With no window on
             // screen the re-index is pure background cost; stop the stream
             // and let the next visible poll rescan.
@@ -318,9 +338,27 @@ class ProviderStore: ObservableObject {
             self.writeWidgetSnapshot()
         }
     }
-    // Note: the timer only *triggers* on the main run loop; the actual scan
-    // runs inside a detached task (see refreshSessions) — the main thread
-    // merely receives parsed results.
+
+    /// Republish the snapshot when the user flips light/dark or the token unit
+    /// style. Both values ride in the payload (the widget cannot read the
+    /// app's `UserDefaults` domain), so without this the widget would keep
+    /// rendering the old palette until the next session poll wrote a changed
+    /// snapshot — which, when every session is idle, is never.
+    private var appearanceCancellables: Set<AnyCancellable> = []
+
+    private func observeAppearance() {
+        guard appearanceCancellables.isEmpty else { return }
+        let prefs = AppPreferences.shared
+        for publisher in [prefs.$appearance.map { _ in () }.eraseToAnyPublisher(),
+                          prefs.$tokenUnitStyle.map { _ in () }.eraseToAnyPublisher()] {
+            publisher
+                .dropFirst()
+                .receive(on: RunLoop.main)
+                .sink { [weak self] in self?.writeWidgetSnapshot() }
+                .store(in: &appearanceCancellables)
+        }
+    }
+
 
     // MARK: - Load / Save
 
@@ -374,6 +412,29 @@ class ProviderStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
         try? data.write(to: FilePaths.presetsFile, options: .atomic)
+        // Every provider's `authToken` is in this file. A file created by the
+        // default umask lands at 0644, and `.atomic` replaces the inode on
+        // every write, so the mode has to be re-applied each time.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: FilePaths.presetsFile.path)
+        hardenLegacySecretFiles()
+    }
+
+    /// One-shot fix-up for the two files older builds left world-readable.
+    /// Cheap enough to run on every save (two `stat`s) and it makes the
+    /// narrowing self-healing for anyone upgrading.
+    private static var hardenedLegacy = false
+
+    private func hardenLegacySecretFiles() {
+        guard !Self.hardenedLegacy else { return }
+        Self.hardenedLegacy = true
+        let fm = FileManager.default
+        for url in [FilePaths.settingsFile, FilePaths.codexProvidersFile] {
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let mode = attrs[.posixPermissions] as? NSNumber,
+                  mode.intValue & 0o077 != 0 else { continue }
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        }
     }
 
     // MARK: - Activate
@@ -425,6 +486,26 @@ class ProviderStore: ObservableObject {
         activateModel(providerID: p.id, modelID: mid, syncPeer: false)
     }
 
+    /// Strip the third-party overlay from `settings.json` and clear the
+    /// active tile. The vendor list is not deleted — activating a row writes
+    /// the overlay back.
+    @MainActor
+    func restoreOfficial() {
+        do {
+            try SettingsManager.restoreOfficial()
+        } catch {
+            errorMessage = "还原官方配置失败：\(error.localizedDescription)"
+            return
+        }
+        errorMessage = nil
+        activeProviderID = nil
+        currentEnv = SettingsManager.readSettings()
+        hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
+        saveProviders()
+        refreshBalance()
+        writeWidgetSnapshot()
+    }
+
     /// Maps a provider/model pair onto the `settings.json` env block. All
     /// `ANTHROPIC_DEFAULT_*_MODEL` aliases carry the chosen model name so
     /// subagent/background traffic is routed to the same endpoint.
@@ -437,7 +518,14 @@ class ProviderStore: ObservableObject {
     private func buildEnv(from provider: Provider, model: ModelConfig) -> EnvConfig {
         let base = provider.captureEnabled ? LocalProxyAddress.claudeBase : provider.baseURL
         return EnvConfig(
-            ANTHROPIC_AUTH_TOKEN: provider.authToken,
+            // When this vendor is routed through the local proxy, the token
+            // that reaches the proxy is its bearer token, not the vendor key —
+            // the proxy injects the real key upstream. Claude Code reads
+            // `ANTHROPIC_AUTH_TOKEN` into `x-api-key`, so this needs no extra
+            // config file, unlike Codex.
+            ANTHROPIC_AUTH_TOKEN: provider.captureEnabled
+                ? CodexProxyServer.configuredToken
+                : provider.authToken,
             ANTHROPIC_BASE_URL: base,
             ANTHROPIC_MODEL: model.name,
             CLAUDE_CODE_MAX_CONTEXT_TOKENS: model.contextTokens,
@@ -562,24 +650,34 @@ class ProviderStore: ObservableObject {
     // MARK: - Balance
 
     func refreshBalance() {
-        guard let env = currentEnv else { balanceText = nil; return }
-        let token = env.ANTHROPIC_AUTH_TOKEN
-        let base: String = {
-            if let p = providers.first(where: { $0.id == activeProviderID }), !p.baseURL.isEmpty {
-                return p.baseURL
-            }
-            return env.ANTHROPIC_BASE_URL
-        }()
-        if LocalProxyAddress.isLoopback(base) { balanceText = nil; return }
+        balanceTask?.cancel()
         balanceLoading = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { balanceLoading = false }
-            if let result = await BalanceFetcher.fetch(authToken: token, baseURL: base) {
-                balanceText = "\(result.balance) \(result.currency)"
-            } else {
-                balanceText = nil
+        balanceTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            // Both model stacks may contain independently configured accounts.
+            var candidates = providers.map { (id: $0.id, name: $0.name, token: $0.authToken, base: $0.baseURL) }
+            candidates += (peer?.providers ?? []).map { (id: $0.id, name: $0.name, token: $0.apiKey, base: $0.baseURL) }
+            var seen = Set<UUID>()
+            let eligible = candidates.filter {
+                BalanceFetcher.supports($0.base) && !$0.token.isEmpty && seen.insert($0.id).inserted
             }
+            supplierBalances = eligible.map { SupplierBalance(id: $0.id, name: $0.name) }
+            balanceText = nil
+            for provider in eligible {
+                guard !Task.isCancelled else { return }
+                let result = await BalanceFetcher.fetch(authToken: provider.token, baseURL: provider.base)
+                guard !Task.isCancelled else { return }
+                if let index = supplierBalances.firstIndex(where: { $0.id == provider.id }) {
+                    supplierBalances[index].amount = result?.display
+                    supplierBalances[index].failed = result == nil
+                }
+                let display = supplierBalances.compactMap { item in
+                    item.amount.map { "\(item.name) · \($0)" }
+                }.joined(separator: " / ")
+                balanceText = display.isEmpty ? nil : display
+            }
+            balanceLoading = false
+            balanceTask = nil
         }
     }
 
@@ -700,6 +798,12 @@ class ProviderStore: ObservableObject {
         let alive = sessions.filter(\.isAlive)
         return WidgetSnapshot(
             todayTotalTokens: usageStats.reduce(0) { $0 + $1.totalTokens },
+            // The number above is the *selected* period's total (default 当前月,
+            // and the popup can page back through any month). Hand the widget
+            // the label so it does not call a past month "today".
+            usagePeriodLabel: usagePeriodLabel,
+            unitStyle: AppPreferences.shared.tokenUnitStyle.rawValue,
+            isDark: AppPreferences.shared.isDark,
             modelBreakdown: usageStats.prefix(5).map {
                 WidgetSnapshot.ModelTokenUsage(model: $0.model, totalTokens: $0.totalTokens)
             },
@@ -731,7 +835,40 @@ class ProviderStore: ObservableObject {
                     relativeUpdated: s.relativeUpdated
                 )
             },
+            externalSessions: externalSessions.prefix(5).map { s in
+                WidgetSnapshot.ExternalSessionSummary(
+                    id: s.id,
+                    status: s.isActive ? "busy" : "idle",
+                    model: s.model,
+                    contextTokens: s.contextTokens,
+                    contextLimit: s.contextLimit,
+                    contextRatio: s.contextRatio,
+                    projectFolder: s.displayName,
+                    relativeUpdated: s.relativeUpdated
+                )
+            },
             updatedAt: Date()
         )
+    }
+
+    /// "今天" for the current day window, otherwise the period's own label
+    /// plus the reference date ("9月" / "2026年"). Matches what the popup and
+    /// the usage page title say for the same window.
+    private var usagePeriodLabel: String {
+        let cal = Calendar.current
+        switch usagePeriod {
+        case .day, .custom:
+            return cal.isDateInToday(usageReferenceDate) ? "今天" : "当日"
+        case .month:
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "M月"
+            return f.string(from: usageReferenceDate)
+        case .year:
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "yyyy年"
+            return f.string(from: usageReferenceDate)
+        }
     }
 }

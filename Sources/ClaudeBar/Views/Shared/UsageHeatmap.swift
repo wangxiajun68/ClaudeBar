@@ -166,10 +166,10 @@ struct UsageHeatmap: View {
     }
 
     private func helpText(date: Date, tokens: Int?) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日"
-        let label = f.string(from: date)
+        // Cached formatter — this runs once per strip cell on every render,
+        // and a fresh DateFormatter re-parses the pattern each time. (The
+        // month/year grid is a Canvas with no per-cell tooltip.)
+        let label = UsageStats.formatter("M月d日").string(from: date)
         if let tokens { return "\(label) · \(UsageStats.formatTokens(tokens))" }
         return "\(label) · 无用量"
     }

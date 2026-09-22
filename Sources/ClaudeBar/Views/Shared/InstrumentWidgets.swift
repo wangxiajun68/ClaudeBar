@@ -78,7 +78,7 @@ private final class SpinPhase {
     }
 }
 
-/// Soft three-petal rotor. Visual spin tracks RPM, capped so a full turn is
+/// Open three-blade rotor. Visual spin tracks RPM, capped so a full turn is
 /// never faster than ~6s. Drawn in Canvas so SwiftUI won't interpolate the
 /// angle back to rest on parent refresh.
 struct SoftRotor: View {
@@ -89,8 +89,11 @@ struct SoftRotor: View {
     var size: CGFloat = 48
 
     @State private var phase = SpinPhase()
+    @State private var mounted = false
+    @State private var windowVisible = UIWakePolicy.shouldAnimate
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var spinning: Bool { rpm >= 80 }
+    private var spinning: Bool { mounted && windowVisible && rpm >= 80 && !reduceMotion }
 
     /// 12°/s at the floor, 58°/s at rated max — about 30s … 6s per turn.
     private var degreesPerSecond: Double {
@@ -100,131 +103,54 @@ struct SoftRotor: View {
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: spinning ? 1.0 / 20.0 : 30)) { timeline in
+        // `paused:` is load-bearing. `PeriodicTimelineSchedule` has no paused
+        // flag, so an idle rotor kept an unconditional 20 Hz display link for
+        // the life of the app and every tick cost a full main-thread layout
+        // pass. `.animation(minimumInterval:paused:)` is the same schedule the
+        // rest of the motion in this app uses and is the only pausable one.
+        // The angle is accumulated from wall-clock time in `SpinPhase`, so the
+        // blades pick up where they left off when unpaused.
+        TimelineView(.animation(minimumInterval: spinning ? 1.0 / 20.0 : 30,
+                                paused: !spinning)) { timeline in
             let deg = spinning
                 ? phase.tick(timeline.date.timeIntervalSinceReferenceDate, dps: degreesPerSecond)
                 : 18
             Canvas { ctx, canvasSize in
                 let s = min(canvasSize.width, canvasSize.height)
-                let origin = CGPoint(x: (canvasSize.width - s) / 2, y: (canvasSize.height - s) / 2)
-                let housing = CGRect(x: origin.x, y: origin.y, width: s, height: s)
-                ctx.fill(Path(ellipseIn: housing),
-                         with: .color(forced ? tint.opacity(0.16) : Theme.cardFill(0.06)))
-                ctx.stroke(Path(ellipseIn: housing.insetBy(dx: 0.5, dy: 0.5)),
-                           with: .color(forced ? tint.opacity(0.55) : Theme.hairline),
-                           lineWidth: forced ? 1.6 : 1)
-
-                var petals = ctx
-                petals.translateBy(x: housing.midX, y: housing.midY)
-                petals.rotate(by: .degrees(deg))
-                let bladeW = s * 0.22
-                let bladeH = s * 0.52
-                for i in 0..<3 {
-                    var arm = petals
-                    arm.rotate(by: .degrees(Double(i) * 120))
-                    let rect = CGRect(x: -bladeW / 2, y: -bladeH * 0.72, width: bladeW, height: bladeH)
-                    arm.fill(Path(roundedRect: rect, cornerRadius: bladeW / 2, style: .continuous),
-                             with: .color(tint.opacity(0.55)))
+                let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                if forced {
+                    let ring = CGRect(x:center.x-s*0.46,y:center.y-s*0.46,width:s*0.92,height:s*0.92)
+                    ctx.stroke(Path(ellipseIn:ring),with:.color(tint.opacity(0.25)),lineWidth:1)
                 }
-
-                let hub = CGRect(x: housing.midX - s * 0.14, y: housing.midY - s * 0.14,
-                                 width: s * 0.28, height: s * 0.28)
-                ctx.fill(Path(ellipseIn: hub), with: .color(Theme.cardSurface))
-                ctx.stroke(Path(ellipseIn: hub),
-                           with: .color(forced ? tint.opacity(0.45) : Theme.hairline), lineWidth: 0.8)
-                let pin = CGRect(x: housing.midX - s * 0.05, y: housing.midY - s * 0.05,
-                                 width: s * 0.10, height: s * 0.10)
-                ctx.fill(Path(ellipseIn: pin), with: .color(tint.opacity(0.95)))
+                var rotor = ctx
+                rotor.translateBy(x:center.x,y:center.y)
+                rotor.rotate(by:.degrees(deg))
+                for i in 0..<3 {
+                    var blade = rotor
+                    blade.rotate(by:.degrees(Double(i)*120))
+                    blade.fill(RotorBlade().path(in:CGRect(x:-s/2,y:-s/2,width:s,height:s)),
+                               with:.color(tint.opacity(0.85)))
+                }
+                let hub = CGRect(x:center.x-s*0.045,y:center.y-s*0.045,width:s*0.09,height:s*0.09)
+                ctx.fill(Path(ellipseIn:hub),with:.color(tint))
             }
             .frame(width: size, height: size)
         }
+        .onAppear { mounted = true; windowVisible = UIWakePolicy.shouldAnimate }
+        .onDisappear { mounted = false }
+        .onReceive(UIWakePolicy.changes) { windowVisible = UIWakePolicy.shouldAnimate }
     }
 }
 
-/// Wi-Fi / Bluetooth / wired lamps for the links meter.
-struct LinkLamps: View {
-    var wifiOn: Bool
-    var bluetoothOn: Bool
-    var wiredOn: Bool
 
-    var body: some View {
-        HStack(spacing: 8) {
-            lamp("wifi", on: wifiOn, tint: Theme.chartBlue)
-            lamp("dot.radiowaves.left.and.right", on: bluetoothOn, tint: Theme.chartPurple)
-            lamp("cable.connector", on: wiredOn, tint: Theme.chartGreen)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func lamp(_ symbol: String, on: Bool, tint: Color) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(on ? tint : Theme.textTertiary(0.45))
-            Circle()
-                .fill(on ? tint : Theme.cardFill(0.18))
-                .frame(width: 5, height: 5)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-/// A package IC: pads around a ceramic body, die grid fills with load.
+/// A restrained chip silhouette with a single continuous load fill.
 struct CPUChip: View {
     var load: Double
     var tint: Color = Theme.chartGreen
 
     var body: some View {
-        Canvas { ctx, size in
-            let s = min(size.width, size.height)
-            let origin = CGPoint(x: (size.width - s) / 2, y: (size.height - s) / 2)
-            let body = CGRect(x: origin.x + s * 0.16, y: origin.y + s * 0.16,
-                              width: s * 0.68, height: s * 0.68)
-            let pad: CGFloat = s * 0.055
-            let padLen: CGFloat = s * 0.09
-            let n = 5
-            for i in 0..<n {
-                let t = (CGFloat(i) + 0.5) / CGFloat(n)
-                let x = body.minX + body.width * t - pad / 2
-                let y = body.minY + body.height * t - pad / 2
-                ctx.fill(Path(roundedRect: CGRect(x: x, y: origin.y + s * 0.04, width: pad, height: padLen),
-                              cornerRadius: 0.8), with: .color(Theme.base4))
-                ctx.fill(Path(roundedRect: CGRect(x: x, y: origin.y + s - padLen - s * 0.04, width: pad, height: padLen),
-                              cornerRadius: 0.8), with: .color(Theme.base4))
-                ctx.fill(Path(roundedRect: CGRect(x: origin.x + s * 0.04, y: y, width: padLen, height: pad),
-                              cornerRadius: 0.8), with: .color(Theme.base4))
-                ctx.fill(Path(roundedRect: CGRect(x: origin.x + s - padLen - s * 0.04, y: y, width: padLen, height: pad),
-                              cornerRadius: 0.8), with: .color(Theme.base4))
-            }
-
-            ctx.fill(Path(roundedRect: body, cornerRadius: s * 0.06, style: .continuous),
-                     with: .color(Theme.cardFill(0.14)))
-            ctx.stroke(Path(roundedRect: body, cornerRadius: s * 0.06, style: .continuous),
-                       with: .color(Theme.hairline), lineWidth: 1)
-
-            let die = body.insetBy(dx: s * 0.08, dy: s * 0.08)
-            ctx.fill(Path(roundedRect: die, cornerRadius: 2, style: .continuous),
-                     with: .color(Theme.cardFill(0.10)))
-
-            let cols = 6
-            let rows = 6
-            let gap: CGFloat = 1.4
-            let cw = (die.width - gap * CGFloat(cols - 1)) / CGFloat(cols)
-            let ch = (die.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
-            let lit = Int((min(max(load, 0), 1) * Double(cols * rows)).rounded())
-            for r in 0..<rows {
-                for c in 0..<cols {
-                    let i = r * cols + c
-                    let cell = CGRect(
-                        x: die.minX + CGFloat(c) * (cw + gap),
-                        y: die.maxY - ch - CGFloat(r) * (ch + gap),
-                        width: cw, height: ch)
-                    let on = i < lit
-                    ctx.fill(Path(roundedRect: cell, cornerRadius: 0.7),
-                             with: .color(on ? tint.opacity(0.55 + 0.45 * load) : Theme.cardFill(0.10)))
-                }
-            }
-        }
-        .accessibilityLabel("CPU 负载 \(Int((load * 100).rounded()))%")
+        InstrumentGlyph(kind: .cpu, tint: tint, level: load, detailed: true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("CPU 负载 \(Int((load * 100).rounded()))%")
     }
 }

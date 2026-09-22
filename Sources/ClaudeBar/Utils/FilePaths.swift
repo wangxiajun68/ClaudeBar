@@ -74,6 +74,14 @@ enum FilePaths {
         return dir
     }
 
+    /// Bearer token that gates the local inspect/routing proxy. The proxy
+    /// injects the active provider's API key, so an unauthenticated loopback
+    /// listener is a credential oracle for anything running as this user.
+    /// Created 0600 with `O_EXCL | O_NOFOLLOW` by `CodexProxyServer.start()`.
+    static var proxyTokenFile: URL {
+        appSupportDir.appendingPathComponent("proxy-token")
+    }
+
     static var captureIndexFile: URL { logsDir.appendingPathComponent("captures.jsonl") }
     static var capturePayloadsDir: URL {
         let dir = logsDir.appendingPathComponent("captures", isDirectory: true)

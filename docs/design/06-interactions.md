@@ -34,7 +34,7 @@
 
 ## 编辑 Provider（独立窗口 / 主窗口页面）
 
-点击菜单栏 popup 底部 "编辑供应商" 图标 → `ProviderEditorWindowController.shared` 打开独立 `NSWindow`（760×520，可缩放）。主窗口供应商页（`ProvidersView`）同样嵌入 `ProviderEditorView`，两处共用同一编辑视图与 `ProviderEditorModel`（`@Observable` 表单模型，含校验与 spinner）。左侧 Provider 列表（增/删/复制），右侧 master-detail：Provider 配置（名/Key/URL）+ 模型列表（增/删/设默认/编辑各字段）。保存时若该 Provider 当前激活，则重新 `activateModel` 应用变更。
+点击菜单栏 popup 底部 "编辑供应商" 图标 → 主窗口切到「模型」页（post `.openProvidersEditor`）。主窗口供应商页（`ProvidersView`）嵌入 `ProviderEditorView`，共用同一 `ProviderEditorModel`（`@Observable` 表单模型，含校验与 spinner）。左侧 Provider 列表（增/删/复制），右侧 master-detail：Provider 配置（名/Key/URL）+ 模型列表（增/删/设默认/编辑各字段）。保存时若该 Provider 当前激活，则重新 `activateModel` 应用变更。
 
 ## Widget 联动
 

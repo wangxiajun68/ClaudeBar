@@ -1,17 +1,5 @@
 import SwiftUI
 
-/// Menu-bar popup header chrome only: node picker, live delay test, rate strip.
-struct VpnChromeCluster: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            VpnNodeMenu()
-            VpnLiveDelayTestButton()
-            VpnRateStrip(height: 22, showNumeric: true)
-                .frame(minWidth: 120, maxWidth: .infinity)
-        }
-    }
-}
-
 /// Custom popover (not `Menu`) so delay sits in a fixed trailing column
 /// and can be colored. Native menus cannot align or tint per-field.
 struct VpnNodeMenu: View {
@@ -115,7 +103,7 @@ struct VpnNodePickerPanel: View {
                     NotificationCenter.default.post(name: .openVPNPage, object: nil)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(Theme.claude)
+                .foregroundColor(Theme.Ink.claude)
                 .padding(12)
             }
         }
@@ -135,7 +123,7 @@ struct VpnNodePickerPanel: View {
                 Group {
                     if live {
                         AppGlyph(name: "checkmark", size: 9)
-                            .foregroundColor(Theme.claude)
+                            .foregroundColor(Theme.Ink.claude)
                     } else {
                         Color.clear
                     }
@@ -209,64 +197,3 @@ enum VpnDelayStyle {
     }
 }
 
-/// Tests the live outbound node (same delay API as the mosaic).
-struct VpnLiveDelayTestButton: View {
-    @ObservedObject private var manager = VpnManager.shared
-
-    var body: some View {
-        let leaf = manager.liveLeafName
-        let testing = leaf.map { manager.testingNodes.contains($0) } ?? false
-        Button {
-            guard let leaf else { return }
-            Task { _ = await manager.testDelay(node: leaf) }
-        } label: {
-            Group {
-                if testing {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .controlSize(.mini)
-                        .tint(Theme.claude)
-                        .scaleEffect(0.85)
-                        .frame(width: 14, height: 14)
-                } else {
-                    AppGlyph(name: "wifi", size: 11)
-                        .foregroundColor(manager.isRunning ? Theme.claude : Theme.textTertiary())
-                }
-            }
-            .frame(width: 22, height: 22)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!manager.isRunning || testing || leaf == nil)
-        .help(leaf.map { "测速当前节点 \($0)" } ?? "启动代理后可测速")
-        .accessibilityLabel("连通性测试")
-    }
-}
-
-/// Stretching dual sparkline + numeric ↓/↑ — popup header only.
-struct VpnRateStrip: View {
-    @ObservedObject private var manager = VpnManager.shared
-    @ObservedObject private var rates = VpnLiveRates.shared
-    var height: CGFloat = 28
-    var showNumeric: Bool = true
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VpnSpeedChart(history: rates.speedHistory)
-                .frame(minWidth: 80, maxWidth: .infinity, minHeight: height, maxHeight: height)
-            if showNumeric {
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text("↓\(VpnFormat.compact(rates.speedDown))")
-                        .foregroundColor(Theme.external)
-                    Text("↑\(VpnFormat.compact(rates.speedUp))")
-                        .foregroundColor(Theme.claudeHi)
-                }
-                .font(.system(size: 10, design: .monospaced).weight(.semibold))
-                .frame(width: 52, alignment: .trailing)
-            }
-        }
-        .opacity(manager.isRunning ? 1 : 0.35)
-        .help("内核 mixed-port 实时速率")
-        .accessibilityLabel("速率")
-    }
-}

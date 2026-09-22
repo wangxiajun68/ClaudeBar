@@ -9,7 +9,7 @@ struct ProvidersPanel: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Space.gridGap) {
-            stackColumn(title: "Claude Code", icon: "cpu", tint: Theme.claude) {
+            stackColumn(title: "Claude Code", icon: "cpu", tint: Theme.claude, ink: Theme.Ink.claude) {
                 ForEach(providerStore.providers) { provider in
                     ForEach(provider.models) { model in
                         PopupModelTile(
@@ -34,13 +34,14 @@ struct ProvidersPanel: View {
                                     model: model,
                                     codex: nil)
                             },
-                            accent: Theme.claude
+                            accent: Theme.claude, accentInk: Theme.Ink.claude
                         )
                     }
                 }
             }
 
-            stackColumn(title: "Codex", icon: "chevron.left.forwardslash.chevron.right", tint: Theme.codex) {
+            stackColumn(title: "Codex", icon: "chevron.left.forwardslash.chevron.right",
+                    tint: Theme.codex, ink: Theme.Ink.codex) {
                 if codexStore.providers.isEmpty {
                     Text("未配置")
                         .font(Theme.Font.micro)
@@ -75,7 +76,7 @@ struct ProvidersPanel: View {
                                         model: ModelConfig(id: model.id, name: model.name),
                                         codex: provider)
                                 },
-                                accent: Theme.codex
+                                accent: Theme.codex, accentInk: Theme.Ink.codex
                             )
                         }
                     }
@@ -94,10 +95,11 @@ struct ProvidersPanel: View {
         title: String,
         icon: String,
         tint: Color,
+        ink: Color,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s4) {
-            SectionHeader(icon: icon, title: title, tint: tint)
+            SectionHeader(icon: icon, title: title, tint: tint, ink: ink)
                 .padding(.horizontal, Theme.Space.s8)
 
             ScrollView {

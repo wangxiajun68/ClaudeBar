@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // MARK: - Mihomo API models
 
@@ -94,7 +95,10 @@ final class VpnManager: ObservableObject {
         case coreMissing                       // binary not found
         case coreNotExecutable(String)         // chmod needed; carries path
         case coreCrashed(exitCode: Int32, fatalLine: String?)  // abnormal exit
-        case coreStartTimeout                  // API never answered
+        /// API never answered. `diagnosis` is the last fatal/`listen` error
+        /// the core logged, if any — usually "address already in use" from
+        /// another proxy app holding our ports.
+        case coreStartTimeout(diagnosis: String?)
         case configWriteFailed(String)         // can't write config.yaml
         case spawnFailed(String)               // Process.run threw
 
@@ -109,7 +113,10 @@ final class VpnManager: ObservableObject {
                     return "内核意外退出（code=\(code)）：\(fatal)"
                 }
                 return "内核意外退出（code=\(code)），详见 core.log"
-            case .coreStartTimeout:
+            case .coreStartTimeout(let diagnosis):
+                if let diagnosis, !diagnosis.isEmpty {
+                    return "内核未响应（15s）：\(diagnosis)"
+                }
                 return "内核启动超时（15s 内未响应 API）"
             case .configWriteFailed(let msg):
                 return "写入配置失败：\(msg)"
@@ -120,6 +127,10 @@ final class VpnManager: ObservableObject {
     }
 
     @Published var state: State = .idle
+    /// Set when `startCore()` refused to launch because another listener owns
+    /// a port the core needs; the UI shows an actionable alert for it. Cleared
+    /// on the next successful start.
+    @Published var portConflict: PortConflict? = nil
     @Published var proxies: [VpnProxy] = []
     @Published var groups: [VpnGroup] = []
     @Published var coreVersion: String? = nil
@@ -132,6 +143,20 @@ final class VpnManager: ObservableObject {
     private var trafficStreamTask: Task<Void, Never>?
     private var failoverTask: Task<Void, Never>?
     private var failoverLogOffset: UInt64 = 0
+    /// Where `core.log` ended when the current core was spawned. `extractFatal`
+    /// reads forward from here so a *previous* run's port conflict is never
+    /// attributed to this one.
+    private static var coreLogTailOffset: UInt64 = 0
+    /// Owns the core's stdout/stderr file. Held as a file descriptor rather
+    /// than re-opened by path on every write, so the log can be rotated
+    /// underneath it (`core.log` reached 86 MB on this machine, appended to
+    /// forever, with nothing ever reading more than its last 16 KB).
+    private let coreLogFD = CoreLogWriter(url: FilePaths.vpnCoreLogFile)
+    private let vpnLogWriter = CoreLogWriter(url: FilePaths.vpnLogFile)
+    /// Generation of `coreLogFD` that `failoverLogOffset` was measured
+    /// against. A rotation invalidates the offset; the ticker resyncs instead
+    /// of seeking past the new end of file forever.
+    private var failoverLogGeneration: UInt64 = 0
     private var failoverHits: [Date] = []
     private var lastFailoverAt: Date?
     private var failoverInFlight = false
@@ -149,24 +174,15 @@ final class VpnManager: ObservableObject {
     @Published private(set) var logLines: [String] = []
     private static let maxLogLines = 500
 
-    /// Append to the in-app log ring and the on-disk vpn.log.
+    /// Append to the in-app log ring and the on-disk vpn.log. The ring is
+    /// capped; the file now is too (see `CoreLogWriter`).
     func log(_ line: String) {
         let stamped = "[\(Self.timestamp(Date()))] \(line)"
         logLines.append(stamped)
         if logLines.count > Self.maxLogLines {
             logLines.removeFirst(logLines.count - Self.maxLogLines)
         }
-        let path = FilePaths.vpnLogFile.path
-        DispatchQueue.global(qos: .utility).async {
-            let entry = stamped + "\n"
-            if let fh = FileHandle(forWritingAtPath: path) {
-                defer { try? fh.close() }
-                _ = try? fh.seekToEnd()
-                try? fh.write(contentsOf: entry.data(using: .utf8) ?? Data())
-            } else {
-                try? entry.write(toFile: path, atomically: true, encoding: .utf8)
-            }
-        }
+        vpnLogWriter.append(Data((stamped + "\n").utf8))
     }
 
     /// Log a structured error and reflect it in state.
@@ -270,6 +286,102 @@ final class VpnManager: ObservableObject {
     }
 
     /// Called at app start and whenever settings change. Idempotent.
+    /// SIGTERM any core still running out of our own VPN directory.
+    ///
+    /// Matching on the executable path is what makes this safe: it only ever
+    /// touches a process started from `~/Library/Application Support/ClaudeBar/
+    /// vpn/mihomo` by this app's own earlier instance, never a Clash Verge /
+    /// ClashX core with its own data directory. Signals are skipped for our
+    /// own pid so a live `process` handle is always the one that stops it.
+    nonisolated private static func reapOrphanCore() {
+        let me = getpid()
+        var pids = [pid_t](repeating: 0, count: 256)
+        let written = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard written > 0 else { return }
+        let mine = Self.corePath
+        for pid in pids where pid > 0 {
+            guard pid != me, let path = Self.executablePath(of: pid), path == mine else { continue }
+            kill(pid, SIGTERM)
+        }
+    }
+
+    /// `~/Library/Application Support/ClaudeBar/vpn/mihomo` — the path the
+    /// bundled core is copied to by `extractBundledCoreIfNeeded`.
+    nonisolated private static let corePath: String = FilePaths.vpnCoreBin.path
+
+    /// A listener already holding a port the core needs.
+    struct PortConflict: Equatable {
+        let port: Int
+        /// Human label for whoever holds it (`Clash Verge`, `mihomo`, …), when
+        /// we can attribute it. Never a reason to act — see `portConflict`.
+        let owner: String?
+        /// True when the holder is *our own* core (the path-matched orphan the
+        /// reaper already tried to kill). Advisory only.
+        let isOurOwnCore: Bool
+    }
+
+    /// Is anything already listening on the ports this core needs?
+    ///
+    /// Ports were previously handed to mihomo blind. When another Clash-family
+    /// app owns them (Clash Verge's `verge-mihomo` on 7890/9097 on this
+    /// machine) the core still *starts* and still writes its log — it just
+    /// fails to bind, keeps running with no API, and the readiness poll
+    /// eventually reports a bare "内核启动超时". The user has no way to learn
+    /// that a different app is in the way.
+    ///
+    /// This probes and reports; it deliberately does **not** kill the holder.
+    /// An earlier design offered to "顶掉" the occupant, which meant this app
+    /// SIGTERM-ing a Clash Verge core it did not start — a cross-app action
+    /// the user never asked for, on a process whose traffic they may be
+    /// actively using. Reaping stays scoped to our own binary
+    /// (`reapOrphanCore`); a foreign listener is the user's call to make.
+    nonisolated static func portConflict(mixedPort: Int, controllerPort: Int) -> PortConflict? {
+        for port in [mixedPort, controllerPort] where port > 0 {
+            guard let pid = listenerPID(on: port) else { continue }
+            let path = executablePath(of: pid)
+            return PortConflict(port: port,
+                                owner: path.map { URL(fileURLWithPath: $0).lastPathComponent },
+                                isOurOwnCore: path == corePath)
+        }
+        return nil
+    }
+
+    /// One-line version of `VPNView`'s alert body, for the status line and the
+    /// log. The view owns the long-form explanation.
+    nonisolated static func conflictMessage(_ conflict: PortConflict) -> String {
+        if let owner = conflict.owner {
+            return "端口 \(conflict.port) 被「\(owner)」占用，内核未启动"
+        }
+        return "端口 \(conflict.port) 被占用，内核未启动"
+    }
+
+    /// Is nothing listening on `port`? Used to pick a replacement mixed port.
+    nonisolated static func isPortFree(_ port: Int) -> Bool {
+        listenerPID(on: port) == nil
+    }
+
+    /// PID of whoever is listening on `port`, or nil when it is free.    ///
+    /// `lsof` rather than a Swift `bind()` probe: a successful bind would tell
+    /// us only *that* the port is taken, while the dialog needs to name the
+    /// occupant. One `lsof` spawn per start attempt is nothing next to the
+    /// core launch that follows it.
+    nonisolated private static func listenerPID(on port: Int) -> pid_t? {
+        let result = Process.runAndRead("/usr/sbin/lsof",
+                                        args: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"])
+        guard result.status == 0 else { return nil }
+        return result.output
+            .split(whereSeparator: \.isNewline)
+            .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+            .first
+    }
+
+    nonisolated private static func executablePath(of pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
+        let n = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard n > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
     func syncRuntime() {
         if prefs.vpnEnabled {
             startCore()
@@ -282,6 +394,29 @@ final class VpnManager: ObservableObject {
     func startCore() {
         guard process == nil else { return }
         guard launchTask == nil else { return }
+        // A previously crashed or force-quit ClaudeBar leaves the core
+        // running with PPID 1: there is no termination hook, so
+        // `stopCore()` never runs on quit. `process` is nil in the new
+        // instance, so it spawns a second core on the same ports — the new
+        // one dies at startup and, because the TUN marker and the system
+        // proxy are still applied, traffic keeps flowing through a process
+        // nothing controls. Reap the orphan before spawning.
+        Self.reapOrphanCore()
+        // Only *our* core is reaped. If anything else still holds the ports,
+        // spawning is guaranteed to produce a core that boots, fails to bind,
+        // and then sits there until the readiness poll gives up — so check
+        // first and report it instead of starting a doomed process.
+        if let conflict = Self.portConflict(mixedPort: prefs.vpnMixedPort, controllerPort: controllerPort) {
+            portConflict = conflict
+            let owner = conflict.owner.map { "（\($0)）" } ?? ""
+            log("端口被占用：\(conflict.port)\(owner)，未启动内核")
+            // The module stays *enabled*: the user asked for it and the reason
+            // it is not running is external. Flipping `vpnEnabled` off here
+            // would silently rewrite their preference on the next launch.
+            state = .failed(Self.conflictMessage(conflict))
+            return
+        }
+        portConflict = nil
         state = .starting
         let profileURL = subscriptions.activeID.map { subscriptions.profileURL($0) }
         let dest = FilePaths.vpnCoreBin
@@ -311,6 +446,7 @@ final class VpnManager: ObservableObject {
                 return
             }
             let profile = profileURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let geoNote = await VpnGeodata.ensureGeoSite(profileText: profile)
             let t0 = Date()
             let text = VpnConfigBuilder.build(profileText: profile, prefs: AppPreferences.shared)
             do {
@@ -324,6 +460,7 @@ final class VpnManager: ObservableObject {
             }
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             await MainActor.run { [weak self] in
+                if let geoNote { self?.log(geoNote) }
                 self?.log("配置已写入 \(ms)ms · \(text.utf8.count / 1024) KB")
                 self?.log("启动内核：\(dest.path) (controller:\(controller), tun:\(tun), sysproxy:\(sysproxy))")
                 self?.spawnProcess(bin: dest, dir: vpnDir, config: configURL)
@@ -342,19 +479,27 @@ final class VpnManager: ObservableObject {
         proc.standardOutput = outPipe
         proc.standardError = errPipe
         stderrPipe = errPipe
+        // Snapshot where the log ended *before* this core's first byte lands.
+        // A core that starts wrong and exits immediately has already closed
+        // its pipes by the time `terminationHandler` runs, so the reason is
+        // only recoverable by reading the file from this offset — and the
+        // reason is the whole point: mihomo reports a port conflict at
+        // *error* level and keeps running with no API, which our readiness
+        // poll then reports as a bare "启动超时".
+        Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)
+        // The core writes connection failures, retries and DNS errors at
+        // whatever `log-level` the profile sets, for the whole time it runs.
+        // Nothing reads this file except the tail in `extractFatal` and the
+        // failover offset, so an unbounded append is pure disk growth — 86 MB
+        // on this machine before this landmine was defused. Rotate at 8 MB,
+        // keep the tail, never block the reader.
+        coreLogFD.rotateIfNeeded()
+        let coreLog = coreLogFD
         for pipe in [outPipe, errPipe] {
             pipe.fileHandleForReading.readabilityHandler = { fh in
                 let data = fh.availableData
                 guard !data.isEmpty else { fh.readabilityHandler = nil; return }
-                let path = FilePaths.vpnCoreLogFile.path
-                if !FileManager.default.fileExists(atPath: path) {
-                    FileManager.default.createFile(atPath: path, contents: nil)
-                }
-                if let fhw = FileHandle(forWritingAtPath: path) {
-                    defer { try? fhw.close() }
-                    _ = try? fhw.seekToEnd()
-                    try? fhw.write(contentsOf: data)
-                }
+                coreLog.append(data)
             }
         }
 
@@ -392,27 +537,63 @@ final class VpnManager: ObservableObject {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Last `level=fatal` (or `level=error` "listen") message the core wrote
+    /// since `coreLogTailOffset`.
+    ///
+    /// Errors matter as much as fatals here: the failure this most often has
+    /// to explain is "the core is alive but its API never answered", and the
+    /// reason for that is an `error` line the core printed seconds earlier —
+    /// `listen tcp 127.0.0.1:9097: bind: address already in use` when another
+    /// Clash-family app holds the controller / mixed port. Reporting the
+    /// timeout alone sent us hunting through an 86 MB log by hand.
     private static func extractFatal(stderr: String) -> String? {
         if let line = fatalLine(in: stderr) { return line }
-        guard let fh = FileHandle(forReadingAtPath: FilePaths.vpnCoreLogFile.path) else { return nil }
+        let path = FilePaths.vpnCoreLogFile.path
+        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
         let end = fh.seekToEndOfFile()
-        let start = end > 16_384 ? end - 16_384 : 0
+        let start = max(Self.coreLogTailOffset, end > 64_000 ? end - 64_000 : 0)
+        guard start < end else { return nil }
         fh.seek(toFileOffset: start)
         let data = fh.readDataToEndOfFile()
         return fatalLine(in: String(decoding: data, as: UTF8.self))
     }
 
+    /// Slice the core's log to what this process breed wrote and hand it to
+    /// `fatalLine`. Used when a core dies at startup: the pipes are gone by
+    /// then, so the file is the only witness.
+    private static func logDiagnosis() -> String? {
+        extractFatal(stderr: "")
+    }
+
+    /// Byte offset this core's log output starts at. Read once per core
+    /// launch, before the first byte of that core lands, so `extractFatal`
+    /// never attributes a *previous* run's port conflict to this one.
+    private static func tailOffset(of url: URL) -> UInt64 {
+        guard let fh = FileHandle(forReadingAtPath: url.path) else { return 0 }
+        defer { try? fh.close() }
+        return fh.seekToEndOfFile()
+    }
+
     private static func fatalLine(in text: String) -> String? {
-        text.split(separator: "\n")
-            .reversed()
-            .first { $0.contains("level=fatal") }
-            .map { line in
-                if let msg = line.split(separator: " msg=", maxSplits: 1).last {
-                    return String(msg).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                }
-                return String(line)
-            }
+        let lines = text.split(separator: "\n").map(String.init)
+        if let fatal = lines.reversed().first(where: { $0.contains("level=fatal") }) {
+            return message(of: fatal)
+        }
+        // "listen ... address already in use" *is* the fatal condition, even
+        // though mihomo logs it at error level (it keeps running with no API
+        // and no inbound ports).
+        if let bind = lines.reversed().first(where: {
+            $0.contains("level=error") && $0.contains("listen")
+        }) {
+            return message(of: bind)
+        }
+        return nil
+    }
+
+    private static func message(of line: String) -> String {
+        guard let msg = line.split(separator: " msg=", maxSplits: 1).last else { return line }
+        return String(msg).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
     }
 
     /// Stop the core. Returns the terminated process (nil when none was
@@ -427,6 +608,7 @@ final class VpnManager: ObservableObject {
     func stopCore(clearLists: Bool = true, resetProbe: Bool = true) -> Process? {
         launchTask?.cancel()
         launchTask = nil
+        portConflict = nil
         log("停止内核")
         readinessTask?.cancel()
         stopPolling()
@@ -462,6 +644,16 @@ final class VpnManager: ObservableObject {
     /// nothing, so `/version` never answers and the page shows 内核启动超时.
     /// Waiting on the main actor here would freeze the UI, so hand the wait
     /// to a task and yield while the process exits.
+    /// Retry after the user cleared a port conflict (or fixed whatever caused
+    /// it). `startCore` re-probes, so this is just "try again now" — it must
+    /// not be routed through `reloadConfig`, which early-returns when
+    /// `vpnEnabled` is false (the state a failed start leaves behind).
+    func retryStart() {
+        guard process == nil, launchTask == nil else { return }
+        portConflict = nil
+        startCore()
+    }
+
     func reloadConfig() {
         guard prefs.vpnEnabled else { return }
         launchTask?.cancel()
@@ -507,20 +699,16 @@ final class VpnManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
         if !Task.isCancelled {
-            fail(.coreStartTimeout)
+            // Read the core's own log from *this* launch's offset: a core that
+            // cannot bind its controller / mixed port logs an error and then
+            // sits there silently, which is exactly the state this timeout
+            // describes. Without the diagnosis the user sees "启动超时" and has
+            // no way to learn that another proxy app owns the port.
+            fail(.coreStartTimeout(diagnosis: Self.logDiagnosis()))
         }
     }
 
     // MARK: External controller API
-
-    private final class NoRedirect: NSObject, URLSessionDelegate {
-        func urlSession(_ s: URLSession, task: URLSessionTask,
-                        willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest,
-                        completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(nil)
-        }
-    }
 
     private func api(_ method: String, _ path: String,
                      body: Data? = nil, query: [String: String] = [:],
@@ -836,7 +1024,109 @@ final class VpnManager: ObservableObject {
         failoverTask?.cancel()
         failoverTask = nil
     }
+}
 
+/// Append-only file that keeps itself under `maxBytes`.
+///
+/// Both VPN logs are diagnostics: the in-app ring shows the last 500 lines,
+/// `extractFatal` reads the last 16 KB, and the failover ticker reads forward
+/// from an offset. None of them need history, so an unbounded append is pure
+/// disk growth — `core.log` had reached 86 MB and `vpn.log` 900 KB on this
+/// machine. On rotation the tail is kept so a crash report written just before
+/// the threshold survives.
+///
+/// `append` is called from the core's `readabilityHandler` (a background
+/// thread); every mutation goes through `lock`. Rotation bumps `generation`
+/// so a reader holding a byte offset can tell that its offset no longer
+/// refers to the same file.
+final class CoreLogWriter: @unchecked Sendable {
+    private let url: URL
+    private let lock = NSLock()
+    private var handle: FileHandle?
+    /// Bumped on every rotation — readers holding a byte offset use it to
+    /// notice that their offset no longer refers to the same file.
+    private var generationStorage: UInt64 = 0
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    var generation: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return generationStorage
+    }
+
+    private var written: UInt64 = 0
+
+    func append(_ data: Data) {
+        lock.lock(); defer { lock.unlock() }
+        guard let handle = ensureHandle() else { return }
+        // Track the byte count here instead of asking the file system on every
+        // chunk. The core writes several lines per second, so every one of
+        // them used to cost an `fstat` (and a `seekToEnd` syscall on the
+        // handle) just to decide whether rotation was due.
+        //
+        // `rotateIfNeeded()` still stats the file once per core launch, which
+        // is what catches a log that grew while this handle was closed — an
+        // earlier run of the app, or another core holding the same file.
+        if written > Self.maxBytes { rotateLocked() }
+        written += UInt64(data.count)
+        try? handle.write(contentsOf: data)
+    }
+
+    /// Stat the file and adopt its size. Called once before a core starts, so
+    /// `written` never begins at zero over a log that is already at the cap.
+    func rotateIfNeeded() {
+        lock.lock(); defer { lock.unlock() }
+        guard let handle = ensureHandle() else { return }
+        let size = (try? handle.seekToEnd()) ?? 0
+        if size > Self.maxBytes {
+            rotateLocked()
+        } else {
+            written = size
+        }
+    }
+
+    // MARK: - Internals
+
+    private static let maxBytes: UInt64 = 8 * 1024 * 1024
+    private static let keepBytes: UInt64 = 512 * 1024
+
+    private func ensureHandle() -> FileHandle? {
+        if let handle { return handle }
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(atPath: url.path, contents: nil)
+        }
+        let opened = try? FileHandle(forWritingTo: url)
+        // `handle.write` writes at the current offset, and a freshly opened
+        // write handle starts at 0 — without this the log would be rewritten
+        // from the top. Appends leave the offset at EOF, so seeking here (once
+        // per open) is enough.
+        _ = try? opened?.seekToEnd()
+        handle = opened
+        return opened
+    }
+
+    private func rotateLocked() {
+        try? handle?.close()
+        handle = nil
+        let tail: Data = {
+            guard let read = try? FileHandle(forReadingFrom: url) else { return Data() }
+            defer { try? read.close() }
+            let end = (try? read.seekToEnd()) ?? 0
+            let start = end > Self.keepBytes ? end - Self.keepBytes : 0
+            try? read.seek(toOffset: start)
+            return (try? read.readToEnd()) ?? Data()
+        }()
+        try? tail.write(to: url, options: .atomic)
+        written = UInt64(tail.count)
+        generationStorage &+= 1
+        _ = ensureHandle()
+    }
+}
+
+extension VpnManager {
     /// Consecutive `i/o timeout` on the live leaf's server → switch 主代理
     /// to the lowest-delay HY2 / KR leaf. Cooldown 60s so a bad airport
     /// cannot flap every few seconds.
@@ -845,6 +1135,13 @@ final class VpnManager: ObservableObject {
         let path = FilePaths.vpnCoreLogFile.path
         guard let fh = FileHandle(forReadingAtPath: path) else { return }
         defer { try? fh.close() }
+        // A rotation rewrites the file from its tail, so the byte offset we
+        // were holding now points into the middle of unrelated text (or past
+        // EOF). Resync instead of silently reading garbage forever.
+        if failoverLogGeneration != coreLogFD.generation {
+            failoverLogGeneration = coreLogFD.generation
+            failoverLogOffset = 0
+        }
         _ = try? fh.seek(toOffset: failoverLogOffset)
         let data = fh.readDataToEndOfFile()
         failoverLogOffset += UInt64(data.count)

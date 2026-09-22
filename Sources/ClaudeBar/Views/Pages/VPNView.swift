@@ -11,6 +11,8 @@ struct VPNView: View {
     @State private var testingAll = false
     @State private var testingNode: String?
     @State private var selectedGroup: String?
+    @State private var filePreview = VpnProfilePreview()
+    @State private var previewGroupName: String?
     @State private var mosaicWidth: CGFloat = 720
     @State private var portDraft = ""
     @State private var logsOpen = false
@@ -30,10 +32,13 @@ struct VPNView: View {
         .background(Theme.bgPrimary)
         .onAppear {
             portDraft = String(prefs.vpnMixedPort)
+            if store.browsingID == nil { store.browsingID = store.activeID }
+            reloadFilePreview()
             if selectedGroup == nil {
                 selectedGroup = manager.primaryGroup?.name ?? orderedGroups.first?.name
             }
         }
+        .onChange(of: store.browsingID) { _, _ in reloadFilePreview() }
         .onChange(of: prefs.vpnMixedPort) { _, v in portDraft = String(v) }
         .onChange(of: manager.groups.map(\.name)) { _, names in
             if let selectedGroup, names.contains(selectedGroup) { return }
@@ -42,6 +47,26 @@ struct VPNView: View {
         .onChange(of: manager.isRunning) { _, on in
             if on { Task { await VpnNetProbe.shared.refreshIP() } }
             else { VpnNetProbe.shared.reset() }
+        }
+        // Port squatter: the core was not started because something else owns
+        // the port. Naming the occupant is the whole point — "启动超时" left
+        // the user with nothing to act on.
+        //
+        // Two exits, and neither of them is "kill the other app": ClaudeBar
+        // reaps only its own core binary, so the user either frees the port or
+        // points the proxy at a different one. The second button does the
+        // obvious half of that for them.
+        .alert("端口被占用，未启动代理", isPresented: portConflictBinding, presenting: manager.portConflict) { conflict in
+            if conflict.port == prefs.vpnMixedPort {
+                Button("换个端口") {
+                    applySuggestedPort()
+                    manager.portConflict = nil
+                    manager.retryStart()
+                }
+            }
+            Button("好") { manager.portConflict = nil }
+        } message: { conflict in
+            Text(portConflictMessage(conflict))
         }
     }
 
@@ -102,7 +127,7 @@ struct VPNView: View {
             if let node = manager.liveLeafName, isEffectivelyOn {
                 Text(node)
                     .font(Theme.Font.captionMono)
-                    .foregroundColor(Theme.claude)
+                    .foregroundColor(Theme.Ink.claude)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.horizontal, 7)
@@ -152,6 +177,53 @@ struct VPNView: View {
         }
         .padding(.horizontal, Theme.Space.s12)
         .padding(.vertical, Theme.Space.s8)
+    }
+
+    /// Drives the port-conflict alert from `manager.portConflict`.
+    private var portConflictBinding: Binding<Bool> {
+        Binding(get: { manager.portConflict != nil },
+                set: { if !$0 { manager.portConflict = nil } })
+    }
+
+    /// Move the mixed port to the first free port above the current one and
+    /// apply it, so the caller can retry immediately.
+    ///
+    /// Only ever called for the *mixed* port: that one is ours to choose. The
+    /// controller port is fixed on both sides of the app, so a conflict there
+    /// is reported but never auto-worked-around.
+    private func applySuggestedPort() {
+        var candidate = prefs.vpnMixedPort + 1
+        while candidate < 65_535 {
+            if VpnManager.isPortFree(candidate) { break }
+            candidate += 1
+        }
+        guard candidate < 65_535 else { return }
+        prefs.vpnMixedPort = candidate
+        portDraft = String(candidate)
+        // Whatever picked the old port (including our own guard loop) must
+        // follow, or the browser/CLI traffic still points at the dead one.
+        syncSystemProxy()
+    }
+
+    /// What to tell the user: which port, who holds it, and what their options
+    /// are. ClaudeBar deliberately does not offer to kill the occupant — see
+    /// `VpnManager.portConflict` — so the wording points at the port field and
+    /// the other app instead of promising something it will not do.
+    private func portConflictMessage(_ conflict: VpnManager.PortConflict) -> String {
+        var lines: [String] = []
+        if let owner = conflict.owner {
+            lines.append("端口 \(conflict.port) 已被「\(owner)」占用，内核未启动。")
+        } else {
+            lines.append("端口 \(conflict.port) 已被占用，内核未启动。")
+        }
+        if conflict.isOurOwnCore {
+            lines.append("占用者是 ClaudeBar 自己上一次留下的内核，通常几秒内会被回收 —— 稍后重试即可。")
+        } else if conflict.port == prefs.vpnMixedPort {
+            lines.append("请退出占用该端口的代理软件，或在上面的端口框里换成另一个端口。")
+        } else {
+            lines.append("这是内核的控制端口。请退出占用它的代理软件（Clash Verge / ClashX 等）。")
+        }
+        return lines.joined(separator: "\n\n")
     }
 
     private func flagChip(_ title: String, icon: String, isOn: Binding<Bool>,
@@ -205,10 +277,10 @@ struct VPNView: View {
     private func errorLine(_ msg: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             AppGlyph(name: "exclamationmark.triangle.fill", size: 11)
-                .foregroundColor(Theme.statusError)
+                .foregroundColor(Theme.Ink.error)
             Text(msg)
                 .font(Theme.Font.caption)
-                .foregroundColor(Theme.statusError)
+                .foregroundColor(Theme.Ink.error)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, Theme.Space.s12)
@@ -220,9 +292,15 @@ struct VPNView: View {
     private var nodeGroup: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: Theme.Space.s8) {
-                sectionLabel("节点", icon: "square.grid.2x2")
+                sectionLabel(viewingLive ? "节点" : "节点预览", icon: "square.grid.2x2")
+                if let name = browsedSubscription?.name {
+                    Text(name)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
-                if manager.isRunning, let group = currentGroup {
+                if viewingLive, let group = currentGroup {
                     Button {
                         Task {
                             testingAll = true
@@ -242,23 +320,91 @@ struct VPNView: View {
                     }
                     .adaptiveGlassButton()
                     .disabled(testingAll || testingNode != nil)
-                    .help("测试当前组全部节点延迟")
+                    .help("和 Clash Verge 一样，用 http://cp.cloudflare.com/generate_204，超时 10 秒。超时表示这条节点连不上测试地址。")
                 }
             }
 
-            if !manager.isRunning {
-                emptyPanel("启动后显示节点。", icon: "globe")
-            } else if manager.groups.isEmpty {
-                emptyPanel("当前订阅没有可选分组。", icon: "square.grid.2x2")
-            } else {
-                VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    groupTabs
-                    mosaic
+            if viewingLive {
+                if manager.groups.isEmpty {
+                    emptyPanel("当前订阅没有可选分组。", icon: "square.grid.2x2")
+                } else {
+                    liveNodeCard
                 }
-                .padding(Theme.Space.s12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .panelCard()
+            } else if filePreview.groups.isEmpty && filePreview.proxyNames.isEmpty {
+                emptyPanel("这份订阅里还没有节点。点卡片上的刷新再看。", icon: "square.grid.2x2")
+            } else {
+                previewNodeCard
             }
+        }
+    }
+
+    private var liveNodeCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            groupTabs
+            mosaic
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelCard()
+    }
+
+    private var previewNodeCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            Text(browsedSubscription?.id == store.activeID
+                 ? "内核没在跑，这是配置里的节点。点「启动」后才能测速和切换出口。"
+                 : "只是查看。点「使用」才会把内核切到这份订阅。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(previewGroups) { group in
+                        let viewing = group.name == (previewGroupName ?? previewGroups.first?.name)
+                        Button { previewGroupName = group.name } label: {
+                            Text(group.name)
+                                .font(Theme.Font.caption)
+                                .foregroundColor(viewing ? Theme.textPrimary : Theme.textSecondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                        .strokeBorder(viewing ? Theme.hairline : Color.clear, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            let nodes = previewGroups.first { $0.name == (previewGroupName ?? previewGroups.first?.name) }?.nodes ?? []
+            if nodes.isEmpty {
+                Text("此分组没有节点。")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textTertiary())
+            } else {
+                LazyVGrid(columns: Theme.GridLayout.mosaic(columns: mosaicColumnCount), spacing: 1) {
+                    ForEach(Array(nodes.enumerated()), id: \.offset) { _, name in
+                        Text(name)
+                            .font(Theme.Font.bodySmall)
+                            .foregroundColor(Theme.textPrimary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                            .background(Theme.base1.opacity(0.72))
+                    }
+                }
+                .padding(1)
+                .background(Theme.hairline)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            }
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelCard()
+        .background {
+            WidthProbe()
+                .onPreferenceChange(MosaicWidthKey.self) { mosaicWidth = $0 }
         }
     }
 
@@ -339,13 +485,13 @@ struct VPNView: View {
                     HStack(spacing: 4) {
                         Text(nodeName)
                             .font(Theme.Font.bodySmall)
-                            .foregroundColor(live ? Theme.claude : Theme.textPrimary)
+                            .foregroundColor(live ? Theme.Ink.claude : Theme.textPrimary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 0)
                         if live {
                             AppGlyph(name: "checkmark", size: 10)
-                                .foregroundColor(Theme.claude)
+                                .foregroundColor(Theme.Ink.claude)
                         }
                     }
                     Text(live ? "使用中" : (remembered ? "本组记忆" : nodeMeta(proxy)))
@@ -384,7 +530,7 @@ struct VPNView: View {
                         .tint(Theme.claude)
                 } else if let delay, delay == 0 {
                     Text("超时")
-                        .foregroundColor(Theme.statusError)
+                        .foregroundColor(Theme.Ink.error)
                 } else if let delay {
                     Text("\(min(delay, 9999))")
                         .foregroundColor(delayColor(delay))
@@ -453,6 +599,34 @@ struct VPNView: View {
             let ib = preferred.firstIndex(of: b.name) ?? 1_000
             if ia != ib { return ia < ib }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    private var browsedSubscription: VpnSubscription? {
+        let id = store.browsingID ?? store.activeID
+        return store.subscriptions.first { $0.id == id }
+    }
+
+    /// Live mosaic only for the subscription the core is actually running.
+    private var viewingLive: Bool {
+        browsedSubscription?.id == store.activeID && manager.isRunning
+    }
+
+    private var previewGroups: [VpnProfilePreview.Group] {
+        if !filePreview.groups.isEmpty { return filePreview.groups }
+        guard !filePreview.proxyNames.isEmpty else { return [] }
+        return [VpnProfilePreview.Group(name: "节点", nodes: filePreview.proxyNames)]
+    }
+
+    private func reloadFilePreview() {
+        guard let id = store.browsingID ?? store.activeID else {
+            filePreview = VpnProfilePreview()
+            return
+        }
+        filePreview = store.preview(for: id)
+        let names = filePreview.groups.map(\.name)
+        if previewGroupName == nil || !names.contains(previewGroupName ?? "") {
+            previewGroupName = names.first
         }
     }
 
@@ -549,7 +723,6 @@ private struct VPNTrafficStrip: View {
             compactStat("↓累计", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: 64)
             compactStat("↑累计", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: 64)
             compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: 36)
-            Spacer(minLength: 0)
             Text(manager.coreVersion.map { "mihomo \($0)" } ?? " ")
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
@@ -650,7 +823,6 @@ private struct VPNProbeRow: View {
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
-                .frame(width: 168, alignment: .trailing)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -813,6 +985,13 @@ struct VpnSpeedChart: View {
 private struct VpnLogConsole: View {
     let lines: [String]
     @State private var copied = false
+    /// Auto-follow is a *convenience*, not a cage: it used to scroll to the
+    /// newest line unconditionally, so reading back through the log was
+    /// impossible — every new core line yanked the view to the bottom. Track
+    /// whether the user is parked at the end and only follow from there.
+    @State private var followTail = true
+
+    private static let tailTolerance: CGFloat = 24
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s6) {
@@ -821,6 +1000,15 @@ private struct VpnLogConsole: View {
                     Text("暂无日志")
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
+                } else if !followTail {
+                    Button {
+                        followTail = true
+                    } label: {
+                        Label("回到最新", systemImage: "arrow.down.to.line")
+                            .font(Theme.Font.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Theme.Ink.claude)
                 }
                 Spacer()
                 Button(copied ? "已复制" : "复制全部") {
@@ -854,9 +1042,22 @@ private struct VpnLogConsole: View {
                 .frame(height: 140)
                 .background(Theme.textTertiary().opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    let distanceFromBottom = geo.contentSize.height
+                        + geo.contentInsets.bottom
+                        - (geo.contentOffset.y + geo.containerSize.height)
+                    return distanceFromBottom <= Self.tailTolerance
+                } action: { _, atTail in
+                    followTail = atTail
+                }
                 .onChange(of: lines.count) { _, count in
-                    if count > 0 {
-                        proxy.scrollTo(count - 1, anchor: .bottom)
+                    guard followTail, count > 0 else { return }
+                    proxy.scrollTo(count - 1, anchor: .bottom)
+                }
+                .onChange(of: followTail) { _, follow in
+                    guard follow, !lines.isEmpty else { return }
+                    withAnimation(Theme.Animation.smooth) {
+                        proxy.scrollTo(lines.count - 1, anchor: .bottom)
                     }
                 }
             }

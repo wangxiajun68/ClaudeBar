@@ -56,6 +56,17 @@ final class ScreenshotHotKey: ObservableObject {
         }
     }
 
+    /// Release the Carbon hot key and the wake observer. Called at
+    /// termination — the event tap is a system-wide registration and the
+    /// observer outlives the singleton otherwise.
+    func stop() {
+        unregister()
+        if let wakeMonitor {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeMonitor)
+            self.wakeMonitor = nil
+        }
+    }
+
     func register() {
         unregister()
         installHandlerIfNeeded()

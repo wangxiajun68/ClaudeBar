@@ -49,6 +49,12 @@ struct ProxyLogEntry: Identifiable, Equatable {
     var bytesIn: Int
     var status: Int
     var error: String?
+    /// Reported by the upstream, present only when it said so. `nil` is "the
+    /// upstream never reported usage" — an interrupted stream, a gateway that
+    /// omits the field — and reads as `—`, never as a real zero.
+    var promptTokens: Int?
+    var completionTokens: Int?
+    var cacheReadTokens: Int?
 
     var isPending: Bool { endedAt == nil }
 
@@ -57,8 +63,22 @@ struct ProxyLogEntry: Identifiable, Equatable {
         return max(0, Int(end.timeIntervalSince(startedAt) * 1000))
     }
 
-    /// Single-line console form, used by the log view and copy-all.
-    var consoleLine: String {
+    /// `⌊input + output + cache⌋`, all three summed, so the number matches the
+    /// Usage page's `ModelUsage.totalTokens` for the same call. `nil` when the
+    /// upstream reported nothing.
+    var totalTokens: Int? {
+        guard promptTokens != nil || completionTokens != nil || cacheReadTokens != nil else { return nil }
+        return (promptTokens ?? 0) + (completionTokens ?? 0) + (cacheReadTokens ?? 0)
+    }
+
+    /// Single-line console form, used by the log view and copy-all: the
+    /// metadata line plus the token column.
+    var consoleLine: String { consoleBody + tokenField }
+
+    /// Everything but the token column — the log view renders the two
+    /// separately so the counts stay in their own right-hand column instead of
+    /// wrapping off a long path.
+    var consoleBody: String {
         let time = ProxyAccessLog.clock.string(from: startedAt)
         let src = source.label.padding(toLength: 6, withPad: " ", startingAt: 0)
         let kindPad = kind.label.padding(toLength: 10, withPad: " ", startingAt: 0)
@@ -76,6 +96,21 @@ struct ProxyLogEntry: Identifiable, Equatable {
         let streamBit = stream ? " sse" : ""
         let err = (error?.isEmpty == false) ? "  \(error!)" : ""
         return "\(time)  \(method.padding(toLength: 4, withPad: " ", startingAt: 0))  \(path)  \(src) \(kindPad)  \(modelBit)\(streamBit)  \(st)  \(dur)  \(size)\(err)"
+    }
+
+    /// The token column for this line, as text: `Σ 8.9万 (in …/out …/cache …)`,
+    /// or a bare `Σ …` while the call is still streaming and no usage event
+    /// has arrived. `""` — no column at all — when the call is over and the
+    /// upstream never reported usage. That is what the `—` of a checkless row
+    /// means; it is not a store of zeros.
+    var tokenField: String {
+        if let totalTokens {
+            // Typed, because `UsageStats.formatTokens` is overloaded (the
+            // style-explicit variant) and a bare reference is ambiguous.
+            let f: (Int) -> String = UsageStats.formatTokens
+            return "  Σ \(f(totalTokens)) (in \(f(promptTokens ?? 0)) / out \(f(completionTokens ?? 0)) / cache \(f(cacheReadTokens ?? 0)))"
+        }
+        return isPending ? "  Σ …" : ""
     }
 }
 
@@ -95,6 +130,8 @@ final class ProxyAccessLog: ObservableObject {
 
     private let lock = NSLock()
     private var rows: [ProxyLogEntry] = []
+    /// Streaming usage, keyed by row id — see `updateTokens`.
+    private var pendingTokens: [UInt64: TokenTotals] = [:]
     private var nextID: UInt64 = 1
     private let limit = 500
     private let iso = ISO8601DateFormatter()
@@ -142,7 +179,10 @@ final class ProxyAccessLog: ObservableObject {
             stream: stream,
             bytesIn: max(0, bytesIn),
             status: 0,
-            error: nil)
+            error: nil,
+            promptTokens: nil,
+            completionTokens: nil,
+            cacheReadTokens: nil)
         rows.append(entry)
         var dropped = 0
         if rows.count > limit {
@@ -154,7 +194,12 @@ final class ProxyAccessLog: ObservableObject {
         return ProxyLogTap(id: id, store: self)
     }
 
-    func finish(id: UInt64, status: Int, error: String?) {
+    /// Seal one line. `tokens` is the upstream's own usage report.
+    ///
+    /// Counts already handed in by `note` are used when `finish` carries none
+    /// — the sealed status does not always come from the arm that merged the
+    /// usage event, and dropping them there would silently blank the field.
+    func finish(id: UInt64, status: Int, error: String?, tokens: TokenTotals? = nil) {
         lock.lock()
         guard let idx = rows.firstIndex(where: { $0.id == id }) else {
             lock.unlock()
@@ -165,6 +210,13 @@ final class ProxyAccessLog: ObservableObject {
             lock.unlock()
             return
         }
+        let stored = pendingTokens.removeValue(forKey: id)
+        let merged = (tokens?.isEmpty == false ? tokens : nil) ?? stored
+        if let merged {
+            row.promptTokens = merged.input
+            row.completionTokens = merged.output
+            row.cacheReadTokens = merged.cacheRead
+        }
         row.endedAt = Date()
         row.status = status
         row.error = error.flatMap { Self.clip($0, 240) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -174,9 +226,25 @@ final class ProxyAccessLog: ObservableObject {
         scheduleWrite(row)
     }
 
+    /// Counts that arrived while the row was still streaming, held back until
+    /// `finish` writes the line once. Usage clusters at the end of a stream,
+    /// so this is both cheaper and what keeps the row from republishing itself
+    /// on every chunk.
+    func updateTokens(id: UInt64, tokens: TokenTotals) {
+        guard !tokens.isEmpty else { return }
+        lock.lock()
+        guard let idx = rows.firstIndex(where: { $0.id == id }), rows[idx].endedAt == nil else {
+            lock.unlock()
+            return
+        }
+        pendingTokens[id] = tokens
+        lock.unlock()
+    }
+
     func clear() {
         lock.lock()
         rows = []
+        pendingTokens = [:]
         lock.unlock()
         publish()
         ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }
@@ -293,6 +361,9 @@ final class ProxyAccessLog: ObservableObject {
             "bytesIn": row.bytesIn,
             "status": row.status,
             "error": row.error ?? "",
+            "promptTokens": row.promptTokens as Any? ?? NSNull(),
+            "completionTokens": row.completionTokens as Any? ?? NSNull(),
+            "cacheReadTokens": row.cacheReadTokens as Any? ?? NSNull(),
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
         var line = data
@@ -330,7 +401,12 @@ final class ProxyAccessLog: ObservableObject {
             error: {
                 let s = obj["error"] as? String ?? ""
                 return s.isEmpty ? nil : s
-            }())
+            }(),
+            // Absent on every line written before usage was recorded, and on
+            // lines for requests whose upstream never reported it.
+            promptTokens: (obj["promptTokens"] as? NSNumber)?.intValue,
+            completionTokens: (obj["completionTokens"] as? NSNumber)?.intValue,
+            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber)?.intValue)
     }
 
     static func clip(_ s: String, _ cap: Int) -> String {
@@ -374,7 +450,14 @@ final class ProxyLogTap {
         self.records = records
     }
 
-    func finish(status: Int, error: String? = nil) {
+    /// Fold the upstream's usage into this line. Safe to call for every event
+    /// and with `nil`; the counts are held until `finish` writes the row.
+    func note(tokens: TokenTotals?) {
+        guard records, let tokens, !tokens.isEmpty else { return }
+        store?.updateTokens(id: id, tokens: tokens)
+    }
+
+    func finish(status: Int, error: String? = nil, tokens: TokenTotals? = nil) {
         lock.lock()
         guard records, !finished else {
             lock.unlock()
@@ -382,7 +465,7 @@ final class ProxyLogTap {
         }
         finished = true
         lock.unlock()
-        store?.finish(id: id, status: status, error: error)
+        store?.finish(id: id, status: status, error: error, tokens: tokens)
     }
 
     /// Returned when third-party traffic recording is disabled.

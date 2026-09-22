@@ -84,7 +84,7 @@ struct ConnectivityTileButton: View {
         .buttonStyle(.plain)
         .disabled(outcome.state == .running)
         .help(helpText)
-        .accessibilityLabel("检测连通性")
+        .accessibilityLabel(helpText)
     }
 
     private var icon: String {
