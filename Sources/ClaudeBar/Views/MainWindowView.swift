@@ -47,6 +47,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 /// the old vertical sidebar — the 宫格 content gets the whole window width and
 /// the chrome reads as one calm strip instead of a heavy left column.
 struct MainWindowView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var prefs = AppPreferences.shared
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
@@ -196,7 +197,7 @@ struct MainWindowView: View {
     }
 
     private func navigate(to page: AppPage) {
-        if page == .traffic || selectedPage == .traffic {
+        if reduceMotion || page == .traffic || selectedPage == .traffic {
             selectedPage = page
         } else {
             withAnimation(Theme.Motion.page) {

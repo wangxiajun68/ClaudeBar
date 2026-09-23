@@ -97,20 +97,13 @@ struct InstrumentGlyph: View, Animatable {
                     fill.fill(Path(CGRect(x:9,y:15-6*amount,width:6,height:6*amount)),with:.color(ink))
                 }
             case .gpu:
-                box(4,5,11,11,track,fill:true,radius:3)
-                box(9+phase,10-phase,11,11,ink,radius:3)
-                line([CGPoint(x:4,y:12),CGPoint(x:4,y:5),CGPoint(x:11,y:5)],ink)
+                LucideHardwarePaths.drawGPU(in: &c, tint: ink, level: amount, detailed: detailed)
             case .memory:
-                // Three uninterrupted banks replace the tiny chip-and-pin matrix.
-                for i in 0..<3 {
-                    let x = CGFloat(5+i*5)
-                    box(x,5,3,14,track,fill:true,radius:1.5)
-                    let fraction = detailed ? min(1,max(0,amount*3-Double(i))) : 1
-                    if fraction > 0 {
-                        var fill = c
-                        fill.clip(to:Path(roundedRect:CGRect(x:x,y:5,width:3,height:14),cornerRadius:1.5))
-                        fill.fill(Path(CGRect(x:x,y:19-14*fraction,width:3,height:14*fraction)),with:.color(ink.opacity(detailed ? 0.8 : 1)))
-                    }
+                box(2,6,20,11,ink,radius:2)
+                box(5,9,5,5,track,fill:true,radius:1)
+                box(13,9,5,5,track,fill:true,radius:1)
+                for x in [CGFloat(5),8,11,16,19] {
+                    line([CGPoint(x:x,y:17),CGPoint(x:x,y:20)],ink)
                 }
             case .disk:
                 box(5,3.5,14,17,ink,radius:4)
@@ -165,17 +158,7 @@ struct InstrumentGlyph: View, Animatable {
                 circle(5.7,17,1.1,ink.opacity(0.75),fill:true)
                 circle(18.3,17,1.1,ink.opacity(0.42),fill:true)
             case .vpn:
-                var shield = Path()
-                shield.move(to:CGPoint(x:12,y:3))
-                shield.addQuadCurve(to:CGPoint(x:19,y:6),control:CGPoint(x:16,y:5))
-                shield.addLine(to:CGPoint(x:19,y:11))
-                shield.addCurve(to:CGPoint(x:12,y:21),control1:CGPoint(x:19,y:16),control2:CGPoint(x:16,y:19))
-                shield.addCurve(to:CGPoint(x:5,y:11),control1:CGPoint(x:8,y:19),control2:CGPoint(x:5,y:16))
-                shield.addLine(to:CGPoint(x:5,y:6))
-                shield.addQuadCurve(to:CGPoint(x:12,y:3),control:CGPoint(x:8,y:5))
-                c.stroke(shield,with:.color(ink),style:stroke)
-                if active { line([CGPoint(x:9,y:12),CGPoint(x:11,y:14),CGPoint(x:15,y:10)],ink) }
-                else { line([CGPoint(x:9,y:12),CGPoint(x:15,y:12)],ink) }
+                LucideHardwarePaths.drawVPN(in: &c, tint: ink, active: active)
             case .battery:
                 box(3,7,16,10,ink,radius:3)
                 line([CGPoint(x:22,y:10),CGPoint(x:22,y:14)],ink)

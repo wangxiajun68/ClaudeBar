@@ -12,6 +12,8 @@
 
 `Sources/build.sh` 是**开发者与 CI 脚本**，不是面向用户的安装器。用户不应需要 clone 仓库或运行 shell 脚本来安装应用。
 
+Release 说明由 [`Sources/ci/extract-changelog.py`](../Sources/ci/extract-changelog.py) 从 CHANGELOG 里切出对应版本段拼成。它是独立文件而非内联 heredoc——`<<'PY'` 的正文必须顶到列 0 才能不被缩进，那会提前终止 `run:` 块标量、让整个 workflow 解析失败。
+
 ## 发行物
 
 打 tag 后 CI 自动上传：
@@ -60,6 +62,14 @@ git push origin "v${VERSION}"
 
 不要用 `v1.8` 这类短 tag，也不要移动已发布的 tag。
 
+**本地预检**（省一次失败的发版）：
+
+```bash
+make test                                       # 源码切片回归
+make package                                    # 确认 DMG/zip 能产出
+python3 Sources/ci/extract-changelog.py "$(tr -d '[:space:]' < VERSION)" | head
+```
+
 ## 手动触发
 
-Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，**不会**创建 GitHub Release（那一步仅在 `v*` tag 上跑）。
+Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，**不会**创建 GitHub Release（那一步仅在 `v*` tag 上跑）。这也是唯一不消耗版本号的端到端验证方式——它会把打包与（除 `gh release create` 之外的）全部步骤真跑一遍。

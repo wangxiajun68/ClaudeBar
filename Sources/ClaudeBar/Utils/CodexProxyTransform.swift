@@ -720,11 +720,12 @@ enum CodexProxyTransform {
                     guard let childName = child["name"] as? String, !childName.isEmpty else { continue }
                     var f = child
                     f["type"] = "function"
-                    f["name"] = ToolRegistry.flatten(ns: ns, child: childName)
+                    let flattenedName = ToolRegistry.flatten(ns: ns, child: childName)
+                    f["name"] = flattenedName
                     f.removeValue(forKey: "defer_loading")
                     f.removeValue(forKey: "output_schema")
                     if f["parameters"] == nil { f["parameters"] = ["type": "object", "properties": [:]] }
-                    registry.register(flat: f["name"] as! String, ns: ns, name: childName)
+                    registry.register(flat: flattenedName, ns: ns, name: childName)
                     appendTool(f)
                 }
             case "function":

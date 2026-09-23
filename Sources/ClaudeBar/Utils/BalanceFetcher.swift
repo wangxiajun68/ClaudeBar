@@ -19,24 +19,16 @@ struct BalanceFetcher {
         return host == "api.deepseek.com"
     }
 
-    /// Fetch DeepSeek balance. Returns nil for non-DeepSeek URLs or on failure.
+    /// Fetch the official account balance; unsupported hosts and failed requests return nil.
     static func fetch(authToken: String, baseURL: String) async -> BalanceResult? {
-        // Only fetch for DeepSeek — match on the URL host so a misconfigured
-        // baseURL like `https://deepseek-proxy.evil.com/` can't trick us into
-        // sending the auth token to an unintended host (a plain `.contains`
-        // would). Verify the host before constructing the request URL.
-        guard !authToken.isEmpty,
-              let base = URL(string: baseURL),
-              let host = base.host?.lowercased(),
-              supports(baseURL) else { return nil }
-
-        guard let url = URL(string: "https://api.deepseek.com/user/balance"),
-              url.host?.lowercased() == host else { return nil }
+        let token = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty, supports(baseURL),
+              let url = URL(string: "https://api.deepseek.com/user/balance") else { return nil }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 5
 
         do {

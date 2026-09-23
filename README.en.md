@@ -102,3 +102,5 @@ make build
 ## License
 
 [MIT](LICENSE)
+
+UI icons come from [Lucide](https://lucide.dev) (ISC), shipped inside the app as `Resources/Lucide.txt`. The VPN core, [mihomo](https://github.com/MetaCubeX/mihomo), is a sidecar downloaded at build time and is not committed.

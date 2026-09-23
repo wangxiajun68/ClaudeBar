@@ -32,10 +32,10 @@ ClaudeBar/
 │   │   │   ├── UsageStats.swift / ProcessSampler.swift / …
 │   │   │   └── …
 │   │   └── Views/
-│   │       ├── MainWindowView.swift      ← NavigationSplitView（sidebar 7 项）
+│   │       ├── MainWindowView.swift      ← 顶栏 tabs + detail（8 页）
 │   │       ├── MenuBarView.swift         ← popup 组合壳
-│   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Usage / Traffic / VPN / Settings
-│   │       ├── Shared/                  ← Tile / UsageBar / VpnTopChrome / FanControlSection / …
+│   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Usage / Traffic / VPN / Settings / Help
+│   │       ├── Shared/                  ← Tile / ConnectionCard / VpnTopChrome / FanControlSection / …
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
 │   └── Widget/
 ├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载
@@ -44,7 +44,8 @@ ClaudeBar/
 │   ├── design/                           ← 产品设计文档（本目录）
 │   ├── technical/
 │   └── CHANGELOG.md
-├── Makefile                              ← 薄封装，调用 Sources/build.sh
+├── Makefile                              ← 薄封装，调用 Sources/build.sh（`make test` 跑 Tests/）
+├── Tests/                                ← 源码切片回归（Python + 临时 swiftc）
 └── .build/                               ← 本地构建产物（gitignore）
     ├── ClaudeBar.app                     ← 编译输出
     └── dist/                             ← 发版产物（仅 CLAUDEBAR_PACKAGE=1）
@@ -62,11 +63,12 @@ ClaudeBar/
 | `bash Sources/build.sh` | 编译 → ad-hoc 签名 → 安装到 `/Applications/ClaudeBar.app` |
 | `CLAUDEBAR_SKIP_INSTALL=1` | 仅编译，产出 `.build/ClaudeBar.app`（CI 默认） |
 | `CLAUDEBAR_PACKAGE=1` | 额外打包 `.build/dist/*.dmg`、`.zip` 及 `.sha256` 校验和 |
-| `CLAUDEBAR_PACKAGE=1` | 额外打包 `.build/dist/*.dmg`、`.zip` 及 `.sha256` 校验和 |
 | `MACOS_MIN` | 部署目标，默认 `15.0` → `arm64-apple-macos15.0` |
 | `MIHOMO_SKIP_DOWNLOAD=1` | 不下载 mihomo，使用 `vendor/mihomo/mihomo`（若存在） |
 
 脚本通过 `find … -name "*.swift"` 自动发现源文件，用 `swiftc` 编译主 app 与 Widget 扩展，无 Xcode 工程依赖。
+
+因为编译靠 glob，脚本在签名前会**断言关键源文件存在**（`Models/WidgetSnapshot.swift`、`Theme/Theme.swift`、Widget 侧同名的符号链接指向同一 inode 等）：漏一个文件只会静默少编译一个功能，不会报错。
 
 ## 构建产物
 

@@ -21,7 +21,7 @@
 | `Utils/ScreenshotHotKey.swift` | Carbon 全局 ⌘⇧A |
 | `Utils/ScreenshotOverlay.swift` | ScreenCaptureKit 拉框截图 |
 | `Theme/Theme.swift` | 设计 token + `Theme.Ink`（作文字用的信号色，≥4.5:1） |
-| `Views/MainWindowView.swift` | 7 页 `AppPage`；流量页常驻 |
+| `Views/MainWindowView.swift` | 8 页 `AppPage`；顶栏 tabs；流量页常驻 |
 | `Views/MenuBarView.swift` | popup 壳：Header + ResourceStrip + 三区 |
 | `Views/Pages/VPNView.swift` | VPN 主界面 |
 | `Views/Shared/VpnTopChrome.swift` | `VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle` |
@@ -29,5 +29,7 @@
 | `Views/Shared/FanControlSection.swift` | 设置页风扇 |
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理：CC/Codex 只读 + 第三方上游选择 |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
+| `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
+| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网 |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo |

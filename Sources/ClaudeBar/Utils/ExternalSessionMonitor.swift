@@ -104,19 +104,13 @@ struct ExternalSessionMonitor {
 
     // MARK: Codex
 
-    /// Codex writes rollout JSONLs under `~/.codex/sessions/YYYY/MM/DD/`:
-    /// `rollout-<ts>-<uuid>.jsonl`. Line 1 is `session_meta` (cwd), and
-    /// `turn_context` records carry the model. The transcript filename
-    /// embeds the session UUID.
-    /// Parsed head/tail fields for one rollout file, keyed by mtime+size.
-    /// The 32 KB head read + 48 KB tail read + JSON scan ran for every file
-    /// inside the 30-day window on every 2.5s poll, even though a file being
-    /// appended to keeps everything before its last line unchanged. An
-    /// untouched file now costs one `attributesOfItem` call.
+    /// Parsed rollout fields cached by mtime and size. Unchanged files require
+    /// only a metadata check; modified files receive bounded head/tail reads.
     private struct CodexFileCache {
         var mtime: TimeInterval
         var size: Int
         var cwd: String
+        var metadataKnown: Bool
         var model: String
         var contextUsed: Int
         var contextLimit: Int
@@ -164,7 +158,7 @@ struct ExternalSessionMonitor {
                         let path = "\(dayPath)/\(file)"
                         guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
                         let parsed = codexFields(path: path, meta: meta)
-                        guard parsed.parentThreadId == nil, parsed.threadSource != "subagent",
+                        guard parsed.metadataKnown, parsed.parentThreadId == nil, parsed.threadSource != "subagent",
                               parsed.spawnDepth == 0 else { continue }
                         // `task_complete` is the authoritative end of a Codex
                         // task, including dispatched sub-agents. Old rollout
@@ -295,17 +289,15 @@ struct ExternalSessionMonitor {
         let entry = CodexFileCache(
             mtime: meta.mtime,
             size: meta.size,
-            cwd: head.field(forKey: "\"cwd\":\""),
-            // Prefer the turn_context model; fall back to any "model"
-            // occurrence (session_meta has none, turn_context always
-            // appears within the first turns).
-            model: head.field(forKey: "\"model\":\""),
+            cwd: spawn?.cwd ?? "",
+            metadataKnown: spawn != nil,
+            model: ctx.model.isEmpty ? headModel(in: head) : ctx.model,
             contextUsed: ctx.used,
             contextLimit: ctx.limit,
-            parentThreadId: spawn.parentThreadId,
-            threadSource: spawn.threadSource,
-            agentNickname: spawn.nickname,
-            spawnDepth: spawn.depth,
+            parentThreadId: spawn?.parentThreadId,
+            threadSource: spawn?.threadSource ?? "",
+            agentNickname: spawn?.nickname ?? "",
+            spawnDepth: spawn?.depth ?? 0,
             hasOpenTask: ctx.hasOpenTask)
         codexCacheLock.lock()
         codexFileCache[path] = entry
@@ -313,39 +305,32 @@ struct ExternalSessionMonitor {
         return entry
     }
 
-    /// Parent/child fields from the head's **first** `session_meta` record —
-    /// line 1 of every rollout, and the only record that carries the parent
-    /// link. A sub-agent rollout embeds its parent's own `session_meta` as
-    /// line 2, so this looks **only** at line 1: scanning onward for
-    /// `session_meta` would find the parent's record and mistake a sub-agent
-    /// for a user session.
-    ///
-    /// The record can exceed the 32 KB head read (`base_instructions` are
-    /// large), in which case it fails to parse and the file reads as a user
-    /// session — the same fallback the cwd/model scans already take.
-    private static func codexSpawnInfo(head: String) -> (parentThreadId: String?, threadSource: String, nickname: String, depth: Int) {
-        let empty: (parentThreadId: String?, threadSource: String, nickname: String, depth: Int) = (nil, "", "", 0)
+    /// Only the first session_meta identifies this rollout; later records may
+    /// contain copied parent metadata. Invalid metadata is never evidence of a root.
+    private static func codexSpawnInfo(head: String) -> (cwd: String, parentThreadId: String?, threadSource: String, nickname: String, depth: Int)? {
         guard let firstLine = head.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first,
               firstLine.contains("\"session_meta\""),
               let data = firstLine.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               obj["type"] as? String == "session_meta",
-              let payload = obj["payload"] as? [String: Any] else { return empty }
+              let payload = obj["payload"] as? [String: Any] else { return nil }
 
-        let threadSource = (payload["thread_source"] as? String) ?? ""
+        var threadSource = (payload["thread_source"] as? String) ?? ""
+        if let source = payload["source"] as? [String: Any], source["subagent"] != nil {
+            threadSource = "subagent"
+        }
         var nickname = (payload["agent_nickname"] as? String) ?? ""
         var depth = 0
         var parent = payload["parent_thread_id"] as? String
         if let source = payload["source"] as? [String: Any],
            let subagent = source["subagent"] as? [String: Any],
            let threadSpawn = subagent["thread_spawn"] as? [String: Any] {
-            if let d = threadSpawn["depth"] as? Int { depth = d }
-            else if let d = threadSpawn["depth"] as? Double { depth = Int(d) }
+            depth = JSONCoerce.intVal(threadSpawn["depth"])
             if nickname.isEmpty, let n = threadSpawn["agent_nickname"] as? String { nickname = n }
             if parent == nil, let p = threadSpawn["parent_thread_id"] as? String { parent = p }
         }
         if parent?.isEmpty == true { parent = nil }
-        return (parent, threadSource, nickname, depth)
+        return (payload["cwd"] as? String ?? "", parent, threadSource, nickname, depth)
     }
 
     // MARK: Helpers
@@ -362,50 +347,52 @@ struct ExternalSessionMonitor {
         return (t, size)
     }
 
-    /// Bounded head read of a JSONL file, returned as a String. Only the
-    /// first records are needed (session_meta / turn_context / model_change
-    /// all appear at the top of the file), so we never read the full
-    /// transcript.
+    /// Read enough for the first metadata record, bounded at 2 MiB. The initial
+    /// chunk also supplies early turn_context records when metadata is small.
     private static func readHead(path: String, bytes: Int) -> String {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return "" }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: bytes),
-              let s = String(data: data, encoding: .utf8) else { return "" }
-        return s
+        var data = Data()
+        while data.count < 2 * 1024 * 1024 {
+            guard let chunk = try? handle.read(upToCount: min(bytes, 2 * 1024 * 1024 - data.count)),
+                  !chunk.isEmpty else { break }
+            data.append(chunk)
+            if data.contains(0x0A) { break }
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
-    /// Tail `token_count` — `last_token_usage.total_tokens` vs `model_context_window`.
-    /// Latest window fill from the tail of a rollout.
-    ///
-    /// Two things this has to get right, both learned from the real corpus:
-    ///
-    /// 1. **`last_token_usage`, not `total_token_usage`.** The monitor used to
-    ///    read `total_token_usage.total_tokens` as "context used". That field
-    ///    is the thread's *cumulative billing* total — it keeps growing across
-    ///    the whole session (measured up to 201 M against a 475 k window) — so
-    ///    every long session reported a context ratio far past 100 %. The
-    ///    window fill is `last_token_usage.total_tokens`, exactly as
-    ///    `UsageIndex.parseCodex` reads it; this now matches
-    ///    (`used ≤ limit` on 255/257 files, the other two are at 100 %).
-    /// 2. **Lossy decode.** The tail read starts at an arbitrary byte offset,
-    ///    so the first character is usually a split multi-byte sequence and
-    ///    strict UTF-8 decoding of the whole window fails — which silently
-    ///    discarded the newest lines on 59 of 291 local rollouts. Decode
-    ///    lossily and let the first (partial) line fail to parse.
-    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?) {
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil) }
+    private static func headModel(in head: String) -> String {
+        for line in head.split(separator: "\n") {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  object["type"] as? String == "turn_context",
+                  let payload = object["payload"] as? [String: Any],
+                  let model = payload["model"] as? String else { continue }
+            return model
+        }
+        return ""
+    }
+
+    /// Bounded tail parsing tracks lifecycle and current-turn usage. Partial
+    /// first lines are ignored; cumulative billing is only a fallback.
+    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String) {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "") }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(48_000, size))
-        guard let data = try? handle.readToEnd() else { return (0, 0, nil) }
+        guard let data = try? handle.readToEnd() else { return (0, 0, nil, "") }
         let text = String(decoding: data, as: UTF8.self)
         var used = 0, limit = 0
+        var model = ""
         var hasOpenTask: Bool?
         for line in text.split(separator: "\n") {
-            guard line.contains("\"type\":\"event_msg\""),
-                  let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  obj["type"] as? String == "event_msg",
-                  let payload = obj["payload"] as? [String: Any],
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let payload = object["payload"] as? [String: Any] else { continue }
+            if object["type"] as? String == "turn_context" {
+                if let current = payload["model"] as? String { model = current }
+                continue
+            }
+            guard object["type"] as? String == "event_msg",
                   let eventType = payload["type"] as? String else { continue }
             if eventType == "task_started" {
                 hasOpenTask = true
@@ -417,8 +404,7 @@ struct ExternalSessionMonitor {
             }
             guard eventType == "token_count",
                   let info = payload["info"] as? [String: Any] else { continue }
-            if let w = info["model_context_window"] as? Int { limit = w }
-            else if let w = info["model_context_window"] as? Double { limit = Int(w) }
+            if info["model_context_window"] != nil { limit = max(0, JSONCoerce.intVal(info["model_context_window"])) }
             if let last = info["last_token_usage"] as? [String: Any] {
                 let total = JSONCoerce.intVal(last["total_tokens"])
                 let input = JSONCoerce.intVal(last["input_tokens"])
@@ -431,21 +417,6 @@ struct ExternalSessionMonitor {
                 used = limit > 0 ? min(total, limit) : total
             }
         }
-        return (used, limit, hasOpenTask)
-    }
-}
-
-// MARK: - Head-field extraction
-
-private extension String {
-    /// Value of the first `"key":"value"` occurrence in the head — a cheap
-    /// prefix scan instead of parsing every JSONL record. Values are untyped
-    /// path/model strings; escaped quotes inside them are impossible for
-    /// cwd/model shapes these tools write.
-    func field(forKey key: String) -> String {
-        guard let r = range(of: key) else { return "" }
-        let after = self[r.upperBound...]
-        guard let q = after.firstIndex(of: "\"") else { return "" }
-        return String(after[..<q])
+        return (max(0, used), limit, hasOpenTask, model)
     }
 }

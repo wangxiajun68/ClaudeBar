@@ -8,7 +8,7 @@ struct UsageView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s16) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
 
                 VStack(alignment: .leading, spacing: Theme.Space.s12) {

@@ -141,16 +141,3 @@ struct SoftRotor: View {
         .onReceive(UIWakePolicy.changes) { windowVisible = UIWakePolicy.shouldAnimate }
     }
 }
-
-
-/// A restrained chip silhouette with a single continuous load fill.
-struct CPUChip: View {
-    var load: Double
-    var tint: Color = Theme.chartGreen
-
-    var body: some View {
-        InstrumentGlyph(kind: .cpu, tint: tint, level: load, detailed: true)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("CPU 负载 \(Int((load * 100).rounded()))%")
-    }
-}

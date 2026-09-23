@@ -87,10 +87,6 @@ enum VpnSystemProxyController {
         return "系统代理已写入 127.0.0.1:\(port)（\(services.count) 个服务\(failed > 0 ? "，失败 \(failed)" : "")，回读 \(ok ? "成功" : "失败")）"
     }
 
-    static func isOurHTTPProxyEnabled(port: Int) -> Bool {
-        isOurHTTPProxyEnabledNow(port: port)
-    }
-
     nonisolated static func isOurHTTPProxyEnabledNow(port: Int) -> Bool {
         let portStr = "\(port)"
         for service in preferredServices() {

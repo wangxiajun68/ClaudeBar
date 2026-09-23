@@ -9,6 +9,9 @@ struct ProvidersView: View {
     @State private var showEditor = false
     @State private var editorFocusProviderID: UUID?
     @State private var confirmRestore = false
+    @State private var query = ""
+    @State private var onlyActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var stackNS
     @AppStorage("providersStack") private var stackRaw = "claude"
 
@@ -58,14 +61,17 @@ struct ProvidersView: View {
     private var gridPage: some View {
         VStack(alignment: .leading, spacing: 0) {
             gridHeader
+            workbench
             HairlineDivider()
-            grid
+            if noMatches {
+                ContentUnavailableView("没有匹配的配置", systemImage: "magnifyingglass", description: Text("试试其他关键词，或关闭“仅当前”。"))
+            } else { grid }
         }
     }
 
     private var gridHeader: some View {
         HStack(alignment: .center, spacing: Theme.Space.s12) {
-            PageTitle(title: "模型")
+            PageTitle(title: "模型工作台")
             stackSwitch
             Spacer(minLength: Theme.Space.s8)
             Button {
@@ -104,7 +110,7 @@ struct ProvidersView: View {
                     selected: stack == s,
                     namespace: stackNS
                 ) {
-                    withAnimation(Theme.Animation.snappy) { stackRaw = s.rawValue }
+                    withAnimation(reduceMotion ? nil : Theme.Animation.snappy) { stackRaw = s.rawValue }
                 }
             }
         }
@@ -163,60 +169,62 @@ struct ProvidersView: View {
         }
     }
 
-    /// Distinctive product marks — asterisk vs blossom — so the two chips
-    /// don't rely on Theme.codex grey to tell them apart.
     private struct StackProductMark: View {
         let stack: Stack
-
         var body: some View {
-            Group {
-                if stack == .claude {
-                    ClaudeAsterisk()
-                } else {
-                    CodexBlossom()
+            ProductBrandMark(codex: stack == .codex).frame(width: 22, height: 22)
+        }
+    }
+
+    private var noMatches: Bool {
+        if stack == .claude {
+            return !providerStore.providers.isEmpty && !providerStore.providers.contains { matches($0, activeID: providerStore.activeProviderID) }
+        }
+        return !codexStore.providers.isEmpty && !codexStore.providers.contains { matches($0.asDisplayProvider, activeID: codexStore.activeProviderID) }
+    }
+
+    private var activeName: String {
+        if stack == .claude {
+            return providerStore.providers.first { $0.id == providerStore.activeProviderID }?.name ?? "官方 / 未选择"
+        }
+        return codexStore.providers.first { $0.id == codexStore.activeProviderID }?.name ?? "官方 / 未选择"
+    }
+
+    private var workbench: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 16) {
+                ProductBrandMark(codex: stack == .codex).frame(width: 60, height: 60)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(stack.label).font(Theme.Font.displayHero)
+                    Text("当前连接 · " + activeName).font(Theme.Font.chromeEmph).foregroundColor(stack.ink)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("选择模型即可切换").font(Theme.Font.chrome)
+                    Text("供应商设置与连通性检测集中在卡片中")
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                 }
             }
-            .frame(width: 16, height: 16)
-            .accessibilityHidden(true)
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundColor(Theme.textSecondary)
+                    TextField("搜索供应商或模型", text: $query).textFieldStyle(.plain)
+                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain) }
+                }.padding(10).background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 10))
+                Toggle("仅当前", isOn: $onlyActive).toggleStyle(.checkbox)
+            }
         }
+        .padding(20)
+        .background(stack.tint.opacity(0.055), in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(stack.tint.opacity(0.16), lineWidth: 1))
+        .padding(.horizontal, 24).padding(.bottom, 18)
     }
 
-    private struct ClaudeAsterisk: Shape {
-        func path(in rect: CGRect) -> Path {
-            var path = Path()
-            let c = CGPoint(x: rect.midX, y: rect.midY)
-            let outer = min(rect.width, rect.height) / 2
-            let inner = outer * 0.16
-            let halfW = outer * 0.17
-            for i in 0..<8 {
-                let a = CGFloat(i) * .pi / 4
-                let dx = cos(a), dy = sin(a)
-                let px = -dy, py = dx
-                path.move(to: CGPoint(x: c.x + dx * outer, y: c.y + dy * outer))
-                path.addLine(to: CGPoint(x: c.x + dx * outer * 0.42 + px * halfW, y: c.y + dy * outer * 0.42 + py * halfW))
-                path.addLine(to: CGPoint(x: c.x + dx * inner + px * halfW * 0.25, y: c.y + dy * inner + py * halfW * 0.25))
-                path.addLine(to: CGPoint(x: c.x + dx * inner - px * halfW * 0.25, y: c.y + dy * inner - py * halfW * 0.25))
-                path.addLine(to: CGPoint(x: c.x + dx * outer * 0.42 - px * halfW, y: c.y + dy * outer * 0.42 - py * halfW))
-                path.closeSubpath()
-            }
-            return path
-        }
-    }
-
-    private struct CodexBlossom: Shape {
-        func path(in rect: CGRect) -> Path {
-            var path = Path()
-            let c = CGPoint(x: rect.midX, y: rect.midY)
-            let r = min(rect.width, rect.height) / 2
-            let orbit = r * 0.38
-            let petal = r * 0.34
-            for i in 0..<6 {
-                let a = CGFloat(i) * .pi / 3 - .pi / 2
-                let p = CGPoint(x: c.x + cos(a) * orbit, y: c.y + sin(a) * orbit)
-                path.addEllipse(in: CGRect(x: p.x - petal, y: p.y - petal, width: petal * 2, height: petal * 2))
-            }
-            return path
-        }
+    private func matches(_ provider: Provider, activeID: UUID?) -> Bool {
+        guard !onlyActive || provider.id == activeID else { return false }
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return needle.isEmpty || provider.name.localizedCaseInsensitiveContains(needle)
+            || provider.models.contains { $0.name.localizedCaseInsensitiveContains(needle) }
     }
 
     @ViewBuilder private var grid: some View {
@@ -232,8 +240,8 @@ struct ProvidersView: View {
             emptyState(stack: .claude)
         } else {
             ScrollView {
-                TileGrid(.pageProvider) {
-                    ForEach(providerStore.providers) { provider in
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), alignment: .top)], alignment: .leading, spacing: 16) {
+                    ForEach(providerStore.providers.filter { matches($0, activeID: providerStore.activeProviderID) }) { provider in
                         ProviderTile(
                             provider: provider,
                             isActive: provider.id == providerStore.activeProviderID,
@@ -254,7 +262,8 @@ struct ProvidersView: View {
                                     model: Self.modelToTest(provider, envModel: providerStore.currentEnv?.ANTHROPIC_MODEL),
                                     codex: nil)
                             },
-                            accent: Theme.claude, accentInk: Theme.Ink.claude
+                            accent: Theme.claude, accentInk: Theme.Ink.claude,
+                            startsExpanded: true
                         )
                     }
                 }
@@ -271,8 +280,8 @@ struct ProvidersView: View {
             emptyState(stack: .codex)
         } else {
             ScrollView {
-                TileGrid(.pageProvider) {
-                    ForEach(codexStore.providers) { provider in
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), alignment: .top)], alignment: .leading, spacing: 16) {
+                    ForEach(codexStore.providers.filter { matches($0.asDisplayProvider, activeID: codexStore.activeProviderID) }) { provider in
                         ProviderTile(
                             provider: provider.asDisplayProvider,
                             isActive: provider.id == codexStore.activeProviderID,
@@ -295,7 +304,8 @@ struct ProvidersView: View {
                                     },
                                     codex: provider)
                             },
-                            accent: Theme.codex, accentInk: Theme.Ink.codex
+                            accent: Theme.codex, accentInk: Theme.Ink.codex,
+                            startsExpanded: true
                         )
                     }
                 }

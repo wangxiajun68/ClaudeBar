@@ -125,15 +125,17 @@ final class CodexProviderStore: ObservableObject {
         if changed || diskHadMax || tomlHadMax { reactivateActive() }
     }
 
-    func save() {
-        let file = CodexProvidersFile(providers: providers, activeProviderID: activeProviderID, activeKey: activeKey)
-        guard let data = try? JSONEncoder().encode(file) else { return }
-        try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
-        try? data.write(to: FilePaths.codexProvidersFile, options: .atomic)
-        // Holds every Codex provider's `apiKey`. `.atomic` replaces the inode,
-        // so re-apply 0600 after each write.
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: FilePaths.codexProvidersFile.path)
+    @discardableResult
+    func save() -> Bool {
+        do {
+            let data = try JSONEncoder().encode(CodexProvidersFile(providers: providers, activeProviderID: activeProviderID, activeKey: activeKey))
+            try FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
+            try PrivateFileWriter.write(data, to: FilePaths.codexProvidersFile)
+            return true
+        } catch {
+            errorMessage = "保存供应商失败：\(error.localizedDescription)"
+            return false
+        }
     }
 
     // MARK: - Local routing proxy
@@ -422,10 +424,16 @@ final class CodexProviderStore: ObservableObject {
         save()
     }
 
-    func updateProvider(_ provider: CodexProvider) {
-        guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else { return }
-        providers[idx] = provider
-        save()
+    @discardableResult
+    func updateProvider(_ provider: CodexProvider) -> Bool {
+        guard let index = providers.firstIndex(where: { $0.id == provider.id }) else { return false }
+        let previous = providers[index]
+        providers[index] = provider
+        guard save() else {
+            providers[index] = previous
+            return false
+        }
+        return true
     }
 
     func deleteProvider(_ provider: CodexProvider) {

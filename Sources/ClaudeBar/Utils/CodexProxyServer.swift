@@ -1203,10 +1203,6 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
-    private func writeRaw(_ connection: NWConnection, data: Data) {
-        Task { await write(connection, data: data) }
-    }
-
     private func respond(_ connection: NWConnection, status: String, contentType: String, body: Data) async {
         let head = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
         await write(connection, data: Data(head.utf8) + body)

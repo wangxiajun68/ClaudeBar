@@ -18,19 +18,19 @@ struct SupplierBalanceCard: View {
                         .accessibilityHidden(true)
                 }
                 if entries.isEmpty {
-                    Text("未配置可查询的供应商")
+                    Text(loading ? "正在查询余额…" : "暂无可用余额")
                         .font(Theme.Font.bodySmall)
-                    Text("支持 DeepSeek 官方 API，需填写 API Key。")
+                    Text(loading ? "等待供应商响应" : "支持 DeepSeek 官方 API；点击重新查询。")
                         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                 } else {
                     ForEach(entries) { entry in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text(entry.name).font(Theme.Font.chromeEmph).lineLimit(1)
                             Spacer(minLength: 4)
-                            Text(entry.amount ?? (entry.failed ? "获取失败，点击重试" : "获取中…"))
-                                .font(entry.amount == nil ? Theme.Font.caption : Theme.Font.tileValueSmall)
+                            Text(entry.amount)
+                                .font(Theme.Font.tileValueSmall)
                                 .monospacedDigit()
-                                .foregroundColor(entry.failed ? Theme.Ink.error : Theme.textPrimary)
+                                .foregroundColor(Theme.textPrimary)
                         }
                     }
                 }

@@ -1,29 +1,16 @@
 import Foundation
 
-/// Shared JSON coercion helpers. `Any` values read from `JSONSerialization`
-/// can arrive as `Int`, `NSNumber`, or numeric `String` depending on the
-/// source document, so every consumer needs the same fallback chain.
-///
-/// Missing/uncoercible values intentionally coerce to 0: token counters and
-/// line indices are additive, and treating absence as zero preserves the
-/// running sums; an optional-based API would just push the defaulting onto
-/// every caller.
+/// Numeric JSON counters. Missing, invalid and out-of-range values become zero.
 enum JSONCoerce {
-    /// Coerce a JSON number (Int / Int64 / Double / NSNumber / numeric String) to Int64.
-    static func int64Val(_ v: Any?) -> Int64 {
-        if let n = v as? Int64 { return n }
-        if let n = v as? Int { return Int64(n) }
-        if let n = v as? Double { return Int64(n) }
-        if let n = v as? NSNumber { return n.int64Value }
-        if let s = v as? String, let n = Int64(s) { return n }
-        return 0
+    static func int64Val(_ value: Any?) -> Int64 {
+        if let number = value as? Int64 { return number }
+        if let text = value as? String { return Int64(text) ?? 0 }
+        guard let number = value as? Double, number.isFinite,
+              number >= Double(Int64.min), number < Double(Int64.max) else { return 0 }
+        return Int64(number)
     }
 
-    /// Coerce a JSON number (Int / NSNumber / numeric String) to Int.
-    static func intVal(_ v: Any?) -> Int {
-        if let n = v as? Int { return n }
-        if let n = v as? NSNumber { return n.intValue }
-        if let s = v as? String, let n = Int(s) { return n }
-        return 0
+    static func intVal(_ value: Any?) -> Int {
+        Int(exactly: int64Val(value)) ?? 0
     }
 }

@@ -106,6 +106,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR"
 RESOURCES_DIR="$CONTENTS/Resources"
 mkdir -p "$RESOURCES_DIR"
+cp "$PROJECT_DIR/Sources/Licenses/Lucide.txt" "$RESOURCES_DIR/Lucide.txt"
 
 # Copy app icon
 ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon.icns"
@@ -195,6 +196,7 @@ swiftc -O -whole-module-optimization \
     -o "$MACOS_DIR/$APP_NAME" \
     -sdk "$SDK_PATH" \
     -target "$MACOS_TARGET" \
+    -framework Metal \
     -framework SwiftUI \
     -framework AppKit \
     -framework WidgetKit \
@@ -203,6 +205,7 @@ swiftc -O -whole-module-optimization \
     -framework IOKit \
     -framework Carbon \
     -framework ScreenCaptureKit \
+    -framework CoreLocation \
     -framework CoreWLAN \
     -framework IOBluetooth \
     -framework ServiceManagement \
@@ -247,6 +250,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <string>区域截图需要屏幕录制权限，用于将选中区域复制到剪贴板。</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>用于在资源条中显示蓝牙开关状态。</string>
+    <key>NSLocationUsageDescription</key>
+    <string>用于显示当前 Wi-Fi 网络名称，不采集地理位置。</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>用于在连接卡片中显示当前 Wi-Fi 网络名称与信号强度。macOS 将 Wi-Fi 名称视为可用于定位的信息，因此读取它需要此授权；ClaudeBar 只读取名称与信号，不会定位。</string>
     <key>CFBundleIconFile</key>
@@ -370,6 +375,8 @@ cat > "$ENT_DIR/app.plist" << 'AENT'
         <string>com.claudebar.app.widget</string>
     </array>
     <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.personal-information.location</key>
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>

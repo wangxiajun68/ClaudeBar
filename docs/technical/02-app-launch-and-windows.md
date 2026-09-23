@@ -43,10 +43,10 @@ struct ClaudeBarApp: App {
 
 ## `MainWindowView` — 主窗口内容
 
-`NavigationSplitView`，sidebar + detail（`.frame(minWidth: 900, minHeight: 600)`）：
+顶栏 tabs + detail（`.frame(minWidth: 900, minHeight: 600)`）：
 
-- **Sidebar**（`Theme.sidebarFill`）：brand 头 + 7 项 `AppPage`（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置）。
-- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `UsageView` / `VPNView` / `SettingsView`；`TrafficView` 首次进入后 `trafficMounted` 常驻。
+- **topBar**（`Theme.cardSurface`，52pt）：brand 头 + 8 项 `AppPage`（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置 / 帮助）；`ViewThatFits` 在宽度不足时只留文字。
+- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `UsageView` / `VPNView` / `SettingsView` / `HelpView`；`TrafficView` 首次进入后 `trafficMounted` 常驻。
 - **CommandPalette**（⌘K）。
 
 ## `MenuBarController` — 面板的承载与定位

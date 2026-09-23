@@ -36,6 +36,7 @@ make build      # 编译、本机自签「ClaudeBar Dev」、安装到 /Applicat
 | `make build` | 日常开发：安装到 `/Applications/ClaudeBar.app` |
 | `make ci` | 与 CI 相同：仅产出 `.build/ClaudeBar.app` |
 | `make package` | 发版验证：产出 `.build/dist/*.dmg`、`.zip`、校验和 |
+| `make test` | 跑 `Tests/` 下的源码切片回归（见下） |
 
 等价于：
 
@@ -43,7 +44,10 @@ make build      # 编译、本机自签「ClaudeBar Dev」、安装到 /Applicat
 bash Sources/build.sh
 CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
 CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
+python3 Tests/ui-regressions.py && python3 Tests/core-regressions.py
 ```
+
+`Tests/` 下是**源码切片回归**：脚本从 `Sources/` 里切出待测函数，拼成一段临时 Swift 用 `swiftc` 编译运行。不需要启动 App、不写用户配置、不联网（只需 Python 3 标准库与 `swiftc`）。CI 在构建后跑同一组。改动被测函数名时记得同步脚本里的切片锚点。
 
 VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该文件再设 `MIHOMO_SKIP_DOWNLOAD=1`。
 
@@ -112,7 +116,7 @@ chore(ci): 升级 release workflow
 
 1. 从 `main` 拉取最新代码，在功能分支上开发。
 2. 填写 [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)。
-3. 确保 CI 通过（`macos-26` runner + `CLAUDEBAR_SKIP_INSTALL=1`）。
+3. 确保 CI 通过（`macos-26` runner + `CLAUDEBAR_SKIP_INSTALL=1`，含 `make test`）。
 4. 涉及 UI 时附简要说明或截图。
 
 ---
