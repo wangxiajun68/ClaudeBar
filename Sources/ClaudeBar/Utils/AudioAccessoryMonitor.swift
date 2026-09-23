@@ -4,39 +4,9 @@ import Foundation
 import OSLog
 import Observation
 
-/// Battery + charging state for Bluetooth audio accessories (AirPods, Beats,
-/// third-party headsets), for the 连接 meter.
-///
-/// Three sources, in priority order. None of them is public API, which is why
-/// there are three of them rather than one:
-///
-/// 1. `com.apple.bluetooth` / `CBPowerSource` — `bluetoothd` announcing a
-///    power source. One line carries the combined level *and* every component
-///    (`Left -56%, Right -55%, Case -51%`), with a `+`/`-` sign for charging.
-///    Read in-process through `OSLogStore`, no entitlement, no subprocess.
-///    Measured p50 25s between updates.
-/// 2. `com.apple.BatteryCenter` / `PowerSourceController` — the daemon behind
-///    System Settings' own battery list. Structured `Part Identifier` plus an
-///    explicit `Is Charging` boolean, and it names the case as its own
-///    accessory. Measured p50 27s.
-/// 3. `system_profiler SPBluetoothDataType -json` — the one path with a public
-///    interface. ~90–140 ms and a subprocess, so it only runs on a slow TTL,
-///    on cold start, or when the log sources go quiet.
-///
-/// Two facts drive the whole design:
-///
-/// - **`0` means "no reading", not "flat".** `bluetoothd` keeps a percentage
-///   per battery and leaves the ones it has learned nothing about at zero.
-///   Every parse here rejects out-of-range values rather than clamping them.
-/// - **The native refresh is 25–60 s.** That is the rate at which the AirPods
-///   broadcast accessory status; nothing in userspace can beat it. The UI says
-///   how old the reading is instead of implying it is live.
-///
-/// Reference implementations, none of which this shares code with: MacTools
-/// (GPL-3.0) uses the same `CBPowerSource` predicate; AirPodsGuard (GPL-3.0)
-/// and BatteryGlass (Apache-2.0) use the BatteryCenter subsystem; AirBattery
-/// (GPL-3.0) and Sapphire (MIT) still grep the retired `Battery M` format,
-/// which no longer appears on macOS 26.
+/// Bluetooth audio battery readings from system logs and profiler data.
+/// Connection state is resolved independently through CoreAudio and Bluetooth topology.
+/// Missing battery values remain unknown; device reporting cadence controls freshness.
 @MainActor
 @Observable
 final class AudioAccessoryMonitor {
@@ -46,6 +16,7 @@ final class AudioAccessoryMonitor {
         case bluetoothLog = "CBPowerSource"
         case batteryCenter = "BatteryCenter"
         case profiler = "system_profiler"
+        case audioRoute = "CoreAudio"
 
         /// Lower sorts first — used when merging two readings of one device.
         var rank: Int {
@@ -53,6 +24,7 @@ final class AudioAccessoryMonitor {
             case .bluetoothLog: return 0
             case .batteryCenter: return 1
             case .profiler: return 2
+            case .audioRoute: return 3
             }
         }
     }
@@ -98,22 +70,9 @@ final class AudioAccessoryMonitor {
         /// A case reading only exists while something is in the case. AirPods
         /// stop broadcasting it with both buds out, and the last value then
         /// sits in the log looking current. Staleness is the honest signal.
-        var isStale: Bool { Date().timeIntervalSince(observedAt) > 180 }
+        var isStale: Bool { source != .audioRoute && Date().timeIntervalSince(observedAt) > 180 }
 
-        /// How the headset relates to this Mac right now.
-        ///
-        /// The battery reading alone cannot answer this, and that is not a
-        /// shortcoming of the sources — it is how AirPods work. They announce
-        /// their levels over BLE, which needs no established link, so a headset
-        /// sitting in a closed case on the desk reports exactly like one playing
-        /// audio into your ears. The distinction has to come from *outside* the
-        /// power sources: the system's connected list, or the audio route.
-        ///
-        /// `BatteryCenter`'s own `connected = YES` is **not** usable here — it
-        /// means "this power source is in the current list", which is true of a
-        /// case on a shelf. It is the same trap as reading `IOBluetooth`'s
-        /// `isConnected()`, which reports `false` for AirPods the system is
-        /// actively announcing.
+        /// Connection is independent of battery availability: in use, nearby, or absent.
         enum Connection: Equatable {
             /// Playing to this Mac, or on the system's connected list.
             case inUse
@@ -155,12 +114,7 @@ final class AudioAccessoryMonitor {
 
     // MARK: - Lifecycle
 
-    /// Refcounted like `FanMonitor`: the popup and the dashboard can both hold
-    /// it, and the last one out stops the polling.
-    ///
-    /// Every caller is on the main thread — the views all appear and disappear
-    /// there — so the refcount and the visibility observer need no lock. The
-    /// timer, which does not, is the engine's problem.
+    /// Reference-counted observation shared by the dashboard and popup.
     @MainActor
     func start() {
         subscribers += 1
@@ -207,29 +161,51 @@ final class AudioAccessoryMonitor {
 
 // MARK: - Engine
 
-/// Everything the poller mutates, plus the timer that drives it, confined to
-/// one private queue.
-///
-/// Split out of the `@MainActor` type above for two reasons. The sampling state
-/// (cursors, the merged device map, the miss counter) is then unreachable from
-/// the main actor, needing no lock or hop per field. And the timer can be
-/// created on the same queue that suspends it: `DispatchSourceTimer` tracks a
-/// suspend *count*, and libdispatch aborts the process outright — `BUG IN CLIENT
-/// OF LIBDISPATCH: Over-resume`, not a throw — when it is resumed more times
-/// than it was suspended. Two views appearing in the same frame each ask for a
-/// resume, so a recorded flag arbitrates rather than the callers.
+/// All mutable polling state is confined to the utility queue.
+/// The unchecked Sendable conformance relies on that confinement.
 private final class Engine: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.claudebar.audioaccessory", qos: .utility)
 
+    private var routeListener: AudioObjectPropertyListenerBlock?
+    private var routeRefresh: DispatchWorkItem?
+    private let routeSelectors: [AudioObjectPropertySelector] = [
+        kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices
+    ]
     private var timer: DispatchSourceTimer?
+
+    private func observeRoutes() {
+        guard routeListener == nil else { return }
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self, !self.suspended else { return }
+            // Publish route changes before slow battery/profile work, so the
+            // connected device appears even before it has reported a charge.
+            let snapshot = self.assemble()
+            if snapshot != self.lastPublished {
+                self.lastPublished = snapshot
+                self.lastPublishedReason = nil
+                let publish = self.publishHandler
+                Task { @MainActor in publish?(snapshot, nil) }
+            }
+            self.routeRefresh?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.timer != nil, !self.suspended else { return }
+                self.poll(forceProfiler: true, publish: self.publishHandler)
+            }
+            self.routeRefresh = work
+            self.queue.asyncAfter(deadline: .now() + 0.35, execute: work)
+        }
+        routeListener = listener
+        for selector in routeSelectors {
+            var address = AudioObjectPropertyAddress(mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+        }
+    }
+
     /// Mirrors whether `timer` currently holds a suspend. Only `queue` touches
     /// it, together with the timer itself, so the two cannot drift apart.
     private var suspended = false
 
-    // Incremental log cursors. `nil` means "cold" — the next poll seeds from
-    // the profiler and a short lookback instead of walking history.
-    private var bluetoothCursor: Date?
-    private var batteryCenterCursor: Date?
     /// Merged per-device state, keyed by accessory identifier. Log lines are
     /// partial (the case announces itself separately from the buds), so
     /// readings accumulate here rather than replacing a whole device.
@@ -239,9 +215,9 @@ private final class Engine: @unchecked Sendable {
     /// The last picture handed to the main actor, so a poll that changes
     /// nothing costs no publish and no re-render.
     private var lastPublished: [AudioAccessoryMonitor.Accessory]?
+    private var lastPublishedReason: String?
     /// Names in the system's connected list, refreshed on the profiler's TTL.
     private var connectedNames: Set<String> = []
-    private var lastConnectedAt: Date = .distantPast
     /// Where a poll hands its result back. Installed once by `start` so the
     /// timer's own polls can deliver; a per-call parameter would leave the
     /// periodic path with nothing to call.
@@ -251,24 +227,9 @@ private final class Engine: @unchecked Sendable {
         queue.async { [self] in
             publishHandler = publish
             guard timer == nil else { return }
+            observeRoutes()
             let t = DispatchSource.makeTimerSource(queue: queue)
-            // **5 s, and it has to be a poll rather than a subscription.**
-            //
-            // The system announces a headset in *bursts* — the levels arrive
-            // together, then nothing for minutes (measured p50 gap within a
-            // burst 0 s, longest quiet stretch 11 min). A burst is the only
-            // moment there is something new to show, and it lasts a couple of
-            // seconds, so a 15 s period routinely lands between two bursts and
-            // the reading appears up to 15 s late. `OSLogStore` has no change
-            // notification for a third-party process, so the only way to catch
-            // a burst promptly is to look often.
-            //
-            // That is affordable because a query costs a flat ~0.07 s of CPU
-            // *regardless of how many rows it returns* (72 h of history costs
-            // the same as 1 s of it): 5 s holds ~1.4% of one core, and the
-            // publish gate below means a poll that finds nothing new renders
-            // nothing. Visibility is still honored — a background app suspends
-            // this entirely.
+            // Poll battery logs every five seconds while visible; route changes are event-driven.
             t.schedule(deadline: .now(), repeating: 5.0, leeway: .seconds(1))
             t.setEventHandler { [weak self] in
                 guard let self else { return }
@@ -282,6 +243,17 @@ private final class Engine: @unchecked Sendable {
 
     func stop() {
         queue.async { [self] in
+            if let listener = routeListener {
+                for selector in routeSelectors {
+                    var address = AudioObjectPropertyAddress(mSelector: selector,
+                        mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+                    AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+                }
+            }
+            routeListener = nil
+            routeRefresh?.cancel()
+            routeRefresh = nil
+            if suspended { timer?.resume() }
             timer?.cancel()
             timer = nil
             suspended = false
@@ -296,7 +268,12 @@ private final class Engine: @unchecked Sendable {
         queue.async { [self] in
             guard let timer, suspended == visible else { return }
             suspended = !visible
-            if visible { timer.resume() } else { timer.suspend() }
+            if visible {
+                timer.resume()
+                poll(forceProfiler: true, publish: publishHandler)
+            } else {
+                timer.suspend()
+            }
         }
     }
 
@@ -307,39 +284,19 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func reset() {
-        bluetoothCursor = nil
-        batteryCenterCursor = nil
+        connectedNames.removeAll()
         merged.removeAll()
         lastProfilerAt = .distantPast
         consecutiveLogMisses = 0
         lastPublished = nil
+        lastPublishedReason = nil
     }
 
     func poll(forceProfiler: Bool, publish: (@MainActor ([AudioAccessoryMonitor.Accessory], String?) -> Void)?) {
         let now = Date()
-        var changed = false
 
-        // Both subsystems go through one query. `OSLogStore` charges ~70 ms per
-        // `getEntries` call almost regardless of what it returns — that is
-        // store-level overhead, not row cost (measured: 72 h of history costs
-        // the same as 1 s of it) — so asking twice to keep the sources separate
-        // would double a bill that is already the largest thing this feature
-        // does.
-        //
-        // **The window cannot be short.** `OSLogStore.position(date:)` is not a
-        // precise index: measured on macOS 26, a position asked for 3 s / 30 s /
-        // 60 s / 120 s / 300 s ago all yield a sequence of *zero* entries, and
-        // the first non-empty result appears around 10 min. Asking for "what
-        // arrived since the last poll" therefore returns nothing, every poll,
-        // forever — which is exactly how this feature read 0 entries while 310
-        // matching rows sat in the store.
-        //
-        // So the query always reaches back a fixed, generous interval and the
-        // cursor is used for *deduplication* instead of for range selection:
-        // readings are merged, so re-reading a row is idempotent, and an update
-        // can never be missed by landing on a boundary. 20 min covers the
-        // observed worst-case gap between announcements (11 min) with margin.
-        let cold = bluetoothCursor == nil
+        // Read both subsystems together. A fixed lookback tolerates delayed log availability;
+        // records are merged before comparing the published snapshot.
         let since = now.addingTimeInterval(-20 * 60)
 
         if let entries = LogSource.entries(since: since) {
@@ -348,11 +305,11 @@ private final class Engine: @unchecked Sendable {
                 switch (entry.subsystem, entry.category) {
                 case ("com.apple.bluetooth", "CBPowerSource"):
                     if let parsed = PowerSourceLogParser.parse(entry.message) {
-                        changed = merge(parsed, at: entry.date, source: .bluetoothLog) || changed
+                        merge(parsed, at: entry.date, source: .bluetoothLog)
                     }
                 case ("com.apple.BatteryCenter", "PowerSourceController"):
                     if let parsed = BatteryCenterLogParser.parse(entry.message) {
-                        changed = merge(parsed, at: entry.date, source: .batteryCenter) || changed
+                        merge(parsed, at: entry.date, source: .batteryCenter)
                     }
                 default:
                     break
@@ -362,64 +319,24 @@ private final class Engine: @unchecked Sendable {
             // *healthy*: silence is what a machine with no headset nearby looks
             // like. Counting it as a miss would make the meter claim the log is
             // unreadable on every Mac without AirPods.
-            bluetoothCursor = now
-            batteryCenterCursor = now
         } else {
             // Only a *failed* store raises the miss count, and it drives the
             // profiler fallback below.
             consecutiveLogMisses += 1
         }
 
-        // The profiler is the authority of last resort: cold start, panel open,
-        // or the logs have gone quiet for a few rounds. Its TTL keeps the
-        // subprocess off the common path — with the log path now working it is
-        // only reachable on a cold start, on an explicit refresh, or when
-        // `OSLogStore` actually fails.
-        let ttl: TimeInterval = cold ? 0 : 300
-        let logsQuiet = consecutiveLogMisses >= 3
-        // The connected list rides the same TTL as the battery fallback: both
-        // are `system_profiler` subprocesses, so running them together costs one
-        // spawn instead of two and keeps the ~120 ms off the 5 s path.
-        if forceProfiler || now.timeIntervalSince(lastConnectedAt) >= ttl || logsQuiet {
-            lastConnectedAt = now
-            connectedNames = ConnectionSource.connectedNames()
-        }
-
-        if forceProfiler || now.timeIntervalSince(lastProfilerAt) >= ttl || logsQuiet {
+        // One profiler invocation supplies topology and battery data. Failed
+        // logs shorten the fallback interval without spawning on every poll.
+        let ttl: TimeInterval = consecutiveLogMisses >= 3 ? 30 : 300
+        if forceProfiler || now.timeIntervalSince(lastProfilerAt) >= ttl {
             lastProfilerAt = now
-            if let parsed = ProfilerSource.read() {
-                for device in parsed {
-                    changed = merge([device], at: now, source: .profiler) || changed
-                }
+            if let snapshot = ProfilerSource.read() {
+                connectedNames = snapshot.connectedNames
+                merge(snapshot.accessories, at: now, source: .profiler)
             }
         }
 
-        // Drop accessories whose readings have gone silent.
-        //
-        // The gate is freshness, not connection state. `IOBluetooth` looks like
-        // the obvious authority here and is not: `IOBluetoothDevice.isConnected()`
-        // reports `false` for AirPods that the system is actively announcing —
-        // observed directly, with `CBPowerSource` still logging `Present yes` and
-        // a 40 s-old case reading while `isConnected()` said no. AirPods pair
-        // over AACP/magic-pairing, which the classic connection flag does not
-        // track. Gating removal on it hid headsets that were in use.
-        //
-        // Silence is the signal that does hold, but the threshold has to clear
-        // the real quiet stretches. Measured over 3 h on macOS 26 there are two
-        // populations: bursts while a headset is in use (p50 gap 0 s), and long
-        // lulls — the worst live-device gap observed on this machine is **11
-        // min**, because a paired-but-idle AirPods broadcasts far less often
-        // than a playing one. A gone device stops for good. 180 s therefore sat
-        // *inside* the live distribution and made a working headset blink out;
-        // 15 min clears every observed live gap with margin while still
-        // retiring a device that has genuinely left. `isStale` (below) stays at
-        // 180 s on purpose: that one is about how old the drawn number is, not
-        // about whether the device still exists, so it should warn early.
-        // Two populations, two windows. A headset that is *in use* announces
-        // often, so a long silence means it left. One sitting in its case is
-        // deliberately quiet — the user asked for it to stay on screen while
-        // charging — so it gets a much longer rope and is dropped only when it
-        // has genuinely stopped existing rather than merely stopped talking.
+        // Retain idle accessories through reporting gaps; charging cases receive a longer TTL.
         let inUseCutoff = now.addingTimeInterval(-15 * 60)
         let chargingCutoff = now.addingTimeInterval(-60 * 60)
         let expired = merged.filter { _, accessory in
@@ -427,37 +344,17 @@ private final class Engine: @unchecked Sendable {
             return accessory.observedAt < cutoff
         }.map(\.key)
         for key in expired { merged.removeValue(forKey: key) }
-        changed = changed || !expired.isEmpty
 
-        // Publish whenever the *picture* differs, not only when a field moved.
-        //
-        // The old gate was "did any field change since the last poll", and that
-        // is not the same question: the first successful poll after launch has
-        // nothing to compare against, and a device whose levels are steady for
-        // an hour produces `changed == false` on every poll. Both cases left
-        // the UI on its empty state with a full set of readings sitting in
-        // `merged` — the meter simply never heard about them. Comparing the
-        // assembled snapshot to the last one we sent is both cheaper to reason
-        // about and strictly more correct; `publish` de-dupes again on arrival.
+        // Publish only when the assembled device snapshot changes.
         let snapshot = assemble()
-        guard snapshot != lastPublished else { return }
-        lastPublished = snapshot
         let reason: String? = snapshot.isEmpty && consecutiveLogMisses >= 3 ? "无法读取系统日志" : nil
+        guard snapshot != lastPublished || reason != lastPublishedReason else { return }
+        lastPublished = snapshot
+        lastPublishedReason = reason
         Task { @MainActor in publish?(snapshot, reason) }
     }
 
-    /// Build the list the UI draws: one entry per *headset*, with the case's
-    /// reading folded back in.
-    ///
-    /// The two parsers deliberately key the case separately (`… #case`) so it
-    /// can never overwrite the buds' name or levels. That separation is an
-    /// internal detail, though — the meter draws a headset as one mark with
-    /// left/right/case rings, so the split has to be undone here, on the way
-    /// out, where it is a pure function of state and cannot disturb the merge.
-    ///
-    /// A `#case` record with no body is still emitted: a case on the desk with
-    /// the buds in someone's ears is a real reading, and dropping it would make
-    /// the meter blink out exactly when the user opens the lid.
+    /// Combine separately announced headset and case records into one accessory.
     private func assemble() -> [AudioAccessoryMonitor.Accessory] {
         var bodies: [String: AudioAccessoryMonitor.Accessory] = [:]
         var cases: [String: AudioAccessoryMonitor.Accessory] = [:]
@@ -496,7 +393,17 @@ private final class Engine: @unchecked Sendable {
             orphan.connection = resolveConnection(for: orphan, route: route)
             out.append(orphan)
         }
-        return out.sorted { $0.name < $1.name }
+        if let route, ConnectionSource.defaultOutputIsBluetooth(),
+           !out.contains(where: { ConnectionSource.routeMatches(accessoryName: $0.name, routeName: route) }) {
+            var accessory = AudioAccessoryMonitor.Accessory(id: "audio-route:" + route, name: route)
+            accessory.source = .audioRoute
+            accessory.connection = .inUse
+            out.append(accessory)
+        }
+        return out.sorted {
+            if ($0.connection == .inUse) != ($1.connection == .inUse) { return $0.connection == .inUse }
+            return $0.name < $1.name
+        }
     }
 
     /// Turn a reading into a statement about connection, from the two outside
@@ -515,18 +422,10 @@ private final class Engine: @unchecked Sendable {
         return .nearby
     }
 
-    /// Fold one sighting into the merged state.
-    ///
-    /// Sources overlap but do not agree on what they describe: `CBPowerSource`
-    /// splits every component, `BatteryCenter` announces the case as a
-    /// separate accessory, `system_profiler` gives all four at once. Whole-
-    /// device replacement would have the slower source erase fields the faster
-    /// one just filled, so fields merge individually and the higher-ranked
-    /// source wins per field.
+    /// Merge partial readings per field so a slower source cannot erase known values.
     private func merge(_ incoming: [AudioAccessoryMonitor.Accessory],
                        at date: Date,
-                       source: AudioAccessoryMonitor.Source) -> Bool {
-        var changed = false
+                       source: AudioAccessoryMonitor.Source) {
         for device in incoming {
             let key = device.id
             guard let existing = merged[key] else {
@@ -534,7 +433,6 @@ private final class Engine: @unchecked Sendable {
                 fresh.observedAt = date
                 fresh.source = source
                 merged[key] = fresh
-                changed = true
                 continue
             }
             var next = existing
@@ -565,10 +463,8 @@ private final class Engine: @unchecked Sendable {
             if source.rank < next.source.rank { next.source = source }
             if next != existing {
                 merged[key] = next
-                changed = true
             }
         }
-        return changed
     }
 
     /// Take the new reading when it carries information the old one lacks, or
@@ -588,43 +484,9 @@ private final class Engine: @unchecked Sendable {
 
 // MARK: - Log access
 
-/// The two signals that say whether a headset is actually *in use*.
-///
-/// The power sources deliberately cannot answer that (see
-/// `Accessory.Connection`), so the answer is assembled here from the outside:
-///
-/// 1. **The audio route** (`CoreAudio`) — the strongest signal there is. If the
-///    default output device is this headset, it is playing to this Mac, full
-///    stop. This is what makes the meter flip to 已连接 the moment audio starts
-///    and drop back when it stops.
-/// 2. **The system's connected list** (`system_profiler SPBluetoothDataType`) —
-///    the public interface behind System Settings' own "已连接". Covers a
-///    connected headset that is idle (no audio routed, link up).
-///
-/// Everything else is 未连接. A case charging on the desk has real levels and
-/// belongs on screen — the user asked for that explicitly — but it must not
-/// claim to be connected.
+/// Connection authority combines the default audio route and the connected-device inventory.
 private enum ConnectionSource {
-    /// Names currently in `device_connected`, normalized for comparison.
-    ///
-    /// A subprocess (~90–140 ms), so it rides the profiler's slow TTL rather
-    /// than the 5 s poll. `system_profiler` is the only public way to read this
-    /// list, and the app already spawns it for the battery fallback.
-    static func connectedNames() -> Set<String> {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
-        process.arguments = ["SPBluetoothDataType", "-json", "-timeout", "3"]
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [] }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return parseConnected(data)
-    }
-
-    /// Split out from `connectedNames` so the wire format is testable without
-    /// spawning anything.
+    /// Connected device names from the shared profiler response.
     static func parseConnected(_ data: Data) -> Set<String> {
         guard !data.isEmpty,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -664,6 +526,19 @@ private enum ConnectionSource {
         }
         guard status == noErr else { return nil }
         return name as String
+    }
+
+    static func defaultOutputIsBluetooth() -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return false }
+        address.mSelector = kAudioDevicePropertyTransportType
+        var transport: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
+        return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
     }
 
     /// Names differ in whitespace between sources — `system_profiler` emits a
@@ -1121,7 +996,7 @@ private enum BatteryCenterLogParser {
 /// inside. `device_batteryLevelMain` / `device_batteryLevel` cover the
 /// single-cell devices (AirPods Max, most Beats).
 private enum ProfilerSource {
-    static func read() -> [AudioAccessoryMonitor.Accessory]? {
+    static func read() -> (accessories: [AudioAccessoryMonitor.Accessory], connectedNames: Set<String>)? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
         // Bounding the subprocess matters more than completeness here: this
@@ -1139,7 +1014,8 @@ private enum ProfilerSource {
         // Read before waiting so a large payload cannot deadlock on a full pipe.
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return parse(data)
+        guard process.terminationStatus == 0, let accessories = parse(data) else { return nil }
+        return (accessories, ConnectionSource.parseConnected(data))
     }
 
     /// Split out from `read()` so the wire format can be tested without

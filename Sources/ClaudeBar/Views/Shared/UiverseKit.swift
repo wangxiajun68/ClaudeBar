@@ -239,31 +239,6 @@ struct OrbitLoader: View {
     }
 }
 
-/// Nested concentric rings — the 3D cube pair flattened to 2D so the menu
-/// bar never pays for preserve-3d rotation.
-struct NestedOrbit: View {
-    var on: Bool
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Theme.cardFill(0.12), lineWidth: 5)
-            Circle()
-                .trim(from: 0, to: on ? 0.85 : 0.12)
-                .stroke(on ? Theme.chartGreen : Theme.statusIdle,
-                        style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Circle()
-                .stroke(on ? Theme.chartGreen.opacity(0.40) : Theme.cardFill(0.10), lineWidth: 2.5)
-                .frame(width: 22, height: 22)
-            Circle()
-                .fill(on ? Theme.chartGreen.opacity(0.18) : Color.clear)
-                .frame(width: 12, height: 12)
-        }
-        .frame(width: 44, height: 44)
-    }
-}
-
 // MARK: - Aurora sparkline (Monthly Balance)
 
 struct AuroraSparkline: View {

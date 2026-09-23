@@ -140,6 +140,9 @@ final class ProcessSampler {
 
     private let queue = DispatchQueue(label: "com.claudebar.proc", qos: .utility)
     private var timer: DispatchSourceTimer?
+    // Disk capacity changes slowly; keep filesystem queries off the live power cadence.
+    private var diskSample: (used: UInt64, total: UInt64)?
+    private var diskSampleAt: TimeInterval = 0
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
     private var claudeRoots: [pid_t] = []
@@ -253,6 +256,7 @@ final class ProcessSampler {
 
     private func applyPeriod() {
         // No consumer: no visible window and no session to attribute to.
+        let wasSuspended = timerSuspended
         let shouldSuspend = !wantsAttribution && !UIWakePolicy.hasVisibleWindow
         if shouldSuspend != timerSuspended {
             timerSuspended = shouldSuspend
@@ -269,11 +273,11 @@ final class ProcessSampler {
         } else if live {
             next = 1
         } else {
-            next = 2.5
+            next = 1
         }
-        guard abs(period - next) > 0.05 else { return }
+        guard wasSuspended || abs(period - next) > 0.05 else { return }
         period = next
-        timer?.schedule(deadline: .now() + next, repeating: next)
+        timer?.schedule(deadline: .now(), repeating: next, leeway: .milliseconds(50))
     }
 
     private func tick() {
@@ -286,7 +290,11 @@ final class ProcessSampler {
         }
 
         let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
-        let disk = HardwareSensors.bootDisk()
+        if diskSample == nil || now - diskSampleAt >= 10 {
+            diskSample = HardwareSensors.bootDisk()
+            diskSampleAt = now
+        }
+        let disk = diskSample ?? (used: 0, total: 1)
         let links = HardwareSensors.linkStatus()
         // Read on *every* tier, not just the foreground one. The 电量 mark is
         // permanent (`ConnectLaneRow` draws it whether or not a pack is fitted),

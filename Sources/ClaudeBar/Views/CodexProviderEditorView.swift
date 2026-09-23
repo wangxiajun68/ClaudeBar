@@ -31,6 +31,7 @@ struct CodexProviderEditorView: View {
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
             model.clearSaveFlash()
         }
         .sheet(isPresented: $model.showModelImport) {

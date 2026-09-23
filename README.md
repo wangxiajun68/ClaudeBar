@@ -102,3 +102,5 @@ make build
 ## License
 
 [MIT](LICENSE)
+
+界面图标取自 [Lucide](https://lucide.dev)（ISC），随应用打包于 `Resources/Lucide.txt`；VPN 内核 [mihomo](https://github.com/MetaCubeX/mihomo) 为构建时下载的 sidecar，不进 Git。

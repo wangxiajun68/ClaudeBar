@@ -12,10 +12,9 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s16) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
                 ResourceStrip()
-                    .resourceMonitorScope(.dashboard)
                 PowerFlowCard()
                 VpnPowerCard(opensVPNPage: true)
                 metricRow
@@ -24,6 +23,7 @@ struct DashboardView: View {
             }
             .padding(Theme.Space.s24)
         }
+        .resourceMonitorScope(.dashboard)
         .background(Theme.bgPrimary)
     }
 

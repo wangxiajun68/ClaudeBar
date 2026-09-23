@@ -11,8 +11,7 @@ class ProviderStore: ObservableObject {
     struct SupplierBalance: Identifiable, Equatable {
         let id: UUID
         let name: String
-        var amount: String?
-        var failed = false
+        let amount: String
     }
     @Published var supplierBalances: [SupplierBalance] = []
     @Published var balanceText: String? = nil
@@ -50,6 +49,10 @@ class ProviderStore: ObservableObject {
     @Published var heartbeats: [Int: [Bool]] = [:]
     static let heartbeatLength = AppConfig.heartbeatLength
     private var sessionTimer: Timer?
+    // Main-thread gates keep each scanner single-flight and preserve result order.
+    private var sessionScanPending = false
+    private var cursorScanPending = false
+    private var externalScanPending = false
     /// Last serialized snapshot payload — `writeWidgetSnapshot()` skips the
     /// file writes + widget reload when the data is unchanged (see
     /// `WidgetSnapshotWriter.write`).
@@ -101,6 +104,8 @@ class ProviderStore: ObservableObject {
     // MARK: - Sessions
 
     func refreshSessions() {
+        guard !sessionScanPending else { return }
+        sessionScanPending = true
         // The scan reads session JSONs + transcript tails + subagent dirs —
         // pure file I/O. Run it off the main thread and only hop back to
         // publish the parsed results, so the poll never blocks the UI.
@@ -112,6 +117,7 @@ class ProviderStore: ObservableObject {
             let pids = enriched.filter(\.isAlive).map(\.pid)
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                self.sessionScanPending = false
                 self.recordHeartbeats(samples)
                 if self.sessions != enriched {
                     self.sessions = enriched
@@ -258,11 +264,14 @@ class ProviderStore: ObservableObject {
 
     /// Read Cursor composer sessions from its state.vscdb. Run off the main
     /// thread — the DB is large, and transcript-tail scans do file I/O.
-    func refreshCursorSessions() {
+    private func refreshCursorSessions() {
+        guard !cursorScanPending else { return }
+        cursorScanPending = true
         Task.detached(priority: .utility) {
             let result = CursorSessionMonitor.fetchActive()
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                self.cursorScanPending = false
                 // Same unchanged-publish skip as the Claude poll: Cursor
                 // sessions are Equatable, so an unchanged scan never touches
                 // the widget snapshot or SwiftUI.
@@ -279,11 +288,14 @@ class ProviderStore: ObservableObject {
 
     /// Scan Codex sessions. Same
     /// off-main scan + unchanged-publish skip as the other two sources.
-    func refreshExternalSessions() {
+    private func refreshExternalSessions() {
+        guard !externalScanPending else { return }
+        externalScanPending = true
         Task.detached(priority: .utility) {
             let result = ExternalSessionMonitor.fetchActive()
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                self.externalScanPending = false
                 if self.externalSessions == result { return }
                 self.externalSessions = result
                 // Busy-edge notifications reuse the same detector machinery:
@@ -407,17 +419,18 @@ class ProviderStore: ObservableObject {
         }
     }
 
-    func saveProviders() {
-        let file = ProvidersFile(providers: providers, activeProviderID: activeProviderID)
-        guard let data = try? JSONEncoder().encode(file) else { return }
-        try? FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
-        try? data.write(to: FilePaths.presetsFile, options: .atomic)
-        // Every provider's `authToken` is in this file. A file created by the
-        // default umask lands at 0644, and `.atomic` replaces the inode on
-        // every write, so the mode has to be re-applied each time.
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: FilePaths.presetsFile.path)
-        hardenLegacySecretFiles()
+    @discardableResult
+    func saveProviders() -> Bool {
+        do {
+            let data = try JSONEncoder().encode(ProvidersFile(providers: providers, activeProviderID: activeProviderID))
+            try FileManager.default.createDirectory(at: FilePaths.claudeDir, withIntermediateDirectories: true)
+            try PrivateFileWriter.write(data, to: FilePaths.presetsFile)
+            hardenLegacySecretFiles()
+            return true
+        } catch {
+            errorMessage = "保存供应商失败：\(error.localizedDescription)"
+            return false
+        }
     }
 
     /// One-shot fix-up for the two files older builds left world-readable.
@@ -546,27 +559,6 @@ class ProviderStore: ObservableObject {
 
     // MARK: - CRUD
 
-    func saveCurrentAsProvider(name: String) {
-        guard let env = currentEnv else { return }
-        let model = ModelConfig(
-            name: env.ANTHROPIC_MODEL.isEmpty ? "default" : env.ANTHROPIC_MODEL,
-            contextTokens: env.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
-            disableCompact: env.DISABLE_COMPACT == "1",
-            disableExperimentalBetas: env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS == "1",
-            autoCompactWindow: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
-        )
-        let provider = Provider(
-            name: name,
-            authToken: env.ANTHROPIC_AUTH_TOKEN,
-            baseURL: env.ANTHROPIC_BASE_URL,
-            models: [model],
-            activeModelID: model.id
-        )
-        providers.append(provider)
-        if activeProviderID == nil { activeProviderID = provider.id }
-        saveProviders()
-    }
-
     func deleteProvider(_ provider: Provider) {
         providers.removeAll { $0.id == provider.id }
         if activeProviderID == provider.id { activeProviderID = providers.first?.id }
@@ -598,10 +590,16 @@ class ProviderStore: ObservableObject {
         return result
     }
 
-    func updateProvider(_ provider: Provider, extras: ProviderBridge.CodexExtras? = nil) {
-        guard let idx = providers.firstIndex(where: { $0.id == provider.id }) else { return }
-        providers[idx] = provider
-        saveProviders()
+    @discardableResult
+    func updateProvider(_ provider: Provider) -> Bool {
+        guard let index = providers.firstIndex(where: { $0.id == provider.id }) else { return false }
+        let previous = providers[index]
+        providers[index] = provider
+        guard saveProviders() else {
+            providers[index] = previous
+            return false
+        }
+        return true
     }
 
     /// Tile-level capture switch. If this vendor is active, rewrite env + proxy.
@@ -657,25 +655,31 @@ class ProviderStore: ObservableObject {
             // Both model stacks may contain independently configured accounts.
             var candidates = providers.map { (id: $0.id, name: $0.name, token: $0.authToken, base: $0.baseURL) }
             candidates += (peer?.providers ?? []).map { (id: $0.id, name: $0.name, token: $0.apiKey, base: $0.baseURL) }
-            var seen = Set<UUID>()
-            let eligible = candidates.filter {
-                BalanceFetcher.supports($0.base) && !$0.token.isEmpty && seen.insert($0.id).inserted
+            // Currently only one official endpoint supports balances. Deduplicate
+            // credentials across the two stacks, not their unrelated configuration IDs.
+            // Credentials never become UI identities or persisted account keys.
+            var seen = Set<String>()
+            let eligible = candidates.compactMap { candidate -> (id: UUID, name: String, token: String, base: String)? in
+                let token = candidate.token.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard BalanceFetcher.supports(candidate.base), !token.isEmpty,
+                      seen.insert(token).inserted else { return nil }
+                return (candidate.id, candidate.name, token, candidate.base)
             }
-            supplierBalances = eligible.map { SupplierBalance(id: $0.id, name: $0.name) }
-            balanceText = nil
+            var balances: [SupplierBalance] = []
             for provider in eligible {
                 guard !Task.isCancelled else { return }
                 let result = await BalanceFetcher.fetch(authToken: provider.token, baseURL: provider.base)
                 guard !Task.isCancelled else { return }
-                if let index = supplierBalances.firstIndex(where: { $0.id == provider.id }) {
-                    supplierBalances[index].amount = result?.display
-                    supplierBalances[index].failed = result == nil
+                if let result {
+                    balances.append(SupplierBalance(id: provider.id,
+                        name: "DeepSeek · " + provider.name, amount: result.display))
                 }
-                let display = supplierBalances.compactMap { item in
-                    item.amount.map { "\(item.name) · \($0)" }
-                }.joined(separator: " / ")
-                balanceText = display.isEmpty ? nil : display
             }
+            // Publish a complete snapshot; retain the previous one during refresh.
+            if supplierBalances != balances { supplierBalances = balances }
+            let display = balances.map { "\($0.name) · \($0.amount)" }.joined(separator: " / ")
+            balanceText = display.isEmpty ? nil : display
+            writeWidgetSnapshot()
             balanceLoading = false
             balanceTask = nil
         }
@@ -713,7 +717,7 @@ class ProviderStore: ObservableObject {
                     let days = UsageIndex.fetchDaily(in: interval)
                     let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                     await MainActor.run { [weak self] in
-                        guard let self else { return }
+                        guard let self, !self.usageRefreshQueued else { return }
                         self.usageStats = quick
                         self.usageBySource = quickSources
                         self.usageDays = days
@@ -737,22 +741,20 @@ class ProviderStore: ObservableObject {
                         self.usageRefreshQueuedRescan = false
                         return (true, nextRescan)
                     }
-                    self.usageRefreshPending = false
-                    return (false, false)
-                }
-                if next.again {
-                    wantRescan = next.rescan
-                    continue
-                }
-
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
+                    // Publish and release the gate in one main-actor transaction.
+                    // A new refresh cannot start between these operations.
                     self.usageStats = final
                     self.usageBySource = finalSources
                     self.usageDays = days
                     self.usageDaysBySource = daysBySource
                     self.usageLoading = false
                     self.writeWidgetSnapshot()
+                    self.usageRefreshPending = false
+                    return (false, false)
+                }
+                if next.again {
+                    wantRescan = next.rescan
+                    continue
                 }
                 return
             }

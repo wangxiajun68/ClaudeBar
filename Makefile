@@ -1,4 +1,4 @@
-.PHONY: build ci package install
+.PHONY: build ci package install test
 
 VERSION := $(shell tr -d '[:space:]' < VERSION)
 
@@ -16,3 +16,8 @@ package:
 
 install: build
 	open /Applications/ClaudeBar.app
+
+# Source-slice regressions (Swift compiled on the fly). No app launch needed.
+test:
+	python3 Tests/ui-regressions.py
+	python3 Tests/core-regressions.py

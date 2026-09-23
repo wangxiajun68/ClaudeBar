@@ -18,8 +18,8 @@ struct MenuBarView: View {
 
     private enum SectionHeight {
         /// Cap only — the card hugs live sessions instead of leaving a blank well.
-        static let sessions: CGFloat = 250
-        static let usage: CGFloat = 320
+        static let sessions: CGFloat = 190
+        static let usage: CGFloat = 280
     }
 
     var body: some View {
@@ -29,6 +29,8 @@ struct MenuBarView: View {
 
             MachineKpiStrip()
                 .appearLift(delay: 0.04)
+
+            PowerFlowCard(compact: true)
 
             if !providerStore.hasSettingsFile && codexStore.providers.isEmpty {
                 missingSettingsView

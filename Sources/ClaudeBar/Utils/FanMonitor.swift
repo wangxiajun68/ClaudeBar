@@ -14,6 +14,9 @@ final class FanMonitor {
     private var timer: Timer?
     private var subscribers = 0
     private var pendingSpeedTasks: [Int: DispatchWorkItem] = [:]
+    /// All privileged commands execute in submission order, away from the UI thread.
+    private let commandQueue = DispatchQueue(label: "com.claudebar.fan-commands", qos: .userInitiated)
+    private var commandRevision: UInt64 = 0
     /// 拖动滑杆期间暂停轮询，避免实时转速把滑杆位置“拽回去”。
     private(set) var isUserAdjusting = false
 
@@ -66,41 +69,24 @@ final class FanMonitor {
     func setAutomatic(_ fanID: Int) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.lastError = nil
-            guard self.helperInstalled else { self.postPermissionNeeded(); return }
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let err = FanHelperInstaller.setAutomatic(fanID: fanID)
-                Task { @MainActor in
-                    self?.lastError = err
-                    self?.refresh()
-                }
-            }
+            self.pendingSpeedTasks.removeValue(forKey: fanID)?.cancel()
+            self.submit { FanHelperInstaller.setAutomatic(fanID: fanID) }
         }
     }
 
     func setManual(_ fanID: Int, rpm: Int) {
-        pendingSpeedTasks[fanID]?.cancel()
-        // Slider 回调处于 SwiftUI 视图更新中；同步改 @Published 会触发 Combine 断言崩溃，
-        // 必须跳出一帧再碰任何 @Published 状态。
+        // Defer observable mutations until the slider's update has completed.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.lastError = nil
-            guard self.helperInstalled else { self.postPermissionNeeded(); return }
+            self.pendingSpeedTasks.removeValue(forKey: fanID)?.cancel()
             let task = DispatchWorkItem { [weak self] in
-                let err = FanHelperInstaller.setFanSpeed(fanID: fanID, rpm: rpm)
-                Task { @MainActor in
-                    self?.lastError = err
-                    self?.refresh()
-                }
+                guard let self else { return }
+                self.pendingSpeedTasks.removeValue(forKey: fanID)
+                self.submit { FanHelperInstaller.setFanSpeed(fanID: fanID, rpm: rpm) }
             }
             self.pendingSpeedTasks[fanID] = task
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
         }
-    }
-
-    func setMinSpeed(_ fanID: Int) {
-        guard let fan = fans.first(where: { $0.id == fanID }) else { return }
-        setManual(fanID, rpm: fan.minRPM)
     }
 
     func setMaxSpeed(_ fanID: Int) {
@@ -111,14 +97,23 @@ final class FanMonitor {
     func resetAllToAutomatic() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.lastError = nil
-            guard self.helperInstalled else { self.postPermissionNeeded(); return }
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let err = FanHelperInstaller.resetAll()
-                Task { @MainActor in
-                    self?.lastError = err
-                    self?.refresh()
-                }
+            self.pendingSpeedTasks.values.forEach { $0.cancel() }
+            self.pendingSpeedTasks.removeAll()
+            self.submit { FanHelperInstaller.resetAll() }
+        }
+    }
+
+    private func submit(_ command: @escaping @Sendable () -> String?) {
+        lastError = nil
+        guard helperInstalled else { postPermissionNeeded(); return }
+        commandRevision &+= 1
+        let revision = commandRevision
+        commandQueue.async { [weak self] in
+            let error = command()
+            Task { @MainActor in
+                guard let self, self.commandRevision == revision else { return }
+                self.lastError = error
+                self.refresh()
             }
         }
     }

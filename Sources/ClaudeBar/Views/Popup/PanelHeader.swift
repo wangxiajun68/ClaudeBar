@@ -29,7 +29,9 @@ struct PanelHeader: View {
                     title: codexModel,
                     subtitle: codexSubtitle,
                     quotaWindows: codexStore.quotaWindows,
-                    tint: Theme.codex, ink: Theme.Ink.codex
+                    tint: Theme.codex, ink: Theme.Ink.codex,
+                    quotaLoading: codexStore.quotaLoading,
+                    refreshQuota: { codexStore.refreshQuota() }
                 ) { _ in
                     ModelSwitchList(kind: .codex, panel: panel)
                 }
@@ -166,49 +168,65 @@ private struct HeaderSwitchChip<Popover: View>: View {
     var tint: Color
     /// Readable counterpart of `tint` for the eyebrow; see `StatusPill`.
     var ink: Color? = nil
+    var quotaLoading = false
+    var refreshQuota: (() -> Void)? = nil
     @ViewBuilder var popover: (Binding<Bool>) -> Popover
 
     @State private var open = false
 
     var body: some View {
-        Button { open.toggle() } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 2) {
-                    Text(eyebrow)
-                        .font(Theme.Font.eyebrow)
-                        .foregroundColor(ink ?? tint)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Theme.textTertiary())
+        VStack(alignment: .leading, spacing: 3) {
+            Button { open.toggle() } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 2) {
+                        Text(eyebrow).font(Theme.Font.eyebrow).foregroundColor(ink ?? tint)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold)).foregroundColor(Theme.textTertiary())
+                    }
+                    Text(title).font(Theme.Font.section).foregroundColor(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                    if refreshQuota == nil { subtitleLabel }
                 }
-                Text(title)
-                    .font(Theme.Font.section)
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if quotaWindows.isEmpty {
-                    Text(subtitle)
-                        .font(Theme.Font.meta)
-                        .foregroundColor(Theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    CodexQuotaGauges(windows: quotaWindows)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Theme.cardSurface)
-            .contentShape(Rectangle())
+            .buttonStyle(.uiversePress)
+            .popover(isPresented: $open, arrowEdge: .bottom) { popover($open) }
+            .help("\(eyebrow)：\(title) · \(subtitle)")
+
+            if let refreshQuota {
+                Button(action: refreshQuota) {
+                    HStack(spacing: 4) {
+                        if quotaLoading {
+                            ProgressView().controlSize(.mini)
+                            Text("刷新额度…").font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
+                        } else if quotaWindows.isEmpty {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                            subtitleLabel
+                        } else {
+                            CodexQuotaGauges(windows: quotaWindows)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(quotaLoading)
+                .help(quotaLoading ? "正在获取 Codex 额度" : "点击刷新 Codex 额度")
+                .accessibilityLabel(quotaLoading ? "正在刷新 Codex 额度" : "刷新 Codex 额度")
+            }
         }
-        .buttonStyle(.uiversePress)
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            popover($open)
-        }
-        .help("\(eyebrow)：\(title) · \(subtitle)")
+        .padding(.horizontal, 8).padding(.vertical, 7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.cardSurface)
     }
+
+    private var subtitleLabel: some View {
+        Text(subtitle).font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
+            .lineLimit(1).truncationMode(.middle)
+    }
+
 }
 
 // MARK: - Model switch list

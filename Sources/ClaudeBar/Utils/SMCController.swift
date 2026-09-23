@@ -85,18 +85,12 @@ private struct FourCharCode: ExpressibleByStringLiteral {
     init(rawValue: UInt32) { self.rawValue = rawValue }
     init(stringLiteral value: StringLiteralType) { self.init(value) }
 
-    func toString() -> String {
-        String(describing: UnicodeScalar(rawValue >> 24 & 0xff)!) +
-        String(describing: UnicodeScalar(rawValue >> 16 & 0xff)!) +
-        String(describing: UnicodeScalar(rawValue >> 8 & 0xff)!) +
-        String(describing: UnicodeScalar(rawValue & 0xff)!)
-    }
 }
 
 private extension Float {
     init?(_ bytes: [UInt8]) {
         guard bytes.count >= MemoryLayout<Float>.size else { return nil }
-        self = bytes.withUnsafeBytes { $0.load(as: Float.self) }
+        self = bytes.withUnsafeBytes { $0.loadUnaligned(as: Float.self) }
     }
 
     var smcBytes: [UInt8] { withUnsafeBytes(of: self, Array.init) }

@@ -422,39 +422,6 @@ struct VerticalHairline: View {
     }
 }
 
-/// Hairline section container: no background, no corner — just spacing and
-/// optional top/bottom rules. Replaces `.panelCard()` nesting for list areas.
-struct SectionBlock<Content: View>: View {
-    var topRule: Bool = true
-    var bottomRule: Bool = true
-    var inset: CGFloat = Theme.Space.s16
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            if topRule { HairlineDivider(inset: inset) }
-            content()
-                .padding(.horizontal, inset)
-            if bottomRule { HairlineDivider(inset: inset) }
-        }
-        .padding(.vertical, Theme.Space.s6)
-    }
-}
-
-extension View {
-    /// Just the hairline rules of a section — for stacks that manage their
-    /// own inner padding. The de-carded alternative to `.panelCard()`.
-    func sectionRules(inset: CGFloat = Theme.Space.s16,
-                      top: Bool = true, bottom: Bool = true) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if top { HairlineDivider(inset: inset) }
-            self
-            if bottom { HairlineDivider(inset: inset) }
-        }
-        .padding(.vertical, Theme.Space.s4)
-    }
-}
-
 // MARK: - Aligned glyphs
 
 /// One optical box for every SF Symbol in chrome (nav, rows, chips).

@@ -23,6 +23,14 @@ struct ProviderEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             if embedded { embeddedToolbar }
+            if let error = providerStore.errorMessage {
+                HStack {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(Theme.Font.caption).foregroundColor(Theme.Ink.error)
+                    Spacer()
+                    Button("关闭") { providerStore.errorMessage = nil }.buttonStyle(.plain)
+                }.padding(12)
+            }
             HStack(spacing: 0) {
                 sidebar
                 Divider()
@@ -46,6 +54,7 @@ struct ProviderEditorView: View {
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
             model.clearSaveFlash()
         }
         .sheet(isPresented: $model.showModelImport) {

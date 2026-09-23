@@ -136,11 +136,6 @@ enum CaptureTranscript {
         return out
     }
 
-    static func declaredToolCount(from raw: String?) -> Int {
-        guard let obj = object(raw) else { return 0 }
-        return (obj["tools"] as? [Any])?.count ?? 0
-    }
-
     // MARK: - Internals
 
     private static func turns(fromLive live: CaptureLive?) -> [Turn] {

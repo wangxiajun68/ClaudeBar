@@ -13,7 +13,7 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s24) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s24) {
                 PageTitle(title: "设置")
 
                 // First section: it is the only setting that decides whether the

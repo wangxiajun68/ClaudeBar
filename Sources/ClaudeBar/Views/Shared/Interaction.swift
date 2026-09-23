@@ -22,8 +22,7 @@ extension ButtonStyle where Self == PressableStyle {
 }
 
 /// Uiverse 3D press: translate down 1pt, collapse the drop shadow.
-/// No scaleEffect — scale reflows neighbors and is what made the 测速
-/// button jump in a row of variable-width chips.
+/// Translation preserves the visual size of compact, variable-width controls.
 struct UiversePressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

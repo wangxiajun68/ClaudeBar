@@ -67,7 +67,7 @@ final class CodexProviderEditorModel {
         disableResponseStorage = p.disableResponseStorage
         captureEnabled = p.captureEnabled
         models = p.models.map { EditableCodexModel(
-            id: $0.id, name: $0.name,
+            id: $0.id, name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
             reasoningEffort: $0.reasoningEffort,
             contextWindow: $0.contextWindow,
             autoCompactTokenLimit: $0.autoCompactTokenLimit
@@ -80,19 +80,25 @@ final class CodexProviderEditorModel {
     // MARK: - Derived validation
 
     var nameError: String? {
-        name.trimmingCharacters(in: .whitespaces).isEmpty ? "请填写名称" : nil
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "请填写名称" : nil
     }
 
     var urlError: String? {
-        let trimmed = baseURL.trimmingCharacters(in: .whitespaces)
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "请填写 Base URL" }
-        return URL(string: trimmed)?.host == nil ? "Base URL 无效" : nil
+        guard let url = URL(string: trimmed), let host = url.host, !host.isEmpty,
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return "请填写有效的 HTTP(S) Base URL" }
+        return nil
     }
 
     var duplicateModelError: String? {
-        let names = models.map { $0.name.trimmingCharacters(in: .whitespaces).lowercased() }
-        let dupes = names.filter { name in names.filter { $0 == name }.count > 1 }
-        return dupes.isEmpty ? nil : "模型名称重复：\(dupes.first ?? "")"
+        let names = models.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        var seen = Set<String>()
+        for name in names {
+            if name.isEmpty { return "模型名称不能为空" }
+            if !seen.insert(name).inserted { return "模型名称重复：\(name)" }
+        }
+        return nil
     }
 
     var canSave: Bool {
@@ -108,8 +114,8 @@ final class CodexProviderEditorModel {
     // MARK: - Model CRUD
 
     func addModel() {
-        let trimmed = newModelName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !models.contains(where: { $0.name == trimmed }) else { return }
+        let trimmed = newModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !models.contains(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
         let newModel = EditableCodexModel(id: UUID(), name: trimmed)
         models.append(newModel)
         if activeModelID == nil { activeModelID = newModel.id }
@@ -201,23 +207,26 @@ final class CodexProviderEditorModel {
     func save() {
         guard canSave, let store, var p = selected else { return }
         isSaving = true
-        p.name = name.trimmingCharacters(in: .whitespaces)
+        defer { isSaving = false }
+        saveFlashUntil = nil
+        store.errorMessage = nil
+        p.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         p.apiKey = apiKey
-        p.baseURL = baseURL.trimmingCharacters(in: .whitespaces)
+        p.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         p.wireAPI = wireAPI
         p.requiresOpenAIAuth = requiresOpenAIAuth
         p.preserveOfficialLogin = preserveOfficialLogin
         p.disableResponseStorage = disableResponseStorage
         p.captureEnabled = captureEnabled
         p.models = models.map {
-            CodexModelConfig(id: $0.id, name: $0.name,
+            CodexModelConfig(id: $0.id, name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
                              reasoningEffort: $0.reasoningEffort,
                              contextWindow: $0.contextWindow,
                              autoCompactTokenLimit: $0.autoCompactTokenLimit)
         }
         p.activeModelID = activeModelID ?? p.models.first?.id
 
-        store.updateProvider(p)
+        guard store.updateProvider(p) else { return }
 
         // If active, re-apply so config.toml/auth.json reflect the edit.
         if store.activeProviderID == p.id,
@@ -225,7 +234,7 @@ final class CodexProviderEditorModel {
             store.activate(providerID: p.id, modelID: model.id)
         }
 
-        isSaving = false
+        guard store.errorMessage == nil else { return }
         saveToken += 1
         saveFlashUntil = Date().addingTimeInterval(2)
     }

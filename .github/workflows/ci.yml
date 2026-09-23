@@ -32,6 +32,11 @@ jobs:
           CLAUDEBAR_SKIP_INSTALL: "1"
         run: bash Sources/build.sh
 
+      - name: Regression tests
+        run: |
+          python3 Tests/ui-regressions.py
+          python3 Tests/core-regressions.py
+
       - name: Smoke-check bundle
         run: |
           APP=".build/ClaudeBar.app"

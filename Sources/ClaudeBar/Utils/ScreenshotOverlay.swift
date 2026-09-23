@@ -695,12 +695,6 @@ private final class SnipCanvas: NSView {
         return l
     }
 
-    /// Convert view point → selection-relative (y-up) coords.
-    private func localPoint(_ p: NSPoint) -> NSPoint {
-        guard let sel = selection else { return p }
-        return NSPoint(x: p.x - sel.minX, y: p.y - sel.minY)
-    }
-
     private func redrawDraft() {
         guard let draft = markDraft, let sel = selection else { return }
         if draftLayer == nil {
@@ -719,38 +713,6 @@ private final class SnipCanvas: NSView {
         let l = Self.markShape(last, in: CGRect(origin: .zero, size: sel.size))
         marksLayer.addSublayer(l)
         markLayers.append(l)
-    }
-
-    /// Composite the marks into the cropped image (selection-relative space).
-    private func renderMarks(onto rep: NSBitmapImageRep, scaleX: CGFloat, scaleY: CGFloat) {
-        guard let sel = selection else { return }
-        let ctx = NSGraphicsContext(bitmapImageRep: rep)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = ctx
-        let color = Self.markColor
-        color.setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 3
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        for mark in marks {
-            let p = CGMutablePath()
-            switch mark.tool {
-            case .rect:
-                p.addRect(NSRect(from: mark.start, to: mark.end).insetBy(dx: 1.5, dy: 1.5))
-            case .ellipse:
-                p.addEllipse(in: NSRect(from: mark.start, to: mark.end).insetBy(dx: 1.5, dy: 1.5))
-            case .arrow:
-                p.addArrow(from: mark.start, to: mark.end)
-            case .pen:
-                guard let first = mark.stroke.first else { continue }
-                p.move(to: first)
-                for pt in mark.stroke.dropFirst() { p.addLine(to: pt) }
-            }
-            path.append(NSBezierPath(cgPath: p))
-        }
-        path.stroke()
-        NSGraphicsContext.restoreGraphicsState()
     }
 
     func selectFullScreen() {

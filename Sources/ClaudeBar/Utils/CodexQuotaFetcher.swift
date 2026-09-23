@@ -36,9 +36,11 @@ enum CodexQuotaFetcher {
     static func fetch() async -> Snapshot {
         var last = Snapshot(note: "Codex 额度查询失败")
         for attempt in 1...3 {
+            guard !Task.isCancelled else { return last }
             let snapshot = await Task.detached(priority: .utility) {
                 fetchFromAppServer()
             }.value
+            guard !Task.isCancelled else { return last }
             last = snapshot
             guard snapshot.windows.isEmpty, shouldRetry(snapshot) else {
                 return snapshot
@@ -82,6 +84,7 @@ enum CodexQuotaFetcher {
             return Snapshot(note: "无法启动 Codex 额度服务")
         }
 
+        let deadline = Date().addingTimeInterval(20)
         let timeout = DispatchWorkItem {
             if process.isRunning { process.terminate() }
         }
@@ -107,8 +110,8 @@ enum CodexQuotaFetcher {
         do {
             for request in requests {
                 let data = try JSONSerialization.data(withJSONObject: request)
-                input.fileHandleForWriting.write(data)
-                input.fileHandleForWriting.write(Data([0x0A]))
+                try input.fileHandleForWriting.write(contentsOf: data)
+                try input.fileHandleForWriting.write(contentsOf: Data([0x0A]))
             }
         } catch {
             finish(process, input: input, timeout: timeout)
@@ -142,7 +145,7 @@ enum CodexQuotaFetcher {
         }
 
         finish(process, input: input, timeout: timeout)
-        let note = process.terminationReason == .uncaughtSignal
+        let note = Date() >= deadline
             ? "Codex 额度查询超时"
             : "Codex 额度服务未返回数据"
         logger.error("\(note, privacy: .public)")
@@ -191,19 +194,19 @@ enum CodexQuotaFetcher {
 
     private static func parseWindow(_ window: [String: Any]) -> CodexQuotaWindow? {
         guard let used = number(window["usedPercent"]) else { return nil }
-        let minutes = Int(number(window["windowDurationMins"]) ?? 0)
+        let minutes = JSONCoerce.intVal(window["windowDurationMins"])
         let reset = number(window["resetsAt"])
         return CodexQuotaWindow(
             label: label(forMinutes: minutes),
-            usedPercent: used,
+            usedPercent: min(100, max(0, used)),
             resetsAt: reset.map(Date.init(timeIntervalSince1970:))
         )
     }
 
     private static func number(_ value: Any?) -> Double? {
-        if let value = value as? Double { return value }
-        if let value = value as? Int { return Double(value) }
-        return (value as? NSNumber)?.doubleValue
+        guard let number = value as? NSNumber else { return nil }
+        let result = number.doubleValue
+        return result.isFinite ? result : nil
     }
 
     /// Keep server diagnostics useful in Console without allowing a malformed

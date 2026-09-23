@@ -66,7 +66,7 @@ struct HelpView: View {
 
     private var rail: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s16) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 if matches.isEmpty {
                     Text("没有匹配的条目")
                         .font(Theme.Font.bodySmall)

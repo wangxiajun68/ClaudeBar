@@ -1,19 +1,6 @@
 import Foundation
 import AppKit
 
-extension Process {
-    /// Convenience runner: launches and waits for stdout/stderr to drain.
-    static func run(_ path: String, args: [String]) throws -> Process {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: path)
-        proc.arguments = args
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
-        try proc.run()
-        return proc
-    }
-}
-
 /// Privileged fan helper for ClaudeBar.
 ///
 /// Install (once, one admin-password prompt): copies the bundled `claudebar-fanctl`
@@ -37,9 +24,12 @@ enum FanHelperInstaller {
 
     private static func runPrivileged(args: [String]) -> String? {
         // Helper is setuid root (installed once) → run directly, no password.
-        guard let proc = try? Process.run(helperPath, args: args) else {
-            return "辅助工具不可用，请重新安装。"
-        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: helperPath)
+        proc.arguments = args
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return "辅助工具不可用，请重新安装。" }
         // 10s timeout so UI never hangs on a stuck helper.
         let deadline = Date().addingTimeInterval(10)
         while proc.isRunning && Date() < deadline {
@@ -107,8 +97,8 @@ enum FanHelperInstaller {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         proc.arguments = ["--verify", "--strict", path]
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
         guard (try? proc.run()) != nil else { return false }
         proc.waitUntilExit()
         return proc.terminationStatus == 0

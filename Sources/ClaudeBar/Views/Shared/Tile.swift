@@ -25,6 +25,7 @@ struct TileModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(hovered ? (tint ?? Theme.Ink.claude).opacity(0.28) : Theme.hairline,
                                   lineWidth: 1)
+                    .allowsHitTesting(false)
             }
     }
 }

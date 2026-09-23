@@ -19,31 +19,33 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 ## 主窗口（`MainWindowController` + `MainWindowView`）
 
-1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），`NavigationSplitView`：
+1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），顶栏 tabs + detail：
 
-- **Sidebar**：brand 头 + 7 项导航（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置）；选中项为简单 accent 填充，hover 变亮。底部状态圆点 + "N 运行中/空闲"。
-- **Detail**：按 `selectedPage`（`AppPage`）切换 7 页。流量页首次打开后保持挂载，避免检查器重建卡顿。
+- **topBar**：brand 头 + 8 项导航（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置 + 右上角问号进「帮助」）；选中项为 accent 填充，hover 变亮。末尾为实时状态 pill（"N 运行中/空闲"）。窗口收窄时 `ViewThatFits` 先丢掉每项的图标，只留文字。
+- **Detail**：按 `selectedPage`（`AppPage`）切换；流量页首次打开后保持挂载，避免检查器重建卡顿。
 - **全局**：⌘K `CommandPalette`；关窗后 status item 保活。
 
-## 7 个 Pages
+## 8 个 Pages
 
 全部页面走**宫格（瓦片）布局**（流量检查器与 VPN 节点列表为领域专用布局）。网格列模板集中在 `Theme.GridLayout.Preset`。
 
 | 页面 | 要点 |
 |------|------|
-| **DashboardView** | 指标头行 → 活跃会话总览 → 用量 Top；可跳转 VPN |
+| **DashboardView** | 指标头行 → 资源条 → 能源流向 → VPN 卡 → 7 块指标磁贴 → 活跃会话总览 → 用量 Top |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
-| **ProvidersView** | 侧栏标签为「模型」；Claude + Codex 供应商宫格 + 编辑器 |
-| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + `UsageModelTile` |
+| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；Claude + Codex 两栈自适应网格 + 编辑器 |
+| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片 |
 | **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 本机 LLM 代理、连通性、空闲通知、**风扇**（`FanControlSection`）、版本 |
+| **SettingsView** | 启动 / 外观 / 截图与通知 / 存储 / 本机代理 / VPN 代理 / 连通性 / 配置文件 / 关于 |
+| **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
 
 - `Tile.swift`：`TileGrid` + `MetricTile` + `.tile()` modifier（与 `panelCard()` 同族的半透明表面，密度更高）。
-- `UsageBar.swift`：`UsageModelTile`、`UsageStackBar`（平涂四色 anatomies）。
+- `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageBar.swift` 的 `UsageModelTile` / `UsageStackBar` 已并入）。
 - `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
+- `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件插画。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` / `MetricTile` 的 `ink:` 参数即此。
 - `ResourceStrip`、`FanControlSection`：本机 CPU / GPU / 内存与 SMC 风扇。
 - `VpnTopChrome.swift`：`VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle`（popup 与卡片共用）。
@@ -69,7 +71,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 ### 表面与排版
 
-- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 发丝线描边；`.tile()` = 更密的瓦片变体；`shadowCard()`、`cardFill()`、`sidebarFill`、`divider` / `hairline`；`HairlineDivider` / `SectionBlock` / `.sectionRules()` 提供去卡片化的发丝线分区。
+- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 发丝线描边；`.tile()` = 更密的瓦片变体；`shadowCard()`、`cardFill()`、`sidebarFill`、`divider` / `hairline`；`HairlineDivider` 提供去卡片化的发丝线分区。
 - **字体**：SF Pro 单族；`displayMetric*` + `.monospacedDigit()`；瓦片字阶 `tileValue` / `tileLabel` / `tileDetail`；popup 密度别名 `rowTitle` / `micro*` / `badgeMono`。
 - **宫格**：`GridLayout.Preset`（`pageMetric` 4 等分、`pageSession` / `pageUsage` / `pageProvider` 自适应、popup 2 列预设）+ `Space.gridGap` / `gridGapPage`。
 - **动效**：`bouncy` / `smooth` / `pulse` / `snappy` + `Motion.page` / `Motion.state`——全部状态驱动。
