@@ -8,18 +8,27 @@
 
 ## [Unreleased]
 
-供应商余额一屏、Codex 套餐额度、AirPods 电量与开机自启动；本地代理改为令牌鉴权 + 仅 `127.0.0.1`；订阅下载改为直连绕开机场占位节点。
+---
+
+## [1.12.0] — 2026-09-23
+
+应用内帮助手册、概览新增仪表与余额 / 额度磁贴、开机自启动；本地代理改为令牌鉴权 + 仅 `127.0.0.1`；VPN 订阅下载改直连绕开机场占位节点；模型页重做为「模型工作台」。
 
 ### 新增
 
-- **帮助页**：主窗口右上角问号（popup 底部也有）进入，左侧章节导航 + 右侧全文（26 篇：上手 / 本地代理 / 会话与用量 / VPN / 快捷键 / 排障），支持搜索、可复制的命令块与键帽。
+- **帮助页**：主窗口右上角问号（popup 底部也有）进入，左侧目录 + 右侧全文（26 篇：上手 / 本地代理 / 会话与用量 / VPN / 快捷键 / 排障），支持搜索、可复制的命令块与键帽。
 - **概览新增磁贴**：Claude Code 配置、Codex 配置、本地代理（`127.0.0.1:端口` + 监听胶囊）、**Codex 额度**（双环表盘 + 「已用 N% · 重置时间」，点一下刷新）、**供应商余额**（逐供应商列余额，可重试）。
-- **概览细节浮层**：内存液面点开是进程内存面板（按 RSS 排序，可打开活动监视器），硬盘占用点开是启动盘环形占用图。
-- **电力流向**：检测到内置电池时，概览画电源输入 / 电池充电 / 电池补充 / 整机消耗四端功率；无电池的机器不显示。
-- **蓝牙耳机电量**：左右耳与充电盒分别读数（含充电中），只在真的在用成卡；「放进充电盒」是播报态，不误判为活跃。
+- **概览细节浮层**：CPU / GPU / 内存 / 硬盘四格现在都可点开——CPU 与 GPU 是负载历史曲线，内存是进程内存面板（按 RSS 排序，可打开活动监视器），硬盘是启动盘环形占用图；「连接」格点开是连接地图（Wi-Fi 信号强度、耳机、隔空投送入口）。
+- **能源流向**：检测到内置电池时，概览画一张功率 Sankey（电源输入 → 整机消耗 / 电池充电，电池放电时汇入整机），菜单栏 popup 里是同一张图的紧凑版。
+- **Codex 额度**：概览磁贴与 popup 的 Codex chip 都能刷新——chip 副标题显示「N 小时已用 X% · N 天已用 Y%」并带双环表盘，popup 里点它就直接查询，不用回主窗口。
+- **连接卡片**：整卡状态字改为「已连接 / Wi-Fi 已开启 / 本机 / 离线」—— Wi-Fi 由「读到名称或有线或有信号」判定，不再只看 RSSI；新增**隔空投送**入口（打开 Finder 的隔空投送）；Wi-Fi 未拿到名称时显示「授权显示名称」，点一下请求定位授权（新文件 `Utils/WiFiNameAuthorization.swift`，8 秒超时后给提示而不是静默），授权后直接显示网络名与 dBm。
+- **硬件细节浮层**（新文件 `Views/Shared/HardwareDetailPanel.swift` / `HardwareIllustration.swift` / `LucideHardwarePaths.swift`）：CPU / GPU 面板含矢量芯片插画（亮度跟随整体负载）、最近采样曲线、逻辑核心数、温度与峰值；GPU 显示 Metal 设备名，CPU 显示 `machdep.cpu.brand_string` 型号。
+- **进程内存面板**（新文件 `Views/Shared/MemoryDetailPanel.swift`、`Utils/ProcessMemoryRow.swift`）：只列占用最高的 8 个进程 + 按最大值缩放的条形，PID 收进 tooltip；读取失败给「无法读取进程，请重试」。
+- **蓝牙耳机电量**：左右耳与充电盒分别读数（含充电中）。连上即成卡（无电量读数显示「—」）；「在用」由 CoreAudio 默认输出路由 + 蓝牙已连接名单共同判定，「放进充电盒」只是播报态，不误判为活跃。popup 的 KPI 条在有耳机使用中时多出一列耳机电量。
 - **开机自启动**：设置页「启动」分区，开关状态即系统 `SMAppService` 状态；等待允许时提示并可直接跳系统设置。
 - **还原为官方配置**：模型页与 popup 均可一键还原（带二次确认、可选只还原 Claude Code 或 Codex）。Claude 侧清掉 ClaudeBar 写入的 `env` 键，Codex 侧切到不占保留名的 `openai_http` 并保留 `auth.json` 的 ChatGPT 登录 —— 修掉切回官方后反复 "Reconnecting 1/5…"。
 - **配置文件自动备份**：每次启动首次改写前各写一份 `settings.json.bak` 与 `config.toml.bak`。
+- **Wi-Fi 名称授权**：设置页说明为什么需要定位权限（读取 SSID），未授权时可一键跳到系统设置；请求期间显示进行中，超时后给出提示而不是静默失败。
 - **VPN**
   - 订阅**预览**：点订阅卡只「查看」，大卡列出该订阅的分组与节点名，不切换当前订阅、不启内核。
   - 端口占用诊断：启动前先回收自己的残留内核，再探测端口；被 Clash Verge 等外部进程占用时**指名占用进程**，并提供「换个端口」一键换到空闲端口。
@@ -35,9 +44,11 @@
 - **VPN 订阅下载改为直连**：按 `mihomo` / `clash.meta` / `ClashforWindows` / `clash-verge` 轮换 UA，不再经 mixed-port 或系统代理（机场会对代理来源回 403 或只给 1 个占位节点 + 假 1 GB 配额）。超时 30s → 45s。**这是「同一条链接 Clash Verge 有节点、ClaudeBar 没有」的原因**。
 - **订阅结果校验**：200 但少于 2 个节点且无 `proxy-providers:` 判为占位不保存；刷新后节点数骤降到原数 20% 以下则保留原节点并提示；配额头也走直连，占位配额不再覆盖真实用量。
 - **订阅解析**：`---` / `...` 文档标记不再让 mihomo 丢掉全部节点；base64 订阅已含 `proxies:` 时直接使用，否则转换 `ss://` / `vmess://` 分享链接；节点计数兼容列 0 的 `- name:` 写法。
-- **菜单栏 popup 改版**：模型切换移到页头 Claude Code / Codex chip（一行一个「供应商 / 模型」+ checkmark），VPN 换成 chip + 电源卡；popup 不再铺供应商宫格（宫格只在主窗口「模型」页），底部去掉独立「编辑供应商」窗口，新增帮助与「还原官方配置」。
+- **模型页改为「模型工作台」**：标题 + 供应商品牌大标（Claude 八芒星 / Codex 六瓣花）+「当前连接 · 供应商名」；下方是供应商 / 模型搜索框与「仅当前」筛选，无命中显示空态而不是空网格。供应商卡默认展开模型行，网格改为自适应列。
+- **菜单栏 popup 改版**：模型切换移到页头 Claude Code / Codex chip（一行一个「供应商 / 模型」+ checkmark），VPN 换成 chip + 电源卡；popup 不再铺供应商宫格（宫格只在主窗口「模型」页），底部去掉独立「编辑供应商」窗口，新增帮助与「还原官方配置」。会话区上限 250→190pt、用量区 320→280pt，并新增能源流向紧凑卡。
 - **会话卡重排**：状态胶囊右移、上下文百分比与细条同排、快捷键读数替代齿轮图标；Codex 卡不再内嵌子 agent 列表，改为 `⋯N` 胶囊点开看全部 swarm，卡片高度不再随 fan-out 增长。
 - **模型页**：Claude / Codex 两个 chip 带产品图形与滑动选中 pill，tooltip 写明各自写入哪个配置文件。
+- **硬件图形改用 Lucide 矢量**：CPU / GPU / 内存 / 硬盘 / Wi-Fi / 以太网 / 电量等自绘成统一线条风格（`LucideHardwarePaths`），替换了此前各自为政的示意图；VPN 仍是盾牌，但未运行时的对勾换回短横，一眼能看出通没通。`NestedOrbit` 等旧装饰件删除。
 - **用量页**：周期图改为热力图，`CacheAnatomyBar` 保留为 token 构成横条。
 - **文字颜色 `Theme.Ink`**：信号色的「文字版」（浅色加深 / 深色提亮，对比度 ≥4.5:1）。状态胶囊、上下文百分比、模型占比、协议徽章、错误文字全部改用 Ink；字与图标用 `Ink`，形状仍用原信号色。
 - **图标与标题**：页面图标换成自绘 `InstrumentGlyph`（27 种），页面标题左侧带 34pt 图标井；`GlyphWell` / `IconChip` 改带描边内边缘，hover 微动。
@@ -46,10 +57,12 @@
 - **Codex `config.toml`**：受管表名不再固定 `[model_providers.custom]`，保留名（`openai` / `ollama` / `lmstudio` / `amazon-bedrock*`）自动改名；`wire_api` 固定 `responses`（此前带 `chat` 会导致 Codex 无法启动）。
 - **Codex 会话判定**：是否归档读桌面索引 `state_*.sqlite`（`archived = 0`），忙碌状态来自 `task_started` / `task_complete` / `turn_aborted` 事件而非 mtime；尊重 `CODEX_HOME`；子 agent 只在活跃时成卡。上下文百分比改读本轮 `last_token_usage`（此前用累计值，出现过 412%）。
 - **连接卡片有线判定**：必须是真正的以太网端口（排除桥接 / iPhone USB / 蓝牙 PAN）且有载波，拔线后有线会如实关闭。
-- **窗口不可见时降低采样与动画**：会话轮询三档（忙 2.5s / 全空闲 5s / 无可见窗口 15s），并同时关停 FSEvents 用量重扫、进程采样、VPN 连接轮询与全部常驻动画。
+- **窗口不可见时降低采样与动画**：会话轮询三档（忙 2.5s / 全空闲 5s / 无可见窗口 15s），并同时关停 FSEvents 用量重扫、进程采样、VPN 连接轮询与全部常驻动画。采样器从可见性闸门恢复时会立刻补一次采样，不再等下一个周期。
+- **风扇控制串行化**：同一风扇的连续指令按序列号排队并作废旧指令，快速点「最大 / 自动」不会两个进程互相打架。
 - **文件权限**：写入密钥的文件统一 0600（`settings.json` 及其 `.bak`、`presets.json`、`codex-providers.json`、`proxy-token`）；抓包记录落盘前脱敏 `authorization` / `x-api-key` / `cookie`。
 - **风扇 helper 收紧**：安装前校验签名，非 root 拒绝执行，转速按 SMC 的 `FNum` 校验并夹在 0…12000。
 - **`ProvidersPanel` 不再挂载**：popup 里的 2 列供应商宫格已停用（文件保留）。
+- **README 截图更新**：主窗口与菜单栏 popup 换成本轮界面；补充界面图标来源（Lucide，ISC，随包内置 `Resources/Lucide.txt`）。
 
 ### 修复
 
@@ -67,18 +80,27 @@
 - **会话卡悬停操作条对键盘与 VoiceOver 可达**（此前鼠标悬停才可点）；补齐大量 `accessibilityLabel`。
 - **主窗口反复关闭 / 打开不再泄漏窗口观察者**（长时间使用不再越来越卡）。
 - **删除供应商、清空抓包**均加带名字 / 条数的二次确认。
+- **编辑器的校验更严**：Base URL 必须是带非空 host 的 `http` / `https`（此前只看能否解析出 host）；模型名两端空白会被清掉、空名与重名（不区分大小写）都会拦下；保存失败会在编辑器顶部显示可关闭的错误条并**回滚内存里的改动**，而不是静默不动还闪「已保存」。
+- **写配置的语义**：空值不再沿用旧值——切到没填 token 的供应商会**清掉上一个 token**（此前会保留，必须手改 `settings.json` 才能删）；`env` 里用户自填的非字符串键（数字、布尔）保持原类型不被改写成字符串；`settings.json` 顶层或 `env` 不是对象时**不再覆盖原文件**，而是报错保留；备份 `.bak` 写失败会在下次写入重试。风扇命令的子进程输出改走 `/dev/null`（此前挂 Pipe 不读会卡住等待）。
+- **设置页与模型页的加载**改为懒加载栈，长页滚动手感更稳。
 
 ### 性能
 
 - 用量索引重扫不再对每个文件单独 `attributesOfItem`（每个文件少两次 `getxattr`），改为一次目录枚举取回属性。
-- 供应商余额、Codex 激活改为可取消的串行任务，连点不再互相覆盖。
+- 供应商余额、Codex 激活改为可取消的串行任务，连点不再互相覆盖；会话 / Cursor / 外部三类扫描各自加了「已在跑就跳过」的闸门，慢盘上不再叠加重扫。
 - `DateFormatter` 按格式缓存；Widget 快照编码复用同一个 `JSONEncoder`；访问日志 token 计数在流结束时写一次。
 - VPN 出口 IP 探测端点从 4 并发 + 7 端点改为 4 端点逐个查询，不再占满当前节点的连接槽导致超时。
-- 会话页网格改为懒加载；tile 与 panelCard 的描边改为 hover 时才染色。
+- 会话页网格改为懒加载；tile 与 panelCard 的描边改为 hover 时才染色，并且描边不再拦截点击。
+- 本机指标在需要归因且窗口可见时统一 **1 秒**一跳（此前忙 1s、空闲 2.5s），周期变更后立即重排；硬盘容量查询相应降到每 10 秒一次（占用最多滞后 10 秒）。
+- 耳机状态改由 CoreAudio 路由变更通知驱动（此前靠定时轮询日志文件），连接 / 断开响应更快也不白耗采样。
+- Codex rollout 解析结果按 mtime + size 缓存，未被追加的文件只做一次元数据检查，不再每 2.5s 重读 32 KB 头 + 48 KB 尾。
+- 界面动效尊重「减弱动态效果」：页面切换与栈切换在开启该选项时直接跳变，不做过渡。
 
 ### 测试
 
 - 新增 `Tests/ui-regressions.py`：从源码切片 + 生成 Swift 编译运行，覆盖心跳发布语义（无变化不发布 / 多次变化只发布一次 / 上限 24 / 缺席会话被裁剪）与 `EqualRowGrid` 布局缓存（内容变化使缓存失效、宽度跟随、回缩恢复）。只需 Python 3 标准库与 `swiftc`，不需启动 App 或任何 TCC 授权。
+- 新增 `Tests/core-regressions.py`：覆盖数值边界（`Infinity` / `NaN` / `Int64` 越界不崩）、配置写入的私有原子落盘与 0600 权限、写配置时保留用户自有键（`permissions`、`GITHUB_PERSONAL_ACCESS_TOKEN` 等）并清掉受管键、损坏的 `settings.json` 不被覆盖、备份内容等于改写前的原文，以及 Codex rollout 头尾解析（含 subagent 判定与 `task_complete`）。
+- 两者都由 `make test` 与 CI 的 **Regression tests** 步骤执行。
 
 ---
 
@@ -351,7 +373,9 @@ Claude / Codex 供应商独立选择；流量简洁视图默认折叠工具与�
 - `build.sh` 用 `swiftc` + shell 构建（无 Xcode 工程）。
 - Pencil 原型 `ClaudeBar.pen` 与应用图标资源。
 
-[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.12.0
+[1.11.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.11.0
 [1.10.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.10.0
 [1.9.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.9.0
 [1.8.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.8.0
