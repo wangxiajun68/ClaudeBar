@@ -55,14 +55,6 @@ struct LinkCard: View {
         if !host.wifiName.isEmpty { lines.append(host.wifiName) }
         if host.wifiOn, host.wifiRSSI < 0 { lines.append("\(host.wifiRSSI) dBm \(WiFiBars.label(for: host.wifiRSSI) ?? "")") }
         if host.wiredOn { lines.append("以太网 已接入") }
-        if host.batteryInstalled {
-            var battery = "电池 \(host.batteryPercent)%"
-            if host.batteryCharging { battery += " 充电中" }
-            else if host.batteryExternalPower { battery += " 已接通电源" }
-            lines.append(battery)
-        } else {
-            lines.append("电源 交流电")
-        }
         if let accessory {
             lines.append("\(accessory.name) \(accessoryValue(accessory, count: accessoryCount)) · \(accessory.connection.label)")
         } else if let unavailableReason {
@@ -76,22 +68,20 @@ struct LinkCard: View {
 fileprivate struct ConnectMetrics {
     var dial: CGFloat
     var caption: CGFloat
-    var markBox: CGFloat
+    /// Every lane uses this width, so icon centres stay a fixed distance apart.
+    var column: CGFloat
     var gap: CGFloat
     /// Height of the band under the glyph row that every mark's percentage (or
     /// caption) sits in. Reserved on every mark, headset or not — a
     /// conditional band was how the row lost its baseline.
     var labelBand: CGFloat
-    var symbolSize: CGFloat {
-        markBox * 0.74
-    }
 
     /// Size each headset symbol by its visible bounds while preserving a common baseline.
     func partSymbolSize(for symbol: String) -> CGFloat {
         // Ink height / em for each mark, measured from `NSImage` at a fixed
         // point size. Rounded to two places; they are ratios, not absolutes.
         let inkHeightRatio: CGFloat = symbol.contains("case") ? 0.875 : 0.80
-        return (dial * 0.46) / inkHeightRatio * 0.80
+        return (dial * 0.42) / inkHeightRatio * 0.80
     }
 
     /// The buds are drawn from their ink width too, so the *pair* stays
@@ -105,17 +95,12 @@ fileprivate struct ConnectMetrics {
     /// centre line.
     var statusBand: CGFloat { 14 }
 
-    static func resolve(_ density: ConnectDensity, extraMarks: Int) -> ConnectMetrics {
-        let crowded = extraMarks > 0
+    static func resolve(_ density: ConnectDensity) -> ConnectMetrics {
         switch density {
         case .page:
-            return ConnectMetrics(dial: 32, caption: 10.5, markBox: 38,
-                                  gap: crowded ? 11 : 20,
-                                  labelBand: 17)
+            return ConnectMetrics(dial: 32, caption: 10.5, column: 68, gap: 12, labelBand: 16)
         case .popup:
-            return ConnectMetrics(dial: 30, caption: 10, markBox: 36,
-                                  gap: crowded ? 9 : 18,
-                                  labelBand: 16)
+            return ConnectMetrics(dial: 28, caption: 10, column: 58, gap: 8, labelBand: 15)
         }
     }
 }
@@ -137,31 +122,25 @@ fileprivate struct ConnectLaneRow: View {
         return accessory
     }
 
-    private var extraMarks: Int {
-        (host.wiredOn ? 1 : 0) + (headset == nil ? 0 : 1)
-    }
-
     private var metrics: ConnectMetrics {
-        ConnectMetrics.resolve(density, extraMarks: extraMarks)
+        ConnectMetrics.resolve(density)
     }
 
     var body: some View {
         let m = metrics
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: m.gap) {
+            HStack(alignment: .top, spacing: m.gap) {
                 wifi
-                BatteryMark(host: host, metrics: m)
-                AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand)
+                AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand, column: m.column, statusHeight: m.statusBand)
                 accessoryMarks
             }
-            VStack(spacing: 10) {
-                HStack(spacing: m.gap) {
+            VStack(spacing: m.gap) {
+                HStack(alignment: .top, spacing: m.gap) {
                     wifi
-                    BatteryMark(host: host, metrics: m)
-                    AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand)
+                    AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand, column: m.column, statusHeight: m.statusBand)
                 }
                 if host.wiredOn || headset != nil {
-                    HStack(spacing: m.gap) { accessoryMarks }
+                    HStack(alignment: .top, spacing: m.gap) { accessoryMarks }
                 }
             }
         }
@@ -175,113 +154,11 @@ fileprivate struct ConnectLaneRow: View {
     }
 
     private var wifi: some View {
-        WiFiConnectionMark(host: host, dial: metrics.dial, labelHeight: metrics.labelBand)
+        WiFiConnectionMark(host: host, dial: metrics.dial, labelHeight: metrics.labelBand,
+                           column: metrics.column, statusHeight: metrics.statusBand)
     }
 
 
-}
-
-/// Segmented power cell with exact percentage and explicit charging state below.
-/// Machines without an internal battery retain the AC plug affordance.
-private struct BatteryMark: View {
-    var host: ProcessSampler.HostStats
-    var metrics: ConnectMetrics
-    @State private var showPowerFlow = false
-
-    /// Desktop Macs retain an AC-power mark when no battery is installed.
-    private var installed: Bool { host.batteryInstalled }
-
-    /// Choose the closest available SF Symbols battery state.
-    private var symbol: String {
-        guard installed else { return "powerplug" }
-        let step = Int((Double(host.batteryPercent) / 25).rounded()) * 25
-        let clamped = max(0, min(100, step))
-        return host.batteryCharging ? "battery.\(clamped).bolt" : "battery.\(clamped)"
-    }
-
-    /// Amber below 20 %, red below 10 % — and never while on external power,
-    /// where a low number is already being handled.
-    private var tint: Color {
-        if host.batteryCharging { return Theme.Ink.success }
-        guard installed else { return Theme.textSecondary }
-        if !host.batteryExternalPower {
-            if host.batteryPercent <= 10 { return Theme.Ink.error }
-            if host.batteryPercent <= 20 { return Theme.Ink.warning }
-        }
-        return Theme.textSecondary
-    }
-
-    /// Charging and *plugged in* are different claims, and a Mac holding at
-    /// 100 % on a charger is the second without the first — so it says 已接通
-    /// rather than 充电中, the same distinction the headset parts make.
-    private var stateWord: String {
-        guard installed else { return "交流电" }
-        if let watts = host.powerBatteryWatts {
-            if watts > 0 { return String(format: "充电 %.1f W", watts) }
-            if watts < 0 { return String(format: "放电 %.1f W", abs(watts)) }
-        }
-        if host.batteryCharging { return "充电中 · 功率未知" }
-        return host.batteryExternalPower ? "已接通" : "电池"
-    }
-
-    /// The reading line. A Mac with no pack has no percentage to print, so the
-    /// line states the source instead — the band is never left blank, which is
-    /// what would make this mark look broken next to the lanes.
-    private var reading: String {
-        installed ? "\(host.batteryPercent)%" : "电源"
-    }
-
-    var body: some View {
-        let content = VStack(spacing: 0) {
-            Group {
-                if installed {
-                    InstrumentGlyph(kind: .battery, tint: tint, level: Double(host.batteryPercent) / 100)
-                } else {
-                    Image(systemName: symbol)
-                        .font(.system(size: metrics.symbolSize, weight: .semibold))
-                        .foregroundColor(tint)
-                }
-            }
-                .frame(width: metrics.markBox, height: metrics.dial)
-            Text(reading)
-                .font(.system(size: metrics.caption, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundColor(installed ? Theme.textPrimary : Theme.textSecondary)
-                .lineLimit(1)
-                .fixedSize()
-                .frame(height: metrics.labelBand)
-            Text(stateWord)
-                .font(.system(size: metrics.caption, weight: .medium, design: .rounded))
-                .foregroundColor(host.batteryCharging ? Theme.Ink.success : Theme.textTertiary())
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .frame(width: metrics.markBox, height: metrics.statusBand)
-        }
-        .frame(width: metrics.markBox)
-        .help(batteryHelp)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(batteryHelp)
-
-        return Button { showPowerFlow = true } label: { content }
-            .buttonStyle(.pressable)
-            .disabled(!installed)
-            .accessibilityHint("点击查看电源、电池与整机的实时功率")
-            .popover(isPresented: $showPowerFlow) {
-                PowerFlowCard().frame(width: 560).padding(12).background(Theme.bgPrimary)
-            }
-    }
-
-    private var batteryHelp: String {
-        guard installed else { return "Mac 电源 · 交流电 · 无内置电池" }
-        var text = "Mac 电池 \(host.batteryPercent)% · \(stateWord)"
-        if host.batteryExternalPower { text += " · 已接电源" }
-        if host.batteryCharging {
-            text += host.batteryChargingWatts == nil
-                ? " · 充电功率暂无读数"
-                : (host.powerIsEstimated ? " · 电池侧估算功率" : " · 电池实时功率")
-        }
-        return text
-    }
 }
 
 /// Live Ethernet. Absent when there is no carrier — a dim USB-plug glyph is
@@ -310,36 +187,29 @@ fileprivate struct HeadsetMarks: View {
     private var showsCase: Bool { accessory.caseLevel != nil }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: metrics.gap) {
-                HeadsetPart(percent: accessory.left?.percent,
-                            symbol: "earbud.left",
-                            charging: accessory.left?.charging == true,
+        // `Group` flattens into the parent row, so each part is its own column
+        // with the same width, glyph box and caption bands as Wi-Fi.
+        Group {
+            HeadsetPart(percent: accessory.left?.percent,
+                        symbol: "earbud.left",
+                        charging: accessory.left?.charging == true,
+                        status: stateWord,
+                        accessory: accessory,
+                        metrics: metrics)
+            HeadsetPart(percent: accessory.right?.percent,
+                        symbol: "earbud.right",
+                        charging: accessory.right?.charging == true,
+                        status: stateWord,
+                        accessory: accessory,
+                        metrics: metrics)
+            if showsCase {
+                HeadsetPart(percent: accessory.caseLevel?.percent,
+                            symbol: "airpods.chargingcase",
+                            charging: accessory.caseLevel?.charging == true,
+                            status: stateWord,
                             accessory: accessory,
                             metrics: metrics)
-                HeadsetPart(percent: accessory.right?.percent,
-                            symbol: "earbud.right",
-                            charging: accessory.right?.charging == true,
-                            accessory: accessory,
-                            metrics: metrics)
-                if showsCase {
-                    HeadsetPart(percent: accessory.caseLevel?.percent,
-                                // The outlined case, not the filled one: the
-                                // filled mark is a slab that outweighs the
-                                // hairline bud glyphs beside it.
-                                symbol: "airpods.chargingcase",
-                                charging: accessory.caseLevel?.charging == true,
-                                accessory: accessory,
-                                metrics: metrics)
-                }
             }
-            // Reserve a separate text band so connection state cannot overlap charge labels.
-            Text(stateWord)
-                .font(.system(size: metrics.caption, weight: .medium, design: .rounded))
-                .foregroundColor(inUse ? Theme.Ink.success : Theme.textTertiary())
-                .lineLimit(1)
-                .fixedSize()
-                .frame(height: metrics.statusBand)
         }
         .help("\(accessory.name) \(accessoryValue(accessory, count: count)) · \(accessory.connection.label)")
     }
@@ -361,6 +231,7 @@ fileprivate struct HeadsetPart: View {
     var percent: Int?
     var symbol: String
     var charging: Bool
+    var status: String
     var accessory: AudioAccessoryMonitor.Accessory
     var metrics: ConnectMetrics
 
@@ -427,13 +298,16 @@ fileprivate struct HeadsetPart: View {
                 .monospacedDigit()
                 .foregroundColor(percent == nil ? Theme.textTertiary() : Theme.textPrimary)
                 .lineLimit(1)
-                .fixedSize()
+                .frame(maxWidth: .infinity)
                 .frame(height: metrics.labelBand)
+            Text(status)
+                .font(.system(size: metrics.caption * 0.9, weight: .medium, design: .rounded))
+                .foregroundColor(inUse ? Theme.Ink.success : Theme.textTertiary())
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .frame(height: metrics.statusBand)
         }
-        // Exactly the box a network lane occupies: same glyph band, same label
-        // band. The mark is centred in the band rather than in the box, which is
-        // why a 32pt ring and a 28pt arc share one centre line.
-        .frame(width: metrics.markBox)
+        .frame(width: metrics.column)
         .accessibilityLabel("\(partName) \(percent.map { "\($0)%" } ?? "无读数")")
     }
 
@@ -468,19 +342,21 @@ fileprivate struct LinkMark: View {
             // The glyph band is the *ring's* diameter on every mark, so a 28pt
             // arc and a 32pt ring are centred on the same horizontal line.
             InstrumentGlyph(kind: symbol == "network" ? .ethernet : .link, tint: effectiveTint, active: on)
-                .frame(width: metrics.markBox, height: metrics.dial)
+                .frame(width: metrics.dial, height: metrics.dial)
             Text(caption)
                 .font(.system(size: metrics.caption, weight: .medium, design: .rounded))
                 .foregroundColor(on && !captionDim ? Theme.textSecondary : Theme.textTertiary())
                 .lineLimit(1)
-                .fixedSize()
+                .frame(maxWidth: .infinity)
                 .frame(height: metrics.labelBand)
-            // The headset prints a status line under its percentages; Wi-Fi
-            // and Ethernet reserve the same band and leave it empty, which is
-            // what keeps every mark on one baseline.
-            Color.clear.frame(height: metrics.statusBand)
+            Text("已接入")
+                .font(.system(size: metrics.caption * 0.9, weight: .medium, design: .rounded))
+                .foregroundColor(on ? Theme.Ink.success : Theme.textTertiary())
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .frame(height: metrics.statusBand)
         }
-        .frame(width: metrics.markBox)
+        .frame(width: metrics.column)
         .help(help)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(help)
@@ -525,34 +401,69 @@ private func accessoryValue(_ accessory: AudioAccessoryMonitor.Accessory, count:
 struct WiFiConnectionMark: View {
     let host: ProcessSampler.HostStats
     var dial: CGFloat = 32
-    var labelHeight: CGFloat = 17
+    var labelHeight: CGFloat = 16
+    var column: CGFloat = 68
+    var statusHeight: CGFloat = 14
     @ObservedObject private var permission = WiFiNameAuthorization.shared
+    @ObservedObject private var permissions = PermissionCenter.shared
+
+    private var switchedOn: Bool { permissions.isEnabled(.location) }
+
+    /// Only a missing name has something to click through to. Everything
+    /// else is a readout: it must not be a *disabled* button, which SwiftUI
+    /// dims to grey even when the lane is connected.
+    private var actionable: Bool {
+        host.wifiOn && host.wifiName.isEmpty && !permission.requesting
+    }
+
+    private var signal: String {
+        guard host.wifiOn, host.wifiRSSI < 0 else { return "Wi-Fi" }
+        let grade = WiFiBars.label(for: host.wifiRSSI).map { $0 + " · " } ?? ""
+        return grade + "\(host.wifiRSSI) dBm"
+    }
 
     private var name: String {
         if !host.wifiOn { return "Wi-Fi 已关闭" }
         if !host.wifiName.isEmpty { return host.wifiName }
+        if !switchedOn { return "在设置中开启" }
         if permission.requesting { return "等待授权…" }
         return permission.authorized ? "检查定位权限" : "授权显示名称"
     }
 
     var body: some View {
-        Button { permission.request() } label: {
-            VStack(spacing: 0) {
-                Image(systemName: host.wifiOn ? "wifi" : "wifi.slash")
-                    .font(.system(size: dial * 0.75, weight: .medium))
-                    .foregroundColor(host.wifiOn ? Theme.chartBlue : Theme.textSecondary)
-                    .frame(height: dial)
-                Text(name).font(Theme.Font.caption).lineLimit(1).truncationMode(.middle)
-                    .frame(height: labelHeight)
-                Text(host.wifiOn && host.wifiRSSI < 0 ? "\(host.wifiRSSI) dBm" : "Wi-Fi")
-                    .font(.system(size: 9)).foregroundColor(Theme.textSecondary).frame(height: 14)
+        Button {
+            guard actionable else { return }
+            if switchedOn {
+                permission.request()
+            } else {
+                NotificationCenter.default.post(name: .showMainWindow, object: nil)
+                NotificationCenter.default.post(name: .openSettingsPage, object: nil)
             }
-            .frame(width: 88)
+        } label: {
+            VStack(spacing: 0) {
+                Image(systemName: host.wifiOn ? WiFiBars.symbol(for: host.wifiRSSI) : "wifi.slash")
+                    .font(.system(size: dial * 0.62, weight: .medium))
+                    .foregroundColor(host.wifiOn ? Theme.chartBlue : Theme.textTertiary())
+                    .frame(width: dial, height: dial)
+                Text(name)
+                    .font(.system(size: dial * 0.32, weight: .medium, design: .rounded))
+                    .foregroundColor(host.wifiName.isEmpty ? (actionable ? Theme.Ink.claude : Theme.textSecondary) : Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: labelHeight)
+                Text(signal)
+                    .font(.system(size: dial * 0.28, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: statusHeight)
+            }
+            .frame(width: column)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!host.wifiOn || !host.wifiName.isEmpty || permission.requesting)
-        .foregroundColor(Theme.textPrimary)
         .help(host.wifiName.isEmpty ? "macOS 读取 Wi-Fi 名称需要定位授权；不会采集地理位置。" : host.wifiName)
         .alert("尚未获得 Wi-Fi 名称读取权限", isPresented: $permission.showSettingsHelp) {
             Button("打开定位设置") { permission.openSettings() }
@@ -565,7 +476,9 @@ struct WiFiConnectionMark: View {
 
 struct AirDropConnectionMark: View {
     var dial: CGFloat = 32
-    var labelHeight: CGFloat = 17
+    var labelHeight: CGFloat = 16
+    var column: CGFloat = 68
+    var statusHeight: CGFloat = 14
     @State private var openFailed = false
 
     var body: some View {
@@ -576,10 +489,19 @@ struct AirDropConnectionMark: View {
             VStack(spacing: 0) {
                 AirDropGlyph(tint: Theme.chartBlue)
                     .frame(width: dial, height: dial)
-                Text("隔空投送").font(Theme.Font.caption).frame(height: labelHeight)
-                Text("打开").font(.system(size: 9)).foregroundColor(Theme.textSecondary).frame(height: 14)
+                Text("隔空投送")
+                    .font(.system(size: dial * 0.32, weight: .medium, design: .rounded))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: labelHeight)
+                Text("打开")
+                    .font(.system(size: dial * 0.28, weight: .medium, design: .rounded))
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: statusHeight)
             }
-            .frame(width: 58).contentShape(Rectangle())
+            .frame(width: column).contentShape(Rectangle())
         }
         .buttonStyle(.plain).foregroundColor(Theme.textPrimary)
         .help("打开隔空投送，查看接收范围与附近设备")

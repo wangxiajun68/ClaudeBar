@@ -84,6 +84,8 @@ enum CodexProxyTransform {
     /// stay on the native path (xAI has its own sanitizer in cc-switch).
     static func shouldBridgeToChat(baseURL: String, wireAPI: String, model: String) -> Bool {
         if wireAPI == "chat" { return true }
+        // Verified native Responses presets must not be silently migrated to Chat.
+        if ProviderCatalogEntry.supportsNativeResponses(baseURL: baseURL, model: model) { return false }
         let host = baseURL.lowercased()
         if host.contains("api.openai.com") || host.contains("api.x.ai") { return false }
         let chatHosts = [

@@ -63,24 +63,15 @@ struct CompactFanPair: View {
     }
 }
 
-/// Accumulates angle from dt so RPM changes don't snap the blades back.
-private final class SpinPhase {
-    var last: TimeInterval?
-    var deg: Double = 18
-
-    func tick(_ now: TimeInterval, dps: Double) -> Double {
-        if let last {
-            deg += min(now - last, 0.2) * dps
-        }
-        last = now
-        if deg > 1_000_000 { deg = deg.truncatingRemainder(dividingBy: 360) }
-        return deg
-    }
-}
-
-/// Open three-blade rotor. Visual spin tracks RPM, capped so a full turn is
-/// never faster than ~6s. Drawn in Canvas so SwiftUI won't interpolate the
-/// angle back to rest on parent refresh.
+/// Open three-blade rotor whose spin tracks RPM (12°/s at the floor, 58°/s
+/// at rated max — about 30 s … 6 s per turn).
+///
+/// The blades are a Core Animation layer with one endless rotation, so the
+/// spin is interpolated by the render server at the display's refresh rate
+/// and costs the app no per-frame work — the previous 20 Hz Canvas timeline
+/// re-ran layout on the main thread for every tick and still looked choppy.
+/// RPM changes retime the layer in place (`RotorLayerView.setSpeed`), so the
+/// blades never snap back to rest.
 struct SoftRotor: View {
     var rpm: Int
     var maxRPM: Int
@@ -88,14 +79,12 @@ struct SoftRotor: View {
     var forced: Bool
     var size: CGFloat = 48
 
-    @State private var phase = SpinPhase()
     @State private var mounted = false
-    @State private var windowVisible = UIWakePolicy.shouldAnimate
+    @Environment(\.surfaceIsVisible) private var windowVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var spinning: Bool { mounted && windowVisible && rpm >= 80 && !reduceMotion }
 
-    /// 12°/s at the floor, 58°/s at rated max — about 30s … 6s per turn.
     private var degreesPerSecond: Double {
         guard spinning else { return 0 }
         let load = min(1, Double(rpm) / Double(max(maxRPM, 1)))
@@ -103,41 +92,126 @@ struct SoftRotor: View {
     }
 
     var body: some View {
-        // `paused:` is load-bearing. `PeriodicTimelineSchedule` has no paused
-        // flag, so an idle rotor kept an unconditional 20 Hz display link for
-        // the life of the app and every tick cost a full main-thread layout
-        // pass. `.animation(minimumInterval:paused:)` is the same schedule the
-        // rest of the motion in this app uses and is the only pausable one.
-        // The angle is accumulated from wall-clock time in `SpinPhase`, so the
-        // blades pick up where they left off when unpaused.
-        TimelineView(.animation(minimumInterval: spinning ? 1.0 / 20.0 : 30,
-                                paused: !spinning)) { timeline in
-            let deg = spinning
-                ? phase.tick(timeline.date.timeIntervalSinceReferenceDate, dps: degreesPerSecond)
-                : 18
-            Canvas { ctx, canvasSize in
-                let s = min(canvasSize.width, canvasSize.height)
-                let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-                if forced {
-                    let ring = CGRect(x:center.x-s*0.46,y:center.y-s*0.46,width:s*0.92,height:s*0.92)
-                    ctx.stroke(Path(ellipseIn:ring),with:.color(tint.opacity(0.25)),lineWidth:1)
-                }
-                var rotor = ctx
-                rotor.translateBy(x:center.x,y:center.y)
-                rotor.rotate(by:.degrees(deg))
-                for i in 0..<3 {
-                    var blade = rotor
-                    blade.rotate(by:.degrees(Double(i)*120))
-                    blade.fill(RotorBlade().path(in:CGRect(x:-s/2,y:-s/2,width:s,height:s)),
-                               with:.color(tint.opacity(0.85)))
-                }
-                let hub = CGRect(x:center.x-s*0.045,y:center.y-s*0.045,width:s*0.09,height:s*0.09)
-                ctx.fill(Path(ellipseIn:hub),with:.color(tint))
+        ZStack {
+            if forced {
+                Circle()
+                    .stroke(tint.opacity(0.25), lineWidth: 1)
+                    .frame(width: size * 0.92, height: size * 0.92)
             }
-            .frame(width: size, height: size)
+            RotorLayer(tint: NSColor(tint), degreesPerSecond: degreesPerSecond)
+                .frame(width: size, height: size)
         }
-        .onAppear { mounted = true; windowVisible = UIWakePolicy.shouldAnimate }
+        .frame(width: size, height: size)
+        .onAppear { mounted = true }
         .onDisappear { mounted = false }
-        .onReceive(UIWakePolicy.changes) { windowVisible = UIWakePolicy.shouldAnimate }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct RotorLayer: NSViewRepresentable {
+    let tint: NSColor
+    let degreesPerSecond: Double
+
+    func makeNSView(context: Context) -> RotorLayerView { RotorLayerView() }
+
+    func updateNSView(_ view: RotorLayerView, context: Context) {
+        view.apply(tint: tint, degreesPerSecond: degreesPerSecond)
+    }
+}
+
+final class RotorLayerView: NSView {
+    private let rotor = CALayer()
+    private let blades = CAShapeLayer()
+    private let hub = CAShapeLayer()
+    private var pathSide: CGFloat = 0
+    private static let spinKey = "spin"
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        rotor.speed = 0
+        rotor.addSublayer(blades)
+        rotor.addSublayer(hub)
+        layer?.addSublayer(rotor)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        rotor.bounds = CGRect(origin: .zero, size: bounds.size)
+        rotor.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        blades.frame = rotor.bounds
+        hub.frame = rotor.bounds
+        let side = min(bounds.width, bounds.height)
+        if side != pathSide, side > 0 {
+            pathSide = side
+            rebuildPaths(side: side)
+        }
+        CATransaction.commit()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        [rotor, blades, hub].forEach { $0.contentsScale = scale }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ensureAnimation()
+    }
+
+    func apply(tint: NSColor, degreesPerSecond: Double) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        blades.fillColor = tint.withAlphaComponent(0.85).cgColor
+        hub.fillColor = tint.cgColor
+        CATransaction.commit()
+        ensureAnimation()
+        setSpeed(Float(degreesPerSecond / 360))
+    }
+
+    private func rebuildPaths(side: CGFloat) {
+        let center = CGAffineTransform(translationX: side / 2, y: side / 2)
+        let blade = RotorBlade().path(in: CGRect(x: -side / 2, y: -side / 2, width: side, height: side))
+        let rotorPath = CGMutablePath()
+        for index in 0..<3 {
+            let angle = (18 + Double(index) * 120) * .pi / 180
+            let transform = CGAffineTransform(rotationAngle: angle).concatenating(center)
+            rotorPath.addPath(blade.cgPath, transform: transform)
+        }
+        blades.path = rotorPath
+        let hubRadius = side * 0.045
+        hub.path = CGPath(ellipseIn: CGRect(x: side / 2 - hubRadius, y: side / 2 - hubRadius,
+                                            width: hubRadius * 2, height: hubRadius * 2), transform: nil)
+    }
+
+    /// One turn per second of layer time; `speed` scales it to the RPM.
+    private func ensureAnimation() {
+        guard rotor.animation(forKey: Self.spinKey) == nil else { return }
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = Double.pi * 2
+        spin.duration = 1
+        spin.repeatCount = .infinity
+        spin.isRemovedOnCompletion = false
+        rotor.add(spin, forKey: Self.spinKey)
+    }
+
+    /// Retimes the layer without a jump: freeze the current local time into
+    /// `timeOffset`, restart the clock now, then apply the new rate.
+    private func setSpeed(_ speed: Float) {
+        guard rotor.speed != speed else { return }
+        let now = CACurrentMediaTime()
+        let local = rotor.convertTime(now, from: nil)
+        rotor.timeOffset = local
+        rotor.beginTime = now
+        rotor.speed = speed
     }
 }

@@ -33,6 +33,7 @@ final class MenuBarController: NSObject {
 
     private var rateAccessory: VpnMenuBarRateView?
     private var rateCancel: AnyCancellable?
+    private lazy var rateIcon = MenuBarMark.image(side: 16)
     private var lastRateKey: String?
     private var appearanceObs: NSObjectProtocol?
 
@@ -109,7 +110,7 @@ final class MenuBarController: NSObject {
             lastRateKey = key
             button.image = nil
             accessory.isHidden = false
-            accessory.update(icon: MenuBarMark.image(side: 16), down: down, up: up)
+            accessory.update(icon: rateIcon, down: down, up: up)
             accessory.frame = NSRect(x: 0, y: 1, width: VpnMenuBarRateView.fullWidth, height: 20)
             statusItem.length = VpnMenuBarRateView.fullWidth + 6
         } else {
@@ -169,8 +170,9 @@ final class MenuBarController: NSObject {
 
     private func makeHostingView() {
         let rootView = AnyView(
-            MenuBarView()
+            MenuBarView(providerStore: providerStore, codexStore: codexProviderStore)
                 .environmentObject(providerStore)
+                .environment(\.providerSource, providerStore)
                 .environmentObject(codexProviderStore)
         )
         let hosting = NSHostingView(rootView: rootView)

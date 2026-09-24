@@ -3,7 +3,7 @@ import SwiftUI
 /// Usage analytics page: period tabs, heatmap, quota rows — same CatStatus
 /// grammar as the popup, at page scale.
 struct UsageView: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState(.usage) var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
 
     var body: some View {

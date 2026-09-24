@@ -59,7 +59,7 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
 }
 
 /// One local-calendar day of aggregated usage — the river chart's column.
-struct DayUsage: Identifiable {
+struct DayUsage: Identifiable, Equatable {
     var id: String { day }
     let day: String
     var inputTokens: Int = 0
@@ -69,7 +69,7 @@ struct DayUsage: Identifiable {
     var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens }
 }
 
-struct ModelUsage: Identifiable {
+struct ModelUsage: Identifiable, Hashable {
     var id: String { model }
     let model: String
     var calls: Int = 0

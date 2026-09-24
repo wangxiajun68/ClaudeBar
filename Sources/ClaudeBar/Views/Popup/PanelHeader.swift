@@ -6,7 +6,7 @@ import SwiftUI
 /// Row 1: live facts (sessions · local proxy · rates) + refresh.
 /// Row 2: three switchers — Claude Code, Codex, VPN — each a popover.
 struct PanelHeader: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.configuration, .sessions]) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject private var prefs = AppPreferences.shared
     @ObservedObject private var vpn = VpnManager.shared
@@ -234,7 +234,7 @@ private struct HeaderSwitchChip<Popover: View>: View {
 private enum ModelSwitchKind { case claude, codex }
 
 private struct ModelSwitchList: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.configuration, .sessions]) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     let kind: ModelSwitchKind
     var panel: PanelState

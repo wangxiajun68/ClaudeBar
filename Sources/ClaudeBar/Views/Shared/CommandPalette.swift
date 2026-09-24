@@ -16,7 +16,7 @@ enum CommandResult: Equatable {
 /// accent tint; `subtitle` is secondary help text shown under the title.
 struct CommandItem: Identifiable {
     enum Kind { case page, claudeSession, cursorSession, provider }
-    let id = UUID()
+    let id: String
     let kind: Kind
     let title: String
     let subtitle: String
@@ -36,10 +36,10 @@ struct CommandItem: Identifiable {
 struct CommandPalette: View {
     @Binding var isPresented: Bool
     let onSelect: (CommandResult) -> Void
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.configuration, .sessions]) var providerStore: ProviderStore
 
     @State private var query = ""
-    @State private var selection: UUID?
+    @State private var selection: String?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -162,13 +162,13 @@ struct CommandPalette: View {
     /// The full set of navigable items, rebuilt from the store each render.
     private var allItems: [CommandItem] {
         var items = AppPage.allCases.map { p in
-            CommandItem(kind: .page, title: p.label,
+            CommandItem(id: "page:\(p.rawValue)", kind: .page, title: p.label,
                         subtitle: "前往页面",
                         icon: p.icon, tint: Theme.accent,
                         result: .page(p))
         }
         items += providerStore.sessions.filter(\.isAlive).map { s in
-            CommandItem(kind: .claudeSession, title: s.projectFolder,
+            CommandItem(id: "claude:\(s.pid)", kind: .claudeSession, title: s.projectFolder,
                         subtitle: s.name.isEmpty ? "Claude Code · PID \(s.pid)" : s.name,
                         icon: "rectangle.connected.to.line.below",
                         tint: Theme.statusBusy,
@@ -176,14 +176,14 @@ struct CommandPalette: View {
         }
         // Cursor sessions carry no UUID, so they route to the sessions page.
         items += providerStore.cursorSessions.map { s in
-            CommandItem(kind: .cursorSession, title: s.projectFolder,
+            CommandItem(id: "cursor:\(s.composerId)", kind: .cursorSession, title: s.projectFolder,
                         subtitle: s.name.isEmpty ? "Cursor" : s.name,
                         icon: "cursorarrow",
                         tint: Theme.cursorAccent,
-                        result: .provider(id: UUID()))
+                        result: .page(.sessions))
         }
         items += providerStore.providers.map { p in
-            CommandItem(kind: .provider, title: p.name,
+            CommandItem(id: "provider:\(p.id)", kind: .provider, title: p.name,
                         subtitle: p.activeModel?.name ?? "供应商",
                         icon: "cube",
                         tint: Theme.accent,

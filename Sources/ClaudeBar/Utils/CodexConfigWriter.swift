@@ -236,20 +236,42 @@ enum CodexConfigWriter {
         //    [model_providers.*] tables stay untouched. Unknown keys in our
         //    table (comments, experimental flags we don't own) are preserved.
         let header = "model_providers.\(key)"
+        // Codex 0.149 (`resolve_provider_auth`) short-circuits on
+        // `experimental_bearer_token` and no longer lets a custom provider
+        // inherit `OPENAI_API_KEY` from `auth.json`. The live key therefore
+        // always lives on this table: the proxy's own token when we route
+        // locally, otherwise the provider key itself. cc-switch
+        // `set_codex_experimental_bearer_token` / `plan_codex_live_write`.
+        let directKey = provider.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let proxyToken = CodexProxyServer.configuredToken
+        let bearer: String? = if proxyBaseURL != nil, !proxyToken.isEmpty {
+            proxyToken
+        } else if proxyBaseURL == nil, !directKey.isEmpty {
+            directKey
+        } else {
+            nil
+        }
+        // Once the table can authenticate on its own, `requires_openai_auth`
+        // only drives login UX. `true` beside a preserved ChatGPT login keeps
+        // the desktop account (and its quota) visible; `false` makes Codex
+        // treat that login as logged out and hide custom models. Stamp it
+        // from the preservation toggle — a stored `true` left over from the
+        // pre-0.149 "key lives in auth.json" era must not survive the switch.
+        // cc-switch `align_codex_requires_openai_auth_with_login_preservation`.
+        let requiresOpenAIAuth = bearer == nil
+            ? provider.requiresOpenAIAuth
+            : provider.preserveOfficialLogin
         var owned: [(String, String)] = [
             ("name", serialize(provider.name)),
             ("base_url", serialize(effectiveBase)),
             ("wire_api", serialize(effectiveWireAPI)),
-            ("requires_openai_auth", String(provider.requiresOpenAIAuth)),
+            ("requires_openai_auth", String(requiresOpenAIAuth)),
         ]
-        if proxyBaseURL != nil {
-            // The proxy now requires a bearer token, so `PROXY_MANAGED` alone
-            // is not enough for Codex to get through it. `diagnose()` before a
-            // switch may see this placeholder and report "configured".
-            owned.append(("experimental_bearer_token", serialize(CodexProxyServer.configuredToken)))
+        if let bearer, !bearer.isEmpty {
+            owned.append(("experimental_bearer_token", serialize(bearer)))
         }
         upsertProviderSection(&doc, header: header, owned: owned,
-                              dropKeys: proxyBaseURL == nil ? ["experimental_bearer_token"] : [])
+                              dropKeys: bearer == nil ? ["experimental_bearer_token"] : [])
 
         try FileManager.default.createDirectory(at: FilePaths.codexDir, withIntermediateDirectories: true)
         try render(doc).write(to: url, atomically: true, encoding: .utf8)
@@ -536,27 +558,37 @@ enum CodexConfigWriter {
         }
     }
 
-    static func writeAuth(apiKey: String, preserveOfficialLogin: Bool) throws {
+    /// Third-party switches never write the provider key into `auth.json`.
+    ///
+    /// Codex 0.149 stopped inheriting that key for custom providers, so
+    /// putting it here (alone, or beside a ChatGPT login) makes the desktop
+    /// report API-key mode: no subscription quota, and the custom route 401s
+    /// because the key never reaches `experimental_bearer_token`. cc-switch
+    /// `plan_codex_live_write`: preservation on leaves the ChatGPT login
+    /// untouched; preservation off deletes the file instead of replacing it
+    /// with the API key. A key this app wrote on an older switch is stripped
+    /// so it cannot keep the session in API-key mode.
+    static func writeAuth(preserveOfficialLogin: Bool) throws {
         let url = FilePaths.codexAuthFile
-        var json: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            json = existing
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return }
+
+        if !preserveOfficialLogin {
+            try fm.removeItem(at: url)
+            return
         }
 
-        if preserveOfficialLogin && hasOfficialLogin(json) {
-            // Keep every existing key (official tokens stay); only refresh
-            // the third-party key. Note: Codex desktop may still prefer the
-            // ChatGPT auth for custom providers — the key is present for
-            // CLI / API-key flows.
-            json["OPENAI_API_KEY"] = apiKey
-        } else {
-            json = ["OPENAI_API_KEY": apiKey, "auth_mode": "apikey"]
+        guard let data = try? Data(contentsOf: url),
+              var json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["OPENAI_API_KEY"] != nil
+        else { return }
+        json.removeValue(forKey: "OPENAI_API_KEY")
+        if hasOfficialLogin(json) {
+            let out = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+            try out.write(to: url, options: .atomic)
+            return
         }
-
-        try FileManager.default.createDirectory(at: FilePaths.codexDir, withIntermediateDirectories: true)
-        let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url, options: .atomic)
+        try fm.removeItem(at: url)
     }
 
     // MARK: - Helpers

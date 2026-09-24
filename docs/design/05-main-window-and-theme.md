@@ -37,7 +37,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片 |
 | **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 启动 / 外观 / 截图与通知 / 存储 / 本机代理 / VPN 代理 / 连通性 / 配置文件 / 关于 |
+| **SettingsView** | 启动 / 外观 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / VPN 代理 / 连通性 / 配置文件 / 关于 |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -55,6 +55,10 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
 - `ConnectivityProbeButton`、`ProxyCurlExample`。
+- `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
+- `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。
+- `BatteryChargeControls.swift`：能源卡的电池控制段（见 [technical/12](../technical/12-battery-control.md)）。
+- `DecorativeMotion.swift`：Core Animation 装饰动效，不跑 SwiftUI 时间线。
 
 ## Theme 设计 token（`Theme/Theme.swift`）
 

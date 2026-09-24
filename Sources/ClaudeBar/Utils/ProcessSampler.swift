@@ -23,6 +23,7 @@ final class ProcessSampler {
         case popup
         case dashboard
         case sessions
+        case island
     }
 
     enum Key: Hashable {
@@ -86,6 +87,7 @@ final class ProcessSampler {
         var powerSystemWatts: Double?
         var powerBatteryWatts: Double?
         var powerIsEstimated = false
+        var adapterRatedWatts: Int?
 
         var diskPercent: Double {
             guard diskTotal > 0 else { return 0 }
@@ -143,6 +145,10 @@ final class ProcessSampler {
     // Disk capacity changes slowly; keep filesystem queries off the live power cadence.
     private var diskSample: (used: UInt64, total: UInt64)?
     private var diskSampleAt: TimeInterval = 0
+    private var linkSample: HardwareSensors.LinkStatus?
+    private var linkSampleAt: TimeInterval = 0
+    private var cpuTemperature: Double?
+    private var temperatureSampleAt: TimeInterval = -.infinity
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
     private var claudeRoots: [pid_t] = []
@@ -273,7 +279,9 @@ final class ProcessSampler {
         } else if live {
             next = 1
         } else {
-            next = 1
+            // A resource UI is open but every session is idle: 2 s keeps the
+            // gauges current at half the IOKit/SMC traffic.
+            next = 2
         }
         guard wasSuspended || abs(period - next) > 0.05 else { return }
         period = next
@@ -295,7 +303,19 @@ final class ProcessSampler {
             diskSampleAt = now
         }
         let disk = diskSample ?? (used: 0, total: 1)
-        let links = HardwareSensors.linkStatus()
+        // CoreWLAN + SCDynamicStore + IOBluetooth; a link state older than
+        // 3 s is not stale for a status mark.
+        if linkSample == nil || now - linkSampleAt >= 3 {
+            linkSample = HardwareSensors.linkStatus()
+            linkSampleAt = now
+        }
+        let links = linkSample ?? HardwareSensors.LinkStatus()
+        // The SMC temperature sweep is the dearest read in the tick, and
+        // package temperature moves on a scale of seconds.
+        if foreground, now - temperatureSampleAt >= 5 {
+            cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
+            temperatureSampleAt = now
+        }
         // Read on *every* tier, not just the foreground one. The 电量 mark is
         // permanent (`ConnectLaneRow` draws it whether or not a pack is fitted),
         // so a background-tier sample that left it at 0 would repaint the tile
@@ -310,7 +330,7 @@ final class ProcessSampler {
             memoryUsed: hostMemoryUsed(),
             memoryTotal: ProcessInfo.processInfo.physicalMemory,
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
-            cpuTemperatureCelsius: foreground ? HardwareSensors.cpuTemperatureCelsius() : nil,
+            cpuTemperatureCelsius: foreground ? cpuTemperature : nil,
             gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
@@ -328,7 +348,8 @@ final class ProcessSampler {
             powerInputWatts: battery.inputWatts,
             powerSystemWatts: battery.systemWatts,
             powerBatteryWatts: battery.batteryWatts,
-            powerIsEstimated: battery.powerIsEstimated
+            powerIsEstimated: battery.powerIsEstimated,
+            adapterRatedWatts: battery.externalPower ? battery.adapterRatedWatts : nil
         )
 
         let memTotal = max(Double(hostSnap.memoryTotal), 1)
@@ -404,6 +425,15 @@ final class ProcessSampler {
             host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
             if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
             if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
+            // RSSI jitters ±1 dBm and the power rails in milliwatts between
+            // samples; below these steps nothing on screen changes, so the
+            // equality check below can actually hold.
+            host.wifiRSSI = (host.wifiRSSI / 2) * 2
+            func tenth(_ value: Double?) -> Double? { value.map { ($0 * 10).rounded() / 10 } }
+            host.powerInputWatts = tenth(host.powerInputWatts)
+            host.powerSystemWatts = tenth(host.powerSystemWatts)
+            host.powerBatteryWatts = tenth(host.powerBatteryWatts)
+            host.batteryChargingWatts = tenth(host.batteryChargingWatts)
 
             if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
             if self.host != host { self.host = host }

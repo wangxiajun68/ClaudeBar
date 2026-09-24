@@ -27,6 +27,13 @@ struct CodexQuotaGauges: View {
                             .font(.system(size: compact ? 10 : 20, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                             .foregroundColor(Theme.textPrimary)
+                        if !compact {
+                            Text(window.resetClock)
+                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                                .foregroundColor(Theme.textTertiary())
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
                     }
                 }
                 .fixedSize()

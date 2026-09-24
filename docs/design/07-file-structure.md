@@ -8,15 +8,23 @@ ClaudeBar/
 ├── Sources/
 │   ├── build.sh                          ← 开发者 / CI 构建脚本（非终端用户安装器）
 │   ├── AppIcon.icns / AppIcon.svg        ← 应用图标
+│   ├── ProviderIcons/                    ← 厂商品牌图标（LobeHub Icons，随包内置；见其 README）
+│   ├── batteryctl/                       ← 电池控制 C 辅助进程（`batteryctl.c` + `policy.h`）
 │   ├── ClaudeBar/                        ← 主 app 源码
 │   │   ├── ClaudeBarApp.swift            ← AppDelegate（.regular 激活策略；@main App 壳）
 │   │   ├── MenuBarController.swift       ← NSStatusItem + NSPanel（菜单栏 popup）
+│   │   ├── NotchIslandController.swift   ← 刘海灵动岛面板 + 收起 / 提醒 / 展开状态机（见 §10）
 │   │   ├── MainWindowController.swift    ← NSWindow 主窗口（1120×720）
 │   │   ├── Theme/Theme.swift             ← 设计 token 单点
 │   │   ├── Models/
 │   │   │   ├── Provider.swift / CodexProvider.swift
 │   │   │   ├── ProviderStore.swift / CodexProviderStore.swift
-│   │   │   ├── ProviderBridge.swift      ← Claude ↔ Codex 联动
+│   │   │   ├── ProviderBridge.swift      ← Claude ↔ Codex 导入转换
+│   │   │   ├── ProviderCatalog.swift     ← 内置供应商目录（端点 / 协议 / 模型预设）
+│   │   │   ├── ProviderProfileSync.swift ← 同一份配置在两侧的同步
+│   │   │   ├── ScopedStoreObservation.swift ← 按字段合并的 store 观察
+│   │   │   ├── BatteryChargeController.swift ← 电池控制状态机
+│   │   │   ├── IslandLiveModel.swift     ← 灵动岛数据（见 §10）
 │   │   │   ├── ProviderEditorModel.swift / CodexEditorModel.swift
 │   │   │   ├── CodexProxyState.swift
 │   │   │   ├── SettingsManager.swift / AppConfig.swift / AppPreferences.swift
@@ -29,13 +37,18 @@ ClaudeBar/
 │   │   │   ├── VpnSystemProxyController.swift / VpnNetProbe.swift
 │   │   │   ├── FanMonitor.swift         ← SMC 风扇 / 温度
 │   │   │   ├── SessionMonitor.swift / CursorSessionMonitor.swift / ExternalSessionMonitor.swift
+│   │   │   ├── PermissionCenter.swift   ← 权限清单与系统授权状态（见 §10）
+│   │   │   ├── TerminalLauncher.swift / SessionHost.swift / OttyBridge.swift ← 回到会话
+│   │   │   ├── NotchGeometry.swift      ← 刘海尺寸（见 §10）
+│   │   │   ├── BatteryHelperInstaller.swift ← 电池辅助进程的安装与校验
 │   │   │   ├── UsageStats.swift / ProcessSampler.swift / …
 │   │   │   └── …
 │   │   └── Views/
 │   │       ├── MainWindowView.swift      ← 顶栏 tabs + detail（8 页）
 │   │       ├── MenuBarView.swift         ← popup 组合壳
+│   │       ├── Island/                   ← 灵动岛形状、根视图、会话行、用量卡（见 §10）
 │   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Usage / Traffic / VPN / Settings / Help
-│   │       ├── Shared/                  ← Tile / ConnectionCard / VpnTopChrome / FanControlSection / …
+│   │       ├── Shared/                  ← Tile / ConnectionCard / ProviderDirectory / PermissionsSection / …
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
 │   └── Widget/
 ├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载

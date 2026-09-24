@@ -4,7 +4,7 @@ import SwiftUI
 /// Models page. Third-party clients get their own pickers and do not rewrite
 /// `settings.json` / `config.toml`.
 struct ProxyUpstreamPickers: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState(.configuration) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject private var prefs = AppPreferences.shared
 

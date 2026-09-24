@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Native translations of the Uiverse.io widgets the product actually uses.
-// Motion is gated: TimelineView only ticks on hover, press, or VPN starting.
+// Motion uses native layers, gated by hover/start state and surface visibility.
 // Ice canvas stays ice — the dark sparkle pill is the one ink contrast CTA.
 
 // MARK: - Sparkle CTA (MuhammadHasann)
@@ -18,7 +18,9 @@ struct SparkleCta: View {
 
     @State private var hover = false
 
-    private var active: Bool { hover || spinning }
+    @Environment(\.surfaceIsVisible) private var surfaceVisible
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var active: Bool { surfaceVisible && !reduceMotion && (hover || spinning) }
 
     private var glow: Color {
         kind == .stop ? Theme.statusError : Color(hue: 0.72, saturation: 0.90, brightness: 0.58)
@@ -27,7 +29,7 @@ struct SparkleCta: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                SparkleMark(active: hover || spinning)
+                SparkleMark(active: active)
                     .frame(width: 16, height: 16)
                 Text(title)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -116,126 +118,40 @@ private struct SparklePressStyle: ButtonStyle {
 
 private struct SparkleMark: View {
     var active: Bool
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: active ? 1.0 / 20.0 : 30, paused: !active)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 1.5) / 1.5
-            ZStack {
-                spark(scaleAt(phase, peak: 0.17))
-                    .frame(width: 10, height: 10)
-                spark(scaleAt(phase, peak: 0.49))
-                    .frame(width: 6, height: 6)
-                    .offset(x: 5, y: -4)
-                spark(scaleAt(phase, peak: 0.83))
-                    .frame(width: 5, height: 5)
-                    .offset(x: -4, y: 5)
-            }
-            .foregroundColor(.white)
-        }
-    }
-
-    private func spark(_ scale: CGFloat) -> some View {
-        Image(systemName: "sparkle")
-            .resizable()
-            .scaledToFit()
-            .scaleEffect(scale)
-    }
-
-    private func scaleAt(_ phase: Double, peak: Double) -> CGFloat {
-        abs(phase - peak) < 0.08 ? 1.22 : 1
-    }
+    var body: some View { DecorativeMotion(kind: .sparkles, active: active) }
 }
 
-/// Rotating white bar clipped to the capsule stroke — `dots_border`.
 private struct SweepRing: View {
     var active: Bool
-
     var body: some View {
-        TimelineView(.animation(minimumInterval: active ? 1.0 / 20.0 : 30, paused: !active)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let deg = active ? (t.truncatingRemainder(dividingBy: 2) / 2) * 360 : 0
-            Canvas { ctx, size in
-                let mid = CGPoint(x: size.width / 2, y: size.height / 2)
-                ctx.translateBy(x: mid.x, y: mid.y)
-                ctx.rotate(by: .degrees(deg))
-                let bar = CGRect(x: 0, y: -10, width: max(size.width, size.height), height: 20)
-                ctx.fill(
-                    Path(bar),
-                    with: .linearGradient(
-                        Gradient(colors: [.clear, .white, .clear]),
-                        startPoint: CGPoint(x: 0, y: -10),
-                        endPoint: CGPoint(x: 0, y: 10)
-                    )
-                )
-            }
-            .mask {
-                Capsule().stroke(lineWidth: 2).padding(-1)
-            }
+        DecorativeMotion(kind: .sweep, active: active)
             .opacity(active ? 1 : 0)
-        }
-        .allowsHitTesting(false)
+            .allowsHitTesting(false)
     }
 }
 
-// MARK: - Orbit loader (circular inset-shadow spinner + stars)
-
-/// Starting-state ring. Stars and rotation only while `spinning`.
+/// Native layer rotation and star pulses; the caption remains static.
 struct OrbitLoader: View {
     var size: CGFloat = 44
     var caption: String = "…"
     var spinning: Bool = true
+    @Environment(\.surfaceIsVisible) private var windowVisible
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: spinning ? 1.0 / 20.0 : 30, paused: !spinning)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            let deg = spinning ? (t.truncatingRemainder(dividingBy: 2) / 2) * 360 + 90 : 90
-            ZStack {
-                if size >= 36 {
-                    ForEach(0..<5, id: \.self) { i in
-                        star(i, t: t)
-                    }
-                }
-                Circle()
-                    .fill(Theme.chartPurple.opacity(0.10))
-                    .shadow(color: Color.white.opacity(0.35), radius: size * 0.18)
-                Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [
-                                Color.white.opacity(0.90),
-                                Color.white.opacity(0.08),
-                                Theme.chartPurple.opacity(0.45),
-                                Color.white.opacity(0.90)
-                            ],
-                            center: .center
-                        ),
-                        lineWidth: max(3, size * 0.09)
-                    )
-                    .rotationEffect(.degrees(deg))
-                if !caption.isEmpty {
-                    Text(caption)
-                        .font(.system(size: max(9, size * 0.24), weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.textPrimary)
-                }
+        ZStack {
+            Circle().fill(Theme.chartPurple.opacity(0.10))
+                .shadow(color: Color.white.opacity(0.35), radius: size * 0.18)
+            DecorativeMotion(kind: .orbit, tint: Theme.chartPurple,
+                             active: spinning && windowVisible && !reduceMotion)
+            if !caption.isEmpty {
+                Text(caption)
+                    .font(.system(size: max(9, size * 0.24), weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary)
             }
-            .frame(width: size, height: size)
         }
+        .frame(width: size, height: size)
         .accessibilityLabel(caption.isEmpty ? "启动中" : caption)
-    }
-
-    private func star(_ i: Int, t: TimeInterval) -> some View {
-        let phase = t + Double(i) * 0.18
-        let pulse = 0.18 + 0.14 * (0.5 + 0.5 * sin(phase * .pi))
-        let angles: [Double] = [70, 28, 130, 210, 320]
-        let radii: [CGFloat] = [0.62, 0.58, 0.70, 0.64, 0.60]
-        let rad = angles[i] * .pi / 180
-        let r = size * radii[i]
-        return Circle()
-            .fill(Color.white.opacity(pulse))
-            .frame(width: 3.5, height: 3.5)
-            .blur(radius: pulse > 0.26 ? 0.4 : 1.6)
-            .offset(x: CGFloat(cos(rad)) * r, y: CGFloat(sin(rad)) * r)
     }
 }
 
@@ -246,13 +162,11 @@ struct AuroraSparkline: View {
     var tint: Color = Theme.chartGreen
     var live: Bool = false
 
-    /// A `live` sparkline pulses its head dot at 12 Hz. `live` is a caller
-    /// decision (VPN running, stream in flight) but on its own it is not
-    /// enough: the schedule has to stop when nothing is on screen, or an
-    /// always-resident menu-bar app keeps animating a window nobody can see.
-    @State private var uiIsLive = UIWakePolicy.hasVisibleWindow
+    /// The halo animates in a layer only while this surface is visible.
+    @Environment(\.surfaceIsVisible) private var uiIsLive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var pulsing: Bool { live && uiIsLive }
+    private var pulsing: Bool { live && uiIsLive && !reduceMotion }
 
     var body: some View {
         GeometryReader { geo in
@@ -270,14 +184,9 @@ struct AuroraSparkline: View {
                     .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 if let last = pts.last {
                     if pulsing {
-                        TimelineView(.animation(minimumInterval: 1.0 / 12.0,
-                                                paused: !pulsing)) { timeline in
-                            let p = 0.5 + 0.5 * sin(timeline.date.timeIntervalSinceReferenceDate * 2.4)
-                            Circle()
-                                .fill(tint.opacity(0.14 + 0.16 * p))
-                                .frame(width: 10 + 8 * p, height: 10 + 8 * p)
-                                .position(last)
-                        }
+                        DecorativeMotion(kind: .pulse, tint: tint, active: pulsing)
+                            .frame(width: 18, height: 18)
+                            .position(last)
                     }
                     Circle()
                         .fill(tint)
@@ -286,9 +195,6 @@ struct AuroraSparkline: View {
                         .position(last)
                 }
             }
-        }
-        .onReceive(UIWakePolicy.changes) { _ in
-            uiIsLive = UIWakePolicy.hasVisibleWindow
         }
         .accessibilityHidden(true)
     }
@@ -382,32 +288,13 @@ struct SourceStack: View {
 }
 
 private struct ScanLine: View {
-    /// Same contract as the other gated schedules in this file: the parent
-    /// stops rendering the line when it is not scanning, and `active` keeps
-    /// the schedule itself paused so an in-flight hover-out cannot leave a
-    /// 20 Hz display link behind.
     var active: Bool
-
+    @Environment(\.surfaceIsVisible) private var surfaceVisible
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        // 20 Hz while the card is hovered. Every other 20 Hz schedule in this
-        // kit carries `paused:`, and this one is worse than they are: it has
-        // no stop condition at all, so leaving the pointer on a usage card
-        // pinned a display link for as long as the app ran.
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !active)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 1.6) / 1.6
-            Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [.clear, Theme.external, .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .offset(x: CGFloat(t - 0.5) * 48)
-                .opacity(0.85)
-        }
-        .allowsHitTesting(false)
+        DecorativeMotion(kind: .scan, tint: Theme.external,
+                         active: active && surfaceVisible && !reduceMotion)
+            .allowsHitTesting(false)
     }
 }
 

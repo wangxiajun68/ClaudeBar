@@ -159,10 +159,36 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    // MARK: 继续会话
+
+    /// Where 继续 / double-click resumes a Claude Code or Codex session.
+    @Published var resumeTerminal: ResumeTerminal {
+        didSet { UserDefaults.standard.set(resumeTerminal.rawValue, forKey: "resumeTerminal") }
+    }
+
+    // MARK: 刘海灵动岛
+
+    /// Show the notch island at the top center of the notched screen.
+    @Published var notchIslandEnabled: Bool {
+        didSet { UserDefaults.standard.set(notchIslandEnabled, forKey: "notchIslandEnabled") }
+    }
+    /// Collapsed island shows the busy agent and today's tokens beside the notch.
+    @Published var notchIslandShowsWings: Bool {
+        didSet { UserDefaults.standard.set(notchIslandShowsWings, forKey: "notchIslandShowsWings") }
+    }
+    /// Grow a short alert out of the notch when a session finishes.
+    @Published var notchIslandAlertsEnabled: Bool {
+        didSet { UserDefaults.standard.set(notchIslandAlertsEnabled, forKey: "notchIslandAlertsEnabled") }
+    }
+    /// Keep the island over full-screen apps.
+    @Published var notchIslandInFullScreen: Bool {
+        didSet { UserDefaults.standard.set(notchIslandInFullScreen, forKey: "notchIslandInFullScreen") }
+    }
+
     private var didSetReady = false
 
     private init() {
-        idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? true
+        idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? false
         appearance = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: "appearanceMode") ?? "") ?? .light
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
@@ -185,7 +211,12 @@ final class AppPreferences: ObservableObject {
         vpnAllowLan = vpn["vpnAllowLan"] as? Bool ?? false
         vpnControllerSecret = vpn["vpnControllerSecret"] as? String ?? ""
         vpnGuardEnabled = vpn["vpnGuardEnabled"] as? Bool ?? true
-        screenshotHotkeyEnabled = UserDefaults.standard.object(forKey: "screenshotHotkeyEnabled") as? Bool ?? true
+        screenshotHotkeyEnabled = UserDefaults.standard.object(forKey: "screenshotHotkeyEnabled") as? Bool ?? false
+        resumeTerminal = UserDefaults.standard.string(forKey: "resumeTerminal").flatMap(ResumeTerminal.init(rawValue:)) ?? .automatic
+        notchIslandEnabled = UserDefaults.standard.object(forKey: "notchIslandEnabled") as? Bool ?? true
+        notchIslandShowsWings = UserDefaults.standard.object(forKey: "notchIslandShowsWings") as? Bool ?? true
+        notchIslandAlertsEnabled = UserDefaults.standard.object(forKey: "notchIslandAlertsEnabled") as? Bool ?? true
+        notchIslandInFullScreen = UserDefaults.standard.object(forKey: "notchIslandInFullScreen") as? Bool ?? false
         didSetReady = true
     }
 

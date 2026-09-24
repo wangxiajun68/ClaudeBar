@@ -164,7 +164,7 @@ final class ProviderEditorModel {
         let url = baseURL
         let key = authToken
         Task {
-            let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key)
+            let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key, wireAPI: "anthropic")
             isFetchingModels = false
             switch result {
             case .success(let payload):

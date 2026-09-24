@@ -176,10 +176,10 @@ enum HelpCatalog {
         HelpEntry(
             id: "start-balance",
             chapter: .start,
-            title: "余额显示「—」",
-            summary: "该中转站没有标准余额查询接口。",
+            title: "供应商卡片没有余额",
+            summary: "只有官方公开了余额接口的平台才会显示。",
             body: [
-                .para("余额按 Base URL 的 host 去拉对应官方接口。自建中转、聚合站通常没有这个接口，显示「—」属正常，不影响转发。"),
+                .para("模型页的供应商卡片会显示余额。目前能查的是 DeepSeek、Kimi 开放平台、硅基流动和 OpenRouter。Coding Plan、按订阅计费的入口，以及没有公开余额接口的平台不显示数字，不影响对话。"),
             ],
             keywords: "余额 balance 无数据 dash 中转 relay"
         ),

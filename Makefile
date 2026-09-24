@@ -21,3 +21,5 @@ install: build
 test:
 	python3 Tests/ui-regressions.py
 	python3 Tests/core-regressions.py
+	python3 Tests/performance-regressions.py
+	python3 Tests/rendering-regressions.py

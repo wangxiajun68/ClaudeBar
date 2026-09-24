@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Full-width VPN readout — the popup's equivalent of CatStatus's 电源 card.
+/// VPN summary: a regular dashboard tile, compact node controls in the popup.
 struct VpnPowerCard: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var rates = VpnLiveRates.shared
@@ -14,6 +14,20 @@ struct VpnPowerCard: View {
     }
 
     var body: some View {
+        if opensVPNPage {
+            MetricTile(label: "VPN", value: manager.isRunning ? "已连接" : (starting ? "启动中" : "未启用"),
+                       detail: manager.isRunning ? (manager.liveLeafName ?? "代理运行中") : statusLine,
+                       tint: Theme.chartGreen, instrumentIcon: .vpn,
+                       pill: manager.isRunning ? "↓ " + VpnFormat.rate(rates.speedDown) : "节点与网络") {
+                NotificationCenter.default.post(name: .openVPNPage, object: nil)
+            }
+        } else {
+            popupContent
+        }
+    }
+
+    @ViewBuilder
+    private var popupContent: some View {
         let inner = VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 ZStack {

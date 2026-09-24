@@ -60,7 +60,8 @@ enum ProviderBridge {
         let activeID = models.first {
             $0.name.caseInsensitiveCompare(activeSlug ?? "") == .orderedSame
         }?.id ?? models.first?.id
-        let wire = url.lowercased().contains("api.openai.com") ? "responses" : "chat"
+        let wire = ProviderCatalogEntry.matching(baseURL: source.baseURL)?.codex?.wireAPI
+            ?? (url.lowercased().contains("api.openai.com") ? "responses" : "chat")
         return CodexProvider(
             name: source.name,
             apiKey: source.authToken,
@@ -71,7 +72,9 @@ enum ProviderBridge {
             disableResponseStorage: true,
             models: models,
             activeModelID: activeID,
-            captureEnabled: source.captureEnabled)
+            captureEnabled: source.captureEnabled,
+            profileID: source.profileID,
+            catalogID: source.catalogID)
     }
 
     static func toClaude(_ source: CodexProvider) -> Provider {
@@ -95,7 +98,9 @@ enum ProviderBridge {
             baseURL: url,
             models: models,
             activeModelID: activeID,
-            captureEnabled: source.captureEnabled)
+            captureEnabled: source.captureEnabled,
+            profileID: source.profileID,
+            catalogID: source.catalogID)
     }
 
     /// Claude and Codex records of the same vendor — name or rewritten OpenAI URL.
@@ -251,6 +256,7 @@ enum ProviderBridge {
     // MARK: - URLs
 
     static func openaiCompatibleURL(_ raw: String) -> String {
+        if let endpoint = ProviderCatalogEntry.matching(baseURL: raw)?.codex { return endpoint.baseURL }
         var s = trimSlash(raw)
         let lower = s.lowercased()
 
@@ -294,6 +300,7 @@ enum ProviderBridge {
     }
 
     static func anthropicCompatibleURL(_ raw: String) -> String {
+        if let endpoint = ProviderCatalogEntry.matching(baseURL: raw)?.claude { return endpoint.baseURL }
         let s = trimSlash(raw)
         let lower = s.lowercased()
 

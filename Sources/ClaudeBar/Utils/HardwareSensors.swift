@@ -156,7 +156,15 @@ enum HardwareSensors {
         var systemWatts: Double?
         var batteryWatts: Double? // Positive = charging, negative = discharging.
         var powerIsEstimated = false
+        /// The adapter's negotiated rating (`AdapterDetails.Watts`), e.g. 65.
+        var adapterRatedWatts: Int?
     }
+
+    /// The previous `PDTR` reading. `PSTR` trails `PDTR` by about a second,
+    /// so pairing this sample's `PSTR` with the last `PDTR` keeps a load step
+    /// from showing up as a momentary charge/discharge swing.
+    private static var lastAdapterReading: (watts: Double, at: Date)?
+    private static let adapterReadingLock = NSLock()
 
     static func batteryStatus() -> BatteryStatus {
         var status = BatteryStatus()
@@ -185,33 +193,87 @@ enum HardwareSensors {
         }
         status.charging = (dict["IsCharging"] as? NSNumber)?.boolValue ?? false
         status.externalPower = (dict["ExternalConnected"] as? NSNumber)?.boolValue ?? false
-        // AppleSmartBattery PowerTelemetryData publishes milliwatts. Decode
-        // signed values explicitly: discharge may arrive as unsigned two's complement.
-        func watts(_ value: Any?, signed: Bool = false) -> Double? {
-            guard let number = value as? NSNumber else { return nil }
-            let raw = signed ? Double(Int64(bitPattern: number.uint64Value)) : number.doubleValue
-            let result = raw / 1000
-            guard result.isFinite, abs(result) <= 500, signed || result >= 0 else { return nil }
-            return result
+        if let adapter = dict["AdapterDetails"] as? [String: Any],
+           let rated = (adapter["Watts"] as? NSNumber)?.intValue, rated > 0, rated <= 500 {
+            status.adapterRatedWatts = rated
         }
-        if let telemetry = dict["PowerTelemetryData"] as? [String: Any] {
-            status.inputWatts = watts(telemetry["SystemPowerIn"])
-            status.systemWatts = watts(telemetry["SystemLoad"])
-            status.batteryWatts = watts(telemetry["BatteryPower"], signed: true)
-        }
-        if status.batteryWatts == nil,
-           let current = (dict["InstantAmperage"] ?? dict["Amperage"]) as? NSNumber,
-           let voltage = (dict["Voltage"] as? NSNumber)?.doubleValue {
-            let milliamps = Double(Int64(bitPattern: current.uint64Value))
-            if abs(milliamps) < 30_000, voltage > 0, voltage < 30_000 {
-                status.batteryWatts = milliamps * voltage / 1_000_000
-                status.powerIsEstimated = true
-            }
-        }
+        applyPowerReadings(to: &status, battery: dict)
         if let battery = status.batteryWatts, battery > 0 {
             status.chargingWatts = battery
         }
         return status
+    }
+
+    /// Adapter / system / battery watts, read the way AlDente does:
+    ///
+    /// - adapter = SMC `PDTR` (DC-in power), system = SMC `PSTR` (total
+    ///   system power), battery = adapter − system. Both are live meters.
+    /// - The battery's **direction** comes from the gauge's `InstantAmperage`,
+    ///   not from the difference. The difference carries the charger's
+    ///   conversion loss and the meters' skew, so on a battery holding at its
+    ///   limit it hovers at ±1–2 W and would flip between 充电 and 补电 every
+    ///   sample. When the gauge and the difference disagree, the gauge's own
+    ///   V × I is used instead.
+    ///
+    /// `PowerTelemetryData` is deliberately not used: it refreshes on the
+    /// order of minutes and was observed reporting a 92 W load with the
+    /// battery discharging while the Mac drew 23 W and charged at 38 W.
+    /// Without SMC power keys (older Intel Macs) only the gauge's V × I is
+    /// known, and the reading is marked estimated.
+    private static func applyPowerReadings(to status: inout BatteryStatus, battery dict: [String: Any]) {
+        var gaugeWatts: Double?
+        var milliamps: Double?
+        if let current = (dict["InstantAmperage"] ?? dict["Amperage"]) as? NSNumber,
+           let voltage = (dict["Voltage"] as? NSNumber)?.doubleValue {
+            let raw = Double(Int64(bitPattern: current.uint64Value))
+            if abs(raw) < 30_000, voltage > 0, voltage < 30_000 {
+                milliamps = raw
+                gaugeWatts = raw * voltage / 1_000_000
+            }
+        }
+        // ~0.5 W at pack voltage: below this the pack is idle, whatever the
+        // meters' difference says.
+        let idle = abs(milliamps ?? 0) < 40
+        let smc = SMCController.shared
+        let system = smc.getValue("PSTR").flatMap(plausibleWatts)
+
+        guard let system else {
+            status.batteryWatts = idle ? 0 : gaugeWatts
+            status.powerIsEstimated = true
+            return
+        }
+        status.systemWatts = system
+
+        guard status.externalPower else {
+            status.inputWatts = nil
+            status.batteryWatts = -system
+            return
+        }
+
+        let now = Date()
+        let current = smc.getValue("PDTR").flatMap(plausibleWatts) ?? 0
+        adapterReadingLock.lock()
+        let previous = lastAdapterReading
+        lastAdapterReading = (current, now)
+        adapterReadingLock.unlock()
+        let adapter = previous.map { now.timeIntervalSince($0.at) <= 1.6 ? $0.watts : current } ?? current
+        status.inputWatts = adapter
+
+        let difference = adapter - system
+        guard !idle, let milliamps else {
+            status.batteryWatts = 0
+            return
+        }
+        let charging = milliamps > 0
+        if (difference > 0) == charging {
+            status.batteryWatts = difference
+        } else {
+            status.batteryWatts = gaugeWatts
+        }
+    }
+
+    private static func plausibleWatts(_ value: Double) -> Double? {
+        value.isFinite && value >= 0 && value <= 500 ? value : nil
     }
 
     /// Bluetooth controller power state.
@@ -236,14 +298,15 @@ enum HardwareSensors {
     /// status is still sampled: a Mac with neither Wi-Fi nor Ethernet still
     /// reports 本机 when the radio is on.
     private static func bluetoothPowerState() -> Bool {
-        (IOBluetoothHostController.default()?.powerState.rawValue ?? 0) != 0
+        guard PermissionGate.allows(.bluetooth) else { return false }
+        return (IOBluetoothHostController.default()?.powerState.rawValue ?? 0) != 0
     }
 
     static func linkStatus() -> LinkStatus {
         var status = LinkStatus()
         let wifi = CWWiFiClient.shared().interface()
         status.wifiOn = wifi?.powerOn() ?? false
-        if let ssid = wifi?.ssid(), !ssid.isEmpty {
+        if PermissionGate.allows(.location), let ssid = wifi?.ssid(), !ssid.isEmpty {
             status.wifiName = ssid
         }
         let rssi = Int(wifi?.rssiValue() ?? 0)

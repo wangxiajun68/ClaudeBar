@@ -27,7 +27,7 @@ struct PlainDumpView: NSViewRepresentable {
         tv.backgroundColor = .clear
         tv.textContainerInset = NSSize(width: 10, height: 10)
         tv.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        tv.textColor = NSColor(srgbRed: 28/255, green: 28/255, blue: 30/255, alpha: 1)
+        tv.textColor = NSColor.labelColor
         tv.insertionPointColor = NSColor.labelColor
         tv.isHorizontallyResizable = false
         tv.isVerticallyResizable = true
@@ -52,7 +52,7 @@ struct PlainDumpView: NSViewRepresentable {
             tv.string = next
         }
         let width = scroll.contentView.bounds.width
-        if width > 8 {
+        if width > 8, tv.textContainer?.containerSize.width != max(8, width - 16) {
             tv.textContainer?.containerSize = NSSize(
                 width: max(8, width - 16),
                 height: CGFloat.greatestFiniteMagnitude)

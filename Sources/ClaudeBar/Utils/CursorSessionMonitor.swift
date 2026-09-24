@@ -27,6 +27,7 @@ struct CursorSessionInfo: Identifiable, Equatable {
     var messageCount: Int = 0
     var currentActivity: String = ""
     var toolPending: Bool = false   // last turn not yet ended → working
+    var completionID: String? = nil // byte offset of the latest successful final answer
     var subagents: [CursorSubagentInfo] = []
 
     /// Context fill ratio 0...1 (0 if percent unknown).
@@ -87,6 +88,7 @@ private struct CursorTranscriptScan {
     let count: Int
     let activity: String
     let toolPending: Bool
+    let completionID: String?
 }
 
 // MARK: - Monitor
@@ -173,12 +175,17 @@ struct CursorSessionMonitor {
             shown[i].messageCount = scan.count
             shown[i].currentActivity = scan.activity
             shown[i].toolPending = scan.toolPending
+            shown[i].completionID = scan.completionID
             let recentlyTouched = (nowMs - shown[i].lastUpdatedAt) < 120_000
             // Sticky `agentLocation.status == active` on old chats is a Cursor
             // quirk. Trust a live transcript turn, a recent unfinished run, or
             // location+recency together — never a stale "active" from yesterday.
             if scan.toolPending {
                 shown[i].status = .active
+            } else if scan.completionID != nil {
+                // The successful final answer is stronger than Cursor's
+                // sometimes-sticky active flag in the composer header.
+                shown[i].status = .idle
             } else if shown[i].status == .active && !recentlyTouched && !scan.toolPending {
                 shown[i].status = .idle
             }
@@ -259,7 +266,8 @@ struct CursorSessionMonitor {
     /// after the last assistant message). Mirrors `SessionMonitor.fetchContext`.
     private static func scanTranscript(cwd: String, composerId: String) -> CursorTranscriptScan {
         let scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 96_000)
-        return CursorTranscriptScan(count: scan.count, activity: scan.activity, toolPending: scan.pending)
+        return CursorTranscriptScan(count: scan.count, activity: scan.activity,
+                                    toolPending: scan.pending, completionID: scan.completionID)
     }
 
     /// Tail scan for a subagent — activity + pending only (count unused).
@@ -275,36 +283,52 @@ struct CursorSessionMonitor {
     ///
     /// Single open/seek/read per call; the file's existence is implied by a
     /// successful open, so no separate stat is needed.
-    private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool) {
+    private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool, completionID: String?) {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return (0, "", false)
+            return (0, "", false, nil)
         }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(readSize, size))
         guard let tailData = try? handle.readToEnd() else {
-            return (0, "", false)
+            return (0, "", false, nil)
         }
         // Lossy decode — a strict one fails for the whole window whenever the
         // seek landed mid-character (see `SessionMonitor.readContext`).
-        let tail = String(decoding: tailData, as: UTF8.self)
-
         var msgCount = 0
         var lastActivity = ""
         var lastAssistantLine = -1
         var lastTurnEndedLine = -1
+        var lastAssistantWasFinalText = false
+        var completionID: String?
         var lineIndex = 0
-        for line in tail.split(separator: "\n", omittingEmptySubsequences: true) {
+        var byteOffset = size - min(readSize, size)
+        for rawLine in tailData.split(separator: 0x0A, omittingEmptySubsequences: false) {
+            defer { byteOffset += UInt64(rawLine.count + 1) }
+            let line = String(decoding: rawLine, as: UTF8.self)
             defer { lineIndex += 1 }
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
             if let t = obj["type"] as? String, t == "turn_ended" {
                 lastTurnEndedLine = lineIndex
+                completionID = (obj["status"] as? String) == "success" && lastAssistantWasFinalText
+                    ? "turn-\(byteOffset)" : nil
+                lastAssistantWasFinalText = false
+                continue
+            }
+            if (obj["role"] as? String) == "user" {
+                completionID = nil
+                lastAssistantWasFinalText = false
                 continue
             }
             guard (obj["role"] as? String) == "assistant",
                   let message = obj["message"] as? [String: Any] else { continue }
             msgCount += 1
             lastAssistantLine = lineIndex
+            completionID = nil
+            let blocks = message["content"] as? [[String: Any]] ?? []
+            lastAssistantWasFinalText = blocks.contains { ($0["type"] as? String) == "text"
+                && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                && !blocks.contains { ($0["type"] as? String) == "tool_use" }
             if let act = describeActivity(in: message), !act.isEmpty {
                 lastActivity = act
             }
@@ -312,7 +336,7 @@ struct CursorSessionMonitor {
         // A turn is in flight if an assistant message appears after the last
         // turn_ended marker (i.e. the turn never completed).
         let pending = lastAssistantLine > lastTurnEndedLine
-        return (msgCount, lastActivity, pending)
+        return (msgCount, lastActivity, pending, completionID)
     }
 
     /// Human-readable summary of the latest tool_use in a message:

@@ -14,12 +14,34 @@ struct CodexQuotaWindow: Equatable, Identifiable {
         return String(format: "%.1f%%", usedPercent)
     }
 
-    var resetText: String {
-        guard let resetsAt else { return "已用额度" }
+    var resetText: String { resetClock }
+
+    /// Clock time of the next allowance refresh. Today omits the date.
+    var resetClock: String {
+        guard let resetsAt else { return "重置时间未知" }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 HH:mm"
+        if Calendar.current.isDateInToday(resetsAt) {
+            formatter.dateFormat = "HH:mm"
+        } else {
+            formatter.dateFormat = "M月d日 HH:mm"
+        }
         return "\(formatter.string(from: resetsAt)) 重置"
+    }
+
+    /// How long until that refresh, for the dashboard detail line.
+    var resetWait: String {
+        guard let resetsAt else { return "" }
+        let delta = resetsAt.timeIntervalSinceNow
+        if delta <= 60 { return "即将重置" }
+        let minutes = Int(delta / 60)
+        if minutes < 60 { return "\(minutes) 分钟后重置" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if hours < 48 {
+            return rest == 0 ? "\(hours) 小时后重置" : "\(hours) 小时 \(rest) 分后重置"
+        }
+        return "\(hours / 24) 天后重置"
     }
 }
 
@@ -195,12 +217,26 @@ enum CodexQuotaFetcher {
     private static func parseWindow(_ window: [String: Any]) -> CodexQuotaWindow? {
         guard let used = number(window["usedPercent"]) else { return nil }
         let minutes = JSONCoerce.intVal(window["windowDurationMins"])
-        let reset = number(window["resetsAt"])
         return CodexQuotaWindow(
             label: label(forMinutes: minutes),
             usedPercent: min(100, max(0, used)),
-            resetsAt: reset.map(Date.init(timeIntervalSince1970:))
+            resetsAt: epoch(window["resetsAt"] ?? window["resets_at"])
         )
+    }
+
+    /// Codex has returned both unix seconds and milliseconds for `resetsAt`.
+    private static func epoch(_ value: Any?) -> Date? {
+        let raw: Double?
+        if let number = value as? NSNumber {
+            raw = number.doubleValue
+        } else if let string = value as? String {
+            raw = Double(string)
+        } else {
+            raw = nil
+        }
+        guard let raw, raw.isFinite, raw > 0 else { return nil }
+        let seconds = raw > 10_000_000_000 ? raw / 1000 : raw
+        return Date(timeIntervalSince1970: seconds)
     }
 
     private static func number(_ value: Any?) -> Double? {

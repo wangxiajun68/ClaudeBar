@@ -11,8 +11,8 @@ extension Notification.Name {
     static let persistenceModeDidChange = Notification.Name("com.claudebar.persistenceModeDidChange")
 }
 
-/// Idle notifications: when a Claude (or Cursor) session transitions from
-/// busy → idle, tell the user "it's done, waiting for you". Encapsulates the
+/// Completion notifications: after a new final answer is confirmed, tell the
+/// user it is ready. Encapsulates the
 /// UNUserNotificationCenter plumbing — authorization, category registration,
 /// and building the notification itself.
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
@@ -58,11 +58,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Posting
 
-    /// "Claude 等你输入" — project folder + what it just finished.
+    /// A confirmed final answer, never the last intermediate tool name.
     func notifyIdle(session: SessionInfo) {
         post(
-            title: "Claude 等待输入",
-            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? (session.model.isEmpty ? "已完成" : session.model) : session.currentActivity)",
+            title: "Claude 已完成",
+            body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: "session-\(session.pid)",
             categoryID: Self.categoryID,
             pid: session.pid
@@ -72,8 +72,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// Cursor flavor — same state machine, violet distinct label.
     func notifyIdle(cursor session: CursorSessionInfo) {
         post(
-            title: "Cursor 等待输入",
-            body: "\(session.projectFolder) · \(session.currentActivity.isEmpty ? "已完成" : session.currentActivity)",
+            title: "Cursor 已完成",
+            body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: "cursor-\(session.composerId)",
             categoryID: Self.categoryID,
             pid: nil
@@ -84,8 +84,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// leads so sessions from different agents stay distinguishable.
     func notifyIdle(external session: ExternalSessionInfo) {
         post(
-            title: "\(session.kind.displayName) 等待输入",
-            body: "\(session.projectFolder) · \(session.model.isEmpty ? "已完成" : session.model)",
+            title: "\(session.kind.displayName) 已完成",
+            body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: session.id,
             categoryID: Self.categoryID,
             pid: nil

@@ -4,12 +4,13 @@ import AppKit
 /// Settings as a 宫格 of control tiles — one concern per cell, same grammar
 /// as the dashboard metric grid.
 struct SettingsView: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState(.configuration) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var tests = ConnectivityTestCenter.shared
-    @ObservedObject private var screenshotHotKey = ScreenshotHotKey.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
+
+    @State private var presentFiles: Set<URL> = []
 
     var body: some View {
         ScrollView {
@@ -41,6 +42,8 @@ struct SettingsView: View {
                     }
                 }
 
+                PermissionsSection()
+
                 section("外观", icon: "paintpalette") {
                     SettingTile(icon: "circle.lefthalf.filled", title: "主题",
                                 caption: "浅色冰面或深色石墨。") {
@@ -66,21 +69,53 @@ struct SettingsView: View {
                     }
                 }
 
-                section("截图与通知", icon: "bell") {
-                    SettingTile(icon: "camera", title: "区域截图 ⌘⇧A",
-                                caption: screenshotCaption) {
-                        Toggle("", isOn: $prefs.screenshotHotkeyEnabled)
+                section("继续会话", icon: "terminal") {
+                    SettingTile(icon: "arrow.uturn.forward", title: "打开方式",
+                                caption: resumeTerminalCaption) {
+                        Picker("", selection: $prefs.resumeTerminal) {
+                            ForEach(ResumeTerminal.allCases) { terminal in
+                                Text(terminal.isInstalled ? terminal.label : "\(terminal.label)（未安装）")
+                                    .tag(terminal)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 140)
+                        .labelsHidden()
+                    }
+                }
+
+                section("灵动岛", icon: "capsule.portrait") {
+                    SettingTile(icon: "capsule", title: "刘海灵动岛",
+                                caption: "鼠标移到刘海展开：运行中的会话、当前路由与近 30 天用量；无刘海的屏幕在菜单栏中央显示。") {
+                        Toggle("", isOn: $prefs.notchIslandEnabled)
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .tint(Theme.claude)
                     }
-                    SettingTile(icon: "bell", title: "空闲通知",
-                                caption: "会话由运行转为空闲时发送系统通知。") {
-                        Toggle("", isOn: $prefs.idleNotifyEnabled)
+                    SettingTile(icon: "waveform", title: "两翼",
+                                caption: "收起时在刘海两侧显示运行中的会话与今日用量，会遮住紧贴刘海的菜单栏图标。") {
+                        Toggle("", isOn: $prefs.notchIslandShowsWings)
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .tint(Theme.claude)
                     }
+                    .disabled(!prefs.notchIslandEnabled)
+                    SettingTile(icon: "checkmark.bubble", title: "完成提醒",
+                                caption: "会话结束时从刘海弹出提醒，可一键回到该会话；悬停暂停，6 秒后自动收起。不需要通知权限。") {
+                        Toggle("", isOn: $prefs.notchIslandAlertsEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.claude)
+                    }
+                    .disabled(!prefs.notchIslandEnabled)
+                    SettingTile(icon: "arrow.up.left.and.arrow.down.right", title: "全屏应用中显示",
+                                caption: "关闭时，全屏应用所在的空间不显示灵动岛。") {
+                        Toggle("", isOn: $prefs.notchIslandInFullScreen)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .tint(Theme.claude)
+                    }
+                    .disabled(!prefs.notchIslandEnabled)
                 }
 
                 section("存储", icon: "internaldrive") {
@@ -254,6 +289,16 @@ struct SettingsView: View {
             .padding(Theme.Space.s24)
         }
         .background(Theme.bgPrimary)
+        .task {
+            while !Task.isCancelled {
+                if UIWakePolicy.hasVisibleMainWindow {
+                    let files = await Task.detached(priority: .utility) { Self.existingFiles() }.value
+                    guard !Task.isCancelled else { return }
+                    if files != presentFiles { presentFiles = files }
+                }
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            }
+        }
     }
 
     private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,
@@ -264,43 +309,24 @@ struct SettingsView: View {
         }
     }
 
-    /// Existence is measured once per render pass, not once per tile.
-    ///
-    /// `fileTile` used to call `fileExists` inline in its body, so five
-    /// synchronous `stat`s ran on the main thread every time this page
-    /// re-evaluated — and the page observes four observable objects, so that
-    /// is often. One `contentsOfDirectory` over the two directories covers all
-    /// five paths (and is what makes the state refreshable when a file appears
-    /// or is deleted while the page is open).
-    private static func existingFileNames() -> Set<String> {
-        var names = Set<String>()
-        let fm = FileManager.default
+    /// Scan off-main once per refresh, never from a tile's body evaluation.
+    nonisolated private static func existingFiles() -> Set<URL> {
+        var files = Set<URL>()
         for dir in [FilePaths.claudeDir, FilePaths.codexDir] {
-            guard let entries = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
-            names.formUnion(entries)
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil) else { continue }
+            files.formUnion(entries)
         }
-        return names
+        return files
     }
-
-    private var presentFiles: Set<String> { Self.existingFileNames() }
 
     private func fileTile(_ path: String, _ url: URL) -> some View {
         let name = (path as NSString).lastPathComponent
         return SettingTile(icon: "doc", title: name, caption: path) {
             Button("打开") { NSWorkspace.shared.open(url) }
                 .adaptiveGlassButton()
-                .disabled(!presentFiles.contains(name))
+                .disabled(!presentFiles.contains(url))
         }
-    }
-
-    private var screenshotCaption: String {
-        if let err = screenshotHotKey.lastError, prefs.screenshotHotkeyEnabled {
-            return err + "。关闭占用该键的截图软件后，重新打开此开关。"
-        }
-        if prefs.screenshotHotkeyEnabled && screenshotHotKey.isRegistered {
-            return "热键已注册。首次使用需允许屏幕录制。"
-        }
-        return "全局拉框截图并复制到剪贴板。"
     }
 
     /// The login item's own state is the caption — there is no remembered
@@ -328,6 +354,17 @@ struct SettingsView: View {
             thirdAnthropic: codexStore.resolvedThirdPartyAnthropic(),
             running: codexStore.proxyRunning,
             port: prefs.codexProxyPort)
+    }
+
+    private var resumeTerminalCaption: String {
+        switch prefs.resumeTerminal.resolved {
+        case .otty, .automatic:
+            return "Otty：会话已在某个标签页运行时直接切过去，否则新开标签页 resume。无需自动化权限。"
+        case .warp:
+            return "Warp：在会话目录新开窗口并执行 resume；需开启“权限与隐私 → 在终端继续会话”。"
+        case .terminal:
+            return "终端：新开窗口执行 resume；需开启“权限与隐私 → 在终端继续会话”。"
+        }
     }
 
     private var vpnStatusText: String {

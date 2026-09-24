@@ -16,12 +16,16 @@ enum ModelListFetcher {
     static func fetch(baseURL: String, apiKey: String, wireAPI: String = "chat") async -> Outcome {
         let urlText = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !urlText.isEmpty else { return .failure("请填写 Base URL") }
-        guard URL(string: urlText)?.host != nil else { return .failure("Base URL 无效") }
+        guard let parsed = URL(string: urlText), parsed.host != nil,
+              ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
+              parsed.user == nil, parsed.password == nil, parsed.query == nil, parsed.fragment == nil
+        else { return .failure("Base URL 无效，请勿在 URL 中附带 Key") }
 
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastError = "未能从 API 获取模型列表"
 
         for candidate in candidateURLs(urlText, wireAPI: wireAPI) {
+            guard !Task.isCancelled else { return .failure("已取消") }
             switch await requestModels(url: candidate.url, apiKey: key, authStyle: candidate.authStyle) {
             case .success(let models) where !models.isEmpty:
                 return .success(ModelListPayload(models: models.sorted(), source: candidate.url.absoluteString))
@@ -56,41 +60,33 @@ enum ModelListFetcher {
             out.append(Candidate(url: url, authStyle: auth))
         }
 
-        let openai = trimSlash(ProviderBridge.openaiCompatibleURL(raw))
-        appendModelsURLs(on: openai, into: append)
-
-        let anthropic = trimSlash(ProviderBridge.anthropicCompatibleURL(raw))
-        if normalize(anthropic) != normalize(openai) {
-            appendModelsURLs(on: anthropic, into: append)
+        // Follow the selected protocol's documented model-list route. Never
+        // guess a different product/plan endpoint and send the same key there.
+        var trimmed = trimSlash(raw)
+        for suffix in ["/chat/completions", "/messages", "/responses"] where trimmed.hasSuffix(suffix) {
+            trimmed = String(trimmed.dropLast(suffix.count)); break
         }
-
-        // Some gateways only expose /models on the raw origin (no /v1 rewrite).
-        let trimmed = trimSlash(raw)
-        if normalize(trimmed) != normalize(openai) && normalize(trimmed) != normalize(anthropic) {
-            appendModelsURLs(on: trimmed, into: append)
+        if let entry = ProviderCatalogEntry.matching(baseURL: raw) {
+            let endpoint = wireAPI == "anthropic" ? entry.claude : entry.codex
+            if let endpoint,
+               ProviderCatalogEntry.identityURL(endpoint.url(for: wireAPI)) == ProviderCatalogEntry.identityURL(raw),
+               let modelsURL = endpoint.modelsURL {
+                append(URL(string: modelsURL), auth: wireAPI == "anthropic" ? .both : .bearer)
+                return out
+            }
         }
-
-        // Responses-native OpenAI roots occasionally prefer /v1/models only.
-        if wireAPI.lowercased() == "responses", let host = URL(string: openai)?.host,
-           host.contains("openai.com") {
-            append(URL(string: openai + "/models"), auth: .bearer)
+        let auth: AuthStyle = wireAPI == "anthropic" ? .both : .bearer
+        if trimmed.hasSuffix("/models") {
+            append(URL(string: trimmed), auth: auth)
+        } else {
+            let path = URL(string: trimmed)?.path ?? ""
+            if path.isEmpty || path == "/" || wireAPI == "anthropic" && !path.hasSuffix("/v1") {
+                append(URL(string: trimmed + "/v1/models"), auth: auth)
+            }
+            append(URL(string: trimmed + "/models"), auth: auth)
         }
 
         return out
-    }
-
-    private static func appendModelsURLs(on base: String, into sink: (URL?, AuthStyle) -> Void) {
-        guard !base.isEmpty else { return }
-        let lower = base.lowercased()
-        if lower.hasSuffix("/models") {
-            sink(URL(string: base), .both)
-            return
-        }
-        if base.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
-            sink(URL(string: base + "/models"), .both)
-        }
-        sink(URL(string: base + "/v1/models"), .both)
-        sink(URL(string: base + "/models"), .both)
     }
 
     // MARK: - HTTP
@@ -103,7 +99,7 @@ enum ModelListFetcher {
         c.urlCache = nil
         c.httpCookieStorage = nil
         c.waitsForConnectivity = false
-        return URLSession(configuration: c)
+        return URLSession(configuration: c, delegate: NoModelListRedirects(), delegateQueue: nil)
     }()
 
     private enum RequestOutcome {
@@ -116,6 +112,7 @@ enum ModelListFetcher {
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         applyAuth(apiKey, style: authStyle, to: &req)
+        if authStyle != .bearer { req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
 
         do {
             let (data, response) = try await session.data(for: req)
@@ -133,7 +130,8 @@ enum ModelListFetcher {
                 return .failure("鉴权失败（HTTP \(status)）")
             }
             guard (200..<300).contains(status) else {
-                return .failure(describeBody(data, status: status, path: url.path))
+                let message = describeBody(data, status: status, path: url.path)
+                return .failure(apiKey.isEmpty ? message : message.replacingOccurrences(of: apiKey, with: "[Key]"))
             }
             guard let models = parseModelIDs(data), !models.isEmpty else {
                 return .success([])
@@ -145,6 +143,8 @@ enum ModelListFetcher {
     }
 
     private static func applyAuth(_ apiKey: String, style: AuthStyle, to req: inout URLRequest) {
+        req.setValue(nil, forHTTPHeaderField: "Authorization")
+        req.setValue(nil, forHTTPHeaderField: "x-api-key")
         guard !apiKey.isEmpty else { return }
         switch style {
         case .bearer:
@@ -248,14 +248,20 @@ enum ModelListFetcher {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    private static func normalize(_ s: String) -> String {
-        trimSlash(s).lowercased()
-    }
-
     private static func clip(_ s: String) -> String {
         let flat = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if flat.count <= 140 { return flat }
         return String(flat.prefix(137)) + "…"
+    }
+}
+
+/// A models endpoint must not redirect a credential-bearing request elsewhere.
+private final class NoModelListRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
