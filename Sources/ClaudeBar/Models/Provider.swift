@@ -23,6 +23,11 @@ struct Provider: Codable, Identifiable, Equatable {
     /// Route this vendor through the local inspect proxy (Claude Code
     /// Anthropic `/v1/messages` and the Codex OpenAI twin).
     var captureEnabled: Bool = false
+    /// Shared with the Codex record of the same configuration. Activation
+    /// stays on `ProvidersFile.activeProviderID` and is not part of this id.
+    var profileID: UUID? = nil
+    /// Catalog entry that owns the client-specific base URL. Nil for custom hosts.
+    var catalogID: String? = nil
 
     var activeModel: ModelConfig? {
         models.first { $0.id == activeModelID } ?? models.first
@@ -30,13 +35,15 @@ struct Provider: Codable, Identifiable, Equatable {
 
     init(name: String, authToken: String = "", baseURL: String = "",
          models: [ModelConfig] = [], activeModelID: UUID? = nil,
-         captureEnabled: Bool = false) {
+         captureEnabled: Bool = false, profileID: UUID? = nil, catalogID: String? = nil) {
         self.name = name
         self.authToken = authToken
         self.baseURL = baseURL
         self.models = models
         self.activeModelID = activeModelID
         self.captureEnabled = captureEnabled
+        self.profileID = profileID
+        self.catalogID = catalogID
     }
 
     init(from decoder: Decoder) throws {
@@ -76,11 +83,13 @@ struct Provider: Codable, Identifiable, Equatable {
             }
         }
         captureEnabled = try c.decodeIfPresent(Bool.self, forKey: .captureEnabled) ?? false
+        profileID = try c.decodeIfPresent(UUID.self, forKey: .profileID)
+        catalogID = try c.decodeIfPresent(String.self, forKey: .catalogID)
     }
 
     /// Only store keys that map to stored properties (for Encodable).
     private enum CodingKeys: String, CodingKey {
-        case id, name, authToken, baseURL, models, activeModelID, captureEnabled
+        case id, name, authToken, baseURL, models, activeModelID, captureEnabled, profileID, catalogID
     }
 
     /// Dynamic key for reading old-format fields during decoding only.

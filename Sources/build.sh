@@ -107,6 +107,7 @@ mkdir -p "$MACOS_DIR"
 RESOURCES_DIR="$CONTENTS/Resources"
 mkdir -p "$RESOURCES_DIR"
 cp "$PROJECT_DIR/Sources/Licenses/Lucide.txt" "$RESOURCES_DIR/Lucide.txt"
+cp -R "$PROJECT_DIR/Sources/ProviderIcons" "$RESOURCES_DIR/ProviderIcons"
 
 # Copy app icon
 ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon.icns"
@@ -119,6 +120,12 @@ MENUBAR_ICON="$PROJECT_DIR/Sources/MenuBarIcon.png"
 if [ -f "$MENUBAR_ICON" ]; then
     cp "$MENUBAR_ICON" "$RESOURCES_DIR/MenuBarIcon.png"
 fi
+
+# Battery controller: fail the build if the required safety monitor cannot compile.
+BATTERYCTL_OUT="$RESOURCES_DIR/claudebar-batteryctl"
+clang -Wall -Wextra -Werror -O2 -arch arm64 -arch x86_64 \
+    -framework IOKit -framework CoreFoundation \
+    "$PROJECT_DIR/Sources/batteryctl/batteryctl.c" -o "$BATTERYCTL_OUT"
 
 # Privileged fan helper: tiny C binary, run via osascript admin prompt.
 FANCTL_SRC="$PROJECT_DIR/Sources/fanctl/fanctl.c"
@@ -393,6 +400,8 @@ AENT
 # or similar detritus not allowed" and can prevent the widget from loading.
 echo "=== Code-signing ==="
 xattr -cr "$APP_BUNDLE"
+
+codesign --force --sign "$SIGN_IDENTITY" --options runtime "$BATTERYCTL_OUT"
 
 # Sign bottom-up (no --deep): appex binary -> appex bundle -> main binary.
 # The main binary is signed explicitly so its entitlements are embedded

@@ -10,11 +10,22 @@ extension Notification.Name {
 /// Menu-bar popup shell — switcher HUD, one-line machine KPIs, then
 /// the three working surfaces (models / sessions / usage).
 struct MenuBarView: View {
-    @EnvironmentObject var providerStore: ProviderStore
-    @EnvironmentObject var codexStore: CodexProviderStore
+    let providerStore: ProviderStore
+    let codexStore: CodexProviderStore
     @ObservedObject var prefs = AppPreferences.shared
     @State private var panel = PanelState()
     @State private var confirmRestore = false
+    @State private var hasSettingsFile = false
+    @State private var hasCodexProviders = false
+
+    init(providerStore: ProviderStore, codexStore: CodexProviderStore) {
+        self.providerStore = providerStore
+        self.codexStore = codexStore
+        // fittingSize is read immediately when the panel opens. Seed the
+        // real state so its first layout never measures the empty variant.
+        _hasSettingsFile = State(initialValue: providerStore.hasSettingsFile)
+        _hasCodexProviders = State(initialValue: !codexStore.providers.isEmpty)
+    }
 
     private enum SectionHeight {
         /// Cap only — the card hugs live sessions instead of leaving a blank well.
@@ -32,7 +43,7 @@ struct MenuBarView: View {
 
             PowerFlowCard(compact: true)
 
-            if !providerStore.hasSettingsFile && codexStore.providers.isEmpty {
+            if !hasSettingsFile && !hasCodexProviders {
                 missingSettingsView
                     .appearLift(delay: 0.08)
             } else {
@@ -59,6 +70,10 @@ struct MenuBarView: View {
         .ignoresSafeArea()
         .preferredColorScheme(prefs.appearance.colorScheme)
         .id(prefs.appearance)
+        // Only shell-relevant changes invalidate the popup; session and usage
+        // updates are observed by their own panels.
+        .onReceive(providerStore.$hasSettingsFile.removeDuplicates()) { hasSettingsFile = $0 }
+        .onReceive(codexStore.$providers.map { !$0.isEmpty }.removeDuplicates()) { hasCodexProviders = $0 }
         .task(id: panel.feedbackToken) {
             guard panel.feedbackToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -116,7 +131,7 @@ struct MenuBarView: View {
             }
             iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
-                .disabled(!providerStore.hasSettingsFile)
+                .disabled(!hasSettingsFile)
             iconButton(prefs.idleNotifyEnabled ? "bell.fill" : "bell.slash",
                        help: "会话空闲时发送系统通知",
                        color: prefs.idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {

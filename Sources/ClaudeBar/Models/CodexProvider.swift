@@ -43,7 +43,8 @@ struct CodexProvider: Codable, Identifiable, Equatable {
     var baseURL: String = ""          // → [model_providers.<key>].base_url
     var wireAPI: String = "responses" // "responses" | "chat"
     var requiresOpenAIAuth: Bool = true
-    /// 切换第三方时保留 auth.json 里的官方 ChatGPT 登录态（桌面 App 门控缓解）。
+    /// 切到第三方时保留 auth.json 里的 ChatGPT 登录。关闭则删除该文件。
+    /// 密钥本身不进 auth.json，写在供应商表的 experimental_bearer_token 上。
     var preserveOfficialLogin: Bool = true
     var disableResponseStorage: Bool = true
     var models: [CodexModelConfig] = []
@@ -51,6 +52,9 @@ struct CodexProvider: Codable, Identifiable, Equatable {
     /// Same flag as the Claude twin — Codex traffic goes through the local
     /// proxy so the Traffic page can record OpenAI Chat/Responses calls.
     var captureEnabled: Bool = false
+    /// Shared with the Claude Code record. Does not select the live Codex provider.
+    var profileID: UUID? = nil
+    var catalogID: String? = nil
 
     var activeModel: CodexModelConfig? {
         models.first { $0.id == activeModelID } ?? models.first
@@ -71,6 +75,8 @@ struct CodexProvider: Codable, Identifiable, Equatable {
             activeModelID: activeModelID,
             captureEnabled: captureEnabled)
         p.id = id
+        p.profileID = profileID
+        p.catalogID = catalogID
         return p
     }
 
@@ -78,7 +84,7 @@ struct CodexProvider: Codable, Identifiable, Equatable {
          wireAPI: String = "responses", requiresOpenAIAuth: Bool = true,
          preserveOfficialLogin: Bool = true, disableResponseStorage: Bool = true,
          models: [CodexModelConfig] = [], activeModelID: UUID? = nil,
-         captureEnabled: Bool = false) {
+         captureEnabled: Bool = false, profileID: UUID? = nil, catalogID: String? = nil) {
         self.name = name
         self.apiKey = apiKey
         self.baseURL = baseURL
@@ -89,6 +95,8 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         self.models = models
         self.activeModelID = activeModelID
         self.captureEnabled = captureEnabled
+        self.profileID = profileID
+        self.catalogID = catalogID
     }
 
     init(from decoder: Decoder) throws {
@@ -104,12 +112,14 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         models = try c.decodeIfPresent([CodexModelConfig].self, forKey: .models) ?? []
         activeModelID = try c.decodeIfPresent(UUID.self, forKey: .activeModelID) ?? models.first?.id
         captureEnabled = try c.decodeIfPresent(Bool.self, forKey: .captureEnabled) ?? false
+        profileID = try c.decodeIfPresent(UUID.self, forKey: .profileID)
+        catalogID = try c.decodeIfPresent(String.self, forKey: .catalogID)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, apiKey, baseURL, wireAPI, requiresOpenAIAuth,
              preserveOfficialLogin, disableResponseStorage, models, activeModelID,
-             captureEnabled
+             captureEnabled, profileID, catalogID
     }
 }
 

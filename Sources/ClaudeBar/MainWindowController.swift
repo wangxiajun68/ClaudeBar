@@ -64,7 +64,8 @@ final class MainWindowController {
 
         let sync: () -> Void = { [weak window] in
             guard let window else { return }
-            UIWakePolicy.setMainWindowVisible(window.isVisible && !window.isMiniaturized)
+            UIWakePolicy.setMainWindowVisible(window.isVisible && !window.isMiniaturized
+                && window.occlusionState.contains(.visible))
         }
         for name: NSNotification.Name in [
             NSWindow.didBecomeKeyNotification,
@@ -87,6 +88,7 @@ final class MainWindowController {
     private func makeWindow() -> NSWindow {
         let rootView = MainWindowView()
             .environmentObject(providerStore)
+                .environment(\.providerSource, providerStore)
             .environmentObject(codexProviderStore)
             .environmentObject(trafficState)
 

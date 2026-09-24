@@ -51,6 +51,7 @@ struct MainWindowView: View {
     @ObservedObject private var prefs = AppPreferences.shared
     @State private var selectedPage: AppPage? = .dashboard
     @State private var showCommandPalette = false
+    @State private var surfaceVisible = UIWakePolicy.hasVisibleMainWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,15 +59,20 @@ struct MainWindowView: View {
             HairlineDivider()
             detailView
         }
+        .environment(\.surfaceIsVisible, surfaceVisible)
+        .onReceive(UIWakePolicy.changes) { surfaceVisible = UIWakePolicy.hasVisibleMainWindow }
         .frame(minWidth: 900, minHeight: 600)
         .background(Theme.bgPrimary)
         .preferredColorScheme(prefs.appearance.colorScheme)
         .id(prefs.appearance)
         // ⌘K command palette — instant fuzzy search across pages, sessions,
         // and providers.
-        .overlay { CommandPalette(isPresented: $showCommandPalette) { result in
-            handleCommand(result)
-        } }
+        .overlay {
+            if showCommandPalette {
+                CommandPalette(isPresented: $showCommandPalette) { result in handleCommand(result) }
+                    .transition(.opacity)
+            }
+        }
         .background {
             Button("") { showCommandPalette.toggle() }
                 .keyboardShortcut("k", modifiers: .command)
@@ -82,6 +88,9 @@ struct MainWindowView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openHelpPage)) { _ in
             navigate(to: .help)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettingsPage)) { _ in
+            navigate(to: .settings)
         }
     }
 
@@ -258,7 +267,7 @@ struct TopNavTab: View {
 
 /// Session polling only invalidates this badge, not the page navigation shell.
 private struct MainWindowSessionStatus: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState(.sessions) var providerStore: ProviderStore
 
     var body: some View {
         StatusPill(label: currentLabel,

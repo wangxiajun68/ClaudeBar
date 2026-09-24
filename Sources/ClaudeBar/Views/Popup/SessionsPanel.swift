@@ -3,7 +3,7 @@ import SwiftUI
 /// Popup sessions: one full-width column so project / activity text can
 /// breathe. Empty tool families are omitted instead of occupying a blank row.
 struct SessionsPanelView: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.sessions, .heartbeats]) var providerStore: ProviderStore
 
     var body: some View {
         let claude = providerStore.aliveSessions
@@ -75,7 +75,8 @@ struct SessionsPanelView: View {
     }
 
     private func resumeInTerminal(_ session: SessionInfo) {
-        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId)
+        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId,
+                                             pid: session.isAlive ? session.pid : nil)
     }
 
     private func openInCursor(_ session: CursorSessionInfo) {
@@ -83,6 +84,7 @@ struct SessionsPanelView: View {
     }
 
     private func resumeCodex(_ session: ExternalSessionInfo) {
-        TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId)
+        TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
+                                            pid: session.holderPID, inDesktop: session.inDesktop)
     }
 }

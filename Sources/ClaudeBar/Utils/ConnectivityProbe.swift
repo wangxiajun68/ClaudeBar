@@ -137,7 +137,7 @@ enum ConnectivityProbe {
         let s = trimSlash(raw)
         guard !s.isEmpty else { return nil }
         if s.lowercased().hasSuffix("/chat/completions") { return URL(string: s) }
-        if s.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
+        if s.hasSuffix("/openai") || s.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
             return URL(string: s + "/chat/completions")
         }
         return URL(string: s + "/v1/chat/completions")

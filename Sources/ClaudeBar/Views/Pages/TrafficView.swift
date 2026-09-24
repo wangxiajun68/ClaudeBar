@@ -27,6 +27,43 @@ final class TrafficPageState: ObservableObject {
     /// Guards out-of-order async detail loads; survives remount so a load
     /// started before unmount still lands correctly.
     var loadGen = 0
+    let detailQueue = DispatchQueue(label: "com.claudebar.capture-detail", qos: .userInitiated)
+    var detailWork: DispatchWorkItem?
+    var fullWork: DispatchWorkItem?
+
+    private var conversationInput: ConversationInput?
+    private var conversationPending = false
+    private let conversationQueue = DispatchQueue(label: "com.claudebar.conversation", qos: .userInitiated)
+
+    func clearConversation() {
+        conversationInput = nil
+        displayBlocks = []
+        historyCount = 0
+    }
+
+    func requestConversation(_ input: ConversationInput) {
+        guard conversationInput != input else { return }
+        conversationInput = input
+        startConversation()
+    }
+
+    private func startConversation() {
+        guard !conversationPending, let input = conversationInput else { return }
+        conversationPending = true
+        conversationQueue.async { [weak self] in
+            let blocks = ConversationBuilder.build(input)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.conversationPending = false
+                guard self.conversationInput == input else {
+                    self.startConversation()
+                    return
+                }
+                self.historyCount = input.history.count
+                self.displayBlocks = blocks
+            }
+        }
+    }
 
     /// The list selection the inspector should show. Mirrors the old
     /// computed property so remounting restores exactly what was on screen.
@@ -38,7 +75,8 @@ final class TrafficPageState: ObservableObject {
 /// Live proxy capture inspector: request list + conversation that fills the pane.
 struct TrafficView: View {
     @ObservedObject private var catalog = ProxyCaptureStore.shared.catalog
-    @ObservedObject private var streams = ProxyCaptureStore.shared.streams
+    private let streams = ProxyCaptureStore.shared.streams
+    @State private var selectedLive: CaptureLive?
     @EnvironmentObject var codexStore: CodexProviderStore
     /// Owned by MainWindowController — survives this view's mount/unmount.
     @EnvironmentObject var state: TrafficPageState
@@ -259,6 +297,9 @@ struct TrafficView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgPrimary)
         .onChange(of: selectedID) { _, id in
+            selectedLive = id.flatMap { streams.live[$0] }
+            state.clearConversation()
+            fullTurns = []
             tab = .conversation
             conversationQuery = ""
             expandedBlocks = []
@@ -275,6 +316,10 @@ struct TrafficView: View {
         }
         .onChange(of: conversationQuery) { _, _ in
             rebuildConversation()
+        }
+        .onReceive(catalog.$records) { _ in
+            // @Published emits before assignment; read the committed array.
+            DispatchQueue.main.async { recomputeFiltered() }
         }
         .onChange(of: catalog.records.count) { _, _ in
             recomputeFiltered()
@@ -295,6 +340,20 @@ struct TrafficView: View {
         .onAppear {
             recomputeFiltered()
             if selectedID == nil { selectedID = filtered.first?.id }
+            selectedLive = currentSummary.flatMap { streams.live[$0.id] }
+            rebuildConversation()
+        }
+        .onReceive(streams.$live) { values in
+            let next = currentSummary.flatMap { values[$0.id] }
+            guard next != selectedLive else { return }
+            selectedLive = next
+            rebuildConversation()
+        }
+        .onDisappear {
+            state.loadGen += 1
+            state.detailWork?.cancel()
+            state.fullWork?.cancel()
+            state.clearConversation()
         }
         .onChange(of: filter) { _, _ in recomputeFiltered() }
         .onChange(of: query) { _, _ in recomputeFiltered() }
@@ -502,7 +561,7 @@ struct TrafficView: View {
 
     private func conversationPane(_ rec: CaptureSummary) -> some View {
         let streaming = rec.state == .streaming || rec.state == .pending
-        let blocks = streaming ? liveBlocks(rec) : displayBlocks
+        let blocks = displayBlocks
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s8) {
                 Image(systemName: "magnifyingglass")
@@ -636,73 +695,11 @@ struct TrafficView: View {
         }
     }
 
-    private func turnMatches(_ turn: CaptureTranscript.Turn, query: String) -> Bool {
-        turn.text.lowercased().contains(query)
-            || turn.name.lowercased().contains(query)
-            || turn.role.lowercased().contains(query)
-            || roleLabel(turn.role).lowercased().contains(query)
-            || (Self.isSystemRole(turn.role) && "系统提示".contains(query))
-            || (turn.role == "tool" && "工具调用".contains(query))
-            || (fullRender && detail?.requestHeadersJSON.lowercased().contains(query) == true)
-    }
-
-    private func groupedBlocks(_ turns: [(Int, CaptureTranscript.Turn)]) -> [ConvBlock] {
-        var out: [ConvBlock] = []
-        var i = 0
-        while i < turns.count {
-            let (idx, turn) = turns[i]
-            if Self.isSystemRole(turn.role) {
-                var items: [(offset: Int, turn: CaptureTranscript.Turn)] = [(idx, turn)]
-                i += 1
-                while i < turns.count, Self.isSystemRole(turns[i].1.role) {
-                    items.append((turns[i].0, turns[i].1))
-                    i += 1
-                }
-                let chars = items.reduce(0) { $0 + $1.turn.text.count }
-                out.append(.group(
-                    id: "sys-\(idx)",
-                    title: "系统提示",
-                    subtitle: items.count > 1 ? "\(items.count) 段 · \(Self.formatCount(chars))" : Self.formatCount(chars),
-                    items: items))
-            } else if turn.role == "tool" {
-                var items: [(offset: Int, turn: CaptureTranscript.Turn)] = [(idx, turn)]
-                i += 1
-                while i < turns.count, turns[i].1.role == "tool" {
-                    items.append((turns[i].0, turns[i].1))
-                    i += 1
-                }
-                if items.count == 1 {
-                    out.append(.single(index: idx, turn: turn))
-                } else {
-                    let names = items.map { $0.turn.name }.filter { !$0.isEmpty }
-                    let preview = names.isEmpty ? "\(items.count) 次" : names.prefix(4).joined(separator: " · ")
-                    out.append(.group(
-                        id: "tool-\(idx)",
-                        title: "工具调用",
-                        subtitle: "\(items.count) · \(preview)",
-                        items: items))
-                }
-            } else {
-                out.append(.single(index: idx, turn: turn))
-                i += 1
-            }
-        }
-        return out
-    }
-
-    private static func isSystemRole(_ role: String) -> Bool {
-        role == "system" || role == "developer" || role == "tools"
-    }
-
-    private static func formatCount(_ n: Int) -> String {
-        if n >= 10_000 { return String(format: "%.1f 万字", Double(n) / 10_000) }
-        return "\(n) 字"
-    }
 
     private func toolsPane(_ rec: CaptureSummary) -> some View {
         let calls = CaptureTranscript.mergingLive(
             detail?.toolCalls ?? [],
-            live: streams.live[rec.id]?.tools ?? [])
+            live: selectedLive?.tools ?? [])
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s8) {
                 if calls.isEmpty {
@@ -913,66 +910,48 @@ struct TrafficView: View {
             reloadDetail(selectedID, raw: true, tools: false)
             return
         }
-        let dir = selectedID.map { CaptureMedia.mediaDir(captureID: $0) }
-        DispatchQueue.global(qos: .userInitiated).async {
+        let id = selectedID
+        let generation = state.loadGen
+        let dir = id.map { CaptureMedia.mediaDir(captureID: $0) }
+        state.fullWork?.cancel()
+        let work = DispatchWorkItem {
             let turns = CaptureTranscript.turns(from: raw, mode: .full, mediaDir: dir)
             DispatchQueue.main.async {
+                guard id == selectedID, generation == state.loadGen, fullRender else { return }
                 fullTurns = turns
                 rebuildConversation()
             }
         }
+        state.fullWork = work
+        state.detailQueue.async(execute: work)
     }
 
     private func rebuildConversation() {
         guard let rec = currentSummary else {
-            displayBlocks = []
-            historyCount = 0
+            state.clearConversation()
             return
         }
-        let built = conversationBlocks(rec)
-        historyCount = built.historyCount
-        displayBlocks = built.blocks
-    }
-
-    private func liveBlocks(_ rec: CaptureSummary) -> [ConvBlock] {
-        conversationBlocks(rec).blocks
-    }
-
-    private func conversationBlocks(_ rec: CaptureSummary) -> (historyCount: Int, blocks: [ConvBlock]) {
-        let live = streams.live[rec.id]
-        let history = fullRender
-            ? fullTurns
-            : (detail?.turns ?? [])
-        let streaming = rec.state == .streaming || rec.state == .pending
-        let reply: [CaptureTranscript.Turn]
-        if streaming {
-            reply = CaptureTranscript.replyTurns(
-                responseJSON: nil, live: live, streaming: true, mode: .conversation)
-        } else if fullRender {
-            reply = CaptureTranscript.replyTurns(
-                responseJSON: detail?.responseJSON, live: live, streaming: false, mode: .full)
-        } else {
-            reply = []
-        }
-        let turns = (history + reply).enumerated().map { ($0.offset, $0.element) }
-        let q = conversationQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let visible = q.isEmpty ? turns : turns.filter { _, t in turnMatches(t, query: q) }
-        let collapse = !fullRender && q.isEmpty
-        let blocks = collapse ? groupedBlocks(visible) : visible.map { ConvBlock.single(index: $0.0, turn: $0.1) }
-        return (history.count, blocks)
+        let matchingDetail = detail?.summary.id == rec.id ? detail : nil
+        state.requestConversation(ConversationInput(
+            id: rec.id, history: fullRender ? fullTurns : (matchingDetail?.turns ?? []),
+            live: selectedLive, response: fullRender ? matchingDetail?.responseJSON : nil,
+            headers: fullRender ? matchingDetail?.requestHeadersJSON : nil,
+            full: fullRender, streaming: rec.isLive, query: conversationQuery))
     }
 
     private func reloadDetail(_ id: Int64?, raw: Bool, tools: Bool) {
+        state.loadGen += 1
+        state.detailWork?.cancel()
+        state.fullWork?.cancel()
         guard let id else {
             detail = nil
             displayBlocks = []
             loadingDetail = false
             return
         }
-        state.loadGen += 1
         let gen = state.loadGen
         loadingDetail = displayBlocks.isEmpty
-        DispatchQueue.global(qos: .userInitiated).async {
+        let work = DispatchWorkItem {
             let d = ProxyCaptureStore.shared.detail(
                 id: id, includeRaw: raw, includePayloads: raw, includeTools: tools)
             DispatchQueue.main.async {
@@ -983,6 +962,8 @@ struct TrafficView: View {
                 else { rebuildConversation() }
             }
         }
+        state.detailWork = work
+        state.detailQueue.async(execute: work)
     }
 
     private func duration(_ rec: CaptureSummary) -> String {
@@ -1118,4 +1099,105 @@ private struct TrafficRow: View {
         case .aborted: return Theme.statusWarning
         }
     }
+}
+
+/// Immutable inputs isolate parsing/filtering from SwiftUI body evaluation.
+struct ConversationInput: Equatable {
+    let id: Int64
+    let history: [CaptureTranscript.Turn]
+    let live: CaptureLive?
+    let response: String?
+    let headers: String?
+    let full: Bool
+    let streaming: Bool
+    let query: String
+}
+
+enum ConversationBuilder {
+    static func build(_ input: ConversationInput) -> [ConvBlock] {
+        let reply = (input.streaming || input.full) ? CaptureTranscript.replyTurns(
+            responseJSON: input.response, live: input.live, streaming: input.streaming,
+            mode: input.full ? .full : .conversation) : []
+        let turns = (input.history + reply).enumerated().map { ($0.offset, $0.element) }
+        let q = input.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let headersMatch = input.full && input.headers?.lowercased().contains(q) == true
+        let visible = q.isEmpty ? turns : turns.filter { _, turn in
+            headersMatch || turn.text.lowercased().contains(q)
+                || turn.name.lowercased().contains(q) || turn.role.lowercased().contains(q)
+                || roleLabel(turn.role).contains(q)
+                || (isSystemRole(turn.role) && "系统提示".contains(q))
+                || (turn.role == "tool" && "工具调用".contains(q))
+        }
+        return !input.full && q.isEmpty ? groupedBlocks(visible)
+            : visible.map { .single(index: $0.0, turn: $0.1) }
+    }
+    static func groupedBlocks(_ turns: [(Int, CaptureTranscript.Turn)]) -> [ConvBlock] {
+        var out: [ConvBlock] = []
+        var i = 0
+        while i < turns.count {
+            let (idx, turn) = turns[i]
+            if Self.isSystemRole(turn.role) {
+                var items: [(offset: Int, turn: CaptureTranscript.Turn)] = [(idx, turn)]
+                i += 1
+                while i < turns.count, Self.isSystemRole(turns[i].1.role) {
+                    items.append((turns[i].0, turns[i].1))
+                    i += 1
+                }
+                let chars = items.reduce(0) { $0 + $1.turn.text.count }
+                out.append(.group(
+                    id: "sys-\(idx)",
+                    title: "系统提示",
+                    subtitle: items.count > 1 ? "\(items.count) 段 · \(Self.formatCount(chars))" : Self.formatCount(chars),
+                    items: items))
+            } else if turn.role == "tool" {
+                var items: [(offset: Int, turn: CaptureTranscript.Turn)] = [(idx, turn)]
+                i += 1
+                while i < turns.count, turns[i].1.role == "tool" {
+                    items.append((turns[i].0, turns[i].1))
+                    i += 1
+                }
+                if items.count == 1 {
+                    out.append(.single(index: idx, turn: turn))
+                } else {
+                    let names = items.map { $0.turn.name }.filter { !$0.isEmpty }
+                    let preview = names.isEmpty ? "\(items.count) 次" : names.prefix(4).joined(separator: " · ")
+                    out.append(.group(
+                        id: "tool-\(idx)",
+                        title: "工具调用",
+                        subtitle: "\(items.count) · \(preview)",
+                        items: items))
+                }
+            } else {
+                out.append(.single(index: idx, turn: turn))
+                i += 1
+            }
+        }
+        return out
+    }
+
+    static func isSystemRole(_ role: String) -> Bool {
+        role == "system" || role == "developer" || role == "tools"
+    }
+
+    static func formatCount(_ n: Int) -> String {
+        if n >= 10_000 { return String(format: "%.1f 万字", Double(n) / 10_000) }
+        return "\(n) 字"
+    }
+
+    static func roleLabel(_ role: String) -> String {
+        switch role {
+        case "user": return "用户"
+        case "assistant": return "助手"
+        case "system": return "系统"
+        case "developer": return "开发者"
+        case "thinking": return "思考"
+        case "tools": return "工具声明"
+        case "tool", "function": return "工具"
+        case "block": return "块"
+        case "response": return "响应"
+        case "request": return "请求"
+        default: return role
+        }
+    }
+
 }

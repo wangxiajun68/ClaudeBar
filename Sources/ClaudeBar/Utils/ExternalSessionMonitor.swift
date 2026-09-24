@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SQLite3
 
@@ -20,8 +21,11 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     let startedAt: Double        // epoch ms (first record or file birth)
     let updatedAt: Double        // epoch ms (file mtime)
     let model: String            // model declared by the tool ("" if unknown)
+    /// Retained in the unarchived thread index; in the legacy fallback, live.
+    /// This is visibility, not evidence that a turn is currently running.
     var isAlive: Bool
-    var isActive: Bool           // touched within busyWindow → working
+    var isActive: Bool           // live writer / recent open turn + lifecycle state
+    var completionID: String? = nil // completed turn id with a final assistant message
     var contextTokens: Int = 0
     var contextLimit: Int = 0
 
@@ -35,13 +39,19 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     var agentNickname: String = ""
     /// Spawn depth from `source.subagent.thread_spawn.depth` (0 when absent).
     var spawnDepth: Int = 0
+    /// The `codex` process writing this rollout, when one is.
+    var holderPID: Int? = nil
+    /// The holder is Codex Desktop's bundled app-server, not a terminal CLI.
+    var inDesktop = false
+    var title: String = ""
 
     var isSubagent: Bool { parentThreadId != nil || threadSource == "subagent" }
 
-    /// Card title: the sub-agent's nickname when there is one, else the
-    /// project folder.
+    /// Prefer the indexed task title; legacy rollouts fall back to the project.
     var displayName: String {
         if !agentNickname.isEmpty { return agentNickname }
+        let indexedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !indexedTitle.isEmpty { return indexedTitle }
         return projectFolder.isEmpty ? kind.displayName : projectFolder
     }
 
@@ -89,13 +99,79 @@ enum ExternalAgentKind: String, CaseIterable {
     /// Codex appends token_count events continuously while a turn is in
     /// flight — they land within seconds of each other.
     var busyWindow: TimeInterval { 90 }
+
+    /// An open turn with no process holding the rollout (a crash mid-turn
+    /// leaves `task_started` without `task_complete`) stops counting as live
+    /// after this long without a write.
+    var orphanedTurnWindow: TimeInterval { 10 * 60 }
+}
+
+/// Which Codex rollouts a running `codex` process holds open right now.
+///
+/// Both the CLI (`codex`, `codex resume`) and Codex Desktop's bundled
+/// `codex app-server` keep a thread's rollout JSONL open for as long as the
+/// thread is loaded, so an open descriptor is the liveness signal a Claude
+/// session gets from its pid. Listing every pid costs a few syscalls each;
+/// descriptors are read only for the one or two `codex` executables — about
+/// 4 ms per scan in total.
+enum CodexProcessScan {
+    struct Holder: Equatable {
+        let pid: Int
+        /// Executable inside an app bundle (Codex Desktop's app-server).
+        let inDesktop: Bool
+    }
+
+    static func openRollouts() -> [String: Holder] {
+        let capacity = proc_listallpids(nil, 0)
+        guard capacity > 0 else { return [:] }
+        var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
+        let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride))
+        guard count > 0 else { return [:] }
+
+        var result: [String: Holder] = [:]
+        var pathBuffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        for pid in pids.prefix(Int(count)) where pid > 0 {
+            guard proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 else { continue }
+            let executable = String(cString: pathBuffer)
+            guard (executable as NSString).lastPathComponent == "codex" else { continue }
+            let holder = Holder(pid: Int(pid), inDesktop: executable.contains(".app/Contents/"))
+            for path in openFiles(pid) where path.hasSuffix(".jsonl") && path.contains("/sessions/") {
+                // A CLI holder is the more specific answer when both hold it.
+                if result[path] == nil || result[path]?.inDesktop == true { result[path] = holder }
+            }
+        }
+        return result
+    }
+
+    private static func openFiles(_ pid: pid_t) -> [String] {
+        let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard bytes > 0 else { return [] }
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(bytes) / stride + 8)
+        let filled = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * stride))
+        guard filled > 0 else { return [] }
+        var paths: [String] = []
+        for fd in fds.prefix(Int(filled) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_VNODE) {
+            var info = vnode_fdinfowithpath()
+            let size = Int32(MemoryLayout<vnode_fdinfowithpath>.stride)
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, size) == size else { continue }
+            let path = withUnsafeBytes(of: info.pvip.vip_path) { raw in
+                String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+            }
+            paths.append(path)
+        }
+        return paths
+    }
 }
 
 // MARK: - Monitor
 
-/// Scans Codex rollout JSONLs and reports recent sessions. Pure file
-/// metadata + a bounded head/tail read per file, run off-main by
-/// `ProviderStore`.
+/// Lists unarchived interactive Codex threads and reads live rollout state.
+/// Membership matches Codex's own default thread list: `archived = 0` and a
+/// session source of `cli`, `vscode`, `atlas`, or `chatgpt`. `codex exec` and
+/// MCP one-shots (`exec`, `mcp`) stay out, as do sub-agents and threads the
+/// agent created for itself. Pure file metadata + a bounded head/tail read
+/// per file, run off-main by `ProviderStore`.
 struct ExternalSessionMonitor {
 
     static func fetchActive() -> [ExternalSessionInfo] {
@@ -111,6 +187,7 @@ struct ExternalSessionMonitor {
         var size: Int
         var cwd: String
         var metadataKnown: Bool
+        var sourceKind: String
         var model: String
         var contextUsed: Int
         var contextLimit: Int
@@ -119,6 +196,7 @@ struct ExternalSessionMonitor {
         var agentNickname: String
         var spawnDepth: Int
         var hasOpenTask: Bool?
+        var completionID: String?
     }
     private static var codexFileCache: [String: CodexFileCache] = [:]
     /// `fetchActive` is called from detached tasks and polls can overlap, so
@@ -128,7 +206,8 @@ struct ExternalSessionMonitor {
     private static func fetchCodex() -> [ExternalSessionInfo] {
         let root = ExternalAgentKind.codex.rootDir
         let now = Date().timeIntervalSince1970
-        if let indexed = indexedCodexSessions(now: now) { return indexed }
+        let holders = CodexProcessScan.openRollouts()
+        if let indexed = indexedCodexSessions(now: now, holders: holders) { return indexed }
         // A session is only surfaced if its file was touched within the
         // recency window. Codex nests by year/month/day; cap the walk at the
         // 3 most recent months so a long Codex history never walks the whole
@@ -157,9 +236,12 @@ struct ExternalSessionMonitor {
                     for file in files where file.hasSuffix(".jsonl") {
                         let path = "\(dayPath)/\(file)"
                         guard let meta = fileMeta(path: path, cutoff: cutoff) else { continue }
+                        if holders[path] == nil,
+                           now - meta.mtime > ExternalAgentKind.codex.orphanedTurnWindow { continue }
                         let parsed = codexFields(path: path, meta: meta)
-                        guard parsed.metadataKnown, parsed.parentThreadId == nil, parsed.threadSource != "subagent",
-                              parsed.spawnDepth == 0 else { continue }
+                        guard parsed.metadataKnown,
+                              isInteractiveMain(source: parsed.sourceKind, threadSource: parsed.threadSource),
+                              parsed.parentThreadId == nil, parsed.spawnDepth == 0 else { continue }
                         // `task_complete` is the authoritative end of a Codex
                         // task, including dispatched sub-agents. Old rollout
                         // formats without lifecycle events get only the brief
@@ -168,6 +250,9 @@ struct ExternalSessionMonitor {
                             ?? (now - meta.mtime <= ExternalAgentKind.codex.busyWindow)
                         let base = (file as NSString).deletingPathExtension
                         let sessionId = String(base.suffix(36))
+                        let holder = holders[path]
+                        let alive = isLive(holder: holder, openTask: parsed.hasOpenTask, updated: meta.mtime, now: now)
+                        guard alive else { continue }
                         results.append(ExternalSessionInfo(
                             kind: .codex,
                             sessionId: sessionId,
@@ -175,14 +260,17 @@ struct ExternalSessionMonitor {
                             startedAt: meta.mtime * 1000,
                             updatedAt: meta.mtime * 1000,
                             model: parsed.model,
-                            isAlive: true,
+                            isAlive: alive,
                             isActive: isRunning,
+                            completionID: parsed.completionID,
                             contextTokens: parsed.contextUsed,
                             contextLimit: parsed.contextLimit,
                             parentThreadId: parsed.parentThreadId,
                             threadSource: parsed.threadSource,
                             agentNickname: parsed.agentNickname,
-                            spawnDepth: parsed.spawnDepth
+                            spawnDepth: parsed.spawnDepth,
+                            holderPID: holder?.pid,
+                            inDesktop: holder?.inDesktop ?? false
                         ))
                     }
                 }
@@ -200,6 +288,30 @@ struct ExternalSessionMonitor {
         let cwd: String
         let created: Double
         let updated: Double
+        let title: String
+        let source: String
+        let threadSource: String
+    }
+
+    /// Codex `thread/list` defaults to these sources. `exec` and `mcp` are
+    /// one-shot runs (often under `/tmp` or `/var/folders`) and are not main
+    /// sessions. An empty source is a legacy rollout that predates the field.
+    private static func isInteractiveMain(source: String, threadSource: String) -> Bool {
+        let thread = threadSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if thread == "subagent" || thread == "agent_created_thread" || thread.contains("subagent") {
+            return false
+        }
+        let raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return thread.isEmpty || thread == "user" }
+        if raw.lowercased().contains("subagent") { return false }
+        if let data = raw.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return object["subagent"] == nil && isInteractiveMain(source: "", threadSource: thread)
+        }
+        switch raw.lowercased() {
+        case "cli", "vscode", "atlas", "chatgpt": return true
+        default: return false
+        }
     }
     private static let indexLock = NSLock()
     private static var indexReadAt = Date.distantPast
@@ -207,7 +319,17 @@ struct ExternalSessionMonitor {
 
     /// Archive membership comes from the desktop index, not rollout recency.
     /// Cache only membership; the rollout cache still updates live turn state.
-    private static func indexedCodexSessions(now: TimeInterval) -> [ExternalSessionInfo]? {
+    /// Live means a process holds the rollout. Without one, only a turn that
+    /// is still open and was written recently counts — a crashed CLI leaves
+    /// its last turn open forever.
+    private static func isLive(holder: CodexProcessScan.Holder?, openTask: Bool?,
+                               updated: TimeInterval, now: TimeInterval) -> Bool {
+        if holder != nil { return true }
+        return openTask == true && now - updated <= ExternalAgentKind.codex.orphanedTurnWindow
+    }
+
+    private static func indexedCodexSessions(now: TimeInterval,
+                                             holders: [String: CodexProcessScan.Holder]) -> [ExternalSessionInfo]? {
         indexLock.lock()
         defer { indexLock.unlock() }
         if Date().timeIntervalSince(indexReadAt) >= 10 {
@@ -221,19 +343,25 @@ struct ExternalSessionMonitor {
         codexCacheLock.unlock()
         return rows.compactMap { row -> ExternalSessionInfo? in
             let meta = fileMeta(path: row.path, cutoff: 0)
+            // Membership is authoritative even for idle or missing rollouts.
             let parsed = meta.map { codexFields(path: row.path, meta: $0) }
-            guard parsed?.parentThreadId == nil, parsed?.threadSource != "subagent",
+            guard isInteractiveMain(source: row.source, threadSource: row.threadSource),
+                  parsed?.parentThreadId == nil, parsed?.threadSource != "subagent",
                   (parsed?.spawnDepth ?? 0) == 0 else { return nil }
             let updated = meta?.mtime ?? row.updated
+            let holder = holders[row.path]
+            let live = isLive(holder: holder, openTask: parsed?.hasOpenTask, updated: updated, now: now)
             return ExternalSessionInfo(
                 kind: .codex, sessionId: row.id,
                 cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
                 startedAt: row.created * 1000, updatedAt: updated * 1000,
                 model: parsed?.model ?? "", isAlive: true,
-                isActive: parsed?.hasOpenTask ?? (now - updated <= ExternalAgentKind.codex.busyWindow),
+                isActive: live && (parsed?.hasOpenTask ?? (now - updated <= ExternalAgentKind.codex.busyWindow)),
+                completionID: parsed?.completionID,
                 contextTokens: parsed?.contextUsed ?? 0, contextLimit: parsed?.contextLimit ?? 0,
                 parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",
-                agentNickname: parsed?.agentNickname ?? "", spawnDepth: parsed?.spawnDepth ?? 0)
+                agentNickname: parsed?.agentNickname ?? "", spawnDepth: parsed?.spawnDepth ?? 0,
+                holderPID: holder?.pid, inDesktop: holder?.inDesktop ?? false, title: row.title)
         }
     }
 
@@ -251,8 +379,21 @@ struct ExternalSessionMonitor {
         }
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 200)
+        var info: OpaquePointer?
+        var columns: Set<String> = []
+        if sqlite3_prepare_v2(db, "PRAGMA table_info(threads)", -1, &info, nil) == SQLITE_OK {
+            while sqlite3_step(info) == SQLITE_ROW {
+                if let name = sqlite3_column_text(info, 1) { columns.insert(String(cString: name)) }
+            }
+        }
+        sqlite3_finalize(info)
+        let hasThreadSource = columns.contains("thread_source")
         var stmt: OpaquePointer?
-        let sql = "SELECT id, rollout_path, cwd, created_at, updated_at, source FROM threads WHERE archived = 0 ORDER BY updated_at DESC"
+        let sql = """
+        SELECT id, rollout_path, cwd, created_at, updated_at, source, title\
+        \(hasThreadSource ? ", thread_source" : "") \
+        FROM threads WHERE archived = 0 ORDER BY updated_at DESC
+        """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
         var rows: [IndexedThread] = []
@@ -262,14 +403,13 @@ struct ExternalSessionMonitor {
         }
         var step = sqlite3_step(stmt)
         while step == SQLITE_ROW {
-            // The indexed source survives large/truncated session_meta lines.
             let source = string(5)
-            let object = source.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }
-            let isChild = source.lowercased().contains("subagent")
-                || (object as? [String: Any])?["subagent"] != nil
-            if isChild { step = sqlite3_step(stmt); continue }
-            rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
-                                      created: sqlite3_column_double(stmt, 3), updated: sqlite3_column_double(stmt, 4)))
+            let threadSource = hasThreadSource ? string(7) : ""
+            if isInteractiveMain(source: source, threadSource: threadSource) {
+                rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
+                                          created: sqlite3_column_double(stmt, 3), updated: sqlite3_column_double(stmt, 4),
+                                          title: string(6), source: source, threadSource: threadSource))
+            }
             step = sqlite3_step(stmt)
         }
         return step == SQLITE_DONE ? rows : nil
@@ -291,6 +431,7 @@ struct ExternalSessionMonitor {
             size: meta.size,
             cwd: spawn?.cwd ?? "",
             metadataKnown: spawn != nil,
+            sourceKind: spawn?.sourceKind ?? "",
             model: ctx.model.isEmpty ? headModel(in: head) : ctx.model,
             contextUsed: ctx.used,
             contextLimit: ctx.limit,
@@ -298,7 +439,8 @@ struct ExternalSessionMonitor {
             threadSource: spawn?.threadSource ?? "",
             agentNickname: spawn?.nickname ?? "",
             spawnDepth: spawn?.depth ?? 0,
-            hasOpenTask: ctx.hasOpenTask)
+            hasOpenTask: ctx.hasOpenTask,
+            completionID: ctx.completionID)
         codexCacheLock.lock()
         codexFileCache[path] = entry
         codexCacheLock.unlock()
@@ -307,7 +449,7 @@ struct ExternalSessionMonitor {
 
     /// Only the first session_meta identifies this rollout; later records may
     /// contain copied parent metadata. Invalid metadata is never evidence of a root.
-    private static func codexSpawnInfo(head: String) -> (cwd: String, parentThreadId: String?, threadSource: String, nickname: String, depth: Int)? {
+    private static func codexSpawnInfo(head: String) -> (cwd: String, sourceKind: String, parentThreadId: String?, threadSource: String, nickname: String, depth: Int)? {
         guard let firstLine = head.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first,
               firstLine.contains("\"session_meta\""),
               let data = firstLine.data(using: .utf8),
@@ -315,8 +457,11 @@ struct ExternalSessionMonitor {
               obj["type"] as? String == "session_meta",
               let payload = obj["payload"] as? [String: Any] else { return nil }
 
+        var sourceKind = ""
         var threadSource = (payload["thread_source"] as? String) ?? ""
-        if let source = payload["source"] as? [String: Any], source["subagent"] != nil {
+        if let named = payload["source"] as? String {
+            sourceKind = named
+        } else if let source = payload["source"] as? [String: Any], source["subagent"] != nil {
             threadSource = "subagent"
         }
         var nickname = (payload["agent_nickname"] as? String) ?? ""
@@ -330,7 +475,7 @@ struct ExternalSessionMonitor {
             if parent == nil, let p = threadSpawn["parent_thread_id"] as? String { parent = p }
         }
         if parent?.isEmpty == true { parent = nil }
-        return (payload["cwd"] as? String ?? "", parent, threadSource, nickname, depth)
+        return (payload["cwd"] as? String ?? "", sourceKind, parent, threadSource, nickname, depth)
     }
 
     // MARK: Helpers
@@ -375,16 +520,18 @@ struct ExternalSessionMonitor {
 
     /// Bounded tail parsing tracks lifecycle and current-turn usage. Partial
     /// first lines are ignored; cumulative billing is only a fallback.
-    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String) {
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "") }
+    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String, completionID: String?) {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "", nil) }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(48_000, size))
-        guard let data = try? handle.readToEnd() else { return (0, 0, nil, "") }
+        guard let data = try? handle.readToEnd() else { return (0, 0, nil, "", nil) }
         let text = String(decoding: data, as: UTF8.self)
         var used = 0, limit = 0
         var model = ""
         var hasOpenTask: Bool?
+        var completionID: String?
+        var finalMessageReady = false
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let payload = object["payload"] as? [String: Any] else { continue }
@@ -392,14 +539,42 @@ struct ExternalSessionMonitor {
                 if let current = payload["model"] as? String { model = current }
                 continue
             }
+            if object["type"] as? String == "response_item" {
+                switch (payload["type"] as? String) ?? "" {
+                case "message" where (payload["role"] as? String) == "assistant":
+                    let phase = payload["phase"] as? String
+                    let blocks = payload["content"] as? [[String: Any]] ?? []
+                    finalMessageReady = (phase == nil || phase == "final_answer")
+                        && blocks.contains { ($0["type"] as? String) == "output_text"
+                            && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                case "function_call", "custom_tool_call":
+                    finalMessageReady = false
+                default:
+                    break
+                }
+                continue
+            }
             guard object["type"] as? String == "event_msg",
                   let eventType = payload["type"] as? String else { continue }
             if eventType == "task_started" {
                 hasOpenTask = true
+                completionID = nil
+                finalMessageReady = false
                 continue
             }
-            if eventType == "task_complete" || eventType == "turn_aborted" {
+            if eventType == "task_complete" {
                 hasOpenTask = false
+                if finalMessageReady, payload["error"] == nil,
+                   let turnID = payload["turn_id"] as? String, !turnID.isEmpty {
+                    completionID = turnID
+                }
+                finalMessageReady = false
+                continue
+            }
+            if eventType == "turn_aborted" {
+                hasOpenTask = false
+                completionID = nil
+                finalMessageReady = false
                 continue
             }
             guard eventType == "token_count",
@@ -417,6 +592,6 @@ struct ExternalSessionMonitor {
                 used = limit > 0 ? min(total, limit) : total
             }
         }
-        return (max(0, used), limit, hasOpenTask, model)
+        return (max(0, used), limit, hasOpenTask, model, completionID)
     }
 }

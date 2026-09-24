@@ -101,6 +101,12 @@ final class SMCController {
 
     private var conn: io_connect_t = 0
     private var fanModeKeyIsLower: Bool?
+    /// Read by the sampler queue and the fan queue.
+    private var temperatureKeys: [String]?
+    private let cacheLock = NSLock()
+    /// Serializes user-client calls: the sampler (temperatures) and the fan
+    /// monitor share this connection from different queues.
+    private let ioLock = NSLock()
 
     var isConnected: Bool { conn != 0 }
 
@@ -157,12 +163,34 @@ final class SMCController {
             "Tp00", "Tp04", "Tp08", "Tp0C", "Tp0G", "Tp0K",
         ]
         let generic = ["TC0D", "TC0E", "TC0F", "TC0P", "TC0H"]
-        var readings: [Double] = []
-        for key in generic + appleSilicon {
-            if let value = getValue(key), value > 0, value < 110 { readings.append(value) }
+
+        // Only a handful of the candidate keys exist on any one machine.
+        // Sweep all of them once, then read just the ones that answered —
+        // re-sweeping only if they all stop answering.
+        cacheLock.lock()
+        let cached = temperatureKeys
+        cacheLock.unlock()
+        if let cached, let average = averageTemperature(cached).average {
+            return average
         }
-        guard !readings.isEmpty else { return nil }
-        return readings.reduce(0, +) / Double(readings.count)
+        let sweep = averageTemperature(generic + appleSilicon)
+        cacheLock.lock()
+        temperatureKeys = sweep.answered.isEmpty ? nil : sweep.answered
+        cacheLock.unlock()
+        return sweep.average
+    }
+
+    private func averageTemperature(_ keys: [String]) -> (average: Double?, answered: [String]) {
+        var readings: [Double] = []
+        var answered: [String] = []
+        for key in keys {
+            if let value = getValue(key), value > 0, value < 110 {
+                readings.append(value)
+                answered.append(key)
+            }
+        }
+        guard !readings.isEmpty else { return (nil, []) }
+        return (readings.reduce(0, +) / Double(readings.count), answered)
     }
 
     func fanModeKey(_ id: Int) -> String {
@@ -372,9 +400,10 @@ final class SMCController {
             }
             return KERN_FAILURE
         }
-        let byteTuple = output2.bytes
-        let mirrored = Mirror(reflecting: byteTuple).children.compactMap { $0.value as? UInt8 }
-        for i in 0..<min(Int(size), outBytes.count) { outBytes[i] = mirrored[i] }
+        let count = min(Int(size), outBytes.count, 32)
+        withUnsafeBytes(of: output2.bytes) { raw in
+            for i in 0..<count { outBytes[i] = raw[i] }
+        }
         return KERN_SUCCESS
     }
 
@@ -401,6 +430,8 @@ final class SMCController {
         let inputSize = MemoryLayout<SMCKeyData>.stride
         var outputSize = MemoryLayout<SMCKeyData>.stride
         precondition(inputSize == 80, "SMCKeyData layout must be 80 bytes")
+        ioLock.lock()
+        defer { ioLock.unlock() }
         return IOConnectCallStructMethod(conn, UInt32(SMCKeys.kernelIndex.rawValue), &input, inputSize, &output, &outputSize)
     }
 

@@ -198,9 +198,10 @@ struct JSONTreeView: View {
                 PlainDumpView(text: s, empty: empty)
             }
         }
-        .task(id: parseID.isEmpty ? "\(source.count)" : parseID) {
+        .task(id: parseID.isEmpty ? source : parseID) {
             let src = source
             let doc = await Task.detached(priority: .utility) { JSONTree.parse(src) }.value
+            guard !Task.isCancelled else { return }
             document = doc
         }
     }
@@ -272,7 +273,7 @@ private struct JSONNodeRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             header
             if open, node.isContainer {
                 ForEach(node.children) { child in
@@ -284,13 +285,9 @@ private struct JSONNodeRow: View {
                 }
                 closer
             } else if open, node.kind == .string, let scalar = node.scalar, isLongString(scalar) {
-                Text(quoted(scalar))
-                    .font(Theme.Font.microMono)
-                    .foregroundColor(Theme.textPrimary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                PlainDumpView(text: quoted(scalar))
+                    .frame(height: 240)
                     .padding(.leading, CGFloat(depth + 1) * 14)
-                    .padding(.bottom, 2)
             }
         }
         .onChange(of: fold.tick) { _, _ in

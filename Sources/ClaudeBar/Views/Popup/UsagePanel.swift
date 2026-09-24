@@ -3,7 +3,7 @@ import SwiftUI
 /// Popup usage: heatmap + source triad + token mix + model bars. Model
 /// tokens only — VPN quota lives on the VPN page.
 struct UsagePanel: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState(.usage) var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
 
     var body: some View {

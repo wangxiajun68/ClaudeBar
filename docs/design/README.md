@@ -19,6 +19,9 @@
 | 07 | [file-structure.md](07-file-structure.md) | 仓库文件树 | 定位文件时 |
 | 08 | [error-handling.md](08-error-handling.md) | 失败场景与降级策略 | 处理边界情况时 |
 | 09 | [build-and-distribution.md](09-build-and-distribution.md) | 构建、分发、平台要求 | 构建与发版时 |
+| 10 | [notch-island.md](10-notch-island.md) | 刘海灵动岛：视觉、状态机、数据口径、性能；权限与隐私开关 | 改灵动岛或权限时 |
+
+按界面组织的说明放在 [`surfaces/`](surfaces/)：目前有 [providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）。
 
 ---
 

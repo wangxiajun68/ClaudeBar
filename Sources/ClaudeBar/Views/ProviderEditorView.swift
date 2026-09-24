@@ -3,8 +3,9 @@ import SwiftUI
 /// Provider editor — layout only. All state, validation, and persistence live
 /// in `ProviderEditorModel` (@Observable); this view binds and renders.
 struct ProviderEditorView: View {
-    @ObservedObject var providerStore: ProviderStore
+    @ProviderState(.configuration) var providerStore: ProviderStore
     @Binding var focusProviderID: UUID?
+    var singleProvider: Bool = false
     var embedded: Bool = false
     var onBack: (() -> Void)? = nil
     @State private var model = ProviderEditorModel()
@@ -13,9 +14,11 @@ struct ProviderEditorView: View {
     init(providerStore: ProviderStore,
          focusProviderID: Binding<UUID?> = .constant(nil),
          embedded: Bool = false,
+         singleProvider: Bool = false,
          onBack: (() -> Void)? = nil) {
-        self.providerStore = providerStore
+        self._providerStore = ProviderState(.configuration, store: providerStore)
         _focusProviderID = focusProviderID
+        self.singleProvider = singleProvider
         self.embedded = embedded
         self.onBack = onBack
     }
@@ -32,8 +35,10 @@ struct ProviderEditorView: View {
                 }.padding(12)
             }
             HStack(spacing: 0) {
-                sidebar
-                Divider()
+                if !singleProvider {
+                    sidebar
+                    Divider()
+                }
                 if model.selected != nil {
                     detailPane
                 } else {
@@ -50,7 +55,10 @@ struct ProviderEditorView: View {
             model.focusProvider(id: id)
             focusProviderID = nil
         }
-        .onAppear { model.attach(store: providerStore) }
+        .onAppear {
+            model.attach(store: providerStore)
+            if let id = focusProviderID { model.focusProvider(id: id); focusProviderID = nil }
+        }
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -166,15 +174,14 @@ struct ProviderEditorView: View {
                 .fixedSize()
             EditorField(label: "名称", error: model.nameError) {
                 TextField("e.g. DeepSeek", text: $model.name)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
             }
             EditorField(label: "API Key") {
-                SecureField("sk-...", text: $model.authToken)
-                    .textFieldStyle(.roundedBorder)
+                APIKeyField(text: $model.authToken)
             }
             EditorField(label: "Base URL", error: model.urlError) {
                 TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
             }
             ConnectivityProbeButton(
                 title: "检测连通性",
@@ -253,7 +260,7 @@ struct ProviderEditorView: View {
             Divider()
             HStack(spacing: Theme.Space.s4) {
                 TextField("添加模型", text: $model.newModelName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
                     .font(Theme.Font.bodySmall)
                     .onSubmit { model.addModel() }
                 Button(action: { model.addModel() }) {
@@ -275,17 +282,17 @@ struct ProviderEditorView: View {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
                 EditorField(label: "模型名称") {
                     TextField("e.g. deepseek-v4-pro[1m]", text: model.binding(for: editingID, keyPath: \.name))
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(ProviderInputStyle())
                         .font(Theme.Font.microMono)
                 }
                 HStack(alignment: .top, spacing: Theme.Space.s16) {
                     EditorField(label: "上下文窗口") {
                         TextField("1000000", text: model.binding(for: editingID, keyPath: \.contextTokens))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(ProviderInputStyle())
                     }
                     EditorField(label: "自动压缩阈值") {
                         TextField("1000000", text: model.binding(for: editingID, keyPath: \.autoCompactWindow))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(ProviderInputStyle())
                     }
                 }
                 Toggle("禁用压缩", isOn: model.binding(for: editingID, keyPath: \.disableCompact))
@@ -364,8 +371,7 @@ struct ProviderEditorView: View {
                         Text("保存")
                     }
                 }
-                .adaptiveGlassButton(prominent: true)
-                .tint(model.isSaveFlashActive ? Theme.statusBusy : Theme.accent)
+                .buttonStyle(ProviderActionStyle(prominent: true, tint: model.isSaveFlashActive ? Theme.Ink.success : ProviderCardState.ready.color))
                 .disabled(!model.canSave || model.isSaving)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("保存供应商 (⌘S)")

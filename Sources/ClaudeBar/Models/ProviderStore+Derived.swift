@@ -20,7 +20,7 @@ extension ProviderStore {
     /// Is any Claude session busy (drives brand pulse / status icon).
     var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.status == .busy } }
 
-    /// Codex sessions currently alive.
+    /// Visible Codex sessions (unarchived main threads when indexed).
     var aliveExternalSessions: [ExternalSessionInfo] { externalSessions.filter(\.isAlive) }
 
     /// External sessions currently mid-turn.
@@ -48,14 +48,11 @@ extension ProviderStore {
         }
     }
 
-    /// Codex sessions as a parent/child forest, children always included.
-    ///
-    /// Codex writes one rollout per sub-agent and links it by
-    /// `parent_thread_id`. Left flat, 66 children of one session render as 66
-    /// near-identical cards; grouped, the tree reads as "one session, N
-    /// agents". Sub-agents whose parent fell outside the recency window are
-    /// promoted to roots rather than dropped — an orphan is still live work.
+    /// Visible main threads, including idle unarchived Codex tasks. Helpers
+    /// are never promoted to main cards; any supplied active children stay
+    /// attached to their parent.
     func externalSessionTree(kind: ExternalAgentKind) -> [ExternalSessionNode] {
+        if let cached = externalTreeCache[kind] { return cached }
         let alive = externalSessions.filter { $0.kind == kind && $0.isAlive }
         var childrenOf: [String: [ExternalSessionInfo]] = [:]
         for session in alive where session.isSubagent {
@@ -65,16 +62,19 @@ extension ProviderStore {
             // Orphaned or completed helpers must never become main cards.
             alive.filter { !$0.isSubagent }
         }
-        func build(_ session: ExternalSessionInfo, depth: Int) -> ExternalSessionNode {
+        func build(_ session: ExternalSessionInfo, depth: Int, ancestors: Set<String> = []) -> ExternalSessionNode {
+            let visited = ancestors.union([session.sessionId])
             let children = (childrenOf[session.sessionId] ?? [])
-                .filter(\.isActive)
+                .filter { $0.isActive && !visited.contains($0.sessionId) }
                 .sorted { $0.updatedAt > $1.updatedAt }
-                .map { build($0, depth: depth + 1) }
+                .map { build($0, depth: depth + 1, ancestors: visited) }
             return ExternalSessionNode(session: session, depth: depth, children: children)
         }
-        return roots()
+        let result = roots()
             .sorted { $0.updatedAt > $1.updatedAt }
             .map { build($0, depth: 0) }
+        externalTreeCache[kind] = result
+        return result
     }
 
     // MARK: - Usage derivation

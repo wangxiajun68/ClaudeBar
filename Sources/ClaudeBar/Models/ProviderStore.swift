@@ -14,6 +14,8 @@ class ProviderStore: ObservableObject {
         let amount: String
     }
     @Published var supplierBalances: [SupplierBalance] = []
+    /// Provider id → display amount. Both client stacks share this map.
+    @Published var balanceAmounts: [UUID: String] = [:]
     @Published var balanceText: String? = nil
     private var balanceTask: Task<Void, Never>?
     @Published var balanceLoading: Bool = false
@@ -58,19 +60,21 @@ class ProviderStore: ObservableObject {
     /// `WidgetSnapshotWriter.write`).
     private var lastSnapshotData: Data?
 
-    // Idle-notification edge detection, one detector per session flavor.
-    // Main-actor confined; see IdleTransitionDetector.
+    // Only a new transcript-confirmed final answer may produce an idle banner.
     @Published var anySessionBusy = false   // drives the menu-bar icon
-    private var claudeIdleDetector = IdleTransitionDetector<Int>()
-    private var cursorIdleDetector = IdleTransitionDetector<String>()
+    private var claudeCompletionDetector = ConfirmedCompletionDetector<Int>()
+    private var cursorCompletionDetector = ConfirmedCompletionDetector<String>()
 
     // Live Cursor (IDE) sessions
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var cursorExpanded: Set<String> = []
 
     // Live Codex sessions
-    @Published var externalSessions: [ExternalSessionInfo] = []
-    private var externalIdleDetector = IdleTransitionDetector<String>()
+    @Published var externalSessions: [ExternalSessionInfo] = [] {
+        didSet { externalTreeCache.removeAll(keepingCapacity: true) }
+    }
+    var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
+    private var externalCompletionDetector = ConfirmedCompletionDetector<String>()
 
     /// Initial state is populated by the AppDelegate once the status item and
     /// main window are wired up — calling `refresh()` here would run file I/O
@@ -87,6 +91,9 @@ class ProviderStore: ObservableObject {
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
         currentEnv = SettingsManager.readSettings()
         loadProviders()
+        if let peer {
+            ProviderProfileSync.reconcile(claude: self, codex: peer)
+        }
         refreshBalance()
         peer?.refreshQuota()
         refreshUsage(rescan: true)
@@ -98,7 +105,7 @@ class ProviderStore: ObservableObject {
         startUsageWatcher()
         observeAppearance()
         writeWidgetSnapshot()
-        syncPeerProxy()
+        refreshSharedProxy()
     }
 
     // MARK: - Sessions
@@ -161,15 +168,14 @@ class ProviderStore: ObservableObject {
         if next != heartbeats { heartbeats = next }
     }
 
-    /// Diff this poll's busy states against the last poll's. A session that
-    /// was busy and is now idle-and-alive just finished its turn — notify.
-    /// Edge bookkeeping lives in `IdleTransitionDetector`; dead sessions are
-    /// pruned there, never notified.
+    /// A busy → idle edge is only a candidate: wait for a new final-answer
+    /// marker from the transcript before notifying.
     private func detectIdleTransitions(_ fresh: [SessionInfo]) {
         let alive = fresh.filter(\.isAlive)
-        let busyIDs = Set(alive.filter { $0.status == .busy || $0.toolPending }.map(\.pid))
-        let (newlyIdle, _) = claudeIdleDetector.record(busyIDs: busyIDs)
-        for pid in newlyIdle {
+        let completed = claudeCompletionDetector.record(alive.map {
+            (id: $0.pid, isBusy: $0.status == .busy || $0.toolPending, completionID: $0.completionID)
+        })
+        for pid in completed {
             if let session = alive.first(where: { $0.pid == pid }) {
                 NotificationService.shared.notifyIdle(session: session)
             }
@@ -179,9 +185,11 @@ class ProviderStore: ObservableObject {
 
     /// Cursor flavor of the same edge detection (see `detectIdleTransitions`).
     private func detectIdleTransitionsCursor(_ fresh: [CursorSessionInfo]) {
-        let busyIDs = Set(fresh.filter { $0.status == .active || $0.toolPending }.map(\.composerId))
-        let (newlyIdle, _) = cursorIdleDetector.record(busyIDs: busyIDs)
-        for id in newlyIdle {
+        let completed = cursorCompletionDetector.record(fresh.map {
+            (id: $0.composerId, isBusy: $0.status == .active || $0.toolPending,
+             completionID: $0.completionID)
+        })
+        for id in completed {
             if let session = fresh.first(where: { $0.composerId == id }) {
                 NotificationService.shared.notifyIdle(cursor: session)
             }
@@ -222,6 +230,7 @@ class ProviderStore: ObservableObject {
                 result[i].messageCount = old.messageCount
                 result[i].currentActivity = old.currentActivity
                 result[i].toolPending = old.toolPending
+                result[i].completionID = old.completionID
                 result[i].contextLimit = old.contextLimit
                 result[i].subagents = old.subagents
                 result[i].workflows = old.workflows
@@ -235,6 +244,7 @@ class ProviderStore: ObservableObject {
             result[i].messageCount = ctx.count
             result[i].currentActivity = ctx.activity
             result[i].toolPending = ctx.toolPending
+            result[i].completionID = ctx.completionID
             result[i].transcriptSize = size
             if ctx.toolPending { result[i].status = .busy }
             result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
@@ -265,6 +275,13 @@ class ProviderStore: ObservableObject {
     /// Read Cursor composer sessions from its state.vscdb. Run off the main
     /// thread — the DB is large, and transcript-tail scans do file I/O.
     private func refreshCursorSessions() {
+        guard PermissionGate.allows(.cursorData) else {
+            if !cursorSessions.isEmpty {
+                cursorSessions = []
+                refreshAnyBusy()
+            }
+            return
+        }
         guard !cursorScanPending else { return }
         cursorScanPending = true
         Task.detached(priority: .utility) {
@@ -298,11 +315,10 @@ class ProviderStore: ObservableObject {
                 self.externalScanPending = false
                 if self.externalSessions == result { return }
                 self.externalSessions = result
-                // Busy-edge notifications reuse the same detector machinery:
-                // a session that leaves the busy window just finished a turn.
-                let busyIDs = Set(result.filter(\.isActive).map(\.id))
-                let (newlyIdle, _) = self.externalIdleDetector.record(busyIDs: busyIDs)
-                for id in newlyIdle {
+                let completed = self.externalCompletionDetector.record(result.map {
+                    (id: $0.id, isBusy: $0.isActive, completionID: $0.completionID)
+                })
+                for id in completed {
                     if let session = result.first(where: { $0.id == id }) {
                         NotificationService.shared.notifyIdle(external: session)
                     }
@@ -343,9 +359,19 @@ class ProviderStore: ObservableObject {
             // screen the re-index is pure background cost; stop the stream
             // and let the next visible poll rescan.
             if UIWakePolicy.hasVisibleWindow {
-                self.startUsageWatcher()
-            } else {
+                if !self.usageWatcherStarted {
+                    self.startUsageWatcher()
+                    // Catch up on transcripts written while nothing watched.
+                    // A brief gap (a notch-island hover) is left to the next
+                    // FSEvents append rather than a full rescan per hover.
+                    if let stoppedAt = self.usageWatcherStoppedAt, Date().timeIntervalSince(stoppedAt) > 30 {
+                        self.refreshUsage(rescan: true)
+                    }
+                }
+            } else if self.usageWatcherStarted {
                 UsageFSWatcher.stop()
+                self.usageWatcherStarted = false
+                self.usageWatcherStoppedAt = Date()
             }
             self.writeWidgetSnapshot()
         }
@@ -360,6 +386,24 @@ class ProviderStore: ObservableObject {
 
     private func observeAppearance() {
         guard appearanceCancellables.isEmpty else { return }
+        NotificationCenter.default.publisher(for: .permissionDidChange)
+            .compactMap { $0.object as? AppPermission }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] permission in
+                guard let self else { return }
+                switch permission {
+                case .widgetData:
+                    // Force a write even if the payload is unchanged since the
+                    // switch was off — the containers never got it.
+                    self.lastSnapshotData = nil
+                    self.writeWidgetSnapshot()
+                case .cursorData:
+                    self.refreshCursorSessions()
+                default:
+                    break
+                }
+            }
+            .store(in: &appearanceCancellables)
         let prefs = AppPreferences.shared
         for publisher in [prefs.$appearance.map { _ in () }.eraseToAnyPublisher(),
                           prefs.$tokenUnitStyle.map { _ in () }.eraseToAnyPublisher()] {
@@ -398,7 +442,7 @@ class ProviderStore: ObservableObject {
             let active = providers.first { $0.id == activeProviderID }
             let expectedLoopback = active?.captureEnabled ?? false
             if !expectedLoopback, let active, let model = active.activeModel {
-                activateModel(providerID: active.id, modelID: model.id, syncPeer: false)
+                activateModel(providerID: active.id, modelID: model.id)
             }
             return
         }
@@ -452,7 +496,7 @@ class ProviderStore: ObservableObject {
 
     // MARK: - Activate
 
-    func activateModel(providerID: UUID, modelID: UUID, syncPeer: Bool = true) {
+    func activateModel(providerID: UUID, modelID: UUID) {
         guard let provider = providers.first(where: { $0.id == providerID }),
               let model = provider.models.first(where: { $0.id == modelID }) else { return }
 
@@ -472,23 +516,7 @@ class ProviderStore: ObservableObject {
         }
         saveProviders()
         refreshBalance()
-        syncPeerProxy()
-        if syncPeer {
-            Task { @MainActor in
-                self.peer?.activateMatching(claude: provider, model: model)
-            }
-        }
-    }
-
-    /// Mirror a Codex activation onto the matching Claude vendor/model.
-    func activateMatching(codex: CodexProvider, model: CodexModelConfig) {
-        guard let dest = providers.first(where: { ProviderBridge.matches($0, codex) }) else { return }
-        let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
-        guard let mid = dest.models.first(where: {
-            ProviderBridge.stripClaudeModelSuffix($0.name).caseInsensitiveCompare(slug) == .orderedSame
-        })?.id else { return }
-        if dest.id == activeProviderID, dest.activeModelID == mid { return }
-        activateModel(providerID: dest.id, modelID: mid, syncPeer: false)
+        refreshSharedProxy()
     }
 
     /// Re-apply the active Claude vendor (e.g. local-proxy toggle flipped).
@@ -496,7 +524,7 @@ class ProviderStore: ObservableObject {
         guard let p = activeProvider else { return }
         let mid = p.activeModelID ?? p.models.first?.id
         guard let mid else { return }
-        activateModel(providerID: p.id, modelID: mid, syncPeer: false)
+        activateModel(providerID: p.id, modelID: mid)
     }
 
     /// Strip the third-party overlay from `settings.json` and clear the
@@ -515,6 +543,7 @@ class ProviderStore: ObservableObject {
         currentEnv = SettingsManager.readSettings()
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
         saveProviders()
+        refreshSharedProxy()
         refreshBalance()
         writeWidgetSnapshot()
     }
@@ -559,24 +588,34 @@ class ProviderStore: ObservableObject {
 
     // MARK: - CRUD
 
-    func deleteProvider(_ provider: Provider) {
+    func deleteProvider(_ provider: Provider, propagate: Bool = true, reassignActive: Bool = true) {
+        let profileID = provider.profileID
+        let wasActive = activeProviderID == provider.id
         providers.removeAll { $0.id == provider.id }
-        if activeProviderID == provider.id { activeProviderID = providers.first?.id }
+        if wasActive {
+            activeProviderID = reassignActive ? providers.first?.id : nil
+        }
         if collapsedProviderIDs.contains(provider.id) { collapsedProviderIDs.remove(provider.id) }
         saveProviders()
+        if propagate, let profileID {
+            MainActor.assumeIsolated { ProviderProfileSync.removeCodex(profileID: profileID, store: self) }
+        }
     }
 
     func duplicateProvider(_ provider: Provider) {
-        let copy = Provider(
+        var copy = Provider(
             name: "\(provider.name) 副本",
             authToken: provider.authToken,
             baseURL: provider.baseURL,
             models: provider.models,
             activeModelID: provider.activeModelID,
-            captureEnabled: provider.captureEnabled
+            captureEnabled: provider.captureEnabled,
+            catalogID: provider.catalogID
         )
+        copy.profileID = UUID()
         providers.append(copy)
         saveProviders()
+        MainActor.assumeIsolated { ProviderProfileSync.pushClaude(copy, store: self) }
     }
 
     /// Import Codex providers. Matching is by name or rewritten Anthropic URL.
@@ -590,14 +629,37 @@ class ProviderStore: ObservableObject {
         return result
     }
 
+    /// Quick setup saves a complete record without changing the live client.
+    @MainActor
     @discardableResult
-    func updateProvider(_ provider: Provider) -> Bool {
+    func addConfiguredProvider(_ provider: Provider, propagate: Bool = true) -> Bool {
+        var provider = provider
+        if provider.profileID == nil { provider.profileID = UUID() }
+        providers.append(provider)
+        guard saveProviders() else {
+            providers.removeAll { $0.id == provider.id }
+            return false
+        }
+        if propagate {
+            ProviderProfileSync.pushClaude(provider, store: self)
+        }
+        return true
+    }
+
+    @discardableResult
+    func updateProvider(_ provider: Provider, propagate: Bool = true) -> Bool {
         guard let index = providers.firstIndex(where: { $0.id == provider.id }) else { return false }
+        var provider = provider
+        if provider.profileID == nil { provider.profileID = providers[index].profileID ?? UUID() }
+        if provider.catalogID == nil { provider.catalogID = providers[index].catalogID }
         let previous = providers[index]
         providers[index] = provider
         guard saveProviders() else {
             providers[index] = previous
             return false
+        }
+        if propagate {
+            MainActor.assumeIsolated { ProviderProfileSync.pushClaude(provider, store: self) }
         }
         return true
     }
@@ -611,8 +673,9 @@ class ProviderStore: ObservableObject {
            let modelID = providers[idx].activeModelID ?? providers[idx].models.first?.id {
             activateModel(providerID: providerID, modelID: modelID)
         } else {
-            syncPeerProxy()
+            refreshSharedProxy()
         }
+        MainActor.assumeIsolated { ProviderProfileSync.pushClaude(providers[idx], store: self) }
     }
 
     /// Blank Claude provider with one placeholder model — ready to edit and save.
@@ -639,7 +702,9 @@ class ProviderStore: ObservableObject {
         saveProviders()
     }
 
-    private func syncPeerProxy() {
+    /// Keep the shared local proxy's Claude upstream current. This does not
+    /// select or write a Codex provider/model.
+    private func refreshSharedProxy() {
         Task { @MainActor [weak self] in
             self?.peer?.syncProxyRuntime()
         }
@@ -655,28 +720,30 @@ class ProviderStore: ObservableObject {
             // Both model stacks may contain independently configured accounts.
             var candidates = providers.map { (id: $0.id, name: $0.name, token: $0.authToken, base: $0.baseURL) }
             candidates += (peer?.providers ?? []).map { (id: $0.id, name: $0.name, token: $0.apiKey, base: $0.baseURL) }
-            // Currently only one official endpoint supports balances. Deduplicate
-            // credentials across the two stacks, not their unrelated configuration IDs.
-            // Credentials never become UI identities or persisted account keys.
-            var seen = Set<String>()
-            let eligible = candidates.compactMap { candidate -> (id: UUID, name: String, token: String, base: String)? in
+            // One request per key and host; every matching card still gets the amount.
+            var groups: [String: (token: String, base: String, ids: [(UUID, String)])] = [:]
+            for candidate in candidates {
                 let token = candidate.token.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard BalanceFetcher.supports(candidate.base), !token.isEmpty,
-                      seen.insert(token).inserted else { return nil }
-                return (candidate.id, candidate.name, token, candidate.base)
+                guard BalanceFetcher.supports(candidate.base), !token.isEmpty else { continue }
+                let key = "\(token)\n\(candidate.base)"
+                var group = groups[key] ?? (token, candidate.base, [])
+                group.ids.append((candidate.id, candidate.name))
+                groups[key] = group
             }
             var balances: [SupplierBalance] = []
-            for provider in eligible {
+            var amounts: [UUID: String] = [:]
+            for provider in groups.values {
                 guard !Task.isCancelled else { return }
                 let result = await BalanceFetcher.fetch(authToken: provider.token, baseURL: provider.base)
                 guard !Task.isCancelled else { return }
-                if let result {
-                    balances.append(SupplierBalance(id: provider.id,
-                        name: "DeepSeek · " + provider.name, amount: result.display))
+                guard let result else { continue }
+                for (id, name) in provider.ids {
+                    amounts[id] = result.display
+                    balances.append(SupplierBalance(id: id, name: name, amount: result.display))
                 }
             }
-            // Publish a complete snapshot; retain the previous one during refresh.
             if supplierBalances != balances { supplierBalances = balances }
+            if balanceAmounts != amounts { balanceAmounts = amounts }
             let display = balances.map { "\($0.name) · \($0.amount)" }.joined(separator: " / ")
             balanceText = display.isEmpty ? nil : display
             writeWidgetSnapshot()
@@ -701,9 +768,14 @@ class ProviderStore: ObservableObject {
             return
         }
         usageRefreshPending = true
-        usageLoading = !UsageIndex.hasCachedData && UsageIndex.needsInitialBuild
 
         Task.detached(priority: .utility) { [weak self] in
+            // The first cache probe can open/migrate SQLite or load JSON.
+            // Never run it on the interaction thread.
+            let initialLoading = !UsageIndex.hasCachedData && UsageIndex.needsInitialBuild
+            await MainActor.run { [weak self] in
+                if self?.usageLoading != initialLoading { self?.usageLoading = initialLoading }
+            }
             var wantRescan = rescan
             while true {
                 guard let self else { return }
@@ -711,18 +783,14 @@ class ProviderStore: ObservableObject {
                     UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate)
                 }
 
-                if UsageIndex.hasCachedData {
+                if wantRescan && UsageIndex.hasCachedData {
                     let quick = Self.queryUsage(in: interval)
                     let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
                     let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                     await MainActor.run { [weak self] in
                         guard let self, !self.usageRefreshQueued else { return }
-                        self.usageStats = quick
-                        self.usageBySource = quickSources
-                        self.usageDays = days
-                        self.usageDaysBySource = daysBySource
-                        self.usageLoading = false
+                        self.publishUsage(quick, quickSources, days, daysBySource)
                     }
                 }
 
@@ -743,11 +811,7 @@ class ProviderStore: ObservableObject {
                     }
                     // Publish and release the gate in one main-actor transaction.
                     // A new refresh cannot start between these operations.
-                    self.usageStats = final
-                    self.usageBySource = finalSources
-                    self.usageDays = days
-                    self.usageDaysBySource = daysBySource
-                    self.usageLoading = false
+                    self.publishUsage(final, finalSources, days, daysBySource)
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
                     return (false, false)
@@ -761,6 +825,26 @@ class ProviderStore: ObservableObject {
         }
     }
 
+    /// Assign only what changed: an FSEvents-driven rescan usually finds the
+    /// same aggregates, and every assignment would re-render the usage page,
+    /// the popup's usage panel and the island.
+    ///
+    /// Arrays are compared as sets of rows because the SQL grouping gives no
+    /// stable order.
+    private func publishUsage(_ stats: [ModelUsage], _ bySource: [UsageSource: [ModelUsage]],
+                              _ days: [DayUsage], _ daysBySource: [UsageSource: [DayUsage]]) {
+        func same(_ a: [ModelUsage], _ b: [ModelUsage]) -> Bool {
+            a.count == b.count && Set(a) == Set(b)
+        }
+        if !same(usageStats, stats) { usageStats = stats }
+        let sourcesEqual = usageBySource.count == bySource.count
+            && bySource.allSatisfy { key, value in usageBySource[key].map { same($0, value) } ?? false }
+        if !sourcesEqual { usageBySource = bySource }
+        if usageDays != days { usageDays = days }
+        if usageDaysBySource != daysBySource { usageDaysBySource = daysBySource }
+        if usageLoading { usageLoading = false }
+    }
+
     private static func queryUsage(in interval: DateInterval) -> [ModelUsage] {
         UsageIndex.fetch(in: interval)
     }
@@ -770,6 +854,7 @@ class ProviderStore: ObservableObject {
     }
 
     private var usageWatcherStarted = false
+    private var usageWatcherStoppedAt: Date?
     private var persistenceObserver: NSObjectProtocol?
 
     private func startUsageWatcher() {
@@ -862,15 +947,9 @@ class ProviderStore: ObservableObject {
         case .day, .custom:
             return cal.isDateInToday(usageReferenceDate) ? "今天" : "当日"
         case .month:
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
-            f.dateFormat = "M月"
-            return f.string(from: usageReferenceDate)
+            return UsageStats.formatter("M月").string(from: usageReferenceDate)
         case .year:
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "zh_CN")
-            f.dateFormat = "yyyy年"
-            return f.string(from: usageReferenceDate)
+            return UsageStats.formatter("yyyy年").string(from: usageReferenceDate)
         }
     }
 }

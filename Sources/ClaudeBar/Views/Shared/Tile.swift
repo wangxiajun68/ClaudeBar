@@ -88,7 +88,7 @@ struct MetricTile: View {
                     .truncationMode(.tail)
                     .minimumScaleFactor(0.5)
                     .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: value)
+                    .animation(.spring(response: 0.24, dampingFraction: 0.8), value: value)
             } else {
                 CodexQuotaGauges(windows: quotaWindows, compact: false)
             }
@@ -103,7 +103,7 @@ struct MetricTile: View {
         .tile(hovered: isHovered, dense: dense)
         .contentShape(RoundedRectangle(cornerRadius: dense ? Theme.Radius.md : Theme.Radius.lg, style: .continuous))
         .hoverState($isHovered)
-        .animation(Theme.Animation.smooth, value: isHovered)
+        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: isHovered)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label)，\(value)\(detail.isEmpty ? "" : "，\(detail)")")
 
@@ -135,7 +135,10 @@ struct TileGrid<Content: View>: View {
         let spec = Theme.GridLayout.equalRow(preset)
         self.fixedColumns = spec.fixed
         self.minColumnWidth = spec.minWidth
-        if case .pageSession = preset { self.virtualized = true }
+        switch preset {
+        case .pageSession, .pageUsage: self.virtualized = true
+        default: break
+        }
         switch preset {
         case .pageMetric, .pageSession, .pageUsage, .pageProvider, .pageSetting:
             self.spacing = spacing ?? Theme.Space.gridGapPage
@@ -208,6 +211,10 @@ struct EqualRowGrid: Layout {
         if let heights = cache.measurements[key] { return heights }
         let result = rowHeights(subviews: subviews, columns: cols,
                                 colW: columnWidth(container: width, columns: cols))
+        // Live resize can propose hundreds of widths without changing the
+        // children. Bound retained measurements while preserving reuse for
+        // the usual measure/place proposal pair.
+        if cache.measurements.count >= 8 { cache.measurements.removeAll(keepingCapacity: true) }
         cache.measurements[key] = result
         return result
     }

@@ -16,13 +16,16 @@
 ```bash
 xattr -cr "$APP_BUNDLE"                        # 1. 清扩展属性（关键！）
 
-codesign ... --entitlements widget.plist "$APPEX/.../ClaudeBarWidget"  # 2. appex 二进制
-codesign ... --entitlements widget.plist "$APPEX_DIR"                  # 3. appex bundle
-codesign ... --entitlements app.plist   "$MACOS_DIR/ClaudeBar"         # 4. 主二进制
-codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 5. 主 bundle wrapper
+codesign ... --options runtime "$BATTERYCTL"    # 2. 电池辅助进程（Resources/claudebar-batteryctl）
+codesign ... --entitlements widget.plist "$APPEX/.../ClaudeBarWidget"  # 3. appex 二进制
+codesign ... --entitlements widget.plist "$APPEX_DIR"                  # 4. appex bundle
+codesign ... --entitlements app.plist   "$MACOS_DIR/ClaudeBar"         # 5. 主二进制
+codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 bundle wrapper
 ```
 
 安装到 /Applications 后**再次** `xattr -cr`（`cp` 会重新引入扩展属性）。
+
+电池辅助进程用 `clang -Wall -Wextra -Werror -O2` 编译为 universal（arm64 + x86_64），**编译失败会中断整个构建**——它是安全相关组件，不允许静默缺失。安装时 `BatteryHelperInstaller` 会再校验安装副本的 SHA-256 与代码签名，与当前包一致才使用。详见 [§12](12-battery-control.md)。
 
 ## Entitlements
 

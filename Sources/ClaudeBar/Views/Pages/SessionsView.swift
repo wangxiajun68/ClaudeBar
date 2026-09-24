@@ -35,7 +35,7 @@ private struct SessionActionChips<Content: View>: View {
         .opacity(revealed ? 1 : 0)
         .offset(x: revealed ? 0 : 10)
         .allowsHitTesting(revealed)
-        .animation(Theme.Animation.smooth, value: revealed)
+        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: revealed)
     }
 }
 
@@ -80,7 +80,7 @@ private struct BusyPulseRing: View {
 /// tile grid, with expandable subagent trees inside each tile and
 /// double-click-to-resume. Mirrors the menu-bar popup's sessions at full width.
 struct SessionsView: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.sessions, .expansion]) var providerStore: ProviderStore
 
     var body: some View {
         ScrollView {
@@ -116,7 +116,7 @@ struct SessionsView: View {
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
-                        SessionTileFull(session: session, store: providerStore)
+                        SessionTileFull(session: session, store: providerStore, isExpanded: providerStore.expandedSessionPIDs.contains(session.pid))
                     }
                 }
             }
@@ -139,7 +139,7 @@ struct SessionsView: View {
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
-                        CursorTileFull(session: session, store: providerStore)
+                        CursorTileFull(session: session, store: providerStore, isExpanded: providerStore.cursorExpanded.contains(session.composerId))
                     }
                 }
             }
@@ -239,8 +239,8 @@ private struct ActivityLine: View {
 /// double-click.
 private struct SessionTileFull: View {
     let session: SessionInfo
-    @ObservedObject var store: ProviderStore
-    private var isExpanded: Bool { store.expandedSessionPIDs.contains(session.pid) }
+    let store: ProviderStore
+    let isExpanded: Bool
     private var isBusy: Bool { session.status == .busy }
     @State private var isHovered = false
 
@@ -347,7 +347,8 @@ private struct SessionTileFull: View {
     }
 
     private func resume() {
-        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId)
+        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId,
+                                             pid: session.isAlive ? session.pid : nil)
     }
 
     @ViewBuilder
@@ -391,8 +392,8 @@ private struct SessionTileFull: View {
 /// carries the violet cursor tint while active.
 private struct CursorTileFull: View {
     let session: CursorSessionInfo
-    @ObservedObject var store: ProviderStore
-    private var isExpanded: Bool { store.cursorExpanded.contains(session.composerId) }
+    let store: ProviderStore
+    let isExpanded: Bool
     private var isActive: Bool { session.status == .active }
     @State private var isHovered = false
 
@@ -509,7 +510,7 @@ private struct ExternalSessionTile: View {
     /// poll, and the cluster packs smaller cards to fit whatever it is given.
     private static let swarmWidthEstimate = AgentSwarmView.SwarmGrid.tileEstimateWidth
     /// Height of the readout column — cwd, model, context bar, session id.
-    private static let readoutHeight: CGFloat = 126
+    private static let readoutHeight: CGFloat = 176
 
     /// Height for this session: the readout column's height, or the cluster's,
     /// whichever is taller. A session whose fan-out is small stays as short as
@@ -577,7 +578,6 @@ private struct ExternalSessionTile: View {
                     .foregroundColor(Theme.textTertiary(0.5))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 0)
             }
             .frame(width: Self.readoutWidth, alignment: .topLeading)
 
@@ -630,7 +630,8 @@ private struct ExternalSessionTile: View {
     }
 
     private func resume(_ target: ExternalSessionInfo) {
-        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId)
+        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId,
+                                            pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
     private func revealCwd() {
@@ -789,7 +790,8 @@ private struct ExternalSessionGridCard: View {
     }
 
     private func resume(_ target: ExternalSessionInfo) {
-        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId)
+        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId,
+                                            pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
     private func revealCwd() {
@@ -798,5 +800,4 @@ private struct ExternalSessionGridCard: View {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
     }
 }
-
 

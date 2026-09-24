@@ -131,6 +131,7 @@ final class ProxyCaptureStore {
     private var openFailed = false
     private var pendingLive: [Int64: CaptureLive] = [:]
     private var flushWork: DispatchWorkItem?
+    private let liveFlushQueue = DispatchQueue(label: "com.claudebar.capture-live", qos: .utility)
     private let listLimit = 120
     private let payloadCap = 16 * 1024 * 1024
     private let isoFormatter = ISO8601DateFormatter()
@@ -780,25 +781,42 @@ final class ProxyCaptureStore {
 
     private func scheduleFlush() {
         lock.lock()
-        flushWork?.cancel()
+        // Throttle, not debounce: a continuous stream must still be shown,
+        // and must not enqueue a cancelled main-queue item for every token.
+        guard flushWork == nil else { lock.unlock(); return }
         let work = DispatchWorkItem { [weak self] in self?.flushLive() }
         flushWork = work
         lock.unlock()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+        liveFlushQueue.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
     private func flushLive() {
+        // This lock is also held by database writes. Wait on the worker,
+        // never on the UI thread during scrolling or a page transition.
         lock.lock()
         let snapshot = pendingLive
         pendingLive = [:]
+        flushWork = nil
         lock.unlock()
         guard !snapshot.isEmpty else { return }
+        let previews = snapshot.mapValues { Self.clip($0.content.isEmpty ? $0.reasoning : $0.content) }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            for (id, buf) in snapshot {
-                self.streams.live[id] = buf
-                self.catalog.livePreview[id] = Self.clip(buf.content.isEmpty ? buf.reasoning : buf.content)
+            let active = Set(self.catalog.records.filter {
+                $0.state == .streaming || $0.state == .pending
+            }.map(\.id))
+            var live = self.streams.live
+            var preview = self.catalog.livePreview
+            var changed = false
+            for (id, buf) in snapshot where active.contains(id) {
+                live[id] = buf
+                preview[id] = previews[id]
+                changed = true
             }
+            // One notification per batch, regardless of concurrent streams.
+            // Completed/deleted records cannot be resurrected by a queued flush.
+            if changed { self.streams.live = live }
+            if preview != self.catalog.livePreview { self.catalog.livePreview = preview }
         }
     }
 

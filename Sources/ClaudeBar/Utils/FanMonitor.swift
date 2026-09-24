@@ -17,6 +17,8 @@ final class FanMonitor {
     /// All privileged commands execute in submission order, away from the UI thread.
     private let commandQueue = DispatchQueue(label: "com.claudebar.fan-commands", qos: .userInitiated)
     private var commandRevision: UInt64 = 0
+    private let readQueue = DispatchQueue(label: "com.claudebar.fan-read", qos: .utility)
+    @ObservationIgnored private var reading = false
     /// 拖动滑杆期间暂停轮询，避免实时转速把滑杆位置“拽回去”。
     private(set) var isUserAdjusting = false
 
@@ -39,19 +41,25 @@ final class FanMonitor {
         timer = nil
     }
 
+    /// SMC reads (several IOKit round-trips per fan) run on `readQueue`;
+    /// only the publish happens on the main actor. A poll with nothing on
+    /// screen is skipped — the rotors it would feed are not being drawn.
     func refresh() {
         if isUserAdjusting { return } // 拖动时不刷新，松手后恢复
-        let available = SMCController.shared.isConnected
-        if smcAvailable != available { smcAvailable = available }
-        guard available else {
-            // 无 SMC：仅在状态真的变化时发布，避免每 2s 让资源区重渲一次。
-            if !fans.isEmpty { fans = [] }
-            return
+        guard !reading, UIWakePolicy.hasVisibleWindow || fans.isEmpty else { return }
+        reading = true
+        readQueue.async { [weak self] in
+            let smc = SMCController.shared
+            let available = smc.isConnected
+            let next = available ? smc.loadFans() : []
+            Task { @MainActor in
+                guard let self else { return }
+                self.reading = false
+                if self.smcAvailable != available { self.smcAvailable = available }
+                // 绝大多数 tick 数值不变 —— Equatable 守卫，避免资源区无谓重渲。
+                if !self.isUserAdjusting, next != self.fans { self.fans = next }
+            }
         }
-        let next = SMCController.shared.loadFans()
-        // 转速是无条件发布的定时器结果，绝大多数 tick 数值不变 —— 加
-        // Equatable 守卫，与 ProviderStore 的既有模式一致。
-        if next != fans { fans = next }
     }
 
     /// 拖动开始/结束（由滑杆的 onEditingChanged 调用）。

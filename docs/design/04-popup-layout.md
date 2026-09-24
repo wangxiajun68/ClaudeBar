@@ -13,7 +13,7 @@
 ├─────────────────────────────────────────────────────────────┤
 │ PROVIDERS … Sessions … Usage（固定区高，见 MenuBarView）      │
 ├─────────────────────────────────────────────────────────────┤
-│ [刷新][主窗口][编辑供应商][settings.json][🔔]  [退出]           │
+│ [刷新][主窗口][帮助][还原官方][管理模型][settings.json][🔔][◐]  [退出] │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,4 +49,6 @@ popup 内不铺供应商宫格：`PanelHeader` 的 Claude Code / Codex chip 打�
 
 ## 底部操作栏
 
-`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、退出。
+`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、帮助（先开窗口再 post `.openHelpPage`）、还原官方配置（带二次确认，可选只还原 Claude Code 或 Codex）、管理模型、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、深浅色切换、退出。
+
+popup 只订阅「是否有 settings.json」「Codex 供应商是否为空」两个外壳状态，会话与用量由各自面板观察，避免心跳牵动整个外层重算。

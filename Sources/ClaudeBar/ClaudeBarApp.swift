@@ -3,6 +3,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var mainWindowController: MainWindowController?
+    private var notchIslandController: NotchIslandController?
     private var providerStore: ProviderStore?
     private var codexProviderStore: CodexProviderStore?
 
@@ -36,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = MenuBarController(providerStore: store, codexProviderStore: codexStore)
         controller.setup()
         menuBarController = controller
+
+        let island = NotchIslandController(providerStore: store, codexStore: codexStore)
+        island.start()
+        notchIslandController = island
 
         let main = MainWindowController(providerStore: store, codexProviderStore: codexStore)
         mainWindowController = main
@@ -85,10 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Posted from the notification-center delegate, which may run off main.
     @objc private func resumeSession(_ note: Notification) {
-        guard let pid = note.userInfo?["pid"] as? Int,
-              let session = providerStore?.sessions.first(where: { $0.pid == pid }) else { return }
-        TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId)
+        guard let pid = note.userInfo?["pid"] as? Int else { return }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let session = self?.providerStore?.sessions.first(where: { $0.pid == pid }) else { return }
+                TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId,
+                                                     pid: session.isAlive ? session.pid : nil)
+            }
+        }
     }
 
     @objc private func showMainWindow() {
@@ -123,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ports. `VpnManager.reapOrphanCore()` covers the crash case; this covers
     /// the ordinary Quit menu item.
     func applicationWillTerminate(_ notification: Notification) {
+        BatteryChargeController.shared.shutdown()
         // Detach the rate accessory first: it hangs off the status-bar button
         // and its `objectWillChange` sink can fire during the rest of teardown.
         menuBarController?.teardownVpnRateDisplay()

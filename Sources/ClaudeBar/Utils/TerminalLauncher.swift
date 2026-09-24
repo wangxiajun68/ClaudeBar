@@ -1,45 +1,99 @@
 import AppKit
 import Foundation
 
-/// Launching external terminal / editor actions shared by the menu-bar popup
-/// and the main-window Sessions page. Both surfaces let the user double-click
-/// a Claude Code session to resume it in a terminal, double-click a Cursor
-/// session to open its workspace, or double-click a Codex session to open it
-/// in Codex Desktop / CLI — the wiring lives here so the two views don't
-/// drift apart (they previously carried two divergent copies of the same logic).
-///
-/// Warp is preferred when installed: it opens a new window at the cwd via
-/// LaunchServices (no Apple Events permission needed), then types + submits
-/// the `claude --resume <id>` command via `osascript` (Warp exposes no
-/// AppleScript `do script` and no `warp://` run-command deep link, so keystroke
-/// injection is the reliable path). Terminal's native `do script` is the
-/// fallback. The osascript runs off the main thread so the tap returns
-/// instantly — `activate` + `delay` + `keystroke` would otherwise block.
-/// Requires Automation permission for Warp (or Terminal) on first use.
-enum TerminalLauncher {
-    /// Resume a Claude Code session: open a terminal in `cwd` and run
-    /// `claude --resume <sessionId>` to restore that exact conversation.
-    ///
-    /// The command is embedded in AppleScript double-quoted string literals,
-    /// so both `\` and `"` must be escaped (AppleScript and the shell both
-    /// consume the backslash layer, giving the shell a correctly quoted cd).
-    /// `sessionId` is a UUID from the session file, but it is validated to a
-    /// safe charset anyway so a tampered file cannot inject shell syntax.
-    static func resumeClaudeSession(cwd: String, sessionId: String) {
-        guard !cwd.isEmpty, isSafePath(cwd) else { return }
-        // Reject a sessionId that could break out of the shell quoting; real
-        // session ids are plain UUID hex+dashes.
-        guard !sessionId.contains(where: { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-".contains($0) == false }) else { return }
-        let safeCwd = cwd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let shellCmd = "cd \"\(safeCwd)\" && claude --resume \(sessionId)"
+/// Where a session is resumed (设置 → 继续会话).
+enum ResumeTerminal: String, CaseIterable, Identifiable {
+    case automatic, otty, warp, terminal
 
-        if FileManager.default.fileExists(atPath: "/Applications/Warp.app") {
-            openInWarp(shellCmd: shellCmd, cwd: cwd)
-        } else {
-            runInAppleTerminal(shellCmd: shellCmd)
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .automatic: return "自动"
+        case .otty: return "Otty"
+        case .warp: return "Warp"
+        case .terminal: return "终端"
         }
+    }
+
+    var isInstalled: Bool {
+        switch self {
+        case .automatic, .terminal: return true
+        case .otty: return OttyBridge.isInstalled
+        case .warp: return FileManager.default.fileExists(atPath: "/Applications/Warp.app")
+        }
+    }
+
+    /// The concrete app a choice lands on: 自动 prefers Otty, then Warp, then
+    /// Terminal; an uninstalled choice degrades the same way.
+    var resolved: ResumeTerminal {
+        if self != .automatic, isInstalled { return self }
+        if ResumeTerminal.otty.isInstalled { return .otty }
+        if ResumeTerminal.warp.isInstalled { return .warp }
+        return .terminal
+    }
+
+    /// Only the AppleScript-driven terminals need 自动化.
+    var needsAutomation: Bool { self == .warp || self == .terminal }
+}
+
+/// Launching external terminal / editor actions shared by the menu-bar popup,
+/// the main-window Sessions page and the notch island, so they cannot drift
+/// apart.
+///
+/// - **Otty** (`OttyBridge`): focuses the pane already running the session,
+///   else opens a tab with the resume command. Socket IPC, no permission.
+/// - **Warp**: opens a window at the cwd via LaunchServices, then types the
+///   command via `osascript` (Warp has no `do script` / run-command link).
+/// - **Terminal**: native `do script`.
+///
+/// Warp and Terminal send Apple Events, so they only run the command when
+/// 设置 → 权限与隐私 → 在终端继续会话 is on; otherwise the terminal opens at
+/// the cwd and the command is left on the clipboard.
+enum TerminalLauncher {
+    /// Continue a Claude Code session. While its process (`pid`) is alive the
+    /// window / tab hosting it is brought forward (`SessionHost`); a second
+    /// `claude --resume` on a live session would fork it. Only an ended
+    /// session is resumed with `claude --resume <sessionId>`.
+    @MainActor
+    static func resumeClaudeSession(cwd: String, sessionId: String, pid: Int? = nil) {
+        guard !cwd.isEmpty, isSafePath(cwd), isSafeSessionId(sessionId) else { return }
+        if let pid, SessionHost.reveal(pid: pid, sessionId: sessionId, cwd: cwd, agent: .claude) { return }
+        launch(command: "claude --resume \(sessionId)", cwd: cwd, sessionId: sessionId)
+    }
+
+    /// Continue a Codex session. A `codex` CLI process holding it (`pid`) is
+    /// revealed in its terminal; a thread loaded in Codex Desktop opens there.
+    /// Otherwise an Otty pane already showing it wins, then Codex Desktop
+    /// (`codex://threads/<id>`) when installed, then `codex resume <id>` in
+    /// the chosen terminal.
+    @MainActor
+    static func resumeCodexSession(cwd: String, sessionId: String, pid: Int? = nil, inDesktop: Bool = false) {
+        guard isSafeSessionId(sessionId) else { return }
+        if let pid, !inDesktop, SessionHost.reveal(pid: pid, sessionId: sessionId, cwd: cwd, agent: .codex) { return }
+        let desktopURL = URL(string: "codex://threads/\(sessionId)")
+            .flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) != nil ? $0 : nil }
+        let command = "codex resume \(sessionId)"
+        let usable = !cwd.isEmpty && isSafePath(cwd)
+        if inDesktop, let desktopURL {
+            NSWorkspace.shared.open(desktopURL)
+            return
+        }
+
+        if OttyBridge.isInstalled, desktopURL != nil || AppPreferences.shared.resumeTerminal.resolved == .otty {
+            let fallback: (@Sendable () -> Void)? = desktopURL.map { url in
+                { @Sendable in DispatchQueue.main.async { NSWorkspace.shared.open(url) } }
+            }
+            OttyBridge.resume(sessionId: sessionId, cwd: usable ? cwd : NSHomeDirectory(), command: command,
+                              title: title(for: cwd), fallback: fallback)
+            return
+        }
+        if let desktopURL {
+            NSWorkspace.shared.open(desktopURL)
+            return
+        }
+        guard usable else { return }
+        launch(command: command, cwd: cwd, sessionId: sessionId)
     }
 
     /// Open a workspace folder in Cursor.app. No-op if Cursor isn't installed
@@ -54,26 +108,49 @@ enum TerminalLauncher {
                                 configuration: NSWorkspace.OpenConfiguration())
     }
 
-    /// Resume a Codex session: open `codex://threads/<sessionId>` in Codex
-    /// Desktop when the scheme is registered, otherwise run
-    /// `codex resume <sessionId>` in a terminal at `cwd`.
-    static func resumeCodexSession(cwd: String, sessionId: String) {
-        guard !sessionId.isEmpty,
-              !sessionId.contains(where: { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-".contains($0) == false }) else { return }
+    // MARK: - Routing
 
-        if let url = URL(string: "codex://threads/\(sessionId)"),
-           NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
-            NSWorkspace.shared.open(url)
-            return
+    private static func launch(command: String, cwd: String, sessionId: String) {
+        switch AppPreferences.shared.resumeTerminal.resolved {
+        case .otty, .automatic:
+            OttyBridge.resume(sessionId: sessionId, cwd: cwd, command: command, title: title(for: cwd))
+        case .warp:
+            runScripted(shellCmd: shellCommand(command, in: cwd), cwd: cwd, app: .warp)
+        case .terminal:
+            runScripted(shellCmd: shellCommand(command, in: cwd), cwd: cwd, app: .terminal)
         }
+    }
 
-        guard !cwd.isEmpty, isSafePath(cwd) else { return }
+    /// `cd "<cwd>" && <command>`, quoted for the AppleScript string it is
+    /// embedded in (AppleScript and the shell each consume one backslash layer).
+    private static func shellCommand(_ command: String, in cwd: String) -> String {
         let safeCwd = cwd
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let shellCmd = "cd \"\(safeCwd)\" && codex resume \(sessionId)"
+        return "cd \"\(safeCwd)\" && \(command)"
+    }
 
-        if FileManager.default.fileExists(atPath: "/Applications/Warp.app") {
+    private static func title(for cwd: String) -> String {
+        let name = (cwd as NSString).lastPathComponent
+        return name.isEmpty ? "ClaudeBar" : name
+    }
+
+    /// With 自动化 on, type/run the command through AppleScript. Without it,
+    /// send no Apple Events at all: open the terminal at `cwd` through
+    /// LaunchServices and leave the command on the clipboard to paste.
+    private static func runScripted(shellCmd: String, cwd: String, app: ResumeTerminal) {
+        guard PermissionGate.allows(.automation) else {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(shellCmd, forType: .string)
+            let appURL = app == .warp
+                ? URL(fileURLWithPath: "/Applications/Warp.app")
+                : URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+            NSWorkspace.shared.open([URL(fileURLWithPath: cwd)], withApplicationAt: appURL,
+                                    configuration: NSWorkspace.OpenConfiguration())
+            return
+        }
+        if app == .warp {
             openInWarp(shellCmd: shellCmd, cwd: cwd)
         } else {
             runInAppleTerminal(shellCmd: shellCmd)
@@ -82,14 +159,12 @@ enum TerminalLauncher {
 
     // MARK: - Warp
 
-    /// Warp path: open a window at the cwd via LaunchServices (reliable +
-    /// permission-free), then type+submit the command via osascript off the
-    /// main thread so the tap handler is instant.
+    /// Open a window at the cwd via LaunchServices (reliable + permission-free),
+    /// then type+submit the command via osascript off the main thread.
     private static func openInWarp(shellCmd: String, cwd: String) {
         NSWorkspace.shared.open([URL(fileURLWithPath: cwd)],
                                 withApplicationAt: URL(fileURLWithPath: "/Applications/Warp.app"),
                                 configuration: NSWorkspace.OpenConfiguration())
-        // Escape the command for an AppleScript double-quoted string.
         let appleStr = shellCmd
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -107,7 +182,7 @@ enum TerminalLauncher {
 
     // MARK: - Terminal
 
-    /// Terminal fallback: native `do script` runs the command in a new window.
+    /// Terminal: native `do script` runs the command in a new window.
     private static func runInAppleTerminal(shellCmd: String) {
         let appleStr = shellCmd
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -120,25 +195,25 @@ enum TerminalLauncher {
         )
     }
 
-    // MARK: - osascript runner
+    // MARK: - Validation
 
     /// Reject paths that could break AppleScript string literals or inject shell syntax.
     private static func isSafePath(_ path: String) -> Bool {
-        guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
-            return false
-        }
-        return true
+        !path.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+    }
+
+    /// Session ids are UUID-like; anything else could break out of the
+    /// command it is interpolated into.
+    private static func isSafeSessionId(_ id: String) -> Bool {
+        !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
     }
 
     /// Run an AppleScript string via `/usr/bin/osascript` (args array — no
-    /// shell interpolation, so the source cannot inject extra arguments).
-    /// `run()` is synchronous, so this runs off the main thread to keep the
-    /// UI responsive; the result is intentionally discarded (best-effort UX
-    /// action — a failure leaves the terminal simply unopened).
+    /// shell interpolation), off the main thread; best-effort.
     private static func runAppleScript(_ source: String) {
         Task.detached(priority: .userInitiated) {
             let proc = Process()
-            proc.launchPath = "/usr/bin/osascript"
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             proc.arguments = ["-e", source]
             _ = try? proc.run()
         }

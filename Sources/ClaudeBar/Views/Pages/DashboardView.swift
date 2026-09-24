@@ -4,7 +4,7 @@ import SwiftUI
 /// live sessions appear as an adaptive tile grid, and per-model usage lands in
 /// its own tile grid. All data flows from `ProviderStore`.
 struct DashboardView: View {
-    @EnvironmentObject var providerStore: ProviderStore
+    @ProviderState([.configuration, .sessions, .usage]) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
     @ObservedObject private var prefs = AppPreferences.shared
     /// Injected by the window so a tile tap navigates to the page.
@@ -16,7 +16,6 @@ struct DashboardView: View {
                 titleBar
                 ResourceStrip()
                 PowerFlowCard()
-                VpnPowerCard(opensVPNPage: true)
                 metricRow
                 sessionOverview
                 usageTop
@@ -56,10 +55,6 @@ struct DashboardView: View {
                        instrumentIcon: .config, pill: "当前") {
                 onNavigate(.providers)
             }
-            SupplierBalanceCard(entries: providerStore.supplierBalances,
-                                loading: providerStore.balanceLoading) {
-                providerStore.refreshBalance()
-            }
             MetricTile(label: "会话", value: sessionValue,
                        detail: "\(runningCount) 运行中 · \(totalSessionCount) 活动",
                        instrumentIcon: .sessions,
@@ -78,7 +73,7 @@ struct DashboardView: View {
                 codexStore.refreshQuota()
             }
             .disabled(codexStore.quotaLoading)
-            .help(codexStore.quotaLoading ? "正在获取最新 Codex 额度" : "点击刷新 Codex 额度")
+            .help(codexQuotaHelp)
             .accessibilityHint("获取最新的 Codex 剩余额度")
             MetricTile(label: "Codex 配置", value: codexConfigValue, detail: codexConfigDetail,
                        instrumentIcon: .config, pill: "模型") {
@@ -92,6 +87,7 @@ struct DashboardView: View {
                        instrumentIcon: .link, pill: codexStore.proxyRunning ? "监听" : "关闭") {
                 onNavigate(.providers)
             }
+            VpnPowerCard(opensVPNPage: true)
         }
     }
 
@@ -121,7 +117,18 @@ struct DashboardView: View {
         if codexStore.quotaLoading { return "正在获取最新额度…" }
         let windows = codexStore.quotaWindows
         if windows.isEmpty { return codexStore.quotaNote ?? "" }
-        return windows.map { "\($0.label)已用 \($0.usedText)" }.joined(separator: " · ")
+        return windows.map { window in
+            let when = window.resetWait.isEmpty ? window.resetClock : window.resetWait
+            return "\(window.label) \(when)"
+        }.joined(separator: " · ")
+    }
+
+    private var codexQuotaHelp: String {
+        if codexStore.quotaLoading { return "正在获取最新 Codex 额度" }
+        let windows = codexStore.quotaWindows
+        if windows.isEmpty { return "点击刷新 Codex 额度" }
+        let lines = windows.map { "\($0.label)：\($0.resetClock)（\($0.resetWait)）" }
+        return (["点击刷新 Codex 额度"] + lines).joined(separator: "\n")
     }
 
     private var codexConfigValue: String {

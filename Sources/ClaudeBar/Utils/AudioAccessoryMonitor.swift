@@ -211,6 +211,7 @@ private final class Engine: @unchecked Sendable {
     /// readings accumulate here rather than replacing a whole device.
     private var merged: [String: AudioAccessoryMonitor.Accessory] = [:]
     private var lastProfilerAt: Date = .distantPast
+    private var lastLogReadAt: Date?
     private var consecutiveLogMisses = 0
     /// The last picture handed to the main actor, so a poll that changes
     /// nothing costs no publish and no re-render.
@@ -270,7 +271,10 @@ private final class Engine: @unchecked Sendable {
             suspended = !visible
             if visible {
                 timer.resume()
-                poll(forceProfiler: true, publish: publishHandler)
+                // Visibility flips on every notch-island hover; a profiler
+                // spawn (hundreds of ms) per flip is only worth it when the
+                // topology it reports is more than a minute old.
+                poll(forceProfiler: Date().timeIntervalSince(lastProfilerAt) > 60, publish: publishHandler)
             } else {
                 timer.suspend()
             }
@@ -287,6 +291,7 @@ private final class Engine: @unchecked Sendable {
         connectedNames.removeAll()
         merged.removeAll()
         lastProfilerAt = .distantPast
+        lastLogReadAt = nil
         consecutiveLogMisses = 0
         lastPublished = nil
         lastPublishedReason = nil
@@ -295,12 +300,16 @@ private final class Engine: @unchecked Sendable {
     func poll(forceProfiler: Bool, publish: (@MainActor ([AudioAccessoryMonitor.Accessory], String?) -> Void)?) {
         let now = Date()
 
-        // Read both subsystems together. A fixed lookback tolerates delayed log availability;
-        // records are merged before comparing the published snapshot.
-        let since = now.addingTimeInterval(-20 * 60)
+        // Read both subsystems together. `merged` keeps what earlier polls
+        // learned, so after the first 20-minute window only the entries since
+        // the previous read are needed — with a 90 s overlap because log
+        // entries can become readable a little after their timestamp.
+        let fullWindow = now.addingTimeInterval(-20 * 60)
+        let since = lastLogReadAt.map { max(fullWindow, $0.addingTimeInterval(-90)) } ?? fullWindow
 
         if let entries = LogSource.entries(since: since) {
             consecutiveLogMisses = 0
+            lastLogReadAt = now
             for entry in entries {
                 switch (entry.subsystem, entry.category) {
                 case ("com.apple.bluetooth", "CBPowerSource"):
@@ -328,7 +337,8 @@ private final class Engine: @unchecked Sendable {
         // One profiler invocation supplies topology and battery data. Failed
         // logs shorten the fallback interval without spawning on every poll.
         let ttl: TimeInterval = consecutiveLogMisses >= 3 ? 30 : 300
-        if forceProfiler || now.timeIntervalSince(lastProfilerAt) >= ttl {
+        if PermissionGate.allows(.bluetooth),
+           forceProfiler || now.timeIntervalSince(lastProfilerAt) >= ttl {
             lastProfilerAt = now
             if let snapshot = ProfilerSource.read() {
                 connectedNames = snapshot.connectedNames

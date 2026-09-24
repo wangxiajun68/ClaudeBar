@@ -20,7 +20,7 @@ struct VPNView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s12) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
                 PageTitle(title: "VPN")
                 overview
                 VpnSubscriptionSection()
@@ -404,7 +404,9 @@ struct VPNView: View {
         .panelCard()
         .background {
             WidthProbe()
-                .onPreferenceChange(MosaicWidthKey.self) { mosaicWidth = $0 }
+                .onPreferenceChange(MosaicWidthKey.self) {
+                    if abs(mosaicWidth - $0) > 0.5 { mosaicWidth = $0 }
+                }
         }
     }
 
@@ -450,9 +452,14 @@ struct VPNView: View {
     private var mosaic: some View {
         VStack(alignment: .leading, spacing: 0) {
             WidthProbe()
-                .onPreferenceChange(MosaicWidthKey.self) { mosaicWidth = $0 }
+                .onPreferenceChange(MosaicWidthKey.self) {
+                    if abs(mosaicWidth - $0) > 0.5 { mosaicWidth = $0 }
+                }
             if let group = currentGroup {
                 let nodes = group.nodes
+                let proxiesByName = Dictionary(manager.proxies.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                let liveNodes = Set(manager.livePath)
+                let testingNodes = manager.testingNodes
                 if nodes.isEmpty {
                     Text("此分组没有节点。")
                         .font(Theme.Font.caption)
@@ -461,7 +468,10 @@ struct VPNView: View {
                 } else {
                     LazyVGrid(columns: Theme.GridLayout.mosaic(columns: mosaicColumnCount), spacing: 1) {
                         ForEach(nodes, id: \.self) { name in
-                            nodeCell(group: group, nodeName: name)
+                            nodeCell(group: group, nodeName: name,
+                                     proxy: proxiesByName[name],
+                                     live: liveNodes.contains(name),
+                                     testing: testingNode == name || testingNodes.contains(name))
                         }
                     }
                     .padding(1)
@@ -472,11 +482,9 @@ struct VPNView: View {
         }
     }
 
-    private func nodeCell(group: VpnGroup, nodeName: String) -> some View {
-        let live = manager.livePath.contains(nodeName)
+    private func nodeCell(group: VpnGroup, nodeName: String,
+                          proxy: VpnProxy?, live: Bool, testing: Bool) -> some View {
         let remembered = nodeName == group.current && !live
-        let proxy = manager.proxies.first(where: { $0.name == nodeName })
-        let testing = testingNode == nodeName || manager.testingNodes.contains(nodeName)
         return HStack(spacing: 0) {
             Button {
                 Task { _ = await manager.selectNode(group: group.name, node: nodeName) }
@@ -575,7 +583,7 @@ struct VPNView: View {
 
     private var logGroup: some View {
         DisclosureGroup(isExpanded: $logsOpen) {
-            VpnLogConsole(lines: manager.logLines)
+            VpnLogConsole()
         } label: {
             sectionLabel("日志", icon: "text.alignleft")
         }
@@ -911,7 +919,6 @@ struct VpnSpeedChart: View {
                 }
             }
         }
-        .drawingGroup()
     }
 
     private func grid(w: CGFloat, h: CGFloat) -> some View {
@@ -983,7 +990,8 @@ struct VpnSpeedChart: View {
 // MARK: - Log console
 
 private struct VpnLogConsole: View {
-    let lines: [String]
+    @ObservedObject private var logStore = VpnLogStore.shared
+    private var lines: [String] { logStore.lines }
     @State private var copied = false
     /// Auto-follow is a *convenience*, not a cage: it used to scroll to the
     /// newest line unconditionally, so reading back through the log was

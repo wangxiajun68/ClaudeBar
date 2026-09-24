@@ -6,6 +6,8 @@ import SwiftUI
 /// effort, preserve-official-login).
 struct CodexProviderEditorView: View {
     @ObservedObject var codexStore: CodexProviderStore
+    var focusProviderID: UUID? = nil
+    var singleProvider: Bool = false
     var embedded: Bool = false
     var onBack: (() -> Void)? = nil
     @State private var model = CodexProviderEditorModel()
@@ -14,8 +16,10 @@ struct CodexProviderEditorView: View {
         VStack(spacing: 0) {
             if embedded { embeddedToolbar }
             HStack(spacing: 0) {
-                sidebar
-                Divider()
+                if !singleProvider {
+                    sidebar
+                    Divider()
+                }
                 if model.selected != nil {
                     detailPane
                 } else {
@@ -27,7 +31,10 @@ struct CodexProviderEditorView: View {
         .onChange(of: model.selectedID) { _, _ in
             model.loadSelected()
         }
-        .onAppear { model.attach(store: codexStore) }
+        .onAppear {
+            model.attach(store: codexStore)
+            if let focusProviderID { model.focusProvider(id: focusProviderID) }
+        }
         .task(id: model.saveToken) {
             guard model.saveToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -142,16 +149,14 @@ struct CodexProviderEditorView: View {
                 .fixedSize()
             EditorField(label: "名称", error: model.nameError) {
                 TextField("e.g. DeepSeek", text: $model.name)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
             }
             EditorField(label: "API Key") {
-                TextField("sk-...", text: $model.apiKey)
-                    .textFieldStyle(.roundedBorder)
-                    .font(Theme.Font.microMono)
+                APIKeyField(text: $model.apiKey)
             }
             EditorField(label: "Base URL", error: model.urlError) {
                 TextField("https://api.deepseek.com", text: $model.baseURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
             }
             HStack(alignment: .top, spacing: Theme.Space.s16) {
                 EditorField(label: "协议") {
@@ -186,6 +191,9 @@ struct CodexProviderEditorView: View {
                 .font(Theme.Font.bodySmall)
             Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
                 .font(Theme.Font.bodySmall)
+            Text("有密钥时切换会按上面的「保留官方登录」重写这一项；这里只在没有密钥的供应商上生效。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
             Toggle(isOn: $model.disableResponseStorage) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("不向云端持久化 Responses")
@@ -196,7 +204,7 @@ struct CodexProviderEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("保留官方登录时，第三方密钥写入 OPENAI_API_KEY，官方令牌保持不变。桌面端模型选择器的限制由上游决定，CLI 不受影响。")
+            Text("第三方密钥写入 config.toml 的 experimental_bearer_token，不再写入 auth.json。保留官方登录时，requires_openai_auth 会标成 true，桌面端才能继续显示 ChatGPT 额度和自定义模型；关闭则删除 auth.json。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
         }
@@ -265,7 +273,7 @@ struct CodexProviderEditorView: View {
             Divider()
             HStack(spacing: Theme.Space.s4) {
                 TextField("添加模型", text: $model.newModelName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(ProviderInputStyle())
                     .font(Theme.Font.bodySmall)
                     .onSubmit { model.addModel() }
                 Button(action: { model.addModel() }) {
@@ -287,17 +295,17 @@ struct CodexProviderEditorView: View {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {
                 EditorField(label: "模型名称") {
                     TextField("e.g. deepseek-chat", text: model.binding(for: editingID, keyPath: \.name))
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(ProviderInputStyle())
                         .font(Theme.Font.microMono)
                 }
                 HStack(alignment: .top, spacing: Theme.Space.s16) {
                     EditorField(label: "上下文窗口") {
                         TextField("400000", text: model.binding(for: editingID, keyPath: \.contextWindow))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(ProviderInputStyle())
                     }
                     EditorField(label: "自动压缩阈值") {
                         TextField("360000", text: model.binding(for: editingID, keyPath: \.autoCompactTokenLimit))
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(ProviderInputStyle())
                     }
                 }
                 Text("对应 Claude 的上下文窗口与自动压缩阈值。Codex 将压缩上限限制为窗口的 90%。留空则不写入，运行时按窗口 × 90% 计算。")
@@ -386,8 +394,7 @@ struct CodexProviderEditorView: View {
                         Text("保存")
                     }
                 }
-                .adaptiveGlassButton(prominent: true)
-                .tint(model.isSaveFlashActive ? Theme.statusBusy : Theme.codex)
+                .buttonStyle(ProviderActionStyle(prominent: true, tint: model.isSaveFlashActive ? Theme.Ink.success : ProviderCardState.ready.color))
                 .disabled(!model.canSave || model.isSaving)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("保存供应商 (⌘S)")

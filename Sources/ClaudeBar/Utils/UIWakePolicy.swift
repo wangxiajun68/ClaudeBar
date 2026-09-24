@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 
 /// Central "is any of our UI actually on screen" signal.
 ///
@@ -16,6 +17,8 @@ enum UIWakePolicy {
     private static var mainWindowVisible = false
     /// Menu-bar popup panel is open.
     private static var popupOpen = false
+    /// Notch island is grown out of the notch (its collapsed wings do not count).
+    private static var islandExpanded = false
 
     private static let subject = PassthroughSubject<Void, Never>()
     private static let lock = NSLock()
@@ -24,7 +27,7 @@ enum UIWakePolicy {
     /// background-only and polling should drop to its sleep cadence.
     static var hasVisibleWindow: Bool {
         lock.lock(); defer { lock.unlock() }
-        return mainWindowVisible || popupOpen
+        return mainWindowVisible || popupOpen || islandExpanded
     }
 
     static var hasVisibleMainWindow: Bool {
@@ -59,9 +62,30 @@ enum UIWakePolicy {
         subject.send()
     }
 
+    static func setIslandExpanded(_ expanded: Bool) {
+        lock.lock()
+        guard islandExpanded != expanded else { lock.unlock(); return }
+        islandExpanded = expanded
+        lock.unlock()
+        subject.send()
+    }
+
     /// Whether any animation may run. This is the gate the silently-animating
     /// views were missing: `SoftRotor`, `AuroraSparkline` and `ScanLine` all
     /// kept a 12–20 Hz display link alive in a hidden window because they
     /// keyed off a caller-supplied flag instead of "is anything on screen".
     static var shouldAnimate: Bool { hasVisibleWindow }
+}
+
+/// Visibility of the owning surface, independent of other open windows.
+/// Popup content is destroyed on close; the persistent main window overrides it.
+private struct SurfaceVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var surfaceIsVisible: Bool {
+        get { self[SurfaceVisibleKey.self] }
+        set { self[SurfaceVisibleKey.self] = newValue }
+    }
 }

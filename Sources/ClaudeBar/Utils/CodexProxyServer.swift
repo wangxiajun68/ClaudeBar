@@ -804,7 +804,7 @@ final class CodexProxyServer: @unchecked Sendable {
         if s.hasSuffix("/chat/completions") {
             return URL(string: s) ?? URL(string: "http://127.0.0.1")!
         }
-        if s.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
+        if s.hasSuffix("/openai") || s.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
             return URL(string: s + "/chat/completions") ?? URL(string: "http://127.0.0.1")!
         }
         return URL(string: s + "/v1/chat/completions") ?? URL(string: "http://127.0.0.1")!

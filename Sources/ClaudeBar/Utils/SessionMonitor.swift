@@ -19,6 +19,7 @@ struct SessionInfo: Identifiable, Equatable {
     var messageCount: Int = 0           // assistant turns in transcript
     var currentActivity: String = ""    // e.g. "Bash" or "Read · path.swift"
     var toolPending: Bool = false       // a tool_use has no following tool_result
+    var completionID: String? = nil     // UUID of the latest final assistant answer
     var subagents: [SubagentInfo] = []  // live subagents spawned by this session
     var workflows: [WorkflowInfo] = []  // workflows spawned by this session
     /// Transcript byte size at last context scan — skip the tail read when unchanged.
@@ -92,6 +93,7 @@ struct ContextScan {
     let count: Int
     let activity: String
     let toolPending: Bool
+    let completionID: String?
 }
 
 /// Reads ~/.claude/sessions/*.json and reports live Claude Code sessions.
@@ -153,7 +155,7 @@ struct SessionMonitor {
     /// existence check, so no separate `fileExists` stat is needed.
     static func fetchContext(for session: SessionInfo) -> ContextScan {
         guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else {
-            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false)
+            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false, completionID: nil)
         }
         defer { try? handle.close() }
 
@@ -161,7 +163,7 @@ struct SessionMonitor {
         let readSize = min(96_000, fileSize)
         try? handle.seek(toOffset: fileSize - readSize)
         guard let tailData = try? handle.readToEnd() else {
-            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false)
+            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false, completionID: nil)
         }
         // Lossy decode: the tail read starts at a byte offset that usually
         // lands inside a multi-byte character, and a strict decode then fails
@@ -174,6 +176,7 @@ struct SessionMonitor {
         var lastModel = ""
         var msgCount = 0
         var lastActivity = ""
+        var completionID: String?
         // Track positions (line index within the tail) of the most recent
         // tool_use and tool_result to decide whether a tool is still pending.
         var lastToolUseLine = -1
@@ -182,6 +185,31 @@ struct SessionMonitor {
 
         for line in tail.split(separator: "\n", omittingEmptySubsequences: true) {
             defer { lineIndex += 1 }
+            // A final answer is valid only until the next user prompt or
+            // assistant step. Tool results are user-shaped transcript records,
+            // but they do not begin a new turn.
+            if line.contains("\"type\":\"user\""),
+               let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+               (obj["type"] as? String) == "user" {
+                let blocks = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]]
+                let onlyToolResults = blocks.map { items in !items.isEmpty && items.allSatisfy {
+                    ($0["type"] as? String) == "tool_result"
+                } } ?? false
+                if !onlyToolResults { completionID = nil }
+            }
+            if line.contains("\"type\":\"assistant\""),
+               let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+               let message = obj["message"] as? [String: Any] {
+                completionID = nil
+                if (obj["isSidechain"] as? Bool) != true,
+                   (message["stop_reason"] as? String) == "end_turn",
+                   let blocks = message["content"] as? [[String: Any]],
+                   blocks.contains(where: { ($0["type"] as? String) == "text"
+                       && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+                   let uuid = obj["uuid"] as? String, !uuid.isEmpty {
+                    completionID = uuid
+                }
+            }
             // Track the latest tool_use → activity.
             if line.contains("\"type\":\"tool_use\""),
                let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -213,7 +241,7 @@ struct SessionMonitor {
         // tool_result (i.e. it has no following result yet).
         let pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
         return ContextScan(tokens: lastContext, model: lastModel, count: msgCount,
-                           activity: lastActivity, toolPending: pending)
+                           activity: lastActivity, toolPending: pending, completionID: completionID)
     }
 
     /// Scan the session's `subagents/` directory for spawned subagents and
