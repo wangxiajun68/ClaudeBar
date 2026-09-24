@@ -37,7 +37,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片 |
 | **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 启动 / 外观 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / VPN 代理 / 连通性 / 配置文件 / 关于 |
+| **SettingsView** | 全部为「`SectionHeader` + `TileGrid(.pageSetting)`」的宫格：启动 / 外观 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / 代理上游 / 第三方接入 / VPN 代理 / 连通性 / 配置文件 / 关于 |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -47,14 +47,16 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件插画。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` / `MetricTile` 的 `ink:` 参数即此。
-- `ResourceStrip`、`FanControlSection`：本机 CPU / GPU / 内存与 SMC 风扇。
+- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
 - `VpnTopChrome.swift`：`VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle`（popup 与卡片共用）。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ConnectivityProbeButton`、`ProxyCurlExample`。
+- `ConnectivityProbeButton`、`ProxyCurlExample`（整宽卡片：说明 + 内嵌 `CodeBlock`）。
+- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 200pt）铺 `SettingTile`；代理上游的四个选择与第三方接入的 Base URL / 鉴权都走这套，不再有整宽行或 divider 列表。
+- 整宽段落用 `panelCard()`，不套 `TileGrid`（例如 `ProxyCurlExample` 的 curl 示例）。**卡不套卡**：`CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；如果把卡片加进 `CodeBlock`，帮助页那半打代码块会变成六层嵌套卡。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
 - `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。
 - `BatteryChargeControls.swift`：能源卡的电池控制段（见 [technical/12](../technical/12-battery-control.md)）。

@@ -177,7 +177,7 @@ struct ProviderEditorView: View {
                     .textFieldStyle(ProviderInputStyle())
             }
             EditorField(label: "API Key") {
-                APIKeyField(text: $model.authToken)
+                APIKeyField(text: $model.authToken, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(model.baseURL))
             }
             EditorField(label: "Base URL", error: model.urlError) {
                 TextField("https://api.deepseek.com/anthropic", text: $model.baseURL)

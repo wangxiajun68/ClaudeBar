@@ -112,11 +112,11 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
               detail: "Responses / Chat · 拉取模型", website: "https://console.x.ai", claude: nil,
               codex: .init(baseURL: "https://api.x.ai/v1", models: [], chatBaseURL: "https://api.x.ai/v1")),
         .init(id: "ollama", name: "Ollama", monogram: "Ol", color: 0x1A1A1A, category: .gateway,
-              detail: "本机模型 · Claude 填 Key「ollama」", website: "https://ollama.com",
+              detail: "本机模型 · 无需真实 Key", website: "https://ollama.com",
               claude: .init(baseURL: "http://localhost:11434", models: []),
               codex: .init(baseURL: "http://localhost:11434/v1", models: [], wireAPI: "chat")),
         .init(id: "lmstudio", name: "LM Studio", monogram: "LM", color: 0x6B57FF, category: .gateway,
-              detail: "本机服务 · Key 可填 lmstudio", website: "https://lmstudio.ai",
+              detail: "本机服务 · 无需真实 Key", website: "https://lmstudio.ai",
               claude: .init(baseURL: "http://localhost:1234", models: []),
               codex: .init(baseURL: "http://localhost:1234/v1", models: [], chatBaseURL: "http://localhost:1234/v1")),
         .init(id: "litellm", name: "LiteLLM", monogram: "LL", color: 0x397D91, category: .gateway,
@@ -177,6 +177,11 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
     var includesCodingPlan: Bool { category == .coding || id.hasPrefix("minimax") }
     var iconName: String {
         switch id {
+        // Ollama and LM Studio ship their own marks; `default` already maps id
+        // to filename, so they need no case here. Kept explicit so a future
+        // rename of the catalog id cannot silently fall back to a system glyph.
+        case "ollama": return "ollama"
+        case "lmstudio": return "lmstudio"
         case "kimi-coding": return "kimi"
         case "glm", "glm-coding": return "zhipu"
         case "minimax-cn": return "minimax"
@@ -186,6 +191,56 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
         case "siliconflow": return "siliconcloud"
         default: return id
         }
+    }
+
+    /// Whether a base URL points at a server on this machine (or a private
+    /// network), which is the only thing that decides if an API key is real.
+    ///
+    /// Local runtimes — Ollama, LM Studio, LiteLLM on loopback — serve with no
+    /// authentication at all. Their key field exists only because the Claude
+    /// and Codex clients require a non-empty `Authorization` header, so a
+    /// placeholder like `ollama` is the correct value, not a fake credential.
+    /// Validation must therefore key off the *host*, never the provider name:
+    /// an Ollama behind a public reverse proxy genuinely does need a key.
+    static func isLocalEndpoint(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              let host = components.host?.lowercased(), !host.isEmpty else { return false }
+        // A subdomain of a private name is not private: `localhost.evil.com`
+        // resolves on the public internet, so match these exactly.
+        if host == "localhost" || host == "0.0.0.0" { return true }
+        // URLComponents keeps IPv6 literals bracketed. Loopback is `::1` in any
+        // of its spellings; a bracketed literal is never a public hostname.
+        if host.hasPrefix("[") && host.hasSuffix("]") {
+            let literal = String(host.dropFirst().dropLast()).lowercased()
+            let groups = literal.split(separator: ":")
+            if groups == ["1"] || groups.allSatisfy({ $0.isEmpty }) || literal == "::1" { return true }
+            return groups.count >= 2 && groups.dropLast().allSatisfy { $0.isEmpty }
+        }
+        // Bonjour `.local` names never leave the local link.
+        if host.hasSuffix(".local") && host != ".local" { return true }
+        // Only bare IPv4 literals: "127.0.0.2.example.com" has octet-parseable
+        // leading labels but is a public name.
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              let a = UInt8(octets[0]), let b = UInt8(octets[1]),
+              UInt8(octets[2]) != nil, UInt8(octets[3]) != nil else { return false }
+        switch (a, b) {
+        case (127, _), (10, _), (192, 168): return true
+        case (172, 16...31): return true
+        default: return false
+        }
+    }
+
+    /// The value the key field should carry for a local endpoint. Kept as a
+    /// named constant so layouts and the placeholder agree on one string.
+    static let localEndpointPlaceholderKey = "ollama"
+
+    /// Why the key field is not required here, for the editor's help text.
+    static func localEndpointNote(_ raw: String) -> String? {
+        isLocalEndpoint(raw) ? "本机服务无需真实 Key，留空或填 ollama 均可" : nil
     }
 
     static func supportsNativeResponses(baseURL: String, model: String) -> Bool {
@@ -227,7 +282,11 @@ struct ProviderSetupDraft {
         guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return "请填写有效的接口地址，不要在地址中附带密钥。" }
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "请填写 API Key（自建网关填写网关 Key）。" }
+        // Only a remote endpoint can require a real key. A loopback server
+        // serves unauthenticated; demanding a key here is the single most
+        // common way users get stuck configuring local Ollama / LM Studio.
+        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !ProviderCatalogEntry.isLocalEndpoint(baseURL) { return "请填写 API Key（自建网关填写网关 Key）。" }
         if modelNames.isEmpty { return "请填写账号可用的模型 ID。" }
         return nil
     }

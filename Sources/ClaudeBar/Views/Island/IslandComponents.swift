@@ -170,6 +170,43 @@ struct IslandContextGauge: View {
     }
 }
 
+/// One mark's icon well. Its geometry is a constant so a `Canvas`-drawn
+/// glyph and an SF Symbol reserve the same square.
+struct IslandMarkWell: View {
+    let symbol: String?
+    let mark: IslandAgent?
+
+    init(symbol: String, tint: Color) {
+        self.symbol = symbol
+        self.mark = nil
+        self.tint = tint
+    }
+
+    init(mark: IslandAgent, tint: Color) {
+        self.symbol = nil
+        self.mark = mark
+        self.tint = tint
+    }
+
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            Circle().fill(tint.opacity(0.16))
+            if let mark {
+                IslandAgentMark(agent: mark)
+                    .frame(width: IslandStyle.markWellSize * 0.62, height: IslandStyle.markWellSize * 0.62)
+            } else if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+        }
+        .frame(width: IslandStyle.markWellSize, height: IslandStyle.markWellSize)
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Rotating glance
 
 /// One icon on a glance card. Several marks of the same kind share a card.
@@ -179,6 +216,8 @@ private struct IslandMark: Identifiable {
     let tint: Color
     let value: String
     let caption: String
+    /// Set when the mark has a real product glyph (the route cards).
+    var mark: IslandAgent? = nil
 }
 
 /// One frame of the island's right-hand reel. Identity stays stable so a
@@ -237,7 +276,7 @@ struct IslandGlanceReel: View {
             frames.append(IslandGlance(id: "sessions", title: "会话", marks: sessionMarks))
         }
         frames.append(IslandGlance(id: "usage", title: "用量", marks: usageMarks))
-        let routes = routeMarks
+        let routes = Array(routeMarks.prefix(2))
         if !routes.isEmpty {
             frames.append(IslandGlance(id: "route", title: "当前模型", marks: routes))
         }
@@ -324,35 +363,42 @@ struct IslandGlanceReel: View {
             $0.trimmingCharacters(in: .whitespaces)
         }
         let model = parts.count > 1 ? parts[1] : parts[0]
-        return IslandMark(id: id, symbol: symbol, tint: tint, value: model, caption: title)
+        return IslandMark(id: id, symbol: symbol, tint: tint, value: model, caption: title, mark: routeAgent(id))
+    }
+
+    /// The route cards reuse the agent's own glyph, so the 当前模型 slide reads
+    /// the same as the header's route chip.
+    private func routeAgent(_ id: String) -> IslandAgent? {
+        id == "claude" ? .claude : (id == "codex" ? .codex : nil)
     }
 
     var body: some View {
         let frames = slides
         let current = frames.isEmpty ? 0 : min(index, frames.count - 1)
-        VStack(spacing: 8) {
-            ZStack {
-                if frames.indices.contains(current) {
-                    glance(frames[current])
-                        .id(frames[current].id)
-                        .transition(reduceMotion ? .opacity : .asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 8)),
-                            removal: .opacity.combined(with: .offset(y: -8))))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if frames.count > 1 {
-                HStack(spacing: 4) {
-                    ForEach(frames.indices, id: \.self) { item in
-                        Capsule()
-                            .fill(Color.white.opacity(item == current ? 0.85 : 0.22))
-                            .frame(width: item == current ? 12 : 4, height: 4)
-                    }
-                }
+        ZStack(alignment: .top) {
+            if frames.indices.contains(current) {
+                glance(frames[current])
+                    .id(frames[current].id)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 8)),
+                        removal: .opacity.combined(with: .offset(y: -8))))
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: IslandStyle.glanceCardSize.width,
+               height: IslandStyle.glanceCardSize.height,
+               alignment: .top)
+        .padding(IslandStyle.glanceCardPadding)
+        .overlay(alignment: .bottom) {
+            if frames.count > 1 {
+                pager(frames: frames, current: current)
+                    .padding(.bottom, IslandStyle.pagerInset)
+            }
+        }
+        // Outside the padding: the card's total box, independent of what any
+        // card draws inside it.
+        .frame(width: IslandStyle.glanceCardSize.width + 2 * IslandStyle.glanceCardPadding,
+               height: IslandStyle.glanceReelHeight,
+               alignment: .top)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.045)))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture {
@@ -370,14 +416,30 @@ struct IslandGlanceReel: View {
         .help("自动切换额度、余额、本机、网络、会话和用量，点击看下一张")
     }
 
+    /// Pager dots: one fixed strip pinned to the card's bottom edge. Never
+    /// measured out of the current card's content, so the dots hold their
+    /// line while the reel turns.
+    private func pager(frames: [IslandGlance], current: Int) -> some View {
+        HStack(spacing: 4) {
+            ForEach(frames.indices, id: \.self) { item in
+                Capsule()
+                    .fill(Color.white.opacity(item == current ? 0.85 : 0.22))
+                    .frame(width: item == current ? 12 : 4, height: 4)
+            }
+        }
+        .frame(height: IslandStyle.pagerDotHeight)
+    }
+
     private func glance(_ frame: IslandGlance) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: IslandStyle.cardTitleGap) {
             Text(frame.title)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(IslandStyle.textTertiary)
                 .lineLimit(1)
+                .frame(height: IslandStyle.cardTitleHeight, alignment: .leading)
             if frame.marks.count >= 4 {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 8) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 2),
+                          spacing: IslandStyle.markRowSpacing) {
                     ForEach(frame.marks.prefix(4)) { markCell($0) }
                 }
             } else {
@@ -386,29 +448,37 @@ struct IslandGlanceReel: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The card body is a fixed box: title band + two mark rows. A reel of
+        // cards can then never disagree about height.
+        .frame(height: IslandStyle.cardBodyHeight, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// One fixed-height cell: the well, a value and a caption always occupy
+    /// the same box, so a card never resizes the lane while the reel turns.
     private func markCell(_ mark: IslandMark) -> some View {
         VStack(spacing: 3) {
-            Image(systemName: mark.symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(mark.tint)
-                .frame(width: 24, height: 24)
-                .background(mark.tint.opacity(0.16), in: Circle())
+            if let agent = mark.mark {
+                IslandMarkWell(mark: agent, tint: mark.tint)
+            } else {
+                IslandMarkWell(symbol: mark.symbol, tint: mark.tint)
+            }
             Text(mark.value)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(IslandStyle.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
+                .frame(height: IslandStyle.markValueHeight)
             Text(mark.caption)
                 .font(.system(size: 9, weight: .medium, design: .rounded))
                 .foregroundStyle(IslandStyle.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(height: IslandStyle.markCaptionHeight)
         }
         .frame(maxWidth: .infinity)
+        .frame(height: IslandStyle.markCellHeight, alignment: .top)
     }
 
     private func play(count: Int) async {

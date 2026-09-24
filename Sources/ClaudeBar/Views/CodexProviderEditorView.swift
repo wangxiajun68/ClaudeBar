@@ -152,7 +152,7 @@ struct CodexProviderEditorView: View {
                     .textFieldStyle(ProviderInputStyle())
             }
             EditorField(label: "API Key") {
-                APIKeyField(text: $model.apiKey)
+                APIKeyField(text: $model.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(model.baseURL))
             }
             EditorField(label: "Base URL", error: model.urlError) {
                 TextField("https://api.deepseek.com", text: $model.baseURL)
@@ -204,7 +204,7 @@ struct CodexProviderEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("第三方密钥写入 config.toml 的 experimental_bearer_token，不再写入 auth.json。保留官方登录时，requires_openai_auth 会标成 true，桌面端才能继续显示 ChatGPT 额度和自定义模型；关闭则删除 auth.json。")
+            Text("第三方密钥只写入 config.toml 的 experimental_bearer_token。有这把钥匙时，正在使用的供应商表会写成 requires_openai_auth = false，否则桌面端仍按 ChatGPT 套餐额度锁住输入。保留官方登录只决定 auth.json 留不留，不影响这条路由。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
         }

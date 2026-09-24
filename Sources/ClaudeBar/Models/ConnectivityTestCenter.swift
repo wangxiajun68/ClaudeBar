@@ -83,10 +83,17 @@ final class ConnectivityTestCenter: ObservableObject {
         let name = (modelName ?? claude.activeModel?.name ?? "").trimmingCharacters(in: .whitespaces)
         if let codex {
             let url = codex.baseURL.trimmingCharacters(in: .whitespaces)
-            let key = codex.apiKey.trimmingCharacters(in: .whitespaces)
+            var key = codex.apiKey.trimmingCharacters(in: .whitespaces)
             let slug = (modelName ?? codex.activeModel?.name ?? name).trimmingCharacters(in: .whitespaces)
             if url.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL") }
-            if key.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未填写 API Key") }
+            // A loopback server has no auth to fail, so an empty key is not an
+            // error there; the probe still needs a non-empty header to send.
+            if key.isEmpty {
+                guard ProviderCatalogEntry.isLocalEndpoint(url) else {
+                    return ConnectivityOutcome(state: .failed, detail: "未填写 API Key")
+                }
+                key = ProviderCatalogEntry.localEndpointPlaceholderKey
+            }
             if slug.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未指定模型") }
             let hit = await ConnectivityProbe.openai(
                 baseURL: url, apiKey: key, model: slug, wireAPI: codex.wireAPI)
@@ -99,14 +106,21 @@ final class ConnectivityTestCenter: ObservableObject {
         if claude.baseURL.trimmingCharacters(in: .whitespaces).isEmpty {
             return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL")
         }
-        if claude.authToken.trimmingCharacters(in: .whitespaces).isEmpty {
-            return ConnectivityOutcome(state: .failed, detail: "未填写 API Key")
+        var apiKey = claude.authToken.trimmingCharacters(in: .whitespaces)
+        // Same rule as the Codex branch: no auth to fail on loopback, so do not
+        // report "未填写 API Key" as a failure for a perfectly healthy local
+        // server — that reads as a misconfiguration and sends users hunting.
+        if apiKey.isEmpty {
+            guard ProviderCatalogEntry.isLocalEndpoint(claude.baseURL) else {
+                return ConnectivityOutcome(state: .failed, detail: "未填写 API Key")
+            }
+            apiKey = ProviderCatalogEntry.localEndpointPlaceholderKey
         }
         if name.isEmpty {
             return ConnectivityOutcome(state: .failed, detail: "未指定模型")
         }
         let hit = await ConnectivityProbe.anthropic(
-            baseURL: claude.baseURL, apiKey: claude.authToken, model: name)
+            baseURL: claude.baseURL, apiKey: apiKey, model: name)
         return ConnectivityOutcome(
             state: hit.ok ? .passed : .failed,
             detail: "Claude \(hit.ok ? "✓" : "✗") \(hit.summary)",

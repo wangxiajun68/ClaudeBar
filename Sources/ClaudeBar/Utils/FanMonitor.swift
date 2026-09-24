@@ -19,8 +19,6 @@ final class FanMonitor {
     private var commandRevision: UInt64 = 0
     private let readQueue = DispatchQueue(label: "com.claudebar.fan-read", qos: .utility)
     @ObservationIgnored private var reading = false
-    /// 拖动滑杆期间暂停轮询，避免实时转速把滑杆位置“拽回去”。
-    private(set) var isUserAdjusting = false
 
     private init() {}
 
@@ -45,7 +43,6 @@ final class FanMonitor {
     /// only the publish happens on the main actor. A poll with nothing on
     /// screen is skipped — the rotors it would feed are not being drawn.
     func refresh() {
-        if isUserAdjusting { return } // 拖动时不刷新，松手后恢复
         guard !reading, UIWakePolicy.hasVisibleWindow || fans.isEmpty else { return }
         reading = true
         readQueue.async { [weak self] in
@@ -57,19 +54,7 @@ final class FanMonitor {
                 self.reading = false
                 if self.smcAvailable != available { self.smcAvailable = available }
                 // 绝大多数 tick 数值不变 —— Equatable 守卫，避免资源区无谓重渲。
-                if !self.isUserAdjusting, next != self.fans { self.fans = next }
-            }
-        }
-    }
-
-    /// 拖动开始/结束（由滑杆的 onEditingChanged 调用）。
-    func setUserAdjusting(_ adjusting: Bool) {
-        isUserAdjusting = adjusting
-        if !adjusting {
-            // 松手后稍等转速跟上再恢复轮询。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self, !self.isUserAdjusting else { return }
-                self.refresh()
+                if next != self.fans { self.fans = next }
             }
         }
     }
