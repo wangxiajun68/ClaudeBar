@@ -251,16 +251,16 @@ enum CodexConfigWriter {
         } else {
             nil
         }
-        // Once the table can authenticate on its own, `requires_openai_auth`
-        // only drives login UX. `true` beside a preserved ChatGPT login keeps
-        // the desktop account (and its quota) visible; `false` makes Codex
-        // treat that login as logged out and hide custom models. Stamp it
-        // from the preservation toggle — a stored `true` left over from the
-        // pre-0.149 "key lives in auth.json" era must not survive the switch.
-        // cc-switch `align_codex_requires_openai_auth_with_login_preservation`.
-        let requiresOpenAIAuth = bearer == nil
-            ? provider.requiresOpenAIAuth
-            : provider.preserveOfficialLogin
+        // A table that carries its own bearer authenticates the turn itself.
+        // `requires_openai_auth = true` makes the desktop prefetch the ChatGPT
+        // plan limits and refuse to send once that window is empty — the
+        // "额度已用完" composer lock — even though the request would go to
+        // `base_url`. Login preservation only decides whether `auth.json`
+        // stays; it must not mark this table as an OpenAI-auth provider.
+        // cc-switch's `align_codex_requires_openai_auth_with_login_preservation`
+        // still copies the preservation flag onto this key, which is the lock
+        // reported in farion1231/cc-switch#7490.
+        let requiresOpenAIAuth = bearer == nil && provider.requiresOpenAIAuth
         var owned: [(String, String)] = [
             ("name", serialize(provider.name)),
             ("base_url", serialize(effectiveBase)),

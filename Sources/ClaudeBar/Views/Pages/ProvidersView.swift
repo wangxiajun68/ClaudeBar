@@ -10,10 +10,7 @@ struct ProvidersView: View {
     @State private var category: ProviderCatalogEntry.Category?
     @State private var configuredOnly = false
     @State private var selectedID: UUID?
-    @State private var showEditor = false
-    @State private var editorFocusProviderID: UUID?
-    @State private var singleProviderEditor = false
-    @State private var editorTitle = "供应商配置"
+    @State private var connectionEdit: ProviderConnectionRoute?
     @State private var setupEntry: ProviderCatalogEntry?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionAnimation
@@ -33,32 +30,14 @@ struct ProvidersView: View {
         .onChange(of: category) { _, _ in selectedID = nil }
         .onChange(of: query) { _, _ in selectedID = nil }
         .onChange(of: configuredOnly) { _, _ in selectedID = nil }
-        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in edit(selected?.id) }
-        .sheet(isPresented: $showEditor) {
-            VStack(spacing: 0) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(editorTitle).font(.system(size: 22, weight: .semibold, design: .rounded))
-                        Text("保存后，Key、名称和模型会写到 Claude Code 与 Codex 两边；接口地址按各自协议保留。激活只改变当前这一端。")
-                            .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer()
-                    Button { showEditor = false } label: { Image(systemName: "xmark") }
-                        .buttonStyle(ProviderActionStyle()).keyboardShortcut(.cancelAction)
-                        .help("关闭；未保存的表单修改不提交")
-                }.padding(24)
-                Divider()
-                if client == .codex {
-                    CodexProviderEditorView(codexStore: codexStore, focusProviderID: editorFocusProviderID,
-                                            singleProvider: singleProviderEditor)
-                } else {
-                    ProviderEditorView(providerStore: providerStore, focusProviderID: $editorFocusProviderID,
-                                       singleProvider: singleProviderEditor)
-                }
+        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
+            if let id = activeID { connectionEdit = ProviderConnectionRoute(id: id, isNew: false) }
+        }
+        .sheet(item: $connectionEdit) { route in
+            if let draft = connectionDraft(route) {
+                ProviderConnectionEditor(client: client, draft: draft, onSave: saveConnection,
+                                         onDelete: route.isNew ? nil : { deleteConnection(route.id) })
             }
-            .frame(width: singleProviderEditor ? 700 : 940, height: 680)
-            .foregroundStyle(Theme.textPrimary).background(Theme.cardSurface)
-            .interactiveDismissDisabled()
         }
         .sheet(item: $setupEntry) { entry in
             ProviderQuickSetup(draft: .init(entry: entry, client: client), onSave: saveSetup)
@@ -92,7 +71,7 @@ struct ProvidersView: View {
             },
             onClearFilters: { query = ""; category = nil; configuredOnly = false },
             onSelect: { setupEntry = $0 },
-            onOpen: { edit($0.id) }
+            onOpen: { connectionEdit = ProviderConnectionRoute(id: $0.id, isNew: false) }
         )
         .equatable()
         .onAppear { providerStore.refreshBalance() }
@@ -106,12 +85,9 @@ struct ProvidersView: View {
                     .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Button { customProvider() } label: { Label("自定义", systemImage: "plus") }
-                .buttonStyle(ProviderActionStyle())
-            Menu {
-                Button("高级管理") { edit(selected?.id) }
-            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
-                .menuStyle(.borderlessButton).fixedSize().help("更多管理操作")
+            Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
+                Label("自定义", systemImage: "plus")
+            }.buttonStyle(ProviderActionStyle())
         }
         .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)
         .foregroundStyle(Theme.textPrimary)
@@ -185,15 +161,97 @@ struct ProvidersView: View {
     private func currentModel(_ p: Provider) -> String? {
         client == .claude && p.id == activeID ? providerStore.currentEnv?.ANTHROPIC_MODEL ?? p.activeModel?.name : p.activeModel?.name
     }
-    private func edit(_ id: UUID?) {
-        editorFocusProviderID = id
-        singleProviderEditor = id != nil
-        editorTitle = id.flatMap { target in providers.first { $0.id == target }?.name } ?? "管理供应商"
-        showEditor = true
+    private func connectionDraft(_ route: ProviderConnectionRoute) -> ProviderConnectionDraft? {
+        if route.isNew { return .custom(client: client, id: route.id) }
+        if client == .claude, let provider = providerStore.providers.first(where: { $0.id == route.id }) {
+            return ProviderConnectionDraft(
+                id: provider.id, isNew: false, catalogID: provider.catalogID, name: provider.name,
+                apiKey: provider.authToken, baseURL: provider.baseURL, wireAPI: "anthropic",
+                preserveOfficialLogin: true, disableResponseStorage: true, requiresOpenAIAuth: false,
+                captureEnabled: provider.captureEnabled, profileID: provider.profileID,
+                models: provider.models.map {
+                    ProviderConnectionModel(id: $0.id, name: $0.name, autoCompactTokenLimit: $0.autoCompactWindow,
+                                            contextTokens: $0.contextTokens, disableCompact: $0.disableCompact,
+                                            disableExperimentalBetas: $0.disableExperimentalBetas)
+                },
+                activeModelID: provider.activeModelID ?? provider.models.first?.id)
+        }
+        if client == .codex, let provider = codexStore.providers.first(where: { $0.id == route.id }) {
+            return ProviderConnectionDraft(
+                id: provider.id, isNew: false, catalogID: provider.catalogID, name: provider.name,
+                apiKey: provider.apiKey, baseURL: provider.baseURL, wireAPI: provider.wireAPI,
+                preserveOfficialLogin: provider.preserveOfficialLogin,
+                disableResponseStorage: provider.disableResponseStorage,
+                requiresOpenAIAuth: provider.requiresOpenAIAuth, captureEnabled: provider.captureEnabled,
+                profileID: provider.profileID,
+                models: provider.models.map {
+                    ProviderConnectionModel(id: $0.id, name: $0.name, reasoningEffort: $0.reasoningEffort,
+                                            contextWindow: $0.contextWindow, autoCompactTokenLimit: $0.autoCompactTokenLimit)
+                },
+                activeModelID: provider.activeModelID ?? provider.models.first?.id)
+        }
+        return nil
     }
-    private func customProvider() {
-        let id = client == .claude ? providerStore.addBlankProvider().id : codexStore.addBlankProvider().id
-        edit(id)
+    private func saveConnection(_ draft: ProviderConnectionDraft) -> String? {
+        if let error = draft.validationError { return error }
+        if client == .claude {
+            let models = draft.models.map {
+                ModelConfig(id: $0.id, name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            contextTokens: $0.contextTokens, disableCompact: $0.disableCompact,
+                            disableExperimentalBetas: $0.disableExperimentalBetas, autoCompactWindow: $0.autoCompactTokenLimit)
+            }
+            var provider = providerStore.providers.first { $0.id == draft.id } ?? Provider(name: draft.name)
+            provider.id = draft.id
+            provider.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.authToken = draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.baseURL = draft.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.models = models
+            provider.activeModelID = draft.activeModelID ?? models.first?.id
+            provider.captureEnabled = draft.captureEnabled
+            provider.profileID = draft.profileID ?? provider.profileID ?? UUID()
+            provider.catalogID = draft.catalogID ?? provider.catalogID
+            let saved = draft.isNew ? providerStore.addConfiguredProvider(provider) : providerStore.updateProvider(provider)
+            guard saved else { return providerStore.errorMessage ?? "保存失败，请重试。" }
+            if providerStore.activeProviderID == provider.id, let modelID = provider.activeModelID {
+                providerStore.activateModel(providerID: provider.id, modelID: modelID)
+            }
+        } else {
+            let models = draft.models.map {
+                CodexModelConfig(id: $0.id, name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                                 reasoningEffort: $0.reasoningEffort, contextWindow: $0.contextWindow,
+                                 autoCompactTokenLimit: $0.autoCompactTokenLimit)
+            }
+            var provider = codexStore.providers.first { $0.id == draft.id }
+                ?? CodexProvider(name: draft.name, requiresOpenAIAuth: false)
+            provider.id = draft.id
+            provider.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.apiKey = draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.baseURL = draft.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            provider.wireAPI = draft.wireAPI
+            provider.preserveOfficialLogin = draft.preserveOfficialLogin
+            provider.disableResponseStorage = draft.disableResponseStorage
+            provider.requiresOpenAIAuth = draft.requiresOpenAIAuth
+            provider.captureEnabled = draft.captureEnabled
+            provider.profileID = draft.profileID ?? provider.profileID ?? UUID()
+            provider.catalogID = draft.catalogID ?? provider.catalogID
+            provider.models = models
+            provider.activeModelID = draft.activeModelID ?? models.first?.id
+            let saved = draft.isNew ? codexStore.addConfiguredProvider(provider) : codexStore.updateProvider(provider)
+            guard saved else { return codexStore.errorMessage ?? "保存失败，请重试。" }
+            if codexStore.activeProviderID == provider.id, let modelID = provider.activeModelID {
+                codexStore.activate(providerID: provider.id, modelID: modelID)
+            }
+        }
+        selectedID = draft.id
+        return nil
+    }
+    private func deleteConnection(_ id: UUID) {
+        if client == .claude, let provider = providerStore.providers.first(where: { $0.id == id }) {
+            providerStore.deleteProvider(provider)
+        } else if let provider = codexStore.providers.first(where: { $0.id == id }) {
+            codexStore.deleteProvider(provider)
+        }
+        if selectedID == id { selectedID = nil }
     }
     private func activate(_ p: Provider, modelID: UUID) {
         if client == .claude { providerStore.activateModel(providerID: p.id, modelID: modelID) }

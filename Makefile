@@ -23,3 +23,6 @@ test:
 	python3 Tests/core-regressions.py
 	python3 Tests/performance-regressions.py
 	python3 Tests/rendering-regressions.py
+	python3 Tests/island-reel-regressions.py
+	python3 Tests/local-endpoint-regressions.py
+	python3 Tests/provider-icon-regressions.py

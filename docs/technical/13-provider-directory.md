@@ -26,7 +26,7 @@ CC Switch 中部分平台仍被列为 Chat Completions；预设协议以当前�
 
 ## 目录与协议补充
 
-目录包含 22 项（含地区、套餐的独立入口），已有配置按 URL 归组；同一个厂商可保存多份配置。识别会移除标准 API 方法后缀与 `/v1`，不会抹去 `/coding`、`/plan` 等产品路径。当前用户的 GLM、DeepSeek、Qwen、OpenRouter 属于预设，Aibox、B300-Local 属于自定义。
+目录包含 23 项（含地区、套餐的独立入口），已有配置按 URL 归组；同一个厂商可保存多份配置。识别会移除标准 API 方法后缀与 `/v1`，不会抹去 `/coding`、`/plan` 等产品路径。当前用户的 GLM、DeepSeek、Qwen、OpenRouter 属于预设，Aibox、B300-Local 属于自定义。
 
 - [智谱 Coding Plan / Codex](https://docs.bigmodel.cn/cn/coding-plan/tool/codex) 与 [Z.AI / Codex](https://docs.z.ai/devpack/tool/codex)：当前文档分别确认 `/api/v1` Responses。旧 Chat 套餐入口 `/api/coding/paas/v4` 仍作为显式选项，不把通用 `/api/paas/v4/models` 当作套餐模型列表。
 - [百炼 Coding Plan](https://help.aliyun.com/zh/model-studio/coding-plan)：专用域名 `coding.dashscope.aliyuncs.com`，Anthropic `/apps/anthropic`、OpenAI `/v1`，不能与按量 Key 混用。目录中暂按 Chat 兼容接入，不据此推断原生 Responses。
@@ -49,9 +49,22 @@ CC Switch 中部分平台仍被列为 Chat Completions；预设协议以当前�
 
 Codex 的 Chat 上游必须经过现有本地 Responses → Chat 转换，不依赖用户额外打开路由开关。原生 Responses 预设保留原协议。目录保存不会直接改写客户端配置，激活时才生效。
 
+## 本机端点与 Key 校验
+
+是否要求 Key 由 **Base URL 的主机**决定，与供应商名称无关：`ProviderCatalogEntry.isLocalEndpoint(_:)` 判定 `localhost` / `127.0.0.0/8` / `::1` / `0.0.0.0` / `.local` / `10/8` / `192.168/16` / `172.16/12`。
+
+- 本机端点：Key 可留空，快速配置与已有配置详情都不再报「请填写 API Key」，Key 控件转为「本机服务无需 Key（留空即可）」；「检测连通性」不再把空 Key 判为失败，而用占位串发出探测请求。
+- 远程端点：Key 仍为必填，连通性检测照旧要求非空。
+- 之所以不能按供应商名判定：Ollama 与 LM Studio 默认无鉴权，但套了公网反代之后就是真需要 Key；`Ollama` 这个名字无法区分这两种情况，主机可以。
+- 边界用例（`localhost.evil.com`、`127.0.0.2.example.com`、`172.15/172.32`、`192.169` 等）由 `Tests/local-endpoint-regressions.py` 锁定。
+
 ## 图标与验证范围
 
 `Sources/ProviderIcons` 包含 LobeHub Icons 1.97.1 的真实厂商图标与 LiteLLM 官方文档 favicon。资源随应用打包，无运行时远程图片请求；来源及许可证见该目录 README 和 LICENSE。
+
+图标必须在自己主题的垫底上可见：`ProviderIdentityMark` 把 PNG 画在 `Theme.bgSecondary` 上，`Tests/provider-icon-regressions.py` 要求每个资源的实心像素对对应主题垫底的对比度 ≥ 3:1。纯白或荧光色的 `-color` 变体在浅色主题下会渲染成一块空白，因此 Kimi、NVIDIA、OpenRouter、硅基流动、火山方舟改用单色变体；Ollama 与 LM Studio 补上了厂商图标。新增图标前先跑该测试。
+
+目录内所有平台均为文档核查，不是使用真实 Key 的付费端到端验证；模型可用性由账号、区域和套餐决定。
 
 按用户要求，本轮只修改代码，未构建、未运行需要 Swift 编译的测试、未使用用户 Key 请求供应商。仅做差异空白检查、构建脚本语法与资源完整性静态检查。既有 Codex 会话回归测试保留，供后续构建验证使用。
 

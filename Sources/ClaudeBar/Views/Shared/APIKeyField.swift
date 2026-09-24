@@ -4,13 +4,26 @@ import SwiftUI
 /// so macOS does not offer Passwords/strong-password AutoFill. Mask at rest.
 struct APIKeyField: View {
     @Binding var text: String
+    /// Set for loopback endpoints, where the runtime serves without auth and
+    /// the key exists only to satisfy the client's non-empty header. Without
+    /// this the field reads as "required and missing" on a healthy local server.
+    var localEndpoint = false
     @State private var editing = false
     @FocusState private var focused: Bool
+
+    private var placeholder: String {
+        localEndpoint ? "本机服务无需 Key（留空即可）" : "填写或粘贴 API Key"
+    }
+
+    private var restText: String {
+        if !text.isEmpty { return "••••••••••••••••" }
+        return placeholder
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             if editing {
-                TextField("填写或粘贴 API Key", text: $text)
+                TextField(placeholder, text: $text)
                     .textContentType(nil)
                     .autocorrectionDisabled()
                     .textFieldStyle(ProviderInputStyle())
@@ -22,14 +35,14 @@ struct APIKeyField: View {
                     editing = true
                     focused = true
                 } label: {
-                    Text(text.isEmpty ? "填写或粘贴 API Key" : "••••••••••••••••")
+                    Text(restText)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(text.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12).padding(.vertical, 10)
                         .background(Theme.bgPrimary, in: RoundedRectangle(cornerRadius: 10))
                         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.25)))
-                }.buttonStyle(.plain).accessibilityLabel(text.isEmpty ? "填写 API Key" : "编辑已保存的 API Key")
+                }.buttonStyle(.plain).accessibilityLabel(text.isEmpty ? placeholder : "编辑已保存的 API Key")
             }
             Button {
                 editing.toggle()

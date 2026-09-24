@@ -33,7 +33,7 @@ struct ProviderQuickSetup: View {
                         }.font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
                     }
                     field("配置名称") { TextField("供应商名称", text: $draft.name) }
-                    field("API Key") { APIKeyField(text: $draft.apiKey) }
+                    field("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
                     field("接口地址") { TextField("https://…", text: $draft.baseURL) }
                     if draft.client == .codex, let endpoint = draft.entry.codex {
                         HStack(spacing: 8) {

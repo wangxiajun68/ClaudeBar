@@ -192,13 +192,37 @@ struct SettingsView: View {
                     }
                 }
 
-                ProxyUpstreamPickers()
-                    .padding(Theme.Space.s12)
-                    .panelCard()
+                // Same grammar as every other settings section: a header plus
+                // the tile grid. These two used to be bare `panelCard()` panels
+                // holding full-width rows, which made the proxy block read as a
+                // list inside a page of cards.
+                VStack(alignment: .leading, spacing: Theme.Space.s10) {
+                    SectionHeader(icon: "arrow.triangle.branch", title: "代理上游", tint: Theme.codex)
+                    ProxyUpstreamPickers()
+                }
 
-                ProxyCurlExample(model: proxyCurlModel)
-                    .padding(Theme.Space.s12)
-                    .panelCard()
+                VStack(alignment: .leading, spacing: Theme.Space.s10) {
+                    SectionHeader(icon: "curlybraces", title: "第三方接入", tint: Theme.codex)
+                    TileGrid(.pageSetting) {
+                        SettingTile(icon: "link", title: "Base URL",
+                                    caption: LocalProxyAddress.openaiRoot,
+                                    tint: Theme.codex) {
+                            Button("复制") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(LocalProxyAddress.openaiRoot, forType: .string)
+                            }
+                            .adaptiveGlassButton()
+                        }
+                        SettingTile(icon: "key.horizontal", title: "鉴权",
+                                    caption: "代理注入密钥，不再接受任意 Bearer。",
+                                    tint: Theme.codex) {
+                            Text("令牌")
+                                .font(Theme.Font.caption)
+                                .foregroundColor(Theme.textSecondary)
+                        }
+                    }
+                    ProxyCurlExample(model: proxyCurlModel)
+                }
 
                 section("VPN 代理", icon: "globe") {
                     SettingTile(icon: "globe", title: "VPN 代理",
@@ -250,14 +274,6 @@ struct SettingsView: View {
                                 codex: p)
                         }
                     }
-                }
-
-                VStack(alignment: .leading, spacing: Theme.Space.s10) {
-                    SectionHeader(icon: "fanblades", title: "风扇", tint: Theme.claude)
-                    FanControlSection()
-                        .padding(Theme.Space.s12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .panelCard()
                 }
 
                 section("配置文件", icon: "doc.text") {

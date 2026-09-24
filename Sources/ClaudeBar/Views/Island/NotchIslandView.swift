@@ -27,6 +27,39 @@ enum IslandStyle {
     static let emptyLaneHeight: CGFloat = 40
     static let usageCardHeight: CGFloat = 108
 
+    /// The rotating glance card is a *fixed box*. Every row inside it is a
+    /// named constant — well, value, caption, title band — so no card can be
+    /// taller than another, and the reel can never resize the session lane
+    /// (and so the island) when it turns. Adding a row here means the card
+    /// grows by exactly that constant, not by whatever a glyph measures.
+    static let markWellSize: CGFloat = 24
+    static let markValueHeight: CGFloat = 14
+    /// The caption line reserves its box even when empty, so a two-up and a
+    /// four-up card end on the same baseline.
+    static let markCaptionHeight: CGFloat = 11
+    static let markCellSpacing: CGFloat = 3
+    static let markRowSpacing: CGFloat = 8
+    static let cardTitleHeight: CGFloat = 12
+    static let cardTitleGap: CGFloat = 8
+    static let glanceCardPadding: CGFloat = 10
+
+    static let markCellHeight: CGFloat = markWellSize + markCellSpacing
+        + markValueHeight + markCellSpacing + markCaptionHeight
+    static let cardBodyHeight: CGFloat = cardTitleHeight + cardTitleGap + 2 * markCellHeight + markRowSpacing
+    /// Card contents, then the padding ring around them.
+    static let glanceCardSize = CGSize(width: 188, height: cardBodyHeight)
+    static let glanceReelWidth: CGFloat = glanceCardSize.width + 2 * glanceCardPadding
+    static let glanceReelHeight: CGFloat = cardBodyHeight + 2 * glanceCardPadding
+
+    /// How far into the card the pager sits, measured up from the card's
+    /// bottom edge. Only reachable when the lane is at least this tall.
+    static var pagerRestingInset: CGFloat { pagerInset + pagerDotHeight }
+
+    /// The pager floats over the card's bottom edge, pinned from the *outer*
+    /// box: no card can move the dots and the dots never affect the card.
+    static let pagerDotHeight: CGFloat = 4
+    static let pagerInset: CGFloat = 9
+
     /// Fixed transparent panel; every morph happens inside it. Sized for the
     /// tallest expanded island (three rows + overflow on a 38pt notch).
     static let panelSize = CGSize(width: 640, height: 400)
@@ -247,9 +280,9 @@ struct NotchIslandView: View {
     private var routeChip: some View {
         let showsCodex = model.sessions.first?.agent == .codex && !model.codexRoute.isEmpty
         let route = showsCodex ? model.codexRoute : model.claudeRoute
+        let agent: IslandAgent = showsCodex ? .codex : .claude
         return HStack(spacing: 6) {
-            IslandAgentMark(agent: showsCodex ? .codex : .claude)
-                .frame(width: 12, height: 12)
+            IslandMarkWell(mark: agent, tint: IslandStyle.color(agent))
             Text(route.isEmpty ? "未配置供应商" : route)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(IslandStyle.textSecondary)
@@ -267,7 +300,21 @@ struct NotchIslandView: View {
                              sessions: model.sessions, usage: model.usage,
                              claudeRoute: model.claudeRoute, codexRoute: model.codexRoute,
                              vpnRunning: model.vpnRunning)
-                .frame(width: 188)
+                // Pinned in both dimensions and top-aligned: the reel keeps
+                // its constant height whatever the lane gives it.
+                .frame(width: IslandStyle.glanceReelWidth,
+                       height: IslandStyle.glanceReelHeight,
+                       alignment: .top)
+                // Option B: the lane still springs with the session count, so
+                // when it is shorter than the card the card is top-aligned and
+                // the overflow is cut rather than allowed to push the lane (and
+                // with it the whole island) taller.
+                //
+                // KNOWN TRADEOFF: with 0-2 sessions the lane is 40/44/90pt, all
+                // under the card's 158pt, so the pager strip is clipped away in
+                // those states. Only 3+ sessions show it. In exchange the card
+                // itself never changes size while the reel turns.
+                .clipped()
         }
     }
 

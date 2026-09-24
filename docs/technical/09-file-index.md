@@ -51,8 +51,7 @@
 | `Views/Pages/VPNView.swift` | VPN 主界面 |
 | `Views/Shared/VpnTopChrome.swift` | `VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle` |
 | `Views/Shared/UsageRiver.swift` | `CacheAnatomyBar`（周期 token 构成） |
-| `Views/Shared/FanControlSection.swift` | 设置页风扇 |
-| `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理：CC/Codex 只读 + 第三方上游选择 |
+| `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：CC/Codex 只读 + 第三方选择（设置页宫格里的 4 张 tile） |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
 | `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网 |
