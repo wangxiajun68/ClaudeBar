@@ -157,14 +157,21 @@ struct ActionChip: View {
 
 // MARK: - Icon chip
 
-/// A compact rounded icon tile with a hover lift + highlight, backed by
-/// Liquid Glass so each icon carries a specular surface. Used for the
-/// menu-bar popup's action bar and small icon buttons.
+/// One item in an icon row — the menu-bar popup's action bar, the battery
+/// popover's button, the main window's trailing controls.
+///
+/// Drawn from the `mymiamo` glass menu's *item*: a rounded tile that stays
+/// quiet at rest and, on hover, takes a lit fill plus the same inset rim the
+/// menu group wears (`inset 2px 2px 5px -2px` top-left, `inset -2px -2px`
+/// bottom-right). A row of ten identical flat squares was the plainest thing in
+/// the highest-frequency surface in the app; the reference's answer is not more
+/// decoration per item but a *shared* well the items sit in, which is
+/// `IconChipRow` below.
 struct IconChip: View {
     let systemImage: String
     var tint: Color = Theme.textSecondary
     var size: CGFloat = 12
-    var tile: CGFloat = 24
+    var tile: CGFloat = 26
     var corner: CGFloat = Theme.Radius.sm
     @State private var hover = false
 
@@ -174,13 +181,74 @@ struct IconChip: View {
             .frame(width: tile, height: tile)
             .background {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(tint.opacity(hover ? 0.16 : 0.07))
+                    .fill(tint.opacity(hover ? 0.15 : 0))
             }
             .overlay {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .strokeBorder(tint.opacity(hover ? 0.3 : 0.12), lineWidth: 0.75)
+                // The lit rim appears with the fill, so the tile reads as a
+                // glass item lighting up rather than as a square that changed
+                // colour.
+                if hover {
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .strokeBorder(tint.opacity(0.30), lineWidth: 0.75)
+                }
+            }
+            .overlay {
+                if hover {
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [Color.white.opacity(Theme.isDark ? 0.10 : 0.75),
+                                         .clear,
+                                         Color.white.opacity(Theme.isDark ? 0.05 : 0.35)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
             }
             .onHover { if hover != $0 { hover = $0 } }
+            .animation(Theme.Motion.state, value: hover)
+    }
+}
+
+/// The milled well an icon row sits in — the `mymiamo` menu's own glass track.
+///
+/// This is the half of the reference that fixes a ten-chip row: the items share
+/// one translucent capsule with a lit top rim and a soft bottom rule, so the bar
+/// reads as a single control strip rather than as ten unrelated squares on the
+/// canvas. The row's own items (`IconChip`) then only need a hover highlight,
+/// which is why they could give up their resting fill entirely.
+///
+/// One shape, one gradient overlay, drawn once for the whole row — no per-item
+/// layer, so a bar of ten chips is two layers, not twenty.
+struct IconChipRow<Content: View>: View {
+    var spacing: CGFloat = Theme.Space.s4
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(spacing: spacing) { content() }
+            .padding(.horizontal, Theme.Space.s6)
+            .padding(.vertical, Theme.Space.s4)
+            .background {
+                Capsule()
+                    .fill(Theme.cardFill(0.06))
+                    .overlay {
+                        Capsule().strokeBorder(Theme.hairline, lineWidth: 1)
+                    }
+            }
+            .overlay {
+                // The lit rim: bright along the top edge, fading before it
+                // reaches the bottom — the same top-lit convention the tiles and
+                // the segmented cradle use.
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(colors: [Theme.innerFrameMuted, .clear],
+                                       startPoint: .top, endPoint: .center),
+                        lineWidth: 1
+                    )
+                    .padding(1.5)
+                    .allowsHitTesting(false)
+            }
     }
 }
 
