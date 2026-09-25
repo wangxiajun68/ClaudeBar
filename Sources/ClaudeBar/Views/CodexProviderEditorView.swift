@@ -34,7 +34,7 @@ struct CodexProviderEditorView: View {
             HStack(spacing: 0) {
                 if !singleProvider {
                     sidebar
-                    HairlineDivider()
+                    VerticalHairline()
                 }
                 if model.selected != nil {
                     detailPane
@@ -268,7 +268,7 @@ struct CodexProviderEditorView: View {
             HStack(alignment: .top, spacing: 0) {
                 modelList
                     .frame(height: 220) // fixed: unbounded inner ScrollView was inflating card height
-                HairlineDivider()
+                VerticalHairline()
                 modelDetail
             }
         }
