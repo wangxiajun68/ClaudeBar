@@ -61,6 +61,19 @@ card in one grid is the same object as a card in another:
 draw the same four parts. `.hoverTile()` is `.tile()` for a call site that has
 no other use for the hover flag — never two `.onHover` regions for one target.
 
+`.tile()` takes a `wash:` override. The 5.5 % light / 11 % dark default is tuned
+for a dense grid of small tiles; a **page-scale band** carries more (9 / 15 %),
+because the white inner frame ring is only visible *because* of the wash behind
+it and at grid strength a large white rectangle still reads as plain. That is
+the one number a surface is allowed to have of its own, and it is what
+`PageHeaderCard` exists to spend.
+
+`PageHeaderCard` is the band that opens a page — the connectors and providers
+pages use it. It is `.tile()` plus the page mark, the page's live counts, and an
+optional `OrbitGauge` drawing the current filter's share of the whole. A page
+header is where a page most easily turns into a generic admin title bar, so it
+is the place the four parts matter most.
+
 `SegmentedCapsule` is the one filter / chip control: a capsule well with one
 sliding selection pill (`matchedGeometryEffect`), replacing the earlier "capsule
 of loose capsules" where a four-item filter drew four cards inside an outer one.
@@ -79,6 +92,27 @@ says "waiting", never what a working machine is doing — and it repeated a figu
 already printed three lines below it, at a smaller size and a lower contrast.
 The live reading belongs to the big mark on the right, drawn in the shape of the
 hardware it describes.
+
+## Controls
+
+The surface language above says what a card *is*; this says what a control does
+when touched. Both live in `Views/Shared/` and both answer the same two rules —
+motion is a one-shot state change or a gated Core Animation layer, and every
+ornament is one shape rather than a stack of views.
+
+| Control | Reference | What it is |
+| --- | --- | --- |
+| `InstrumentField` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. The providers directory's second search field is a thin alias. |
+| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 20 toggles in the app. |
+| `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
+| `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
+| `InstrumentRing` | `stat-widget` pill | a conic reading ring around a value — "how much of the whole", where `OrbitGauge` is "where on the dial". |
+| `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
+| `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
+
+`HairlineDivider` is the only rule; a native `Divider()` is a different grey in
+light and dark and belongs to no family. `SectionHeader` is the only section
+heading and `StatusPill` the only capsule readout.
 
 ## Machine marks
 
