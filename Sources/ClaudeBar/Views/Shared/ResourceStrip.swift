@@ -216,8 +216,30 @@ struct ResourceStrip: View {
                 // it is drawn in the shape of the hardware it describes: twelve
                 // cells for twelve cores, one column per GPU sub-unit. That
                 // mark states the reading; this one only names the tile.
-                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
-                    .frame(width: 28, height: 28)
+                // The tile's own reading, drawn as `stat-widget`'s conic ring.
+                //
+                // This is a *different* figure from the big mark on the right,
+                // which is why it earns its place where the old `LoadRing` did
+                // not: the mark shows the hardware's own shape (twelve cells,
+                // one per core), and this ring shows the one aggregate the tile
+                // is named for, as a fraction of its range. A ring around a
+                // value is not a spinner — it does not rotate, it fills — and
+                // at this size it is the fastest thing on the tile to read.
+                //
+                // The fans have no single 0…1 reading, so they keep the plain
+                // badge and state themselves in the pill instead.
+                if kind == .fans {
+                    InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
+                        .frame(width: 28, height: 28)
+                } else {
+                    InstrumentRing(progress: load, tint: tint, size: 28, thickness: 3)
+                        .overlay {
+                            InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link,
+                                            tint: tint)
+                                .frame(width: 19, height: 19)
+                        }
+                        .accessibilityHidden(true)
+                }
                 Text(label)
                     .font(Theme.Font.chrome)
                     .foregroundColor(Theme.textSecondary)

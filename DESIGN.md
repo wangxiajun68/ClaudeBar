@@ -80,6 +80,15 @@ of loose capsules" where a four-item filter drew four cards inside an outer one.
 It backs the connector type and platform filters, the provider client switcher
 and category filter, the usage period tabs and the VPN group tabs.
 
+The machine tiles carry the `stat-widget`'s **conic reading ring**: a value
+circled by the share of its own range, drawn as one `AngularGradient` masked to
+a ring, with the tile's mark plated inside it. It is the one ornament on the
+resource strip, and it is not the `LoadRing` that was deleted — a `LoadRing`
+rotated, which read as "waiting", and repeated a figure printed below it; this
+ring does not move, it *fills*, and it states the tile's own aggregate, which no
+other mark on the tile does. The fans have no single 0…1 reading and keep the
+plain badge.
+
 `OrbitGauge` is a trim-based arc with a body riding it (the quota gauges);
 `ConveyorBelt` is the travelling-tick strip used where a surface is *doing*
 something continuous, so liveness is drawn rather than pulsed.
