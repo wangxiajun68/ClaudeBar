@@ -132,7 +132,7 @@ struct ProviderIdentityMark: View {
             }
         }
         .frame(width: size, height: size)
-        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3))
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
         .accessibilityHidden(true)
     }
 }

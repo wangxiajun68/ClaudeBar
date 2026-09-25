@@ -10,9 +10,9 @@ struct ContextBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: height / 2)
+                RoundedRectangle(cornerRadius: height / 2, style: .continuous)
                     .fill(Theme.cardFill(trackOpacity))
-                RoundedRectangle(cornerRadius: height / 2)
+                RoundedRectangle(cornerRadius: height / 2, style: .continuous)
                     .fill(Theme.contextColor(ratio))
                     .frame(width: max(height, geo.size.width * min(max(ratio, 0), 1.0)))
             }

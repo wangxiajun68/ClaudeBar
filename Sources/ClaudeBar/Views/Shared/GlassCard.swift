@@ -15,7 +15,7 @@ struct SelectionTintModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.background {
             if isActive {
-                RoundedRectangle(cornerRadius: corner)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .fill(color.opacity(opacity))
             }
         }

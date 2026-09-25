@@ -134,7 +134,7 @@ struct VPNView: View {
                     .truncationMode(.middle)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Theme.claude.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                    .background(Theme.claude.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
                     .help("当前出口")
             }
             Spacer(minLength: 0)
@@ -243,11 +243,11 @@ struct VPNView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                     .fill(isOn.wrappedValue ? Theme.claude.opacity(0.14) : Theme.cardFill(0.05))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                     .strokeBorder(isOn.wrappedValue ? Theme.claude.opacity(0.45) : Theme.hairline, lineWidth: 1)
             )
         }
@@ -369,7 +369,7 @@ struct VPNView: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(
-                                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                                         .strokeBorder(viewing ? Theme.hairline : Color.clear, lineWidth: 1)
                                 )
                         }
@@ -822,7 +822,7 @@ private struct VPNProbeRow: View {
                             .font(Theme.Font.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                            .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
                         }
                         .buttonStyle(.pressable)
                         .disabled(!manager.isRunning || probe.testingAll)
@@ -1100,7 +1100,7 @@ private struct VpnLogConsole: View {
                 }
                 .frame(height: 140)
                 .background(Theme.textTertiary().opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     let distanceFromBottom = geo.contentSize.height
                         + geo.contentInsets.bottom

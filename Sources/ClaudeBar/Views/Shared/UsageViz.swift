@@ -236,7 +236,7 @@ struct UsageDaySpark: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Theme.textPrimary, in: RoundedRectangle(cornerRadius: 5))
+                    .background(Theme.textPrimary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     // `ZStack(alignment: .topTrailing)` puts the badge's top at
                     // the guide's y only if the stack is the full height; the
                     // guide is inside a `.frame(height: barHeight)`, which the

@@ -34,10 +34,10 @@ struct CodeBlock: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(Theme.Space.s12)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                         .fill(Theme.cardFill(0.08)))
                 .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                         .strokeBorder(Theme.hairline, lineWidth: 1))
             if title == nil {
                 HStack {
