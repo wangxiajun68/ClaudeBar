@@ -46,3 +46,24 @@ struct InstrumentSearchField: View {
         }
     }
 }
+
+
+/// The compact form of `InstrumentField`, for the small numeric and single-line
+/// fields that live inside a tile or a sheet row (a rate, a port, a filter box).
+///
+/// Same well, same focus rim, just tighter padding — so a field never reverts to
+/// Aqua's `roundedBorder` box, which was the last stock control left in the app
+/// and read as a foreign object inside a machined tile.
+struct InstrumentFieldStyle: TextFieldStyle {
+    var focused: Bool = false
+    var onCard: Bool = true
+
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        InstrumentField(radius: Theme.Radius.sm, focused: focused, onCard: onCard) {
+            configuration
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+        }
+    }
+}

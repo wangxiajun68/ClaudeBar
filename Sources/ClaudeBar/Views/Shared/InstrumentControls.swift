@@ -98,22 +98,17 @@ struct InstrumentToggleStyle: ToggleStyle {
     /// The track's own hue when on — the raw shape hue, since it is a fill.
     var faceTint: Color? = nil
 
+    /// The switch stands alone. Call sites in this app already print the
+    /// control's own name in the tile they sit in (`SettingTile`), so a label
+    /// beside the track would be the second copy of the same words — which is
+    /// exactly what the twenty hand-written `.labelsHidden()` chains were
+    /// suppressing one by one. The label is still honoured (and still
+    /// clickable) when a call site genuinely passes one, as `Toggle("启用", …)`
+    /// does outside a tile.
     func makeBody(configuration: Configuration) -> some View {
         let face = faceTint ?? tint
-        return HStack(spacing: Theme.Space.s8) {
-            configuration.label
-                .font(Theme.Font.chrome)
-                .foregroundStyle(Theme.textPrimary)
-                .onTapGesture { configuration.isOn.toggle() }
-            Spacer(minLength: Theme.Space.s8)
-            track(configuration, face: face, tint: tint)
-        }
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-    }
-
-    private func track(_ configuration: Configuration, face: Color, tint: Color) -> some View {
-        InstrumentToggleTrack(isOn: configuration.isOn, face: face, tint: tint) {
+        return InstrumentToggleTrack(isOn: configuration.isOn, face: face, tint: tint,
+                                     label: configuration.label) {
             configuration.isOn.toggle()
         }
     }
@@ -121,10 +116,11 @@ struct InstrumentToggleStyle: ToggleStyle {
 
 /// The track itself, split out so the `@State` hover flag lives on a small view
 /// (the style's `makeBody` cannot hold one).
-private struct InstrumentToggleTrack: View {
+private struct InstrumentToggleTrack<Label: View>: View {
     var isOn: Bool
     var face: Color
     var tint: Color
+    var label: Label
     var action: () -> Void
 
     @State private var hovered = false
@@ -136,21 +132,27 @@ private struct InstrumentToggleTrack: View {
     private var travel: CGFloat { width - height }
 
     var body: some View {
-        Button(action: action) {
-            ZStack(alignment: .leading) {
-                track
-                handle
+        HStack(spacing: Theme.Space.s8) {
+            label
+                .font(Theme.Font.chrome)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .onTapGesture(perform: action)
+            Button(action: action) {
+                ZStack(alignment: .leading) {
+                    track
+                    handle
+                }
+                .frame(width: width, height: height)
+                .contentShape(Capsule())
             }
-            .frame(width: width, height: height)
-            .contentShape(Capsule())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
         .onHover { if hovered != $0 { hovered = $0 } }
         .animation(Theme.Animation.snappy, value: isOn)
         .animation(Theme.Motion.state, value: hovered)
-        .accessibilityRepresentation {
-            Toggle(isOn: .constant(isOn), label: { EmptyView() })
-        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 
     /// The recessed channel: a milled well whose top edge is engraved (dark) and
@@ -232,26 +234,46 @@ struct PerimeterSweep: View {
     /// How much of the perimeter the lit arc covers, in degrees.
     var span: Double = 130
 
-    @State private var phase: Double = -1
+    /// Fraction of the perimeter the *head* of the arc sits at. Negative while
+    /// the sweep is parked, and the whole overlay is hidden then — a negative
+    /// `to:` on a trim does not render nothing, it renders a wrap-around arc,
+    /// which is how an earlier version leaked a stray circle outside its button.
+    @State private var phase: Double = 0
+    @State private var running = false
 
     var body: some View {
         GeometryReader { geo in
             let radius = min(geo.size.width, geo.size.height) / 2
             let capsule = RoundedRectangle(cornerRadius: radius, style: .continuous)
             ZStack {
+                // The head: the bright leading third of the sweep.
                 capsule
-                    .trim(from: max(0, phase), to: min(1, phase + span / 360))
+                    .trim(from: phase, to: phase + span / 360)
                     .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                // The tail, so the arc reads as travelling rather than as a
+                // blob jumping around the edge.
                 capsule
-                    .trim(from: max(0, phase - 0.08), to: max(0, min(1, phase)))
-                    .stroke(tint.opacity(0.35), style: StrokeStyle(lineWidth: lineWidth * 0.6, lineCap: .round))
+                    .trim(from: phase - span / 360 * 0.55, to: phase)
+                    .stroke(tint.opacity(0.30),
+                            style: StrokeStyle(lineWidth: lineWidth * 0.6, lineCap: .round))
             }
+            .opacity(running ? 1 : 0)
         }
         .allowsHitTesting(false)
         .onChange(of: active) { _, on in
-            guard on else { phase = -1; return }
-            phase = -1
-            withAnimation(.easeInOut(duration: 0.9)) { phase = 1 }
+            guard on else { return }
+            // Start just off the leading edge and run past the end, so the arc
+            // enters and leaves rather than appearing in place. 0…1 covers the
+            // whole perimeter; the span overshoot parks it fully off.
+            phase = -span / 360
+            running = true
+            withAnimation(.easeInOut(duration: 0.85)) { phase = 1 }
+        }
+        .onChange(of: running) { _, _ in }
+        .task(id: active) {
+            guard active else { running = false; return }
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            running = false
         }
     }
 }

@@ -148,7 +148,12 @@ struct ProviderCatalogBrowser: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if pinned.shows {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("当前激活").font(.system(size: 16, weight: .semibold, design: .rounded))
+                            // A bare 16pt grey row was the archetypal admin
+                            // section label; every other section in the app
+                            // opens with a glyph well and a count.
+                            SectionHeader(icon: "bolt.fill", title: "当前激活",
+                                          tint: Theme.statusSuccess, ink: Theme.Ink.success,
+                                          count: 1, emptyLabel: "无")
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                                 pinnedCard(pinned, layout: layout)
                             }
@@ -160,7 +165,9 @@ struct ProviderCatalogBrowser: View {
                         }
                         if !items.isEmpty || (group == .platform && showsOfficial && !pinned.official) {
                             VStack(alignment: .leading, spacing: 12) {
-                                Text(group.rawValue).font(.system(size: 16, weight: .semibold, design: .rounded))
+                                SectionHeader(icon: group.symbol, title: group.rawValue,
+                                              tint: Theme.Ink.claude,
+                                              count: items.count + ((group == .platform && showsOfficial && !pinned.official) ? 1 : 0))
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                                     if group == .platform && showsOfficial && !pinned.official {
                                         OfficialProviderCard(client: client, isDefault: activeID == nil, onUse: onUseOfficial)
@@ -178,10 +185,12 @@ struct ProviderCatalogBrowser: View {
                         customSection(restingCustoms)
                     }
                     if visible.isEmpty && !showCustomSection && !showsOfficial && !pinned.shows {
-                        ContentUnavailableView {
-                            Label("没有匹配的供应商", systemImage: "magnifyingglass")
-                        } description: { Text("试试厂商、已保存名称或模型 ID。") }
-                        actions: { Button("清除筛选", action: onClearFilters) }
+                        StandbyEmptyState(label: "没有匹配的供应商",
+                                          symbol: "magnifyingglass",
+                                          tint: Theme.Ink.claude,
+                                          caption: "试试厂商、已保存名称或模型 ID。",
+                                          block: true,
+                                          action: ("清除筛选", onClearFilters))
                     }
                 }.padding(.bottom, 24)
             }
@@ -237,7 +246,8 @@ struct ProviderCatalogBrowser: View {
 
     private func customSection(_ customs: [Provider]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("自定义供应商").font(.system(size: 16, weight: .semibold, design: .rounded))
+            SectionHeader(icon: "square.and.pencil", title: "自定义供应商",
+                          tint: Theme.Ink.cursor, count: customs.count)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                 ForEach(customs) { provider in
                     CustomProviderDirectoryCard(provider: provider, active: provider.id == activeID,
@@ -286,23 +296,18 @@ struct ProviderCategoryFilter: View {
     }
 }
 
+/// The provider directory's search box is the app's search box.
+///
+/// It was a second implementation — its own `HStack`, its own glyph, its own
+/// clear button, a radius-10 well and a hand-applied `.innerFrame` — doing the
+/// same job as `InstrumentSearchField` with a different look and no focus
+/// state. Two search fields in one app is one too many; this is now a thin
+/// alias so the call sites keep their name.
 struct ProviderDirectorySearch: View {
     @Binding var query: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary)
-            TextField("搜索厂商、配置或模型", text: $query).textFieldStyle(.plain)
-            if !query.isEmpty {
-                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain).help("清除搜索")
-            }
-        }.font(Theme.Font.bodySmall).padding(10)
-            .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 10))
-            // The same inset ring the tile and the panel card wear, so a field
-            // on a toolbar is recognisably the same family as the surfaces it
-            // sits between rather than a bare rectangle.
-            .innerFrame(inset: 2.5, radius: 10)
+        InstrumentSearchField(prompt: "搜索厂商、配置或模型", text: $query)
     }
 }
 
@@ -545,9 +550,9 @@ struct ProviderConnectionDetail: View {
                     Label(provider.authToken.isEmpty ? "尚未填写 Key" : "已保存 API Key", systemImage: "key.horizontal")
                     Spacer()
                     Toggle("记录流量", isOn: Binding(get: { provider.captureEnabled }, set: { _ in onCapture() }))
-                        .toggleStyle(.switch).controlSize(.small)
+                        .toggleStyle(.instrument)
                 }.font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                Divider()
+                HairlineDivider()
                 HStack {
                     Text("模型").font(.system(size: 16, weight: .semibold, design: .rounded))
                     Spacer()
@@ -587,6 +592,6 @@ struct ProviderConnectionDetail: View {
                     .textSelection(.enabled)
             }
         }.padding(.vertical, 12)
-            .overlay(alignment: .bottom) { Divider() }
+            .overlay(alignment: .bottom) { HairlineDivider() }
     }
 }

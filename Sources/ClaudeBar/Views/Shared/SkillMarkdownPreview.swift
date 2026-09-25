@@ -27,8 +27,8 @@ struct SkillMarkdownPreview: View {
                 ProgressView("正在读取 Skill 文档")
                     .frame(maxWidth: .infinity, minHeight: 180)
             } else if let message {
-                ContentUnavailableView(message, systemImage: "doc.text")
-                    .frame(maxWidth: .infinity, minHeight: 180)
+                StandbyEmptyState(label: message, symbol: "doc.text",
+                                  tint: Theme.Ink.claude, block: true)
             } else {
                 LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
