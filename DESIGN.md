@@ -60,6 +60,10 @@ card in one grid is the same object as a card in another:
 `.tile()` is the grid-cell form and `.panelCard()` the page-level one; both
 draw the same four parts. `.hoverTile()` is `.tile()` for a call site that has
 no other use for the hover flag — never two `.onHover` regions for one target.
+`PageHeaderCard` is the clearest case: it tracks the pointer for the whole band
+and hands the flag to its content (`content: (Bool) -> Content`), so
+`PageTitle(engaged:)` and a header's own mark light up on the band's state
+instead of opening a second tracker of their own.
 
 `.tile()` takes a `wash:` override. The 5.5 % light / 11 % dark default is tuned
 for a dense grid of small tiles; a **page-scale band** carries more (9 / 15 %),
