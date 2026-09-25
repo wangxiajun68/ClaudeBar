@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-09-25
+
 刘海灵动岛；设置页新增「权限与隐私」（隐私能力改为逐项 opt-in）；能源卡新增电池充电控制（限充 / 暂停 / 放电）；模型页改为供应商目录；主窗口新增「连接器」页（三家客户端的 Skills / MCP / 插件）；概览与用量页带上按刊例价估算的模型花费；完成通知改为只在 transcript 证明交付了新答复时才发。
 
 ### 新增
@@ -25,14 +27,14 @@
 - **汇率折算（可选）**：设置 → 模型花费 里把「显示货币」从默认的「分列」改成人民币或美元，才会出现汇率行——可联网取（两个无 Key 日更源，12 小时缓存），也可点数字手动钉一个值；不选折算就完全不联网。
 - **继续会话的目标终端**：设置 →「继续会话」可选 自动 / Otty / Warp / 终端（默认自动，按 Otty → Warp → 终端 降级，未安装的选项带标注）。新文件 `Utils/OttyBridge.swift`（`otty-cli` socket IPC，按 `agent_session_id` 聚焦已有窗格）、`Utils/SessionHost.swift`（沿父进程找宿主 App：终端 / iTerm2 按 tty 选标签，Cursor / VS Code 聚焦对应文件夹窗口）。
 - **回到会话不再另开一个**：会话进程仍存活时只把宿主窗口 / 标签页带到前台（Otty 走 socket，无需自动化权限）；已结束的才 `claude --resume` / `codex resume`。加载在 Codex Desktop 的线程直接开 `codex://threads/<id>`。
-- **Codex 额度显示重置时刻**：概览磁贴副标题从「已用 N%」改为「10 小时后重置」，tooltip 与表盘下都列出每个窗口的重置时刻与相对时间；兼容 `resets_at` 与秒 / 毫秒两种时间戳。
+- **Codex 额度显示重置时刻**：popup 页头 Codex chip 表盘下的副行从「已用 N%」改为「10 小时后重置」，tooltip 与表盘里都列出每个窗口的重置时刻与相对时间；兼容 `resets_at` 与秒 / 毫秒两种时间戳。
 - **余额支持 4 家官方接口**：DeepSeek、Kimi 开放平台（moonshot.cn / moonshot.ai）、硅基流动、OpenRouter；USD 显示 `$`。余额按「同一 Key + 同一 Base URL」去重请求，所有匹配的卡片都拿到金额。帮助页与 FAQ 同步说明哪些平台会显示。
 - **能源流向四态**：充电中 / 电池补电 / 电源直供 / 电池供电，色带厚度按瓦数等比，光波沿流向滚动；电源块在展开态显示「N W 适配器」额定值。读数模型明确改为 SMC `PDTR`（适配器）− `PSTR`（整机），方向由电量计决定。
 - **模型花费（估算）**：概览的「用量对照」与 popup 的用量区都给出按厂商官方刊例价折算的当前周期花费，用量页每个模型瓦片也带上自己的金额。价目表逐行对过官方定价页（**56 条价目 + 7 条明确无价**，Anthropic / OpenAI / DeepSeek / Kimi / 智谱 / 百炼 / MiniMax / 火山 / 阶跃）。人民币与美元**分列不换算**（主数字是金额大的那个，副行写「另有 $43.20」；也可在 设置 → 模型花费 里选单币种并折算）。算不出钱的模型不会静默按 0，分三类写明：**订阅制**（Kimi Code 会员、火山 Coding Plan —— 压根不按 token 计费）、**未公开价**（百炼未公布缓存命中价的 qwen3.8 系列、OpenAI 未给 cached-input 价的 -pro 档）、**未计价**（表未收录该模型名），三者 token 均不计入合计。随周期切换自动重算。**这是估算不是账单**——只有 OpenRouter 与 Cursor 的接口回传金额。口径与更新方式见 [技术 §15](technical/15-model-cost.md)。
 
 ### 变更
 
-- **概览首屏换成「用量对照」**：原来的 8 块指标磁贴（Claude 配置 / Codex 配置 / 本地代理 / Codex 额度 / 供应商余额 / 模型花费 / VPN …）整排撤掉，换成一张对照卡：7 / 14 / 28 天三档，按来源堆叠的每日柱 + 此前同样长一段总量的灰虚线，配上「较此前 +N%」的结论、刊例价估算与「Token 去了哪些模型」的构成。额度、余额、代理监听、VPN 状态都没有变成不可见——额度与余额仍在模型页卡片与 popup、代理仍在页头 chip 与流量页、VPN 在 popup 页头与 VPN 页。
+- **概览首屏换成「用量对照」**：原来的 8 块指标磁贴（Claude 配置 / Codex 配置 / 本地代理 / Codex 额度 / 供应商余额 / 模型花费 / VPN …）整排撤掉，换成一张对照卡：7 / 14 / 28 天三档，按来源堆叠的每日柱 + 此前同样长一段总量的灰虚线，配上「较此前 +N%」的结论、刊例价估算与「Token 去了哪些模型」的构成。撤掉的数字没有变成不可见：Codex 额度在 popup 页头的 Codex chip（表盘 + 重置时刻），供应商余额在模型页每张卡片上，代理监听在页头 chip、流量页状态条与设置页，VPN 在 popup 页头 chip 与 VPN 页。
 - **默认不再双向联动激活**：切换 Claude Code 只写 `settings.json`，切换 Codex 只写 `config.toml`，激活状态互不影响（此前同名供应商会顺带切对端）。两侧共享同一份配置的名称、Key 与模型列表——首次启动会执行一次配对，为历史配置分配共享 id、把一边空着的 Key 补给另一边、模型列表取并集，然后回写两侧的 JSON（会改动 `claude-bar-providers.json` 与 `claude-bar-codex-providers.json`）。
 - **Codex 第三方 Key 不再写入 `auth.json`**：改写在 `model_providers.<key>.experimental_bearer_token`（走本地代理时写代理令牌）。「保留官方登录」开启时只从 `auth.json` 移除本应用写过的 `OPENAI_API_KEY`（ChatGPT 登录原样保留），关闭时整个删除该文件。有 bearer 的供应商表写成 `requires_openai_auth = false` —— 此前跟随"保留登录"开关标成 `true`，会让桌面端预取 ChatGPT 套餐额度，额度窗口一空就锁住输入框（"额度已用完"），即使请求本来要发给 `base_url`。修掉切到第三方后 Codex 桌面端进入 API-key 模式、看不到订阅额度、自定义模型 401 的问题。
 - **切换 Claude Code 不再改写 Codex 的选中模型与 `config.toml`**：共享代理的旧令牌修复只在 Codex 自己加载配置时执行。「还原官方配置」会先取消挂起的激活任务。
@@ -445,7 +447,8 @@ Claude / Codex 供应商独立选择；流量简洁视图默认折叠工具与�
 - `build.sh` 用 `swiftc` + shell 构建（无 Xcode 工程）。
 - Pencil 原型 `ClaudeBar.pen` 与应用图标资源。
 
-[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.13.0
 [1.12.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.12.0
 [1.11.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.11.0
 [1.10.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.10.0
