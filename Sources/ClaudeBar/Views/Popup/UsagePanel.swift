@@ -32,9 +32,8 @@ struct UsagePanel: View {
             )
 
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                Text("暂无用量")
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.textTertiary())
+                StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
+                                  tint: Theme.textSecondary)
             } else {
                 ForEach(Array(providerStore.usageStats.prefix(3))) { stat in
                     HStack(spacing: 8) {
