@@ -215,7 +215,7 @@ struct WidgetEntryView: View {
                                            available: geo.size.width,
                                            spacing: 2)
                     ForEach(Array(models.enumerated()), id: \.element.model) { index, m in
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        RoundedRectangle(cornerRadius: 2)
                             .fill(WidgetBars.gradient(for: m.model))
                             .frame(width: widths[index])
                     }
@@ -433,9 +433,9 @@ struct WidgetEntryView: View {
                     .foregroundColor(ink)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        RoundedRectangle(cornerRadius: 2)
                             .fill(p.cardFill)
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        RoundedRectangle(cornerRadius: 2)
                             .fill(fill)
                             .frame(width: geo.size.width * min(max(ratio, 0), 1))
                     }
