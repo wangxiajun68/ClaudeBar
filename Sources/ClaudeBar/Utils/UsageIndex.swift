@@ -295,6 +295,40 @@ struct UsageIndex {
         return out.sorted { $0.totalTokens > $1.totalTokens }
     }
 
+    /// All-time tokens for one Claude or Codex transcript. A session may
+    /// cross midnight, so a period query cannot supply its lifetime cost.
+    static func fetchSession(source: UsageSource, sessionId: String) -> [ModelUsage] {
+        guard !sessionId.isEmpty, source != .thirdParty else { return [] }
+        let prefix = source == .claude ? "claude:" : "codex:"
+        let suffix = (source == .claude ? "/" : "-") + sessionId + ".jsonl"
+        if !DiskPersistence.useDatabase {
+            return UsageJSONStore.shared.fetchSession(pathPrefix: prefix, pathSuffix: suffix)
+        }
+        guard let db = connection() else { return [] }
+        lock.lock(); defer { lock.unlock() }
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
+            FROM rollup WHERE path LIKE ?1 AND substr(path, -?2) = ?3 GROUP BY model
+            """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, prefix + "%", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 2, Int32(suffix.utf8.count))
+        sqlite3_bind_text(stmt, 3, suffix, -1, SQLITE_TRANSIENT)
+        var out: [ModelUsage] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            var usage = ModelUsage(model: String(cString: sqlite3_column_text(stmt, 0)))
+            usage.calls = Int(sqlite3_column_int64(stmt, 1))
+            usage.inputTokens = Int(sqlite3_column_int64(stmt, 2))
+            usage.outputTokens = Int(sqlite3_column_int64(stmt, 3))
+            usage.cacheReadTokens = Int(sqlite3_column_int64(stmt, 4))
+            usage.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 5))
+            if usage.totalTokens > 0 { out.append(usage) }
+        }
+        return out.sorted { $0.totalTokens > $1.totalTokens }
+    }
+
     /// Per-model usage within `interval`, tagged by where it came from. Same
     /// interval rules as `fetch`; the Codex/Claude split is the rollup `path`
     /// prefix, third-party comes from the proxy's own rollup.
@@ -315,6 +349,41 @@ struct UsageIndex {
         out[.codex] = taggedDaily(startDay: startDay, endDay: endDay, prefix: "codex:")
         out[.thirdParty] = ProxyUsageStore.shared.fetchDaily(startDay: startDay, endDay: endDay)
         return out
+    }
+
+    /// One batch for the island's daily tokens and prices; never query on hover.
+    static func fetchDailyModels(in interval: DateInterval) -> [String: [ModelUsage]] {
+        let (start, end) = dayBounds(interval)
+        var days = ProxyUsageStore.shared.fetchDailyModels(startDay: start, endDay: end)
+        if !DiskPersistence.useDatabase {
+            let local = UsageJSONStore.shared.fetchDailyModels(startDay: start, endDay: end)
+            for (day, models) in local { days[day, default: []] += models }
+            return days.mapValues { ModelUsage.merged($0) }
+        }
+        guard let db = connection() else { return days }
+        lock.lock(); defer { lock.unlock() }
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT day, model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
+            FROM rollup WHERE day BETWEEN ?1 AND ?2
+                AND (path LIKE 'claude:%' OR path LIKE 'codex:%')
+            GROUP BY day, model
+            """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return days }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, start, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, end, -1, SQLITE_TRANSIENT)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let day = String(cString: sqlite3_column_text(stmt, 0))
+            let model = String(cString: sqlite3_column_text(stmt, 1))
+            days[day, default: []].append(ModelUsage(model: model,
+                calls: Int(sqlite3_column_int64(stmt, 2)),
+                inputTokens: Int(sqlite3_column_int64(stmt, 3)),
+                outputTokens: Int(sqlite3_column_int64(stmt, 4)),
+                cacheReadTokens: Int(sqlite3_column_int64(stmt, 5)),
+                cacheCreationTokens: Int(sqlite3_column_int64(stmt, 6))))
+        }
+        return days.mapValues { ModelUsage.merged($0) }
     }
 
     /// Inclusive local-day bounds for an interval. `DateInterval.end` is

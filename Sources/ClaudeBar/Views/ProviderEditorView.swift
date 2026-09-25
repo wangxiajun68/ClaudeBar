@@ -116,7 +116,7 @@ struct ProviderEditorView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(provider.name).font(Theme.Font.body)
                                 .lineLimit(1).truncationMode(.tail)
-                            Text("\(provider.models.count) 个模型")
+                            RollingNumberText("\(provider.models.count) 个模型")
                                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                                 .lineLimit(1)
                         }

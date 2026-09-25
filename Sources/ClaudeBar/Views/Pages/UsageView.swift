@@ -7,7 +7,12 @@ struct UsageView: View {
     @State private var showCustomDatePicker = false
 
     var body: some View {
-        ScrollView {
+        // Derived once: `caption` read both of these, so the body used to run
+        // the date formatter and the whole `usageStats` reduce twice per pass.
+        let periodLabel = UsageStats.label(for: providerStore.usagePeriod,
+                                           reference: providerStore.usageReferenceDate)
+        let totalLabel = providerStore.totalUsageLabel
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
 
@@ -18,7 +23,7 @@ struct UsageView: View {
                             Text("Token 活动")
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                                 .foregroundColor(Theme.textPrimary)
-                            Text(caption)
+                            RollingNumberText("\(periodLabel) · \(totalLabel)")
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.textSecondary)
                         }
@@ -39,7 +44,7 @@ struct UsageView: View {
                                 .foregroundColor(Theme.textSecondary)
                         }
                         .buttonStyle(.plain)
-                        Text(UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
+                        Text(periodLabel)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundColor(Theme.textPrimary)
                         Button(action: { shiftUsage(1) }) {
@@ -52,11 +57,10 @@ struct UsageView: View {
                         if providerStore.usageLoading {
                             ProgressView().scaleEffect(0.6)
                         } else {
-                            Text(providerStore.totalUsageLabel)
+                            RollingNumberText(totalLabel)
                                 .font(Theme.Font.displayMetric)
                                 .foregroundColor(Theme.textPrimary)
-                                .contentTransition(.numericText())
-                        }
+                                        }
                     }
 
                     if showCustomDatePicker {
@@ -125,10 +129,6 @@ struct UsageView: View {
         PageTitle(title: "用量")
     }
 
-    private var caption: String {
-        "\(UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)) · \(providerStore.totalUsageLabel)"
-    }
-
     private var breakdown: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             Text("按模型")
@@ -140,11 +140,16 @@ struct UsageView: View {
                     .padding(.vertical, 24)
             } else {
                 TileGrid(.pageUsage) {
+                    // Hoisted: `maxUsageTokens` is a computed property over the
+                    // whole model list, and reading it inside the loop made it
+                    // a per-tile pass.
+                    let scale = max(providerStore.maxUsageTokens, 1)
                     ForEach(providerStore.usageStats) { stat in
                         UsageModelCard(
                             stat: stat,
                             slices: providerStore.usageSourceSlices(for: stat),
-                            share: Double(stat.totalTokens) / Double(max(providerStore.maxUsageTokens, 1))
+                            share: Double(stat.totalTokens) / Double(scale),
+                            costLine: providerStore.costLine(for: stat.model)
                         )
                     }
                 }

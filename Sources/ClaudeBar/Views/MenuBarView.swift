@@ -12,7 +12,14 @@ extension Notification.Name {
 struct MenuBarView: View {
     let providerStore: ProviderStore
     let codexStore: CodexProviderStore
-    @ObservedObject var prefs = AppPreferences.shared
+    /// The two preferences this shell renders, subscribed individually.
+    /// Observing `AppPreferences.shared` wholesale meant every unrelated write
+    /// re-evaluated the whole popup — and the shell's body builds the header,
+    /// the KPI strip, both panels and the action bar, so a settings text field
+    /// (a proxy port, a mixed port) rebuilt all of them per keystroke. Same
+    /// arrangement as `MainWindowView`.
+    @State private var appearance = AppPreferences.shared.appearance
+    @State private var idleNotifyEnabled = AppPreferences.shared.idleNotifyEnabled
     @State private var panel = PanelState()
     @State private var confirmRestore = false
     @State private var hasSettingsFile = false
@@ -21,59 +28,64 @@ struct MenuBarView: View {
     init(providerStore: ProviderStore, codexStore: CodexProviderStore) {
         self.providerStore = providerStore
         self.codexStore = codexStore
-        // fittingSize is read immediately when the panel opens. Seed the
-        // real state so its first layout never measures the empty variant.
+        // Seed the real state so the first frame uses the correct content.
         _hasSettingsFile = State(initialValue: providerStore.hasSettingsFile)
         _hasCodexProviders = State(initialValue: !codexStore.providers.isEmpty)
-    }
-
-    private enum SectionHeight {
-        /// Cap only — the card hugs live sessions instead of leaving a blank well.
-        static let sessions: CGFloat = 190
-        static let usage: CGFloat = 280
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             PanelHeader(panel: panel)
-                .appearLift()
-
+                .fixedSize(horizontal: false, vertical: true)
             MachineKpiStrip()
-                .appearLift(delay: 0.04)
-
+                .fixedSize(horizontal: false, vertical: true)
             PowerFlowCard(compact: true)
-
+                .fixedSize(horizontal: false, vertical: true)
             if !hasSettingsFile && !hasCodexProviders {
                 missingSettingsView
-                    .appearLift(delay: 0.08)
+                Spacer(minLength: 0)
             } else {
                 sessionsPanel
-                    .frame(maxHeight: SectionHeight.sessions, alignment: .top)
+                    .frame(maxHeight: .infinity, alignment: .top)
                     .panelCard()
-                    .appearLift(delay: 0.08)
-
                 UsagePanel()
-                    .frame(minHeight: 260, maxHeight: SectionHeight.usage, alignment: .top)
+                    .fixedSize(horizontal: false, vertical: true)
                     .panelCard()
-                    .appearLift(delay: 0.12)
             }
-
             actionBar
-                .appearLift(delay: 0.16)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 10)
         .frame(width: 424)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.bgPrimary)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .ignoresSafeArea()
-        .preferredColorScheme(prefs.appearance.colorScheme)
-        .id(prefs.appearance)
+        .preferredColorScheme(appearance.colorScheme)
+        // No `.id(appearance)` here. It destroyed and rebuilt the whole popup
+        // graph on a theme toggle — new `PanelState`, reset scroll and
+        // `showSwarm`/`showCustomDatePicker` state, re-run `onAppear` chains
+        // (the popup's own action bar can toggle the theme) — which is exactly
+        // the gesture most likely to show a hitch. `preferredColorScheme`
+        // propagates through the environment on its own.
+        .onReceive(AppPreferences.shared.$appearance.removeDuplicates()) { appearance = $0 }
+        .onReceive(AppPreferences.shared.$idleNotifyEnabled.removeDuplicates()) { idleNotifyEnabled = $0 }
         // Only shell-relevant changes invalidate the popup; session and usage
         // updates are observed by their own panels.
         .onReceive(providerStore.$hasSettingsFile.removeDuplicates()) { hasSettingsFile = $0 }
         .onReceive(codexStore.$providers.map { !$0.isEmpty }.removeDuplicates()) { hasCodexProviders = $0 }
+        .overlay(alignment: .bottom) {
+            // The toast is the only reader of `panel.feedbackMessage`, so it
+            // invalidates here rather than invalidating the shell: the write
+            // used to re-evaluate the header, both panels and the action bar to
+            // display nothing (nothing mounted the toast at all).
+            FeedbackToast(message: panel.feedbackMessage)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+                .allowsHitTesting(false)
+        }
         .task(id: panel.feedbackToken) {
             guard panel.feedbackToken > 0 else { return }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -132,16 +144,16 @@ struct MenuBarView: View {
             iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
                 .disabled(!hasSettingsFile)
-            iconButton(prefs.idleNotifyEnabled ? "bell.fill" : "bell.slash",
+            iconButton(idleNotifyEnabled ? "bell.fill" : "bell.slash",
                        help: "会话空闲时发送系统通知",
-                       color: prefs.idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
-                prefs.idleNotifyEnabled.toggle()
-                panel.showFeedback(prefs.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")
+                       color: idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
+                AppPreferences.shared.idleNotifyEnabled.toggle()
+                panel.showFeedback(idleNotifyEnabled ? "已关闭空闲通知" : "已开启空闲通知")
             }
-            iconButton(prefs.appearance == .dark ? "sun.max" : "moon",
-                       help: prefs.appearance == .dark ? "切换浅色" : "切换深色",
+            iconButton(appearance == .dark ? "sun.max" : "moon",
+                       help: appearance == .dark ? "切换浅色" : "切换深色",
                        color: Theme.textSecondary) {
-                prefs.appearance = prefs.appearance == .dark ? .light : .dark
+                AppPreferences.shared.appearance = appearance == .dark ? .light : .dark
             }
             Spacer()
             iconButton("power", help: "退出", color: Theme.statusError) {

@@ -37,7 +37,7 @@ struct SourceRing: View {
                 }
             }
             VStack(spacing: 1) {
-                Text(centerValue)
+                RollingNumberText(centerValue)
                     .font(Theme.Font.captionMono)
                     .monospacedDigit()
                     .foregroundColor(Theme.textPrimary)
@@ -106,11 +106,11 @@ struct SourceRingLegend: View {
                         .foregroundColor(slice.value > 0 ? Theme.textSecondary : Theme.textTertiary(0.6))
                         .lineLimit(1)
                     Spacer(minLength: 6)
-                    Text(total > 0 ? "\(Int((Double(slice.value) / Double(total) * 100).rounded()))%" : "—")
+                    RollingNumberText(total > 0 ? "\(Int((Double(slice.value) / Double(total) * 100).rounded()))%" : "—")
                         .font(Theme.Font.tileDetail)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
-                    Text(UsageStats.formatTokens(slice.value))
+                    RollingNumberText(UsageStats.formatTokens(slice.value))
                         .font(Theme.Font.tileDetail)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())

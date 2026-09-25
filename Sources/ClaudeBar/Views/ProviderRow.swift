@@ -157,7 +157,7 @@ struct ProviderTile: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 0) {
-                Text("\(provider.models.count) 个模型")
+                RollingNumberText("\(provider.models.count) 个模型")
                     .font(Theme.Font.tileDetail)
                     .foregroundColor(Theme.textTertiary(0.35))
                 Spacer(minLength: 0)
@@ -185,7 +185,7 @@ struct ProviderTile: View {
                     .truncationMode(.middle)
                 Spacer()
                 if !model.contextTokens.isEmpty {
-                    Text(formatContext(model.contextTokens))
+                    RollingNumberText(formatContext(model.contextTokens))
                         .font(Theme.Font.microMedium)
                         .foregroundColor(Theme.textTertiary(0.35))
                         .padding(.horizontal, 5).padding(.vertical, 1)

@@ -12,6 +12,10 @@ final class MainWindowController {
     private let codexProviderStore: CodexProviderStore
     /// Outlives the traffic page's mount — see `TrafficPageState`.
     let trafficState = TrafficPageState()
+    /// The page the window was last showing. The hosting view is torn down on
+    /// close (see `releaseContent`), so the selection has to live outside the
+    /// view graph or every reopen would snap back to 概览.
+    private var lastPage: AppPage = .dashboard
 
     private var appearanceObs: NSObjectProtocol?
     /// Window-scoped observers registered by `observeVisibility(of:)`. Every
@@ -34,13 +38,21 @@ final class MainWindowController {
         }
     }
 
-    /// Bring the window to the front, creating it on first call or recreating
-    /// it if the user closed it. Single-instance: a second call while visible
-    /// just focuses the existing window.
+    /// Bring the window to the front, creating it on first call, rebuilding its
+    /// content if it was torn down on close, or focusing it if it is already up.
     func showWindow() {
-        if let window = window, window.isVisible {
+        if let window, window.isVisible {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        if let window {
+            // Reused shell: the AppKit window (and its autosaved frame)
+            // survives the close, only the SwiftUI content is remade.
+            installContent(in: window)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            observeVisibility(of: window)
             return
         }
         let window = makeWindow()
@@ -49,6 +61,30 @@ final class MainWindowController {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         observeVisibility(of: window)
+    }
+
+    /// Drop the SwiftUI graph when the window closes.
+    ///
+    /// `isReleasedWhenClosed = false` keeps the `NSWindow` alive across
+    /// close/reopen, which also keeps its `NSHostingView` alive — and an
+    /// ordered-out hosting view keeps driving a full display cycle. Measured
+    /// with the window closed and nothing on screen: ~18–20 % of a core, all
+    /// of it on the main thread inside `UC::DriverCore::continueProcessing` →
+    /// `CA::Transaction::commit` → `NSDisplayCycleFlush` →
+    /// `NSHostingView.layout()` → `ViewGraph.renderDisplayList` → glyph
+    /// rasterisation. Clearing `contentView` took the same app to 0.0–0.7 %.
+    /// The window is cheap to keep (it owns the autosaved frame and the AppKit
+    /// shell); only the view graph has to go, and `showWindow` rebuilds it in
+    /// ~50–150 ms.
+    private func releaseContent() {
+        UIWakePolicy.setMainWindowVisible(false)
+        // `willClose` fires while the close is still in flight; dropping the
+        // view graph inside that notification tears down layers mid-animation,
+        // so land the teardown on the next main-queue turn instead.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, !window.isVisible else { return }
+            window.contentView = nil
+        }
     }
 
     /// Feed the window's on-screen state to `UIWakePolicy` so the pollers can
@@ -75,8 +111,8 @@ final class MainWindowController {
         ] {
             windowObservers.append(center.addObserver(forName: name, object: window, queue: .main) { _ in sync() })
         }
-        windowObservers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-            UIWakePolicy.setMainWindowVisible(false)
+        windowObservers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+            self?.releaseContent()
         })
         // isVisible is not yet true at this point in makeKeyAndOrderFront's
         // cycle on some launches; re-assert after the order-front settles.
@@ -85,15 +121,31 @@ final class MainWindowController {
 
     // MARK: - Window construction
 
-    private func makeWindow() -> NSWindow {
-        let rootView = MainWindowView()
+    private func installContent(in window: NSWindow) {
+        let rootView = MainWindowView(initialPage: lastPage) { [weak self] page in
+            self?.lastPage = page
+        }
             .environmentObject(providerStore)
-                .environment(\.providerSource, providerStore)
+            .environment(\.providerSource, providerStore)
             .environmentObject(codexProviderStore)
             .environmentObject(trafficState)
 
         let hosting = NSHostingView(rootView: rootView)
+        // No size feedback into AppKit. `NSHostingView`'s default sizing
+        // options make every layout pass call `invalidateSizeConstraints`
+        // → `minSize()` → a full `sizeThatFits` walk of the entire view
+        // graph. Sampling the idle app showed that walk at ~16 % of a core
+        // with every window ordered out. The window owns the geometry
+        // (contentRect + `setFrameAutosaveName`), and `autoresizingMask`
+        // keeps the host filling it without entering the constraint engine —
+        // the same arrangement the notch island and the menu-bar popup use.
+        hosting.sizingOptions = []
+        hosting.autoresizingMask = [.width, .height]
+        hosting.frame = window.contentLayoutRect
+        window.contentView = hosting
+    }
 
+    private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -112,7 +164,7 @@ final class MainWindowController {
         window.backgroundColor = Theme.windowNSColor
         window.isOpaque = true
         window.hasShadow = true
-        window.contentView = hosting
+        installContent(in: window)
         return window
     }
 }

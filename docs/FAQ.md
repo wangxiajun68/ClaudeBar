@@ -123,6 +123,41 @@ Claude Code 的 busy 来自 `~/.claude/sessions/<pid>.json` 与 transcript 尾�
 
 设置 → 显示 → Token 单位：「万 / 亿」或「K / M / B」。主应用与桌面 Widget 同步生效。
 
+### 模型花费和账单对不上？
+
+花费是**按厂商刊例价估的**，不是账单——只有 OpenRouter 与 Cursor 的接口会回传真实金额，其余都靠 token 数乘价目表。口径见 [technical/15](technical/15-model-cost.md)。三个常见差异来源：
+
+- **订阅制**（Kimi Code 会员、火山 Coding Plan）压根不按 token 计费，卡片写明「订阅制」，token 不计入合计。
+- **未公开价**（如百炼未公布缓存命中价的 qwen3.8 系列、OpenAI `-pro` 档没给 cached-input 价）会单独列出，也**不**按 0 静默计入。
+- 人民币与美元**分列不换算**——主数字是金额大的那个，副行写「另有 $43.20」。想折算成单一币种可在设置 → 模型花费里开转换并设汇率（要联网取或手动钉一个值）。
+
+---
+
+## 连接器
+
+### 连接器页会改动我的配置吗？
+
+默认**只读**。只有你点卡片上的启停控件才写：
+
+| 类型 | 写入位置 |
+| --- | --- |
+| Codex MCP / 插件 | `~/.codex/config.toml` 里目标表的那一行 `enabled`，其余字节原样保留；写前重新读比对，同目录原子替换 |
+| 独立 Skill 目录 | 整个文件夹移到 `~/Library/Application Support/ClaudeBar/DisabledSkills/`，原路径记在 `registry.json`；恢复时原路径被占用则拒绝覆盖 |
+| Claude Code 插件 | 官方 `claude plugin enable/disable` CLI |
+| Cursor MCP | 官方 `agent mcp enable/disable` CLI |
+
+### 为什么 MCP 工具列表拉不出来？
+
+详情页要按 MCP 协议连上去做一次 `initialize` + `tools/list`。失败多半是这几类：
+
+- 配置里用的是 `npx` / `uvx` 这类**可能触发安装**的运行器 —— 本页不会替你启动，会直接给可恢复的说明。
+- 旧式 SSE 传输，或需要客户端专属认证的服务 —— 当前只支持直接启动的 stdio 与 Streamable HTTP。
+- 远端服务超时（请求有超时与数量上限，不会挂住界面）。
+
+### Cursor 的 MCP 开关为什么标「待确认」？
+
+Cursor 的启停状态没有公开、稳定的磁盘格式可读，所以卡片不猜状态，直接给出「启用」「停用」两条官方 CLI 命令，以 Cursor 自己为准。同理 Claude Code 的 MCP 以原生 `/mcp` 状态为准，本页只展示来源，不改写 `~/.claude.json`。
+
 ---
 
 ## Codex 本地代理

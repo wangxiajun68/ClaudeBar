@@ -45,16 +45,14 @@ struct SectionHeader: View {
                     tint: activeCount > 0 ? tint : Theme.textSecondary,
                     ink: activeCount > 0 ? (ink ?? tint) : Theme.textSecondary
                 )
-                .contentTransition(.numericText())
                 .animation(Theme.Animation.smooth, value: activeCount)
                 .animation(Theme.Animation.smooth, value: count)
             } else {
-                Text("\(count)")
+                RollingNumberText("\(count)")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(Theme.textSecondary)
-                    .contentTransition(.numericText())
-                    .animation(Theme.Animation.smooth, value: count)
+                        .animation(Theme.Animation.smooth, value: count)
             }
         }
     }

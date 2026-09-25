@@ -40,7 +40,7 @@ Claude Code、Codex、Cursor 同时在跑的时候，工作流会被拆成一堆
 
 ClaudeBar 把这些收进**一个**菜单栏应用。顶栏常驻，主窗口按需打开。点一下就能做刚才那件事，然后回去写代码。
 
-## 六件事
+## 七件事
 
 **切换。** Claude Code 与 Codex 各有一份供应商。激活分别写回 `~/.claude/settings.json` 和 `~/.codex/config.toml`，互不覆盖。菜单栏三格：CC、Codex、VPN 节点。
 
@@ -50,7 +50,9 @@ ClaudeBar 把这些收进**一个**菜单栏应用。顶栏常驻，主窗口按
 
 **现场。** 会话页把 Claude Code、Cursor、Codex 和其他 CLI 收成一张牌：上下文条、当前工具、心跳、CPU / 内存。双击卡片就能在终端或 Cursor 里接上。
 
-**用量。** 只统计模型 Token。日 / 月 / 年热力图、CC / Codex / 第三方来源柱、输入·命中·写入·输出构成。VPN 剩余流量留在 VPN 页，不混进来。
+**用量。** 只统计模型 Token。日 / 月 / 年热力图、CC / Codex / 第三方来源柱、输入·命中·写入·输出构成。同一周期再按厂商刊例价折算花费（56 条价目，人民币与美元分列不换算，算不出钱的模型明写原因）。VPN 剩余流量留在 VPN 页，不混进来。
+
+**连接器。** 一个页面看清三家客户端装了哪些 Skills、MCP 服务器和插件。共享的 Agent CLI（`lark-cli`、`gh`、`mcporter`…）单独归到「本机共享」，并按 Skill 的 `requires.bins` 与 MCP 的 `command` 把关联能力挂到它名下。Codex 的 MCP 开关只改 `config.toml` 里那一行；独立的 Skill 目录做可逆移库；详情页能读 `SKILL.md`、列 MCP 工具（不发调用）。只读扫描，不启动服务。
 
 **本机。** 概览 2×3：负载、温度写在 CPU / GPU 说明里、硬盘占用、Wi-Fi / 蓝牙 / 有线、两只可点的风扇（自动 / 最大）。浅色是冰 `#EEF3F8`，深色是石墨 `#16181C`，不跟系统外观走。
 

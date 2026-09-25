@@ -1,22 +1,21 @@
 import SwiftUI
 
-/// Popup usage: heatmap + source triad + token mix + model bars. Model
-/// tokens only — VPN quota lives on the VPN page.
+/// Fixed-height popup summary: matching token/cost figures, a heatmap and
+/// the three leading models. Full breakdowns live on the usage page.
 struct UsagePanel: View {
     @ProviderState(.usage) var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             header
-            if showCustomDatePicker {
-                DatePicker("", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
-                    .datePickerStyle(.compact)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .transition(.opacity)
-            }
+                .popover(isPresented: $showCustomDatePicker) {
+                    DatePicker("选择日期", selection: $providerStore.usageReferenceDate,
+                               displayedComponents: [.date])
+                        .datePickerStyle(.graphical)
+                        .padding(12)
+                }
+            usageSummary
             UsageHeatmap(
                 days: providerStore.usageDays,
                 period: providerStore.usagePeriod,
@@ -32,39 +31,26 @@ struct UsagePanel: View {
                 }
             )
 
-            EqualRowGrid(spacing: 10, minColumnWidth: 0, fixedColumns: 2) {
-                SourceTriad(totals: providerStore.usageTotalBySource)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("构成")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textTertiary())
-                    TokenMixStrip(stats: providerStore.usageStats, compact: true)
-                    UsageDaySpark(days: providerStore.usageDays)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
                 Text("暂无用量")
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             } else {
                 ForEach(Array(providerStore.usageStats.prefix(3))) { stat in
-                    QuotaRow(
-                        title: stat.model,
-                        subtitle: "\(stat.calls) 次",
-                        used: share(of: stat),
-                        remainingLabel: UsageStats.formatTokens(stat.totalTokens),
-                        trailing: "用量 \(Int((share(of: stat) * 100).rounded()))%",
-                        mode: .share
-                    )
+                    HStack(spacing: 8) {
+                        Text(stat.model)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        RollingNumberText(UsageStats.formatTokens(stat.totalTokens)).monospacedDigit()
+                    }
+                    .font(Theme.Font.micro)
+                    .foregroundStyle(Theme.textSecondary)
                 }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        }
+        .frame(height: 272, alignment: .top)
     }
 
     private var header: some View {
@@ -88,15 +74,47 @@ struct UsagePanel: View {
         }
     }
 
-    private var periodCaption: String {
-        let label = UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
-        if providerStore.usageLoading { return label }
-        return "\(label) · \(providerStore.totalUsageLabel)"
+    private var usageSummary: some View {
+        let estimate = providerStore.costEstimate
+        return HStack(alignment: .top, spacing: 16) {
+            summaryMetric("Token 用量", value: providerStore.totalUsageLabel,
+                          detail: "所选时段累计")
+            summaryMetric("花费", value: estimate.cost.dominant.map {
+                ModelPricing.format($0.amount, currency: $0.currency)
+            } ?? "—", detail: costDetail(estimate))
+        }
+        .padding(.vertical, 8)
     }
 
-    private func share(of stat: ModelUsage) -> Double {
-        let peak = max(providerStore.maxUsageTokens, 1)
-        return min(1, Double(stat.totalTokens) / Double(peak))
+    private func summaryMetric(_ title: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
+            RollingNumberText(value)
+                .font(.system(size: 21, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(detail.isEmpty ? " " : detail)
+                .font(Theme.Font.micro)
+                .foregroundStyle(Theme.textTertiary())
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func costDetail(_ estimate: ModelPricing.Estimate) -> String {
+        if let secondary = estimate.cost.secondary {
+            return "另有 " + ModelPricing.format(secondary.amount, currency: secondary.currency)
+        }
+        if estimate.unpricedModels > 0 { return "\(estimate.unpricedModels) 个未计价" }
+        return estimate.isEmpty ? "暂无用量" : ""
+    }
+
+    private var periodCaption: String {
+        let label = UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+        return label
     }
 
     private func selectPeriod(_ period: UsagePeriod) {

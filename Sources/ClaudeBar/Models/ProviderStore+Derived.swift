@@ -36,16 +36,31 @@ extension ProviderStore {
         let session: ExternalSessionInfo
         let depth: Int
         let children: [ExternalSessionNode]
+        /// This node's session plus every descendant's, in pre-order.
+        ///
+        /// Stored, not computed: the tree is already cached per kind, and this
+        /// used to be `[self] + children.flatMap(\.flattened)` evaluated on
+        /// every access from `body` — a fresh `O(subtree)` allocation per node,
+        /// per call, so a wide tree cost `O(n²)` per render.
+        let flattened: [ExternalSessionInfo]
+
+        /// How many descendants are mid-turn. Counted once at build time so a
+        /// page that only needs the number does not allocate the descendant
+        /// array to count it (see `SessionsView`).
+        let activeDescendantCount: Int
+
+        init(session: ExternalSessionInfo, depth: Int, children: [ExternalSessionNode]) {
+            self.session = session
+            self.depth = depth
+            self.children = children
+            self.flattened = [session] + children.flatMap(\.flattened)
+            self.activeDescendantCount = children.reduce(0) {
+                $0 + $1.activeDescendantCount + ($1.session.isActive ? 1 : 0)
+            }
+        }
 
         /// Every sub-agent below this node, at any depth.
-        var descendantCount: Int {
-            children.reduce(0) { $0 + 1 + $1.descendantCount }
-        }
-
-        /// Nodes in pre-order — what the flat tree list renders.
-        var flattened: [ExternalSessionNode] {
-            [self] + children.flatMap(\.flattened)
-        }
+        var descendantCount: Int { flattened.count - 1 }
     }
 
     /// Visible main threads, including idle unarchived Codex tasks. Helpers
@@ -90,20 +105,16 @@ extension ProviderStore {
 
     /// Per-model origin breakdown for the ring popover, in a fixed source
     /// order so CC / Codex / 第三方 keep their color and row position.
-    /// `stat.tokenTotalBySource` is keyed by model name; models that only
-    /// appear in one source get zeroed slices for the others.
+    /// `usageTokensByModel` is keyed by model name; models that only appear in
+    /// one source get zeroed slices for the others.
     func usageSourceSlices(for stat: ModelUsage) -> [SourceRing.Slice] {
-        let bySource = usageTokensBySource
         let slices = UsageSource.allCases.map { source in
             SourceRing.Slice(label: source.label,
-                             value: bySource[source]?.first { $0.model == stat.model }?.totalTokens ?? 0,
+                             value: usageTokensByModel[source]?[stat.model] ?? 0,
                              color: source.color)
         }
         return slices.contains { $0.value > 0 } ? slices : []
     }
-
-    /// `usageBySource` flattened to per-model totals per source.
-    var usageTokensBySource: [UsageSource: [ModelUsage]] { usageBySource }
 
     /// Totals per source for the whole period — the river's legend and the
     /// popup total line.
@@ -112,6 +123,23 @@ extension ProviderStore {
             (source, (usageBySource[source] ?? []).reduce(0) { $0 + $1.totalTokens })
         }
     }
+
+    /// Estimated list-price spend for the selected period.
+    ///
+    /// Derived from `usageStats`, which is already the period's per-model
+    /// rollup — so this moves with the period chips for free. The estimate is
+    /// computed once in `publishUsage` (alongside `usageCostLines`) rather than
+    /// per read: `ModelPricing.estimate` canonicalises every model slug — two
+    /// regex compilations per model — and it was being re-run from `body` on
+    /// every publish and every animation frame. The app never sees an invoice
+    /// (subscriptions are not metered, relays do not return cost), so this is
+    /// explicitly an estimate at published API prices; `ModelPricing` owns the
+    /// table and the caveats.
+    var costEstimate: ModelPricing.Estimate { usageEstimate }
+
+    /// The price of one model, for a usage tile. A dictionary hit — the
+    /// estimate's lines are rebuilt with `usageStats`, not per call.
+    func costLine(for model: String) -> ModelPricing.Estimate.Line? { usageCostLines[model] }
 
     // MARK: - Active provider
 

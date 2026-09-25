@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Glance-reel geometry: the pager must hold one line across every card shape.
 
-The reel is a fixed 188x100 card whose bottom strip carries the page dots.
+The reel is a fixed 188 x `cardBodyHeight` card whose bottom strip carries the
+page dots. Probe lanes are arbitrary heights — the point is that none of them
+may move the card.
 Two bugs shipped here before: the dots took part in the card's layout, so a
 two-mark card (short content) pushed them up while a four-mark card pushed
 them to the edge; and the reel sized itself from whatever the session lane
@@ -17,17 +19,47 @@ root = Path(__file__).resolve().parents[1]
 components = (root / 'Sources/ClaudeBar/Views/Island/IslandComponents.swift').read_text()
 view = (root / 'Sources/ClaudeBar/Views/Island/NotchIslandView.swift').read_text()
 
+
+def matching_brace(text, open_index):
+    """Index just past the `}` matching the `{` at `open_index`."""
+    depth = 0
+    for i in range(open_index, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    raise AssertionError('unbalanced braces')
+
+
 # The production mark cell and glance content, lifted verbatim so the test
 # measures the shipped view tree rather than a copy.
-markCell = components[components.index('    private func markCell(_ mark: IslandMark)'):components.index('    private func play(count: Int)')]
+#
+# The cell is delimited by brace matching rather than by whatever function
+# happens to follow it: the reel and the network page render the same cell
+# through a shared card view, and a slice that ran to the "next function"
+# would silently swallow everything in between.
+start = components.index('    private func markCell(_ mark: IslandMark)')
+open_brace = components.index('{', start)
+markCell = components[start:matching_brace(components, open_brace)]
 # Drop the production signature line: the probe supplies its own `cell`.
 markCell = '\n'.join(markCell.splitlines()[1:])
-markCell = markCell.replace('_ mark: IslandMark', '_ m: (String, String)')
-for field, tupleIndex in (('mark.mark', None), ('mark.tint', None), ('mark.value', '0'), ('mark.caption', '1')):
-    pass
-markCell = markCell.replace('if let agent = mark.mark {', 'if false, let agent: IslandAgent = nil {')
-markCell = markCell.replace('IslandMarkWell(mark: agent, tint: mark.tint)', 'IslandMarkWell(symbol: "cpu", tint: Color.white)')
-markCell = markCell.replace('IslandMarkWell(symbol: mark.symbol, tint: mark.tint)', 'IslandMarkWell(symbol: "cpu", tint: Color.white)')
+
+# The probe's marks are (value, caption) pairs with no agent, so the well is
+# always the instrument-glyph form. Collapse the product-mark branch and its
+# `else` scaffold — dropping the branch *body* rather than making it dead code,
+# so the probe does not have to know whether the well is built with a symbol
+# name or a glyph kind.
+if_start = markCell.index('if let agent = mark.mark {')
+if_open = markCell.index('{', if_start)
+if_close = matching_brace(markCell, if_open)
+else_start = markCell.index('else {', if_close)
+else_open = markCell.index('{', else_start)
+else_close = matching_brace(markCell, else_open)
+markCell = markCell[:if_start] + markCell[else_open + 1:else_close - 1] + markCell[else_close:]
+markCell = markCell.replace('mark.kind', 'InstrumentGlyph.Kind.cpu')
+markCell = markCell.replace('mark.tint', 'Color.white')
 markCell = markCell.replace('mark.value', 'm.0').replace('mark.caption', 'm.1')
 # The slice ends on the cell's own closing brace; the caller supplies that.
 markCell = markCell.rstrip()
@@ -40,7 +72,18 @@ style = view[view.index('enum IslandStyle {'):view.index('/// What the island\'s
 style = style.rstrip().rstrip('}').rstrip() + '\n}\n'
 # Mark wells live in the same file as the reel; the agent marks they can draw
 # need the brand canvas, which is irrelevant to geometry.
-well = components[components.index('/// One mark\'s icon well.'):components.index('/// One icon on a glance card.')]
+well = components[components.index('struct IslandMarkWell: View {'):components.index('private struct IslandMark: Identifiable {')]
+# The well draws whichever icon family the mark names; only its geometry is
+# under test here, so the glyph artwork is replaced with a same-sized clear
+# square. Its `Kind` vocabulary is lifted from production (below), so a new
+# instrument kind does not need a change here.
+well = well.replace('InstrumentGlyph(kind: kind, tint: tint)', 'Color.clear')
+
+# Instrument vocabulary — `IslandAgent.markKind` and the well both name it.
+glyph_source = (root / 'Sources/ClaudeBar/Views/Shared/InstrumentGlyph.swift').read_text()
+kind_start = glyph_source.index('    enum Kind {')
+kind_body = glyph_source[kind_start:matching_brace(glyph_source, glyph_source.index('{', kind_start))]
+kind_enum = 'enum InstrumentGlyph {\n' + kind_body + '\n}\n'
 agents = (root / 'Sources/ClaudeBar/Models/IslandLiveModel.swift').read_text()
 agentEnum = agents[agents.index('enum IslandAgent: String'):agents.index('/// One live agent session')]
 usageSource = 'enum UsageSource: String, CaseIterable, Identifiable {\n    case claude, codex, thirdParty\n    var id: String { rawValue }\n}\n'
@@ -53,6 +96,7 @@ import AppKit
 import Combine
 HEXINIT
 USAGESOURCE
+KINDENUM
 AGENTENUM
 STYLE
 WELL
@@ -61,6 +105,15 @@ WELL
 struct IslandAgentMark: View {
     let agent: IslandAgent
     var body: some View { Color.white }
+}
+
+/// The production cell rolls its digits through this shared component. It
+/// lives in `Interaction.swift`, outside the slice under test, so it is stubbed
+/// to the same text — the geometry is what the probe measures, not the roll.
+struct RollingNumberText: View {
+    let value: String
+    init(_ value: String) { self.value = value }
+    var body: some View { Text(value).monospacedDigit() }
 }
 
 private struct IslandUsage { }
@@ -205,13 +258,21 @@ MARKCELL
             precondition(image.height == Int(lane * 2),
                          "lane \(lane)pt must stay \(lane)pt; got \(Double(image.height) / 2)")
         }
-        precondition(IslandStyle.glanceReelHeight == IslandStyle.cardBodyHeight + 2 * IslandStyle.glanceCardPadding,
-                     "the card box must be its content plus its padding, not a hand-tuned number")
+        precondition(IslandStyle.glanceReelHeight == IslandStyle.cardContentBand
+                     + 2 * IslandStyle.glanceCardPadding + IslandStyle.reelPagerBand,
+                     "the card box must be its content plus its padding plus the reserved pager band, "
+                     + "not a hand-tuned number")
+        precondition(IslandStyle.cardContentBand == IslandStyle.cardBodyHeight,
+                     "the content band must be the card body the pages actually draw")
+        precondition(IslandStyle.reelPagerBand == (IslandStyle.reelReservesPager
+                     ? IslandStyle.pagerInset + IslandStyle.pagerDotHeight : 0),
+                     "a reserved pager band must be exactly the pager's own height")
         print("PASS: card fixed at \(IslandStyle.glanceCardSize.width)x\(IslandStyle.glanceReelHeight)pt across "
               + "\(cards.count) shapes; pager gap \(twoGap)pt vs \(fourGap)pt; lane 40/44/90/136/206pt unaffected")
     }
 }
 '''.replace('HEXINIT', hexInit).replace('USAGESOURCE', usageSource) \
+   .replace('KINDENUM', kind_enum) \
    .replace('AGENTENUM', agentEnum).replace('STYLE', style).replace('WELL', well) \
    .replace('MARKCELL', markCell)
 with tempfile.TemporaryDirectory(prefix='claudebar-reel-tests-') as folder:

@@ -79,7 +79,7 @@ struct ProxyLogView: View {
             InstrumentSearchField(prompt: "路径 / 模型 / 供应商", text: $query)
                 .frame(maxWidth: 240)
             Spacer()
-            Text("\(filtered.count)")
+            RollingNumberText("\(filtered.count)")
                 .font(Theme.Font.captionMono)
                 .foregroundColor(Theme.textTertiary())
                 .monospacedDigit()
@@ -128,7 +128,7 @@ struct ProxyLogView: View {
                             // Token column, right-aligned: a new row's counts
                             // appear here the moment its usage event lands,
                             // without the metadata line reflowing.
-                            Text(row.tokenField)
+                            RollingNumberText(row.tokenField)
                                 .font(Theme.Font.console)
                                 .foregroundColor(Theme.textTertiary())
                                 .monospacedDigit()

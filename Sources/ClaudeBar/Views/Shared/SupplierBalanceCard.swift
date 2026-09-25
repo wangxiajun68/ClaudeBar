@@ -27,7 +27,7 @@ struct SupplierBalanceCard: View {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text(entry.name).font(Theme.Font.chromeEmph).lineLimit(1)
                             Spacer(minLength: 4)
-                            Text(entry.amount)
+                            RollingNumberText(entry.amount)
                                 .font(Theme.Font.tileValueSmall)
                                 .monospacedDigit()
                                 .foregroundColor(Theme.textPrimary)
@@ -43,7 +43,7 @@ struct SupplierBalanceCard: View {
         }
         .buttonStyle(.pressable)
         .disabled(loading)
-        .onHover { hovered = $0 }
+        .onHover { if hovered != $0 { hovered = $0 } }
         .help(loading ? "正在获取供应商余额" : "点击刷新所有支持查询的供应商余额")
     }
 }

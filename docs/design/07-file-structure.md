@@ -44,10 +44,10 @@ ClaudeBar/
 │   │   │   ├── UsageStats.swift / ProcessSampler.swift / …
 │   │   │   └── …
 │   │   └── Views/
-│   │       ├── MainWindowView.swift      ← 顶栏 tabs + detail（8 页）
+│   │       ├── MainWindowView.swift      ← 顶栏 tabs + detail（9 页）
 │   │       ├── MenuBarView.swift         ← popup 组合壳
 │   │       ├── Island/                   ← 灵动岛形状、根视图、会话行、用量卡（见 §10）
-│   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Usage / Traffic / VPN / Settings / Help
+│   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Connectors / Usage / Traffic / VPN / Settings / Help
 │   │       ├── Shared/                  ← Tile / ConnectionCard / ProviderDirectory / PermissionsSection / …
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
 │   └── Widget/

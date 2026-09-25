@@ -73,7 +73,7 @@ struct HardwareDetailPanel: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name).font(Theme.Font.chromeEmph)
                     Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                    Text(String(format: "%.1f%%", load)).font(Theme.Font.displayMetric).monospacedDigit()
+                    RollingNumberText(String(format: "%.1f%%", load)).font(Theme.Font.displayMetric).monospacedDigit()
                 }
                 Spacer()
             }
@@ -105,7 +105,7 @@ struct ConnectionDetailPanel: View {
             }.frame(height: 110)
             if host.wifiOn && host.wifiRSSI < 0 {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack { Text("信号强度"); Spacer(); Text("\(host.wifiRSSI) dBm").monospacedDigit() }
+                    HStack { Text("信号强度"); Spacer(); RollingNumberText("\(host.wifiRSSI) dBm").monospacedDigit() }
                     GeometryReader { proxy in
                         Capsule().fill(Theme.hairline)
                         Capsule().fill(LinearGradient(colors: [Theme.chartBlue, Theme.chartGreen], startPoint: .leading, endPoint: .trailing))

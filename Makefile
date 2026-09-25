@@ -26,3 +26,8 @@ test:
 	python3 Tests/island-reel-regressions.py
 	python3 Tests/local-endpoint-regressions.py
 	python3 Tests/provider-icon-regressions.py
+	python3 Tests/session-title-regressions.py
+	python3 Tests/quota-reset-regressions.py
+	python3 Tests/menubar-strip-regressions.py
+	python3 Tests/charge-limit-regressions.py
+	python3 Tests/model-cost-regressions.py

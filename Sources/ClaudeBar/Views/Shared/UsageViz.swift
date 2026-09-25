@@ -11,7 +11,7 @@ struct SourceTriad: View {
             ForEach(totals, id: \.source) { row in
                 let h = CGFloat(row.tokens) / CGFloat(peak)
                 VStack(spacing: 4) {
-                    Text(UsageStats.formatTokens(row.tokens))
+                    RollingNumberText(UsageStats.formatTokens(row.tokens))
                         .font(Theme.Font.microMono)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
@@ -38,36 +38,55 @@ struct TokenMixStrip: View {
     let stats: [ModelUsage]
     var compact: Bool = false
 
-    private var input: Int { stats.reduce(0) { $0 + $1.inputTokens } }
-    private var hit: Int { stats.reduce(0) { $0 + $1.cacheReadTokens } }
-    private var write: Int { stats.reduce(0) { $0 + $1.cacheCreationTokens } }
-    private var output: Int { stats.reduce(0) { $0 + $1.outputTokens } }
-    private var total: Int { max(input + hit + write + output, 1) }
+    /// The four sums, computed in one pass.
+    ///
+    /// They were four computed properties, each a full `reduce` over `stats`;
+    /// `total` was a fifth, and `slice(_:_:_:)` read it again per slice — so
+    /// one body pass walked the model list nine times.
+    private struct Totals {
+        var input = 0
+        var hit = 0
+        var write = 0
+        var output = 0
+        var sum: Int { max(input + hit + write + output, 1) }
+    }
+
+    private static func totals(_ stats: [ModelUsage]) -> Totals {
+        var out = Totals()
+        for stat in stats {
+            out.input += stat.inputTokens
+            out.hit += stat.cacheReadTokens
+            out.write += stat.cacheCreationTokens
+            out.output += stat.outputTokens
+        }
+        return out
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let t = Self.totals(stats)
+        return VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geo in
                 HStack(spacing: 1) {
-                    slice(input, geo.size.width, Theme.claude)
-                    slice(hit, geo.size.width, Theme.external)
-                    slice(write, geo.size.width, Theme.statusWarning)
-                    slice(output, geo.size.width, Theme.cursor)
+                    slice(t.input, geo.size.width, Theme.claude, total: t.sum)
+                    slice(t.hit, geo.size.width, Theme.external, total: t.sum)
+                    slice(t.write, geo.size.width, Theme.statusWarning, total: t.sum)
+                    slice(t.output, geo.size.width, Theme.cursor, total: t.sum)
                 }
                 .clipShape(Capsule())
             }
             .frame(height: compact ? 8 : 10)
             .background(Capsule().fill(Theme.cardFill(0.08)))
             HStack(spacing: compact ? 8 : 12) {
-                cap("输入", input, Theme.claude)
-                cap("命中", hit, Theme.external)
-                cap("写入", write, Theme.statusWarning)
-                cap("输出", output, Theme.cursor)
+                cap("输入", t.input, Theme.claude)
+                cap("命中", t.hit, Theme.external)
+                cap("写入", t.write, Theme.statusWarning)
+                cap("输出", t.output, Theme.cursor)
             }
         }
     }
 
     @ViewBuilder
-    private func slice(_ n: Int, _ width: CGFloat, _ color: Color) -> some View {
+    private func slice(_ n: Int, _ width: CGFloat, _ color: Color, total: Int) -> some View {
         if n > 0 {
             color.opacity(0.9)
                 .frame(width: max(2, width * CGFloat(n) / CGFloat(total)))
@@ -77,7 +96,7 @@ struct TokenMixStrip: View {
     private func cap(_ label: String, _ n: Int, _ color: Color) -> some View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
-            Text(compact ? label : "\(label) \(UsageStats.formatTokens(n))")
+            RollingNumberText(compact ? label : "\(label) \(UsageStats.formatTokens(n))")
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
                 .lineLimit(1)

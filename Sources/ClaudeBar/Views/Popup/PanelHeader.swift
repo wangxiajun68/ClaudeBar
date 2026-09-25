@@ -8,12 +8,23 @@ import SwiftUI
 struct PanelHeader: View {
     @ProviderState([.configuration, .sessions]) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
-    @ObservedObject private var prefs = AppPreferences.shared
+    /// The three preferences this header renders, subscribed individually.
+    /// Observing `AppPreferences.shared` wholesale re-evaluated the whole
+    /// header — including both popover switchers' labels — for any unrelated
+    /// write (a notch flag, the token-unit toggle, `manualUSDToCNY`).
+    @State private var codexProxyPort = AppPreferences.shared.codexProxyPort
+    @State private var codexRoutingEnabled = AppPreferences.shared.codexRoutingEnabled
+    @State private var vpnMixedPort = AppPreferences.shared.vpnMixedPort
     @ObservedObject private var vpn = VpnManager.shared
     var panel: PanelState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // Read once: `liveLeafName` walks the primary group and the selector
+        // chain, and `resolvedDelay` walks it again — and the chip read both
+        // from two separate computed properties.
+        let leaf = vpn.liveLeafName
+        let delay = vpn.isRunning ? vpn.resolvedDelay(leaf) : nil
+        return VStack(alignment: .leading, spacing: 6) {
             statusRow
             EqualRowGrid(spacing: 1, minColumnWidth: 0, fixedColumns: 3) {
                 HeaderSwitchChip(
@@ -37,8 +48,8 @@ struct PanelHeader: View {
                 }
                 HeaderSwitchChip(
                     eyebrow: "VPN",
-                    title: vpnTitle,
-                    subtitle: vpnSubtitle,
+                    title: vpnTitle(leaf),
+                    subtitle: vpnSubtitle(leaf: leaf, delay: delay),
                     tint: vpn.isRunning ? Theme.chartGreen : Theme.textSecondary,
                     ink: vpn.isRunning ? Theme.Ink.success : Theme.textSecondary
                 ) { isPresented in
@@ -52,6 +63,9 @@ struct PanelHeader: View {
                     .strokeBorder(Theme.hairline, lineWidth: 1)
             )
         }
+        .onReceive(AppPreferences.shared.$codexProxyPort.removeDuplicates()) { codexProxyPort = $0 }
+        .onReceive(AppPreferences.shared.$codexRoutingEnabled.removeDuplicates()) { codexRoutingEnabled = $0 }
+        .onReceive(AppPreferences.shared.$vpnMixedPort.removeDuplicates()) { vpnMixedPort = $0 }
     }
 
     // MARK: Status row
@@ -109,8 +123,8 @@ struct PanelHeader: View {
     }
 
     private var proxyFact: String {
-        if codexStore.proxyRunning { return "本地 \(prefs.codexProxyPort)" }
-        if prefs.codexRoutingEnabled { return "本地 未监听" }
+        if codexStore.proxyRunning { return "本地 \(codexProxyPort)" }
+        if codexRoutingEnabled { return "本地 未监听" }
         return "本地 关"
     }
 
@@ -141,17 +155,17 @@ struct PanelHeader: View {
         return windows.map { "\($0.label)已用 \($0.usedText)" }.joined(separator: " · ")
     }
 
-    private var vpnTitle: String {
+    private func vpnTitle(_ leaf: String?) -> String {
         if vpn.state == .starting { return "启动中…" }
-        if vpn.isRunning { return vpn.liveLeafName ?? "代理" }
+        if vpn.isRunning { return leaf ?? "代理" }
         return "未启用"
     }
 
-    private var vpnSubtitle: String {
-        if vpn.isRunning, let delay = vpn.resolvedDelay(vpn.liveLeafName) {
+    private func vpnSubtitle(leaf: String?, delay: Int?) -> String {
+        if vpn.isRunning, let delay {
             return VpnDelayStyle.text(delay)
         }
-        if vpn.isRunning { return "127.0.0.1:\(prefs.vpnMixedPort)" }
+        if vpn.isRunning { return "127.0.0.1:\(vpnMixedPort)" }
         return "点击启动"
     }
 }
@@ -362,7 +376,7 @@ private struct HeaderTrafficRates: View {
     @ObservedObject private var rates = VpnLiveRates.shared
 
     var body: some View {
-        Text("↓\(VpnFormat.compact(rates.speedDown)) ↑\(VpnFormat.compact(rates.speedUp))")
+        RollingNumberText("↓\(VpnFormat.compact(rates.speedDown)) ↑\(VpnFormat.compact(rates.speedUp))")
             .font(.system(size: 11, design: .monospaced))
             .foregroundColor(Theme.textSecondary)
             .lineLimit(1)

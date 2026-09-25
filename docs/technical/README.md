@@ -24,6 +24,8 @@
 | 12 | [battery-control.md](12-battery-control.md) | 电池限充 / 暂停 / 放电、特权辅助进程 | 改能源卡 / 电池控制 |
 | 13 | [provider-directory.md](13-provider-directory.md) | 供应商目录、协议核查、Codex 会话监控 | 改模型页 / 会话判定 |
 | 14 | [performance-audit.md](14-performance-audit.md) | 桌面 / popup / 灵动岛的刷新与渲染审查 | 优化卡顿 / 掉帧 |
+| 15 | [model-cost.md](15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配规则 | 改价格 / 加模型 |
+| 16 | [connectors.md](16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停机制 | 改连接器 / MCP 发现 |
 
 ---
 

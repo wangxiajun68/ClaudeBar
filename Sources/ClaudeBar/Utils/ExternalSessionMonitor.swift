@@ -50,12 +50,20 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     /// Prefer the indexed task title; legacy rollouts fall back to the project.
     var displayName: String {
         if !agentNickname.isEmpty { return agentNickname }
-        let indexedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !indexedTitle.isEmpty { return indexedTitle }
-        return projectFolder.isEmpty ? kind.displayName : projectFolder
+        let indexedTitle = SessionTitle.condense(title)
+        if !indexedTitle.isEmpty { return SessionTitle.shorten(indexedTitle) }
+        return projectFolder.isEmpty ? kind.displayName : SessionTitle.condense(projectFolder)
     }
 
     var projectFolder: String { (cwd as NSString).lastPathComponent }
+
+    /// Two-part card header: `folder · threads.title`.
+    var cardLabel: SessionTitle.Label {
+        // A subagent's nickname is its whole identity — the parent thread's
+        // title would be misleading on the child's own card.
+        SessionTitle(authored: agentNickname.isEmpty ? title : agentNickname,
+                     folder: projectFolder).cardLabel
+    }
 
     var contextRatio: Double {
         guard contextLimit > 0 else { return 0 }

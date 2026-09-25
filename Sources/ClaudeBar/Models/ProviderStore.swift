@@ -27,6 +27,22 @@ class ProviderStore: ObservableObject {
     /// river; `usageStats`/`usageDays` stay the flat totals everything else
     /// already reads.
     @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
+    /// `usageBySource` indexed as source → model → tokens, rebuilt in
+    /// `publishUsage`. The ring slices were built by scanning each source's
+    /// model *array* once per tile (`first { $0.model == stat.model }`), which
+    /// is O(models²) across the usage grid on every publish.
+    private(set) var usageTokensByModel: [UsageSource: [String: Int]] = [:]
+    /// Per-model cost line, keyed by model, rebuilt with `usageStats`. The
+    /// usage grid used to call `costLine(for:)` per tile, and each call ran
+    /// `ModelPricing.cost(of:)` — slug normalisation plus a table lookup — from
+    /// `body`.
+    private(set) var usageCostLines: [String: ModelPricing.Estimate.Line] = [:]
+    /// The whole period's estimate, cached with the lines above. `costEstimate`
+    /// used to re-run `ModelPricing.estimate(usageStats)` from `body` — slug
+    /// canonicalisation (two regex compilations per model) plus a scan of the
+    /// price table — on every publish and on every frame of the period-change
+    /// animation, defeating the point of `usageCostLines`.
+    private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
     @Published var usagePeriod: UsagePeriod = .month {
@@ -231,6 +247,7 @@ class ProviderStore: ObservableObject {
                 result[i].currentActivity = old.currentActivity
                 result[i].toolPending = old.toolPending
                 result[i].completionID = old.completionID
+                result[i].firstPrompt = old.firstPrompt
                 result[i].contextLimit = old.contextLimit
                 result[i].subagents = old.subagents
                 result[i].workflows = old.workflows
@@ -245,6 +262,7 @@ class ProviderStore: ObservableObject {
             result[i].currentActivity = ctx.activity
             result[i].toolPending = ctx.toolPending
             result[i].completionID = ctx.completionID
+            result[i].firstPrompt = ctx.title
             result[i].transcriptSize = size
             if ctx.toolPending { result[i].status = .busy }
             result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
@@ -836,10 +854,25 @@ class ProviderStore: ObservableObject {
         func same(_ a: [ModelUsage], _ b: [ModelUsage]) -> Bool {
             a.count == b.count && Set(a) == Set(b)
         }
-        if !same(usageStats, stats) { usageStats = stats }
+        if !same(usageStats, stats) {
+            usageStats = stats
+            let estimate = ModelPricing.estimate(stats)
+            var lines: [String: ModelPricing.Estimate.Line] = [:]
+            for line in estimate.lines { lines[line.model] = line }
+            usageCostLines = lines
+            usageEstimate = estimate
+        }
         let sourcesEqual = usageBySource.count == bySource.count
             && bySource.allSatisfy { key, value in usageBySource[key].map { same($0, value) } ?? false }
-        if !sourcesEqual { usageBySource = bySource }
+        if !sourcesEqual {
+            usageBySource = bySource
+            usageTokensByModel = bySource.mapValues { rows in
+                var out: [String: Int] = [:]
+                out.reserveCapacity(rows.count)
+                for row in rows { out[row.model] = row.totalTokens }
+                return out
+            }
+        }
         if usageDays != days { usageDays = days }
         if usageDaysBySource != daysBySource { usageDaysBySource = daysBySource }
         if usageLoading { usageLoading = false }
@@ -940,16 +973,9 @@ class ProviderStore: ObservableObject {
 
     /// "今天" for the current day window, otherwise the period's own label
     /// plus the reference date ("9月" / "2026年"). Matches what the popup and
-    /// the usage page title say for the same window.
+    /// the usage page title say for the same window. Shared with the
+    /// dashboard's cost tile pill, which needs the same short form.
     private var usagePeriodLabel: String {
-        let cal = Calendar.current
-        switch usagePeriod {
-        case .day, .custom:
-            return cal.isDateInToday(usageReferenceDate) ? "今天" : "当日"
-        case .month:
-            return UsageStats.formatter("M月").string(from: usageReferenceDate)
-        case .year:
-            return UsageStats.formatter("yyyy年").string(from: usageReferenceDate)
-        }
+        UsageStats.compactLabel(for: usagePeriod, reference: usageReferenceDate)
     }
 }

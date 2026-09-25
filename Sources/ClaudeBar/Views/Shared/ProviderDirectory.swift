@@ -53,7 +53,11 @@ struct ProviderCatalogBrowser: View {
     private struct Partition {
         var buckets: [String: [Provider]]
         var custom: [Provider]
+        /// Catalog entry id → saved connection count, so the sort and the
+        /// "configured only" filter do not walk the bucket array per entry.
+        var counts: [String: Int] = [:]
         func saved(_ entry: ProviderCatalogEntry) -> [Provider] { buckets[entry.id] ?? [] }
+        func hasSaved(_ entry: ProviderCatalogEntry) -> Bool { (counts[entry.id] ?? 0) > 0 }
     }
 
     /// One URL match per saved row. The grid used to match every row against
@@ -70,25 +74,59 @@ struct ProviderCatalogBrowser: View {
                 custom.append(provider)
             }
         }
-        return Partition(buckets: buckets, custom: custom)
+        var counts: [String: Int] = [:]
+        for (id, rows) in buckets { counts[id] = rows.count }
+        return Partition(buckets: buckets, custom: custom, counts: counts)
+    }
+
+    /// The search term, lowercased once; the old version lowercased a joined
+    /// haystack per entry per render.
+    private var searchTerm: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
     private func matches(_ texts: [String]) -> Bool {
-        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return term.isEmpty || texts.joined(separator: " ").localizedCaseInsensitiveContains(term)
+        guard !searchTerm.isEmpty else { return true }
+        return texts.joined(separator: " ").lowercased().contains(searchTerm)
     }
-    private func entries(in layout: Partition) -> [ProviderCatalogEntry] {
+
+    /// Catalog entries with their saved connections attached, computed in one
+    /// pass per render instead of re-deriving `endpoint(for:)` and `saved(_:)`
+    /// three times per entry inside the filter, the search haystack and the
+    /// sort comparator.
+    private struct EntryRow: Identifiable {
+        let entry: ProviderCatalogEntry
+        let connections: [Provider]
+        /// Catalog position — hoisted out of the comparator, which used to
+        /// rebuild the whole order dictionary on every render and look it up
+        /// per comparison.
+        let order: Int
+
+        var id: String { entry.id }
+        var category: ProviderCatalogEntry.Category { entry.category }
+    }
+
+    private func entries(in layout: Partition) -> [EntryRow] {
         let order = Dictionary(uniqueKeysWithValues: ProviderCatalogEntry.all.enumerated().map { ($1.id, $0) })
-        return ProviderCatalogEntry.all.filter { $0.endpoint(for: client) != nil || !layout.saved($0).isEmpty }.filter { entry in
-            let connections = layout.saved(entry)
-            let inCategory = category == nil || entry.category == category || (category == .coding && entry.includesCodingPlan)
-            return inCategory && (!configuredOnly || !connections.isEmpty) && matches(
-                [entry.name, entry.detail, entry.category.rawValue] + (entry.endpoint(for: client)?.models ?? []) +
-                connections.flatMap { [$0.name, $0.baseURL] + $0.models.map(\.name) })
-        }.sorted { lhs, rhs in
-            let left = !layout.saved(lhs).isEmpty, right = !layout.saved(rhs).isEmpty
-            if left != right { return left }
-            return (order[lhs.id] ?? 0) < (order[rhs.id] ?? 0)
-        }
+        return ProviderCatalogEntry.all
+            .filter { $0.endpoint(for: client) != nil || layout.hasSaved($0) }
+            .compactMap { entry -> EntryRow? in
+                let connections = layout.saved(entry)
+                let inCategory = category == nil || entry.category == category
+                    || (category == .coding && entry.includesCodingPlan)
+                guard inCategory, !configuredOnly || !connections.isEmpty else { return nil }
+                if !searchTerm.isEmpty {
+                    let haystack = [entry.name, entry.detail, entry.category.rawValue]
+                        + (entry.endpoint(for: client)?.models ?? [])
+                        + connections.flatMap { [$0.name, $0.baseURL] + $0.models.map(\.name) }
+                    guard matches(haystack) else { return nil }
+                }
+                return EntryRow(entry: entry, connections: connections, order: order[entry.id] ?? 0)
+            }
+            .sorted { lhs, rhs in
+                let left = !lhs.connections.isEmpty, right = !rhs.connections.isEmpty
+                if left != right { return left }
+                return lhs.order < rhs.order
+            }
     }
     private func custom(in layout: Partition) -> [Provider] {
         layout.custom.filter { matches([$0.name, $0.baseURL] + $0.models.map(\.name)) }
@@ -127,10 +165,10 @@ struct ProviderCatalogBrowser: View {
                                     if group == .platform && showsOfficial && !pinned.official {
                                         OfficialProviderCard(client: client, isDefault: activeID == nil, onUse: onUseOfficial)
                                     }
-                                    ForEach(items) { entry in
-                                        ProviderDirectoryCard(entry: entry, client: client, connections: layout.saved(entry),
+                                    ForEach(items) { row in
+                                        ProviderDirectoryCard(entry: row.entry, client: client, connections: row.connections,
                                             activeID: activeID, selectedID: selectedID, balances: balances,
-                                            onAdd: { onSelect(entry) }, onOpen: onOpen, onActivate: onActivate)
+                                            onAdd: { onSelect(row.entry) }, onOpen: onOpen, onActivate: onActivate)
                                     }
                                 }
                             }
@@ -296,7 +334,7 @@ private struct ProviderCardSurface<Content: View>: View {
                 selected || hovered ? Theme.chartBlue.opacity(0.6) :
                     state.color.opacity(state == .unconfigured ? 0.14 : 0.35)))
             .shadow(color: .black.opacity(hovered ? 0.06 : 0), radius: 10, y: 5)
-            .onHover { hovered = $0 }
+            .onHover { if hovered != $0 { hovered = $0 } }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovered)
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: state)
     }
@@ -335,7 +373,7 @@ private struct ProviderDirectoryCard: View {
                 }
                 Spacer(minLength: 8)
                 if let balance = balanceLabel {
-                    Text(balance)
+                    RollingNumberText(balance)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
@@ -405,7 +443,7 @@ private struct CustomProviderDirectoryCard: View {
                 }
                 Spacer(minLength: 8)
                 if let balance {
-                    Text(balance)
+                    RollingNumberText(balance)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
@@ -417,7 +455,7 @@ private struct CustomProviderDirectoryCard: View {
             HStack {
                 ProviderStatusBadge(state: ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete)
                 Spacer()
-                Text("\(provider.models.count) 个模型").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                RollingNumberText("\(provider.models.count) 个模型").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }.frame(height: 22)
             HStack {
                 Button(action: onOpen) { Label("配置", systemImage: "slider.horizontal.3") }

@@ -57,6 +57,26 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(tokenUnitStyle.rawValue, forKey: "tokenUnitStyle") }
     }
 
+    /// How estimated model spend is presented across currencies.
+    @Published var costDisplay: CostDisplay = .split {
+        didSet {
+            UserDefaults.standard.set(costDisplay.rawValue, forKey: "costDisplay")
+            if didSetReady, costDisplay.needsRate { ExchangeRate.shared.refreshIfStale() }
+        }
+    }
+
+    /// A user-pinned USD→CNY rate, overriding the fetched one. Set it to stop
+    /// the app making any outbound request for a rate at all.
+    @Published var manualUSDToCNY: Double? {
+        didSet {
+            if let rate = manualUSDToCNY, rate > 0 {
+                UserDefaults.standard.set(rate, forKey: "manualUSDToCNY")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "manualUSDToCNY")
+            }
+        }
+    }
+
     @Published var appearance: AppearanceMode {
         didSet {
             UserDefaults.standard.set(appearance.rawValue, forKey: "appearanceMode")
@@ -191,6 +211,11 @@ final class AppPreferences: ObservableObject {
         idleNotifyEnabled = UserDefaults.standard.object(forKey: "idleNotifyEnabled") as? Bool ?? false
         appearance = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: "appearanceMode") ?? "") ?? .light
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
+        costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
+        // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:
+        // the stored value is a number, and a 0 rate is not a rate.
+        let manual = UserDefaults.standard.double(forKey: "manualUSDToCNY")
+        manualUSDToCNY = manual > 0 ? manual : nil
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
         codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
         proxyThirdPartyTrafficEnabled = UserDefaults.standard.object(forKey: "proxyThirdPartyTrafficEnabled") as? Bool ?? true

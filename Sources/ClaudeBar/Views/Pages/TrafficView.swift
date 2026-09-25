@@ -319,11 +319,14 @@ struct TrafficView: View {
         }
         .onReceive(catalog.$records) { _ in
             // @Published emits before assignment; read the committed array.
-            DispatchQueue.main.async { recomputeFiltered() }
-        }
-        .onChange(of: catalog.records.count) { _, _ in
-            recomputeFiltered()
-            if selectedID == nil { selectedID = filtered.first?.id }
+            // One handler, not two: this used to be paired with an
+            // `onChange(of: catalog.records.count)` that ran the same filter a
+            // second time for the same publish (and a count-only handler would
+            // miss an in-place record update anyway, hence the deferral).
+            DispatchQueue.main.async {
+                recomputeFiltered()
+                if selectedID == nil { selectedID = filtered.first?.id }
+            }
         }
         .onChange(of: currentSummary?.state) { _, state in
             if state == .done || state == .error || state == .aborted {
@@ -845,7 +848,7 @@ struct TrafficView: View {
             Text(label)
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
-            Text(value)
+            RollingNumberText(value)
                 .font(Theme.Font.captionMono)
                 .foregroundColor(Theme.textPrimary)
                 .monospacedDigit()
@@ -1052,7 +1055,7 @@ private struct TrafficRow: View {
                         onInterrupt(rec)
                     }
                 }
-                Text(rec.startedAt.formatted(date: .omitted, time: .shortened))
+                Text(ProxyAccessLog.clockShort.string(from: rec.startedAt))
                     .font(Theme.Font.captionMono)
                     .foregroundColor(Theme.textTertiary())
             }

@@ -80,15 +80,14 @@ struct MetricTile: View {
                 }
             }
             if quotaWindows.isEmpty {
-                Text(value)
+                RollingNumberText(value)
                     .font(Theme.Font.displayMetricSmall)
                     .monospacedDigit()
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .minimumScaleFactor(0.5)
-                    .contentTransition(.numericText())
-                    .animation(.spring(response: 0.24, dampingFraction: 0.8), value: value)
+                        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: value)
             } else {
                 CodexQuotaGauges(windows: quotaWindows, compact: false)
             }
@@ -187,8 +186,16 @@ struct EqualRowGrid: Layout {
     var minColumnWidth: CGFloat
     var fixedColumns: Int?
 
+    /// Keyed on what the row heights actually depend on. It used to carry the
+    /// raw proposed width, but `sizeThatFits` collapses a non-finite proposal
+    /// to 0 while `placeSubviews` uses `bounds.width` — the *same* layout pass
+    /// therefore produced two different keys, so every child was measured
+    /// twice per pass for every greedy (`.frame(maxWidth: .infinity)`) parent,
+    /// which is the documented common case.
     struct MeasurementKey: Hashable {
-        let width: CGFloat
+        /// Non-finite proposals collapse to 0, matching `sizeThatFits`.
+        let proposalWidth: CGFloat
+        let colW: CGFloat
         let columns: Int
         let spacing: CGFloat
     }
@@ -205,12 +212,20 @@ struct EqualRowGrid: Layout {
         cache.measurements.removeAll(keepingCapacity: true)
     }
 
-    private func heights(for width: CGFloat, subviews: Subviews, cache: inout Cache) -> [CGFloat] {
+    /// Row heights for a proposed container width. The cache key is built from
+    /// the *collapsed* width and its derived column geometry, so the measure
+    /// pass (`sizeThatFits`) and the place pass (`placeSubviews`) — which
+    /// arrive with `∞` and with the resolved width respectively — hit the same
+    /// entry instead of re-measuring every child.
+    private func heights(container: CGFloat, subviews: Subviews, cache: inout Cache) -> [CGFloat] {
+        // A non-finite width makes the column math produce NaN/∞, which traps
+        // on `Int(...)`. Collapse it to 0 so we lay out one column instead.
+        let width = container.isFinite ? container : 0
         let cols = columnCount(for: width)
-        let key = MeasurementKey(width: width, columns: cols, spacing: spacing)
+        let colW = columnWidth(container: width, columns: cols)
+        let key = MeasurementKey(proposalWidth: width, colW: colW, columns: cols, spacing: spacing)
         if let heights = cache.measurements[key] { return heights }
-        let result = rowHeights(subviews: subviews, columns: cols,
-                                colW: columnWidth(container: width, columns: cols))
+        let result = rowHeights(subviews: subviews, columns: cols, colW: colW)
         // Live resize can propose hundreds of widths without changing the
         // children. Bound retained measurements while preserving reuse for
         // the usual measure/place proposal pair.
@@ -221,11 +236,9 @@ struct EqualRowGrid: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         // SwiftUI proposes `.infinity` width whenever the parent is greedy
-        // (`.frame(maxWidth: .infinity)`), and a non-finite width makes the
-        // column math produce NaN/∞, which traps on `Int(...)`. Collapse
-        // non-finite proposals to 0 so we lay out one column instead.
+        // (`.frame(maxWidth: .infinity)`); `heights` collapses that for us.
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 0
-        let heights = heights(for: width, subviews: subviews, cache: &cache)
+        let heights = heights(container: width, subviews: subviews, cache: &cache)
         let rows = heights.count
         let height = heights.reduce(0, +) + spacing * CGFloat(max(rows - 1, 0))
         return CGSize(width: width, height: height)
@@ -235,7 +248,7 @@ struct EqualRowGrid: Layout {
         let container = bounds.width.isFinite ? bounds.width : 0
         let cols = columnCount(for: container)
         let colW = columnWidth(container: container, columns: cols)
-        let heights = heights(for: container, subviews: subviews, cache: &cache)
+        let heights = heights(container: container, subviews: subviews, cache: &cache)
         var y = bounds.minY
         for (row, height) in heights.enumerated() {
             for col in 0..<cols {

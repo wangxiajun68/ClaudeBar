@@ -17,13 +17,39 @@ struct ProvidersView: View {
 
     private var client: ProviderClient { ProviderClient(rawValue: clientRaw) ?? .claude }
     private var tint: Color { client == .claude ? Theme.claude : Theme.codex }
-    private var providers: [Provider] { client == .claude ? providerStore.providers : codexStore.providers.map(\.asDisplayProvider) }
+
+    /// The page's whole model, resolved once per body.
+    ///
+    /// These were computed properties, so `workspace`'s call tree re-derived
+    /// each of them at every read: on the Codex client, `providers` maps and
+    /// rebuilds every model of every provider — and it was read four times
+    /// (the directory model, the count, and two `first(where:)` lookups).
+    private struct Facts {
+        var providers: [Provider] = []
+        var activeID: UUID?
+        var error: String?
+    }
+
+    private func facts() -> Facts {
+        var out = Facts()
+        if client == .claude {
+            out.providers = providerStore.providers
+            out.activeID = providerStore.activeProviderID
+            out.error = providerStore.errorMessage
+        } else {
+            out.providers = codexStore.providers.map(\.asDisplayProvider)
+            out.activeID = codexStore.activeProviderID
+            out.error = codexStore.errorMessage
+        }
+        return out
+    }
+
     private var activeID: UUID? { client == .claude ? providerStore.activeProviderID : codexStore.activeProviderID }
-    private var selected: Provider? { providers.first { $0.id == selectedID } }
     private var error: String? { client == .claude ? providerStore.errorMessage : codexStore.errorMessage }
 
     var body: some View {
-        workspace
+        let f = facts()
+        return workspace(f)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgPrimary)
         .onChange(of: clientRaw) { _, _ in selectedID = nil }
@@ -31,7 +57,7 @@ struct ProvidersView: View {
         .onChange(of: query) { _, _ in selectedID = nil }
         .onChange(of: configuredOnly) { _, _ in selectedID = nil }
         .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
-            if let id = activeID { connectionEdit = ProviderConnectionRoute(id: id, isNew: false) }
+            if let id = f.activeID { connectionEdit = ProviderConnectionRoute(id: id, isNew: false) }
         }
         .sheet(item: $connectionEdit) { route in
             if let draft = connectionDraft(route) {
@@ -44,24 +70,25 @@ struct ProvidersView: View {
         }
     }
 
-    private var workspace: some View {
+    private func workspace(_ f: Facts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if let error {
+            if let error = f.error {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(Theme.Font.caption).foregroundStyle(Theme.Ink.error)
                     .padding(.horizontal, 24).padding(.bottom, 12)
             }
             directoryToolbar
-            connectionStrip
-            directory
+            connectionStrip(f)
+            directory(f)
         }
     }
 
-    private var directory: some View {
+    private func directory(_ f: Facts) -> some View {
         ProviderDirectoryHost(
             model: ProviderDirectoryModel(
-                client: client, providers: providers, activeID: activeID, selectedID: selectedID,
+                client: client, providers: f.providers,
+                activeID: f.activeID, selectedID: selectedID,
                 query: query, category: category, configuredOnly: configuredOnly,
                 balances: providerStore.balanceAmounts),
             onActivate: { activate($0, modelID: $1) },
@@ -136,16 +163,16 @@ struct ProvidersView: View {
         .padding(.horizontal, 24)
     }
 
-    private var connectionStrip: some View {
+    private func connectionStrip(_ f: Facts) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
-                Circle().fill(activeID == nil ? Theme.textSecondary : Theme.statusSuccess).frame(width: 6, height: 6)
+                Circle().fill(f.activeID == nil ? Theme.textSecondary : Theme.statusSuccess).frame(width: 6, height: 6)
                 Text("当前连接").foregroundStyle(Theme.textSecondary)
-                Text(providers.first { $0.id == activeID }?.name ?? "官方 / 默认")
+                Text(f.providers.first { $0.id == f.activeID }?.name ?? "官方 / 默认")
                     .fontWeight(.semibold).lineLimit(1)
             }
-            Text("\(providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
-            if let provider = providers.first(where: { $0.id == activeID }), let model = currentModel(provider) {
+            Text("\(f.providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
+            if let provider = f.providers.first(where: { $0.id == f.activeID }), let model = currentModel(provider) {
                 Text(model).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
                     .layoutPriority(-1)
             }
@@ -155,7 +182,7 @@ struct ProvidersView: View {
         }
         .font(Theme.Font.caption).foregroundStyle(Theme.textPrimary)
         .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 16)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: activeID)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: f.activeID)
     }
 
     private func currentModel(_ p: Provider) -> String? {

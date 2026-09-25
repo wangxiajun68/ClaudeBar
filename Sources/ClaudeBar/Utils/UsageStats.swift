@@ -49,6 +49,23 @@ struct UsageStats {
         return formatter(format).string(from: reference)
     }
 
+    /// Short form for a pill in a tile header, where `label(for:reference:)`
+    /// ("2026年9月") does not fit: "今天" for the current day, otherwise the
+    /// period's own granularity ("9月" / "2026年").
+    ///
+    /// The widget snapshot's period line is the same string, which is why this
+    /// lives here rather than in the one view that needs the pill.
+    static func compactLabel(for period: UsagePeriod, reference: Date) -> String {
+        switch period {
+        case .day, .custom:
+            return Calendar.current.isDateInToday(reference) ? "今天" : "当日"
+        case .month:
+            return formatter("M月").string(from: reference)
+        case .year:
+            return formatter("yyyy年").string(from: reference)
+        }
+    }
+
     /// Shift the reference date by one unit of the current period (±1).
     static func shift(_ period: UsagePeriod, reference: Date, by amount: Int) -> Date {
         let cal = Calendar.current

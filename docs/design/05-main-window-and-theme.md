@@ -21,23 +21,24 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），顶栏 tabs + detail：
 
-- **topBar**：brand 头 + 8 项导航（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置 + 右上角问号进「帮助」）；选中项为 accent 填充，hover 变亮。末尾为实时状态 pill（"N 运行中/空闲"）。窗口收窄时 `ViewThatFits` 先丢掉每项的图标，只留文字。
+- **topBar**：冰色画布贯穿顶部，导航标签收在居中的白色悬浮圆角容器中，brand 与实时状态留在两侧；容器使用轻阴影与发丝线，不使用全幅模糊。导航包含概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置；选中项使用浅蓝填充，右侧问号进入「帮助」。窗口收窄时 `ViewThatFits` 先丢掉每项的图标，保留文字与原有键盘可达性。
 - **Detail**：按 `selectedPage`（`AppPage`）切换；流量页首次打开后保持挂载，避免检查器重建卡顿。
 - **全局**：⌘K `CommandPalette`；关窗后 status item 保活。
 
-## 8 个 Pages
+## 9 个 Pages
 
 全部页面走**宫格（瓦片）布局**（流量检查器与 VPN 节点列表为领域专用布局）。网格列模板集中在 `Theme.GridLayout.Preset`。
 
 | 页面 | 要点 |
 |------|------|
-| **DashboardView** | 指标头行 → 资源条 → 能源流向 → VPN 卡 → 7 块指标磁贴 → 活跃会话总览 → 用量 Top |
+| **DashboardView** | 标题 → 资源条 → **用量对照**（7 / 14 / 28 天，来源堆叠柱 + 此前总量虚线 + 刊例价估算 + 「Token 去了哪些模型」）→ 能源流向 → 活跃会话总览 → **用量分布日历**（可翻月，点某天看当天 Token） |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
 | **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；Claude + Codex 两栈自适应网格 + 编辑器 |
-| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片 |
+| **ConnectorsView** | 连接器：三家客户端的本机 Skills / MCP / 插件，左侧客户端筛选 + 「本机共享」，详情页渲染 SKILL.md、MCP `tools/list` 与插件组成；见 [technical/16](../technical/16-connectors.md) |
+| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片（每块带自己的估算金额） |
 | **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 全部为「`SectionHeader` + `TileGrid(.pageSetting)`」的宫格：启动 / 外观 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / 代理上游 / 第三方接入 / VPN 代理 / 连通性 / 配置文件 / 关于 |
+| **SettingsView** | 全部为「`SectionHeader` + `TileGrid(.pageSetting)`」的宫格：启动 / 电池管理授权 / 外观 / 模型花费 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / 代理上游 / 第三方接入 / VPN 代理 / 连通性 / 配置文件 / 关于 |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -54,9 +55,9 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ConnectivityProbeButton`、`ProxyCurlExample`（整宽卡片：说明 + 内嵌 `CodeBlock`）。
-- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 200pt）铺 `SettingTile`；代理上游的四个选择与第三方接入的 Base URL / 鉴权都走这套，不再有整宽行或 divider 列表。
-- 整宽段落用 `panelCard()`，不套 `TileGrid`（例如 `ProxyCurlExample` 的 curl 示例）。**卡不套卡**：`CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；如果把卡片加进 `CodeBlock`，帮助页那半打代码块会变成六层嵌套卡。
+- `ConnectivityProbeButton`、`ProxyCurlExample`（与其他设置等大的瓦片，弹出层内查看并复制完整 curl 命令）。
+- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 200pt）铺 `SettingTile`；代理上游的四个选择与第三方接入的 Base URL / 鉴权 / curl 示例都走这套。
+- `CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；帮助页的代码块也复用它。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
 - `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。
 - `BatteryChargeControls.swift`：能源卡的电池控制段（见 [technical/12](../technical/12-battery-control.md)）。

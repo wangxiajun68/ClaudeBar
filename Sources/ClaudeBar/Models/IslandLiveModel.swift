@@ -2,15 +2,45 @@ import Foundation
 import Combine
 import SwiftUI
 
+/// What the island's alert strip is showing.
+///
+/// A session finishing and a quota window rolling over are both "something you
+/// were waiting for just became true", so they share one strip, one timer and
+/// one dismissal path. They carry different payloads, hence a sum type rather
+/// than a widened session struct.
+enum IslandAlert: Equatable, Identifiable {
+    case finished(IslandSession)
+    case quotaReset(CodexQuotaWindow)
+
+    /// Identity decides when the strip is replaced mid-animation: a newer
+    /// alert of either kind takes over the one on screen.
+    var id: String {
+        switch self {
+        case .finished(let session): return "finished:\(session.id)"
+        case .quotaReset(let window): return "quota:\(window.label)"
+        }
+    }
+
+    var agent: IslandAgent {
+        switch self {
+        case .finished(let session): return session.agent
+        case .quotaReset: return .codex
+        }
+    }
+}
+
 /// The three agent families ClaudeBar watches.
 enum IslandAgent: String, Equatable, CaseIterable {
     case claude, codex, cursor
 
-    var glanceSymbol: String {
+    /// The island's own instrument vocabulary for this family, so a session
+    /// module on a glance card uses the same drawing family as the rest of the
+    /// app instead of a one-off SF Symbol.
+    var markKind: InstrumentGlyph.Kind {
         switch self {
-        case .claude: return "sparkle"
-        case .codex: return "terminal"
-        case .cursor: return "cursorarrow.rays"
+        case .claude: return .sessions
+        case .codex: return .config
+        case .cursor: return .overview
         }
     }
 
@@ -49,6 +79,7 @@ struct IslandSession: Identifiable, Equatable {
 struct IslandDay: Equatable, Identifiable {
     let date: Date
     let tokens: Int
+    var cost = ModelPricing.Estimate()
     var id: Date { date }
 }
 
@@ -56,6 +87,7 @@ struct IslandDay: Equatable, Identifiable {
 struct IslandUsage: Equatable {
     var today = 0
     var todayCalls = 0
+    var todayCost = ModelPricing.Estimate()
     var yesterday = 0
     var month = 0
     var lastMonthSameSpan = 0
@@ -78,6 +110,7 @@ struct IslandUsage: Equatable {
 @MainActor
 final class IslandLiveModel: ObservableObject {
     @Published private(set) var sessions: [IslandSession] = []
+    @Published private(set) var sessionCosts: [String: ModelPricing.Estimate] = [:]
     @Published private(set) var usage = IslandUsage()
     @Published private(set) var claudeRoute = ""
     @Published private(set) var codexRoute = ""
@@ -90,7 +123,19 @@ final class IslandLiveModel: ObservableObject {
     /// A session that just went busy → idle. Fires once per transition.
     let finished = PassthroughSubject<IslandSession, Never>()
 
+    /// A Codex quota window that just rolled over. Fires once per rollover —
+    /// see `QuotaResetDetector`, which is what keeps a 4.2 s glance from
+    /// re-announcing the same reset.
+    let quotaReset = PassthroughSubject<CodexQuotaWindow, Never>()
+
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
+
+    /// The row a session sits in, or nil once it is gone. The session strip
+    /// uses this to keep its dwell on the *session* rather than on the slot
+    /// index it happened to occupy before the list changed under it.
+    func index(of session: IslandSession) -> Int? {
+        sessions.firstIndex { $0.id == session.id }
+    }
 
     /// Busy agent families, most urgent first, without repeats.
     var busyAgents: [IslandAgent] {
@@ -104,8 +149,10 @@ final class IslandLiveModel: ObservableObject {
     private weak var providerStore: ProviderStore?
     private var cancellables: Set<AnyCancellable> = []
     private var completionDetector = ConfirmedCompletionDetector<String>()
+    private var quotaResetDetector = QuotaResetDetector()
     private var usageRefreshPending = false
     private var usageRefreshQueued = false
+    private var sessionCostGeneration = 0
     private var lastRescan: Date = .distantPast
     private var periodicTimer: Timer?
 
@@ -150,7 +197,17 @@ final class IslandLiveModel: ObservableObject {
         codexStore.$quotaWindows
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.quotaWindows = $0 }
+            .sink { [weak self] windows in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.quotaWindows = windows
+                    // Edge-detect before publishing, so the 4.2 s glance poll
+                    // cannot re-announce a window that merely stayed low.
+                    for window in self.quotaResetDetector.record(windows) {
+                        self.quotaReset.send(window)
+                    }
+                }
+            }
             .store(in: &cancellables)
 
         Publishers.CombineLatest(VpnManager.shared.$state, AppPreferences.shared.$vpnEnabled)
@@ -165,7 +222,10 @@ final class IslandLiveModel: ObservableObject {
         providerStore.$usageStats
             .dropFirst()
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in self?.reloadUsage() }
+            .sink { [weak self] _ in
+                self?.reloadUsage()
+                self?.reloadSessionCosts()
+            }
             .store(in: &cancellables)
 
         reloadUsage()
@@ -174,6 +234,7 @@ final class IslandLiveModel: ObservableObject {
     // MARK: - Sessions
 
     private func apply(_ fresh: [IslandSession]) {
+        let oldIDs = sessions.map(\.id)
         let completed = completionDetector.record(fresh.map {
             (id: $0.id, isBusy: $0.isBusy, completionID: $0.completionID)
         })
@@ -181,6 +242,33 @@ final class IslandLiveModel: ObservableObject {
             finished.send(session)
         }
         sessions = fresh
+        if fresh.map(\.id) != oldIDs { reloadSessionCosts() }
+    }
+
+    private func reloadSessionCosts() {
+        let requests: [(id: String, source: UsageSource, sessionId: String)] = sessions.compactMap { session in
+            let source: UsageSource
+            switch session.agent {
+            case .claude: source = .claude
+            case .codex: source = .codex
+            case .cursor: return nil
+            }
+            return (session.id, source, session.sessionId)
+        }
+        sessionCostGeneration += 1
+        let generation = sessionCostGeneration
+        Task { [weak self] in
+            let costs = await Task.detached(priority: .utility) {
+                var result: [String: ModelPricing.Estimate] = [:]
+                for request in requests {
+                    let usage = UsageIndex.fetchSession(source: request.source, sessionId: request.sessionId)
+                    if !usage.isEmpty { result[request.id] = ModelPricing.estimate(usage) }
+                }
+                return result
+            }.value
+            guard let self, generation == self.sessionCostGeneration else { return }
+            if costs != self.sessionCosts { self.sessionCosts = costs }
+        }
     }
 
     nonisolated private static func flatten(claude: [SessionInfo], cursor: [CursorSessionInfo],
@@ -303,6 +391,7 @@ final class IslandLiveModel: ObservableObject {
         var usage = IslandUsage()
         let today = UsageIndex.fetchBySource(in: DateInterval(start: todayStart, end: todayEnd))
         usage.today = total(today)
+        usage.todayCost = ModelPricing.estimate(today.values.flatMap { $0 })
         usage.todayCalls = today.values.reduce(0) { $0 + $1.reduce(0) { $0 + $1.calls } }
         usage.yesterday = total(UsageIndex.fetchBySource(in: DateInterval(start: yesterdayStart, end: todayStart)))
         let month = UsageIndex.fetchBySource(in: monthSpan)
@@ -314,15 +403,14 @@ final class IslandLiveModel: ObservableObject {
             in: DateInterval(start: lastMonthStart, end: max(lastMonthEnd, lastMonthStart))))
 
         // Day keys are local `yyyy-MM-dd`, the same form `UsageIndex` stores.
-        var byDay: [String: Int] = [:]
-        for days in UsageIndex.fetchDailyBySource(in: DateInterval(start: seriesStart, end: todayEnd)).values {
-            for day in days { byDay[day.day, default: 0] += day.totalTokens }
-        }
+        let byDay = UsageIndex.fetchDailyModels(in: DateInterval(start: seriesStart, end: todayEnd))
         usage.days = (0..<30).compactMap { offset in
             guard let date = cal.date(byAdding: .day, value: offset, to: seriesStart) else { return nil }
             let c = cal.dateComponents([.year, .month, .day], from: date)
             let key = String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-            return IslandDay(date: date, tokens: byDay[key] ?? 0)
+            let models = byDay[key] ?? []
+            return IslandDay(date: date, tokens: models.reduce(0) { $0 + $1.totalTokens },
+                             cost: ModelPricing.estimate(models))
         }
         return usage
     }

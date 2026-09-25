@@ -25,12 +25,20 @@ struct UsageHeatmap: View {
     }
 
     var body: some View {
-        Group {
+        // Derived once per render. `byDay` rebuilds a dictionary over the whole
+        // `days` array on every read (it is a computed property), and the week
+        // strip used to read it *and* `peak` per cell — seven dictionary
+        // rebuilds and seven max passes for a seven-cell row. The month/year
+        // Canvas read it again inside its draw closure, so every frame of the
+        // period-change animation rebuilt it too.
+        let by = byDay
+        let peak = max(Double(by.values.max() ?? 1), 1)
+        return Group {
             switch period {
             case .day, .custom:
-                weekStrip
+                weekStrip(by: by, peak: peak)
             case .month, .year:
-                contributionGrid
+                contributionGrid(by: by, peak: peak)
             }
         }
         .frame(maxWidth: .infinity)
@@ -41,8 +49,8 @@ struct UsageHeatmap: View {
 
     // MARK: Day — seven large cells for the week containing `reference`
 
-    private var weekStrip: some View {
-        let items = weekItems
+    private func weekStrip(by: [String: Int], peak: Double) -> some View {
+        let items = weekItems(by: by, peak: peak)
         return GeometryReader { geo in
             let gap: CGFloat = compact ? 4 : 6
             let n = CGFloat(max(items.count, 1))
@@ -71,7 +79,7 @@ struct UsageHeatmap: View {
 
     // MARK: Month / year — GitHub week-column grid, Canvas
 
-    private var contributionGrid: some View {
+    private func contributionGrid(by: [String: Int], peak: Double) -> some View {
         GeometryReader { geo in
             let layout = HeatLayout.make(
                 interval: gridInterval,
@@ -79,8 +87,6 @@ struct UsageHeatmap: View {
                 cal: cal,
                 compact: compact)
             Canvas { ctx, _ in
-                let by = byDay
-                let peak = max(Double(by.values.max() ?? 1), 1)
                 for col in 0..<layout.cols {
                     for row in 0..<7 {
                         let i = col * 7 + row - layout.leading
@@ -138,11 +144,7 @@ struct UsageHeatmap: View {
         Dictionary(uniqueKeysWithValues: days.map { ($0.day, $0.totalTokens) })
     }
 
-    private var peak: Double {
-        max(Double(byDay.values.max() ?? 1), 1)
-    }
-
-    private var weekItems: [Cell] {
+    private func weekItems(by: [String: Int], peak: Double) -> [Cell] {
         let week = cal.dateInterval(of: .weekOfYear, for: reference)
             ?? DateInterval(start: reference, duration: 7 * 86400)
         let today = cal.startOfDay(for: Date())
@@ -152,7 +154,7 @@ struct UsageHeatmap: View {
                 return Cell()
             }
             let key = Self.dayKey(date)
-            let tokens = byDay[key]
+            let tokens = by[key]
             let weekday = cal.component(.weekday, from: date)
             return Cell(
                 date: date,
@@ -301,11 +303,10 @@ struct QuotaRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text(remainingLabel ?? defaultTrailing)
+                RollingNumberText(remainingLabel ?? defaultTrailing)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundColor(mode == .remaining ? fillColor : Theme.textSecondary)
-                    .contentTransition(.numericText())
-            }
+                }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.cardFill(0.08))

@@ -183,6 +183,19 @@ enum HelpCatalog {
             ],
             keywords: "余额 balance 无数据 dash 中转 relay"
         ),
+        HelpEntry(
+            id: "start-cost",
+            chapter: .start,
+            title: "模型花费是怎么算的",
+            summary: "按厂商官方刊例价折算的估算，不是账单。",
+            body: [
+                .para("概览的「模型花费」与用量页每个模型瓦片上的金额，都是**拿本机记录的 token 乘官方刊例价**算出来的。Claude Code / Codex 的订阅不按 token 计费，第三方中转基本不回传单价（只有 OpenRouter 与 Cursor 的接口带金额），所以应用拿不到真实账单——这个数字回答的是「这些 token 走按量 API 要花多少钱」。"),
+                .para("人民币与美元**分列不换算**：主数字是金额大的那个，副行写「另有 $43.20」。没有汇率的换算会得到一个谁都不认的数字。"),
+                .para("有模型算不出钱，就写清楚是什么情况，而不是显示 0：**订阅制**（Kimi Code 会员、火山 Coding Plan 这类按套餐计的）根本不按 token 收费；**未公开价**是厂商没公布刊例价（百炼的 qwen3.8 系列缓存命中价）；**未计价**是价目表还没收录这个模型名。三者的 token 都不计入合计，tooltip 里写明这部分总共多少。"),
+                .para("金额随概览上方的周期（日 / 月 / 年）走的同一套口径——用量页切到哪个月，磁贴就是哪个月。"),
+            ],
+            keywords: "花费 成本 cost 价格 pricing 估算 未计价 订阅制"
+        ),
     ]
 
     // MARK: 本地代理

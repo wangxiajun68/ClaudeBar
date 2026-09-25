@@ -145,6 +145,37 @@ final class UsageJSONStore {
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
 
+    /// All-time usage belonging to one transcript, identified by its file
+    /// suffix. Claude and Codex use different filename forms.
+    func fetchSession(pathPrefix: String, pathSuffix: String) -> [ModelUsage] {
+        lock.lock(); defer { lock.unlock() }
+        loadLocked()
+        var byModel: [String: ModelUsage] = [:]
+        for row in rollup.values where row.path.hasPrefix(pathPrefix) && row.path.hasSuffix(pathSuffix) {
+            var usage = byModel[row.model] ?? ModelUsage(model: row.model)
+            usage.calls += row.calls
+            usage.inputTokens += row.input
+            usage.outputTokens += row.output
+            usage.cacheReadTokens += row.cacheRead
+            usage.cacheCreationTokens += row.cacheCreate
+            byModel[row.model] = usage
+        }
+        return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
+    }
+
+    func fetchDailyModels(startDay: String, endDay: String) -> [String: [ModelUsage]] {
+        lock.lock(); defer { lock.unlock() }
+        loadLocked()
+        var days: [String: [ModelUsage]] = [:]
+        for row in rollup.values where row.day >= startDay && row.day <= endDay
+            && (row.path.hasPrefix("claude:") || row.path.hasPrefix("codex:")) {
+            days[row.day, default: []].append(ModelUsage(model: row.model, calls: row.calls,
+                inputTokens: row.input, outputTokens: row.output,
+                cacheReadTokens: row.cacheRead, cacheCreationTokens: row.cacheCreate))
+        }
+        return days.mapValues { ModelUsage.merged($0) }
+    }
+
     func fetchDaily(startDay: String, endDay: String, pathPrefix: String? = nil) -> [DayUsage] {
         lock.lock(); defer { lock.unlock() }
         loadLocked()

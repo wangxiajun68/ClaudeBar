@@ -60,7 +60,7 @@ VPN 页把 **mihomo**（Clash Meta）作为本机 sidecar：生成 runtime YAML 
 | 表面 | 内容 |
 |------|------|
 | 主窗口 **VPN** 页 | `VPNView`：开关、节点宫格、测速、订阅（`VPNSubscriptionSection`）、日志 |
-| 菜单栏 popup | `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`：选节点、测速）+ `VpnPowerCard`（启停）；VPN 运行时 status item 显示双行 ↓/↑（`VpnMenuBarRateView`） |
+| 菜单栏 popup | `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`：选节点、测速）；VPN 运行时 status item 显示双行 ↓/↑ + 电池格（`VpnMenuBarRateView`，宽度由布局常量推导）。`VpnPowerCard` 磁贴保留在源码里但**当前未挂载** |
 | 主窗口 | **不**重复 popup 的 VPN chrome |
 
 菜单栏模板图标由 `MenuBarMark` 矢量绘制。仓库里的 `MenuBarIcon.png` 带不透明底，`isTemplate` 后会整块变白，status item **不要**再当模板 PNG 用。

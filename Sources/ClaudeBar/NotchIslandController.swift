@@ -12,10 +12,8 @@ final class NotchIslandState: ObservableObject {
     @Published var mode: Mode = .collapsed
     @Published var geometry: NotchGeometry
     @Published var showsWings: Bool
-    /// The session the alert is about; set while `mode == .alert`.
-    @Published var alert: IslandSession?
-    /// Live session count — the only session fact the island's size depends on.
-    @Published var sessionCount = 0
+    /// What the alert is about; set while `mode == .alert`.
+    @Published var alert: IslandAlert?
 
     init(geometry: NotchGeometry, showsWings: Bool) {
         self.geometry = geometry
@@ -40,16 +38,9 @@ final class NotchIslandState: ObservableObject {
                height: notch.height + IslandStyle.alertBodyHeight)
     }
 
-    var sessionsLaneHeight: CGFloat {
-        guard sessionCount > 0 else { return IslandStyle.emptyLaneHeight }
-        let rows = min(sessionCount, IslandStyle.maxSessionRows)
-        var height = CGFloat(rows) * IslandStyle.sessionRowHeight
-            + CGFloat(rows - 1) * IslandStyle.sessionRowSpacing
-        if sessionCount > IslandStyle.maxSessionRows {
-            height += IslandStyle.sessionRowSpacing + IslandStyle.overflowRowHeight
-        }
-        return height
-    }
+    /// A fixed two-row grid with a compact readout. Scrolling never changes
+    /// the island's height, regardless of the number of sessions.
+    var sessionsLaneHeight: CGFloat { IslandStyle.expandedLaneHeight }
 
     var expandedSize: CGSize {
         let width = max(IslandStyle.minExpandedWidth, notch.width + 2 * IslandStyle.topFlare + 320)
@@ -99,6 +90,9 @@ final class NotchIslandController {
     private var localMonitor: Any?
     private var armTimer: Timer?
     private var tickTimer: Timer?
+    /// Last value written to `panel.ignoresMouseEvents` (see
+    /// `syncMouseCapture`). Cleared whenever the panel is replaced.
+    private var mouseCapture: Bool?
     private var leaveDeadline: Date?
     private var alertDeadline: Date?
     private var screenObserver: NSObjectProtocol?
@@ -162,7 +156,6 @@ final class NotchIslandController {
         let state = NotchIslandState(geometry: geometry, showsWings: prefs.notchIslandShowsWings)
         let model = IslandLiveModel(providerStore: providerStore, codexStore: codexStore)
         model.setPeriodicRefresh(prefs.notchIslandShowsWings)
-        state.sessionCount = model.sessions.count
         self.state = state
         self.model = model
         bind(model, to: state)
@@ -198,6 +191,7 @@ final class NotchIslandController {
         container.addSubview(hosting)
         panel.contentView = container
         self.panel = panel
+        mouseCapture = nil
 
         position(panel, geometry: geometry)
         panel.orderFrontRegardless()
@@ -229,20 +223,22 @@ final class NotchIslandController {
     private func bind(_ model: IslandLiveModel, to state: NotchIslandState) {
         modelCancellables.removeAll()
 
-        model.$sessions
-            .map(\.count)
-            .removeDuplicates()
-            .sink { [weak state] count in
-                MainActor.assumeIsolated {
-                    guard let state, state.sessionCount != count else { return }
-                    withAnimation(IslandStyle.morphSpring) { state.sessionCount = count }
-                }
+        // No `model.$sessions` bridge: it used to write a `sessionCount` on the
+        // state purely to animate the lane's height, but the strip has been a
+        // fixed-height window since the island stopped resizing around its
+        // sessions (see `NotchIslandState.sessionsLaneHeight`). The bridge only
+        // produced a `morphSpring` animation and a state invalidation per poll
+        // whose result nothing read.
+
+        model.quotaReset
+            .sink { [weak self] window in
+                MainActor.assumeIsolated { self?.showAlert(for: .quotaReset(window)) }
             }
             .store(in: &modelCancellables)
 
         model.finished
             .sink { [weak self] session in
-                MainActor.assumeIsolated { self?.showAlert(for: session) }
+                MainActor.assumeIsolated { self?.showAlert(for: .finished(session)) }
             }
             .store(in: &modelCancellables)
     }
@@ -344,14 +340,24 @@ final class NotchIslandController {
 
     /// The window only receives clicks that land on the drawn island. The rest
     /// of the fixed panel stays click-through, including while an alert is up.
+    ///
+    /// Guarded on the last value written: this is called from the pointer
+    /// monitors (once per `mouseMoved`) *and* from the 10 Hz close timer, and
+    /// `ignoresMouseEvents` is not a cheap flag to re-set — each write re-runs
+    /// the window's mouse-handling re-evaluation, which shows up in a sample
+    /// as `_NSWindowSetIgnoresMouseEvents` under the pointer-move stack.
     private func syncMouseCapture() {
         guard let panel, let state else { return }
+        let ignore: Bool
         switch state.mode {
         case .collapsed:
-            panel.ignoresMouseEvents = true
+            ignore = true
         case .alert, .expanded:
-            panel.ignoresMouseEvents = !islandHitZone.contains(NSEvent.mouseLocation)
+            ignore = !islandHitZone.contains(NSEvent.mouseLocation)
         }
+        guard ignore != mouseCapture else { return }
+        mouseCapture = ignore
+        panel.ignoresMouseEvents = ignore
     }
 
     private var islandHitZone: CGRect {
@@ -375,13 +381,18 @@ final class NotchIslandController {
         startTicking()
     }
 
-    /// Surfaces a finished session. A newer finish replaces the one on
-    /// screen; nothing interrupts an expanded island, which already lists it.
-    private func showAlert(for session: IslandSession) {
+    /// Surfaces an alert in the strip below the notch. A newer alert replaces
+    /// the one on screen; nothing interrupts an expanded island, which already
+    /// lists the sessions (and the quota it shows).
+    ///
+    /// Finished sessions and quota rollovers share this path — both are
+    /// "something you were waiting for just became true", both auto-dismiss on
+    /// the same deadline, and both expand the island on click.
+    private func showAlert(for alert: IslandAlert) {
         guard prefs.notchIslandAlertsEnabled, let state, state.mode != .expanded else { return }
         alertDeadline = Date().addingTimeInterval(Self.alertDuration)
         withAnimation(IslandStyle.alertSpring) {
-            state.alert = session
+            state.alert = alert
             state.mode = .alert
         }
         syncMouseCapture()

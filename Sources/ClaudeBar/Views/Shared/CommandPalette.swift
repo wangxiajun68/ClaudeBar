@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // MARK: - Command result
 
@@ -23,6 +24,24 @@ struct CommandItem: Identifiable {
     let icon: String
     let tint: Color
     let result: CommandResult
+    /// Lowercased copies, folded once at construction. The filter and the
+    /// rank comparison both run per keystroke *and* per comparison inside
+    /// `sorted` — re-lowercasing there allocated a fresh string every time.
+    let searchTitle: String
+    let searchSubtitle: String
+
+    init(id: String, kind: Kind, title: String, subtitle: String,
+         icon: String, tint: Color, result: CommandResult) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.tint = tint
+        self.result = result
+        self.searchTitle = title.lowercased()
+        self.searchSubtitle = subtitle.lowercased()
+    }
 }
 
 // MARK: - Command palette
@@ -40,6 +59,7 @@ struct CommandPalette: View {
 
     @State private var query = ""
     @State private var selection: String?
+    @State private var items: [CommandItem] = []
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -79,11 +99,18 @@ struct CommandPalette: View {
                 }
                 .onAppear {
                     searchFocused = true
-                    selection = allItems.first?.id
+                    refreshItems(reselect: true)
                 }
             }
         }
         .animation(Theme.Animation.smooth, value: isPresented)
+        // While the palette is open a poll can add, finish or drop a session.
+        // Rebuilding on the store's own signals (rather than on every render)
+        // keeps the list current without re-deriving it per keystroke.
+        .onReceive(Publishers.MergeMany(providerStore.viewChanges([.configuration, .sessions]))) { _ in
+            guard isPresented else { return }
+            refreshItems()
+        }
     }
 
     private func moveSelection(_ delta: Int) {
@@ -159,8 +186,13 @@ struct CommandPalette: View {
 
     // MARK: Items
 
-    /// The full set of navigable items, rebuilt from the store each render.
-    private var allItems: [CommandItem] {
+    /// The full set of navigable items, built when the palette opens or its
+    /// source data changes — not on every render. Building them ran
+    /// `SessionTitle.condense` for every live session and was previously
+    /// repeated for every read of `filtered` (body, `moveSelection`,
+    /// `fireSelected`, the query `onChange`): two to three full rebuilds per
+    /// keystroke.
+    private func buildItems() -> [CommandItem] {
         var items = AppPage.allCases.map { p in
             CommandItem(id: "page:\(p.rawValue)", kind: .page, title: p.label,
                         subtitle: "前往页面",
@@ -168,7 +200,7 @@ struct CommandPalette: View {
                         result: .page(p))
         }
         items += providerStore.sessions.filter(\.isAlive).map { s in
-            CommandItem(id: "claude:\(s.pid)", kind: .claudeSession, title: s.projectFolder,
+            CommandItem(id: "claude:\(s.pid)", kind: .claudeSession, title: s.displayTitle,
                         subtitle: s.name.isEmpty ? "Claude Code · PID \(s.pid)" : s.name,
                         icon: "rectangle.connected.to.line.below",
                         tint: Theme.statusBusy,
@@ -176,7 +208,7 @@ struct CommandPalette: View {
         }
         // Cursor sessions carry no UUID, so they route to the sessions page.
         items += providerStore.cursorSessions.map { s in
-            CommandItem(id: "cursor:\(s.composerId)", kind: .cursorSession, title: s.projectFolder,
+            CommandItem(id: "cursor:\(s.composerId)", kind: .cursorSession, title: s.displayTitle,
                         subtitle: s.name.isEmpty ? "Cursor" : s.name,
                         icon: "cursorarrow",
                         tint: Theme.cursorAccent,
@@ -192,16 +224,19 @@ struct CommandPalette: View {
         return items
     }
 
+    private func refreshItems(reselect: Bool = false) {
+        items = buildItems()
+        if reselect { selection = filtered.first?.id }
+    }
+
     /// Case-insensitive substring filter on title + subtitle; prefix matches
     /// rank above contained matches.
     private var filtered: [CommandItem] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return allItems }
-        return allItems
-            .filter { item in
-                item.title.lowercased().contains(q) || item.subtitle.lowercased().contains(q)
-            }
-            .sorted { $0.title.lowercased().hasPrefix(q) && !$1.title.lowercased().hasPrefix(q) }
+        guard !q.isEmpty else { return items }
+        return items
+            .filter { $0.searchTitle.contains(q) || $0.searchSubtitle.contains(q) }
+            .sorted { $0.searchTitle.hasPrefix(q) && !$1.searchTitle.hasPrefix(q) }
     }
 
     // MARK: Actions

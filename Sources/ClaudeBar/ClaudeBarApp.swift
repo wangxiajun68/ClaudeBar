@@ -61,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         ScreenshotHotKey.shared.startIfEnabled()
 
+        // Fetches only when the saved preference already asks for a converted
+        // cost display — the default 分列 mode makes no outbound request at all.
+        ExchangeRate.shared.start()
+
         // Re-read the login item so the Settings toggle reflects the system
         // rather than a remembered value. Also re-runs on every activation, so
         // a change made in System Settings shows up on return.
