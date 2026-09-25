@@ -280,7 +280,7 @@ struct AgentSwarmView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             if showsAge {
-                Text("\(child.relativeUpdated) 前")
+                RollingNumberText("\(child.relativeUpdated) 前")
                     .font(Theme.Font.tileDetail)
                     .monospacedDigit()
                     .foregroundColor(Theme.textTertiary(0.45))
@@ -318,9 +318,12 @@ struct AgentSwarmView: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             guard !compact else { return }
-            withAnimation(Theme.Animation.bouncy) {
-                hoveredId = hovering ? child.id : (hoveredId == child.id ? nil : hoveredId)
-            }
+            // Edge-triggered: a repeated same-value event used to restart the
+            // bounce (a `@State` write invalidates regardless of equality), and
+            // one hover re-evaluates every cell in the cluster.
+            let next: String? = hovering ? child.id : (hoveredId == child.id ? nil : hoveredId)
+            guard next != hoveredId else { return }
+            withAnimation(Theme.Animation.bouncy) { hoveredId = next }
         }
         .onTapGesture(count: 2) { onOpen?(child) }
         .help(child.help)
@@ -358,7 +361,7 @@ struct AgentSwarmView: View {
             Text(child.isActive ? "运行中" : "空闲")
                 .font(Theme.Font.tileDetail)
                 .foregroundColor(child.isActive ? Theme.externalHi : Theme.textTertiary())
-            Text("\(child.relativeUpdated) 前")
+            RollingNumberText("\(child.relativeUpdated) 前")
                 .font(Theme.Font.tileDetail)
                 .monospacedDigit()
                 .foregroundColor(Theme.textTertiary())

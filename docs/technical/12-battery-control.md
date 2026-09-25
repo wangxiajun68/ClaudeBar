@@ -17,7 +17,7 @@
 
 `Sources/batteryctl/batteryctl.c` 是独立 C 辅助进程，`--probe` 只读，`--serve` 需要 root。仅接受四种模式、20–100 阈值、请求版本号和 heartbeat；不提供任意 SMC key、路径、shell 或网络接口。
 
-用户首次点击控制按钮时，系统管理员授权将随包签名的工具安装到 `/Library/PrivilegedHelperTools/com.claudebar.batteryctl`，root:wheel / 4755。安装采用 root 目录中的临时副本，校验 SHA-256 与代码签名后再设置权限并替换。运行前校验安装副本归属、文件类型、权限和内容与当前包一致。没有 launch daemon；应用通过私有 stdin/stdout 管道与工具通信。授权取消只显示错误，不启用控制。
+用户可先在「设置 → 电池控制」完成系统管理员授权，也可首次点击控制按钮时授权。随包签名的工具安装到 `/Library/PrivilegedHelperTools/com.claudebar.batteryctl`，root:wheel / 4755；匹配当前应用包时后续启动直接复用，无需再次确认。应用更新了辅助工具后会要求重新授权安装新版。安装采用 root 目录中的临时副本，校验 SHA-256 与代码签名后再设置权限并替换。运行前校验安装副本归属、文件类型、权限和内容与当前包一致。没有 launch daemon；应用通过私有 stdin/stdout 管道与工具通信。授权取消只显示错误，不启用控制。
 
 辅助进程持有 `/var/run/claudebar-battery.lock` 排他锁；启动时遇到已有非零充电控制值会拒绝接管，提示先关闭其他电池工具。其他工具在运行期间重新写入不受 ClaudeBar 控制，因此不要同时启用多个限充工具。
 

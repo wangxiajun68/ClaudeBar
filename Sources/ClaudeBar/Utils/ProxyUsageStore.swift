@@ -93,6 +93,15 @@ final class ProxyUsageStore {
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
 
+    func fetchDailyModels(startDay: String, endDay: String) -> [String: [ModelUsage]] {
+        var days: [String: [ModelUsage]] = [:]
+        for row in allRows() where row.day >= startDay && row.day <= endDay {
+            days[row.day, default: []].append(ModelUsage(model: row.model, calls: row.calls,
+                inputTokens: row.input, outputTokens: row.output, cacheReadTokens: row.cacheRead))
+        }
+        return days.mapValues { ModelUsage.merged($0) }
+    }
+
     /// Per-day totals, for the usage river.
     func fetchDaily(startDay: String, endDay: String) -> [DayUsage] {
         var byDay: [String: DayUsage] = [:]

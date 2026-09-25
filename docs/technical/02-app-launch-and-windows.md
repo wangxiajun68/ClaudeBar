@@ -45,8 +45,8 @@ struct ClaudeBarApp: App {
 
 顶栏 tabs + detail（`.frame(minWidth: 900, minHeight: 600)`）：
 
-- **topBar**（`Theme.cardSurface`，52pt）：brand 头 + 8 项 `AppPage`（概览 / 会话 / 模型 / 用量 / 流量 / VPN / 设置 / 帮助）；`ViewThatFits` 在宽度不足时只留文字。
-- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `UsageView` / `VPNView` / `SettingsView` / `HelpView`；`TrafficView` 首次进入后 `trafficMounted` 常驻。
+- **topBar**（`Theme.cardSurface`，52pt）：brand 头 + 9 项 `AppPage`（概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置 / 帮助）；`ViewThatFits` 在宽度不足时只留文字。
+- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `ConnectorsView` / `UsageView` / `VPNView` / `SettingsView` / `HelpView`；`TrafficView` 首次进入后 `trafficMounted` 常驻。
 - **CommandPalette**（⌘K）。
 
 ## `MenuBarController` — 面板的承载与定位
@@ -61,10 +61,11 @@ struct ClaudeBarApp: App {
 - `hidesOnDeactivate = false`、`isFloatingPanel = true` —— 悬浮且不因失焦隐藏（自行用事件监听收起）。
 
 **定位逻辑（`sizeAndPosition`）：**
-- 宽度 `max(560, fittingSize.width)`，高度上限为屏幕可见区高度 -8。
+- 宽度固定 `424`（`MenuBarView` 自己的 frame），高度取 `min(820, 屏幕可见区高度 - 8)`。
+  > 早期版本用 `max(400, fittingSize.width)` + `fittingSize.height`：滚动视图没有有用的固有高度，量出来会把会话区压成一条并被裁掉，所以宽度与高度现在都是显式数字。
 - 水平：以状态项图标的**全局 x 中心**对齐面板中心（`globalIconX = windowOriginX + btnInWindow.midX`），再 clamp 到屏幕内。
 - 垂直：`y = screen.visibleFrame.maxY - height - 4`，即紧贴菜单栏下方。
-- 使用 `NSScreen.screens.first`（主屏）而非 `NSScreen.main`，因为后者可能是负 origin 的副屏。
+- 屏幕取 `statusItem.button?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first`：状态项所在屏优先，所以多显示器下 popup 跟着菜单栏图标走，而不是永远开在主屏。
 
 **收起监听（`installMonitors`）：**
 - `localMonitor`：本 app 内的鼠标按下若不在 panel.frame 内则 `hide()`。

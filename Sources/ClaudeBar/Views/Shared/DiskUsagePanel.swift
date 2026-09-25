@@ -24,7 +24,7 @@ struct DiskUsagePanel: View {
                             .stroke(Theme.chartPurple, style: StrokeStyle(lineWidth: 14, lineCap: .round))
                             .rotationEffect(.degrees(-90))
                         VStack(spacing: 3) {
-                            Text(String(format: "%.0f%%", fraction * 100)).font(Theme.Font.tileValue)
+                            RollingNumberText(String(format: "%.0f%%", fraction * 100)).font(Theme.Font.tileValue)
                             Text("已使用").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                         }
                     }.frame(width: 126, height: 126).padding(8)
@@ -45,7 +45,7 @@ struct DiskUsagePanel: View {
     private func metric(_ title: String, bytes: UInt64, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(Theme.Font.caption).foregroundColor(color)
-            Text(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
+            RollingNumberText(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
                 .font(Theme.Font.chromeEmph).monospacedDigit()
         }
     }

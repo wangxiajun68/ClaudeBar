@@ -126,6 +126,17 @@ final class ProxyAccessLog: ObservableObject {
         return f
     }()
 
+    /// Hour and minute only, for the traffic list rows. `Date.formatted` builds
+    /// a fresh `Date.FormatStyle` and re-parses the pattern through ICU on every
+    /// call — for up to `listLimit` rows, on every capture publish (0.1 s while
+    /// anything is streaming).
+    static let clockShort: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     @Published private(set) var entries: [ProxyLogEntry] = []
 
     private let lock = NSLock()

@@ -26,6 +26,10 @@ struct CursorSessionInfo: Identifiable, Equatable {
     // Filled by scanning the transcript tail (0/"" if no transcript).
     var messageCount: Int = 0
     var currentActivity: String = ""
+    /// `composerHeaders.value.name`, Cursor's own conversation title.
+    var title: String = ""
+    /// `composerHeaders.value.subtitle` — e.g. "Edited app.py, frontend.html".
+    var subtitle: String = ""
     var toolPending: Bool = false   // last turn not yet ended → working
     var completionID: String? = nil // byte offset of the latest successful final answer
     var subagents: [CursorSubagentInfo] = []
@@ -46,6 +50,22 @@ struct CursorSessionInfo: Identifiable, Equatable {
     /// Folder name derived from cwd, e.g. "ClaudeBar".
     var projectFolder: String {
         (cwd as NSString).lastPathComponent
+    }
+
+    /// Cursor already stores a real conversation title, so it wins over the
+    /// folder; `subtitle` is the "what changed" line shown underneath.
+    var displayTitle: String {
+        SessionTitle(authored: title, folder: projectFolder).display
+    }
+
+    /// Two-part card header: `folder · Cursor 的会话标题`.
+    var cardLabel: SessionTitle.Label {
+        SessionTitle(authored: title, folder: projectFolder).cardLabel
+    }
+
+    /// Budgeted "Edited app.py, frontend.html" line.
+    var cardSubtitle: String {
+        SessionTitle(authored: title, folder: projectFolder, subtitle: subtitle).cardSubtitle
     }
 
     /// Short "5m ago" style label since last update.
@@ -147,6 +167,10 @@ struct CursorSessionMonitor {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
             let name = (obj["name"] as? String) ?? ""
+            // Cursor stores the conversation title and an "Edited a.py, b.py"
+            // summary in the same head this loop already parses — no extra
+            // query, and no deriving a title from the transcript.
+            let subtitle = (obj["subtitle"] as? String) ?? ""
             let createdAt = (obj["createdAt"] as? Double) ?? recency
             let lastUpdatedAt = (obj["lastUpdatedAt"] as? Double) ?? recency
             let cwd = extractFsPath(obj)
@@ -163,7 +187,9 @@ struct CursorSessionMonitor {
                 lastUpdatedAt: lastUpdatedAt,
                 contextPercent: ctxPct,
                 status: (unfinishedRecent || locActive) ? .active : .idle,
-                isAlive: lastUpdatedAt > cutoff
+                isAlive: lastUpdatedAt > cutoff,
+                title: name,
+                subtitle: subtitle
             ))
         }
 

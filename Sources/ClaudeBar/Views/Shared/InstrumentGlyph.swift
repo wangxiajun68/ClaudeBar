@@ -4,7 +4,7 @@ import SwiftUI
 /// Compact labels stay monochrome; only live instruments use semantic color.
 struct InstrumentGlyph: View, Animatable {
     enum Kind { case cpu, gpu, memory, disk, link, ethernet, fan, config, balance, sessions, tokens, quota, vpn, battery, refresh
-        case overview, traffic, settings, help, power, notification, folder, search, appearance, camera }
+        case overview, traffic, settings, help, power, notification, folder, search, appearance, camera, cost }
     var kind: Kind
     var tint: Color = Theme.chartBlue
     var level: Double = 0
@@ -41,6 +41,7 @@ struct InstrumentGlyph: View, Animatable {
         case "magnifyingglass": return .search
         case "paintpalette", "circle.lefthalf.filled": return .appearance
         case "camera": return .camera
+        case "banknote": return .cost
         case "arrow.clockwise": return .refresh
         case "cylinder": return .disk
         default: return nil
@@ -139,6 +140,14 @@ struct InstrumentGlyph: View, Animatable {
                 line([CGPoint(x:9,y:8),CGPoint(x:12,y:11),CGPoint(x:15,y:8)],ink)
                 line([CGPoint(x:9,y:13),CGPoint(x:15,y:13)],ink)
                 line([CGPoint(x:12,y:11),CGPoint(x:12,y:16)],ink)
+            case .cost:
+                // A banknote, not the ¥-in-a-circle of `.balance`: the two sit
+                // in the same grid and must not read as the same instrument.
+                box(2.5,6,19,12,ink,radius:3)
+                circle(12,12,3.2,ink)
+                line([CGPoint(x:12,y:10.4),CGPoint(x:12,y:13.6)],ink)
+                line([CGPoint(x:5.5,y:9),CGPoint(x:5.5,y:15)],track)
+                line([CGPoint(x:18.5,y:9),CGPoint(x:18.5,y:15)],track)
             case .sessions:
                 box(4,6,16,13,ink,radius:3)
                 line([CGPoint(x:8,y:10),CGPoint(x:10.5,y:12.5),CGPoint(x:8,y:15)],ink)

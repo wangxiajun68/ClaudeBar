@@ -9,6 +9,7 @@ struct SettingsView: View {
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
+    @Bindable private var batteryController = BatteryChargeController.shared
 
     @State private var presentFiles: Set<URL> = []
 
@@ -44,6 +45,19 @@ struct SettingsView: View {
 
                 PermissionsSection()
 
+                section("电池管理授权", icon: "battery.100percent") {
+                    SettingTile(icon: "lock.shield", title: "授权电池管理",
+                                caption: batteryController.lastError ?? (batteryController.helperInstalled
+                                    ? "已授权。日常启动和重启应用无需重复授权；仅辅助工具代码更新时需重新授权。"
+                                    : "一次管理员授权，安装本机电池辅助工具；之后启动充电管理自动复用。")) {
+                        Button(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "立即授权")) {
+                            batteryController.authorizeHelper()
+                        }
+                        .adaptiveGlassButton()
+                        .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.helperInstalled)
+                    }
+                }
+
                 section("外观", icon: "paintpalette") {
                     SettingTile(icon: "circle.lefthalf.filled", title: "主题",
                                 caption: "浅色冰面或深色石墨。") {
@@ -66,6 +80,26 @@ struct SettingsView: View {
                         .pickerStyle(.segmented)
                         .frame(width: 140)
                         .labelsHidden()
+                    }
+                }
+
+                section("模型花费", icon: "banknote") {
+                    SettingTile(icon: "yensign.circle", title: "显示货币",
+                                caption: costDisplayCaption) {
+                        Picker("", selection: $prefs.costDisplay) {
+                            ForEach(CostDisplay.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+                        .labelsHidden()
+                    }
+                    // Only rendered once a conversion is actually asked for —
+                    // in 分列 mode there is no rate, so a tile about one would
+                    // be a control with nothing behind it.
+                    if prefs.costDisplay.needsRate {
+                        ExchangeRateTile()
                     }
                 }
 
@@ -220,8 +254,8 @@ struct SettingsView: View {
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.textSecondary)
                         }
+                        ProxyCurlExample(model: proxyCurlModel)
                     }
-                    ProxyCurlExample(model: proxyCurlModel)
                 }
 
                 section("VPN 代理", icon: "globe") {
@@ -315,6 +349,7 @@ struct SettingsView: View {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
+        .task { await batteryController.refreshHelperAuthorization() }
     }
 
     private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,
@@ -355,8 +390,21 @@ struct SettingsView: View {
         return "登录时自动启动 ClaudeBar。"
     }
 
-    private var proxyCurlModel: String {
-        codexStore.resolvedThirdPartyOpenAI()?.activeModel?.name
+    /// Says what the choice costs the user, not just what it does. The default
+    /// is the only one that makes no outbound request, and the converted modes
+    /// are the only reason this app ever fetches an exchange rate — worth
+    /// stating where the switch is.
+    private var costDisplayCaption: String {
+        switch prefs.costDisplay {
+        case .split:
+            return "人民币与美元分列，不做换算，也不联网查汇率。"
+        case .cny, .usd:
+            if let note = ExchangeRate.shared.note { return "按 \(note) 折算成一个数字。" }
+            return "按实时汇率折算成一个数字，需要联网查询。"
+        }
+    }
+
+    private var proxyCurlModel: String {        codexStore.resolvedThirdPartyOpenAI()?.activeModel?.name
             ?? codexStore.activeProvider?.activeModel?.name
             ?? providerStore.activeProvider?.activeModel?.name
             ?? ""

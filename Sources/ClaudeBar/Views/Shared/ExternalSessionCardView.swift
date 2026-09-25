@@ -19,15 +19,16 @@ struct ExternalSessionCardView: View {
     @State private var showSwarm = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        // Read once: `cardLabel` runs the full condense/shorten pipeline, and
+        // it was evaluated twice — the visible title and the accessibility
+        // string.
+        let label = session.cardLabel
+        return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Circle()
                     .fill(isActive ? Theme.external : Theme.Ink.idle)
                     .frame(width: 6, height: 6)
-                Text(session.displayName)
-                    .font(Theme.Font.section)
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
+                SessionTitleLine(label: label)
                 Spacer()
                 if descendantCount > 0 {
                     Button { showSwarm = true } label: {
@@ -41,7 +42,7 @@ struct ExternalSessionCardView: View {
             }
 
             HStack(spacing: 6) {
-                Text(session.contextLabel)
+                RollingNumberText(session.contextLabel)
                     .font(Theme.Font.tileMicroValue)
                     .foregroundColor(Theme.Ink.success)
                     .lineLimit(1)
@@ -49,7 +50,7 @@ struct ExternalSessionCardView: View {
                     .opacity(session.contextTokens > 0 ? 1 : 0.25)
                     .frame(maxWidth: .infinity)
                 SessionLoadChip(key: .standardizedCwd(session.cwd), compact: true)
-                Text(session.relativeUpdated)
+                RollingNumberText(session.relativeUpdated)
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
@@ -68,12 +69,12 @@ struct ExternalSessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
+        .accessibilityLabel(accessibilityText(label))
         .help("双击以在 Codex 中继续")
         .onTapGesture(count: 2) { onDoubleTap?() }
         .popover(isPresented: $showSwarm, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                Text("\(session.displayName) · \(childAgents.count) 个子 agent")
+                RollingNumberText("\(session.displayName) · \(childAgents.count) 个子 agent")
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
@@ -84,8 +85,8 @@ struct ExternalSessionCardView: View {
         }
     }
 
-    private var accessibilityText: String {
-        var parts = [session.kind.displayName, session.displayName, isActive ? "运行中" : "空闲"]
+    private func accessibilityText(_ label: SessionTitle.Label) -> String {
+        var parts = [session.kind.displayName, label.accessibilityText, isActive ? "运行中" : "空闲"]
         if descendantCount > 0 { parts.append("\(descendantCount) 个子 agent") }
         return parts.joined(separator: "，")
     }

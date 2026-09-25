@@ -70,6 +70,9 @@ final class ProcessSampler {
         var coreCount: Int = 1
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
+        /// Battery cell temperature, when the SMC reports one. Distinct from
+        /// the CPU / GPU sensors: on battery the cell is what gets warm.
+        var batteryTemperatureCelsius: Double?
         var memoryPressureLevel: Int = 0
         var diskUsed: UInt64 = 0
         var diskTotal: UInt64 = 1
@@ -148,6 +151,7 @@ final class ProcessSampler {
     private var linkSample: HardwareSensors.LinkStatus?
     private var linkSampleAt: TimeInterval = 0
     private var cpuTemperature: Double?
+    private var batteryTemperature: Double?
     private var temperatureSampleAt: TimeInterval = -.infinity
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
@@ -314,6 +318,7 @@ final class ProcessSampler {
         // package temperature moves on a scale of seconds.
         if foreground, now - temperatureSampleAt >= 5 {
             cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
+            batteryTemperature = HardwareSensors.batteryTemperatureCelsius()
             temperatureSampleAt = now
         }
         // Read on *every* tier, not just the foreground one. The 电量 mark is
@@ -332,6 +337,7 @@ final class ProcessSampler {
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
             cpuTemperatureCelsius: foreground ? cpuTemperature : nil,
             gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
+            batteryTemperatureCelsius: foreground ? batteryTemperature : nil,
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
             diskTotal: disk.total,
@@ -425,6 +431,7 @@ final class ProcessSampler {
             host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
             if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
             if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
+            if let t = host.batteryTemperatureCelsius { host.batteryTemperatureCelsius = t.rounded() }
             // RSSI jitters ±1 dBm and the power rails in milliwatts between
             // samples; below these steps nothing on screen changes, so the
             // equality check below can actually hold.

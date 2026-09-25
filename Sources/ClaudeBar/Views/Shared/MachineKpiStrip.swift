@@ -9,10 +9,15 @@ struct MachineKpiStrip: View {
     private let audioMonitor = AudioAccessoryMonitor.shared
 
     var body: some View {
-        EqualRowGrid(spacing: 1, minColumnWidth: 0, fixedColumns: hasHeadset ? 5 : 4) {
-            MachineKpiButton(kind: .cpu, value: String(format: "%.0f%%", sampler.host.cpu))
-            MachineKpiButton(kind: .gpu, value: String(format: "%.0f%%", sampler.host.gpu))
-            MachineKpiButton(kind: .memory, value: memShort)
+        // One tooltip for the four machine cells. `kpiLabel` used to fall back
+        // to `helpText()`, so CPU / GPU / memory / fan each rebuilt the same
+        // host string (two `String(format:)` temperature labels included) on
+        // every body pass.
+        let help = helpText()
+        return EqualRowGrid(spacing: 1, minColumnWidth: 0, fixedColumns: hasHeadset ? 5 : 4) {
+            MachineKpiButton(kind: .cpu, value: String(format: "%.0f%%", sampler.host.cpu), help: help)
+            MachineKpiButton(kind: .gpu, value: String(format: "%.0f%%", sampler.host.gpu), help: help)
+            MachineKpiButton(kind: .memory, value: memShort, help: help)
             // The headphone cell exists only while a headset is actually in
             // use. Nearby / charging-in-the-case readings stay in the 连接
             // tooltip, they do not steal a column here.
@@ -22,10 +27,10 @@ struct MachineKpiStrip: View {
             }
             Button(action: toggleFanMax) {
                 kpiLabel(icon: "fanblades", label: "风扇",
-                         value: fanShort, tint: Theme.claude)
+                         value: fanShort, tint: Theme.claude,
+                         help: fansAtMax ? "恢复自动风速" : "最大风速")
             }
             .buttonStyle(.uiversePress)
-            .help(fansAtMax ? "恢复自动风速" : "最大风速")
         }
         .background(Theme.hairline)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -46,7 +51,7 @@ struct MachineKpiStrip: View {
     }
 
     private func kpiLabel(icon: String, label: String, value: String, tint: Color,
-                          help: String? = nil) -> some View {
+                          help: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 SignatureGlyph(name: icon, tint: tint, size: 15)
@@ -55,7 +60,7 @@ struct MachineKpiStrip: View {
                     .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
             }
-            Text(value)
+            RollingNumberText(value)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundColor(Theme.textPrimary)
@@ -66,7 +71,7 @@ struct MachineKpiStrip: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, minHeight: 62, maxHeight: .infinity, alignment: .leading)
         .background(Theme.cardSurface)
-        .help(help ?? helpText())
+        .help(help)
         .accessibilityElement(children: .combine)
     }
 
@@ -127,7 +132,7 @@ struct MachineKpiStrip: View {
                     .font(Theme.Font.kpi)
                     .foregroundColor(Theme.textSecondary)
             }
-            Text(audioShort)
+            RollingNumberText(audioShort)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundColor(Theme.textPrimary)
@@ -240,6 +245,8 @@ private struct MachineKpiButton: View {
 
     let kind: Kind
     let value: String
+    /// The host tooltip, built once by the strip and shared by its cells.
+    var help: String = ""
     @State private var open = false
     var body: some View {
         Button { open = true } label: {
@@ -248,10 +255,13 @@ private struct MachineKpiButton: View {
                     SignatureGlyph(name: kind.icon, tint: kind.tint, size: 15)
                     Text(kind.label).font(Theme.Font.kpi).foregroundColor(Theme.textSecondary)
                 }
-                Text(value).font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+                RollingNumberText(value).font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
             }.padding(.horizontal, 9).padding(.vertical, 10)
                 .frame(maxWidth: .infinity, minHeight: 62, maxHeight: .infinity, alignment: .leading).background(Theme.cardSurface)
-        }.buttonStyle(.pressable).popover(isPresented: $open) {
+        }
+        .buttonStyle(.pressable)
+        .help(help)
+        .popover(isPresented: $open) {
             if kind == .memory { MemoryDetailPanel() }
             else { HardwareDetailPanel(gpu: kind == .gpu) }
         }

@@ -69,12 +69,6 @@ enum UIWakePolicy {
         lock.unlock()
         subject.send()
     }
-
-    /// Whether any animation may run. This is the gate the silently-animating
-    /// views were missing: `SoftRotor`, `AuroraSparkline` and `ScanLine` all
-    /// kept a 12–20 Hz display link alive in a hidden window because they
-    /// keyed off a caller-supplied flag instead of "is anything on screen".
-    static var shouldAnimate: Bool { hasVisibleWindow }
 }
 
 /// Visibility of the owning surface, independent of other open windows.

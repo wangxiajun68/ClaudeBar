@@ -53,6 +53,14 @@
 
 **transcript 路径编码**：`/Users/wangxiajun/Project/ClaudeBar` → `projects/-Users-wangxiajun-Project-ClaudeBar`（去前导 `/` 后换 `-`，并加前导 `-`，与 Cursor 编码不同）。
 
+**标题 `firstHumanPrompt`**：读 transcript **头部 16KB** 找第一条人类 prompt（Claude Code 没有标题字段）。`user` 流里绝大多数记录不是人打的字，必须按顺序排除：
+
+- `isMeta == true` —— 注入的 `<local-command-caveat>` 提示
+- `isSidechain == true` —— 子 agent 流量
+- `origin.kind != "human"` —— `/effort`、`/clear` 等斜杠命令管道（`origin` 缺失即此类）
+
+实测本机 40 份 transcript：**35 份**能拿到干净首条 prompt，其余（只跑过 `/clear`、或只有 `<history>` 注入）回退目录名。标题统一由 `SessionTitle` 派生，见 [07 文件索引](09-file-index.md)。
+
 **子 Agent / Workflow `fetchSubagents`**：
 - 直属子 Agent：`<sessionDir>/subagents/agent-<id>.meta.json` + 同名 `.jsonl`。
 - Workflow：`<sessionDir>/subagents/workflows/<wf_id>/agent-<id>.meta.json`，各 agent 的 transcript 在 `<wf_id>/<fname>.jsonl`。

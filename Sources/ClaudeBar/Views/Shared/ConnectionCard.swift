@@ -293,7 +293,7 @@ fileprivate struct HeadsetPart: View {
                 .offset(x: 2, y: -2)
             }
 
-            Text(percent.map { "\($0)%" } ?? "—")
+            RollingNumberText(percent.map { "\($0)%" } ?? "—")
                 .font(.system(size: metrics.caption, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundColor(percent == nil ? Theme.textTertiary() : Theme.textPrimary)
@@ -451,7 +451,7 @@ struct WiFiConnectionMark: View {
                     .lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: .infinity)
                     .frame(height: labelHeight)
-                Text(signal)
+                RollingNumberText(signal)
                     .font(.system(size: dial * 0.28, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(Theme.textSecondary)

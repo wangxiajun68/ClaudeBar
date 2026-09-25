@@ -117,7 +117,7 @@ private struct PermissionCard: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(isOn ? Theme.claude.opacity(hovered ? 0.45 : 0.22) : Theme.hairline, lineWidth: 1)
         )
-        .onHover { hovered = $0 }
+        .onHover { if hovered != $0 { hovered = $0 } }
         .animation(Theme.Motion.state, value: hovered)
         .animation(Theme.Motion.state, value: status)
         .animation(Theme.Motion.state, value: isOn)

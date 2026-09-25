@@ -1,6 +1,6 @@
 # ClaudeBar 文档中心
 
-> 本仓库文档的唯一入口。最后更新：2026-09-24
+> 本仓库文档的唯一入口。最后更新：2026-09-25
 
 ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** 两层组织。先读设计建立产品上下文，再按需查阅技术实现。
 
@@ -34,7 +34,7 @@ docs/
 │   └── surfaces/             按界面分的设计说明
 └── technical/                技术实现（代码如何工作）
     ├── README.md
-    └── 01–14 *.md
+    └── 01–16 *.md
 ```
 
 ---
@@ -80,6 +80,8 @@ docs/
 | 12 | [battery-control](technical/12-battery-control.md) | 电池限充 / 暂停 / 放电与特权辅助进程 |
 | 13 | [provider-directory](technical/13-provider-directory.md) | 供应商目录、协议核查、Codex 会话监控 |
 | 14 | [performance-audit](technical/14-performance-audit.md) | 桌面 / popup / 灵动岛刷新与渲染审查 |
+| 15 | [model-cost](technical/15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配 |
+| 16 | [connectors](technical/16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停 |
 
 完整索引：[technical/README.md](technical/README.md)
 
@@ -96,6 +98,8 @@ docs/
 | 改灵动岛 / 权限开关 | [design/10](design/10-notch-island.md) · [technical/09](technical/09-file-index.md) |
 | 改电池控制 | [technical/12](technical/12-battery-control.md) |
 | 改供应商目录 / 会话判定 | [technical/13](technical/13-provider-directory.md) |
+| 改模型价目 / 花费口径 | [technical/15](technical/15-model-cost.md) |
+| 改连接器页（Skills / MCP） | [technical/16](technical/16-connectors.md) |
 | 构建 / 签名 / 发版 | [09](design/09-build-and-distribution.md) · [technical/07](technical/07-build-and-signing.md) · [VERSIONING](VERSIONING.md) · [RELEASING](RELEASING.md) |
 | 性能优化 | [technical/08](technical/08-performance.md) · [technical/14](technical/14-performance-audit.md) |
 | 边界与错误 | [08](design/08-error-handling.md) |

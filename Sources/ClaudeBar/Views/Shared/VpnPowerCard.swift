@@ -59,7 +59,7 @@ struct VpnPowerCard: View {
                             ink: manager.isRunning ? Theme.Ink.success : (starting ? Theme.Ink.claude : Theme.Ink.idle)
                         )
                         if manager.isRunning {
-                            Text("↓\(VpnFormat.rate(rates.speedDown))  ↑\(VpnFormat.rate(rates.speedUp))")
+                            RollingNumberText("↓\(VpnFormat.rate(rates.speedDown))  ↑\(VpnFormat.rate(rates.speedUp))")
                                 .font(Theme.Font.tileMicroValue)
                                 .foregroundColor(Theme.textSecondary)
                                 .lineLimit(1)

@@ -16,8 +16,50 @@ enum BatteryHelperInstaller {
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
               info.st_uid == 0, info.st_mode & 0o7777 == 0o4755,
-              let bundle = bundledURL, let expected = digest(bundle) else { return false }
-        return digest(URL(fileURLWithPath: path)) == expected
+              let bundle = bundledURL else { return false }
+        let installed = URL(fileURLWithPath: path)
+        // CMS signing timestamps change the file digest even when every
+        // executable code page is identical. Compare verified CodeDirectories
+        // for every architecture instead; changed code still requires install.
+        guard let expected = codeIdentity(bundle),
+              let actual = codeIdentity(installed) else { return false }
+        return expected == actual
+    }
+
+    private static func codeIdentity(_ url: URL) -> [String: String]? {
+        guard command("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", url.path]) != nil,
+              let details = command("/usr/bin/codesign", ["-d", "--verbose=4", url.path]),
+              let format = details.split(separator: "\n").first(where: { $0.hasPrefix("Format=Mach-O") }),
+              let opening = format.firstIndex(of: "("),
+              let closing = format.lastIndex(of: ")"), opening < closing else { return nil }
+        // codesign is included with macOS; do not require lipo / developer tools.
+        let listed = format[format.index(after: opening)..<closing]
+        let architectures = listed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !architectures.isEmpty else { return nil }
+        var hashes: [String: String] = [:]
+        for architecture in architectures {
+            guard let details = command("/usr/bin/codesign", ["-d", "--verbose=4", "--arch", architecture, url.path]),
+                  let line = details.split(separator: "\n").first(where: { $0.hasPrefix("CDHash=") }) else { return nil }
+            let hash = String(line.dropFirst("CDHash=".count))
+            guard hash.count >= 40, hash.allSatisfy({ $0.isHexDigit }) else { return nil }
+            hashes[architecture] = hash
+        }
+        return hashes
+    }
+
+    /// Installer entry points run off the main actor. Arguments are passed
+    /// directly, and verification never runs the privileged executable.
+    private static func command(_ executable: String, _ arguments: [String]) -> String? {
+        let child = Process(), output = Pipe()
+        child.executableURL = URL(fileURLWithPath: executable)
+        child.arguments = arguments
+        child.standardOutput = output
+        child.standardError = output
+        do { try child.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        child.waitUntilExit()
+        guard child.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Called off the UI thread. A root-owned staging copy is verified before

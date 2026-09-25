@@ -84,7 +84,10 @@ struct SessionsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.s24) {
+            // Lazy, like the dashboard and usage pages: this list carries every
+            // Claude, Cursor and Codex card, and a plain `VStack` builds all of
+            // them (plus every section header) on every poll.
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s24) {
                 titleBar
                 claudeSection
                 cursorSection
@@ -103,8 +106,8 @@ struct SessionsView: View {
     // MARK: Claude Code
 
     private var claudeSection: some View {
-        let alive = providerStore.sessions.filter(\.isAlive)
-        let busy = alive.filter { $0.status == .busy }.count
+        let alive = providerStore.aliveSessions
+        let busy = providerStore.busySessionCount
         return sectionContainer(
             title: "Claude Code",
             icon: "rectangle.connected.to.line.below",
@@ -127,7 +130,7 @@ struct SessionsView: View {
 
     private var cursorSection: some View {
         let alive = providerStore.cursorSessions
-        let active = alive.filter { $0.status == .active }.count
+        let active = providerStore.activeCursorCount
         return sectionContainer(
             title: "Cursor",
             icon: "cursorarrow.rays",
@@ -160,7 +163,10 @@ struct SessionsView: View {
     private func externalSection(kind: ExternalAgentKind) -> some View {
         let tree = providerStore.externalSessionTree(kind: kind)
         let alive = tree.reduce(0) { $0 + 1 + $1.descendantCount }
-        let active = tree.flatMap(\.flattened).filter { $0.session.isActive }.count
+        // Counted from the stored per-node tally: `flatMap(\.flattened)` here
+        // allocated the whole descendant list once per kind, per publish,
+        // purely to count the active ones.
+        let active = tree.reduce(0) { $0 + ($1.session.isActive ? 1 : 0) + $1.activeDescendantCount }
         return sectionContainer(
             title: kind.displayName,
             icon: kind.icon,
@@ -248,11 +254,8 @@ private struct SessionTileFull: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
                 PulsingStatusDot(isOn: isBusy, color: Theme.statusBusy, big: true)
-                Text(session.projectFolder)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                SessionTitleLine(label: session.cardLabel,
+                                 font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
                 StatusPill(label: isBusy ? "运行中" : "空闲",
                            tint: isBusy ? Theme.statusBusy : Theme.statusIdle,
@@ -264,13 +267,13 @@ private struct SessionTileFull: View {
             // same height regardless of what the transcript scan found.
             VStack(alignment: .leading, spacing: Theme.Space.s4) {
                 HStack {
-                    Text(session.contextLabel)
+                    RollingNumberText(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
                         .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()
-                    Text("\(session.messageCount) msgs · \(session.relativeUpdated)")
+                    RollingNumberText("\(session.messageCount) msgs · \(session.relativeUpdated)")
                         .font(Theme.Font.caption)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
@@ -377,7 +380,7 @@ private struct SessionTileFull: View {
             Image(systemName: "gearshape").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
             Text(wf.workflowId).font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
                 .lineLimit(1).truncationMode(.middle)
-            Text("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+            RollingNumberText("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
                 .lineLimit(1)
             if wf.runningCount > 0 {
                 Text("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
@@ -401,11 +404,8 @@ private struct CursorTileFull: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
                 PulsingStatusDot(isOn: isActive, color: Theme.cursorAccent, big: true)
-                Text(session.projectFolder.isEmpty ? "cursor" : session.projectFolder)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                SessionTitleLine(label: session.cardLabel,
+                                 font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
                 StatusPill(label: isActive ? "运行中" : "空闲",
                            tint: isActive ? Theme.cursorAccent : Theme.statusIdle,
@@ -415,13 +415,13 @@ private struct CursorTileFull: View {
             // Space-reserved context + activity lines — see SessionTileFull.
             VStack(alignment: .leading, spacing: Theme.Space.s4) {
                 HStack {
-                    Text(session.contextLabel)
+                    RollingNumberText(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
                         .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()
-                    Text(session.relativeUpdated)
+                    RollingNumberText(session.relativeUpdated)
                         .font(Theme.Font.caption)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
@@ -493,8 +493,13 @@ private struct ExternalSessionTile: View {
 
     /// Every agent below this node, in pre-order (sub-agents first, then their
     /// own children).
-    private var swarmAgents: [ExternalSessionInfo] {
-        node.children.flatMap(\.flattened).map(\.session)
+    ///
+    /// `node.children.flatMap(\.flattened)` allocates the whole descendant
+    /// list per read, and `body` read it through `tileHeight` + the swarm
+    /// header several times — `O(subtree)` recomputed per access, on every
+    /// poll. `body` hoists it into one `let` and passes it down instead.
+    static func swarmAgents(of node: ProviderStore.ExternalSessionNode) -> [ExternalSessionInfo] {
+        node.children.flatMap(\.flattened)
     }
 
     /// Left column width. The swarm column takes the rest, and its header and
@@ -515,28 +520,29 @@ private struct ExternalSessionTile: View {
     /// Height for this session: the readout column's height, or the cluster's,
     /// whichever is taller. A session whose fan-out is small stays as short as
     /// its own readout rather than reserving room for agents it does not have.
-    private var tileHeight: CGFloat {
-        let base = Self.tilePadding * 2 + Self.readoutHeight
-        guard !swarmAgents.isEmpty else { return base }
+    private static func tileHeight(agentCount: Int) -> CGFloat {
+        let base = tilePadding * 2 + readoutHeight
+        guard agentCount > 0 else { return base }
         let cluster = AgentSwarmView.SwarmGrid.requiredHeight(
-            count: swarmAgents.count, width: Self.swarmWidthEstimate)
+            count: agentCount, width: swarmWidthEstimate)
         // Clamped so a 200-agent session does not push everything else off the
         // page; the cluster packs smaller cards to fit whatever it is given.
-        return min(max(base, Self.tilePadding * 2 + Self.headerHeight + Self.swarmTopInset + cluster), 520)
+        return min(max(base, tilePadding * 2 + headerHeight + swarmTopInset + cluster), 520)
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Theme.Space.s16) {
+        // Derived once per render: these used to re-walk the subtree on every
+        // access from `tileHeight`, the header and the cluster's arguments.
+        let agents = ExternalSessionTile.swarmAgents(of: node)
+        let height = Self.tileHeight(agentCount: agents.count)
+        return HStack(alignment: .top, spacing: Theme.Space.s16) {
             // Left: the session's own readout, in a fixed column so every
             // tile's swarm gets the same amount of room.
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 HStack(spacing: 8) {
                     PulsingStatusDot(isOn: isActive, color: tint, big: true)
-                    Text(session.displayName)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    SessionTitleLine(label: session.cardLabel,
+                                     font: .system(size: 14, weight: .semibold, design: .rounded))
                     Spacer(minLength: 4)
                     StatusPill(label: isActive ? "运行中" : "空闲",
                                 tint: isActive ? Theme.external : Theme.statusIdle,
@@ -545,13 +551,13 @@ private struct ExternalSessionTile: View {
 
                 VStack(alignment: .leading, spacing: Theme.Space.s4) {
                     HStack {
-                        Text(session.contextLabel)
+                        RollingNumberText(session.contextLabel)
                             .font(Theme.Font.tileValueSmall)
                             .foregroundColor(Theme.contextInk(session.contextRatio))
                             .lineLimit(1)
                             .fixedSize()
                         Spacer()
-                        Text(session.relativeUpdated)
+                        RollingNumberText(session.relativeUpdated)
                             .font(Theme.Font.caption)
                             .monospacedDigit()
                             .foregroundColor(Theme.textTertiary())
@@ -583,8 +589,8 @@ private struct ExternalSessionTile: View {
 
             // Right: the swarm cluster, hanging under its header.
             VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                swarmHeader
-                AgentSwarmView(root: session, children: swarmAgents, onOpen: { resume($0) })
+                swarmHeader(agents)
+                AgentSwarmView(root: session, children: agents, onOpen: { resume($0) })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     // Small breathing room above the cluster so the parent
                     // badge does not crowd the "子 agent" header.
@@ -594,7 +600,7 @@ private struct ExternalSessionTile: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: tileHeight, alignment: .topLeading)
+        .frame(height: height, alignment: .topLeading)
         .tile(hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume(session) }
@@ -602,18 +608,18 @@ private struct ExternalSessionTile: View {
         .help("\(session.cwd)\n双击以在 Codex 中继续")
     }
 
-    private var swarmHeader: some View {
+    private func swarmHeader(_ agents: [ExternalSessionInfo]) -> some View {
         HStack(spacing: 6) {
             Text("子 agent")
                 .font(Theme.Font.labelSection)
                 .foregroundColor(Theme.textSecondary)
-            Text(swarmAgents.isEmpty ? "无" : "\(swarmAgents.count)")
+            RollingNumberText(agents.isEmpty ? "无" : "\(agents.count)")
                 .font(Theme.Font.captionMono)
                 .monospacedDigit()
                 .foregroundColor(Theme.textTertiary())
             Spacer()
-            if !swarmAgents.isEmpty {
-                let running = swarmAgents.filter(\.isActive).count
+            if !agents.isEmpty {
+                let running = agents.filter(\.isActive).count
                 Text(running > 0 ? "\(running) 运行中" : "全部空闲")
                     .font(Theme.Font.caption)
                     .foregroundColor(running > 0 ? Theme.externalHi : Theme.textTertiary())
@@ -660,12 +666,6 @@ private struct ExternalSessionGridCard: View {
     private var tint: Color { Theme.external }
     private var isActive: Bool { session.isActive }
 
-    /// Every agent below this node, in pre-order — the cluster is drawn from the
-    /// whole subtree, not just the direct children.
-    private var swarmAgents: [ExternalSessionInfo] {
-        node.children.flatMap(\.flattened).map(\.session)
-    }
-
     /// Card width the strip is sized against — an estimate, not a measurement,
     /// so the grid row height does not reflow on every poll.
     private static let stripWidthEstimate: CGFloat = 300
@@ -673,30 +673,28 @@ private struct ExternalSessionGridCard: View {
     /// normal 宫格 card, so it grows by a row or two, never to the height of its
     /// largest fan-out; the rest is counted by the `⋯N` badge.
     private static let stripRows = 2
-    private static var strip: (visible: Int, height: CGFloat) {
-        AgentSwarmView.SwarmGrid.strip(count: .max,
-                                       width: stripWidthEstimate,
-                                       maxRows: stripRows,
-                                       compact: true)
-    }
+    /// Constant: the strip asks for `count: .max`, so this never varies and it
+    /// was pure overhead to recompute it on every read of `body`.
+    private static let strip: (visible: Int, height: CGFloat) = AgentSwarmView.SwarmGrid.strip(
+        count: .max, width: stripWidthEstimate, maxRows: stripRows, compact: true)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+        // One subtree walk per render — this used to run on every read of
+        // `swarmAgents` from the badge, the strip, its prefix and the popover.
+        let agents = ExternalSessionTile.swarmAgents(of: node)
+        return VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
                 PulsingStatusDot(isOn: isActive, color: tint, big: true)
-                Text(session.displayName)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                SessionTitleLine(label: session.cardLabel,
+                                 font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
-                if !swarmAgents.isEmpty {
+                if !agents.isEmpty {
                     Button { showSwarm = true } label: {
-                        StatusPill(label: "⋯\(swarmAgents.count)", tint: Theme.externalHi,
+                        StatusPill(label: "⋯\(agents.count)", tint: Theme.externalHi,
                                 ink: Theme.Ink.success)
                     }
                     .buttonStyle(.plain)
-                    .help("查看 \(swarmAgents.count) 个子 agent")
+                    .help("查看 \(agents.count) 个子 agent")
                 }
                 StatusPill(label: isActive ? "运行中" : "空闲",
                                 tint: isActive ? Theme.external : Theme.statusIdle,
@@ -706,13 +704,13 @@ private struct ExternalSessionGridCard: View {
             // Context + recency, space-reserved so cards in a row stay level.
             VStack(alignment: .leading, spacing: Theme.Space.s4) {
                 HStack {
-                    Text(session.contextLabel)
+                    RollingNumberText(session.contextLabel)
                         .font(Theme.Font.tileValueSmall)
                         .foregroundColor(Theme.contextInk(session.contextRatio))
                         .lineLimit(1)
                         .fixedSize()
                     Spacer()
-                    Text(session.relativeUpdated)
+                    RollingNumberText(session.relativeUpdated)
                         .font(Theme.Font.caption)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
@@ -758,12 +756,12 @@ private struct ExternalSessionGridCard: View {
             // there are some — an empty session's card ends here. A two-row
             // strip holds the first `strip.visible` agents; the badge above
             // accounts for the rest.
-            if !swarmAgents.isEmpty {
+            if !agents.isEmpty {
                 Rectangle()
                     .fill(Theme.hairline)
                     .frame(height: 1)
                 AgentSwarmView(root: session,
-                               children: Array(swarmAgents.prefix(Self.strip.visible)),
+                               children: Array(agents.prefix(Self.strip.visible)),
                                compact: true,
                                onOpen: { resume($0) })
                     .frame(height: Self.strip.height)
@@ -778,11 +776,11 @@ private struct ExternalSessionGridCard: View {
         .help("\(session.cwd)\n双击以在 Codex 中继续")
         .popover(isPresented: $showSwarm, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                Text("\(session.displayName) · \(swarmAgents.count) 个子 agent")
+                RollingNumberText("\(session.displayName) · \(agents.count) 个子 agent")
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
-                AgentSwarmView(root: session, children: swarmAgents, onOpen: { resume($0) })
+                AgentSwarmView(root: session, children: agents, onOpen: { resume($0) })
                     .frame(width: 380, height: 300)
             }
             .padding(Theme.Space.s12)

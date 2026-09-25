@@ -9,7 +9,7 @@ struct VPNView: View {
     @ObservedObject private var prefs = AppPreferences.shared
 
     @State private var testingAll = false
-    @State private var testingNode: String?
+    @State private var groupOrder: [VpnGroup] = []
     @State private var selectedGroup: String?
     @State private var filePreview = VpnProfilePreview()
     @State private var previewGroupName: String?
@@ -34,15 +34,17 @@ struct VPNView: View {
             portDraft = String(prefs.vpnMixedPort)
             if store.browsingID == nil { store.browsingID = store.activeID }
             reloadFilePreview()
+            refreshGroupOrder()
             if selectedGroup == nil {
-                selectedGroup = manager.primaryGroup?.name ?? orderedGroups.first?.name
+                selectedGroup = manager.primaryGroup?.name ?? groupOrder.first?.name
             }
         }
         .onChange(of: store.browsingID) { _, _ in reloadFilePreview() }
         .onChange(of: prefs.vpnMixedPort) { _, v in portDraft = String(v) }
-        .onChange(of: manager.groups.map(\.name)) { _, names in
-            if let selectedGroup, names.contains(selectedGroup) { return }
-            selectedGroup = manager.primaryGroup?.name ?? orderedGroups.first?.name
+        .onChange(of: manager.groups) { _, _ in
+            refreshGroupOrder()
+            if let selectedGroup, groupOrder.contains(where: { $0.name == selectedGroup }) { return }
+            selectedGroup = manager.primaryGroup?.name ?? groupOrder.first?.name
         }
         .onChange(of: manager.isRunning) { _, on in
             if on { Task { await VpnNetProbe.shared.refreshIP() } }
@@ -319,7 +321,7 @@ struct VPNView: View {
                         .frame(width: 52, height: 22)
                     }
                     .adaptiveGlassButton()
-                    .disabled(testingAll || testingNode != nil)
+                    .disabled(testingAll || !manager.testingNodes.isEmpty)
                     .help("和 Clash Verge 一样，用 http://cp.cloudflare.com/generate_204，超时 10 秒。超时表示这条节点连不上测试地址。")
                 }
             }
@@ -467,11 +469,15 @@ struct VPNView: View {
                         .padding(.vertical, Theme.Space.s12)
                 } else {
                     LazyVGrid(columns: Theme.GridLayout.mosaic(columns: mosaicColumnCount), spacing: 1) {
-                        ForEach(nodes, id: \.self) { name in
+                        // Keyed by index: node names repeat inside a group in
+                        // real subscriptions, and `id: \.self` made those
+                        // duplicates a SwiftUI identity collision, so the whole
+                        // grid churned on every update while warning about it.
+                        ForEach(Array(nodes.enumerated()), id: \.offset) { _, name in
                             nodeCell(group: group, nodeName: name,
                                      proxy: proxiesByName[name],
                                      live: liveNodes.contains(name),
-                                     testing: testingNode == name || testingNodes.contains(name))
+                                     testing: testingNodes.contains(name))
                         }
                     }
                     .padding(1)
@@ -552,18 +558,18 @@ struct VPNView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(testingAll || testingNode != nil)
+        .disabled(testingAll || !manager.testingNodes.isEmpty)
             .help(delay == 0
                   ? "该节点连不通（内核测 generate_204 超时）。不是订阅链接本身失效，可换节点。"
                   : "测速此节点")
     }
 
+    /// Fire-and-forget: the manager's own `testingNodes` set drives the
+    /// spinner, so a test redraws only the cells that carry it — the page no
+    /// longer holds a `testingNode` @State that re-rendered the whole
+    /// 1000-line body three times per test.
     private func testOne(_ node: String) {
-        Task {
-            testingNode = node
-            _ = await manager.testDelay(node: node)
-            testingNode = nil
-        }
+        Task { _ = await manager.testDelay(node: node) }
     }
 
     private func emptyPanel(_ text: String, icon: String) -> some View {
@@ -600,15 +606,26 @@ struct VPNView: View {
         return max(3, Int((mosaicWidth + 1) / (minCell + 1)))
     }
 
-    private var orderedGroups: [VpnGroup] {
+    /// Group order, computed once per `manager.groups` change.
+    ///
+    /// The old computed property sorted from `body`, and its comparator called
+    /// `preferred.firstIndex(of:)` *and* `localizedStandardCompare` on every
+    /// comparison — with a few hundred groups in a subscription that is a lot
+    /// of `O(n log n)` string collation per render, on a page that re-renders
+    /// for every node test and every traffic probe.
+    private func refreshGroupOrder() {
         let preferred = ["主代理"] + VpnManager.primaryGroupNames + ["♻️ 自动选择"]
-        return manager.groups.sorted { a, b in
-            let ia = preferred.firstIndex(of: a.name) ?? 1_000
-            let ib = preferred.firstIndex(of: b.name) ?? 1_000
+        var rank: [String: Int] = [:]
+        for (i, name) in preferred.enumerated() where rank[name] == nil { rank[name] = i }
+        groupOrder = manager.groups.sorted { a, b in
+            let ia = rank[a.name] ?? 1_000
+            let ib = rank[b.name] ?? 1_000
             if ia != ib { return ia < ib }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
     }
+
+    private var orderedGroups: [VpnGroup] { groupOrder }
 
     private var browsedSubscription: VpnSubscription? {
         let id = store.browsingID ?? store.activeID
@@ -631,10 +648,18 @@ struct VPNView: View {
             filePreview = VpnProfilePreview()
             return
         }
-        filePreview = store.preview(for: id)
-        let names = filePreview.groups.map(\.name)
-        if previewGroupName == nil || !names.contains(previewGroupName ?? "") {
-            previewGroupName = names.first
+        // Off the main thread: this runs from `onAppear`, i.e. inside the page
+        // switch transaction, and the profile can be a few hundred KB.
+        Task {
+            let preview = await store.previewAsync(for: id)
+            // The user may have browsed to another card while the read was in
+            // flight; the newer call owns `filePreview` then.
+            guard id == (store.browsingID ?? store.activeID) else { return }
+            filePreview = preview
+            let names = preview.groups.map(\.name)
+            if previewGroupName == nil || !names.contains(previewGroupName ?? "") {
+                previewGroupName = names.first
+            }
         }
     }
 
@@ -748,7 +773,7 @@ private struct VPNTrafficStrip: View {
             Text(label)
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
-            Text(value)
+            RollingNumberText(value)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundColor(tint)
                 .lineLimit(1)
@@ -909,13 +934,17 @@ struct VpnSpeedChart: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
+            // Computed once: `peak` maps the whole history twice, and it used
+            // to be read from inside `points` — twice per series, two series,
+            // at the traffic stream's 4 Hz flush rate.
+            let peak = peak
             ZStack(alignment: .bottomLeading) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(Theme.cardFill(0.04))
                 grid(w: w, h: h)
                 if history.count >= 2 {
-                    series(\.up, stroke: Theme.claudeHi, fill: Theme.claudeHi, w: w, h: h)
-                    series(\.down, stroke: Theme.external, fill: Theme.external, w: w, h: h)
+                    series(\.up, peak: peak, stroke: Theme.claudeHi, fill: Theme.claudeHi, w: w, h: h)
+                    series(\.down, peak: peak, stroke: Theme.external, fill: Theme.external, w: w, h: h)
                 }
             }
         }
@@ -932,9 +961,9 @@ struct VpnSpeedChart: View {
         .stroke(Theme.hairline.opacity(0.45), style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
     }
 
-    private func series(_ key: KeyPath<(down: Int64, up: Int64), Int64>,
+    private func series(_ key: KeyPath<(down: Int64, up: Int64), Int64>, peak: Int64,
                         stroke: Color, fill: Color, w: CGFloat, h: CGFloat) -> some View {
-        let pts = points(key, w: w, h: h)
+        let pts = points(key, peak: peak, w: w, h: h)
         return ZStack {
             smooth(pts, closeTo: h)
                 .fill(LinearGradient(
@@ -945,7 +974,7 @@ struct VpnSpeedChart: View {
         }
     }
 
-    private func points(_ key: KeyPath<(down: Int64, up: Int64), Int64>,
+    private func points(_ key: KeyPath<(down: Int64, up: Int64), Int64>, peak: Int64,
                         w: CGFloat, h: CGFloat) -> [CGPoint] {
         let n = history.count
         let slots = max(60, n)

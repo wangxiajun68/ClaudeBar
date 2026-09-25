@@ -24,12 +24,14 @@ extension ButtonStyle where Self == PressableStyle {
 /// Uiverse 3D press: translate down 1pt, collapse the drop shadow.
 /// Translation preserves the visual size of compact, variable-width controls.
 struct UiversePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .offset(y: configuration.isPressed ? 1 : 0)
+            .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
             .shadow(color: .black.opacity(configuration.isPressed ? 0 : 0.08),
                     radius: configuration.isPressed ? 0 : 2, y: configuration.isPressed ? 0 : 1)
-            .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
     }
 }
 
@@ -138,7 +140,7 @@ struct ActionChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            hover = hovering
+            if hover != hovering { hover = hovering }
         }
         .help(help)
         // `.help` renders a tooltip only; VoiceOver needs the label.
@@ -171,6 +173,22 @@ struct IconChip: View {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .strokeBorder(tint.opacity(hover ? 0.3 : 0.12), lineWidth: 0.75)
             }
-            .onHover { hover = $0 }
+            .onHover { if hover != $0 { hover = $0 } }
+    }
+}
+
+/// The island's per-digit roll, shared by the island, the menu-bar popup and
+/// the main window. Only the glyphs move; the view's frame stays put.
+struct RollingNumberText: View {
+    let value: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(_ value: String) { self.value = value }
+
+    var body: some View {
+        Text(value)
+            .monospacedDigit()
+            .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+            .animation(reduceMotion ? nil : .snappy(duration: 0.38), value: value)
     }
 }

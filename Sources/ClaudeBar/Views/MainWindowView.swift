@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The top-nav destinations.
 enum AppPage: String, CaseIterable, Identifiable {
-    case dashboard, sessions, providers, usage, traffic, vpn, settings, help
+    case dashboard, sessions, providers, connectors, usage, traffic, vpn, settings, help
     var id: String { rawValue }
 
     /// The pages that get a top-bar tab. 帮助 is reachable from the trailing
@@ -18,6 +18,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .dashboard: return "概览"
         case .sessions: return "会话"
         case .providers: return "模型"
+        case .connectors: return "连接器"
         case .usage: return "用量"
         case .traffic: return "流量"
         case .vpn: return "VPN"
@@ -31,6 +32,7 @@ enum AppPage: String, CaseIterable, Identifiable {
         case .dashboard: return "square.grid.2x2"
         case .sessions: return "rectangle.stack"
         case .providers: return "cube"
+        case .connectors: return "puzzlepiece.extension"
         case .usage: return "chart.bar"
         case .traffic: return "arrow.left.arrow.right"
         case .vpn: return "globe"
@@ -42,29 +44,48 @@ enum AppPage: String, CaseIterable, Identifiable {
 
 // MARK: - Main window root
 
-/// The main window's SwiftUI content: a top navigation bar (brand · pages ·
-/// live status) above a full-width detail area. The horizontal bar replaces
-/// the old vertical sidebar — the 宫格 content gets the whole window width and
-/// the chrome reads as one calm strip instead of a heavy left column.
+/// The main window's SwiftUI content: a floating navigation capsule between
+/// the brand and live status, above the full-width detail area.
 struct MainWindowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject private var prefs = AppPreferences.shared
-    @State private var selectedPage: AppPage? = .dashboard
+    /// The one preference this shell renders, subscribed individually.
+    /// Observing `AppPreferences.shared` wholesale meant every unrelated
+    /// write — a VPN port commit, a token-unit toggle, any notch flag —
+    /// re-evaluated this body, which reconstructs `DashboardView(onNavigate:)`
+    /// with a fresh closure value. Closures are not diffable, so SwiftUI could
+    /// not prove the child unchanged and re-ran the whole active page's body
+    /// (and all of its derived arrays) for a settings change it does not
+    /// render.
+    @State private var appearance = AppPreferences.shared.appearance
+    @State private var selectedPage: AppPage?
     @State private var showCommandPalette = false
     @State private var surfaceVisible = UIWakePolicy.hasVisibleMainWindow
 
+    /// The page the window was showing before it closed. The hosting view is
+    /// torn down on close (see `MainWindowController.releaseContent`), so the
+    /// selection is kept by the controller and handed back here.
+    var initialPage: AppPage = .dashboard
+    /// Reported on every navigation so the controller can remember it across
+    /// a close/reopen.
+    var onNavigate: (AppPage) -> Void = { _ in }
+
+    init(initialPage: AppPage = .dashboard, onNavigate: @escaping (AppPage) -> Void = { _ in }) {
+        self.initialPage = initialPage
+        self.onNavigate = onNavigate
+        _selectedPage = State(initialValue: initialPage)
+    }
     var body: some View {
         VStack(spacing: 0) {
             topBar
-            HairlineDivider()
             detailView
         }
         .environment(\.surfaceIsVisible, surfaceVisible)
         .onReceive(UIWakePolicy.changes) { surfaceVisible = UIWakePolicy.hasVisibleMainWindow }
+        .onReceive(AppPreferences.shared.$appearance.removeDuplicates()) { appearance = $0 }
         .frame(minWidth: 900, minHeight: 600)
         .background(Theme.bgPrimary)
-        .preferredColorScheme(prefs.appearance.colorScheme)
-        .id(prefs.appearance)
+        .preferredColorScheme(appearance.colorScheme)
+        .id(appearance)
         // ⌘K command palette — instant fuzzy search across pages, sessions,
         // and providers.
         .overlay {
@@ -107,32 +128,44 @@ struct MainWindowView: View {
 
     // MARK: Top navigation bar
 
-    /// Brand · page tabs (centered) · live status (trailing). One row, 52pt.
+    /// Brand · floating page capsule · live status. The ice canvas continues
+    /// behind the navigation so the capsule reads as a separate surface.
     ///
-    /// Eight tabs at `s4` run ~570pt; with the brand, the status pill and the
-    /// outer padding that is ~812 of the 900pt minimum width, and the window can
-    /// be dragged narrower than its minimum once the status label grows
-    /// ("3 运行中"). `ViewThatFits` drops the per-tab glyph — 18pt × 8 — when
-    /// the full row does not fit, which is cheaper than making the tabs scroll
-    /// or truncating a label. The icon's meaning survives in the tooltip and the
-    /// accessibility label.
+    /// `ViewThatFits` drops per-tab glyphs before labels when the window
+    /// narrows; tooltips and accessibility labels preserve the full names.
     private var topBar: some View {
-        HStack(spacing: Theme.Space.s16) {
+        HStack(spacing: Theme.Space.s12) {
             brand
-            Spacer()
+                .fixedSize()
+            Spacer(minLength: 0)
             pageTabs
-            Spacer()
+                .padding(Theme.Space.s4)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                        .fill(Theme.cardSurface)
+                        .shadow(color: .black.opacity(Theme.isDark ? 0.20 : 0.07),
+                                radius: 14, y: 5)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                        .strokeBorder(Theme.hairline, lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            Spacer(minLength: 0)
             liveStatus
+                .fixedSize()
         }
         .padding(.horizontal, Theme.Space.s16)
-        .frame(height: 52)
-        .background(Theme.cardSurface)
+        .padding(.top, Theme.Space.s12)
+        .padding(.bottom, Theme.Space.s16)
+        .frame(maxWidth: .infinity)
+        .background(Theme.bgPrimary)
     }
 
     private var pageTabs: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.s4) { tabRow(showGlyph: true) }
-            HStack(spacing: Theme.Space.s4) { tabRow(showGlyph: false) }
+            HStack(spacing: Theme.Space.s2) { tabRow(showGlyph: true) }
+            HStack(spacing: Theme.Space.s2) { tabRow(showGlyph: false) }
         }
     }
 
@@ -182,6 +215,7 @@ struct MainWindowView: View {
                 case .dashboard: DashboardView(onNavigate: navigate(to:))
                 case .sessions: SessionsView()
                 case .providers: ProvidersView()
+                case .connectors: ConnectorsView()
                 case .usage: UsageView()
                 case .settings: SettingsView()
                 case .help: HelpView()
@@ -206,6 +240,7 @@ struct MainWindowView: View {
     }
 
     private func navigate(to page: AppPage) {
+        onNavigate(page)
         if reduceMotion || page == .traffic || selectedPage == .traffic {
             selectedPage = page
         } else {
@@ -218,7 +253,7 @@ struct MainWindowView: View {
 
 // MARK: - Top nav tab
 
-/// A top-bar navigation tab: label + accent underline.
+/// A tab nested in the floating navigation capsule.
 struct TopNavTab: View {
     let page: AppPage
     let isSelected: Bool
@@ -226,11 +261,28 @@ struct TopNavTab: View {
     var showGlyph: Bool = true
     let action: () -> Void
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 if showGlyph {
+                    // Cached by `engaged`, not animated from the live value.
+                    //
+                    // `engaged` flips on every pointer entry to a tab, and a
+                    // `SignatureGlyph` — like every `InstrumentGlyph` — is a
+                    // `Canvas` that strokes 10–20 paths. Animating the
+                    // *glyph's own* `phase` means Core Animation has to
+                    // re-render that canvas at each interpolated frame, so
+                    // every hover entry pays a full re-draw of every mark in
+                    // the row. Removing only the tab's own background/colour
+                    // animation changed nothing measurable (1760 → 1740 ms per
+                    // 5 s hover sweep); removing the glyph's did (1750 → 1490,
+                    // and 2460 vs 460 in a later three-way split). Two states
+                    // at 17 pt — one engaged, one not — are visually
+                    // indistinguishable from the interpolated ones, and the
+                    // row stops doing per-frame rasterisation while the
+                    // pointer travels across it.
                     SignatureGlyph(name: page.icon,
                                    tint: isSelected ? PageIdentity.ink(page.label) : rowColor,
                                    size: 17, engaged: isSelected || isHovered)
@@ -241,19 +293,21 @@ struct TopNavTab: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, Theme.Space.s10)
+            .frame(height: 36)
             .background {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? Theme.cardSurface
-                          : (isHovered ? Theme.cardFill(0.04) : Color.clear))
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                    .fill(isSelected ? Theme.claude.opacity(Theme.isDark ? 0.16 : 0.09)
+                          : (isHovered ? Theme.bgSecondary : Color.clear))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(isSelected ? PageIdentity.ink(page.label).opacity(0.3) : Color.clear,
+                        RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                            .strokeBorder(isSelected ? Theme.claude.opacity(0.32) : Color.clear,
                                           lineWidth: 1)
                     }
             }
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: isSelected)
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: isHovered)
         }
         .buttonStyle(.pressable)
         .hoverState($isHovered)
@@ -276,17 +330,18 @@ private struct MainWindowSessionStatus: View {
     }
 
     private var isBusy: Bool {
-        providerStore.sessions.contains { $0.isAlive && $0.status == .busy }
-            || providerStore.cursorSessions.contains { $0.status == .active }
+        providerStore.anyClaudeBusy || providerStore.activeCursorCount > 0
             || providerStore.anyExternalBusy
     }
 
+    /// Counts come from `ProviderStore`'s own derived values: the pill used to
+    /// run its own `filter` / `contains` passes over the same three arrays on
+    /// every session poll, duplicating work the store already does once.
     private var currentLabel: String {
-        let alive = providerStore.sessions.filter(\.isAlive)
-        let busy = alive.filter { $0.status == .busy }.count
-        let cursor = providerStore.cursorSessions.filter { $0.status == .active }.count
+        let busy = providerStore.busySessionCount
+        let cursor = providerStore.activeCursorCount
         let external = providerStore.activeExternalCount
-        if alive.isEmpty && cursor == 0 && external == 0 { return "空闲" }
+        if providerStore.aliveSessions.isEmpty && cursor == 0 && external == 0 { return "空闲" }
         return "\(busy + cursor + external) 运行中"
     }
 

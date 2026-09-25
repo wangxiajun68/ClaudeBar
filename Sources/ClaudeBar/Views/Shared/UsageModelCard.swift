@@ -6,11 +6,24 @@ struct UsageModelCard: View {
     let stat: ModelUsage
     let slices: [SourceRing.Slice]
     var share: Double
+    /// This model's estimated list-price cost, or the reason it has none.
+    /// Nil only when the model has no recorded usage row at all.
+    var costLine: ModelPricing.Estimate.Line? = nil
+    /// The single preference this tile renders, subscribed individually.
+    /// Observing `AppPreferences.shared` wholesale meant every unrelated write
+    /// — a VPN port commit, a notch flag, the token-unit toggle — re-evaluated
+    /// every usage tile on the page. `ExchangeRate` is narrow enough to keep.
+    @State private var costDisplay = AppPreferences.shared.costDisplay
+    @ObservedObject private var fx = ExchangeRate.shared
     @State private var open = false
     @State private var hovered = false
 
     var body: some View {
-        Button {
+        // Resolved once per render: `costLabel`, its second line and the help
+        // text each called `presented(_:)` again, so one pass ran the pricing
+        // presentation up to five times.
+        let shown = costLine.map { presented($0.cost) }
+        return Button {
             withAnimation(Theme.Animation.smooth) { open.toggle() }
         } label: {
             VStack(alignment: .leading, spacing: 10) {
@@ -24,17 +37,20 @@ struct UsageModelCard: View {
                     if !slices.isEmpty {
                         SourceStack(slices: slices, scan: hovered)
                     }
-                    Text("\(stat.calls) 次")
+                    RollingNumberText("\(stat.calls) 次")
                         .font(Theme.Font.micro)
                         .foregroundColor(Theme.textTertiary())
                 }
-                Text(UsageStats.formatTokens(stat.totalTokens))
-                    .font(Theme.Font.displayMetricSmall)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textPrimary)
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    RollingNumberText(UsageStats.formatTokens(stat.totalTokens))
+                        .font(Theme.Font.displayMetricSmall)
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textPrimary)
+                                .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Spacer(minLength: 0)
+                    costLabel(shown)
+                }
                 AuroraSparkline(
                     values: AuroraSparkline.accentCurve(peak: min(max(share, 0.08), 1)),
                     tint: Theme.chartPurple,
@@ -63,6 +79,73 @@ struct UsageModelCard: View {
         }
         .buttonStyle(.plain)
         .hoverState($hovered)
-        .help(open ? "收起来源" : "查看 Claude Code / Codex / 第三方用量")
+        .help(helpText(shown))
+        .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
+    }
+
+    /// Estimated list-price cost of this tile's tokens.
+    ///
+    /// A model with no money renders its *reason* rather than a blank: the
+    /// tokens above it are real, and a tile that shows nothing next to a
+    /// number invites reading it as "free". 订阅制 and 未公开价 are different
+    /// facts — one means you are not billed per token, the other means we
+    /// cannot know — so they get their own words.
+    @ViewBuilder
+    private func costLabel(_ shown: ModelPricing.Presented?) -> some View {
+        if let line = costLine, let shown, let primary = shown.primary {
+            VStack(alignment: .trailing, spacing: 1) {
+                RollingNumberText(ModelPricing.format(primary.amount, currency: primary.currency))
+                    .font(Theme.Font.tileValueSmall)
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                // The second line is either the other currency (分列) or the
+                // unconverted figure (折算) — both are "the number this came
+                // from", which is what makes the headline checkable.
+                if let below = secondLine(line.cost, shown: shown) {
+                    RollingNumberText(below)
+                        .font(Theme.Font.micro)
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityLabel("估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
+        } else {
+            Text(costLine?.unpriced?.label ?? "未计价")
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textTertiary())
+                .help(costLine?.unpriced?.explanation ?? "价目表未收录该模型，token 不计入花费合计")
+        }
+    }
+
+    private func presented(_ cost: ModelPricing.Cost) -> ModelPricing.Presented {
+        ModelPricing.present(cost, display: costDisplay, rate: fx.effectiveRate)
+    }
+
+    /// The smaller line under the headline, or nil when there is nothing left
+    /// to say.
+    private func secondLine(_ cost: ModelPricing.Cost, shown: ModelPricing.Presented) -> String? {
+        if let secondary = shown.secondary {
+            return ModelPricing.format(secondary.amount, currency: secondary.currency)
+        }
+        // Converted: show the original amount instead, so a converted per-model
+        // figure can be checked against the vendor's own currency.
+        guard shown.isConverted, let source = cost.dominant,
+              source.currency != shown.primary?.currency else { return nil }
+        return ModelPricing.format(source.amount, currency: source.currency)
+    }
+
+    private func helpText(_ shown: ModelPricing.Presented?) -> String {
+        var lines: [String] = [open ? "收起来源" : "查看 Claude Code / Codex / 第三方用量"]
+        if costLine != nil, let shown, let primary = shown.primary {
+            lines.append("按官方刊例价估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
+        } else if let unpriced = costLine?.unpriced {
+            lines.append("\(unpriced.explanation)，不计入花费合计")
+        } else {
+            lines.append("价目表未收录 \(stat.model)")
+        }
+        return lines.joined(separator: "\n")
     }
 }

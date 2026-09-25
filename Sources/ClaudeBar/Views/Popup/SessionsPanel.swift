@@ -45,6 +45,7 @@ struct SessionsPanelView: View {
             }
             .padding(.bottom, 4)
         }
+        .scrollIndicators(.hidden)
         .padding(.vertical, 7)
     }
 
@@ -67,7 +68,7 @@ struct SessionsPanelView: View {
             ForEach(tree) { node in
                 ExternalSessionCardView(session: node.session,
                                         descendantCount: node.descendantCount,
-                                        childAgents: node.children.flatMap(\.flattened).map(\.session)) {
+                                        childAgents: node.children.flatMap(\.flattened)) {
                     resumeCodex(node.session)
                 }
             }

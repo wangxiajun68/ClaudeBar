@@ -13,7 +13,7 @@
 | 01 | [product-overview.md](01-product-overview.md) | 产品定位、目标用户、非目标 | 了解 ClaudeBar 是什么 |
 | 02 | [architecture.md](02-architecture.md) | 顶层架构图、核心设计取舍 | 理解整体结构与决策 |
 | 03 | [data-models.md](03-data-models.md) | Provider、会话、用量、Widget 快照 | 改数据模型时 |
-| 04 | [popup-layout.md](04-popup-layout.md) | 菜单栏 popup 560pt 布局 | 改 popup 时 |
+| 04 | [popup-layout.md](04-popup-layout.md) | 菜单栏 popup 424pt 布局 | 改 popup 时 |
 | 05 | [main-window-and-theme.md](05-main-window-and-theme.md) | 主窗口、页面、Theme token | 改主窗口 / 视觉时 |
 | 06 | [interactions.md](06-interactions.md) | 切换、轮询、通知、Widget 联动 | 理解行为流程时 |
 | 07 | [file-structure.md](07-file-structure.md) | 仓库文件树 | 定位文件时 |

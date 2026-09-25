@@ -453,6 +453,31 @@ final class VpnSubscriptionStore: ObservableObject {
         return VpnProfilePreview.parse(text)
     }
 
+    /// Parsed-preview cache, stamped with the profile's modification date so a
+    /// re-download invalidates it.
+    ///
+    /// `preview(for:)` reads the entire profile off disk and walks it line by
+    /// line — hundreds of KB for a big subscription. The VPN page called it
+    /// from its `onAppear`, which runs *inside* the page-switch animation
+    /// transaction, so the first frame of every visit to the VPN tab carried
+    /// the read and the walk. This variant does both off the main thread and
+    /// memoises the result.
+    func previewAsync(for id: UUID) async -> VpnProfilePreview {
+        let url = profileURL(id)
+        let stamp = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate
+        if let hit = previewCache[id], hit.stamp == stamp { return hit.preview }
+        let text = await Task.detached(priority: .utility) {
+            try? String(contentsOf: url, encoding: .utf8)
+        }.value
+        guard let text else { return VpnProfilePreview() }
+        let preview = VpnProfilePreview.parse(text)
+        previewCache[id] = (stamp, preview)
+        return preview
+    }
+
+    private var previewCache: [UUID: (stamp: Date?, preview: VpnProfilePreview)] = [:]
+
     private static func defaultName(from url: String) -> String {
         URL(string: url)?.host ?? "订阅"
     }

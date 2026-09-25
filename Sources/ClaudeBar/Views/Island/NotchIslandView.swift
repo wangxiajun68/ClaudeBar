@@ -21,26 +21,36 @@ enum IslandStyle {
     static let sectionGap: CGFloat = 8
     static let bottomPadding: CGFloat = 12
     static let sessionRowHeight: CGFloat = 44
-    static let sessionRowSpacing: CGFloat = 2
-    static let maxSessionRows = 3
-    static let overflowRowHeight: CGFloat = 22
-    static let emptyLaneHeight: CGFloat = 40
-    static let usageCardHeight: CGFloat = 108
+    static let sessionRowSpacing: CGFloat = 4
+    /// Two columns and two visible rows; additional sessions scroll inside.
+    static let sessionColumns = 2
+    static let maxSessionRows = 2
+    static var sessionLaneHeight: CGFloat {
+        CGFloat(maxSessionRows) * sessionRowHeight + CGFloat(maxSessionRows - 1) * sessionRowSpacing
+    }
+    static let stripReadoutHeight: CGFloat = 14
+    static var sessionStripHeight: CGFloat {
+        sessionLaneHeight + sessionRowSpacing + stripReadoutHeight
+    }
+    static var expandedLaneHeight: CGFloat { sessionStripHeight }
+    static let usageCardHeight: CGFloat = 156
 
-    /// The rotating glance card is a *fixed box*. Every row inside it is a
-    /// named constant — well, value, caption, title band — so no card can be
-    /// taller than another, and the reel can never resize the session lane
-    /// (and so the island) when it turns. Adding a row here means the card
-    /// grows by exactly that constant, not by whatever a glyph measures.
-    static let markWellSize: CGFloat = 24
+    /// The rotating glance card is a *fixed box*. Every band inside it is a
+    /// named constant, so no card can be taller than another, and the reel can
+    /// never resize the session lane (and so the island) when it turns.
+    ///
+    /// The card is the same 2×2 grid of *modules* on every page — a section
+    /// name, an icon, a figure and a unit — so a four-mark hardware page and a
+    /// two-mark quota page sit on the same baseline grid.
+    static let markWellSize: CGFloat = 20
     static let markValueHeight: CGFloat = 14
     /// The caption line reserves its box even when empty, so a two-up and a
     /// four-up card end on the same baseline.
     static let markCaptionHeight: CGFloat = 11
-    static let markCellSpacing: CGFloat = 3
-    static let markRowSpacing: CGFloat = 8
+    static let markCellSpacing: CGFloat = 2
+    static let markRowSpacing: CGFloat = 6
     static let cardTitleHeight: CGFloat = 12
-    static let cardTitleGap: CGFloat = 8
+    static let cardTitleGap: CGFloat = 6
     static let glanceCardPadding: CGFloat = 10
 
     static let markCellHeight: CGFloat = markWellSize + markCellSpacing
@@ -49,20 +59,37 @@ enum IslandStyle {
     /// Card contents, then the padding ring around them.
     static let glanceCardSize = CGSize(width: 188, height: cardBodyHeight)
     static let glanceReelWidth: CGFloat = glanceCardSize.width + 2 * glanceCardPadding
-    static let glanceReelHeight: CGFloat = cardBodyHeight + 2 * glanceCardPadding
+    static let glanceReelHeight: CGFloat = cardBodyHeight + 2 * glanceCardPadding + reelPagerBand
+
+    /// Reserve a separate pager band below the complete two-row body.
+    static let reelReservesPager = true
+    static var reelPagerBand: CGFloat { reelReservesPager ? pagerInset + pagerDotHeight : 0 }
+    static var cardContentBand: CGFloat {
+        cardBodyHeight
+    }
 
     /// How far into the card the pager sits, measured up from the card's
     /// bottom edge. Only reachable when the lane is at least this tall.
     static var pagerRestingInset: CGFloat { pagerInset + pagerDotHeight }
 
-    /// The pager floats over the card's bottom edge, pinned from the *outer*
-    /// box: no card can move the dots and the dots never affect the card.
+    /// The pager is pinned from the card's *outer* box, so no page can move it
+    /// and the dots never affect a page's layout.
     static let pagerDotHeight: CGFloat = 4
     static let pagerInset: CGFloat = 9
 
-    /// Fixed transparent panel; every morph happens inside it. Sized for the
-    /// tallest expanded island (three rows + overflow on a 38pt notch).
-    static let panelSize = CGSize(width: 640, height: 400)
+    /// Fixed transparent panel; every morph happens inside it. Derived from
+    /// the tallest island there is (two session rows on the tallest notch),
+    /// so it follows the geometry instead of being a number that has to be
+    /// remembered whenever a band changes.
+    static let panelWidth: CGFloat = 640
+    static var panelSize: CGSize {
+        CGSize(width: panelWidth, height: expandedMaxHeight + 48)
+    }
+    private static var expandedMaxHeight: CGFloat {
+        let tallestNotch: CGFloat = 46
+        return tallestNotch + contentTopGap + expandedLaneHeight
+            + sectionGap + usageCardHeight + bottomPadding
+    }
 
     // Surfaces & text
     static let textPrimary = Color.white.opacity(0.92)
@@ -128,7 +155,6 @@ struct NotchIslandView: View {
     /// observing all of `AppPreferences` would re-render the island for every
     /// unrelated settings change.
     @State private var tokenStyle = AppPreferences.shared.tokenUnitStyle
-    @State private var sessionPage = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vpnEnabled = AppPreferences.shared.vpnEnabled
 
@@ -138,10 +164,6 @@ struct NotchIslandView: View {
             .environment(\.colorScheme, .dark)
             .onReceive(AppPreferences.shared.$tokenUnitStyle.removeDuplicates()) { tokenStyle = $0 }
             .onReceive(AppPreferences.shared.$vpnEnabled.removeDuplicates()) { vpnEnabled = $0 }
-            .onChange(of: model.sessions.map(\.id)) { _, _ in sessionPage = 0 }
-            .onChange(of: state.mode) { _, mode in
-                if mode == .collapsed { sessionPage = 0 }
-            }
     }
 
     private var island: some View {
@@ -156,9 +178,9 @@ struct NotchIslandView: View {
                     wings.transition(.opacity)
                 }
             case .alert:
-                if let session = state.alert {
-                    IslandAlertContent(session: session, notch: state.notch, width: size.width, actions: actions)
-                        .id(session.id)
+                if let alert = state.alert {
+                    IslandAlertContent(alert: alert, notch: state.notch, width: size.width, actions: actions)
+                        .id(alert.id)
                         .transition(.islandContent)
                 }
             case .expanded:
@@ -199,10 +221,9 @@ struct NotchIslandView: View {
 
             Color.clear.frame(width: state.notch.width)
 
-            Text(UsageStats.formatTokens(model.usage.today))
+            RollingNumberText(UsageStats.formatTokens(model.usage.today))
                 .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(IslandStyle.textPrimary)
-                .contentTransition(.numericText())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .frame(width: IslandStyle.wingWidth - 8, alignment: .trailing)
@@ -221,11 +242,10 @@ struct NotchIslandView: View {
             HStack(spacing: 5) {
                 IslandAgentBadge(agent: lead.agent, busy: true, size: 18)
                 if busy.count > 1 {
-                    Text("\(busy.count)")
+                    RollingNumberText("\(busy.count)")
                         .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(IslandStyle.color(lead.agent))
-                        .contentTransition(.numericText())
-                }
+                        }
             }
             .transition(.opacity)
         } else {
@@ -293,35 +313,13 @@ struct NotchIslandView: View {
     }
 
     private var sessionsLane: some View {
-        HStack(alignment: .top, spacing: 8) {
-            sessionList
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            IslandGlanceReel(balances: model.balances, quota: model.quotaWindows,
-                             sessions: model.sessions, usage: model.usage,
-                             claudeRoute: model.claudeRoute, codexRoute: model.codexRoute,
-                             vpnRunning: model.vpnRunning)
-                // Pinned in both dimensions and top-aligned: the reel keeps
-                // its constant height whatever the lane gives it.
-                .frame(width: IslandStyle.glanceReelWidth,
-                       height: IslandStyle.glanceReelHeight,
-                       alignment: .top)
-                // Option B: the lane still springs with the session count, so
-                // when it is shorter than the card the card is top-aligned and
-                // the overflow is cut rather than allowed to push the lane (and
-                // with it the whole island) taller.
-                //
-                // KNOWN TRADEOFF: with 0-2 sessions the lane is 40/44/90pt, all
-                // under the card's 158pt, so the pager strip is clipped away in
-                // those states. Only 3+ sessions show it. In exchange the card
-                // itself never changes size while the reel turns.
-                .clipped()
-        }
+        sessionsStrip(model.sessions)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(height: IslandStyle.sessionStripHeight, alignment: .top)
     }
 
-    @ViewBuilder private var sessionList: some View {
-        let sessions = model.sessions
-        let pageCount = max(1, (sessions.count + IslandStyle.maxSessionRows - 1) / IslandStyle.maxSessionRows)
-        let page = min(sessionPage, pageCount - 1)
+    @ViewBuilder
+    private func sessionsStrip(_ sessions: [IslandSession]) -> some View {
         if sessions.isEmpty {
             HStack(spacing: 8) {
                 Image(systemName: "moon.zzz")
@@ -333,56 +331,91 @@ struct NotchIslandView: View {
             .foregroundStyle(IslandStyle.textTertiary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            VStack(spacing: IslandStyle.sessionRowSpacing) {
-                ForEach(sessions.dropFirst(page * IslandStyle.maxSessionRows).prefix(IslandStyle.maxSessionRows)) { session in
-                    IslandSessionRow(session: session) { actions.openSession(session) }
-                        .transition(.opacity)
-                }
-                if sessions.count > IslandStyle.maxSessionRows {
-                    Button { sessionPage = (page + 1) % pageCount } label: {
-                        Text("\(sessions.count) 个会话 · \(page + 1)/\(pageCount) · 下一组 ›")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(IslandStyle.textTertiary)
-                            .frame(maxWidth: .infinity, minHeight: IslandStyle.overflowRowHeight)
-                            .contentShape(Rectangle())
+            IslandSessionStrip(
+                sessions: sessions,
+                open: { actions.openSession($0) },
+                cost: { model.sessionCosts[$0.id] })
+        }
+    }
+}
+
+// MARK: - Session grid
+
+/// A native vertical scroll view supports both mouse wheels and trackpads.
+/// No playback timer moves a session out from under the pointer.
+private struct IslandSessionStrip: View {
+    let sessions: [IslandSession]
+    let open: (IslandSession) -> Void
+    let cost: (IslandSession) -> ModelPricing.Estimate?
+
+    private var canScroll: Bool {
+        sessions.count > IslandStyle.sessionColumns * IslandStyle.maxSessionRows
+    }
+
+    var body: some View {
+        VStack(spacing: IslandStyle.sessionRowSpacing) {
+            ScrollView(.vertical) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8),
+                                         count: IslandStyle.sessionColumns),
+                          spacing: IslandStyle.sessionRowSpacing) {
+                    ForEach(sessions) { session in
+                        IslandSessionRow(session: session, cost: cost(session)) { open(session) }
                     }
-                    .buttonStyle(.plain)
+                }
+                .padding(.trailing, canScroll ? 6 : 0)
+            }
+            .scrollIndicators(.visible)
+            .scrollDisabled(!canScroll)
+            .frame(height: IslandStyle.sessionLaneHeight)
+            .clipped()
+
+            HStack {
+                RollingNumberText("\(sessions.count) 个会话")
+                Spacer(minLength: 0)
+                if canScroll {
+                    Text("上下滑动查看更多")
                 }
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: sessions.map(\.id))
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: sessionPage)
+            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+            .foregroundStyle(IslandStyle.textTertiary)
+            .padding(.horizontal, 10)
+            .frame(height: IslandStyle.stripReadoutHeight)
         }
     }
 }
 
 // MARK: - Alert
 
-/// "A session just finished": the agent's mark, a one-shot glint around the
-/// rim, which project finished, and a button straight back into it. Clicking
-/// anywhere else expands the island.
+/// The alert strip under the notch, for either kind of alert: the agent's
+/// mark, a one-shot glint around the rim, what happened, and the action that
+/// follows from it. Clicking anywhere else expands the island.
+///
+/// A quota rollover reads left-to-right the same way a finished session does —
+/// mark, verdict, detail, action — so the two share one layout rather than
+/// growing a second strip that would need its own geometry to match.
 private struct IslandAlertContent: View {
-    let session: IslandSession
+    let alert: IslandAlert
     let notch: CGSize
     let width: CGFloat
     let actions: IslandActions
 
     var body: some View {
-        let tint = IslandStyle.color(session.agent)
+        let tint = IslandStyle.color(alert.agent)
         let side = max(0, (width - 2 * IslandStyle.topFlare - notch.width) / 2 - 14)
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                IslandAgentBadge(agent: session.agent, size: 20)
+                IslandAgentBadge(agent: alert.agent, size: 20)
                     .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "checkmark.circle.fill")
+                        Image(systemName: badgeSymbol)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(Color.black, IslandStyle.mint)
+                            .foregroundStyle(Color.black, verdictTint)
                             .offset(x: 3, y: 3)
                     }
                     .frame(width: side, alignment: .leading)
                 Spacer(minLength: 0)
-                Text("已完成")
+                Text(verdict)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(IslandStyle.mint)
+                    .foregroundStyle(verdictTint)
                     .frame(width: side, alignment: .trailing)
             }
             .padding(.horizontal, 14)
@@ -390,7 +423,7 @@ private struct IslandAlertContent: View {
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.project.isEmpty ? session.agent.label : session.project)
+                    Text(headline)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(IslandStyle.textPrimary)
                         .lineLimit(1)
@@ -400,20 +433,32 @@ private struct IslandAlertContent: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                Button { actions.openSession(session) } label: {
-                    HStack(spacing: 4) {
-                        Text(session.agent == .cursor ? "打开" : "继续")
-                        Image(systemName: "arrow.up.forward")
-                            .font(.system(size: 9, weight: .bold))
+                if let openSession = sessionToOpen {
+                    Button { actions.openSession(openSession) } label: {
+                        HStack(spacing: 4) {
+                            Text(openSession.agent == .cursor ? "打开" : "继续")
+                            Image(systemName: "arrow.up.forward")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(Capsule().fill(tint))
+                        .contentShape(Capsule())
                     }
-                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.black)
-                    .padding(.horizontal, 12)
-                    .frame(height: 26)
-                    .background(Capsule().fill(tint))
-                    .contentShape(Capsule())
+                    .buttonStyle(IslandPressStyle())
+                } else {
+                    // Nothing to open for a quota rollover — the figure itself
+                    // is the whole message, so the space goes to a label that
+                    // says which window recovered.
+                    Text(alertQuotaLabel)
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(Capsule().fill(tint.opacity(0.16)))
                 }
-                .buttonStyle(IslandPressStyle())
             }
             .padding(.horizontal, IslandStyle.sidePadding + 8)
             .frame(height: IslandStyle.alertBodyHeight)
@@ -425,9 +470,57 @@ private struct IslandAlertContent: View {
         .overlay { IslandGlint(color: tint) }
     }
 
+    /// The session this alert can jump back into; nil for a quota rollover.
+    private var sessionToOpen: IslandSession? {
+        if case .finished(let session) = alert { return session }
+        return nil
+    }
+
+    private var alertQuotaLabel: String {
+        if case .quotaReset(let window) = alert { return window.label }
+        return ""
+    }
+
+    private var headline: String {
+        switch alert {
+        case .finished(let session):
+            return session.project.isEmpty ? session.agent.label : session.project
+        case .quotaReset(let window):
+            return "\(window.label) 已重置"
+        }
+    }
+
     private var detail: String {
-        let who = session.agent.label + (session.model.isEmpty ? "" : " · " + session.model)
-        return who + " · 等待你的下一步"
+        switch alert {
+        case .finished(let session):
+            let who = session.agent.label + (session.model.isEmpty ? "" : " · " + session.model)
+            return who + " · 等待你的下一步"
+        case .quotaReset:
+            return "额度已刷新 · 可以继续使用"
+        }
+    }
+
+    private var verdict: String {
+        switch alert {
+        case .finished: return "已完成"
+        case .quotaReset: return "已重置"
+        }
+    }
+
+    /// Mint for a finished turn; amber for a refilled allowance — the same
+    /// pairing the quota gauges use when a window is nearly spent.
+    private var verdictTint: Color {
+        switch alert {
+        case .finished: return IslandStyle.mint
+        case .quotaReset: return IslandStyle.amber
+        }
+    }
+
+    private var badgeSymbol: String {
+        switch alert {
+        case .finished: return "checkmark.circle.fill"
+        case .quotaReset: return "arrow.clockwise.circle.fill"
+        }
     }
 }
 
@@ -509,7 +602,7 @@ private struct IslandIconButton: View {
         }
         .buttonStyle(IslandPressStyle())
         .help(help)
-        .onHover { hovered = $0 }
+        .onHover { if hovered != $0 { hovered = $0 } }
         .animation(IslandStyle.hoverSpring, value: hovered)
     }
 }

@@ -79,6 +79,9 @@ enum HostAccelerator {
 enum HardwareSensors {
     static func cpuTemperatureCelsius() -> Double? { SMCController.shared.cpuTemperatureCelsius() }
 
+    /// 电池电芯温度，随上面两项一起采样：MacBook 拔电后真正发热的是电池。
+    static func batteryTemperatureCelsius() -> Double? { SMCController.shared.batteryTemperatureCelsius() }
+
     /// GPU 温度：IOAccelerator 的 PerformanceStatistics 在 Apple Silicon 上通常没有
     /// Temperature(C)，所以兜底读 SMC 的 GPU 温度键。
     /// SMC 内核按键名字节序匹配，同一物理键需正/反拼写都试（M3 Pro 实测 G0eT/g0pT/G1pT）。

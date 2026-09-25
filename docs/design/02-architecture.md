@@ -56,7 +56,7 @@
 │                                        └───────────────────────────────┘
 │  ┌──────────── Theme ────────────┐    ┌──────────── Views ────────────┐
 │  │ Theme (设计 token 单点)         │    │ MenuBarView + Popup/          │
-│  │   panelCard() / tile() / …     │    │ MainWindowView + Pages/ (8 页)│
+│  │   panelCard() / tile() / …     │    │ MainWindowView + Pages/ (9 页)│
 │  └─────────────────────────────────┘    │ Provider*Editor / Shared/     │
 │                                        └───────────────────────────────┘
 └──────────────────────────────────────────────────────────────┘
@@ -72,7 +72,7 @@
 
 | 决策 | 选择 | 原因 |
 |------|------|------|
-| UI 容器 | 主窗口 `NSWindow` + 顶栏 tabs（`VStack` + `ViewThatFits`）；菜单栏为自定义 `NSPanel` + `NSStatusItem`，而非 `MenuBarExtra` | 主窗口承载完整管理功能（8 页面 + ⌘K）；菜单栏 popup 为快速概览。 |
+| UI 容器 | 主窗口 `NSWindow` + 顶栏 tabs（`VStack` + `ViewThatFits`）；菜单栏为自定义 `NSPanel` + `NSStatusItem`，而非 `MenuBarExtra` | 主窗口承载完整管理功能（9 页面 + ⌘K）；菜单栏 popup 为快速概览。 |
 | 状态管理 | `ProviderStore` + `CodexProviderStore` 双中枢，经 peer 互引 | 配置域与激活状态分离；peer 只用于共享代理状态，不联动模型切换。 |
 | 依赖 | 零 **Swift** 第三方包（系统框架 + libsqlite3）；VPN 另捆绑 **mihomo** 二进制 sidecar | `swiftc` + shell；内核由 `build.sh` 下载到 `vendor/mihomo/`，不进 Git。 |
 | 布局语言 | 全界面宫格化：数据域以等高瓦片网格呈现，列模板收敛到 `Theme.GridLayout.Preset` | 每个数据域只在一处决定"怎么排"；瓦片等高保证网格行整齐，信息密度高于卡片列表。 |

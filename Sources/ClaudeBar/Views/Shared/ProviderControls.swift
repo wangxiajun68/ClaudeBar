@@ -80,7 +80,7 @@ struct ProviderActionStyle: ButtonStyle {
                 .opacity(enabled ? 1 : 0.4)
                 .contentShape(RoundedRectangle(cornerRadius: 10))
                 .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-                .onHover { hovered = $0 }
+                .onHover { if hovered != $0 { hovered = $0 } }
                 .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.75), value: configuration.isPressed)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovered)
         }
@@ -184,7 +184,7 @@ private struct ProviderModelPicker: View {
             HStack {
                 Text("选择待激活模型").font(.system(size: 16, weight: .semibold, design: .rounded))
                 Spacer()
-                Text("\(available.count) 个可用").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                RollingNumberText("\(available.count) 个可用").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
             TextField("搜索模型或配置名称", text: $query)
                 .textFieldStyle(ProviderInputStyle()).focused($searching)

@@ -86,10 +86,22 @@ struct VpnNodePickerPanel: View {
                     .padding(.top, 8)
                     .padding(.bottom, 4)
 
+                // Hoisted out of the row loop. `livePath` walks the primary
+                // group and the whole selector chain, and `resolvedDelay`
+                // walks it again — both are computed properties, so reading
+                // them per row made one popover render O(nodes × groups).
+                // Neither set changes between two rows of the same render.
+                let livePath = Set(manager.livePath)
+                let testingNodes = manager.testingNodes
+                let delays = Dictionary(manager.proxies.map { ($0.name, $0.delay) },
+                                        uniquingKeysWith: { first, _ in first })
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(group.nodes, id: \.self) { name in
-                            nodeRow(group: group.name, name: name)
+                            nodeRow(group: group.name, name: name,
+                                    live: livePath.contains(name),
+                                    delay: delays[name] ?? manager.resolvedDelay(name),
+                                    testing: testingNodes.contains(name))
                         }
                     }
                     .padding(.horizontal, 6)
@@ -111,11 +123,8 @@ struct VpnNodePickerPanel: View {
         .padding(.top, 4)
     }
 
-    private func nodeRow(group: String, name: String) -> some View {
-        let live = manager.livePath.contains(name)
-        let delay = manager.resolvedDelay(name)
-        let testing = manager.testingNodes.contains(name)
-        return Button {
+    private func nodeRow(group: String, name: String, live: Bool, delay: Int?, testing: Bool) -> some View {
+        Button {
             Task { _ = await manager.selectNode(group: group, node: name) }
             isPresented = false
         } label: {

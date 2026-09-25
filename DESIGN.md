@@ -46,6 +46,14 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
 5. **VPN CTA** — dark sparkle pill. Live outbound path is a `›` breadcrumb,
    not a decorative metro line.
 6. **Settings** — one control per grid tile, including theme.
+7. **Connectors** — a compact client rail with a separate shared Agent CLI
+   destination for each CLI and its declared Skills/MCP, a segmented type
+   filter, and equal-height adaptive grid tiles. Each tile names its type and
+   keeps the state action visible. A sheet renders Skill Markdown, MCP tool
+   metadata, or plugin contents; scrolling never expands or relays out a tile.
+8. **Main navigation** — a centered white capsule floats over the continuous
+   ice canvas; brand and live status stay outside it. At narrow widths tabs
+   lose glyphs before labels, preserving the full destination list.
 
 ## Motion / performance
 
@@ -54,3 +62,8 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
 - YAML sanitize + `networksetup` run off the main actor.
 - Fan rotors tick on a periodic TimelineView and accumulate angle; do not
   drive blades with `rotationEffect` (parent refresh snaps them back).
+- Connector controls animate only on press, selection, focus, or an explicit
+  state change. Inventory tiles remain lazy, fixed-height and shadow-free;
+  reduce-motion removes nonessential movement.
+- The main navigation uses one static elevated surface; only tab hover and
+  selection animate. No full-width material blur or scrolling tab strip.

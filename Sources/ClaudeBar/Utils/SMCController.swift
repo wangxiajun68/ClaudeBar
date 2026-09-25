@@ -155,6 +155,18 @@ final class SMCController {
         return chars.joined().trimmingCharacters(in: .whitespaces)
     }
 
+    /// 电池电芯温度：SMC 上以 `TB1T` / `TB0T` 为主，M 系列机型两者拼写都有出现，
+    /// 所以两套都试。只接受 `0 < t < 120` 的读数——未接电池的键会回 0，别把 0 当成
+    /// 温度。第一个答得上来的键即采用（同一时刻不同键是同一颗电芯，不必取最大值）。
+    func batteryTemperatureCelsius() -> Double? {
+        for key in ["TB1T", "TB0T", "Tb1t", "Tb0t"] {
+            if let value = getValue(key), value > 0, value < 120 {
+                return value
+            }
+        }
+        return nil
+    }
+
     func cpuTemperatureCelsius() -> Double? {
         let appleSilicon = [
             "Te05", "Te0L", "Te0P", "Te0S", "Te09", "Te0H",

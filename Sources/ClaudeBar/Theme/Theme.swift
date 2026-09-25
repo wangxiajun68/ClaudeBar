@@ -501,7 +501,7 @@ struct PageTitle: View {
                 .lineLimit(1)
                 .fixedSize()
         }
-        .onHover { hovered = $0 }
+        .onHover { if hovered != $0 { hovered = $0 } }
         .accessibilityAddTraits(.isHeader)
     }
 }

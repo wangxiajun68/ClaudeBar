@@ -18,6 +18,7 @@ struct SessionInfo: Identifiable, Equatable {
     var model: String = ""              // actual responding model
     var messageCount: Int = 0           // assistant turns in transcript
     var currentActivity: String = ""    // e.g. "Bash" or "Read · path.swift"
+    var firstPrompt: String = ""        // first human prompt → card title
     var toolPending: Bool = false       // a tool_use has no following tool_result
     var completionID: String? = nil     // UUID of the latest final assistant answer
     var subagents: [SubagentInfo] = []  // live subagents spawned by this session
@@ -41,6 +42,18 @@ struct SessionInfo: Identifiable, Equatable {
     /// Folder name derived from cwd, e.g. "ClaudeBar".
     var projectFolder: String {
         (cwd as NSString).lastPathComponent
+    }
+
+    /// Title for cards, palettes and the dashboard. Claude Code has no title
+    /// field, so the first human prompt stands in; the folder is the last
+    /// resort. See `SessionTitle`.
+    var displayTitle: String {
+        SessionTitle(firstPrompt: firstPrompt, folder: projectFolder).display
+    }
+
+    /// Two-part card header: `folder · 首条 prompt`.
+    var cardLabel: SessionTitle.Label {
+        SessionTitle(firstPrompt: firstPrompt, folder: projectFolder).cardLabel
     }
 
     /// Short "5m ago" style label since last update.
@@ -94,6 +107,8 @@ struct ContextScan {
     let activity: String
     let toolPending: Bool
     let completionID: String?
+    /// The first human prompt, used as the card title (see `SessionTitle`).
+    var title: String = ""
 }
 
 /// Reads ~/.claude/sessions/*.json and reports live Claude Code sessions.
@@ -153,6 +168,55 @@ struct SessionMonitor {
     ///
     /// Single open/seek/read per poll; `size` from `seekToEnd` doubles as the
     /// existence check, so no separate `fileExists` stat is needed.
+    /// The session's first human prompt, from the transcript's *head*.
+    ///
+    /// The title is not in the tail this monitor normally reads, so this is a
+    /// second bounded read. Claude Code marks a typed prompt with
+    /// `origin.kind == "human"` (`promptSource: "typed"`); everything else in
+    /// the `user` stream is plumbing that must not become a title:
+    ///
+    ///   - `isMeta: true` — injected `<local-command-caveat>` notices
+    ///   - `isSidechain: true` — subagent traffic
+    ///   - `origin == nil` — `/effort`, `/clear` … command wrappers
+    ///
+    /// Measured on 40 local transcripts: 35 yield a clean first prompt, and the
+    /// 5 that do not (`/clear`-only sessions, `<history>` injections) fall back
+    /// to the folder name via `SessionTitle`.
+    private static func firstHumanPrompt(for session: SessionInfo) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else { return "" }
+        defer { try? handle.close() }
+        // Prompts live well inside the first few records; 16KB covers the
+        // session preamble at a fraction of a full read.
+        guard let data = try? handle.read(upToCount: 16_000), !data.isEmpty else { return "" }
+        let head = String(decoding: data, as: UTF8.self)
+        for line in head.split(separator: "\n", omittingEmptySubsequences: true) {
+            // Substring check first: only user-shaped lines pay for a parse.
+            guard line.contains("\"type\":\"user\"") else { continue }
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  (obj["type"] as? String) == "user" else { continue }
+            if (obj["isMeta"] as? Bool) == true { continue }
+            if (obj["isSidechain"] as? Bool) == true { continue }
+            guard let origin = obj["origin"] as? [String: Any],
+                  (origin["kind"] as? String) == "human" else { continue }
+            guard let message = obj["message"] as? [String: Any] else { continue }
+            let content = message["content"]
+            let text: String
+            if let plain = content as? String {
+                text = plain
+            } else if let blocks = content as? [[String: Any]] {
+                text = blocks.compactMap { block -> String? in
+                    guard (block["type"] as? String) == "text" else { return nil }
+                    return block["text"] as? String
+                }.joined(separator: " ")
+            } else {
+                text = ""
+            }
+            let cleaned = SessionTitle.condense(text)
+            if !cleaned.isEmpty { return cleaned }
+        }
+        return ""
+    }
+
     static func fetchContext(for session: SessionInfo) -> ContextScan {
         guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else {
             return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false, completionID: nil)
@@ -241,7 +305,8 @@ struct SessionMonitor {
         // tool_result (i.e. it has no following result yet).
         let pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
         return ContextScan(tokens: lastContext, model: lastModel, count: msgCount,
-                           activity: lastActivity, toolPending: pending, completionID: completionID)
+                           activity: lastActivity, toolPending: pending, completionID: completionID,
+                           title: firstHumanPrompt(for: session))
     }
 
     /// Scan the session's `subagents/` directory for spawned subagents and

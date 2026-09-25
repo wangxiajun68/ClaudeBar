@@ -6,7 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `ClaudeBarApp.swift` | AppDelegate：激活策略、启动时序、`claudebar://`、空闲通知 Resume |
-| `MenuBarController.swift` | NSStatusItem + NSPanel；`MenuBarMark` 矢量模板标；VPN 运行时 `VpnMenuBarRateView` |
+| `MenuBarController.swift` | NSStatusItem + NSPanel；`MenuBarMark` 矢量模板标；VPN 速率 + 电池条 `VpnMenuBarRateView`（宽度由布局常量推导，`Tests/menubar-strip-regressions.py` 锁定） |
 | `NotchIslandController.swift` | 刘海灵动岛：`NotchIslandState`（收起 / 提醒 / 展开）、固定尺寸面板、热区与离开判定、完成提醒计时 |
 | `Models/IslandLiveModel.swift` | 灵动岛数据：三家会话扁平化、忙→闲完成事件、当前路由、VPN、今日 / 本月 / 30 天用量 |
 | `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时的伪刘海 |
@@ -46,9 +46,23 @@
 | `Utils/ScreenshotHotKey.swift` | Carbon 全局 ⌘⇧A |
 | `Utils/ScreenshotOverlay.swift` | ScreenCaptureKit 拉框截图 |
 | `Theme/Theme.swift` | 设计 token + `Theme.Ink`（作文字用的信号色，≥4.5:1） |
-| `Views/MainWindowView.swift` | 8 页 `AppPage`；顶栏 tabs；流量页常驻 |
-| `Views/MenuBarView.swift` | popup 壳：Header + ResourceStrip + 三区 |
+| `Views/MainWindowView.swift` | 9 页 `AppPage`；顶栏 tabs（帮助走右上角问号）；流量页常驻 |
+| `Views/MenuBarView.swift` | popup 壳（424pt）：Header + MachineKpiStrip + 能源流向 + 两面板 + 操作栏；只订阅外壳状态 |
 | `Views/Pages/VPNView.swift` | VPN 主界面 |
+| `Models/IdleTransitionDetector.swift` | `IdleTransitionDetector` / `ConfirmedCompletionDetector` / `QuotaResetDetector` —— 忙碌、完成、额度重置三种边沿检测 |
+| `Utils/SessionTitle.swift` | 会话卡片标题的唯一推导：Codex `threads.title` / Cursor `composerHeaders.name` / CC 首条人类 prompt，回退目录名 |
+| `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
+| `Utils/ModelPriceTable.swift` | 内置官方刊例价表（每行标注来源，见 [§15](15-model-cost.md)）；更新只需改这一个文件 |
+| `Utils/ExchangeRate.swift` | USD→CNY 汇率：用户要求折算时才联网（两个无 Key 日更源），也可手动钉住一个值 |
+| `Views/Shared/ModelCostCard.swift` | 「模型花费」磁贴（主币种金额 + 另一币种与未计价模型数）；**当前未挂载**（概览首屏已换成用量对照），花费现由概览的用量对照区、popup 用量区与用量页瓦片展示 |
+| `Views/Shared/VpnPowerCard.swift` | VPN 状态磁贴；**当前未挂载**，VPN 状态由 popup 页头 chip 与 VPN 页承载 |
+| `Models/ConnectorManager.swift` | 连接器扫描：三家客户端的本机 Skills / MCP / 插件，及其启停方式；只读元数据，不启动服务 |
+| `Models/MCPToolDiscovery.swift` | MCP `initialize` + `tools/list`（不发 `tools/call`），HTTP 与 stdio 两种传输，带超时与上限 |
+| `Views/Pages/ConnectorsView.swift` | 连接器页：客户端筛选 + 「本机共享」+ 类型筛选 + 搜索 + 等高卡片网格 |
+| `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
+| `Views/Pages/DashboardAnalysis.swift` | 概览的「用量对照」：7/14/28 天来源堆叠柱 + 此前总量虚线 + 刊例价估算 + Token 去向 |
+| `Views/Shared/SkillMarkdownPreview.swift` | SKILL.md 的原生 SwiftUI 渲染（标题 / 列表 / 引用 / 代码块 / 表格） |
+| `Views/Shared/ExchangeRateTile.swift` | 设置 → 模型花费 → 汇率：显示当前汇率与日期、手动钉值 |
 | `Views/Shared/VpnTopChrome.swift` | `VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle` |
 | `Views/Shared/UsageRiver.swift` | `CacheAnatomyBar`（周期 token 构成） |
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：CC/Codex 只读 + 第三方选择（设置页宫格里的 4 张 tile） |

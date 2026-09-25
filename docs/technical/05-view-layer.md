@@ -3,9 +3,7 @@
 > ClaudeBar 技术文档 · §5
 > 相关：设计文档 [主窗口与设计系统](../design/05-main-window-and-theme.md) · [Popup 布局](../design/04-popup-layout.md) · 技术文档 [启动与窗口](02-app-launch-and-windows.md)
 
-ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，560pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 7 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
-
-## `Theme` — 设计 token 单点
+ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，424pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 9 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
 
 ## `Theme` — 设计 token 单点
 
@@ -19,13 +17,16 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 ## `MenuBarView` + `Views/Popup/` — 菜单栏 popup
 
-`MenuBarView` 是组合壳（宽 560pt 的 `VStack`）：
+`MenuBarView` 是组合壳（宽 424pt 的 `VStack`）：
 
 - **PanelHeader**：Brand + 模型/VPN 切换 chip（`HeaderSwitchChip` + `VpnNodePickerPanel`）+ 刷新。
-- **ResourceStrip（dense）**：本机资源与风扇。
-- **SessionsPanel / UsagePanel**：固定区高，避免互相挤压。Provider 宫格只存在于主窗口（popup 的模型切换在 `PanelHeader` 的 chip 里）。
-- **PanelState**：feedback toast、折叠态。
-- **底部操作栏**：刷新 / 主窗口 / 编辑供应商 / settings.json / 空闲通知 / 退出。
+- **MachineKpiStrip（dense）**：本机资源与风扇。
+- **PowerFlowCard(compact)**：有内置电池时的能源流向紧凑卡。
+- **SessionsPanel / UsagePanel**：各自观察自己的字段；Provider 宫格只存在于主窗口（popup 的模型切换在 `PanelHeader` 的 chip 里）。
+- **PanelState / FeedbackToast**：toast 只由 `overlay` 里那个 reader 订阅，写反馈不再重算整个外壳。
+- **底部操作栏**：刷新 / 主窗口 / 帮助 / 还原官方配置 / 管理模型 / settings.json / 空闲通知 / 深浅色 / 退出。
+
+**外壳订阅范围**：只订阅 `hasSettingsFile` 与「Codex 供应商是否为空」，以及它自己渲染的 `appearance` / `idleNotifyEnabled`；会话与用量由各自面板观察。主题切换**不**用 `.id()` 重建整个 popup（那会重置滚动位置与展开态，而底部操作栏本身就能切主题）。
 
 **视觉规范**：
 - 配色统一 `Theme` token（`textPrimary`/`textSecondary`/`textTertiary()`/`accent`/`statusBusy`/`cursorAccent`/`divider` 等）。
@@ -33,11 +34,11 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - busy/active 的状态点脉冲动画（`Theme.Animation.pulse`）。
 - 反馈 toast（`PanelState.showFeedback` + `FeedbackToast`）2 秒淡出。
 
-**双击行为**（经共享 `TerminalLauncher`）：
-- Claude 会话：`TerminalLauncher.resumeClaudeSession(cwd:sessionId:)` → 优先 Warp（`/Applications/Warp.app` 存在时），否则 Terminal。Warp 路径：`NSWorkspace.open` 打开 cwd + 后台 `osascript` 注入 `claude --resume <sessionId>` 并回车。Terminal 路径：`do script`。
+**双击行为**（经共享 `TerminalLauncher`，先把活会话的宿主窗口带到前台；见 [§9](09-file-index.md) 的 `SessionHost` / `OttyBridge`）：
+- Claude 会话：`TerminalLauncher.resumeClaudeSession(cwd:sessionId:pid:)` —— 会话进程仍活着就只聚焦宿主（Otty 走 socket，无需自动化权限）；已结束的才按「继续会话」偏好（自动 / Otty / Warp / 终端）执行 `claude --resume`。
 - Cursor 会话：`TerminalLauncher.openInCursor(cwd:)` 或 `NSWorkspace` 打开 Cursor.app + cwd。
 
-编辑器由主窗口的「模型」页承载（`ProvidersView` 嵌入 `ProviderEditorView`）；popup 底部的编辑按钮只负责 post `.openProvidersEditor` 切页，不再持有自己的 NSWindow。
+编辑器由主窗口的「模型」页承载（`ProvidersView` 打开 `ProviderConnectionEditor` 单连接弹窗）；popup 底部的「管理模型」只负责 post `.openProvidersEditor` 切页，不再持有自己的 NSWindow。
 
 ## `ProviderTile` / `ProviderRow`（`Views/ProviderRow.swift`）
 

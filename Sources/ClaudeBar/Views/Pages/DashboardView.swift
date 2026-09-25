@@ -1,12 +1,10 @@
 import SwiftUI
+import Charts
 
-/// Dashboard page: the 宫格 overview. Four metric tiles carry the key numbers,
-/// live sessions appear as an adaptive tile grid, and per-model usage lands in
-/// its own tile grid. All data flows from `ProviderStore`.
+/// Analysis first, then power controls, session details and the usage calendar.
+/// Shares the selected usage period with the usage page.
 struct DashboardView: View {
     @ProviderState([.configuration, .sessions, .usage]) var providerStore: ProviderStore
-    @EnvironmentObject var codexStore: CodexProviderStore
-    @ObservedObject private var prefs = AppPreferences.shared
     /// Injected by the window so a tile tap navigates to the page.
     var onNavigate: (AppPage) -> Void = { _ in }
 
@@ -15,8 +13,8 @@ struct DashboardView: View {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
                 ResourceStrip()
-                PowerFlowCard()
                 metricRow
+                PowerFlowCard()
                 sessionOverview
                 usageTop
             }
@@ -45,122 +43,20 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: Metric tiles
+    // MARK: Analysis
 
-    /// The four key numbers, one tile each.
     private var metricRow: some View {
-        TileGrid(.pageMetric) {
-            MetricTile(label: "活跃配置", value: activeConfigLabel,
-                       detail: providerStore.currentEnv?.ANTHROPIC_MODEL ?? "",
-                       instrumentIcon: .config, pill: "当前") {
-                onNavigate(.providers)
-            }
-            MetricTile(label: "会话", value: sessionValue,
-                       detail: "\(runningCount) 运行中 · \(totalSessionCount) 活动",
-                       instrumentIcon: .sessions,
-                       pill: runningCount > 0 ? "运行中" : "空闲") {
-                onNavigate(.sessions)
-            }
-            MetricTile(label: "Token 总量", value: tokenTotalValue,
-                       detail: UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate),
-                       instrumentIcon: .tokens) {
-                onNavigate(.usage)
-            }
-            MetricTile(label: "Codex 额度", value: codexQuotaValue, detail: codexQuotaDetail,
-                       instrumentIcon: .quota,
-                       pill: codexStore.quotaLoading ? "刷新中…" : "点击刷新",
-                       quotaWindows: codexStore.quotaWindows) {
-                codexStore.refreshQuota()
-            }
-            .disabled(codexStore.quotaLoading)
-            .help(codexQuotaHelp)
-            .accessibilityHint("获取最新的 Codex 剩余额度")
-            MetricTile(label: "Codex 配置", value: codexConfigValue, detail: codexConfigDetail,
-                       instrumentIcon: .config, pill: "模型") {
-                onNavigate(.providers)
-            }
-            MetricTile(label: "Claude Code 配置", value: ccConfigValue, detail: ccConfigDetail,
-                       instrumentIcon: .config, pill: "模型") {
-                onNavigate(.providers)
-            }
-            MetricTile(label: "本地代理", value: localProxyValue, detail: "127.0.0.1:\(prefs.codexProxyPort)",
-                       instrumentIcon: .link, pill: codexStore.proxyRunning ? "监听" : "关闭") {
-                onNavigate(.providers)
-            }
-            VpnPowerCard(opensVPNPage: true)
-        }
+        DashboardAnalysisView(refreshStats: providerStore.usageStats,
+                              refreshDays: providerStore.usageDays)
     }
 
-    // MARK: Metric values
+    private var aliveCount: Int { providerStore.aliveSessions.count }
 
-    private var activeConfigLabel: String {
-        providerStore.providers.first(where: { $0.id == providerStore.activeProviderID })?.name ?? "未配置"
-    }
-
-    private var sessionValue: String {
-        "\(runningCount)/\(totalSessionCount)"
-    }
-
-    private var tokenTotalValue: String {
-        UsageStats.formatTokens(providerStore.usageStats.reduce(0) { $0 + $1.totalTokens })
-    }
-
-    private var codexQuotaValue: String {
-        if codexStore.quotaLoading && codexStore.quotaWindows.isEmpty { return "⋯" }
-        let windows = codexStore.quotaWindows
-        if windows.isEmpty { return "—" }
-        return windows.map { "剩余 \(Int(max(0, min(100, 100 - $0.usedPercent)).rounded()))%" }
-            .joined(separator: " / ")
-    }
-
-    private var codexQuotaDetail: String {
-        if codexStore.quotaLoading { return "正在获取最新额度…" }
-        let windows = codexStore.quotaWindows
-        if windows.isEmpty { return codexStore.quotaNote ?? "" }
-        return windows.map { window in
-            let when = window.resetWait.isEmpty ? window.resetClock : window.resetWait
-            return "\(window.label) \(when)"
-        }.joined(separator: " · ")
-    }
-
-    private var codexQuotaHelp: String {
-        if codexStore.quotaLoading { return "正在获取最新 Codex 额度" }
-        let windows = codexStore.quotaWindows
-        if windows.isEmpty { return "点击刷新 Codex 额度" }
-        let lines = windows.map { "\($0.label)：\($0.resetClock)（\($0.resetWait)）" }
-        return (["点击刷新 Codex 额度"] + lines).joined(separator: "\n")
-    }
-
-    private var codexConfigValue: String {
-        codexStore.activeProvider?.activeModel?.name ?? "未配置"
-    }
-
-    private var codexConfigDetail: String {
-        codexStore.activeProvider?.name ?? "官方登录"
-    }
-
-    private var ccConfigValue: String {
-        providerStore.activeModel?.name
-            ?? providerStore.currentEnv?.ANTHROPIC_MODEL
-            ?? "未配置"
-    }
-
-    private var ccConfigDetail: String {
-        providerStore.activeProvider?.name ?? "官方登录"
-    }
-
-    private var localProxyValue: String {
-        codexStore.proxyRunning ? "开" : "关"
-    }
-
-    private var aliveCount: Int {
-        providerStore.sessions.filter(\.isAlive).count
-    }
-
-    /// Claude busy sessions + active Cursor sessions.
+    /// Claude busy sessions + active Cursor sessions — from the store's own
+    /// derived values rather than three fresh filter passes per body.
     private var runningCount: Int {
-        providerStore.sessions.filter { $0.isAlive && $0.status == .busy }.count
-            + providerStore.cursorSessions.filter { $0.status == .active }.count
+        providerStore.busySessionCount
+            + providerStore.activeCursorCount
             + providerStore.activeExternalCount
     }
 
@@ -193,7 +89,14 @@ struct DashboardView: View {
             }
             .padding(.horizontal, Theme.Space.s4)
 
-            let rows = overviewRows.prefix(8)
+            // Derived once: `overviewRows` maps every live session through
+            // `displayTitle` / `currentActivity` / `contextLabel` and a
+            // `SessionTitle.condense` pass (five `replacingOccurrences` + a
+            // scalar-width reduce) per row. Reading the property twice — once
+            // for the grid, once for the overflow count — doubled that on
+            // every poll and every usage publish.
+            let all = overviewRows
+            let rows = all.prefix(8)
             if rows.isEmpty {
                 Text("暂无活跃会话")
                     .font(Theme.Font.body)
@@ -206,9 +109,9 @@ struct DashboardView: View {
                         OverviewTile(row: row) { onNavigate(.sessions) }
                     }
                 }
-                if overviewRows.count > 8 {
+                if all.count > 8 {
                     Button(action: { onNavigate(.sessions) }) {
-                        Label("查看全部 \(overviewRows.count) 个会话", systemImage: "arrow.right")
+                        Label("查看全部 \(all.count) 个会话", systemImage: "arrow.right")
                             .font(Theme.Font.bodySmall)
                     }
                     .buttonStyle(.plain)
@@ -221,9 +124,10 @@ struct DashboardView: View {
         .panelCard()
     }
 
-    /// Unified view-model for one overview tile (Claude or Cursor).
+    /// Unified view-model for one overview tile across all three platforms.
     struct OverviewRow: Identifiable {
         let id: String
+        let platform: String
         /// Row hue — a *shape* color (status dot, gauge).
         let tint: Color
         /// `tint` as readable text, for the running/idle capsule.
@@ -244,10 +148,11 @@ struct DashboardView: View {
             .map { s in
                 OverviewRow(
                     id: "c-\(s.pid)",
+                    platform: "CC",
                     tint: Theme.claude,
                     pillInk: Theme.Ink.claude,
                     busy: s.status == .busy,
-                    project: s.projectFolder,
+                    project: s.displayTitle,
                     activity: s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
@@ -259,10 +164,11 @@ struct DashboardView: View {
             .map { s in
                 OverviewRow(
                     id: "u-\(s.composerId)",
+                    platform: "Cursor",
                     tint: Theme.cursor,
                     pillInk: Theme.Ink.cursor,
                     busy: s.status == .active,
-                    project: s.projectFolder.isEmpty ? "cursor" : s.projectFolder,
+                    project: s.displayTitle,
                     activity: s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
@@ -276,10 +182,11 @@ struct DashboardView: View {
             .map { s in
                 OverviewRow(
                     id: "e-\(s.kind.rawValue)-\(s.sessionId)",
+                    platform: s.kind.displayName,
                     tint: Theme.external,
                     pillInk: Theme.Ink.success,
                     busy: s.isActive,
-                    project: s.projectFolder.isEmpty ? s.kind.displayName : s.projectFolder,
+                    project: s.displayName,
                     activity: s.model,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
@@ -290,56 +197,93 @@ struct DashboardView: View {
         return claudeRows + cursorRows + externalRows
     }
 
-    // MARK: Usage top grid
+    // MARK: Usage calendar
 
+    /// The overview always draws a whole month. It used to share the usage
+    /// page's period, so choosing one day collapsed this card into seven
+    /// weekday tiles fed by a single day's rows.
     private var usageTop: some View {
+        DashboardUsageCalendar()
+    }
+}
+
+private struct DashboardUsageCalendar: View {
+    @State private var anchor = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date()
+    @State private var days: [DayUsage] = []
+    @State private var selected: Date?
+    @State private var loading = true
+
+    var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            HStack {
-                Text("用量")
+            HStack(spacing: 8) {
+                Text("用量分布")
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .fixedSize()
-                Spacer()
-                Text(UsageStats.label(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
+                Spacer(minLength: 8)
+                Button { shift(-1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textSecondary)
+                Text(UsageStats.formatter("yyyy年M月").string(from: anchor))
                     .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textSecondary)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(minWidth: 88)
+                Button { shift(1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canGoForward ? Theme.textSecondary : Theme.textTertiary())
+                .disabled(!canGoForward)
             }
-            UsageHeatmap(
-                days: providerStore.usageDays,
-                period: providerStore.usagePeriod,
-                reference: providerStore.usageReferenceDate,
-                onSelectDay: { date in
-                    providerStore.usagePeriod = .day
-                    providerStore.usageReferenceDate = date
-                },
-                onSelectMonth: { date in
-                    providerStore.usagePeriod = .month
-                    providerStore.usageReferenceDate = date
-                }
-            )
-            if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量")
+            UsageHeatmap(days: days, period: .month, reference: anchor, onSelectDay: { selected = $0 })
+            Text(selectionCaption)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+            if !loading && days.isEmpty {
+                StandbyEmptyState(label: "这个月暂无用量")
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 12)
-            } else {
-                TileGrid(.pageUsage) {
-                    ForEach(Array(providerStore.usageStats.prefix(4))) { stat in
-                        UsageModelCard(
-                            stat: stat,
-                            slices: providerStore.usageSourceSlices(for: stat),
-                            share: Double(stat.totalTokens) / Double(maxUsageTokens)
-                        )
-                    }
-                }
             }
         }
         .padding(Theme.Space.s16)
         .panelCard()
+        .task(id: anchor) {
+            loading = true
+            let month = anchor
+            let fetched = await Task.detached(priority: .utility) {
+                let interval = Calendar.current.dateInterval(of: .month, for: month)
+                    ?? DateInterval(start: month, duration: 86400)
+                return UsageIndex.fetchDaily(in: interval)
+            }.value
+            guard !Task.isCancelled else { return }
+            days = fetched
+            loading = false
+        }
     }
 
-    private var maxUsageTokens: Int {
-        max(providerStore.usageStats.first?.totalTokens ?? 1, 1)
+    private var canGoForward: Bool {
+        let cal = Calendar.current
+        guard let next = cal.date(byAdding: .month, value: 1, to: anchor) else { return false }
+        return next <= (cal.dateInterval(of: .month, for: Date())?.start ?? Date())
+    }
+
+    private var selectionCaption: String {
+        guard let selected else { return "整月分布。点某一天看当天 Token。" }
+        let label = UsageStats.formatter("M月d日").string(from: selected)
+        let key = UsageHeatmap.dayKey(selected)
+        guard let day = days.first(where: { $0.day == key }) else { return "\(label) · 无用量" }
+        return "\(label) · \(UsageStats.formatTokens(day.totalTokens))"
+    }
+
+    private func shift(_ months: Int) {
+        guard let next = Calendar.current.date(byAdding: .month, value: months, to: anchor) else { return }
+        anchor = next
+        selected = nil
     }
 }
 
@@ -387,11 +331,8 @@ private struct OverviewTile: View {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 HStack(spacing: 8) {
                     OverviewStatusDot(tint: row.tint, isBusy: row.busy)
-                    Text(row.project)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    StatusPill(label: row.platform, tint: row.tint, ink: row.pillInk)
+                        .fixedSize()
                     Spacer()
                     StatusPill(
                         label: row.busy ? "运行中" : "空闲",
@@ -399,8 +340,13 @@ private struct OverviewTile: View {
                         ink: row.busy ? row.pillInk : Theme.Ink.idle
                     )
                 }
+                Text(row.project)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 HStack(alignment: .firstTextBaseline) {
-                    Text(row.contextRatio > 0 ? row.contextLabel : "—")
+                    RollingNumberText(row.contextRatio > 0 ? row.contextLabel : "—")
                         .font(Theme.Font.tileValueSmall)
                         .foregroundColor(row.contextRatio > 0 ? Theme.contextInk(row.contextRatio) : Theme.textTertiary())
                         .lineLimit(1)
@@ -430,7 +376,8 @@ private struct OverviewTile: View {
         .buttonStyle(.plain)
         .hoverState($isHovered)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.project)，\(row.busy ? "运行中" : "空闲")，上下文 \(row.contextLabel)")
+        .accessibilityLabel("\(row.platform)，\(row.project)，\(row.busy ? "运行中" : "空闲")，上下文 \(row.contextLabel)")
         .accessibilityHint("在会话页查看")
     }
 }
+

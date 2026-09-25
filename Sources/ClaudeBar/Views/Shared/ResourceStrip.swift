@@ -12,7 +12,12 @@ struct ResourceStrip: View {
     @State private var showDisk = false
 
     var body: some View {
-        EqualRowGrid(spacing: Theme.Space.gridGap, minColumnWidth: 0, fixedColumns: 3) {
+        // Every tile carries the same tooltip, so one string serves all six.
+        // `meter(...)` used to call `helpText()` itself, which built the
+        // identical array of shares + host line + `String(format:)` memory
+        // labels six times per body pass (2 s, or 1 s while live).
+        let help = helpText()
+        return EqualRowGrid(spacing: Theme.Space.gridGap, minColumnWidth: 0, fixedColumns: 3) {
             meter("CPU",
                   icon: "cpu",
                   hero: String(format: "%.0f%%", sampler.host.cpu),
@@ -22,6 +27,7 @@ struct ResourceStrip: View {
                   tint: Theme.chartGreen,
                   caption: cpuTempCaption,
                   pill: ("\(sampler.host.coreCount) 核", Theme.textSecondary),
+                  help: help,
                   tempColor: cpuTempColor)
             meter("GPU",
                   icon: "square.3.layers.3d",
@@ -32,6 +38,7 @@ struct ResourceStrip: View {
                   tint: Theme.chartBlue,
                   caption: gpuCaption,
                   pill: ("本机", Theme.textSecondary),
+                  help: help,
                   tempColor: gpuTempColor)
             meter("内存",
                   icon: "memorychip",
@@ -41,7 +48,8 @@ struct ResourceStrip: View {
                   kind: .memory,
                   tint: Theme.chartAmber,
                   caption: "已使用 \(sampler.host.memoryLabel)",
-                  pill: memoryPill)
+                  pill: memoryPill,
+                  help: help)
             meter("硬盘",
                   icon: "internaldrive",
                   hero: String(format: "%.0f%%", sampler.host.diskPercent),
@@ -50,7 +58,8 @@ struct ResourceStrip: View {
                   kind: .disk,
                   tint: Theme.chartPurple,
                   caption: "已使用 \(sampler.host.diskLabel)",
-                  pill: diskPill)
+                  pill: diskPill,
+                  help: help)
             // Connection status combines network, power and accessory readings.
             LinkCard(host: sampler.host,
                      accessory: audioMonitor.accessories.first,
@@ -65,7 +74,8 @@ struct ResourceStrip: View {
                   kind: .fans,
                   tint: Theme.claude,
                   caption: fanCaption,
-                  pill: fanPill)
+                  pill: fanPill,
+                  help: help)
         }
         .onAppear {
             if dense { ProcessSampler.shared.setScope(.popup, active: true) }
@@ -164,6 +174,7 @@ struct ResourceStrip: View {
         tint: Color,
         caption: String,
         pill: (String, Color),
+        help: String,
         tempColor: Color? = nil
     ) -> some View {
         let content = VStack(alignment: .leading, spacing: 8) {
@@ -184,7 +195,7 @@ struct ResourceStrip: View {
 
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(hero)
+                    RollingNumberText(hero)
                             .font(Theme.Font.displayMetric)
                             .monospacedDigit()
                             .foregroundColor(tempColor ?? heroTint)
@@ -223,7 +234,7 @@ struct ResourceStrip: View {
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: dense ? 112 : 124, maxHeight: .infinity, alignment: .topLeading)
         .tile(dense: dense)
-        .help(helpText())
+        .help(help)
         return Group {
             if kind == .cpu {
                 Button { showCPU = true } label: { content }
@@ -293,7 +304,7 @@ struct SessionLoadChip: View {
 
     var body: some View {
         let snap = sampler.byKey[key]
-        Text(snap?.loadLabel ?? "—")
+        RollingNumberText(snap?.loadLabel ?? "—")
             .font(compact ? Theme.Font.microMono : Theme.Font.captionMono)
             .monospacedDigit()
             .foregroundColor(snap == nil ? Theme.textTertiary(0.45) : Theme.textSecondary)
