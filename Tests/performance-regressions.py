@@ -79,14 +79,26 @@ final class Counter: @unchecked Sendable {
         let s = fixture.streams.objectWillChange.sink { streamPublishes += 1 }
         let p = fixture.catalog.objectWillChange.sink { previewPublishes += 1 }
         // An uninterrupted stream must publish before it goes quiet.
+        //
+        // The publish count is bounded *relative to elapsed time*, not by a
+        // constant: the loop asks for 5ms sleeps but a loaded CI runner
+        // overshoots them, so the same 100ms throttle legitimately gets more
+        // windows there than here. What must never happen is one publish per
+        // record (60), which this still catches on any runner.
+        let throttle = 0.1
+        let started = Date()
         for i in 0..<60 {
             fixture.push("token \(i)")
             try? await Task.sleep(for: .milliseconds(5))
         }
+        let pushWindow = Date().timeIntervalSince(started)
         precondition(streamPublishes >= 2, "Debouncing starves continuous streams")
         try? await Task.sleep(for: .milliseconds(200))
         precondition(fixture.streams.live[99]?.content == "token 59")
-        precondition(streamPublishes < 12, "Publish once per batch, not once per record")
+        let budget = Int(pushWindow / throttle) + 3
+        precondition(streamPublishes <= budget,
+                     "Publish once per batch, not once per record: "
+                     + "\(streamPublishes) publishes in \(pushWindow)s, budget \(budget)")
         precondition(previewPublishes == streamPublishes)
         // A pending flush must not overwrite finished content or revive a deleted row.
         fixture.push("stale")
