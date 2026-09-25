@@ -443,6 +443,14 @@ final class NotchIslandController {
         stopTicking()
         guard let state, state.mode != .collapsed else { return }
         let wasExpanded = state.mode == .expanded
+        // Written through the bookkeeping, not around it: `syncMouseCapture`
+        // skips its write when the flag it computes matches `mouseCapture`, so
+        // setting `ignoresMouseEvents` directly left the two disagreeing — the
+        // *next* expand computed `ignore == false`, matched a stale
+        // `mouseCapture == false`, and returned without ever giving the mouse
+        // back. The island then opened under the pointer and stayed
+        // click-through until the pointer left its rect and came back.
+        mouseCapture = true
         panel?.ignoresMouseEvents = true
         let apply = {
             state.mode = .collapsed

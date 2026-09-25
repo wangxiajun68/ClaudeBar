@@ -34,6 +34,17 @@ enum UsageSource: String, CaseIterable, Identifiable {
         case .thirdParty: return Theme.cursor
         }
     }
+
+    /// `color` as readable text, index-aligned with it — the source cards paint
+    /// their title and counts as glyphs, and the raw hues are 1.8–3.4:1 on the
+    /// ice canvas (see `Theme.Ink`). Bars and rings keep `color`.
+    var ink: Color {
+        switch self {
+        case .claude: return Theme.Ink.claude
+        case .codex: return Theme.Ink.codex
+        case .thirdParty: return Theme.Ink.cursor
+        }
+    }
 }
 
 /// Granularity for usage aggregation.
@@ -83,13 +94,16 @@ struct ModelUsage: Identifiable, Hashable {
     var totalTokens: Int { totalInputTokens + outputTokens }
     var isZero: Bool { calls == 0 && totalTokens == 0 }
 
-    /// Cache-hit share of prompt-side tokens (Claude Code / Codex).
+    /// Cache-hit share of prompt-side tokens.
     ///
     /// The denominator is the full prompt side (`input + read + create`) and
-    /// the numerator is the cached portion. That reads correctly for both
-    /// sources only because each is stored with **disjoint** buckets: for
-    /// Claude, `input_tokens` excludes the cache fields; for Codex, the parser
-    /// subtracts `cached_input_tokens` from `input_tokens` before storing.
+    /// the numerator is the cached portion. That reads correctly for all three
+    /// sources only because each is stored with **disjoint** buckets: Claude's
+    /// `input_tokens` excludes the cache fields; the Codex parser subtracts
+    /// `cached_input_tokens` from `input_tokens`; and the proxy's `TokenTotals`
+    /// folds the hit out of the upstream's prompt count before the third-party
+    /// rollup ever sees it (DeepSeek's `prompt_tokens` and OpenAI's
+    /// `input_tokens` both include it).
     var cacheHitRate: Double {
         let denom = totalInputTokens
         guard denom > 0 else { return 0 }

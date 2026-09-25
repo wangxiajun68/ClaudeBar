@@ -9,8 +9,6 @@ import UserNotifications
 extension Notification.Name {
     /// A permission switch in Settings flipped. `object` is the `AppPermission`.
     static let permissionDidChange = Notification.Name("com.claudebar.permissionDidChange")
-    /// Navigate the main window to Settings.
-    static let openSettingsPage = Notification.Name("com.claudebar.openSettingsPage")
 }
 
 /// Everything ClaudeBar can do that macOS gates behind a privacy prompt, plus

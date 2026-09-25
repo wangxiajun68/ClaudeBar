@@ -46,7 +46,7 @@ struct ClaudeBarApp: App {
 顶栏 tabs + detail（`.frame(minWidth: 900, minHeight: 600)`）：
 
 - **topBar**（`Theme.cardSurface`，52pt）：brand 头 + 9 项 `AppPage`（概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置 / 帮助）；`ViewThatFits` 在宽度不足时只留文字。
-- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `ConnectorsView` / `UsageView` / `VPNView` / `SettingsView` / `HelpView`；`TrafficView` 首次进入后 `trafficMounted` 常驻。
+- **Detail**：`DashboardView` / `SessionsView` / `ProvidersView` / `ConnectorsView` / `UsageView` / `VPNView` / `SettingsView` / `HelpView`；`TrafficView` 只在选中时挂载，昂贵状态留在 `TrafficPageState`。
 - **CommandPalette**（⌘K）。
 
 ## `MenuBarController` — 面板的承载与定位
@@ -55,9 +55,9 @@ struct ClaudeBarApp: App {
 
 **面板特性（`makePanel`）：**
 - 类型 `KeyablePanel: NSPanel`，`canBecomeKey = true` / `canBecomeMain = false` —— 可成为 key window（SwiftUI Alert/控件需 key）但不激活应用。
-- `styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView]` —— 非激活面板，隐藏标题栏按钮。
-- `backgroundColor = .clear` + `NSVisualEffectView(material: .menu, blendingMode: .behindWindow)` —— 毛玻璃背景，材质与系统菜单栏下拉一致。
-- `appearance = .vibrantDark`、`collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]` —— 全空间可见、全屏辅助。
+- `styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView]` —— 非激活、无边框；圆角由 `contentView.layer` 的 22pt `continuous` 提供。
+- `backgroundColor = .clear` + `isOpaque = false`，内容层直接铺 `Theme.windowNSColor` —— 不透明实填，不用 `NSVisualEffectView`（全幅 live blur 的 GPU 纹理开销约 100 MB 量级）。
+- `appearance = Theme.nsAppearance`（`.aqua` / `.darkAqua`，跟随应用主题而非系统 vibrancy）、`collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]` —— 全空间可见、全屏辅助。
 - `hidesOnDeactivate = false`、`isFloatingPanel = true` —— 悬浮且不因失焦隐藏（自行用事件监听收起）。
 
 **定位逻辑（`sizeAndPosition`）：**
@@ -68,7 +68,7 @@ struct ClaudeBarApp: App {
 - 屏幕取 `statusItem.button?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first`：状态项所在屏优先，所以多显示器下 popup 跟着菜单栏图标走，而不是永远开在主屏。
 
 **收起监听（`installMonitors`）：**
-- `localMonitor`：本 app 内的鼠标按下若不在 panel.frame 内则 `hide()`。
+- `localMonitor`：本 app 内的鼠标按下若**不在 panel.frame 内、也不是挂在该 panel 上的子窗口（`window.parent === panel`，即 SwiftUI popover）**则 `hide()`。旧版只测 frame，落在面板外侧的 popover（电池控制、模型切换）第一下点击就被吞掉。
 - `globalMonitor`：其他 app 的鼠标按下一律 `hide()`（切回主线程执行）。
 
 > 单例面板被复用（`panel ?? makePanel()`），`isReleasedWhenClosed = false`，避免反复创建。

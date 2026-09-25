@@ -98,6 +98,13 @@ final class FanMonitor {
 
     private func submit(_ command: @escaping @Sendable () -> String?) {
         lastError = nil
+        // Re-stat before deciding: `helperInstalled` is written in `start()`
+        // and by nothing else, and `start()` only runs again from a fresh
+        // `ResourceStrip.onAppear`. So the *second* rotor click after a
+        // successful install — the user's way of confirming it worked — still
+        // read a stale `false`, re-raised the permission alert, and dropped the
+        // requested RPM without ever applying it.
+        helperInstalled = FanHelperInstaller.isInstalled()
         guard helperInstalled else { postPermissionNeeded(); return }
         commandRevision &+= 1
         let revision = commandRevision

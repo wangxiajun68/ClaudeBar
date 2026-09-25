@@ -55,6 +55,7 @@ struct ProxyLogEntry: Identifiable, Equatable {
     var promptTokens: Int?
     var completionTokens: Int?
     var cacheReadTokens: Int?
+    var cacheWriteTokens: Int?
 
     var isPending: Bool { endedAt == nil }
 
@@ -63,12 +64,16 @@ struct ProxyLogEntry: Identifiable, Equatable {
         return max(0, Int(end.timeIntervalSince(startedAt) * 1000))
     }
 
-    /// `⌊input + output + cache⌋`, all three summed, so the number matches the
-    /// Usage page's `ModelUsage.totalTokens` for the same call. `nil` when the
-    /// upstream reported nothing.
+    /// `⌊input + output + cache read + cache write⌋`, all four summed — the
+    /// same fold as `TokenTotals.total` in `StreamAssembler`, which is what the
+    /// Usage page's per-model rollup is built from. (It is *not*
+    /// `ModelUsage.totalTokens`, which sums only the two non-cache buckets.)
+    /// `nil` when the upstream reported nothing.
     var totalTokens: Int? {
-        guard promptTokens != nil || completionTokens != nil || cacheReadTokens != nil else { return nil }
-        return (promptTokens ?? 0) + (completionTokens ?? 0) + (cacheReadTokens ?? 0)
+        guard promptTokens != nil || completionTokens != nil
+                || cacheReadTokens != nil || cacheWriteTokens != nil else { return nil }
+        return (promptTokens ?? 0) + (completionTokens ?? 0)
+            + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
     }
 
     /// Single-line console form, used by the log view and copy-all: the
@@ -98,17 +103,25 @@ struct ProxyLogEntry: Identifiable, Equatable {
         return "\(time)  \(method.padding(toLength: 4, withPad: " ", startingAt: 0))  \(path)  \(src) \(kindPad)  \(modelBit)\(streamBit)  \(st)  \(dur)  \(size)\(err)"
     }
 
-    /// The token column for this line, as text: `Σ 8.9万 (in …/out …/cache …)`,
+    /// The token column for this line, as text: `Σ 8.9万 (in …/out …/hit …/write …)`,
     /// or a bare `Σ …` while the call is still streaming and no usage event
     /// has arrived. `""` — no column at all — when the call is over and the
     /// upstream never reported usage. That is what the `—` of a checkless row
     /// means; it is not a store of zeros.
+    ///
+    /// `in` is fresh input: `TokenTotals` has already folded the cache hit out
+    /// of the upstream's prompt count, so `in + hit` is the prompt the model
+    /// actually saw.
     var tokenField: String {
         if let totalTokens {
             // Typed, because `UsageStats.formatTokens` is overloaded (the
             // style-explicit variant) and a bare reference is ambiguous.
             let f: (Int) -> String = UsageStats.formatTokens
-            return "  Σ \(f(totalTokens)) (in \(f(promptTokens ?? 0)) / out \(f(completionTokens ?? 0)) / cache \(f(cacheReadTokens ?? 0)))"
+            // The write bucket is omitted when the upstream never reported
+            // one, rather than printed as a zero: only Anthropic-shaped
+            // traffic has a number to put there.
+            let write = cacheWriteTokens.map { " / write \(f($0))" } ?? ""
+            return "  Σ \(f(totalTokens)) (in \(f(promptTokens ?? 0)) / out \(f(completionTokens ?? 0)) / hit \(f(cacheReadTokens ?? 0))\(write))"
         }
         return isPending ? "  Σ …" : ""
     }
@@ -193,7 +206,8 @@ final class ProxyAccessLog: ObservableObject {
             error: nil,
             promptTokens: nil,
             completionTokens: nil,
-            cacheReadTokens: nil)
+            cacheReadTokens: nil,
+            cacheWriteTokens: nil)
         rows.append(entry)
         var dropped = 0
         if rows.count > limit {
@@ -227,6 +241,7 @@ final class ProxyAccessLog: ObservableObject {
             row.promptTokens = merged.input
             row.completionTokens = merged.output
             row.cacheReadTokens = merged.cacheRead
+            row.cacheWriteTokens = merged.cacheWrite
         }
         row.endedAt = Date()
         row.status = status
@@ -375,6 +390,7 @@ final class ProxyAccessLog: ObservableObject {
             "promptTokens": row.promptTokens as Any? ?? NSNull(),
             "completionTokens": row.completionTokens as Any? ?? NSNull(),
             "cacheReadTokens": row.cacheReadTokens as Any? ?? NSNull(),
+            "cacheWriteTokens": row.cacheWriteTokens as Any? ?? NSNull(),
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
         var line = data
@@ -417,7 +433,8 @@ final class ProxyAccessLog: ObservableObject {
             // lines for requests whose upstream never reported it.
             promptTokens: (obj["promptTokens"] as? NSNumber)?.intValue,
             completionTokens: (obj["completionTokens"] as? NSNumber)?.intValue,
-            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber)?.intValue)
+            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber)?.intValue,
+            cacheWriteTokens: (obj["cacheWriteTokens"] as? NSNumber)?.intValue)
     }
 
     static func clip(_ s: String, _ cap: Int) -> String {

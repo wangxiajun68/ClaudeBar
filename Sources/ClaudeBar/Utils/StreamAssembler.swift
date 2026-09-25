@@ -49,28 +49,72 @@ struct LineSSEParser {
 /// recording off there is no capture tap at all, and the console is the only
 /// surface left.
 ///
-/// Buckets are kept as the upstream reported them: Anthropic counts cache
-/// reads as their own bucket, while OpenAI-shaped responses report cached
-/// input *inside* `input`. `total` sums the three as displayed, matching the
-/// usage ring's `ModelUsage.totalTokens`.
+/// The buckets are **disjoint** — fresh input, cache read, cache write, output
+/// — because that is the only shape anything downstream can bill: `ModelUsage`
+/// stores them disjointly, `ModelPricing` multiplies each by its own rate and
+/// adds, and `ModelUsage.totalTokens` is their sum. The upstreams do not agree
+/// on that shape, so the disagreement is resolved here, at the one layer that
+/// knows which protocol the numbers arrived on:
+///
+///   * **Anthropic** reports cache reads and writes as their own fields, and
+///     its `input_tokens` excludes both. Taken at face value.
+///   * **Chat / Responses** report the cache hit *inside* the prompt count.
+///     DeepSeek documents it outright — `prompt_tokens` equals
+///     `prompt_cache_hit_tokens + prompt_cache_miss_tokens` — and OpenAI's
+///     `input_tokens_details.cached_tokens` is likewise a subset of
+///     `input_tokens`. Storing both numbers raw bills the cached part twice
+///     (once at the miss rate, once at the hit rate) and double counts it in
+///     `total`.
+///
+/// The subtraction happens on every apply, from the raw prompt count kept
+/// aside — not once against `input` — so a stream that repeats its usage block,
+/// or reports the cached count in a different event than the total, settles on
+/// the same answer instead of subtracting twice.
 struct TokenTotals: Equatable {
     var input: Int?
     var output: Int?
     var cacheRead: Int?
+    var cacheWrite: Int?
 
-    var isEmpty: Bool { input == nil && output == nil && cacheRead == nil }
+    /// The upstream's own prompt count, and whether that number already
+    /// contains `cacheRead`. Private: they are the inputs `input` is derived
+    /// from, not buckets in their own right.
+    private var promptTotal: Int?
+    private var promptIncludesCacheRead = false
+
+    /// Usage is identical when the buckets are — the raw prompt count is
+    /// bookkeeping, not part of the report.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.input == rhs.input && lhs.output == rhs.output
+            && lhs.cacheRead == rhs.cacheRead && lhs.cacheWrite == rhs.cacheWrite
+    }
+
+    var isEmpty: Bool {
+        input == nil && output == nil && cacheRead == nil && cacheWrite == nil
+    }
 
     /// `nil` when the upstream never reported usage — an interrupted stream, a
     /// gateway that omits the field. Distinct from a real zero.
-    var total: Int? { isEmpty ? nil : (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) }
+    var total: Int? {
+        isEmpty ? nil : (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
+    }
 
     mutating func applyChat(_ event: [String: Any]) {
         guard let usage = event["usage"] as? [String: Any] else { return }
-        input = intValue(usage["prompt_tokens"]) ?? input
         output = intValue(usage["completion_tokens"]) ?? output
-        if let details = usage["prompt_tokens_details"] as? [String: Any] {
-            cacheRead = intValue(details["cached_tokens"]) ?? cacheRead
+        // `prompt_tokens_details.cached_tokens` is the OpenAI-compatible
+        // spelling; DeepSeek also reports the same number at the top level as
+        // `prompt_cache_hit_tokens`. Either may be the only one present.
+        let details = usage["prompt_tokens_details"] as? [String: Any]
+        if let hit = positive(details?["cached_tokens"], usage["prompt_cache_hit_tokens"]) {
+            cacheRead = hit
         }
+        if let written = positive(details?["cache_write_tokens"], usage["cache_write_tokens"]) {
+            cacheWrite = written
+        }
+        // A Chat prompt count always *includes* the hit — DeepSeek documents
+        // `prompt_tokens == prompt_cache_hit_tokens + prompt_cache_miss_tokens`.
+        setPrompt(total: intValue(usage["prompt_tokens"]), includesCacheRead: true)
     }
 
     /// `response.usage` on streamed events; the top level on a non-streaming
@@ -79,10 +123,37 @@ struct TokenTotals: Equatable {
         let usage = ((event["response"] as? [String: Any])?["usage"] as? [String: Any])
             ?? (event["usage"] as? [String: Any])
         guard let usage else { return }
-        input = intValue(usage["input_tokens"]) ?? intValue(usage["prompt_tokens"]) ?? input
         output = intValue(usage["output_tokens"]) ?? intValue(usage["completion_tokens"]) ?? output
-        if let details = usage["input_tokens_details"] as? [String: Any] {
-            cacheRead = intValue(details["cached_tokens"]) ?? cacheRead
+        let prompt = intValue(usage["input_tokens"]) ?? intValue(usage["prompt_tokens"])
+        let inputDetails = usage["input_tokens_details"] as? [String: Any]
+        let promptDetails = usage["prompt_tokens_details"] as? [String: Any]
+        // A hit under one of the OpenAI-compatible names is a *subset* of the
+        // prompt count. Both detail blocks are consulted: `normalizeUsage`
+        // fills `input_tokens_details` from `prompt_tokens_details` only when
+        // the former is absent, so an upstream that sent both leaves the
+        // interesting number in the second.
+        let subsetHit = positive(inputDetails?["cached_tokens"],
+                                 promptDetails?["cached_tokens"],
+                                 usage["prompt_cache_hit_tokens"])
+        // Anthropic's spelling is a *sibling* of `input_tokens`, not a subset:
+        // a relay echoing the upstream's usage verbatim hands us a prompt count
+        // that already excludes it. Folding that count would under-report the
+        // whole cache read, so this wins only when no subset-shaped hit is
+        // present (otherwise the two agree and the subset is the safe read).
+        let siblingRead = positive(usage["cache_read_input_tokens"])
+        if let subsetHit {
+            cacheRead = subsetHit
+            if let written = positive(inputDetails?["cache_write_tokens"],
+                                      promptDetails?["cache_write_tokens"]) {
+                cacheWrite = written
+            }
+            setPrompt(total: prompt, includesCacheRead: true)
+        } else if let siblingRead {
+            cacheRead = siblingRead
+            if let written = positive(usage["cache_creation_input_tokens"]) { cacheWrite = written }
+            setPrompt(total: prompt, includesCacheRead: false)
+        } else {
+            setPrompt(total: prompt, includesCacheRead: true)
         }
     }
 
@@ -104,14 +175,49 @@ struct TokenTotals: Equatable {
 
     private mutating func applyAnthropicUsage(_ usage: [String: Any]?) {
         guard let usage else { return }
-        input = intValue(usage["input_tokens"]) ?? input
         output = intValue(usage["output_tokens"]) ?? output
         cacheRead = intValue(usage["cache_read_input_tokens"]) ?? cacheRead
+        cacheWrite = intValue(usage["cache_creation_input_tokens"]) ?? cacheWrite
+        // Anthropic's `input_tokens` is fresh input on its own — the cache
+        // fields sit beside it, not inside it. Nothing is folded out.
+        setPrompt(total: intValue(usage["input_tokens"]), includesCacheRead: false)
+    }
+
+    /// Record the upstream's prompt count and derive the fresh-input bucket.
+    ///
+    /// Chat/Responses report a prompt total that already contains the cache hit
+    /// (see the type's comment), so the hit is subtracted here — recomputed
+    /// from the raw total each time rather than decremented from `input`, so
+    /// repeated usage blocks converge instead of double-subtracting. Callers
+    /// pass `total: nil` when this event did not carry one: the remembered
+    /// total is then re-derived against the cache hit, which may have arrived
+    /// in a different event.
+    private mutating func setPrompt(total: Int?, includesCacheRead: Bool) {
+        if let total {
+            promptTotal = total
+            promptIncludesCacheRead = includesCacheRead
+        }
+        guard let total = promptTotal else { return }
+        let hit = promptIncludesCacheRead ? (cacheRead ?? 0) : 0
+        input = max(0, total - hit)
     }
 
     private func intValue(_ any: Any?) -> Int? {
         if let n = any as? NSNumber { return n.intValue }
         if let i = any as? Int { return i }
+        return nil
+    }
+
+    /// First of several spellings that carries a count. Zero counts as absent
+    /// on purpose: `CodexProxyTransform.normalizeUsage` synthesizes
+    /// `cached_tokens: 0` for an upstream that never reported a detail block,
+    /// and a real zero and a synthesized one are indistinguishable — treating
+    /// zero as "not reported" keeps that placeholder from masking an
+    /// Anthropic-shaped hit sitting beside it.
+    private func positive(_ candidates: Any?...) -> Int? {
+        for candidate in candidates {
+            if let value = intValue(candidate), value > 0 { return value }
+        }
         return nil
     }
 }
@@ -130,6 +236,7 @@ struct CaptureAssembler {
     var promptTokens: Int? { tokens.input }
     var completionTokens: Int? { tokens.output }
     var cacheReadTokens: Int? { tokens.cacheRead }
+    var cacheWriteTokens: Int? { tokens.cacheWrite }
 
     struct Tool: Equatable {
         var id: String
@@ -246,6 +353,7 @@ struct CaptureAssembler {
                 "prompt_tokens": promptTokens as Any,
                 "completion_tokens": completionTokens as Any,
                 "cache_read_tokens": cacheReadTokens as Any,
+                "cache_write_tokens": cacheWriteTokens as Any,
             ],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),

@@ -92,6 +92,62 @@ class ProviderStore: ObservableObject {
     var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
     private var externalCompletionDetector = ConfirmedCompletionDetector<String>()
 
+    /// Cross-surface page requests, relayed to whoever currently owns the main
+    /// window's content. Posted by the menu-bar popup and by other pages
+    /// (设置 → 打开 VPN 页, the Wi-Fi permission chip) through
+    /// `MainWindowController.showWindow(on:)`.
+    ///
+    /// This lives on the store — the one object every surface already holds a
+    /// reference to — rather than being threaded through `MainWindowView`'s
+    /// initializer: `installContent` rebuilds that view on every reopen, and a
+    /// view-typed property would have made `ProviderStore` depend on it.
+    /// `@Published` means a request outlives the window's teardown and is
+    /// replayed to the next subscriber.
+    @Published private(set) var navigationRequest: NavigationRequest?
+
+    /// A page a caller asked for before the window could route it.
+    ///
+    /// These used to be `NotificationCenter` posts, which do not survive a
+    /// window that had to be built first: a freshly installed `NSHostingView`
+    /// subscribes to the center only when its first display pass runs —
+    /// measured at ~50 ms, exactly the 50–150 ms `installContent` costs — so
+    /// the page post was published before `MainWindowView` existed and the
+    /// window opened on the page it had last remembered. A published value is
+    /// replayed instead of missed.
+    ///
+    /// The token makes repeated requests distinguishable, so asking for the
+    /// same page twice still routes twice.
+    struct NavigationRequest: Equatable {
+        let destination: Destination
+        let token: Int
+
+        enum Destination: Equatable {
+            case page(AppPage)
+            /// Same page, plus "open the editor for the active provider" —
+            /// what the popup's 「管理模型」 and its empty-state 「去添加供应商」
+            /// actually mean.
+            case editor(AppPage)
+        }
+    }
+
+    private var navigationCounter = 0
+
+    /// Ask for a page to be shown. Applied by whoever owns the main window's
+    /// content at the time this is watched; see `MainWindowView`.
+    func requestNavigation(_ destination: NavigationRequest.Destination) {
+        navigationCounter += 1
+        navigationRequest = NavigationRequest(destination: destination, token: navigationCounter)
+    }
+
+    /// Marks a request as handled. The window's shell is its only consumer —
+    /// an editor request is handed to the page as a `@State` flag — so the
+    /// request can be dropped as soon as it has been routed, and a later
+    /// reopen (or a revisit of the page) cannot replay it.
+    func clearNavigation(_ taken: NavigationRequest) {
+        guard navigationRequest == taken else { return }
+        navigationRequest = nil
+    }
+
     /// Initial state is populated by the AppDelegate once the status item and
     /// main window are wired up — calling `refresh()` here would run file I/O
     /// and spawn background tasks before the UI surfaces exist, and the

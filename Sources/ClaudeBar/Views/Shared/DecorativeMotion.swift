@@ -4,7 +4,7 @@ import SwiftUI
 /// Repeating decoration is interpolated by the render server. No timer,
 /// TimelineView, per-frame path construction, or SwiftUI layout is involved.
 struct DecorativeMotion: NSViewRepresentable {
-    enum Kind { case sparkles, sweep, orbit, pulse, scan }
+    enum Kind { case sparkles, sweep, orbit, pulse, scan, conveyor }
     let kind: Kind
     var tint: Color = .white
     var active: Bool
@@ -70,6 +70,7 @@ final class MotionLayerView: NSView {
         for (target, animation) in tracks { target.add(animation, forKey: "decoration") }
         running = true
     }
+
     private func motion(_ key: String, from: Double, to: Double,
                         duration: Double, autoreverses: Bool = false) -> CABasicAnimation {
         let animation = CABasicAnimation(keyPath: key)
@@ -191,6 +192,45 @@ final class MotionLayerView: NSView {
             line.opacity = 0.85
             layer.addSublayer(line)
             tracks.append((line, motion("transform.translation.x", from: -24, to: 24, duration: 1.6)))
+        case .conveyor:
+            // The belt card's travelling ticks. One gradient carrying a whole
+            // run of ticks slides by exactly one tick pitch per cycle, so the
+            // pattern is continuous at the loop point — a single moving band
+            // would read as a scan line, not a belt.
+            //
+            // The travel is `transform.translation.x`, not `position.x`:
+            // `position` *is* how a layer's frame is placed, so animating it
+            // would yank the belt off the strip on the first frame.
+            let pitch = max(14, h * 0.9)
+            let ticks = max(3, Int(ceil(w / pitch)) + 3)
+            let span = CGFloat(ticks) * pitch
+            let belt = CAGradientLayer()
+            belt.startPoint = CGPoint(x: 0, y: 0.5)
+            belt.endPoint = CGPoint(x: 1, y: 0.5)
+            // `locations` are fractions of the layer's *own* width, so the layer
+            // must be exactly `ticks` pitches wide for one 4-stop group to span
+            // exactly one pitch. It is anchored one pitch left of the strip and
+            // travelled by exactly `pitch`: at that point the pattern has moved
+            // onto itself, so the loop point is invisible, and the extra two
+            // ticks keep the strip covered for the whole cycle.
+            // (A frame of `span * 2` with a travel of `pitch` shifted the
+            // pattern by half a group, which reads as a hitch every 1.1 s.)
+            belt.frame = CGRect(x: -pitch, y: 0, width: span, height: h)
+            let stops = ticks * 4
+            belt.locations = (0...stops).map { NSNumber(value: Double($0) / Double(stops)) }
+            belt.colors = (0...stops).map { index in
+                let phase = index % 4
+                let alpha: CGFloat = phase == 1 ? 0.85 : (phase == 2 ? 0.35 : 0)
+                return tint.withAlphaComponent(alpha).cgColor
+            }
+            layer.addSublayer(belt)
+            let travel = CABasicAnimation(keyPath: "transform.translation.x")
+            travel.fromValue = 0
+            travel.toValue = pitch
+            travel.duration = 1.1
+            travel.repeatCount = .infinity
+            travel.timingFunction = CAMediaTimingFunction(name: .linear)
+            tracks.append((belt, travel))
         }
     }
 }

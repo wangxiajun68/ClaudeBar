@@ -10,8 +10,21 @@ struct SettingsView: View {
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @Bindable private var batteryController = BatteryChargeController.shared
+    /// Read by the VPN tile's title. Without observing it the title only
+    /// refreshed when something *else* invalidated the page, so a core that
+    /// finished starting (or failed) while this page was open kept its old
+    /// label — 「内核启动中」 forever, or 「VPN 未启用」 over a crashed core.
+    @ObservedObject private var vpn = VpnManager.shared
 
     @State private var presentFiles: Set<URL> = []
+    /// Which resume terminals are installed, refreshed by the same 5 s scan as
+    /// `presentFiles`. `ResumeTerminal.isInstalled` is a LaunchServices lookup
+    /// (`urlForApplication`) plus a file stat, and the Picker asked for all four
+    /// on every body pass — seven such probes per pass once the caption's
+    /// `resolved` chain is counted.
+    @State private var installedTerminals: Set<ResumeTerminal> = []
+    @State private var codexPortDraft = ""
+    @FocusState private var codexPortFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -108,7 +121,8 @@ struct SettingsView: View {
                                 caption: resumeTerminalCaption) {
                         Picker("", selection: $prefs.resumeTerminal) {
                             ForEach(ResumeTerminal.allCases) { terminal in
-                                Text(terminal.isInstalled ? terminal.label : "\(terminal.label)（未安装）")
+                                Text(installedTerminals.contains(terminal) ? terminal.label
+                                     : "\(terminal.label)（未安装）")
                                     .tag(terminal)
                             }
                         }
@@ -196,24 +210,26 @@ struct SettingsView: View {
                     SettingTile(icon: "number", title: "端口",
                                 caption: proxyStatusCaption,
                                 tint: Theme.codex) {
-                        TextField("15721", text: Binding(
-                            get: { String(prefs.codexProxyPort) },
-                            set: { v in
-                                // Commit on focus loss / submit, not per
-                                // keystroke: the binding used to write
-                                // UserDefaults on every character, so typing
-                                // "15721" published 1, 15, 157, 1572, 15721
-                                // and re-rendered every reader of the pref —
-                                // and an intermediate value like "1" is a
-                                // valid-looking port that nothing validates.
-                                guard v != String(prefs.codexProxyPort),
-                                      let port = Int(v), (1024...65535).contains(port) else { return }
-                                prefs.codexProxyPort = port
-                            }))
+                        // A draft + commit, the same shape `VPNView` uses for
+                        // its mixed port. The old `Binding(get:set:)` claimed to
+                        // "commit on focus loss / submit" but a SwiftUI
+                        // `TextField` calls `set` on every keystroke, so it
+                        // wrote UserDefaults mid-typing (a 4-digit prefix is a
+                        // valid-looking port), and nothing restarted the proxy
+                        // on focus loss — only Return did. Typing a new port and
+                        // clicking away therefore left every *description* of
+                        // the proxy (this caption, the 第三方接入 base URL, the
+                        // curl snippet, the help text) advertising a port the
+                        // listener was not on.
+                        TextField("15721", text: $codexPortDraft)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 88)
                             .multilineTextAlignment(.trailing)
-                            .onSubmit { codexStore.restartProxyAndReactivate() }
+                            .focused($codexPortFocused)
+                            .onSubmit { commitCodexPort() }
+                            .onChange(of: codexPortFocused) { _, on in
+                                if !on { commitCodexPort() }
+                            }
                     }
                     SettingTile(icon: "wifi", title: "检测代理",
                                 caption: "本机是否正在监听指定端口。",
@@ -265,8 +281,20 @@ struct SettingsView: View {
                             get: { prefs.vpnEnabled },
                             set: { on in
                                 prefs.vpnEnabled = on
-                                VpnManager.shared.syncRuntime()
-                                if !on {
+                                // Turning it on has to ask for the system proxy
+                                // too, the way every other entry point does
+                                // (VPN 页的「启动」、订阅自动启动、popup 的
+                                // VPN chip), and the way this tile's own caption
+                                // promises ("接管系统流量"). `waitUntilReady`
+                                // applies it only `if vpnSystemProxyEnabled`, so
+                                // without this line a user who enabled the VPN
+                                // from Settings got a running mihomo and no
+                                // takeover at all.
+                                if on {
+                                    prefs.vpnSystemProxyEnabled = true
+                                    VpnManager.shared.syncRuntime()
+                                } else {
+                                    VpnManager.shared.syncRuntime()
                                     VpnProxyGuard.shared.stop()
                                     VpnSystemProxyController.clearSystemProxyAsync()
                                 }
@@ -278,7 +306,7 @@ struct SettingsView: View {
                     SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
                                 caption: "订阅、节点、系统代理与 TUN。") {
                         Button("打开") {
-                            NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                            NotificationCenter.default.post(.showMainWindow(page: .vpn))
                         }
                         .adaptiveGlassButton()
                         .tint(Theme.claude)
@@ -290,16 +318,19 @@ struct SettingsView: View {
                                 caption: currentCCCaption) {
                         ConnectivityTileButton(
                             outcome: activeVendorOutcome,
-                            helpIdle: "向当前 Claude Code 供应商发送最短请求") {
+                            helpIdle: providerStore.activeProvider == nil
+                                ? "先在「模型」页激活一个供应商" : "向当前 Claude Code 供应商发送最短请求") {
                             guard let p = providerStore.activeProvider else { return }
                             tests.testVendor(id: p.id, claude: p, model: p.activeModel, codex: nil)
                         }
+                        .disabled(providerStore.activeProvider == nil)
                     }
                     SettingTile(icon: "terminal", title: "检测 Codex",
                                 caption: currentCodexCaption, tint: Theme.codex) {
                         ConnectivityTileButton(
                             outcome: activeCodexOutcome,
-                            helpIdle: "向当前 Codex 供应商发送最短请求") {
+                            helpIdle: codexStore.activeProvider == nil
+                                ? "先在「模型」页激活一个 Codex 供应商" : "向当前 Codex 供应商发送最短请求") {
                             guard let p = codexStore.activeProvider else { return }
                             tests.testVendor(
                                 id: p.id,
@@ -307,6 +338,7 @@ struct SettingsView: View {
                                 model: p.activeModel.map { ModelConfig(id: $0.id, name: $0.name) },
                                 codex: p)
                         }
+                        .disabled(codexStore.activeProvider == nil)
                     }
                 }
 
@@ -339,17 +371,45 @@ struct SettingsView: View {
             .padding(Theme.Space.s24)
         }
         .background(Theme.bgPrimary)
+        .onAppear {
+            codexPortDraft = String(prefs.codexProxyPort)
+            installedTerminals = Set(ResumeTerminal.allCases.filter(\.isInstalled))
+        }
+        // Keep the draft honest when the value is changed from elsewhere (the
+        // popup's upstream pickers, a preset import) — but never while the user
+        // is editing it, or a stray publish would overwrite what they typed.
+        .onChange(of: prefs.codexProxyPort) { _, port in
+            if !codexPortFocused { codexPortDraft = String(port) }
+        }
         .task {
             while !Task.isCancelled {
                 if UIWakePolicy.hasVisibleMainWindow {
                     let files = await Task.detached(priority: .utility) { Self.existingFiles() }.value
                     guard !Task.isCancelled else { return }
                     if files != presentFiles { presentFiles = files }
+                    let terminals = Set(ResumeTerminal.allCases.filter(\.isInstalled))
+                    if terminals != installedTerminals { installedTerminals = terminals }
                 }
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }
         .task { await batteryController.refreshHelperAuthorization() }
+    }
+
+    /// Validate and apply the port draft — on Return and on focus loss, which
+    /// is what the old comment claimed the binding did. The proxy is restarted
+    /// only when the value actually changed, so tabbing through the field is
+    /// free.
+    private func commitCodexPort() {
+        let digits = codexPortDraft.filter(\.isNumber)
+        guard let port = Int(digits), (1024...65535).contains(port) else {
+            codexPortDraft = String(prefs.codexProxyPort)
+            return
+        }
+        codexPortDraft = String(port)
+        guard port != prefs.codexProxyPort else { return }
+        prefs.codexProxyPort = port
+        codexStore.restartProxyAndReactivate()
     }
 
     private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,
@@ -420,8 +480,10 @@ struct SettingsView: View {
             port: prefs.codexProxyPort)
     }
 
+    /// Resolved against the cached install set, not a fresh LaunchServices
+    /// probe per body pass.
     private var resumeTerminalCaption: String {
-        switch prefs.resumeTerminal.resolved {
+        switch prefs.resumeTerminal.resolved(installed: installedTerminals) {
         case .otty, .automatic:
             return "Otty：会话已在某个标签页运行时直接切过去，否则新开标签页 resume。无需自动化权限。"
         case .warp:
@@ -432,7 +494,7 @@ struct SettingsView: View {
     }
 
     private var vpnStatusText: String {
-        switch VpnManager.shared.state {
+        switch vpn.state {
         case .idle: return "VPN 未启用"
         case .missingCore: return "缺少内核"
         case .starting: return "内核启动中"
@@ -473,6 +535,12 @@ struct SettingsView: View {
 }
 
 /// One settings control: icon + title + caption, control in the top trailing slot.
+///
+/// The surface is the shared tile (`tint` drives the wash, the corner lens and
+/// the hover edge), because a settings page of bespoke "circle behind a card"
+/// panels read as a different family from every other grid in the app. The
+/// `GlyphWell` beside the title is the card's mark; the lens is the depth
+/// behind it, drawn in the same hue and carrying no glyph of its own.
 struct SettingTile<Control: View>: View {
     let icon: String
     let title: String
@@ -483,26 +551,27 @@ struct SettingTile<Control: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                GlyphWell(name: icon, tint: tint, size: 28, engaged: hovered)
+            HStack(alignment: .center, spacing: 10) {
+                GlyphWell(name: icon, tint: tint, size: 36, engaged: hovered)
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
                 Spacer(minLength: 4)
                 control()
                     .controlSize(.small)
             }
-            .frame(height: 32)
-            Text(title)
-                .font(Theme.Font.chromeEmph)
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(1)
+            .frame(height: 40)
             Text(caption.isEmpty ? " " : caption)
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(3)
                 .frame(minHeight: 42, alignment: .topLeading)
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: hovered)
+        .tile(tint: tint, hovered: hovered,
+              lens: DepthLensSpec(tint: tint, size: 124))
         .hoverState($hovered)
     }
 }

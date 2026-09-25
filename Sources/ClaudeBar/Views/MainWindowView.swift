@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // MARK: - Page enum
@@ -47,6 +48,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 /// The main window's SwiftUI content: a floating navigation capsule between
 /// the brand and live status, above the full-width detail area.
 struct MainWindowView: View {
+    @ProviderState(.configuration) var providerStore: ProviderStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The one preference this shell renders, subscribed individually.
     /// Observing `AppPreferences.shared` wholesale meant every unrelated
@@ -60,6 +62,9 @@ struct MainWindowView: View {
     @State private var selectedPage: AppPage?
     @State private var showCommandPalette = false
     @State private var surfaceVisible = UIWakePolicy.hasVisibleMainWindow
+    /// Page whose provider editor was asked for by another surface. Handed
+    /// down to the page; see `route(_:)`.
+    @State private var editorRequest: AppPage?
 
     /// The page the window was showing before it closed. The hosting view is
     /// torn down on close (see `MainWindowController.releaseContent`), so the
@@ -68,7 +73,6 @@ struct MainWindowView: View {
     /// Reported on every navigation so the controller can remember it across
     /// a close/reopen.
     var onNavigate: (AppPage) -> Void = { _ in }
-
     init(initialPage: AppPage = .dashboard, onNavigate: @escaping (AppPage) -> Void = { _ in }) {
         self.initialPage = initialPage
         self.onNavigate = onNavigate
@@ -82,6 +86,13 @@ struct MainWindowView: View {
         .environment(\.surfaceIsVisible, surfaceVisible)
         .onReceive(UIWakePolicy.changes) { surfaceVisible = UIWakePolicy.hasVisibleMainWindow }
         .onReceive(AppPreferences.shared.$appearance.removeDuplicates()) { appearance = $0 }
+        // A destination another surface asked for. Read through
+        // `ProviderState` so the subscription lands on the store's scoped
+        // invalidation, and dropped as soon as it is routed — the request is a
+        // one-shot (see `ProviderStore.clearNavigation`).
+        .onReceive(providerStore.$navigationRequest.compactMap { $0 }) { request in
+            route(request)
+        }
         .frame(minWidth: 900, minHeight: 600)
         .background(Theme.bgPrimary)
         .preferredColorScheme(appearance.colorScheme)
@@ -101,17 +112,22 @@ struct MainWindowView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
-            navigate(to: .providers)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openVPNPage)) { _ in
-            navigate(to: .vpn)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openHelpPage)) { _ in
-            navigate(to: .help)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openSettingsPage)) { _ in
-            navigate(to: .settings)
+    }
+
+    /// Route a relayed destination and consume it.
+    ///
+    /// The editor case is handed to the destination page as state rather than
+    /// acted on here: `ProvidersView` owns the sheet, so it is the only view
+    /// that can open it.
+    private func route(_ request: ProviderStore.NavigationRequest) {
+        let destination = request.destination
+        providerStore.clearNavigation(request)
+        switch destination {
+        case .page(let page):
+            navigate(to: page)
+        case .editor(let page):
+            editorRequest = page
+            navigate(to: page)
         }
     }
 
@@ -122,7 +138,7 @@ struct MainWindowView: View {
         case .session:
             navigate(to: .sessions)
         case .provider:
-            navigate(to: .providers)
+            providerStore.requestNavigation(.editor(.providers))
         }
     }
 
@@ -130,6 +146,13 @@ struct MainWindowView: View {
 
     /// Brand · floating page capsule · live status. The ice canvas continues
     /// behind the navigation so the capsule reads as a separate surface.
+    ///
+    /// The capsule is the app's largest piece of chrome, so it carries the
+    /// full surface language: a milled well (hairline + faint fill), the
+    /// weather card's inner frame ring inside its own edge, and a light wash of
+    /// the accent behind the whole group. The previous capsule layered a
+    /// `chartBlue` fill, an outer border, an inset white border and a shadow to
+    /// get there; the ring does it in one stroke.
     ///
     /// `ViewThatFits` drops per-tab glyphs before labels when the window
     /// narrows; tooltips and accessibility labels preserve the full names.
@@ -141,14 +164,24 @@ struct MainWindowView: View {
             pageTabs
                 .padding(Theme.Space.s4)
                 .background {
-                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                    Capsule()
                         .fill(Theme.cardSurface)
-                        .shadow(color: .black.opacity(Theme.isDark ? 0.20 : 0.07),
-                                radius: 14, y: 5)
+                        .overlay(Capsule().fill(Theme.chartBlue.opacity(Theme.isDark ? 0.10 : 0.07)))
+                        .shadow(color: .black.opacity(Theme.isDark ? 0.20 : 0.08), radius: 16, y: 7)
                 }
                 .overlay {
-                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
+                    Capsule()
+                        .strokeBorder(Theme.chartBlue.opacity(Theme.isDark ? 0.22 : 0.17), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+                .overlay {
+                    // The weather card's `::after`, scaled to the capsule: the
+                    // lit edge sits *inside* the chrome's own border, so the
+                    // group reads as a milled bar rather than a pill laid on
+                    // the canvas.
+                    Capsule()
+                        .strokeBorder(Theme.innerFrame.opacity(0.55), lineWidth: 1)
+                        .padding(2.5)
                         .allowsHitTesting(false)
                 }
             Spacer(minLength: 0)
@@ -214,7 +247,7 @@ struct MainWindowView: View {
                 switch selectedPage ?? .dashboard {
                 case .dashboard: DashboardView(onNavigate: navigate(to:))
                 case .sessions: SessionsView()
-                case .providers: ProvidersView()
+                case .providers: ProvidersView(editorRequest: $editorRequest)
                 case .connectors: ConnectorsView()
                 case .usage: UsageView()
                 case .settings: SettingsView()
@@ -296,16 +329,17 @@ struct TopNavTab: View {
             .padding(.horizontal, Theme.Space.s10)
             .frame(height: 36)
             .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                    .fill(isSelected ? Theme.claude.opacity(Theme.isDark ? 0.16 : 0.09)
-                          : (isHovered ? Theme.bgSecondary : Color.clear))
+                Capsule()
+                    .fill(isSelected ? Theme.cardSurface
+                          : (isHovered ? Theme.chartBlue.opacity(0.12) : Color.clear))
                     .overlay {
-                        RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                            .strokeBorder(isSelected ? Theme.claude.opacity(0.32) : Color.clear,
+                        Capsule()
+                            .strokeBorder(isSelected ? Theme.chartBlue.opacity(0.22) : Color.clear,
                                           lineWidth: 1)
                     }
+                    .shadow(color: .black.opacity(isSelected ? 0.08 : 0), radius: 5, y: 2)
             }
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .contentShape(Capsule())
             .animation(reduceMotion ? nil : Theme.Motion.state, value: isSelected)
             .animation(reduceMotion ? nil : Theme.Motion.state, value: isHovered)
         }

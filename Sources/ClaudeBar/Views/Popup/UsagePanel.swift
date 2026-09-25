@@ -7,7 +7,7 @@ struct UsagePanel: View {
     @State private var showCustomDatePicker = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             header
                 .popover(isPresented: $showCustomDatePicker) {
                     DatePicker("选择日期", selection: $providerStore.usageReferenceDate,
@@ -49,8 +49,8 @@ struct UsagePanel: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(height: 272, alignment: .top)
+        .padding(.vertical, 6)
+        .frame(height: 244, alignment: .top)
     }
 
     private var header: some View {
@@ -83,7 +83,7 @@ struct UsagePanel: View {
                 ModelPricing.format($0.amount, currency: $0.currency)
             } ?? "—", detail: costDetail(estimate))
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private func summaryMetric(_ title: String, value: String, detail: String) -> some View {
@@ -119,8 +119,18 @@ struct UsagePanel: View {
 
     private func selectPeriod(_ period: UsagePeriod) {
         if period == .custom {
-            withAnimation(Theme.Animation.smooth) { showCustomDatePicker.toggle() }
-            providerStore.usagePeriod = .custom
+            // Toggle, not "always open": the same chip closes the picker, and
+            // that click used to leave the popup on a 自定义 period the user
+            // never chose (the reference date keeps its old value, so the
+            // figures silently switched to a single day).
+            let opening = !showCustomDatePicker
+            withAnimation(Theme.Animation.smooth) { showCustomDatePicker = opening }
+            if opening {
+                providerStore.usagePeriod = .custom
+            } else if providerStore.usagePeriod == .custom {
+                providerStore.usagePeriod = .month
+                providerStore.usageReferenceDate = Date()
+            }
         } else {
             showCustomDatePicker = false
             providerStore.usagePeriod = period

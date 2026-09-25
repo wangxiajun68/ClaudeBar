@@ -15,9 +15,12 @@ struct MachineKpiStrip: View {
         // every body pass.
         let help = helpText()
         return EqualRowGrid(spacing: 1, minColumnWidth: 0, fixedColumns: hasHeadset ? 5 : 4) {
-            MachineKpiButton(kind: .cpu, value: String(format: "%.0f%%", sampler.host.cpu), help: help)
-            MachineKpiButton(kind: .gpu, value: String(format: "%.0f%%", sampler.host.gpu), help: help)
-            MachineKpiButton(kind: .memory, value: memShort, help: help)
+            MachineKpiButton(kind: .cpu, value: String(format: "%.0f%%", sampler.host.cpu),
+                             load: sampler.host.cpu / 100, help: help)
+            MachineKpiButton(kind: .gpu, value: String(format: "%.0f%%", sampler.host.gpu),
+                             load: sampler.host.gpu / 100, help: help)
+            MachineKpiButton(kind: .memory, value: memShort,
+                             load: memPercent / 100, help: help)
             // The headphone cell exists only while a headset is actually in
             // use. Nearby / charging-in-the-case readings stay in the 连接
             // tooltip, they do not steal a column here.
@@ -82,9 +85,10 @@ struct MachineKpiStrip: View {
     // MARK: - 耳机 (popup)
 
     /// The popup's one-line headphone readout: the product glyph, the worse
-    /// bud's percentage, and nothing else. The popup already spends its width
-    /// on four machine facts; the L/R/case breakdown lives in the tooltip
-    /// rather than as a fifth column of numbers.
+    /// bud's percentage, and nothing else. The per-bud / case breakdown stays in
+    /// the tooltip — this cell was added *as* a fifth column (`hasHeadset`
+    /// drives `fixedColumns`), so what it deliberately does not do is spend a
+    /// second column on those numbers.
     private var audioShort: String {
         guard let accessory = audioMonitor.accessories.first, let low = accessory.headline else {
             return "—"
@@ -125,9 +129,15 @@ struct MachineKpiStrip: View {
     private var audioKpi: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
+                // No ring, for the same reason the CPU / GPU / 内存 cells
+                // beside it dropped theirs: a ~96° arc at 20pt reads as a
+                // *spinner*, and "waiting" is never what this cell means. The
+                // battery it used to encode as a rate is already the badge's own
+                // dial — a percentage, which is the honest shape for it — and
+                // the tooltip still carries the bytes.
                 HeadsetBadge(accessory: audioMonitor.accessories.first,
                              charging: audioCharging, level: audioLevel)
-                    .frame(width: 13, height: 13)
+                    .frame(width: 20, height: 20)
                 Text("耳机")
                     .font(Theme.Font.kpi)
                     .foregroundColor(Theme.textSecondary)
@@ -150,6 +160,14 @@ struct MachineKpiStrip: View {
         ProcessSampler.Snapshot(memoryBytes: sampler.host.memoryUsed).memoryLabel
             .replacingOccurrences(of: " GB", with: "G")
             .replacingOccurrences(of: " MB", with: "M")
+    }
+
+    /// Share of physical memory in use, 0…1 — the popup keeps the three-column
+    /// form ("12.4G") but the mark needs the *fraction*, or the arc would spin
+    /// at full rate on a machine with 128 GB of which 12 GB are used.
+    private var memPercent: Double {
+        guard sampler.host.memoryTotal > 0 else { return 0 }
+        return Double(sampler.host.memoryUsed) / Double(sampler.host.memoryTotal)
     }
 
     private var fanShort: String {
@@ -191,6 +209,9 @@ private struct HeadsetBadge: View {
 
     private var inUse: Bool { accessory?.connection == .inUse }
 
+    /// `tint` is the ink mix — it colours the 9pt glyph and the dial. An ink
+    /// hue is the right choice here; the raw signal hues are for shapes, which
+    /// is the whole reason `Theme.Ink` and `Theme.chart*` are separate.
     private var tint: Color {
         guard inUse else { return Theme.Ink.idle }
         return charging ? Theme.Ink.success : Theme.chartPurple
@@ -245,6 +266,12 @@ private struct MachineKpiButton: View {
 
     let kind: Kind
     let value: String
+    /// 0…1 — the same reading the strip prints, handed to the mark so its lit
+    /// arc travels at a rate proportional to it. Passed in rather than derived
+    /// here: the strip already holds the sampler and has already formatted the
+    /// figure, and two places computing "the load" is how a label and its
+    /// ornament end up disagreeing.
+    var load: Double = 0
     /// The host tooltip, built once by the strip and shared by its cells.
     var help: String = ""
     @State private var open = false
@@ -252,6 +279,11 @@ private struct MachineKpiButton: View {
         Button { open = true } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
+                    // No ring behind the glyph. The popup is 424pt wide and four
+                    // to five cells share it, so an ornament here is the most
+                    // expensive thing a cell can carry — and this one said
+                    // "waiting" (a spinner) about a machine that was working,
+                    // while repeating the figure printed directly below it.
                     SignatureGlyph(name: kind.icon, tint: kind.tint, size: 15)
                     Text(kind.label).font(Theme.Font.kpi).foregroundColor(Theme.textSecondary)
                 }

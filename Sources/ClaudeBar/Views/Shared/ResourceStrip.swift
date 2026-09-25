@@ -5,23 +5,27 @@ struct ResourceStrip: View {
     private let sampler = ProcessSampler.shared
     private let fanMonitor = FanMonitor.shared
     private let audioMonitor = AudioAccessoryMonitor.shared
-    var dense: Bool = false
     @State private var showCPU = false
     @State private var showGPU = false
     @State private var showMemory = false
     @State private var showDisk = false
 
     var body: some View {
-        // Every tile carries the same tooltip, so one string serves all six.
-        // `meter(...)` used to call `helpText()` itself, which built the
-        // identical array of shares + host line + `String(format:)` memory
-        // labels six times per body pass (2 s, or 1 s while live).
+        // One shared string for the CPU / GPU / 风扇 tiles. `meter(...)` used to
+        // call `helpText()` itself, which built the identical array of shares +
+        // host line + `String(format:)` memory labels six times per body pass
+        // (2 s, or 1 s while live). 内存 and 硬盘 replace it at their own call
+        // sites with a tooltip naming their popover, which is why this is the
+        // default rather than "the" tooltip.
         let help = helpText()
         return EqualRowGrid(spacing: Theme.Space.gridGap, minColumnWidth: 0, fixedColumns: 3) {
             meter("CPU",
                   icon: "cpu",
                   hero: String(format: "%.0f%%", sampler.host.cpu),
-                  heroTint: Theme.chartGreen,
+                  // The hero is a *figure*, so it takes the text variant of the
+                  // hue — `chartGreen` is a fill color and measures 1.99:1 on
+                  // the ice canvas (see the `Theme.Ink` note in Theme.swift).
+                  heroTint: Theme.Ink.success,
                   load: sampler.host.cpu / 100,
                   kind: .cpu,
                   tint: Theme.chartGreen,
@@ -65,7 +69,7 @@ struct ResourceStrip: View {
                      accessory: audioMonitor.accessories.first,
                      accessoryCount: audioMonitor.accessories.count,
                      unavailableReason: audioMonitor.unavailableReason,
-                     dense: dense)
+                     dense: false)
             meter("风扇",
                   icon: "fanblades",
                   hero: fanHero,
@@ -78,12 +82,10 @@ struct ResourceStrip: View {
                   help: help)
         }
         .onAppear {
-            if dense { ProcessSampler.shared.setScope(.popup, active: true) }
             fanMonitor.start()
             audioMonitor.start()
         }
         .onDisappear {
-            if dense { ProcessSampler.shared.setScope(.popup, active: false) }
             fanMonitor.stop()
             audioMonitor.stop()
         }
@@ -97,6 +99,12 @@ struct ResourceStrip: View {
     }
 
     private var fanCaption: String {
+        // A refused write is the one thing this tile has to say out loud: the
+        // readout is SMC truth, so a failed toggle leaves the number simply
+        // refusing to move, with nothing on screen explaining why. The helper
+        // returns real sentences ("辅助工具不可用，请重新安装。" / "风扇调整失败（退出码 n）")
+        // and they had no reader anywhere in the app.
+        if let error = fanMonitor.lastError { return error }
         guard !fanMonitor.fans.isEmpty else { return "未检测到风扇" }
         let manual = fanMonitor.fans.filter { !$0.mode.isAutomatic }.count
         if manual > 0 { return "\(manual)/\(fanMonitor.fans.count) 手动" }
@@ -117,8 +125,22 @@ struct ResourceStrip: View {
         sampler.host.temperatureColor(celsius: celsius)
     }
 
-    private var cpuTempColor: Color? { temperatureColor(sampler.host.cpuTemperatureCelsius) }
-    private var gpuTempColor: Color? { temperatureColor(sampler.host.gpuTemperatureCelsius) }
+    /// The temperature-to-color rule returns raw signal hues, which is right
+    /// for the mark and wrong for the two places this file applies it: the hero
+    /// figure and the caption under it are *text*. `Theme.swift` documents those
+    /// hues at 1.8–3.4:1 on the ice canvas and reserves `Theme.Ink.*` for
+    /// anything read as text — the same rule the pills in this file already
+    /// follow. A 28pt hero in raw amber at 1.84:1 was the least legible number
+    /// on the page, at exactly the temperature where it matters most.
+    private func temperatureInk(_ celsius: Double?) -> Color? {
+        guard let celsius, celsius > 0 else { return nil }
+        if celsius >= 85 { return Theme.Ink.error }
+        if celsius >= 75 { return Theme.Ink.warning }
+        return nil
+    }
+
+    private var cpuTempColor: Color? { temperatureInk(sampler.host.cpuTemperatureCelsius) }
+    private var gpuTempColor: Color? { temperatureInk(sampler.host.gpuTemperatureCelsius) }
 
     private var cpuTempCaption: String {
         if let temp = sampler.host.temperatureLabel(celsius: sampler.host.cpuTemperatureCelsius) {
@@ -138,6 +160,8 @@ struct ResourceStrip: View {
     }
 
     private var fanPill: (String, Color) {
+        // Text, so `Theme.Ink` — the same rule as the pills below.
+        if fanMonitor.lastError != nil { return ("失败", Theme.Ink.error) }
         guard !fanMonitor.fans.isEmpty else { return ("未检测", Theme.Ink.idle) }
         if fansAtMax { return ("最大", Theme.Ink.warning) }
         if fanMonitor.fans.contains(where: { !$0.mode.isAutomatic }) { return ("手动", Theme.Ink.warning) }
@@ -179,7 +203,21 @@ struct ResourceStrip: View {
     ) -> some View {
         let content = VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link)
+                // No ring here.
+                //
+                // Each tile's header used to wrap its glyph in a `LoadRing`: a
+                // ~96° arc travelling at a rate proportional to the tile's own
+                // reading. It read as a **spinner**, which is a lie — a spinner
+                // means "waiting", and nothing on this strip is ever waiting for
+                // the machine. It also duplicated the figure printed three
+                // lines under it, at a smaller size and a lower contrast.
+                //
+                // The live reading belongs to the big mark on the right, where
+                // it is drawn in the shape of the hardware it describes: twelve
+                // cells for twelve cores, one column per GPU sub-unit. That
+                // mark states the reading; this one only names the tile.
+                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
+                    .frame(width: 28, height: 28)
                 Text(label)
                     .font(Theme.Font.chrome)
                     .foregroundColor(Theme.textSecondary)
@@ -211,20 +249,36 @@ struct ResourceStrip: View {
                 Group {
                     switch kind {
                     case .gpu:
-                        HardwareSiliconMark(gpu: true, load: load, tint: tint)
+                        // One cell per graphics sub-unit the driver publishes,
+                        // not one bar for the whole card: the tile's own figure
+                        // is already the aggregate, and a mark that only repeats
+                        // it is the decoration this whole strip exists to avoid.
+                        HardwareSiliconMark(gpu: true, load: load, tint: tint,
+                                            cells: sampler.host.gpuRenderers.map { $0 / 100 })
                     case .memory:
-                        CapacityHardwareMark(disk: false, load: load, bytes: sampler.host.memoryTotal, tint: tint)
+                        CapacityHardwareMark(disk: false, load: load,
+                                             bytes: sampler.host.memoryTotal, tint: tint,
+                                             wells: sampler.host.memoryWells,
+                                             wellCaptions: sampler.host.memoryWellCaptions)
                     case .cpu:
-                        HardwareSiliconMark(load: load, tint: tint)
+                        // Twelve cores, twelve cells — each lit by that core's
+                        // own busy fraction. Empty until the sampler's second
+                        // tick establishes the baseline, and the mark falls back
+                        // to a single lit die until then rather than inventing
+                        // per-core numbers.
+                        HardwareSiliconMark(load: load, tint: tint, cells: sampler.host.coreLoad)
                     case .fans:
                         CompactFanPair(fans: fanMonitor.fans, onToggle: toggleFan)
                     case .disk:
-                        CapacityHardwareMark(disk: true, load: load, bytes: sampler.host.diskTotal, tint: tint)
+                        CapacityHardwareMark(disk: true, load: load,
+                                             bytes: sampler.host.diskTotal, tint: tint,
+                                             wells: sampler.host.diskWells,
+                                             wellCaptions: sampler.host.diskWellCaptions)
                     }
                 }
                 // The tile's mark slot: the mini charts are ornaments sized to
                 // the slot by design.
-                .frame(width: dense ? 88 : 112, height: dense ? 68 : 80)
+                .frame(width: 112, height: 80)
                 .clipped()
                 .transaction { tx in
                     if kind != .fans { tx.animation = nil }
@@ -232,8 +286,17 @@ struct ResourceStrip: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: dense ? 112 : 124, maxHeight: .infinity, alignment: .topLeading)
-        .tile(dense: dense)
+        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: .infinity, alignment: .topLeading)
+        // The meter carries its own hue into the tile surface: the accent wash
+        // is what the inner frame ring sits on, and the hover edge then agrees
+        // with the hero number's tint. No lens here — the tile's mark occupies
+        // the trailing cell, and rings anchored to a corner would sit behind
+        // the readout instead of behind the mark.
+        //
+        // Hover is owned by the surface, not by this meter: `content` is used
+        // twice (bare, and wrapped in a popover button) and nothing in it reads
+        // the flag.
+        .hoverTile(tint: tint, dense: false)
         .help(help)
         return Group {
             if kind == .cpu {

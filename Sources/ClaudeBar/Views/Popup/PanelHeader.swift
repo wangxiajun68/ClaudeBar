@@ -266,8 +266,7 @@ private struct ModelSwitchList: View {
             if rows.isEmpty {
                 Button("去添加供应商") {
                     dismiss()
-                    NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                    NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
+                    NotificationCenter.default.post(.showMainWindow(page: .providers, editor: true))
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.Ink.claude)

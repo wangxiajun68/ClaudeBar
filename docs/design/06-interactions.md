@@ -34,7 +34,11 @@
 
 ## 编辑 Provider（独立窗口 / 主窗口页面）
 
-点击菜单栏 popup 底部 "编辑供应商" 图标 → 主窗口切到「模型」页（post `.openProvidersEditor`）。主窗口供应商页（`ProvidersView`）嵌入 `ProviderEditorView`，共用同一 `ProviderEditorModel`（`@Observable` 表单模型，含校验与 spinner）。左侧 Provider 列表（增/删/复制），右侧 master-detail：Provider 配置（名/Key/URL）+ 模型列表（增/删/设默认/编辑各字段）。保存时若该 Provider 当前激活，则重新 `activateModel` 应用变更。
+点击菜单栏 popup 底部 "管理模型" 图标 → 主窗口切到「模型」页，并**在同一个通知里带上目的地**（`Notification.showMainWindow(page:editor:)` 的 `userInfo`）。窗口可能是这一刻才被建出来的，而新的 `NSHostingView` 要等第一次 display pass（约 50 ms）才订阅 `NotificationCenter`；先 post 再补一条分页通知会丢掉分页，所以目的地随同一条通知发布，或经 `ProviderStore.navigationRequest` 转发（见 [technical/05](../technical/05-view-layer.md)）。
+
+主窗口「模型」页是供应商目录（`ProviderDirectoryHost`）：品牌大标 + 当前连接 + 搜索 / 「仅当前」筛选 + Claude / Codex 两栈网格。选中一项后用 `ProviderConnectionEditor` 弹窗编辑——名称 / Key / 接口地址 / 模型列表 / Codex 协议与推理强度——保存时若该 Provider 当前激活，则重新 `activateModel` 应用变更。目录页即列表，弹窗不再套第二列导航。
+
+源码里另有一套 master-detail 编辑器（`ProviderEditorView` / `CodexProviderEditorView` + `ProviderEditorModel`），**当前没有挂载点**；见 [technical/17](../technical/17-ui-audit-backlog.md)。
 
 ## Widget 联动
 

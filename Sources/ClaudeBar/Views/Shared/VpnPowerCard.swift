@@ -1,6 +1,12 @@
 import SwiftUI
 
 /// VPN summary: a regular dashboard tile, compact node controls in the popup.
+/// **Not mounted.** Nothing instantiates this card — the popup's VPN surface is
+/// `PanelHeader`'s chip plus `VpnNodePickerPanel`, and the VPN page owns its own
+/// chrome — so its `VpnFormat.rate` preview of a rate format the live surfaces
+/// do not use is unreachable too. Kept as the finished design for a popup-sized
+/// VPN tile; mount it or delete it with the doc rows in
+/// `docs/technical/11-vpn.md` and `09-file-index.md`.
 struct VpnPowerCard: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var rates = VpnLiveRates.shared
@@ -19,7 +25,7 @@ struct VpnPowerCard: View {
                        detail: manager.isRunning ? (manager.liveLeafName ?? "代理运行中") : statusLine,
                        tint: Theme.chartGreen, instrumentIcon: .vpn,
                        pill: manager.isRunning ? "↓ " + VpnFormat.rate(rates.speedDown) : "节点与网络") {
-                NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                NotificationCenter.default.post(.showMainWindow(page: .vpn))
             }
         } else {
             popupContent
@@ -86,7 +92,7 @@ struct VpnPowerCard: View {
 
         if opensVPNPage {
             Button {
-                NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                NotificationCenter.default.post(.showMainWindow(page: .vpn))
             } label: {
                 inner
             }

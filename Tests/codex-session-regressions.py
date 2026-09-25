@@ -44,5 +44,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
         }
     }''')
     binary = work / 'regression'
-    subprocess.run(['swiftc','-parse-as-library',str(root/'Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift'),str(root/'Sources/ClaudeBar/Utils/JSONCoerce.swift'),str(harness),'-o',str(binary)], check=True)
+    # SessionTitle is a dependency of the monitor, not of the fixture: without
+    # it the slice does not compile at all, which is how this test came to be
+    # parked outside CI (`Makefile` / `ci.yml` never ran it). Fonts are
+    # CoreGraphics and Foundation only, so the slice stays app-free.
+    subprocess.run(['swiftc','-parse-as-library',
+                    str(root/'Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/JSONCoerce.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/SessionTitle.swift'),
+                    str(harness),'-o',str(binary)], check=True)
     subprocess.run([str(binary)], env={**os.environ, 'CODEX_HOME':folder}, check=True)

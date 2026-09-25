@@ -26,6 +26,7 @@
 | 14 | [performance-audit.md](14-performance-audit.md) | 桌面 / popup / 灵动岛的刷新与渲染审查 | 优化卡顿 / 掉帧 |
 | 15 | [model-cost.md](15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配规则 | 改价格 / 加模型 |
 | 16 | [connectors.md](16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停机制 | 改连接器 / MCP 发现 |
+| 17 | [ui-audit-backlog.md](17-ui-audit-backlog.md) | 已核实但未修的 UI / 交互问题（每条注明复现依据与待决策点） | 接手审查遗留项 |
 
 ---
 

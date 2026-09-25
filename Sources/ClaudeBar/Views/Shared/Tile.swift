@@ -2,38 +2,135 @@ import SwiftUI
 
 // MARK: - Tile surface
 
-/// The 宫格 (grid) tile surface: dense Liquid Glass over `.panelCard()`'s
-/// glass — smaller radius, slightly lighter fill, optional state tint, and a
-/// hover lift. Tiles are the only data surface; hairlines group grids.
+/// The 宫格 (grid) tile surface — the one card behind every data grid in the
+/// app (dashboard KPIs, sessions, usage, providers, connectors).
+///
+/// One shape language, four parts, all of them already drawn by the reference
+/// Uiverse pieces (see `UiverseSurfaces.swift`):
+///
+/// 1. a `cardSurface` base, so a tile is opaque in both themes;
+/// 2. an optional **accent wash** — the tile's own hue at 5–17 % — which is
+///    what the weather card's saturated gradient does for its white frame ring;
+/// 3. an optional **depth lens** off the top trailing corner, receding past the
+///    edge (`DepthLens`, one `Canvas`);
+/// 4. the **inner frame ring** inside the card's own edge, and a hairline that
+///    lights up as the accent on hover.
+///
+/// Cost, because this hangs off grids of up to 200 cards: the lens is one
+/// `Canvas` drawing three stroked circles — fewer layers than the three
+/// separate `Circle` views it replaces, and the same count as the single
+/// stroked circle each of these cards drew before. Nothing here animates on a
+/// timer; the only motion is the hover lift, which is a pointer state change.
 struct TileModifier: ViewModifier {
     var tint: Color? = nil
     var hovered: Bool = false
     var dense: Bool = false
+    var lens: DepthLensSpec? = nil
+    var framed: Bool = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
+        TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
+                    framed: framed, reduceMotion: reduceMotion) {
+            content
+        }
+    }
+}
+
+/// The surface itself, split out of the modifier so it can be reused by
+/// `.hoverTile()` (which owns its own hover flag) without the two modifiers
+/// chaining into each other — a modifier calling another modifier's extension
+/// on `Content` does not type-check.
+struct TileSurface<Content: View>: View {
+    var tint: Color?
+    var hovered: Bool
+    var dense: Bool
+    var lens: DepthLensSpec?
+    var framed: Bool
+    var reduceMotion: Bool
+    let content: Content
+
+    /// Explicit init: the memberwise one would take `content` as a plain
+    /// function, so every call site would have to spell out
+    /// `content: { … }` instead of trailing-closure syntax.
+    init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
+         lens: DepthLensSpec? = nil, framed: Bool = true,
+         reduceMotion: Bool = false,
+         @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.hovered = hovered
+        self.dense = dense
+        self.lens = lens
+        self.framed = framed
+        self.reduceMotion = reduceMotion
+        self.content = content()
+    }
+
+    var body: some View {
         let radius = dense ? Theme.Radius.md : Theme.Radius.lg
+        // A tile with no accent hue still needs an interactive edge; the app's
+        // blue is the one every page already uses for "this is a control".
+        let accent = tint ?? Theme.Ink.claude
         content
             .background {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(tint == nil
-                          ? Theme.cardSurface
-                          : tint!.opacity(hovered ? 0.14 : 0.09))
-                    .shadow(color: .black.opacity(hovered ? 0.06 : 0.04),
-                            radius: hovered ? 8 : 5, y: 1)
+                ZStack(alignment: lens?.align ?? .topTrailing) {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Theme.cardSurface)
+                    if tint != nil {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(accent.opacity(Theme.isDark
+                                                 ? (hovered ? 0.17 : 0.11)
+                                                 : (hovered ? 0.10 : 0.055)))
+                    }
+                    if let lens {
+                        DepthLens(spec: lens, engaged: hovered)
+                            // Pushed past the aligned edge so the rings leave the
+                            // card instead of sitting in it — the reference
+                            // card's circles are cropped by its own bounds the
+                            // same way. `LensPlacement` keeps the direction tied
+                            // to the alignment, and honours an exact offset when
+                            // the card knows where its mark actually is.
+                            .offset(LensPlacement.offset(lens))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .shadow(color: .black.opacity(hovered ? 0.07 : 0.04),
+                        radius: hovered ? 9 : 5, y: hovered ? 4 : 1)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(hovered ? (tint ?? Theme.Ink.claude).opacity(0.28) : Theme.hairline,
+                    .strokeBorder(hovered ? accent.opacity(0.34) : Theme.hairline,
                                   lineWidth: 1)
                     .allowsHitTesting(false)
             }
+            .overlay {
+                if framed {
+                    // On a tinted tile the ring is the lit white edge of the
+                    // reference card; on a plain one it is an engraved hairline
+                    // (white over white would be nothing).
+                    InnerFrameRing(inset: dense ? 2.5 : 3, radius: radius,
+                                   tint: tint == nil ? Theme.innerFrameMuted : Theme.innerFrame)
+                }
+            }
+            .offset(y: hovered && !reduceMotion ? -2 : 0)
     }
 }
 
 extension View {
     /// Apply the tile surface — the grid cell equivalent of `.panelCard()`.
-    func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false) -> some View {
-        modifier(TileModifier(tint: tint, hovered: hovered, dense: dense))
+    ///
+    /// `tint` is the tile's accent: it drives the corner lens, the wash and the
+    /// hover edge. `lens` is opt-in because a 40pt metric tile has no corner to
+    /// spare, and because on some tiles the corner is already occupied (a
+    /// session tile's agent cluster) — rings there would run under content
+    /// instead of behind a header. The rings carry no glyph of their own: a
+    /// card's mark belongs in its header, where it is legible and where it can
+    /// keep its own accessible name, so the lens is hue and depth only.
+    func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
+              lens: DepthLensSpec? = nil, framed: Bool = true) -> some View {
+        modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
+                              lens: lens, framed: framed))
     }
 }
 
@@ -186,6 +283,13 @@ struct EqualRowGrid: Layout {
     var minColumnWidth: CGFloat
     var fixedColumns: Int?
 
+    /// Why the row heights are cached at all: SwiftUI asks `sizeThatFits` for
+    /// the container's own height *and* then `placeSubviews` for where every
+    /// cell goes, and it re-asks on any parent change (a scroll pass, a hover
+    /// on one cell, an unrelated publish). Without the cache each of those
+    /// passes calls `sizeThatFits` on every child, so a 200-card grid measures
+    /// 200 text layouts twice per pass.
+    ///
     /// Keyed on what the row heights actually depend on. It used to carry the
     /// raw proposed width, but `sizeThatFits` collapses a non-finite proposal
     /// to 0 while `placeSubviews` uses `bounds.width` — the *same* layout pass

@@ -81,12 +81,41 @@ final class VpnLiveRates: ObservableObject {
         guard hasPending else { return }
         hasPending = false
         lastFlush = Date()
-        if pendingDown == speedDown && pendingUp == speedUp { return }
+        if pendingDown == speedDown && pendingUp == speedUp {
+            // The sample is still *recorded*, because the chart's x-axis is a
+            // slot per flush: skipping an idle stretch would draw a two-minute
+            // gap as one step, and with samples right-aligned by index the
+            // previous burst would sit pinned at the right edge for as long as
+            // the silence lasted.
+            //
+            // Recording is a `@Published` write — `append` fires
+            // `objectWillChange` whether or not the value changed (measured) —
+            // so this tick does invalidate the rate observers. It is bounded
+            // two ways: the reader emits roughly one line a second, so an idle
+            // flush is ~1 Hz rather than the 4 Hz ceiling; and the guard below
+            // stops it entirely once the whole window is already flat, which is
+            // the steady state of a VPN that is running but carrying nothing.
+            guard !windowIsAllFlat else { return }
+            appendHistory(down: pendingDown, up: pendingUp)
+            return
+        }
         speedDown = pendingDown
         speedUp = pendingUp
         traffic.up = pendingUp
         traffic.down = pendingDown
-        speedHistory.append((down: pendingDown, up: pendingUp))
+        appendHistory(down: pendingDown, up: pendingUp)
+    }
+
+    /// True when appending another zero sample would draw exactly what is on
+    /// screen already: a full window whose every sample is zero. A window that
+    /// is merely *some* zeros still changes the drawing (the trace shifts left).
+    private var windowIsAllFlat: Bool {
+        guard pendingDown == 0, pendingUp == 0, speedHistory.count >= 60 else { return false }
+        return !speedHistory.contains { $0.down != 0 || $0.up != 0 }
+    }
+
+    private func appendHistory(down: Int64, up: Int64) {
+        speedHistory.append((down: down, up: up))
         if speedHistory.count > 60 {
             speedHistory.removeFirst(speedHistory.count - 60)
         }

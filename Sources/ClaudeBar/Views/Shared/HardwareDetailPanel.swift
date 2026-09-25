@@ -19,9 +19,14 @@ struct HardwareSiliconMark: View {
     var gpu = false
     var load: Double
     var tint: Color
+    /// The mark's per-unit reading, straight from the sampler: one cell per
+    /// logical core, or one per GPU sub-unit. The mark is the same drawing
+    /// everywhere it appears, so the breakdown is handed in rather than looked
+    /// up — a caller with only a single number still draws the single die.
+    var cells: [Double] = []
     var body: some View {
         VStack(spacing: 4) {
-            HardwareIllustration(kind: gpu ? .gpu : .cpu, load: load, tint: tint)
+            HardwareIllustration(kind: gpu ? .gpu : .cpu, load: load, tint: tint, cells: cells)
             Text(gpu ? HardwareIdentity.gpuName.replacingOccurrences(of: "Apple ", with: "") : HardwareIdentity.shortName).font(.system(size: 11, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.6)
         }
         .padding(.horizontal, 2)
@@ -64,12 +69,33 @@ struct HardwareDetailPanel: View {
     let gpu: Bool
     private let sampler = ProcessSampler.shared
     private var tint: Color { gpu ? Theme.chartBlue : Theme.chartGreen }
+
+    /// What the mark is actually showing. The previous copy promised the
+    /// opposite ("不代表单个核心的独立读数") of what the drawing now does, which
+    /// is exactly the kind of caption that turns a measurement back into an
+    /// ornament.
+    private var caption: String {
+        if gpu {
+            let units = sampler.host.gpuRenderers.count
+            return units > 0
+                ? "每一格是一组图形子单元，按各自的实时占用点亮。"
+                : "芯片亮度表示整体负载。"
+        }
+        let cores = sampler.host.coreLoad.count
+        return cores > 0
+            ? "每一个方块是一个逻辑核心（共 \(cores) 个），按各自的实时占用点亮。"
+            : "芯片亮度表示整体负载。"
+    }
+
     var body: some View {
         let load = gpu ? sampler.host.gpu : sampler.host.cpu
         let values = sampler.trail.map { gpu ? $0.gpu : $0.cpu }
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 18) {
-                HardwareSiliconMark(gpu: gpu, load: load / 100, tint: tint).frame(width: 94, height: 84)
+                HardwareSiliconMark(gpu: gpu, load: load / 100, tint: tint,
+                                    cells: gpu ? sampler.host.gpuRenderers.map { $0 / 100 }
+                                               : sampler.host.coreLoad)
+                    .frame(width: 94, height: 84)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name).font(Theme.Font.chromeEmph)
                     Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -83,7 +109,7 @@ struct HardwareDetailPanel: View {
                 Spacer()
                 Text("峰值 \(Int((values.max() ?? 0) * 100))%")
             }.font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-            Text(gpu ? "芯片亮度表示整体负载。" : "芯片亮度表示整体负载，不代表单个核心的独立读数。")
+            Text(caption)
                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
         }.padding(22).frame(width: 420).background(Theme.cardSurface)
     }
@@ -152,13 +178,19 @@ struct CapacityHardwareMark: View {
     var load: Double
     var bytes: UInt64
     var tint: Color
+    /// The mark's own reading, one entry per well. Empty falls back to the
+    /// single `load` figure, which is what a caller without the breakdown gets.
+    var wells: [Double] = []
+    var wellCaptions: [String] = []
     var body: some View {
         VStack(spacing: 0) {
-            if disk {
-                InstrumentGlyph(kind: .disk, tint: tint, level: load, detailed: true)
-            } else {
-                HardwareIllustration(kind: .memory, load: load, tint: tint)
-            }
+            // Both capacities use the same 100×76 memory-module drawing: a disk
+            // is a capacity, and a third unrelated silhouette in the same row
+            // read as a different *kind* of thing rather than as the same
+            // measurement of a different medium. What separates them is the
+            // reading and its caption, which is what the wells carry.
+            HardwareIllustration(kind: .memory, load: load, tint: tint,
+                                 wells: wells, wellCaptions: wellCaptions)
             Text(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
                 .font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(Theme.textSecondary)
         }

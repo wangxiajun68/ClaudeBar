@@ -251,11 +251,22 @@ struct ProviderCatalogBrowser: View {
 }
 
 /// Shares the client's toolbar row; only the category control collapses on narrow windows.
+///
+/// The wide form is the app's `SegmentedCapsule`, not a bespoke
+/// `matchedGeometryEffect` row: this page and the connectors toolbar sat side by
+/// side in the same family of "filter what the grid shows" controls and were
+/// built two different ways, so the same gesture read as two different
+/// controls. The menu form stays a `Picker` — it only appears when the row has
+/// no width to give.
 struct ProviderCategoryFilter: View {
     @Binding var category: ProviderCatalogEntry.Category?
     var compact = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var filterAnimation
+
+    /// `nil` is the 全部 entry, kept in the same list so it slides under the
+    /// same selection pill as the three real categories.
+    private var items: [ProviderCatalogEntry.Category?] {
+        [nil] + ProviderCatalogEntry.Category.allCases.map { Optional($0) }
+    }
 
     var body: some View {
         Group {
@@ -265,26 +276,13 @@ struct ProviderCategoryFilter: View {
                     ForEach(ProviderCatalogEntry.Category.allCases) { Text($0.rawValue).tag(Optional($0)) }
                 }.pickerStyle(.menu)
             } else {
-                HStack(spacing: 4) {
-                    filter("全部", value: nil)
-                    ForEach(ProviderCatalogEntry.Category.allCases) { filter($0.rawValue, value: $0) }
-                }
+                SegmentedCapsule(items: items,
+                                 selection: category,
+                                 title: { $0?.rawValue ?? "全部" },
+                                 tint: Theme.claude,
+                                 onSelect: { category = $0 })
             }
-        }.padding(4).background(Theme.bgOverlay, in: RoundedRectangle(cornerRadius: 12))
-            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: category)
-    }
-    private func filter(_ title: String, value: ProviderCatalogEntry.Category?) -> some View {
-        Button { category = value } label: {
-            Text(title).font(Theme.Font.caption).fontWeight(category == value ? .semibold : .regular)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .foregroundStyle(category == value ? Theme.textPrimary : Theme.textSecondary)
-                .background {
-                    if category == value {
-                        RoundedRectangle(cornerRadius: 8).fill(Theme.cardSurface)
-                            .matchedGeometryEffect(id: "category", in: filterAnimation)
-                    }
-                }
-        }.buttonStyle(.plain).accessibilityAddTraits(category == value ? .isSelected : [])
+        }
     }
 }
 
@@ -301,6 +299,10 @@ struct ProviderDirectorySearch: View {
             }
         }.font(Theme.Font.bodySmall).padding(10)
             .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 10))
+            // The same inset ring the tile and the panel card wear, so a field
+            // on a toolbar is recognisably the same family as the surfaces it
+            // sits between rather than a bare rectangle.
+            .innerFrame(inset: 2.5, radius: 10)
     }
 }
 
@@ -322,20 +324,25 @@ private struct ProviderCardSurface<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) { content }
             .padding(18).frame(maxWidth: .infinity).frame(height: 216, alignment: .topLeading)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16).fill(Theme.cardSurface)
-                    if state != .unconfigured {
-                        RoundedRectangle(cornerRadius: 16).fill(state.color.opacity(Theme.isDark ? 0.14 : 0.08))
-                    }
+            // The directory's state hue (grey / amber / blue / green) is the
+            // card's accent, so the wash, the corner rings and the hover edge
+            // all move through the same four states as the status badge — the
+            // page used to say "state" in three unrelated places (a wash, an
+            // outline, a badge) and only the badge carried the colour.
+            //
+            // The rings carry no glyph: this card's subject is its brand mark,
+            // which lives at the *leading* edge, so a symbol in the corner would
+            // be a second, competing identity.
+            .tile(tint: state.faceColor, hovered: hovered,
+                  lens: DepthLensSpec(tint: state.faceColor, size: 150, rings: 3))
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                        .strokeBorder(Theme.chartBlue.opacity(0.6), lineWidth: 1.5)
+                        .allowsHitTesting(false)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(
-                selected || hovered ? Theme.chartBlue.opacity(0.6) :
-                    state.color.opacity(state == .unconfigured ? 0.14 : 0.35)))
-            .shadow(color: .black.opacity(hovered ? 0.06 : 0), radius: 10, y: 5)
-            .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovered)
+            .hoverState($hovered)
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: state)
     }
 }
