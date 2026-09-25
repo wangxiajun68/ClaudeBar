@@ -18,7 +18,7 @@ struct CodexProviderEditorView: View {
             HStack(spacing: 0) {
                 if !singleProvider {
                     sidebar
-                    Divider()
+                    HairlineDivider()
                 }
                 if model.selected != nil {
                     detailPane
@@ -188,8 +188,10 @@ struct CodexProviderEditorView: View {
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
             Toggle("切换第三方供应商时保留官方登录", isOn: $model.preserveOfficialLogin)
+                .toggleStyle(.instrument)
                 .font(Theme.Font.bodySmall)
             Toggle("requires_openai_auth", isOn: $model.requiresOpenAIAuth)
+                    .toggleStyle(.instrument)
                 .font(Theme.Font.bodySmall)
             Text("有密钥时切换会按上面的「保留官方登录」重写这一项；这里只在没有密钥的供应商上生效。")
                 .font(Theme.Font.caption)
@@ -245,7 +247,7 @@ struct CodexProviderEditorView: View {
             HStack(alignment: .top, spacing: 0) {
                 modelList
                     .frame(height: 220) // fixed: unbounded inner ScrollView was inflating card height
-                Divider()
+                HairlineDivider()
                 modelDetail
             }
         }
@@ -270,7 +272,7 @@ struct CodexProviderEditorView: View {
                 }
             }
 
-            Divider()
+            HairlineDivider()
             HStack(spacing: Theme.Space.s4) {
                 TextField("添加模型", text: $model.newModelName)
                     .textFieldStyle(ProviderInputStyle())
@@ -359,7 +361,7 @@ struct CodexProviderEditorView: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
-            Divider()
+            HairlineDivider()
             HStack(spacing: Theme.Space.s12) {
                 if let err = model.duplicateModelError {
                     Text(err)

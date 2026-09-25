@@ -165,7 +165,7 @@ struct PowerFlowCard: View {
                 PowerFlowContent(flow: PowerFlow(host: host), compact: compact)
                     .equatable()
                 if !compact {
-                    Divider().padding(.horizontal, 18)
+                    HairlineDivider().padding(.horizontal, 18)
                     BatteryChargeControls().padding(18)
                 }
             }

@@ -74,7 +74,7 @@ struct CommandPalette: View {
 
                     VStack(spacing: 0) {
                         searchBar
-                        Divider().opacity(0.2)
+                        HairlineDivider()
                         resultsList
                     }
                     .frame(width: 460)

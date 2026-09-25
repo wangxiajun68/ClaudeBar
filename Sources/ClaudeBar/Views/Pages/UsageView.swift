@@ -386,7 +386,7 @@ private struct UsageProviderCard: View {
 
                 if open {
                     VStack(alignment: .leading, spacing: 8) {
-                        Divider()
+                        HairlineDivider()
                         Text("模型明细")
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)
@@ -487,7 +487,7 @@ private struct UsagePlatformCard: View {
 
                 if open {
                     VStack(alignment: .leading, spacing: 8) {
-                        Divider()
+                        HairlineDivider()
                         Text("模型明细")
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)

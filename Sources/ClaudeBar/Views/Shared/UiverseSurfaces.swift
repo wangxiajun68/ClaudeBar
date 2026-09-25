@@ -641,8 +641,15 @@ struct PageHeaderCard<Content: View>: View {
             .padding(.horizontal, Theme.Space.s16)
             .padding(.vertical, Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A band this size needs a heavier wash than a 200-card grid does:
+            // at the grid's 5.5 % the white inner frame ring has nothing to sit
+            // on and the band still reads as a plain white rectangle, which is
+            // the exact failure this surface exists to fix. 9 % light / 15 %
+            // dark is the point where the ring reads without the band shouting
+            // over the page.
             .tile(tint: face, hovered: hovered,
-                  lens: DepthLensSpec(tint: face, size: 168, rings: 3))
+                  lens: DepthLensSpec(tint: face, size: 168, rings: 3),
+                  wash: Theme.isDark ? 0.15 : 0.09)
             .overlay(alignment: .trailing) {
                 if let orbit {
                     OrbitGauge(progress: orbit, tint: face,

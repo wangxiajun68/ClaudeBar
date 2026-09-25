@@ -275,31 +275,30 @@ struct ConnectorsView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: Theme.Space.s12) {
-            // The mark in the shared well rather than a bare SF Symbol on a
-            // hand-mixed rectangle — the empty state is a surface like any
-            // other, and its mark should be the same object as a card's.
-            GlyphWell(name: focus.symbol, tint: Theme.Ink.claude, size: 52, engaged: true)
-            Text(search.isEmpty ? "这里还没有\(focus.title)" : "没有匹配的卡片")
-                .font(Theme.Font.chromeEmph)
-            Text(!search.isEmpty || (focus != .local && platform != nil)
-                 ? "换一个平台或清掉搜索再看。"
-                 : (projectPath.isEmpty ? "选择项目后，还会带上项目里的配置。" : "当前项目暂无这类配置。"))
-                .font(Theme.Font.caption)
-                .foregroundStyle(Theme.textSecondary)
-            if !search.isEmpty || (focus != .local && platform != nil) {
-                Button("清空筛选") {
-                    search = ""
-                    platform = nil
-                }
-                .headerControl()
-            } else if projectPath.isEmpty {
-                Button("选择项目", action: chooseProject)
-                    .headerControl()
-            }
+        // The shared parked-instrument state, on the tile surface — so an empty
+        // grid and an empty model list say "nothing here" the same way.
+        StandbyEmptyState(label: search.isEmpty ? "这里还没有\(focus.title)" : "没有匹配的卡片",
+                          symbol: focus.symbol,
+                          tint: Theme.Ink.claude,
+                          caption: emptyCaption,
+                          block: true,
+                          action: emptyAction)
+            .frame(minHeight: 220)
+            .tile()
+    }
+
+    private var emptyCaption: String {
+        if !search.isEmpty || (focus != .local && platform != nil) {
+            return "换一个平台或清掉搜索再看。"
         }
-        .frame(maxWidth: .infinity, minHeight: 220)
-        .tile()
+        return projectPath.isEmpty ? "选择项目后，还会带上项目里的配置。" : "当前项目暂无这类配置。"
+    }
+
+    private var emptyAction: (label: String, run: () -> Void)? {
+        if !search.isEmpty || (focus != .local && platform != nil) {
+            return ("清空筛选", { search = ""; platform = nil })
+        }
+        return projectPath.isEmpty ? ("选择项目", chooseProject) : nil
     }
 
     private var loadingState: some View {
@@ -428,17 +427,14 @@ private struct ConnectorInventoryHeader: View {
                     .headerControl()
                 }
 
-                // The reading strip: the header answers "how much is here"
-                // before the grid does, so the three figures are drawn as one
-                // instrument rather than as three lines of grey text.
-                HStack(spacing: Theme.Space.s16) {
-                    readout("本机 CLI", count: localCount, tint: Theme.Ink.claude)
-                    VerticalHairline().frame(height: 26)
-                    readout("插件", count: kindCounts[.plugin] ?? 0, tint: Theme.Ink.claude)
-                    readout("Skills", count: kindCounts[.skill] ?? 0, tint: Theme.Ink.cursor)
-                    readout("MCP", count: kindCounts[.mcp] ?? 0, tint: Theme.Ink.success)
-                    Spacer(minLength: 0)
-                }
+                // The composition strip. The header's job is to answer "what is
+                // in here" before the grid does, and four grey figures answering
+                // it separately is not an answer — it is four numbers to read.
+                // Drawn as one proportional bar instead: each type owns a
+                // segment sized by its share, so the *shape* of the inventory is
+                // legible in one glance and the figures are there for the reader
+                // who wants them.
+                inventoryStrip
 
                 if focus != .local {
                     // The platform row is the same segmented capsule as the type
@@ -488,21 +484,64 @@ private struct ConnectorInventoryHeader: View {
         return "共 \(total) 项能力 · 当前分类 \(currentCount) 项"
     }
 
-    /// One figure in the header's reading strip: a number the header owns, with
-    /// its own caption. Ink for the digits (they are text), the tint only on the
-    /// rule above them.
-    private func readout(_ label: String, count: Int, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(count)")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textPrimary)
-                .contentTransition(.numericText())
-            HStack(spacing: 4) {
-                Rectangle().fill(tint.opacity(0.55)).frame(width: 8, height: 2)
-                Text(label)
-                    .font(Theme.Font.micro)
-                    .foregroundStyle(Theme.textSecondary)
+    /// The types the strip proportions, in the order the filter lists them.
+    private var stripParts: [(focus: ConnectorFocus, count: Int, face: Color, ink: Color)] {
+        [
+            (.plugin, kindCounts[.plugin] ?? 0, Theme.claude, Theme.Ink.claude),
+            (.skill, kindCounts[.skill] ?? 0, Theme.cursor, Theme.Ink.cursor),
+            (.mcp, kindCounts[.mcp] ?? 0, Theme.statusSuccess, Theme.Ink.success),
+        ]
+    }
+
+    private var stripTotal: Int {
+        max(1, stripParts.reduce(0) { $0 + $1.count })
+    }
+
+    /// One proportional bar plus a legend that doubles as the figures. The bar
+    /// takes the **shape** hues (a fill), the legend the **ink** ones (text) —
+    /// the same split every other bar-and-label pair in the app keeps.
+    private var inventoryStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    ForEach(stripParts, id: \.focus) { part in
+                        let share = CGFloat(part.count) / CGFloat(stripTotal)
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(part.face.opacity(part.count == 0 ? 0.13 : 0.85))
+                            .frame(width: max(3, geo.size.width * share - 2))
+                    }
+                }
+            }
+            .frame(height: 6)
+
+            HStack(spacing: Theme.Space.s14) {
+                ForEach(stripParts, id: \.focus) { part in
+                    HStack(spacing: 5) {
+                        Circle().fill(part.face).frame(width: 6, height: 6)
+                        Text(part.focus.title)
+                            .font(Theme.Font.micro)
+                            .foregroundStyle(Theme.textSecondary)
+                        Text("\(part.count)")
+                            .font(Theme.Font.microSemibold)
+                            .monospacedDigit()
+                            .foregroundStyle(part.ink)
+                            .contentTransition(.numericText())
+                    }
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 5) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary())
+                    Text("本机 CLI")
+                        .font(Theme.Font.micro)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("\(localCount)")
+                        .font(Theme.Font.microSemibold)
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textPrimary)
+                        .contentTransition(.numericText())
+                }
             }
         }
     }
@@ -690,7 +729,7 @@ private struct ConnectorCard: View {
             .buttonStyle(.plain)
             .help("查看详情")
             Spacer(minLength: 0)
-            Rectangle().fill(Theme.hairline).frame(height: 1)
+            HairlineDivider()
             actions
         }
         .padding(16)

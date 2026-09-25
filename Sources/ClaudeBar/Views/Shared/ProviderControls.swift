@@ -54,14 +54,29 @@ enum ProviderCardState: Equatable {
     }
 }
 
+/// The provider card's state readout: the shared pill, plus the state's own
+/// glyph.
+///
+/// It was a `Label` in a hand-rolled capsule with its own fill opacities
+/// (0.15 / 0.09) and its own padding (8 / 5) — the same object as `StatusPill`
+/// drawn with different numbers, which is how the app ended up with two
+/// capsule readouts that never quite matched side by side. Same well now, and
+/// the glyph rides in it.
 struct ProviderStatusBadge: View {
     let state: ProviderCardState
     var body: some View {
-        Label(state.title, systemImage: state.icon)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(state.color).lineLimit(1).fixedSize()
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(state.color.opacity(Theme.isDark ? 0.15 : 0.09), in: Capsule())
+        HStack(spacing: 4) {
+            Image(systemName: state.icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(state.title)
+        }
+        .font(Theme.Font.pill)
+        .foregroundStyle(state.color)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(state.faceColor.opacity(0.12)))
     }
 }
 
@@ -102,12 +117,18 @@ struct ProviderActionStyle: ButtonStyle {
     }
 }
 
+/// The provider editors' input. It used to be its own recipe — `Theme.bgPrimary`
+/// in a radius-10 box with a `textSecondary` 0.18 hairline — a fourth field
+/// surface that disagreed with the other three on radius, fill and stroke. It
+/// now wears `InstrumentField`, so an editor field and a search box are the
+/// same object.
 struct ProviderInputStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration.textFieldStyle(.plain)
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(Theme.bgPrimary, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.18)))
+        InstrumentField(onCard: true) {
+            configuration
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+        }
     }
 }
 
@@ -237,14 +258,16 @@ private struct ProviderModelPicker: View {
                             }
                         }
                         if providers.allSatisfy({ provider in !provider.models.contains { matches($0, provider: provider) } }) {
-                            Text("没有匹配模型，可在配置中拉取或添加。")
-                                .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary).padding(.vertical, 20)
+                            StandbyEmptyState(label: "没有匹配模型，可在配置中拉取或添加。",
+                                              symbol: "magnifyingglass",
+                                              tint: Theme.textSecondary)
+                                .padding(.vertical, Theme.Space.s12)
                         }
                     }
                 }.frame(height: 260)
                     .onChange(of: highlighted) { _, item in if let item { reader.scrollTo(item) } }
             }
-            Divider()
+            HairlineDivider()
             Label("选择不会切换连接；回到卡片点击激活。", systemImage: "info.circle")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
         }.padding(18).frame(width: 400).foregroundStyle(Theme.textPrimary).background(Theme.cardSurface)

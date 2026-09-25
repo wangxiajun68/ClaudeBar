@@ -73,10 +73,7 @@ private struct PermissionCard: View {
                           size: 28, engaged: hovered)
                 Spacer(minLength: 4)
                 Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .tint(Theme.claude)
+                    .toggleStyle(.instrument)
             }
             Text(permission.title)
                 // The shared settings-tile title size, so this card and

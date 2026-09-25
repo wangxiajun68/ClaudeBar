@@ -124,11 +124,12 @@ struct ConnectorDetailSheet: View {
                 ProgressView("正在连接 MCP 服务")
                     .frame(maxWidth: .infinity, minHeight: 130)
             } else if let toolsError {
-                ContentUnavailableView(toolsError, systemImage: "exclamationmark.triangle")
-                    .frame(maxWidth: .infinity, minHeight: 150)
+                StandbyEmptyState(label: toolsError, symbol: "exclamationmark.triangle",
+                                  tint: Theme.Ink.error, block: true)
             } else if tools.isEmpty {
-                ContentUnavailableView("该服务没有公布工具", systemImage: "square.grid.2x2")
-                    .frame(maxWidth: .infinity, minHeight: 150)
+                StandbyEmptyState(label: "该服务没有公布工具",
+                                  symbol: "square.grid.2x2",
+                                  tint: Theme.textSecondary, block: true)
             } else {
                 ForEach(tools) { tool in
                     VStack(alignment: .leading, spacing: Theme.Space.s6) {

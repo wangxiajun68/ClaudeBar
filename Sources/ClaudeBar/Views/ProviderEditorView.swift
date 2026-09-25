@@ -37,7 +37,7 @@ struct ProviderEditorView: View {
             HStack(spacing: 0) {
                 if !singleProvider {
                     sidebar
-                    Divider()
+                    HairlineDivider()
                 }
                 if model.selected != nil {
                     detailPane
@@ -232,7 +232,7 @@ struct ProviderEditorView: View {
             HStack(alignment: .top, spacing: 0) {
                 modelList
                     .frame(height: 220)
-                Divider()
+                HairlineDivider()
                 modelDetail
             }
         }
@@ -257,7 +257,7 @@ struct ProviderEditorView: View {
                 }
             }
 
-            Divider()
+            HairlineDivider()
             HStack(spacing: Theme.Space.s4) {
                 TextField("添加模型", text: $model.newModelName)
                     .textFieldStyle(ProviderInputStyle())
@@ -296,8 +296,10 @@ struct ProviderEditorView: View {
                     }
                 }
                 Toggle("禁用压缩", isOn: model.binding(for: editingID, keyPath: \.disableCompact))
+                    .toggleStyle(.instrument)
                     .font(Theme.Font.bodySmall)
                 Toggle("禁用实验性 Beta", isOn: model.binding(for: editingID, keyPath: \.disableExperimentalBetas))
+                    .toggleStyle(.instrument)
                     .font(Theme.Font.bodySmall)
             }
             .padding(Theme.Space.s12)
@@ -347,7 +349,7 @@ struct ProviderEditorView: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
-            Divider()
+            HairlineDivider()
             HStack(spacing: Theme.Space.s12) {
                 if let err = model.duplicateModelError {
                     Text(err)

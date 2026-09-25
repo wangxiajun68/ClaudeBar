@@ -27,12 +27,13 @@ struct TileModifier: ViewModifier {
     var dense: Bool = false
     var lens: DepthLensSpec? = nil
     var framed: Bool = true
+    var wash: Double? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, reduceMotion: reduceMotion) {
+                    framed: framed, wash: wash, reduceMotion: reduceMotion) {
             content
         }
     }
@@ -48,6 +49,11 @@ struct TileSurface<Content: View>: View {
     var dense: Bool
     var lens: DepthLensSpec?
     var framed: Bool
+    /// Base accent wash at rest, overridden when a surface needs its own
+    /// strength. The default (5.5 % light / 11 % dark) is tuned for a dense
+    /// grid of small tiles; a page-scale band carries a heavier one so its
+    /// white inner frame ring actually reads (`PageHeaderCard`).
+    var wash: Double?
     var reduceMotion: Bool
     let content: Content
 
@@ -56,15 +62,23 @@ struct TileSurface<Content: View>: View {
     /// `content: { … }` instead of trailing-closure syntax.
     init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
          lens: DepthLensSpec? = nil, framed: Bool = true,
-         reduceMotion: Bool = false,
+         wash: Double? = nil, reduceMotion: Bool = false,
          @ViewBuilder content: () -> Content) {
         self.tint = tint
         self.hovered = hovered
         self.dense = dense
         self.lens = lens
         self.framed = framed
+        self.wash = wash
         self.reduceMotion = reduceMotion
         self.content = content()
+    }
+
+    /// The wash actually painted: the surface's own strength when it asked for
+    /// one, otherwise the grid default, deepened on hover in both cases.
+    private var restWash: Double {
+        let base = wash ?? (Theme.isDark ? 0.11 : 0.055)
+        return hovered ? base * 1.7 : base
     }
 
     var body: some View {
@@ -79,9 +93,7 @@ struct TileSurface<Content: View>: View {
                         .fill(Theme.cardSurface)
                     if tint != nil {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(accent.opacity(Theme.isDark
-                                                 ? (hovered ? 0.17 : 0.11)
-                                                 : (hovered ? 0.10 : 0.055)))
+                            .fill(accent.opacity(restWash))
                     }
                     if let lens {
                         DepthLens(spec: lens, engaged: hovered)
@@ -128,9 +140,10 @@ extension View {
     /// card's mark belongs in its header, where it is legible and where it can
     /// keep its own accessible name, so the lens is hue and depth only.
     func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
-              lens: DepthLensSpec? = nil, framed: Bool = true) -> some View {
+              lens: DepthLensSpec? = nil, framed: Bool = true,
+              wash: Double? = nil) -> some View {
         modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
-                              lens: lens, framed: framed))
+                              lens: lens, framed: framed, wash: wash))
     }
 }
 
