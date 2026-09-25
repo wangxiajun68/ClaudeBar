@@ -158,10 +158,6 @@ struct TrafficView: View {
     private var conversationQueryBinding: Binding<String> {
         Binding(get: { state.conversationQuery }, set: { state.conversationQuery = $0 })
     }
-    private var rawSliceBinding: Binding<RawSlice> {
-        Binding(get: { state.rawSlice }, set: { state.rawSlice = $0 })
-    }
-
     enum TrafficMode: String, CaseIterable, Identifiable {
         case inspector, log
         var id: String { rawValue }
@@ -787,13 +783,13 @@ struct TrafficView: View {
     private var rawPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s8) {
-                Picker("", selection: rawSliceBinding) {
-                    ForEach(RawSlice.allCases) { s in
-                        Text(s.label).tag(s)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 280)
+                // Four panes of one record — the app's segmented control.
+                SegmentedCapsule(items: RawSlice.allCases,
+                                 selection: rawSlice,
+                                 title: { $0.label },
+                                 tint: Theme.Ink.claude,
+                                 onSelect: { rawSlice = $0 })
+                    .fixedSize()
                 Spacer()
                 rawToolButton("展开") { jsonFold.expandAll() }
                 rawToolButton("收起") { jsonFold.collapseAll() }
