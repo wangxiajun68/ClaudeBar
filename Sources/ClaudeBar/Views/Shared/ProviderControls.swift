@@ -177,9 +177,11 @@ struct ProviderModelSelector: View {
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
             }.padding(.horizontal, 10).frame(height: 44)
-                .background(Theme.bgPrimary.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.14)))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                // The model selector is a field the user opens rather than
+                // types into — same well, same rim, so it reads as one of the
+                // inputs around it instead of as a fourth box design.
+                .instrumentWell(radius: Theme.Radius.md, onCard: false)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }.buttonStyle(.plain)
             .disabled(!providers.contains { !$0.models.isEmpty })
             .help(target.map { "选择待激活模型：" + $0.1.name } ?? "请先配置模型")

@@ -49,6 +49,29 @@ struct InstrumentField<Content: View>: View {
 
     var body: some View {
         content()
+            // One implementation of the well: `InstrumentWell` is the surface
+            // both this and a field-shaped control wear.
+            .instrumentWell(radius: radius, focused: focused,
+                            accent: accent, onCard: onCard)
+            .animation(Theme.Motion.state, value: focused)
+    }
+}
+
+/// The field's *surface* without a field — the well and the rim, for a control
+/// that is drawn as a field but is not a `TextField` (an API key's read state, a
+/// selector that opens a picker).
+///
+/// Split from `InstrumentField` so those two call sites can wear the same box as
+/// the inputs beside them without pretending to be inputs: the difference
+/// between "type here" and "click here" is the content, not the well.
+struct InstrumentWell: ViewModifier {
+    var radius: CGFloat = Theme.Radius.md
+    var focused: Bool = false
+    var accent: Color = Theme.Ink.claude
+    var onCard: Bool = false
+
+    func body(content: Content) -> some View {
+        content
             .background {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(onCard ? Theme.cardFill(0.06) : Theme.fieldWell)
@@ -60,11 +83,18 @@ struct InstrumentField<Content: View>: View {
                     .allowsHitTesting(false)
             }
             .overlay {
-                if focused {
-                    InnerFrameRing(inset: 2, radius: radius, tint: accent.opacity(0.28))
-                }
+                InnerFrameRing(inset: 2, radius: radius,
+                               tint: focused ? accent.opacity(0.28) : Theme.innerFrameMuted)
             }
-            .animation(Theme.Motion.state, value: focused)
+    }
+}
+
+extension View {
+    func instrumentWell(radius: CGFloat = Theme.Radius.md, focused: Bool = false,
+                        accent: Color = Theme.Ink.claude,
+                        onCard: Bool = false) -> some View {
+        modifier(InstrumentWell(radius: radius, focused: focused,
+                                accent: accent, onCard: onCard))
     }
 }
 

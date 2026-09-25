@@ -40,8 +40,11 @@ struct APIKeyField: View {
                         .foregroundStyle(text.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12).padding(.vertical, 10)
-                        .background(Theme.bgPrimary, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.25)))
+                        // The key's read state is still a *field*: the same
+                        // recessed well and rim as the editable state above it,
+                        // so toggling edit does not swap one box design for
+                        // another.
+                        .instrumentWell(radius: Theme.Radius.md)
                 }.buttonStyle(.plain).accessibilityLabel(text.isEmpty ? placeholder : "编辑已保存的 API Key")
             }
             Button {
