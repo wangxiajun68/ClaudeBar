@@ -630,14 +630,21 @@ struct PageHeaderCard<Content: View>: View {
     var faceTint: Color? = nil
     /// 0…1, drawn on the sky path when `orbit` is non-nil.
     var orbit: Double? = nil
-    @ViewBuilder var content: () -> Content
+    /// The band's content, handed the band's own hover flag.
+    ///
+    /// It is passed in rather than tracked again by whatever the content
+    /// contains: the band already has a pointer region over the whole header,
+    /// and a page mark inside it that opened a second one would be two
+    /// trackers for overlapping targets — the doubled work this file's header
+    /// rules out. `PageTitle(engaged:)` takes it.
+    @ViewBuilder var content: (Bool) -> Content
 
     @State private var hovered = false
 
     private var face: Color { faceTint ?? tint }
 
     var body: some View {
-        content()
+        content(hovered)
             .padding(.horizontal, Theme.Space.s16)
             .padding(.vertical, Theme.Space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)

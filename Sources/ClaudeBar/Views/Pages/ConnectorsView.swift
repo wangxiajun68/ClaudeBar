@@ -393,16 +393,15 @@ private struct ConnectorInventoryHeader: View {
     let onSelectPlatform: (ConnectorPlatform?) -> Void
     let onRefresh: () -> Void
     let onChooseProject: () -> Void
-    @State private var hovered = false
 
     var body: some View {
         PageHeaderCard(tint: Theme.Ink.claude,
                        faceTint: Theme.claude,
-                       orbit: orbitReading) {
+                       orbit: orbitReading) { engaged in
             VStack(alignment: .leading, spacing: Theme.Space.s14) {
                 HStack(alignment: .top, spacing: Theme.Space.s12) {
                     GlyphWell(name: "puzzlepiece.extension",
-                              tint: Theme.Ink.claude, size: 38, engaged: hovered)
+                              tint: Theme.Ink.claude, size: 38, engaged: engaged)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("连接器")
                             .font(.system(size: 22, weight: .semibold, design: .rounded))
@@ -463,7 +462,6 @@ private struct ConnectorInventoryHeader: View {
                 }
             }
         }
-        .hoverState($hovered)
     }
 
     /// The header's arc: how much of the whole inventory the current filter

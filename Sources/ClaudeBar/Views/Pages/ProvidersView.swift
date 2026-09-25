@@ -160,9 +160,9 @@ struct ProvidersView: View {
     /// well, the destination's own hue as a wash, and the frame ring the grid
     /// below carries.
     private var header: some View {
-        PageHeaderCard(tint: Theme.Ink.cursor, faceTint: Theme.cursor) {
+        PageHeaderCard(tint: Theme.Ink.cursor, faceTint: Theme.cursor) { engaged in
             HStack(spacing: Theme.Space.s12) {
-                PageTitle(title: "模型")
+                PageTitle(title: "模型", engaged: engaged)
                 Spacer(minLength: Theme.Space.s12)
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("发现模型平台，为你的编程工具接入新能力。")
