@@ -4,6 +4,22 @@ import SwiftUI
 /// persistence live in `CodexProviderEditorModel` (@Observable). Mirrors
 /// `ProviderEditorView` with Codex-specific fields (wire_api, reasoning
 /// effort, preserve-official-login).
+/// The two wire protocols a Codex provider can speak. Mirrors the `wireAPI`
+/// string on the model so the segmented control has a `Hashable` item type
+/// while the persisted value stays the plain string it has always been.
+enum CodexWireAPI: String, CaseIterable, Identifiable {
+    case responses
+    case chat
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .responses: return "Responses（原生）"
+        case .chat: return "Chat Completions"
+        }
+    }
+}
+
 struct CodexProviderEditorView: View {
     @ObservedObject var codexStore: CodexProviderStore
     var focusProviderID: UUID? = nil
@@ -160,12 +176,17 @@ struct CodexProviderEditorView: View {
             }
             HStack(alignment: .top, spacing: Theme.Space.s16) {
                 EditorField(label: "协议") {
-                    Picker("", selection: $model.wireAPI) {
-                        Text("Responses（原生）").tag("responses")
-                        Text("Chat Completions").tag("chat")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    // Two options, one decision — the app's segmented control,
+                    // not Aqua's. `wireAPI` is a String on the model (the
+                    // produced config is a plain `wire_api = "…"` line), so the
+                    // capsule runs over a small local option type and writes the
+                    // raw value back, rather than the model growing an enum for
+                    // a picker's benefit.
+                    SegmentedCapsule(items: CodexWireAPI.allCases,
+                                     selection: CodexWireAPI(rawValue: model.wireAPI) ?? .responses,
+                                     title: { $0.label },
+                                     tint: Theme.Ink.claude,
+                                     onSelect: { model.wireAPI = $0.rawValue })
                 }
                 EditorField(label: "推理强度") {
                     Picker("", selection: modelReasoningEffortBinding) {
