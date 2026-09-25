@@ -71,9 +71,9 @@ struct HelpView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 if matches.isEmpty {
-                    Text("没有匹配的条目")
-                        .font(Theme.Font.bodySmall)
-                        .foregroundColor(Theme.textTertiary())
+                    StandbyEmptyState(label: "没有匹配的条目",
+                                      symbol: "magnifyingglass",
+                                      tint: Theme.textSecondary)
                         .padding(.horizontal, Theme.Space.s16)
                         .padding(.top, Theme.Space.s8)
                 } else {

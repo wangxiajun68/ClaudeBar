@@ -379,9 +379,8 @@ struct VPNView: View {
             }
             let nodes = previewGroups.first { $0.name == (previewGroupName ?? previewGroups.first?.name) }?.nodes ?? []
             if nodes.isEmpty {
-                Text("此分组没有节点。")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
+                StandbyEmptyState(label: "此分组没有节点。", symbol: "globe",
+                                  tint: Theme.textSecondary)
             } else {
                 LazyVGrid(columns: Theme.GridLayout.mosaic(columns: mosaicColumnCount), spacing: 1) {
                     ForEach(Array(nodes.enumerated()), id: \.offset) { _, name in
@@ -443,9 +442,8 @@ struct VPNView: View {
                 let liveNodes = Set(manager.livePath)
                 let testingNodes = manager.testingNodes
                 if nodes.isEmpty {
-                    Text("此分组没有节点。")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
+                    StandbyEmptyState(label: "此分组没有节点。", symbol: "globe",
+                                      tint: Theme.textSecondary)
                         .padding(.vertical, Theme.Space.s12)
                 } else {
                     LazyVGrid(columns: Theme.GridLayout.mosaic(columns: mosaicColumnCount), spacing: 1) {
@@ -1059,9 +1057,8 @@ private struct VpnLogConsole: View {
         VStack(alignment: .leading, spacing: Theme.Space.s6) {
             HStack {
                 if lines.isEmpty {
-                    Text("暂无日志")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
+                    StandbyEmptyState(label: "暂无日志", symbol: "doc.text",
+                                      tint: Theme.textSecondary)
                 } else if !followTail {
                     Button {
                         followTail = true

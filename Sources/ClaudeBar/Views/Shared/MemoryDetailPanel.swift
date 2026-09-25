@@ -18,7 +18,8 @@ struct MemoryDetailPanel: View {
             if loading { ProgressView("读取中…") }
             if failed { Text("无法读取进程，请重试。").foregroundColor(Theme.Ink.error) }
             if !loading && !failed && rows.isEmpty {
-                Text("暂无可显示的进程数据。").foregroundColor(Theme.textSecondary)
+                StandbyEmptyState(label: "暂无可显示的进程数据。", symbol: "memorychip",
+                                  tint: Theme.textSecondary)
             }
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(rows.prefix(8))) { row in

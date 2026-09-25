@@ -243,9 +243,9 @@ struct ProviderEditorView: View {
     private var modelList: some View {
         VStack(spacing: 0) {
             if model.models.isEmpty {
-                Text("暂无模型")
-                    .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
-                    .padding(.vertical, Theme.Space.s12).frame(maxWidth: .infinity)
+                StandbyEmptyState(label: "暂无模型", symbol: "cube",
+                                  tint: Theme.textSecondary)
+                    .padding(.vertical, Theme.Space.s12)
             } else {
                 ScrollView {
                     VStack(spacing: 2) {

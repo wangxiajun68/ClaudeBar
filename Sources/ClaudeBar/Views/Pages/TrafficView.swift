@@ -451,15 +451,11 @@ struct TrafficView: View {
             HairlineDivider()
 
             if filtered.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    Text("暂无记录")
-                        .font(Theme.Font.body)
-                        .foregroundColor(Theme.textSecondary)
-                    Text("在供应商上启用流量记录后，Claude Code 与 Codex 的请求将显示于此。")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                StandbyEmptyState(label: "暂无记录",
+                                  symbol: "arrow.left.arrow.right",
+                                  tint: Theme.Ink.claude,
+                                  caption: "在供应商上启用流量记录后，Claude Code 与 Codex 的请求将显示于此。",
+                                  block: true)
                 .padding(Theme.Space.s16)
                 Spacer()
             } else {
