@@ -131,7 +131,7 @@ struct HelpView: View {
             .padding(.vertical, 8)
             .padding(.trailing, Theme.Space.s12)
             .background(on ? Theme.cardSurface : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 8))
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

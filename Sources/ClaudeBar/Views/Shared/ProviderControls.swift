@@ -108,7 +108,7 @@ struct ProviderActionStyle: ButtonStyle {
                     .strokeBorder(tint.opacity(hovered ? 0.55 : 0.2)))
                 .shadow(color: tint.opacity(prominent && hovered ? 0.16 : 0), radius: 7, y: 3)
                 .opacity(enabled ? 1 : 0.4)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
                 .onHover { if hovered != $0 { hovered = $0 } }
                 .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.75), value: configuration.isPressed)
@@ -253,7 +253,7 @@ private struct ProviderModelPicker: View {
                                             if current { Text("使用中").font(Theme.Font.caption).foregroundStyle(Theme.Ink.success) }
                                             else if !ProviderCardState.isReady(provider) { Text("待完善").font(Theme.Font.caption).foregroundStyle(ProviderCardState.incomplete.color) }
                                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                            .background(ProviderCardState.ready.color.opacity(item == highlighted || item == selected ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 9))
+                                            .background(ProviderCardState.ready.color.opacity(item == highlighted || item == selected ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                                             .contentShape(Rectangle())
                                     }.buttonStyle(.plain).disabled(!ProviderCardState.isReady(provider)).id(item)
                                 }

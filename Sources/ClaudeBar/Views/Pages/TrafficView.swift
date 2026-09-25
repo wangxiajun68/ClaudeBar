@@ -682,7 +682,7 @@ struct TrafficView: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
     }
 
     @ViewBuilder
@@ -721,7 +721,7 @@ struct TrafficView: View {
                     }
                     .padding(Theme.Space.s12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -772,7 +772,7 @@ struct TrafficView: View {
                     }
                     .padding(Theme.Space.s12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                 }
             }
             .padding(Theme.Space.s16)
@@ -882,7 +882,7 @@ struct TrafficView: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(roleColor(role).opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .background(roleColor(role).opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
     }
 
     private func compactStat(_ label: String, _ value: String) -> some View {
