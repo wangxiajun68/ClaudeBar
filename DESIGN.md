@@ -123,6 +123,17 @@ ornament is one shape rather than a stack of views.
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
 | `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
 
+Two reference elements are deliberately **not** translated, and the reason is
+scale rather than taste:
+
+- The 3D button's glitch text and click shockwave. A glitch on a native macOS
+  control reads as a rendering fault, not as intent, and the ripple is a touch
+  metaphor with no pointer analogue. The perimeter sweep already carries the
+  part worth keeping — "this control is live, and the pointer arrived".
+- The deep machine-faceplate toggle. A 2.5D plated switch with glow trails is a
+  *hero* control; every switch in this app is one row of a settings tile, and
+  the `metanef` track is the honest translation at that size.
+
 `HairlineDivider` is the only rule; a native `Divider()` is a different grey in
 light and dark and belongs to no family. `SectionHeader` is the only section
 heading and `StatusPill` the only capsule readout.
