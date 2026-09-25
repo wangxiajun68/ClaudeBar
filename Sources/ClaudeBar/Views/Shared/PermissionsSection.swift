@@ -73,7 +73,11 @@ private struct PermissionCard: View {
                           size: 28, engaged: hovered)
                 Spacer(minLength: 4)
                 Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
-                    .toggleStyle(.instrument)
+                    // Same hue as the well beside it, so the card's mark and its
+                    // switch agree about what "on" looks like.
+                    .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude,
+                                                       faceTint: Theme.claude,
+                                                       showsLabel: false))
             }
             Text(permission.title)
                 // The shared settings-tile title size, so this card and
