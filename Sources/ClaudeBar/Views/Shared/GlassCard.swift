@@ -1,6 +1,8 @@
 import SwiftUI
 
-// MARK: - Selection tint/// Selected/active Liquid Glass tint: a translucent accent wash behind the
+// MARK: - Selection tint
+
+/// Selected/active Liquid Glass tint: a translucent accent wash behind the
 /// content, drawn only when `isActive`. Single source for row selection
 /// backgrounds so editors and lists stay visually consistent.
 struct SelectionTintModifier: ViewModifier {
@@ -30,5 +32,3 @@ extension View {
         modifier(SelectionTintModifier(isActive: isActive, color: color, corner: corner, opacity: opacity))
     }
 }
-
-// MARK: - Glass card

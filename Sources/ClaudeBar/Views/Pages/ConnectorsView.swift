@@ -12,7 +12,6 @@ struct ConnectorsView: View {
     @State private var busyIDs: Set<String> = []
     @State private var selectedRecord: ConnectorRecord?
     @State private var pendingRemoval: RemovalRequest?
-    @FocusState private var searchFocused: Bool
 
     private let columns = [GridItem(.adaptive(minimum: 268), spacing: Theme.Space.gridGapPage, alignment: .top)]
     private var selectedProject: String? { projectPath.isEmpty ? nil : projectPath }
@@ -20,11 +19,11 @@ struct ConnectorsView: View {
     var body: some View {
         let shown = visibleRecords
         let clis = visibleCLIs
-        return VStack(alignment: .leading, spacing: 0) {
-            header
-            toolbar(count: focus == .local ? clis.count : shown.count)
-            notices
-            ScrollView {
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                toolbar(count: focus == .local ? clis.count : shown.count)
+                notices
                 if manager.isLoading && manager.records.isEmpty && manager.localCLIs.isEmpty {
                     loadingState
                         .padding(.horizontal, Theme.Space.s24)
@@ -71,24 +70,58 @@ struct ConnectorsView: View {
         .onChange(of: projectPath) { _, _ in
             Task { await manager.refresh(projectPath: selectedProject, scanCLIs: false) }
         }
+        // `selectedRecord` is a *copy* captured at click time, and any refresh
+        // replaces `manager.records` wholesale — so an open detail sheet could
+        // keep describing an install that was just removed or disabled, and
+        // read paths that no longer exist. Re-resolve it against the new list;
+        // when the record is gone, close the sheet.
+        .onChange(of: manager.records.map(\.id)) { _, ids in
+            guard let open = selectedRecord else { return }
+            guard let fresh = manager.records.first(where: { $0.id == open.id }) else {
+                selectedRecord = nil
+                return
+            }
+            if fresh != open { selectedRecord = fresh }
+        }
     }
 
     private var removalPresented: Binding<Bool> {
         Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })
     }
 
-    private var visibleRecords: [ConnectorRecord] {
-        let kind: ConnectorKind = switch focus {
-        case .plugin: .plugin
-        case .skill: .skill
-        case .mcp: .mcp
-        case .local: .skill
+    /// How many records belong to a focus category — a table lookup, not a walk.
+    /// See `ConnectorManager.connectorCounts`.
+    private func kindCount(_ item: ConnectorFocus) -> Int {
+        guard item != .local else { return manager.localCLIs.count }
+        return manager.count(kind: kind(of: item))
+    }
+
+    private func kind(of item: ConnectorFocus) -> ConnectorKind {
+        switch item {
+        case .plugin: return .plugin
+        case .skill: return .skill
+        case .mcp: return .mcp
+        case .local: return .skill
         }
+    }
+
+    private var visibleRecords: [ConnectorRecord] {
         guard focus != .local else { return [] }
+        let kind = kind(of: focus)
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let platform = self.platform
+        // Read once for the whole pass. The contents test has to be here rather
+        // than in `matches`, and it deliberately consumes the same value the
+        // cards do: a bundle's contents and the card that renders them are one
+        // dependency, so a scan that rewrites a bundle has to invalidate both.
+        let contents = manager.pluginContents
         return manager.records.filter { record in
             record.kind == kind &&
             (platform.map { record.platforms.contains($0) } ?? true) &&
-            matches(record)
+            (matches(record, needle: needle)
+                || (contents[record.id]?.items.contains {
+                        $0.name.localizedStandardContains(needle)
+                    } ?? false))
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
@@ -105,118 +138,83 @@ struct ConnectorsView: View {
         manager.records.reduce(0) { $0 + ($1.sharedOwner == name ? 1 : 0) }
     }
 
-    private func matches(_ record: ConnectorRecord) -> Bool {
-        guard !search.isEmpty else { return true }
-        if record.name.localizedStandardContains(search) { return true }
-        if record.scope.localizedStandardContains(search) { return true }
-        if record.platforms.contains(where: { $0.title.localizedStandardContains(search) }) { return true }
-        if record.sharedOwner?.localizedStandardContains(search) == true { return true }
-        return manager.pluginContents[record.id]?.items.contains {
-            $0.name.localizedStandardContains(search)
-        } ?? false
+    /// Does `record` match the search box, ignoring its plugin contents?
+    ///
+    /// The needle is passed in rather than read from `search` so the filter has
+    /// one string per pass. The contents test is applied by the caller, which
+    /// reads `pluginContents` once for the whole list — reading it *per record*
+    /// here made every card depend on the published dictionary, so a scan that
+    /// changed any one bundle passed a new dictionary into all ~200 cards and
+    /// re-rendered the grid.
+    private func matches(_ record: ConnectorRecord, needle: String) -> Bool {
+        guard !needle.isEmpty else { return true }
+        if record.name.localizedStandardContains(needle) { return true }
+        if record.scope.localizedStandardContains(needle) { return true }
+        if record.platforms.contains(where: { $0.title.localizedStandardContains(needle) }) { return true }
+        if record.sharedOwner?.localizedStandardContains(needle) == true { return true }
+        return false
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: Theme.Space.s16) {
-            VStack(alignment: .leading, spacing: Theme.Space.s6) {
-                PageTitle(title: "连接器")
-                Text("每张卡片是一处安装，启停和移除都在卡片上")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: Theme.Space.s12)
-            Button { Task { await manager.refresh(projectPath: selectedProject) } } label: {
-                Label("刷新", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.uiversePress)
-            .connectorUtilityButton()
-            .disabled(manager.isLoading)
-            Button(action: chooseProject) {
-                Label(projectPath.isEmpty ? "选择项目" : URL(fileURLWithPath: projectPath).lastPathComponent,
-                      systemImage: "folder")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 170)
-            }
-            .buttonStyle(.uiversePress)
-            .connectorUtilityButton(accented: !projectPath.isEmpty)
-        }
+        ConnectorInventoryHeader(
+            focus: focus,
+            platform: platform,
+            counts: Dictionary(uniqueKeysWithValues: ConnectorPlatform.allCases.map { item in
+                (item, manager.count(kind: kind(of: focus), platform: item))
+            }),
+            total: manager.records.count,
+            currentCount: kindCount(focus),
+            loading: manager.isLoading,
+            projectName: projectPath.isEmpty ? nil : URL(fileURLWithPath: projectPath).lastPathComponent,
+            onSelectPlatform: { item in
+                withAnimation(Theme.Motion.state) {
+                    // Tapping the selected chip clears the filter, which is
+                    // what the chip's own selected state implies and what the
+                    // empty state's 「清空筛选」 says it does.
+                    platform = (item != nil && platform == item) ? nil : item
+                    if focus == .local { focus = .plugin }
+                }
+            },
+            onRefresh: { Task { await manager.refresh(projectPath: selectedProject) } },
+            onChooseProject: chooseProject
+        )
         .padding(.horizontal, Theme.Space.s24)
-        .padding(.vertical, Theme.Space.s16)
+        .padding(.top, Theme.Space.s8)
+        .padding(.bottom, Theme.Space.s16)
     }
 
     private func toolbar(count: Int) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             HStack(spacing: Theme.Space.s8) {
-                HStack(spacing: Theme.Space.s2) {
-                    ForEach(ConnectorFocus.allCases) { item in
-                        ConnectorKindButton(title: item.title, symbol: item.symbol,
-                                            selected: focus == item) { focus = item }
+                ConnectorKindFilter(items: ConnectorFocus.allCases,
+                                    selection: focus,
+                                    count: kindCount,
+                                    onSelect: { item in
+                    withAnimation(Theme.Motion.state) {
+                        focus = item
+                        // A platform filter picked under 插件 means
+                        // nothing under Skills; carrying it over landed
+                        // the user on a silently empty grid.
+                        platform = nil
                     }
-                }
-                .padding(3)
-                .background(Theme.bgOverlay.opacity(0.62), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                })
                 Spacer(minLength: Theme.Space.s8)
                 Text("\(count) 项")
                     .font(Theme.Font.microMedium)
                     .monospacedDigit()
                     .foregroundStyle(Theme.textSecondary)
             }
-            HStack(spacing: Theme.Space.s8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(searchFocused ? Theme.Ink.claude : Theme.textSecondary)
-                TextField("搜索名称、平台或包含的 Skill", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(Theme.Font.bodySmall)
-                    .focused($searchFocused)
-                if !search.isEmpty {
-                    Button { search = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textSecondary)
-                    }
+            InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
+                .frame(height: 38)
+            if !projectPath.isEmpty {
+                Button("清除项目筛选") { projectPath = "" }
                     .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, Theme.Space.s12)
-            .frame(height: 38)
-            .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-            .overlay {
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                    .strokeBorder(searchFocused ? Theme.claude.opacity(0.7) : Theme.hairline,
-                                  lineWidth: searchFocused ? 1.5 : 1)
-            }
-            if focus != .local {
-                HStack(spacing: Theme.Space.s6) {
-                    platformChip(nil, title: "全部平台")
-                    ForEach(ConnectorPlatform.allCases) { item in
-                        platformChip(item, title: item.title)
-                    }
-                    Spacer()
-                    if !projectPath.isEmpty {
-                        Button("清除项目") { projectPath = "" }
-                            .buttonStyle(.plain)
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.Ink.claude)
-                    }
-                }
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.Ink.claude)
             }
         }
         .padding(.horizontal, Theme.Space.s24)
         .padding(.bottom, Theme.Space.s12)
-    }
-
-    private func platformChip(_ item: ConnectorPlatform?, title: String) -> some View {
-        let selected = platform == item
-        return Button { platform = item } label: {
-            Text(title)
-                .font(selected ? Theme.Font.microSemibold : Theme.Font.micro)
-                .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background(selected ? Theme.cardSurface : Color.clear, in: Capsule())
-                .overlay(Capsule().strokeBorder(selected ? Theme.hairline : Color.clear))
-        }
-        .buttonStyle(.plain)
     }
 
     private func cardGrid<Cards: View>(isEmpty: Bool, @ViewBuilder cards: () -> Cards) -> some View {
@@ -281,9 +279,21 @@ struct ConnectorsView: View {
                 .background(Theme.claude.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.lg))
             Text(search.isEmpty ? "这里还没有\(focus.title)" : "没有匹配的卡片")
                 .font(Theme.Font.chromeEmph)
-            Text(projectPath.isEmpty ? "选择项目后，还会带上项目里的配置。" : "换一个平台或清掉搜索再看。")
+            Text(!search.isEmpty || (focus != .local && platform != nil)
+                 ? "换一个平台或清掉搜索再看。"
+                 : (projectPath.isEmpty ? "选择项目后，还会带上项目里的配置。" : "当前项目暂无这类配置。"))
                 .font(Theme.Font.caption)
                 .foregroundStyle(Theme.textSecondary)
+            if !search.isEmpty || (focus != .local && platform != nil) {
+                Button("清空筛选") {
+                    search = ""
+                    platform = nil
+                }
+                .buttonStyle(ConnectorHeaderButtonStyle())
+            } else if projectPath.isEmpty {
+                Button("选择项目", action: chooseProject)
+                    .buttonStyle(ConnectorHeaderButtonStyle())
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 220)
         .tile()
@@ -291,11 +301,17 @@ struct ConnectorsView: View {
 
     private var loadingState: some View {
         VStack(spacing: Theme.Space.s12) {
-            OrbitLoader(size: 42, caption: "", spinning: true)
+            OrbitLoader(size: 52, caption: "扫描")
             Text("正在读取本机清单").font(Theme.Font.chromeEmph)
+            // The belt: this surface is *doing* something continuous, so the
+            // liveness is drawn travelling rather than pulsed, and it stops the
+            // moment the scan does. It takes the raw shape hue, not the ink
+            // variant — `Theme.Ink.*` is mixed for text, and this is a stripe.
+            ConveyorBelt(tint: Theme.claude, height: 4, running: true)
+                .frame(width: 132)
         }
         .frame(maxWidth: .infinity, minHeight: 220)
-        .tile()
+        .tile(tint: Theme.claude)
     }
 
     private func messageBanner(_ message: String, symbol: String, tint: Color, onDismiss: @escaping () -> Void) -> some View {
@@ -321,6 +337,124 @@ struct ConnectorsView: View {
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in projectPath = url.standardizedFileURL.path }
         }
+    }
+}
+
+/// The page's header card: title, live counts, refresh / project controls, and
+/// the platform filter. The three client destinations are real filters; scan and
+/// project stay reachable from every state, because a scan is the answer to
+/// "this list looks wrong" and hiding it behind the filter would be a trap.
+///
+/// The *type* filter (插件 / Skills / MCP / 本机 CLI) is not here — it lives in
+/// `toolbar` below this card, since it selects what the page shows rather than
+/// describing what was found.
+private struct ConnectorInventoryHeader: View {
+    let focus: ConnectorFocus
+    let platform: ConnectorPlatform?
+    let counts: [ConnectorPlatform: Int]
+    let total: Int
+    let currentCount: Int
+    let loading: Bool
+    let projectName: String?
+    let onSelectPlatform: (ConnectorPlatform?) -> Void
+    let onRefresh: () -> Void
+    let onChooseProject: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s16) {
+            HStack(alignment: .top, spacing: Theme.Space.s12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("连接器")
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(loading ? "正在扫描本机与项目配置" :
+                            (focus == .local ? "本机已安装 \(currentCount) 个 CLI" : "共 \(total) 项能力 · 当前分类 \(currentCount) 项"))
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: Theme.Space.s8)
+                Button(action: onRefresh) {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .disabled(loading)
+                Button(action: onChooseProject) {
+                    Label(projectName ?? "选择项目", systemImage: "folder")
+                        .lineLimit(1)
+                }
+            }
+            .font(Theme.Font.caption)
+            .buttonStyle(ConnectorHeaderButtonStyle())
+
+            if focus != .local {
+                // The platform row is the same segmented capsule as the type
+                // filter below it, with one difference: each item keeps its own
+                // hue, because Claude / Codex / Cursor are identities rather
+                // than entries in one list. Four equal-width bordered cards
+                // (the previous shape) drew a second card grid inside the
+                // header card and made the selection read as "which one is
+                // filled" instead of "where am I".
+                SegmentedCapsule(items: platformItems,
+                                 selection: platform,
+                                 title: { $0?.title ?? "全部" },
+                                 symbol: { item in
+                                     item.map(platformSymbol) ?? "square.grid.2x2"
+                                 },
+                                 count: { item in
+                                     item.map { counts[$0] ?? 0 } ?? currentCount
+                                 },
+                                 tint: Theme.Ink.claude,
+                                 itemTint: { item in
+                                     item.map(platformTint) ?? Theme.Ink.claude
+                                 },
+                                 fillsWidth: true,
+                                 onSelect: onSelectPlatform)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(Theme.Space.s16)
+        .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// `nil` is the 全部 entry, kept in the same list so it slides under the
+    /// same selection pill as the three real clients.
+    private var platformItems: [ConnectorPlatform?] {
+        [nil] + ConnectorPlatform.allCases.map { Optional($0) }
+    }
+
+    private func platformTint(_ item: ConnectorPlatform) -> Color {
+        switch item {
+        case .claude: Theme.Ink.claude
+        case .codex: Theme.Ink.codex
+        case .cursor: Theme.Ink.cursor
+        }
+    }
+
+    private func platformSymbol(_ item: ConnectorPlatform) -> String {
+        switch item {
+        case .claude: "terminal"
+        case .codex: "chevron.left.forwardslash.chevron.right"
+        case .cursor: "cursorarrow.rays"
+        }
+    }
+}
+
+private struct ConnectorHeaderButtonStyle: ButtonStyle {
+    /// Same gate as `PressableStyle` / `UiversePressStyle`: the fill change is
+    /// state, the scale is motion, and Reduce Motion turns the latter off.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .foregroundStyle(Theme.textPrimary)
+            .background(configuration.isPressed ? Theme.bgOverlay : Theme.bgSecondary, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
     }
 }
 
@@ -359,7 +493,11 @@ private struct ConnectorCard: View {
     let onDetails: () -> Void
     let onSetEnabled: (Bool) -> Void
     let onRemove: () -> Void
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The card's platform hue as **text** — the `GlyphWell` mark and the
+    /// per-platform chips, both of which need the readable variant.
     private var tint: Color {
         switch record.platforms.first {
         case .claude: return Theme.Ink.claude
@@ -369,25 +507,44 @@ private struct ConnectorCard: View {
         }
     }
 
+    /// The same platform hue as a **surface** — the wash and the corner rings.
+    /// Deliberately a second value rather than `tint` used twice: the ink mix
+    /// lands near-navy behind a card whose own title is `textPrimary`, so the
+    /// wash read as a dark smudge instead of as the card's accent. (`nil` — a
+    /// connector with no platform — keeps the neutral hairline, i.e. no wash.)
+    private var faceTint: Color? {
+        switch record.platforms.first {
+        case .claude: return Theme.claude
+        case .codex: return Theme.codex
+        case .cursor: return Theme.cursor
+        case nil: return nil
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Button(action: onDetails) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        GlyphWell(name: record.kind.symbol, tint: tint, size: 32)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
+                        GlyphWell(name: record.kind.symbol, tint: tint, size: 40, engaged: hovered)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(record.name)
-                                .font(Theme.Font.chromeEmph)
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Text(record.kind == .skill ? "Skill" : record.kind.title)
-                                .font(Theme.Font.micro)
+                                .font(Theme.Font.microSemibold)
                                 .foregroundStyle(Theme.textSecondary)
                         }
                         Spacer(minLength: 4)
                         status
                     }
+                    Text(blurb)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
                     HStack(spacing: 4) {
                         ForEach(record.platforms) { item in
                             Text(item.title)
@@ -404,26 +561,34 @@ private struct ConnectorCard: View {
                         Spacer(minLength: 0)
                     }
                     .frame(height: 22)
-                    Text(blurb)
-                        .font(Theme.Font.micro)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("查看详情")
             Spacer(minLength: 0)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
             actions
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 176, maxHeight: 176, alignment: .topLeading)
-        .tile()
-        .overlay(alignment: .top) {
-            Capsule().fill(tint).frame(width: 28, height: 3).padding(.top, 1)
-                .allowsHitTesting(false)
-        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
+        .tile(tint: faceTint, hovered: hovered, lens: lens)
+        // The 3D card's gesture, on the one page where the tiles *are* the
+        // page. Only the hovered card transforms, so the cost is bounded to one
+        // subtree however many tiles are in the grid; Reduce Motion drops the
+        // tilt and keeps the lift `.tile()` already applies.
+        .depthTilt(corner: Theme.Radius.lg, hovered: hovered, reduceMotion: reduceMotion)
+        .hoverState($hovered)
+    }
+
+    /// The corner ornament, drawn in the card's own platform hue as a surface,
+    /// matching the wash under it. Sized past the tile's 22pt radius so it
+    /// reads as depth behind the header rather than as a badge; the type mark
+    /// itself is the `GlyphWell` in that header, so the rings stay hue-only and
+    /// the card keeps one identity, not two.
+    private var lens: DepthLensSpec? {
+        guard let faceTint else { return nil }
+        return DepthLensSpec(tint: faceTint, size: 132, rings: 3)
     }
 
     private var blurb: String {
@@ -502,35 +667,39 @@ private struct ConnectorCard: View {
     }
 }
 
-private struct ConnectorKindButton: View {
-    let title: String
-    let symbol: String
-    let selected: Bool
-    let action: () -> Void
+/// The type filter (插件 / Skills / MCP / 本机 CLI) as one segmented capsule:
+/// a single milled group with a sliding selection pill and per-item counts.
+///
+/// It used to be a capsule *containing* four capsules, each with its own
+/// border and shadow — four cards in a card, and the selection only legible as
+/// "which one is filled". The counts move into the item itself, so the filter
+/// answers "how many of each" without a second lookup.
+private struct ConnectorKindFilter: View {
+    let items: [ConnectorFocus]
+    let selection: ConnectorFocus
+    let count: (ConnectorFocus) -> Int
+    let onSelect: (ConnectorFocus) -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: Theme.Space.s6) {
-                Image(systemName: symbol).font(.system(size: 11, weight: .medium))
-                Text(title).font(selected ? Theme.Font.chromeEmph : Theme.Font.chrome)
-            }
-            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, Theme.Space.s10)
-            .frame(height: 30)
-            .background(selected ? Theme.cardSurface : Color.clear, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-        }
-        .buttonStyle(.pressable)
+        SegmentedCapsule(items: items,
+                         selection: selection,
+                         title: { $0.title },
+                         symbol: { $0.symbol },
+                         count: count,
+                         tint: Theme.Ink.claude,
+                         onSelect: onSelect)
     }
 }
 
 private struct LocalCLICard: View {
     let cli: LocalCLIRecord
     let relatedCount: Int
+    @State private var hovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                GlyphWell(name: "terminal", tint: Theme.Ink.claude, size: 32)
+                GlyphWell(name: "terminal", tint: Theme.Ink.claude, size: 40, engaged: hovered)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cli.name)
                         .font(Theme.Font.chromeEmph)
@@ -561,31 +730,37 @@ private struct LocalCLICard: View {
             }
             .frame(height: 30)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 176, maxHeight: 176, alignment: .topLeading)
-        .tile()
-        .overlay(alignment: .top) {
-            Capsule().fill(Theme.Ink.claude).frame(width: 28, height: 3).padding(.top, 1)
-                .allowsHitTesting(false)
-        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
+        // Surface hue, not the ink variant: `Theme.Ink.claude` is mixed for
+        // text and lands near-navy as a wash. The header mark keeps the ink.
+        .tile(tint: Theme.claude, hovered: hovered,
+              lens: DepthLensSpec(tint: Theme.claude, size: 132))
+        .hoverState($hovered)
     }
 }
 
 private struct ConnectorUtilityButtonModifier: ViewModifier {
     let accented: Bool
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content
             .font(Theme.Font.microSemibold)
-            .foregroundStyle(accented ? Theme.Ink.claude : Theme.textPrimary)
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(accented ? Theme.claude.opacity(0.10) : Theme.bgOverlay,
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            .foregroundStyle(hovered ? (Theme.isDark ? Color.black : .white) :
+                             (accented ? Theme.Ink.claude : Theme.textPrimary))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(hovered ? Theme.textPrimary : (accented ? Theme.claude.opacity(0.11) : Theme.bgOverlay),
+                        in: Capsule())
             .overlay {
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                    .strokeBorder(accented ? Theme.claude.opacity(0.22) : Theme.hairline)
+                Capsule()
+                    .strokeBorder(hovered ? Theme.textPrimary : (accented ? Theme.claude.opacity(0.25) : Theme.hairline))
                     .allowsHitTesting(false)
             }
+            .hoverState($hovered)
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
     }
 }
 
@@ -593,4 +768,12 @@ private extension View {
     func connectorUtilityButton(accented: Bool = false) -> some View {
         modifier(ConnectorUtilityButtonModifier(accented: accented))
     }
+
+    // `connectorSurface` was its own card surface — a clipped card with one
+    // stroked arc in the corner, a hover lift and a hover shadow. It is now
+    // `.tile(tint:hovered:lens:)`: the tile draws the same corner ornament as a
+    // `DepthLens` (three rings shrinking *and* drifting toward the corner, at
+    // one `Canvas` instead of one view per ring) plus the same lift and shadow,
+    // so the connector grid and every other grid in the app are literally the
+    // same surface.
 }

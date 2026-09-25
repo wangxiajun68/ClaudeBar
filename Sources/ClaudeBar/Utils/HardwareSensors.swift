@@ -12,7 +12,25 @@ enum HostAccelerator {
     struct Reading: Equatable {
         var utilization: Double = 0
         var temperatureCelsius: Double?
+        /// GPU core count, as the driver publishes it (`gpu-core-count`, e.g. 18
+        /// on an M3 Pro). Zero when the key is absent.
+        ///
+        /// Read, not inferred: the dashboard's GPU mark draws this many cells,
+        /// and a cell count that is guessed from the machine's marketing name
+        /// would be the one number on that card with no source.
+        var coreCount: Int = 0
+        /// The three sub-unit readings the driver does publish, in this order:
+        /// overall device, renderer, tiler. **macOS does not publish per-core
+        /// GPU load at all** (verified: `PerformanceStatistics` carries only
+        /// these three, and no per-engine array), so unlike the CPU mark the
+        /// GPU mark's cells cannot each hold a real number — it draws the real
+        /// core *count* and spends its live detail on these three instead.
+        var renderers: [Double] = []
     }
+
+    /// The three keys, in the order `Reading.renderers` uses them, and the same
+    /// order `utilization(from:)` already maximises over.
+    static let rendererKeys = ["Device Utilization %", "Renderer Utilization %", "Tiler Utilization %"]
 
     private static let lock = NSLock()
     private static var services: [io_object_t] = []
@@ -28,13 +46,36 @@ enum HostAccelerator {
             guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
                   let dict = props?.takeRetainedValue() as? [String: Any],
                   let stats = dict["PerformanceStatistics"] as? [String: Any] else { continue }
-            best.utilization = max(best.utilization, utilization(from: stats))
+            let figure = utilization(from: stats)
+            // The busiest accelerator wins the headline, and then *its* core
+            // count and sub-unit readings are the ones reported — mixing one
+            // device's percent with another's core count would describe a
+            // machine that does not exist.
+            if figure >= best.utilization {
+                best.utilization = figure
+                best.coreCount = (dict["gpu-core-count"] as? Int) ?? best.coreCount
+                best.renderers = rendererKeys.map { Self.percent(stats[$0]) }
+            }
             if let temp = temperature(from: stats) {
                 best.temperatureCelsius = max(best.temperatureCelsius ?? 0, temp)
             }
         }
         best.utilization = max(0, min(100, best.utilization))
+        if best.coreCount <= 0 { best.renderers = [] }
         return best
+    }
+
+    /// One `PerformanceStatistics` value as a 0…100 percent. The dictionary is
+    /// `Any`, and the driver has published these as both number and string
+    /// kinds across OS versions, so both are accepted rather than assumed.
+    private static func percent(_ raw: Any?) -> Double {
+        let value: Double
+        switch raw {
+        case let number as NSNumber: value = number.doubleValue
+        case let text as String: value = Double(text) ?? 0
+        default: return 0
+        }
+        return max(0, min(100, value))
     }
 
     private static func refreshLocked() {
@@ -55,13 +96,12 @@ enum HostAccelerator {
     }
 
     private static func utilization(from stats: [String: Any]) -> Double {
-        let keys = ["Device Utilization %", "GPU Activity%", "Renderer Utilization %", "Tiler Utilization %"]
         var best = 0.0
-        for key in keys {
-            if let n = stats[key] as? Double { best = max(best, n) }
-            else if let n = stats[key] as? Int { best = max(best, Double(n)) }
-            else if let n = stats[key] as? NSNumber { best = max(best, n.doubleValue) }
-        }
+        for key in rendererKeys { best = max(best, percent(stats[key])) }
+        // `GPU Activity%` is the older spelling of the device figure and is not
+        // one of the three `renderers` entries, so it only ever contributes to
+        // the headline — `percent` already clamps it.
+        best = max(best, percent(stats["GPU Activity%"]))
         return best
     }
 

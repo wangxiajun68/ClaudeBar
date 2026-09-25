@@ -65,7 +65,7 @@ struct ProxyUpstreamPickers: View {
                     tint: tint) {
             if empty {
                 Button("去添加") {
-                    NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
+                    NotificationCenter.default.post(.showMainWindow(page: .providers, editor: true))
                 }
                 .adaptiveGlassButton()
                 .tint(tint)

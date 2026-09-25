@@ -27,19 +27,24 @@ struct UsageModelCard: View {
             withAnimation(Theme.Animation.smooth) { open.toggle() }
         } label: {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 6) {
+                HStack(alignment: .top, spacing: 6) {
                     Text(stat.model)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
-                    if !slices.isEmpty {
-                        SourceStack(slices: slices, scan: hovered)
+                    VStack(alignment: .trailing, spacing: 5) {
+                        HStack(spacing: 6) {
+                            if !slices.isEmpty {
+                                SourceStack(slices: slices, scan: hovered)
+                            }
+                            RollingNumberText("\(stat.calls) 次")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textTertiary())
+                        }
+                        CacheHitBadge(stat: stat)
                     }
-                    RollingNumberText("\(stat.calls) 次")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textTertiary())
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     RollingNumberText(UsageStats.formatTokens(stat.totalTokens))
@@ -53,7 +58,7 @@ struct UsageModelCard: View {
                 }
                 AuroraSparkline(
                     values: AuroraSparkline.accentCurve(peak: min(max(share, 0.08), 1)),
-                    tint: Theme.chartPurple,
+                    tint: tint,
                     live: hovered
                 )
                 .frame(height: 28)
@@ -73,14 +78,34 @@ struct UsageModelCard: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .tile(hovered: hovered)
+            // The card takes the model's own hue, so a page of models reads as
+            // a colour-keyed set, and the corner lens carries the usage glyph —
+            // the card's subject, not decoration.
+            .tile(tint: tint, hovered: hovered,
+                  lens: DepthLensSpec(tint: tint, size: 124))
             .folderPeek(hovered)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .hoverState($hovered)
         .help(helpText(shown))
+        .accessibilityHint(open ? "收起来源明细" : "展开来源明细")
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
+    }
+
+    /// The model's own accent, from `Theme`'s hash-stable per-model palette —
+    /// a *shape* hue, so it drives the sparkline, the corner rings and the
+    /// card's wash alike. A usage card that took the page's blue would say
+    /// nothing about *which* model it is.
+    ///
+    /// It used to be the dominant *source*'s hue (`.claude` / `.codex` /
+    /// 第三方), which is not a property of the model at all: on a relay that
+    /// mixes Codex and third-party traffic for one model, the card changed
+    /// colour as the mix moved — the opposite of the stable key the comments
+    /// here claim. `Theme.barColor`/`barInk` exist for exactly this and were
+    /// documented as this card's palette, with `barInk` left with no caller.
+    private var tint: Color {
+        Theme.barColor(for: stat.model)
     }
 
     /// Estimated list-price cost of this tile's tokens.
@@ -147,5 +172,30 @@ struct UsageModelCard: View {
             lines.append("价目表未收录 \(stat.model)")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Cache read tokens divided by all prompt-side tokens, shared by model and
+/// platform usage cards. A missing prompt side is shown as unknown, not 0%.
+struct CacheHitBadge: View {
+    let stat: ModelUsage
+
+    var body: some View {
+        let hasPrompt = stat.totalInputTokens > 0
+        return HStack(spacing: 4) {
+            Image(systemName: "memorychip")
+                .font(.system(size: 10, weight: .semibold))
+            Text(hasPrompt ? "命中 \(stat.cacheHitPercent)%" : "命中 —")
+                .monospacedDigit()
+        }
+        .font(Theme.Font.microSemibold)
+        .foregroundStyle(hasPrompt ? Theme.Ink.success : Theme.textTertiary())
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(hasPrompt ? Theme.chartGreen.opacity(0.11) : Theme.cardFill(0.06)))
+        .help(hasPrompt
+              ? "缓存读取 Token ÷ 输入、缓存读取与缓存写入 Token 总和"
+              : "没有输入 Token，无法计算缓存命中率")
+        .accessibilityLabel(hasPrompt ? "缓存命中率 \(stat.cacheHitPercent)%" : "缓存命中率暂无数据")
     }
 }

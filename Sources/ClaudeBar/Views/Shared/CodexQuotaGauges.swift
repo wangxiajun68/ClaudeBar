@@ -1,6 +1,13 @@
 import SwiftUI
 
-/// Filled arc = remaining allowance; the quiet track = consumed allowance.
+/// Filled arc = remaining allowance; the quiet track = consumed allowance; a
+/// body rides the arc at the value, which is the weather card's orbit used as a
+/// meter (see `OrbitGauge`).
+///
+/// The track runs 300° starting at -215° so the arc opens at the bottom, which
+/// is what makes it read as a gauge rather than a progress ring — and it is the
+/// only part of the card that moves, so a quota refresh animates one small
+/// shape instead of relaying out the header.
 struct CodexQuotaGauges: View {
     let windows: [CodexQuotaWindow]
     var compact = true
@@ -12,13 +19,11 @@ struct CodexQuotaGauges: View {
                 let tint = remaining <= 10 ? Theme.Ink.error
                     : remaining <= 25 ? Theme.Ink.warning : Theme.Ink.success
                 HStack(spacing: 3) {
-                    ZStack {
-                        Circle().stroke(Theme.hairline, lineWidth: 2.5)
-                        Circle().trim(from: 0, to: remaining / 100)
-                            .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                    }
-                    .frame(width: compact ? 15 : 30, height: compact ? 15 : 30)
+                    OrbitGauge(progress: remaining / 100,
+                               tint: tint,
+                               lineWidth: compact ? 2.5 : 4,
+                               bodySize: compact ? 7 : 11)
+                        .frame(width: compact ? 15 : 30, height: compact ? 15 : 30)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(window.label.replacingOccurrences(of: " 小时", with: "h").replacingOccurrences(of: " 天", with: "d") + " 剩余")
                             .font(.system(size: compact ? 8 : 10, weight: .medium))

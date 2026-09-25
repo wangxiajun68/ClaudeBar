@@ -27,6 +27,9 @@ final class CaptureJSONStore {
         var promptTokens: Int?
         var completionTokens: Int?
         var cacheReadTokens: Int?
+        /// Absent on every row written before the third-party rollup carried a
+        /// cache-write bucket.
+        var cacheWriteTokens: Int?
         var error: String?
         var preview: String
     }
@@ -96,6 +99,7 @@ final class CaptureJSONStore {
             kind: kind, source: source, providerName: provider, model: model,
             path: path, isStream: stream, state: .pending, httpStatus: 0,
             promptTokens: nil, completionTokens: nil, cacheReadTokens: nil,
+            cacheWriteTokens: nil,
             error: nil, preview: preview)
         summaries.insert(summary, at: 0)
         let req = CaptureMedia.compact(requestJSON, captureID: id)
@@ -183,6 +187,7 @@ final class CaptureJSONStore {
                 promptTokens: s.promptTokens,
                 completionTokens: s.completionTokens,
                 cacheReadTokens: s.cacheReadTokens,
+                cacheWriteTokens: s.cacheWriteTokens,
                 error: s.error,
                 preview: s.preview)
             if let data = try? enc.encode(row), let line = String(data: data, encoding: .utf8) {
@@ -224,6 +229,7 @@ final class CaptureJSONStore {
             promptTokens: row.promptTokens,
             completionTokens: row.completionTokens,
             cacheReadTokens: row.cacheReadTokens,
+            cacheWriteTokens: row.cacheWriteTokens,
             error: row.error,
             preview: row.preview)
     }

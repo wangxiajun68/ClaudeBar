@@ -132,21 +132,14 @@ struct BatteryChargeControls: View {
 
 struct CompactBatteryChargeControl: View {
     @State private var presented = false
-    private var controller = BatteryChargeController.shared
+
     var body: some View {
         Button { presented.toggle() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                Text("充电控制")
-                Spacer()
-                Text(controller.mode == .system ? "系统管理" : "上限 \(controller.appliedLimit)%")
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-            }
-            .font(Theme.Font.caption)
-            .foregroundStyle(Theme.textSecondary)
-            .contentShape(Rectangle())
+            IconChip(systemImage: "slider.horizontal.3", tint: Theme.textSecondary)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
+        .help("充电控制")
+        .accessibilityLabel("充电控制")
         .popover(isPresented: $presented) {
             BatteryChargeControls().padding(16).frame(width: 420).background(Theme.cardSurface)
         }

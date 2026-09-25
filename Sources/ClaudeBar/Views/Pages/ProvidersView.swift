@@ -13,10 +13,12 @@ struct ProvidersView: View {
     @State private var connectionEdit: ProviderConnectionRoute?
     @State private var setupEntry: ProviderCatalogEntry?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var selectionAnimation
+    /// Set by the window when another surface asked for the provider editor
+    /// (the popup's 「管理模型」, a ⌘K provider result). Cleared once the sheet
+    /// is up; see `MainWindowView.route(_:)`.
+    @Binding var editorRequest: AppPage?
 
     private var client: ProviderClient { ProviderClient(rawValue: clientRaw) ?? .claude }
-    private var tint: Color { client == .claude ? Theme.claude : Theme.codex }
 
     /// The page's whole model, resolved once per body.
     ///
@@ -44,8 +46,13 @@ struct ProvidersView: View {
         return out
     }
 
-    private var activeID: UUID? { client == .claude ? providerStore.activeProviderID : codexStore.activeProviderID }
-    private var error: String? { client == .claude ? providerStore.errorMessage : codexStore.errorMessage }
+    /// The active provider's model name. `activeID` is passed in rather than
+    /// re-read from the stores: `facts()` already resolved it for this body,
+    /// and a second read here is exactly the duplicate work the `Facts` doc
+    /// above describes.
+    private func currentModel(_ p: Provider, activeID: UUID?) -> String? {
+        client == .claude && p.id == activeID ? providerStore.currentEnv?.ANTHROPIC_MODEL ?? p.activeModel?.name : p.activeModel?.name
+    }
 
     var body: some View {
         let f = facts()
@@ -56,8 +63,17 @@ struct ProvidersView: View {
         .onChange(of: category) { _, _ in selectedID = nil }
         .onChange(of: query) { _, _ in selectedID = nil }
         .onChange(of: configuredOnly) { _, _ in selectedID = nil }
-        .onReceive(NotificationCenter.default.publisher(for: .openProvidersEditor)) { _ in
-            if let id = f.activeID { connectionEdit = ProviderConnectionRoute(id: id, isNew: false) }
+        .onChange(of: editorRequest) { _, page in
+            guard page == .providers else { return }
+            editorRequest = nil
+            openRequestedEditor(f)
+        }
+        .onAppear {
+            // The window sets the flag on the same pass that installs this
+            // page, so the change above can arrive before `onChange` exists.
+            guard editorRequest == .providers else { return }
+            editorRequest = nil
+            openRequestedEditor(f)
         }
         .sheet(item: $connectionEdit) { route in
             if let draft = connectionDraft(route) {
@@ -67,6 +83,22 @@ struct ProvidersView: View {
         }
         .sheet(item: $setupEntry) { entry in
             ProviderQuickSetup(draft: .init(entry: entry, client: client), onSave: saveSetup)
+        }
+    }
+
+    /// Open the editor another surface asked for (the popup's 「管理模型」, a ⌘K
+    /// provider result).
+    ///
+    /// With no active provider the request used to be dropped silently — the
+    /// page opened with no sheet at all. That is exactly the state a user is in
+    /// when they reach for this: the popup's entry point for an unconfigured
+    /// install is 「去添加供应商」, and Codex starts with nothing active. So an
+    /// empty active slot opens the *new connection* form instead of nothing.
+    private func openRequestedEditor(_ f: Facts) {
+        if let id = f.activeID {
+            connectionEdit = ProviderConnectionRoute(id: id, isNew: false)
+        } else {
+            connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true)
         }
     }
 
@@ -94,7 +126,11 @@ struct ProvidersView: View {
             onActivate: { activate($0, modelID: $1) },
             onUseOfficial: {
                 if client == .claude { providerStore.restoreOfficial() } else { codexStore.restoreOfficial() }
-                if error == nil { selectedID = nil }
+                // The official connection has no provider card, so a card
+                // selection is stale the moment it is restored. Read through
+                // `Facts` rather than a second live property: `Facts` is what
+                // this body already renders from.
+                if f.error == nil { selectedID = nil }
             },
             onClearFilters: { query = ""; category = nil; configuredOnly = false },
             onSelect: { setupEntry = $0 },
@@ -121,28 +157,16 @@ struct ProvidersView: View {
     }
 
     private var clientSwitcher: some View {
-        HStack(spacing: 4) {
-            ForEach(ProviderClient.allCases) { item in
-                Button {
-                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) { clientRaw = item.rawValue }
-                } label: {
-                    HStack(spacing: 7) {
-                        ProductBrandMark(codex: item == .codex).frame(width: 17, height: 17)
-                        Text(item.title).font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(client == item ? Theme.textPrimary : Theme.textSecondary)
-                    .frame(width: 132, height: 34)
-                    .background {
-                        if client == item {
-                            RoundedRectangle(cornerRadius: 9).fill(Theme.cardSurface)
-                                .matchedGeometryEffect(id: "client", in: selectionAnimation)
-                        }
-                    }
-                }.buttonStyle(.plain).accessibilityAddTraits(client == item ? .isSelected : [])
-            }
-        }.padding(4).background(Theme.bgOverlay, in: RoundedRectangle(cornerRadius: 13))
-            .fixedSize(horizontal: true, vertical: false)
+        SegmentedCapsule(items: ProviderClient.allCases,
+                         selection: client,
+                         title: \.title,
+                         tint: Theme.Ink.claude,
+                         itemTint: { $0 == .claude ? Theme.Ink.claude : Theme.Ink.codex },
+                         brand: { $0 == .codex },
+                         onSelect: { item in
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) { clientRaw = item.rawValue }
+        })
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var directoryToolbar: some View {
@@ -172,7 +196,8 @@ struct ProvidersView: View {
                     .fontWeight(.semibold).lineLimit(1)
             }
             Text("\(f.providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
-            if let provider = f.providers.first(where: { $0.id == f.activeID }), let model = currentModel(provider) {
+            if let provider = f.providers.first(where: { $0.id == f.activeID }),
+               let model = currentModel(provider, activeID: f.activeID) {
                 Text(model).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
                     .layoutPriority(-1)
             }
@@ -185,9 +210,6 @@ struct ProvidersView: View {
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: f.activeID)
     }
 
-    private func currentModel(_ p: Provider) -> String? {
-        client == .claude && p.id == activeID ? providerStore.currentEnv?.ANTHROPIC_MODEL ?? p.activeModel?.name : p.activeModel?.name
-    }
     private func connectionDraft(_ route: ProviderConnectionRoute) -> ProviderConnectionDraft? {
         if route.isNew { return .custom(client: client, id: route.id) }
         if client == .claude, let provider = providerStore.providers.first(where: { $0.id == route.id }) {
@@ -284,14 +306,6 @@ struct ProvidersView: View {
         if client == .claude { providerStore.activateModel(providerID: p.id, modelID: modelID) }
         else { codexStore.activate(providerID: p.id, modelID: modelID) }
     }
-    private func toggleCapture(_ p: Provider) {
-        if client == .claude { providerStore.setCaptureEnabled(providerID: p.id, enabled: !p.captureEnabled) }
-        else { codexStore.setCaptureEnabled(providerID: p.id, enabled: !p.captureEnabled) }
-    }
-    private func test(_ p: Provider, model: ModelConfig) {
-        ConnectivityTestCenter.shared.testVendor(id: p.id, claude: p, model: model,
-                         codex: client == .codex ? codexStore.providers.first { $0.id == p.id } : nil)
-    }
     private func saveSetup(_ draft: ProviderSetupDraft) -> String? {
         if let error = draft.validationError { return error }
         let existing = draft.client == .claude ? providerStore.providers : codexStore.providers.map(\.asDisplayProvider)
@@ -312,25 +326,5 @@ struct ProvidersView: View {
         }
         selectedID = id
         return nil
-    }
-    private func addModels(_ names: Set<String>, to provider: Provider) {
-        if client == .claude {
-            guard var updated = providerStore.providers.first(where: { $0.id == provider.id }) else { return }
-            let existing = Set(updated.models.map { $0.name.lowercased() })
-            updated.models += names.sorted().filter { !existing.contains($0.lowercased()) }.map {
-                ModelConfig(name: $0, disableCompact: false, disableExperimentalBetas: false)
-            }
-            if updated.activeModelID == nil { updated.activeModelID = updated.models.first?.id }
-            providerStore.updateProvider(updated)
-        } else {
-            guard var updated = codexStore.providers.first(where: { $0.id == provider.id }) else { return }
-            let existing = Set(updated.models.map { $0.name.lowercased() })
-            updated.models += names.sorted().filter { !existing.contains($0.lowercased()) }.map { CodexModelConfig(name: $0) }
-            if updated.activeModelID == nil { updated.activeModelID = updated.models.first?.id }
-            codexStore.updateProvider(updated)
-        }
-    }
-    static func modelToTest(_ provider: Provider, envModel: String?) -> ModelConfig? {
-        provider.models.first { $0.name.caseInsensitiveCompare(envModel ?? "") == .orderedSame } ?? provider.activeModel ?? provider.models.first
     }
 }

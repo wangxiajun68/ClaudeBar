@@ -39,7 +39,11 @@ private struct SessionActionChips<Content: View>: View {
     }
 }
 
-/// Pulsing status dot: filled + ringed while `isOn`, muted gray otherwise.
+/// Status dot: filled + haloed while `isOn`, muted gray otherwise.
+///
+/// The halo is *static* (`BusyPulseRing` is a scaled, low-opacity ring, not an
+/// animation) — the name is a leftover from when it pulsed. See that type for
+/// why.
 private struct PulsingStatusDot: View {
     let isOn: Bool
     let color: Color
@@ -51,11 +55,10 @@ private struct PulsingStatusDot: View {
             .frame(width: big ? 8 : 6, height: big ? 8 : 6)
             .overlay {
                 if isOn {
-                    // Pulsing ring while busy. The repeating animation lives
-                    // on a view that only exists while busy — an
-                    // always-attached repeatForever animation keeps the
-                    // render server ticking even when invisible, burning GPU
-                    // on every idle session dot.
+                    // The ring only exists while busy. It used to carry a
+                    // `repeatForever` pulse, which kept the render server
+                    // ticking for every live dot on the page whether or not it
+                    // was on screen. `BusyPulseRing` is now a static shape.
                     BusyPulseRing(color: color, big: big)
                 }
             }
@@ -76,9 +79,10 @@ private struct BusyPulseRing: View {
     }
 }
 
-/// Full session page: all live Claude Code and Cursor sessions as an adaptive
-/// tile grid, with expandable subagent trees inside each tile and
-/// double-click-to-resume. Mirrors the menu-bar popup's sessions at full width.
+/// Full session page: one section per tool family — Claude Code, Cursor, then
+/// one per external kind (Codex …) — each an adaptive tile grid with
+/// double-click-to-resume, and the Codex tiles carrying their sub-agent swarm.
+/// Mirrors the menu-bar popup's sessions at full width.
 struct SessionsView: View {
     @ProviderState([.sessions, .expansion]) var providerStore: ProviderStore
 
@@ -142,7 +146,7 @@ struct SessionsView: View {
             } else {
                 TileGrid(.pageSession) {
                     ForEach(alive) { session in
-                        CursorTileFull(session: session, store: providerStore, isExpanded: providerStore.cursorExpanded.contains(session.composerId))
+                        CursorTileFull(session: session)
                     }
                 }
             }
@@ -162,16 +166,33 @@ struct SessionsView: View {
 
     private func externalSection(kind: ExternalAgentKind) -> some View {
         let tree = providerStore.externalSessionTree(kind: kind)
-        let alive = tree.reduce(0) { $0 + 1 + $1.descendantCount }
         // Counted from the stored per-node tally: `flatMap(\.flattened)` here
         // allocated the whole descendant list once per kind, per publish,
         // purely to count the active ones.
-        let active = tree.reduce(0) { $0 + ($1.session.isActive ? 1 : 0) + $1.activeDescendantCount }
+        //
+        // `busy` and `agents` are deliberately separate tallies over separate
+        // populations. `SectionHeader` renders its pill as
+        // `"\(active)B · \(count - active)I"`, so `active` has to be a subset of
+        // `count` — feeding it sessions-plus-agents (which is what the count
+        // used to be too) is only safe while the two share a population. Now
+        // that `count` is the row count of the grid below, an agent in `active`
+        // reads as a negative idle figure: one busy session with five busy
+        // helpers rendered "6B · -5I".
+        let busy = tree.reduce(0) { $0 + ($1.session.isActive ? 1 : 0) }
+        let activeAgents = tree.reduce(0) { $0 + $1.activeDescendantCount }
+        let agents = tree.reduce(0) { $0 + $1.descendantCount }
         return sectionContainer(
             title: kind.displayName,
             icon: kind.icon,
-            count: alive,
-            active: active
+            // Sessions, which is what the grid below lists. This used to add
+            // every sub-agent to the same number, so the pill read "Codex · 5B
+            // · 132I" above eleven cards — a count of rows that were not there.
+            // The agents are counted where they are shown: the tile's 子 agent
+            // header and its ⋯N badge.
+            count: tree.count,
+            active: busy,
+            agentCount: agents,
+            activeAgentCount: activeAgents
         ) {
             if tree.isEmpty {
                 emptyHint("暂无 \(kind.displayName) 会话")
@@ -195,11 +216,31 @@ struct SessionsView: View {
     // MARK: Helpers
 
     private func sectionContainer<C: View>(title: String, icon: String, count: Int, active: Int,
+                                            agentCount: Int = 0, activeAgentCount: Int = 0,
                                             @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             SectionHeader(icon: icon, title: title, tint: Theme.claude,
                           ink: Theme.Ink.claude,
-                          count: count, activeCount: active)
+                          count: count, activeCount: active,
+                          // Sessions and the agents they spawned are different
+                          // things, so they get different pills rather than one
+                          // summed number that matches neither list. The agent
+                          // pill carries its own busy count for the same reason.
+                          //
+                          // Rendered *inside* the header's own `HStack`, before
+                          // the count pill. It used to be an
+                          // `.overlay(alignment: .trailing)` on the header with
+                          // a guessed `.padding(.trailing, 62)` — a constant
+                          // measured against the pill's width at one session
+                          // count, so a wider count ("12B · 30I") slid the pill
+                          // straight under the label. Nothing in an overlay can
+                          // know the pill's width; a sibling in the row can.
+                          note: agentCount > 0
+                              ? (activeAgentCount > 0
+                                 ? "+\(agentCount) agent · \(activeAgentCount) 运行"
+                                 : "+\(agentCount) agent")
+                              : nil,
+                          noteTint: activeAgentCount > 0 ? Theme.Ink.success : Theme.textTertiary())
             content()
         }
     }
@@ -330,7 +371,12 @@ private struct SessionTileFull: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered)
+        // Hue is information here, not decoration: three agent families share
+        // this grid, and the card's own accent is what makes a page of them
+        // scannable by row. Busy-ness stays with the dot and the capsule, so
+        // the wash never moves under the pointer.
+        .tile(tint: Theme.claude, hovered: isHovered,
+              lens: DepthLensSpec(tint: Theme.claude, size: 132))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume() }
         .hoverState($isHovered)
@@ -395,8 +441,6 @@ private struct SessionTileFull: View {
 /// carries the violet cursor tint while active.
 private struct CursorTileFull: View {
     let session: CursorSessionInfo
-    let store: ProviderStore
-    let isExpanded: Bool
     private var isActive: Bool { session.status == .active }
     @State private var isHovered = false
 
@@ -441,6 +485,15 @@ private struct CursorTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
+                // Cursor's own spawned agents were only ever reachable through
+                // the removed expand path; the popup card has always counted
+                // them, so the full-width tile does too rather than being the
+                // one surface that hides them.
+                if !session.subagents.isEmpty {
+                    StatusPill(label: "⋯\(session.subagents.count)",
+                               tint: Theme.externalHi, ink: Theme.Ink.success)
+                        .help("Cursor 为这个会话派生的子 agent")
+                }
                 SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -453,7 +506,8 @@ private struct CursorTileFull: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered)
+        .tile(tint: Theme.cursor, hovered: isHovered,
+              lens: DepthLensSpec(tint: Theme.cursor, size: 132))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { openCursor() }
         .hoverState($isHovered)
@@ -601,7 +655,11 @@ private struct ExternalSessionTile: View {
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: height, alignment: .topLeading)
-        .tile(hovered: isHovered)
+        // Tint, but deliberately **no** corner lens: this tile's trailing half
+        // is a cluster of live agent cards, and rings receding off that corner
+        // would run under the swarm rather than behind the header the way they
+        // do on the readout-only tiles.
+        .tile(tint: tint, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume(session) }
         .hoverState($isHovered)
@@ -654,9 +712,9 @@ private struct ExternalSessionTile: View {
 /// A session that spawned sub-agents carries a `⋯N` badge and a compact strip of
 /// agent cards beneath its readout — names *and* recency, so the strip is
 /// information rather than decoration. A session with none is simply a card:
-/// no badge, no placeholder, no extra height. The full-width swarm stays
-/// reachable through the badge's double-click target on the tile itself, and
-/// through the popup on the card.
+/// no badge, no placeholder, no extra height. The full-width swarm opens from
+/// that `⋯N` badge, which is the grid card's only route to it — the tile's own
+/// double-click resumes the session.
 private struct ExternalSessionGridCard: View {
     let node: ProviderStore.ExternalSessionNode
     @State private var isHovered = false
@@ -769,7 +827,9 @@ private struct ExternalSessionGridCard: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered)
+        // Same reasoning as `ExternalSessionTile`: the agent strip occupies the
+        // card's lower half, so the ornament is the hue, not the rings.
+        .tile(tint: tint, hovered: isHovered)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume(session) }
         .hoverState($isHovered)

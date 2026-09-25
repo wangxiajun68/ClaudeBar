@@ -130,22 +130,6 @@ final class IslandLiveModel: ObservableObject {
 
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
 
-    /// The row a session sits in, or nil once it is gone. The session strip
-    /// uses this to keep its dwell on the *session* rather than on the slot
-    /// index it happened to occupy before the list changed under it.
-    func index(of session: IslandSession) -> Int? {
-        sessions.firstIndex { $0.id == session.id }
-    }
-
-    /// Busy agent families, most urgent first, without repeats.
-    var busyAgents: [IslandAgent] {
-        var seen: [IslandAgent] = []
-        for session in sessions where session.isBusy && !seen.contains(session.agent) {
-            seen.append(session.agent)
-        }
-        return seen
-    }
-
     private weak var providerStore: ProviderStore?
     private var cancellables: Set<AnyCancellable> = []
     private var completionDetector = ConfirmedCompletionDetector<String>()

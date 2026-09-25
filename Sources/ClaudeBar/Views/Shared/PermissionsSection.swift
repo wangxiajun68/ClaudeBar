@@ -12,7 +12,11 @@ struct PermissionsSection: View {
             Text("已开启 \(center.enabledCount) / \(AppPermission.allCases.count) 项 · 打开开关才会向系统请求，关闭后不再调用对应接口。")
                 .font(Theme.Font.caption)
                 .foregroundStyle(Theme.textSecondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)], spacing: 12) {
+            // The page's own grid, not a second one: at 220pt this row laid
+            // out five columns where every other section lays out three, and
+            // the cards carried their own hand-rolled surface, so 权限与隐私
+            // read as a different page bolted into the middle of this one.
+            TileGrid(.pageSetting) {
                 ForEach(AppPermission.allCases) { permission in
                     PermissionCard(permission: permission,
                                    isOn: center.isEnabled(permission),
@@ -75,7 +79,10 @@ private struct PermissionCard: View {
                     .tint(Theme.claude)
             }
             Text(permission.title)
-                .font(Theme.Font.chromeEmph)
+                // The shared settings-tile title size, so this card and
+                // `SettingTile` are the same 15pt semibold rounded rather than
+                // two points apart.
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
             Text(permission.purpose)
@@ -112,13 +119,12 @@ private struct PermissionCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
-        .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(isOn ? Theme.claude.opacity(hovered ? 0.45 : 0.22) : Theme.hairline, lineWidth: 1)
-        )
+        // The shared tile surface. The card keeps the switch/status *writes*
+        // as its own concern; only the surface is the page's.
+        .tile(tint: isOn ? Theme.claude : Theme.textSecondary,
+              hovered: hovered,
+              lens: DepthLensSpec(tint: isOn ? Theme.claude : Theme.textSecondary, size: 124))
         .onHover { if hovered != $0 { hovered = $0 } }
-        .animation(Theme.Motion.state, value: hovered)
         .animation(Theme.Motion.state, value: status)
         .animation(Theme.Motion.state, value: isOn)
     }

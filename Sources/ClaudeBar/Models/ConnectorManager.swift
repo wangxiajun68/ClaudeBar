@@ -33,7 +33,7 @@ enum ConnectorKind: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct MCPConnection: Sendable {
+struct MCPConnection: Sendable, Equatable {
     let command: String
     let arguments: [String]
     let environment: [String: String]
@@ -41,7 +41,7 @@ struct MCPConnection: Sendable {
     var headers: [String: String] = [:]
 }
 
-enum ConnectorMethod: Sendable {
+enum ConnectorMethod: Sendable, Equatable {
     case skillMove(original: URL)
     case codexSetting(section: String)
     case claudePlugin(identifier: String)
@@ -54,7 +54,10 @@ enum ConnectorMethod: Sendable {
     }
 }
 
-struct ConnectorRecord: Identifiable, Sendable {
+/// `Equatable` so an open detail sheet can tell whether the record it is
+/// showing is still the one the manager holds: a refresh replaces `records`
+/// wholesale, and the sheet used to keep a stale copy (see `ConnectorsView`).
+struct ConnectorRecord: Identifiable, Sendable, Equatable {
     let id: String
     let name: String
     let summary: String
@@ -166,6 +169,34 @@ struct LocalCLIRecord: Identifiable, Sendable {
     @Published var noticeMessage: String?
     private var scanGeneration = 0
 
+    /// `kind → platform → count` (with `nil` = every platform), rebuilt once per
+    /// scan.
+    ///
+    /// The page's header, its platform row and its four kind chips each ran
+    /// their own `records.filter { … }` on every `body` evaluation — six passes,
+    /// most of them walking `records` once *per platform* — so a single render
+    /// walked the whole inventory ~10 times and re-scanned every row's
+    /// `platforms` array each time. The counts only move with `records`.
+    private(set) var connectorCounts: [ConnectorKind: [ConnectorPlatform?: Int]] = [:]
+
+    func count(kind: ConnectorKind) -> Int { connectorCounts[kind]?[nil] ?? 0 }
+
+    func count(kind: ConnectorKind, platform: ConnectorPlatform) -> Int {
+        connectorCounts[kind]?[platform] ?? 0
+    }
+
+    private func rebuildCounts() {
+        var table: [ConnectorKind: [ConnectorPlatform?: Int]] = [:]
+        for kind in ConnectorKind.allCases { table[kind] = [nil: 0] }
+        for record in records {
+            table[record.kind, default: [:]][nil, default: 0] += 1
+            for platform in record.platforms {
+                table[record.kind, default: [:]][platform, default: 0] += 1
+            }
+        }
+        connectorCounts = table
+    }
+
     func refresh(projectPath: String?, scanCLIs: Bool = true) async {
         scanGeneration += 1
         let generation = scanGeneration
@@ -182,6 +213,7 @@ struct LocalCLIRecord: Identifiable, Sendable {
         records = result.0
         pluginContents = result.1
         localCLIs = result.2
+        rebuildCounts()
         isLoading = false
     }
 
@@ -239,7 +271,14 @@ private enum ConnectorInventory {
         var result: [String: PluginBundleContents] = [:]
         result.reserveCapacity(records.count)
         for record in records where record.kind == .plugin {
-            guard let directory = record.installDirectory else { continue }
+            // `detailDirectory ?? source`, not `installDirectory`: that property
+            // returns nil for any source whose last path component looks like a
+            // config file, which is exactly the Claude/Codex catalog plugin
+            // (its `source` is `settings.json`). Those plugins therefore never
+            // got a contents entry, and the card told the user the install
+            // "没有单独列出的 Skill 或 MCP" for a bundle it had never read.
+            guard let directory = record.detailDirectory
+                    ?? (record.source.hasDirectoryPath ? record.source : nil) else { continue }
             let contents = PluginBundleContents.read(directory: directory)
             if !contents.items.isEmpty { result[record.id] = contents }
         }

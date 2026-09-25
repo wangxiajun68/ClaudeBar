@@ -3,8 +3,31 @@ import SwiftUI
 // MARK: - Agent mark
 
 /// An agent family's mark in a tinted well. While busy, a short arc orbits
-/// it — a single `rotationEffect` driven by a repeating animation, so the
-/// render server interpolates it without re-running any view body.
+/// it.
+///
+/// `IslandOrbit` is a SwiftUI `.rotationEffect` driven by a `repeatForever`
+/// animation, **not** a render-server layer like `DecorativeMotion` — see the
+/// warning there and in `UiverseSurfaces.swift`. That matters here because the
+/// island's collapsed hot zone is ~220 × 38 pt *inside* a 640 × 386 panel: a
+/// brief pointer pass over the notch (WASD-ing under a full-width window) can
+/// grow the island to its full expanded box, start the orbit, and then
+/// collapse back — and a `repeatForever` keeps the render server interpolating
+/// whether or not the view is on screen. Once that happens the panel goes on
+/// paying for a full `NSHostingView` layout + rasterization every display
+/// cycle at 10 Hz while collapsed (measured; see
+/// `docs/technical/17-ui-audit-backlog.md` §7), which is also the likeliest
+/// explanation for the *bimodal* idle figures this app shows after a session
+/// of interacting with the island: a fresh launch with nibbles ON measures
+/// ~2–3 %, the same build minutes later measures ~20–30 % with no further
+/// input.
+///
+/// The fix is to drive the orbit the way the fan rotors and the island's own
+/// pulsing dots already are — a Core Animation layer gated on
+/// `window?.occlusionState` — and that is deliberately **not** done here: it is
+/// a change to the app's most visible surface, it needs an eye on the rotation
+/// to confirm nothing regressed visually, and it belongs with the panel-size
+/// fix in the backlog entry rather than before it. Deleting the orbit would be
+/// the wrong trade — the busy indicator is the point of the badge.
 struct IslandAgentBadge: View {
     let agent: IslandAgent
     var busy = false
@@ -296,6 +319,15 @@ private struct IslandGlance: Identifiable {
 
 /// Auto-advancing status in the space beside the sessions. Playback lives on
 /// this view; the rest of the island does not tick with it.
+///
+/// **Not mounted.** Nothing instantiates this reel (or `NetworkGlancePage`),
+/// and `NotchIslandView`'s expanded content is the header + session strip +
+/// `IslandUsageCard` only — so `ProcessSampler.MonitorScope.island` and the
+/// island tier of `FanMonitor`, which only this view activates, are currently
+/// unreachable, and `IslandStyle`'s `glance*` / `mark*` / `pager*` constants
+/// are read by nothing but `Tests/island-reel-regressions.py`. Kept as the
+/// finished design for that band; mount it in `NotchIslandView.expandedContent`
+/// or delete it together with its test.
 ///
 /// Every page is the same 2×2 module grid under a section band, and pages are
 /// *grouped by subject* rather than by whatever data happened to arrive:
@@ -791,6 +823,9 @@ struct IslandUsageCard: View {
     let usage: IslandUsage
     @State private var scrubIndex: Int?
     @State private var histogramWidth: CGFloat = 1
+    /// Re-identifies this card's figures when the token unit style changes —
+    /// see `TokenStyleGenerationKey`.
+    @Environment(\.tokenStyleGeneration) private var tokenStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -825,6 +860,9 @@ struct IslandUsageCard: View {
                         .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
                 )
         )
+        // Scoped to this card's own figures: the identity change that re-renders
+        // them must not reach the session strip or the header beside it.
+        .id(tokenStyle)
     }
 
     private func index(at x: CGFloat) -> Int? {

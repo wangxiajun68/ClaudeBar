@@ -3,17 +3,20 @@ import SwiftUI
 /// The in-app manual, as a **contents rail + reader** rather than a list of
 /// accordions.
 ///
-/// The previous shape stacked 25 collapsed rows under a chapter filter, so
-/// finding anything meant either reading 25 summaries or searching. A manual is
-/// read linearly within a topic and jumped around between topics, which is
-/// exactly the master/detail split here:
+/// The previous shape stacked every article as a collapsed row under a chapter
+/// filter, so finding anything meant either reading all the summaries or
+/// searching. A manual is read linearly within a topic and jumped around
+/// between topics, which is exactly the master/detail split here:
 ///
 ///   * the **rail** lists every chapter with its articles, always visible, and
 ///     marks the one being read;
 ///   * the **reader** shows the selected article in full — no expand step.
 ///
-/// Search still filters the rail (and clears the chapter lock when it matches),
-/// because it is the fast path when you know the word but not the chapter.
+/// Search filters the rail down to matching articles and re-seeds the reader
+/// onto the first survivor, because it is the fast path when you know the word
+/// but not the chapter. There is no separate chapter state to clear: chapters
+/// are section headers over the filtered list, so an empty chapter simply
+/// omits itself (see `rail`).
 ///
 /// Content lives in `HelpCatalog` as static literals, so this page owns no
 /// store — only the selected article, the query, and the cached filter. Those

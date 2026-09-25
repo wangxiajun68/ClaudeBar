@@ -138,6 +138,27 @@ struct IslandActions {
     var expandFromAlert: () -> Void
 }
 
+/// The token-unit style, carried as an environment *value* rather than as an
+/// `.id()` on the island.
+///
+/// The figures that format tokens are leaves (`RollingNumberText`), and their
+/// inputs — the numbers — do not change when the unit style does, so they need
+/// an identity change to re-render. Applying it here lets each leaf take it:
+/// the three that exist (the wing total, the usage card's hero and month line)
+/// re-identify, and nothing else on the island does. An `.id()` on the island
+/// itself reset the whole panel instead — see the comment at that site.
+struct TokenStyleGenerationKey: EnvironmentKey {
+    static let defaultValue = TokenUnitStyle.chinese
+}
+
+extension EnvironmentValues {
+    var tokenStyleGeneration: TokenUnitStyle {
+        get { self[TokenStyleGenerationKey.self] }
+        set { self[TokenStyleGenerationKey.self] = newValue }
+    }
+}
+
+
 // MARK: - Root
 
 /// Root of the island panel. One black shape morphs between three sizes —
@@ -191,9 +212,17 @@ struct NotchIslandView: View {
         .frame(width: size.width, height: size.height)
         .clipShape(shape)
         // Token figures are formatted deep in child views whose inputs do not
-        // change with the unit style; a new identity re-renders them. The
-        // style flips only from Settings, so the reset is never visible.
-        .id(tokenStyle)
+        // change with the unit style, so they are re-identified from the one
+        // view that owns that style instead of from an identity change applied
+        // to the whole island.
+        //
+        // `.id(tokenStyle)` used to sit *here*, on the shape — so flipping the
+        // unit in Settings threw away the identity of the silhouette, the rim
+        // stroke and every child: an expanded island lost its `IslandIconButton`
+        // hover, the session strip's scroll position and the usage card's scrub
+        // index. The style still only flips from Settings, but the reset is now
+        // scoped to the figures that actually need re-rendering.
+        .environment(\.tokenStyleGeneration, tokenStyle)
         // Collapsed must be edge-less to melt into the notch; the rim light
         // only appears once the island has grown out of it.
         .overlay {
@@ -229,6 +258,7 @@ struct NotchIslandView: View {
                 .frame(width: IslandStyle.wingWidth - 8, alignment: .trailing)
                 .padding(.trailing, 8)
                 .animation(.snappy, value: model.usage.today)
+                .id(tokenStyle)
         }
         .padding(.horizontal, IslandStyle.topFlare)
         .frame(height: state.notch.height)

@@ -38,7 +38,12 @@ struct SupplierBalanceCard: View {
             .foregroundColor(Theme.textPrimary)
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 112, maxHeight: .infinity, alignment: .topLeading)
-            .tile(hovered: hovered)
+            // Green is the wallet hue — the same one `InstrumentBadge(.balance)`
+            // already draws, so the surface and the mark say the same thing.
+            // It is the *raw* `chartGreen`, not `Ink.success`: a wash is a
+            // shape, and the pill text keeps the readable variant.
+            .tile(tint: Theme.chartGreen, hovered: hovered,
+                  lens: DepthLensSpec(tint: Theme.chartGreen, size: 118))
             .contentShape(Rectangle())
         }
         .buttonStyle(.pressable)

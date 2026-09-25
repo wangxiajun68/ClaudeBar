@@ -18,7 +18,7 @@
 | `Utils/ModelPricing.swift` | slug 归一化与匹配、逐桶计价、分币种累加、金额格式化、「无价」分类 |
 | `Utils/ModelPriceTable.swift` | 内置价目表 + 无价名单。**更新价格只改这一个文件**，日期在 `ModelPricing.updated` |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：双源查询、TTL 缓存、手动覆盖；默认模式下不发请求 |
-| `Views/Shared/ModelCostCard.swift` | 概览磁贴 |
+| `Views/Shared/ModelCostCard.swift` | 「模型花费」磁贴（**当前未挂载**，无调用点） |
 | `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行 |
 | `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示） |
 | `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个入口 |
@@ -35,7 +35,18 @@
 | `cacheRead` | `cacheReadTokens` | 命中 prompt cache 的读 |
 | `cacheWrite` | `cacheCreationTokens` | 写入 cache |
 
-`ModelUsage` 的桶是**互斥**的（Claude 的 `input_tokens` 不含缓存字段；Codex 解析时从 `input_tokens` 里减掉了 `cached_input_tokens`，见 [§04](04-data-access-layer.md)），所以四项各自乘单价直接相加，不会重复计费。
+`ModelUsage` 的桶是**互斥**的（Claude 的 `input_tokens` 不含缓存字段；Codex 解析时从 `input_tokens` 里减掉了 `cached_input_tokens`；代理侧由 `TokenTotals` 在落库前折掉，见 [§04](04-data-access-layer.md)），所以四项各自乘单价直接相加，不会重复计费。
+
+这条互斥性不是各家上游天然给的——三条来源各自的形状不同，`TokenTotals`（`Utils/StreamAssembler.swift`）负责在**唯一知道协议的那一层**抹平：
+
+| 来源 | 上游报的形状 | 处理 |
+|------|--------------|------|
+| Anthropic Messages | `input_tokens` 与 `cache_read_input_tokens` / `cache_creation_input_tokens` 并列，前者**不含**后两者 | 原样采信 |
+| Chat Completions | `prompt_tokens` **含**命中数，另外在 `prompt_tokens_details.cached_tokens`（DeepSeek 还额外给顶层 `prompt_cache_hit_tokens`）报命中 | `input = prompt_tokens − 命中` |
+| Responses | `input_tokens` **含** `input_tokens_details.cached_tokens` | 同上 |
+| 中转回显 Anthropic 字段 | `cache_read_input_tokens` 旁边是**不含**缓存的 `input_tokens` | 不折，按 Anthropic 处理 |
+
+DeepSeek 自己的文档就写明了这条等式：`prompt_tokens == prompt_cache_hit_tokens + prompt_cache_miss_tokens`。**旧版本把这个和 `cached_tokens` 一起原样存了**，于是命中那部分既按 `input` 全价算了一次、又按 `cacheRead` 折价算了一次，`totalTokens` 也把它加了两次。第三方 rollup（`proxy-usage.db`）里修前的行走过一次 `input -= cache_read` 的迁移（`user_version = 1`），JSONL 后端同理（`usage-third-party.v1` 标记文件）。`Tests/proxy-usage-regressions.py` 锁定这些形状。
 
 ### 厂商的桶各不相同，按三条规则映射
 
@@ -156,7 +167,7 @@ ProviderStore.costEstimate            （概览磁贴）
         ↓  ModelPricing.cost(of:) / unpricedReason(_:)
 ProviderStore.costLine(for:)          （用量瓦片，逐个模型，不重建整个 estimate）
         ↓  ModelPricing.present(_:display:rate:)   ← ExchangeRate.effectiveRate
-ModelCostCard / UsageModelCard        （按偏好渲染：分列 / 折算）
+UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡（按偏好渲染：分列 / 折算）
 ```
 
 `costEstimate` 与周期选择天然联动：`usageStats` 就是周期聚合，换日 / 月 / 年自动跟着变，不需要额外查询。折算只发生在**渲染**这一步，`Estimate` 本身始终保留两种货币的原值——切换显示模式不会丢失任何信息，也不会把折算结果写回数据。

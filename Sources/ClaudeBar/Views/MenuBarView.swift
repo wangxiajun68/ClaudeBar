@@ -1,10 +1,30 @@
 import SwiftUI
 
 extension Notification.Name {
+    /// Bring the main window forward, optionally to a page. The destination
+    /// rides in `userInfo` as an `AppPage` raw value, so one post carries both
+    /// halves of the request — see `Notification.showMainWindow(page:editor:)`.
+    ///
+    /// There is no separate "open the editor once the window is up" name: the
+    /// editor request is the same post with `editor: true`, because a surface
+    /// cannot know whether the window it is asking for already exists, and a
+    /// trailing second post loses the request whenever it has to be built.
     static let showMainWindow = Notification.Name("com.claudebar.showMainWindow")
-    static let openProvidersEditor = Notification.Name("com.claudebar.openProvidersEditor")
-    static let openVPNPage = Notification.Name("com.claudebar.openVPNPage")
-    static let openHelpPage = Notification.Name("com.claudebar.openHelpPage")
+}
+
+extension Notification {
+    /// Show the main window and route it to `page` in one post. `editor: true`
+    /// additionally opens the provider editor for that page's active provider
+    /// (what the popup's 「管理模型」 and 「去添加供应商」 mean).
+    ///
+    /// Posting `showMainWindow` and a separate page notification back to back
+    /// used to lose the page whenever the window had to be built first: a fresh
+    /// `NSHostingView` subscribes to the center on its first display pass
+    /// (~50 ms), i.e. after the second post was published.
+    static func showMainWindow(page: AppPage, editor: Bool = false) -> Notification {
+        Notification(name: .showMainWindow, object: nil,
+                     userInfo: ["page": page.rawValue, "editor": editor])
+    }
 }
 
 /// Menu-bar popup shell — switcher HUD, one-line machine KPIs, then
@@ -112,6 +132,9 @@ struct MenuBarView: View {
 
     private var actionBar: some View {
         HStack(spacing: Theme.Space.s4) {
+            if ProcessSampler.shared.host.batteryInstalled {
+                CompactBatteryChargeControl()
+            }
             iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary) {
                 providerStore.refresh()
                 panel.showFeedback("已刷新")
@@ -120,10 +143,10 @@ struct MenuBarView: View {
                 NotificationCenter.default.post(name: .showMainWindow, object: nil)
             }
             iconButton("questionmark.circle", help: "帮助", color: Theme.textSecondary) {
-                // Window first, then the page: the same order the providers
-                // editor uses, so the window exists before it is asked to route.
-                NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                NotificationCenter.default.post(name: .openHelpPage, object: nil)
+                // One post naming the destination: the window has to exist
+                // before it is asked to route, and a second notification would
+                // race its installation.
+                NotificationCenter.default.post(.showMainWindow(page: .help))
             }
             iconButton("arrow.uturn.backward", help: "还原官方配置", color: Theme.textSecondary) {
                 confirmRestore = true
@@ -148,7 +171,13 @@ struct MenuBarView: View {
                        help: "会话空闲时发送系统通知",
                        color: idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
                 AppPreferences.shared.idleNotifyEnabled.toggle()
-                panel.showFeedback(idleNotifyEnabled ? "已关闭空闲通知" : "已开启空闲通知")
+                // Read the preference, not `idleNotifyEnabled`: this
+                // `@State` mirror is written by an `.onReceive` on a
+                // `removeDuplicates` publisher, which coalesces the two writes
+                // made in one runloop turn, so inside the action that toggled
+                // it the mirror still holds the *previous* value and the toast
+                // announced the opposite of what had just happened.
+                panel.showFeedback(AppPreferences.shared.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")
             }
             iconButton(appearance == .dark ? "sun.max" : "moon",
                        help: appearance == .dark ? "切换浅色" : "切换深色",
@@ -176,8 +205,7 @@ struct MenuBarView: View {
     }
 
     private func openEditor() {
-        NotificationCenter.default.post(name: .showMainWindow, object: nil)
-        NotificationCenter.default.post(name: .openProvidersEditor, object: nil)
+        NotificationCenter.default.post(.showMainWindow(page: .providers, editor: true))
     }
 
     private func openSettingsFile() {

@@ -93,14 +93,28 @@ struct VpnNodePickerPanel: View {
                 // Neither set changes between two rows of the same render.
                 let livePath = Set(manager.livePath)
                 let testingNodes = manager.testingNodes
+                // `proxies` carries every node's delay, so the fallback is only
+                // for a name the controller has no row for — which is what
+                // `resolvedDelay` would answer too. Leaving it verbatim meant
+                // the *hoist* was defeated for exactly the rows it was written
+                // for, since `resolvedDelay` walks the whole selector chain per
+                // row.
+                // `[String: Int?]` would make every subscript a double
+                // optional; `compactMapValues` keeps the tested rows and lets
+                // an untested one read as "no measurement".
                 let delays = Dictionary(manager.proxies.map { ($0.name, $0.delay) },
                                         uniquingKeysWith: { first, _ in first })
+                    .compactMapValues { $0 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(group.nodes, id: \.self) { name in
+                        // Enumerated, not `id: \.self`: node names repeat inside
+                        // a real subscription's group, and duplicate identity
+                        // makes SwiftUI churn the whole list — the same fix
+                        // `VPNView` documents for its grid.
+                        ForEach(Array(group.nodes.enumerated()), id: \.offset) { _, name in
                             nodeRow(group: group.name, name: name,
                                     live: livePath.contains(name),
-                                    delay: delays[name] ?? manager.resolvedDelay(name),
+                                    delay: delays[name],
                                     testing: testingNodes.contains(name))
                         }
                     }
@@ -111,8 +125,7 @@ struct VpnNodePickerPanel: View {
             } else {
                 Button("打开 VPN 页") {
                     isPresented = false
-                    NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                    NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                    NotificationCenter.default.post(.showMainWindow(page: .vpn))
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.Ink.claude)
@@ -186,6 +199,15 @@ struct VpnNodePickerPanel: View {
             prefs.vpnEnabled = true
             prefs.vpnSystemProxyEnabled = true
             manager.syncRuntime()
+            // The VPN page does this in the same place (`syncSystemProxy`), and
+            // it is not redundant with the apply that `waitUntilReady` performs
+            // once the core answers: the reason to re-apply *here* is the
+            // crash-orphan case. A force-quit inside `clearSystemProxyAsync`'s
+            // window leaves macOS still pointing at a mixed port nothing owns,
+            // and `syncRuntime` → `startCore` only spawns a process — it cannot
+            // repair a stale system-proxy entry that was never cleared.
+            VpnSystemProxyController.applySystemProxy(port: prefs.vpnMixedPort)
+            if prefs.vpnGuardEnabled { VpnProxyGuard.shared.start() }
         }
     }
 }

@@ -7,7 +7,7 @@
 1. `Preset.swift` 的 `EnvConfig` 加属性 + `CodingKeys` + 两个 `init`。
 2. `SettingsManager.swift` 的 `readSettings` 加读取、`writeSettings` 加 `preserve` 行。
 3. `ProviderStore.buildEnv` 赋值。
-4. 若需 UI 编辑，`ProviderEditorModel` 的 `EditableModel` + `ProviderEditorView` 详情表单加字段。
+4. 若需 UI 编辑，加在用户真正会打开的编辑器上：`ProviderConnectionModel`（`Views/Shared/ProviderConnectionEditor.swift`）+ `ProviderConnectionDraft` 的读写、`ProvidersView.connectionDraft` / `saveConnection` 的往返。注意 `ProviderEditorModel` / `ProviderEditorView` 这一套**当前没有挂载点**（见 [17](17-ui-audit-backlog.md)），改它不会出现在界面上。
 
 ## 新增一个 Provider 级余额源
 1. `BalanceFetcher` 加分支或新建 fetcher。

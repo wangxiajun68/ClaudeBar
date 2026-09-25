@@ -106,8 +106,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func showMainWindow() {
-        mainWindowController?.showWindow()
+    @objc private func showMainWindow(_ note: Notification) {
+        // Cross-surface entries name their destination on the same notification
+        // (`userInfo["page"]`, optionally `userInfo["editor"]`) instead of
+        // posting a second one: a fresh window's SwiftUI graph subscribes to
+        // `NotificationCenter` only on its first display pass, ~50 ms after the
+        // window is ordered front, so a trailing page post raced that
+        // subscription and the window opened on whatever page it last
+        // remembered. See `Notification.showMainWindow(page:editor:)`.
+        guard let raw = note.userInfo?["page"] as? String,
+              let page = AppPage(rawValue: raw) else {
+            mainWindowController?.showWindow()
+            return
+        }
+        let editor = note.userInfo?["editor"] as? Bool ?? false
+        mainWindowController?.showWindow(on: editor ? .editor(page) : .page(page))
     }
 
     /// Handle widget tap → show the menu panel.

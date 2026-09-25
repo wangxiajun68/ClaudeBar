@@ -29,6 +29,21 @@ enum ProviderCardState: Equatable {
         case .active: return Theme.Ink.success
         }
     }
+
+    /// `color` as a **surface** hue, for a card's accent wash and its corner
+    /// rings. `color` is mixed for glyphs and pills (it clears 4.5:1 on the ice
+    /// canvas); a wash needs the raw signal instead, or the state reads as a
+    /// grey card with a coloured badge — which is what the directory looked
+    /// like before: state was said in three places and only the badge carried
+    /// it. The two are deliberately separate values, not one colour used twice.
+    var faceColor: Color {
+        switch self {
+        case .unconfigured: return Theme.statusIdle
+        case .incomplete: return Theme.chartAmber
+        case .ready: return Theme.chartBlue
+        case .active: return Theme.chartGreen
+        }
+    }
     var icon: String {
         switch self {
         case .unconfigured: return "circle.dashed"

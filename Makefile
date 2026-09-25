@@ -31,3 +31,7 @@ test:
 	python3 Tests/menubar-strip-regressions.py
 	python3 Tests/charge-limit-regressions.py
 	python3 Tests/model-cost-regressions.py
+	python3 Tests/proxy-usage-regressions.py
+	python3 Tests/codex-session-regressions.py
+	python3 Tests/inflight-animation-regressions.py
+	python3 Tests/machine-mark-regressions.py

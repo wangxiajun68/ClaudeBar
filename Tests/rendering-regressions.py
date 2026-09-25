@@ -84,13 +84,17 @@ final class FixtureWindow: NSWindow {
         let window = FixtureWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
                                    styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let preview = CGContext(data: nil, width: 720, height: 144, bitsPerComponent: 8,
+        let preview = CGContext(data: nil, width: 1152, height: 144, bitsPerComponent: 8,
                                 bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         preview.setFillColor(NSColor.black.cgColor)
-        preview.fill(CGRect(x: 0, y: 0, width: 720, height: 144))
-        for (index, kind) in [DecorativeMotion.Kind.sparkles, .sweep, .orbit, .pulse, .scan].enumerated() {
-            let view = MotionLayerView(frame: NSRect(x: 0, y: 0, width: 44, height: 44))
+        preview.fill(CGRect(x: 0, y: 0, width: 1152, height: 144))
+        for (index, kind) in [DecorativeMotion.Kind.sparkles, .sweep, .orbit, .pulse, .scan, .conveyor].enumerated() {
+            // The belt is a *strip*, not a box: it only means anything at a
+            // width several tick pitches across, and a 44pt frame would crop it
+            // to two ticks and still pass every lifecycle assertion below.
+            let width: CGFloat = kind == .sweep ? 80 : (kind == .scan ? 2 : (kind == .conveyor ? 120 : 44))
+            let view = MotionLayerView(frame: NSRect(x: 0, y: 0, width: width, height: 44))
             window.contentView = view
             view.apply(kind: kind, tint: .systemPurple, active: true)
             view.layoutSubtreeIfNeeded()
@@ -110,8 +114,24 @@ final class FixtureWindow: NSWindow {
             precondition(animationCount(view.layer!) > 0)
             preview.saveGState()
             preview.translateBy(x: CGFloat(index) * 144 + 50, y: 50)
-            view.frame = NSRect(x: 0, y: 0, width: kind == .sweep ? 80 : (kind == .scan ? 2 : 44), height: 44)
+            view.frame = NSRect(x: 0, y: 0, width: width, height: 44)
             view.layoutSubtreeIfNeeded()
+            if kind == .conveyor {
+                // The belt has one invariant the lifecycle checks above cannot
+                // see, and it is the one that was wrong: it must travel exactly
+                // one *tick group* per cycle, or the pattern does not meet
+                // itself at the loop point and the belt visibly hitches.
+                // (The first version drew the pattern across a layer twice as
+                // wide as `ticks` pitches while travelling one pitch, i.e. half
+                // a group per cycle — every assertion above still passed.)
+                let belt = view.layer!.sublayers![0] as! CAGradientLayer
+                let travel = belt.animation(forKey: "decoration") as! CABasicAnimation
+                let group = Double(belt.frame.width) / Double(belt.locations!.count - 1) * 4
+                precondition(abs((travel.toValue as! Double) - group) < 0.001,
+                             "The belt must travel one tick group per cycle")
+                precondition(belt.frame.minX <= 0 && belt.frame.maxX >= view.bounds.width,
+                             "The belt must span the strip across its whole travel")
+            }
             view.layer!.render(in: preview)
             preview.restoreGState()
             view.removeFromSuperview()
@@ -142,7 +162,7 @@ final class FixtureWindow: NSWindow {
         fixture.clearConversation()
         try? await Task.sleep(for: .milliseconds(100))
         precondition(fixture.displayBlocks.isEmpty, "A departed page must reject its pending result")
-        print("PASS: scoped/coalesced subscriptions; 5 native effects × 1000 stable updates; hide/detach stops animations; 10000-turn filtering and stale-result rejection (\(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - started))s including waits)")
+        print("PASS: scoped/coalesced subscriptions; 7 native effects × 1000 stable updates; hide/detach stops animations; 10000-turn filtering and stale-result rejection (\(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - started))s including waits)")
     }
 }
 '''

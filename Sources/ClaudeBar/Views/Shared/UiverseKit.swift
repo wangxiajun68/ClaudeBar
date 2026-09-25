@@ -109,10 +109,14 @@ struct SparkleCta: View {
 
 /// Press collapses the hover scale back to 1, matching `:active { scale(1) }`.
 private struct SparklePressStyle: ButtonStyle {
+    /// The CTA's own press feedback. Gated like every other press style in the
+    /// app — the sparkle CTA is the largest moving control on the VPN page.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
