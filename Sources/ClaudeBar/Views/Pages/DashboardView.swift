@@ -39,9 +39,9 @@ struct DashboardView: View {
     private var titleBar: some View {
         PageHeaderCard(tint: Theme.Ink.claude, faceTint: Theme.claude,
                        orbit: totalSessionCount > 0
-                           ? Double(runningCount) / Double(totalSessionCount) : nil) {
+                           ? Double(runningCount) / Double(totalSessionCount) : nil) { engaged in
             HStack(spacing: Theme.Space.s12) {
-                PageTitle(title: "概览")
+                PageTitle(title: "概览", engaged: engaged)
                 Spacer(minLength: Theme.Space.s12)
                 HStack(spacing: Theme.Space.s14) {
                     figure("运行中", runningCount, Theme.statusSuccess, Theme.Ink.success)
