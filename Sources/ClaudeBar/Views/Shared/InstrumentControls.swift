@@ -127,6 +127,10 @@ struct InstrumentToggleStyle: ToggleStyle {
     var tint: Color = Theme.Ink.claude
     /// The track's own hue when on — the raw shape hue, since it is a fill.
     var faceTint: Color? = nil
+    /// Whether the label beside the track is drawn. The tile call sites name the
+    /// control in the tile itself and pass `false`; a call site that prints its
+    /// own words beside the switch passes `true` (the default).
+    var showsLabel: Bool = true
 
     /// The switch stands alone. Call sites in this app already print the
     /// control's own name in the tile they sit in (`SettingTile`), so a label
@@ -138,7 +142,8 @@ struct InstrumentToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         let face = faceTint ?? tint
         return InstrumentToggleTrack(isOn: configuration.isOn, face: face, tint: tint,
-                                     label: configuration.label) {
+                                     hasLabel: showsLabel,
+                                     label: { configuration.label }) {
             configuration.isOn.toggle()
         }
     }
@@ -150,7 +155,8 @@ private struct InstrumentToggleTrack<Label: View>: View {
     var isOn: Bool
     var face: Color
     var tint: Color
-    var label: Label
+    var hasLabel: Bool
+    @ViewBuilder var label: () -> Label
     var action: () -> Void
 
     @State private var hovered = false
@@ -161,13 +167,26 @@ private struct InstrumentToggleTrack<Label: View>: View {
     private let inset: CGFloat = 3
     private var travel: CGFloat { width - height }
 
+    /// Label then track, **hugging** — deliberately no spacer between them.
+    ///
+    /// The stock SwiftUI toggle behaves this way, and the call sites depend on
+    /// it: several are already inside an `HStack` that puts its own `Spacer()`
+    /// before the toggle so the control lands on the row's trailing edge. A
+    /// spacer inside the style as well would pin the *switch* to the far right
+    /// while leaving its label behind at the left, splitting the two halves of
+    /// one control. So the pair stays together and the row decides where the
+    /// pair goes.
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
-            label
-                .font(Theme.Font.chrome)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .onTapGesture(perform: action)
+            // A bare switch takes no label column *and* no stack spacing, so it
+            // sits centred in a tile cell rather than 8pt off it.
+            if hasLabel {
+                label()
+                    .font(Theme.Font.chrome)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .onTapGesture(perform: action)
+            }
             Button(action: action) {
                 ZStack(alignment: .leading) {
                     track

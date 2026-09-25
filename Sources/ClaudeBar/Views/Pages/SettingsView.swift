@@ -43,8 +43,7 @@ struct SettingsView: View {
                             // read back after that is the system's, not the
                             // one that was asked for.
                             set: { on in launchAtLogin.setEnabled(on) }))
-                        .toggleStyle(.instrument)
-                        .tint(Theme.claude)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     if launchAtLogin.needsApproval {
                         SettingTile(icon: "hand.raised", title: "等待系统允许",
@@ -131,28 +130,24 @@ struct SettingsView: View {
                     SettingTile(icon: "capsule", title: "刘海灵动岛",
                                 caption: "鼠标移到刘海展开：运行中的会话、当前路由与近 30 天用量；无刘海的屏幕在菜单栏中央显示。") {
                         Toggle("", isOn: $prefs.notchIslandEnabled)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "waveform", title: "两翼",
                                 caption: "收起时在刘海两侧显示运行中的会话与今日用量，会遮住紧贴刘海的菜单栏图标。") {
                         Toggle("", isOn: $prefs.notchIslandShowsWings)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                     SettingTile(icon: "checkmark.bubble", title: "完成提醒",
                                 caption: "会话结束时从刘海弹出提醒，可一键回到该会话；悬停暂停，6 秒后自动收起。不需要通知权限。") {
                         Toggle("", isOn: $prefs.notchIslandAlertsEnabled)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                     SettingTile(icon: "arrow.up.left.and.arrow.down.right", title: "全屏应用中显示",
                                 caption: "关闭时，全屏应用所在的空间不显示灵动岛。") {
                         Toggle("", isOn: $prefs.notchIslandInFullScreen)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                 }
@@ -163,8 +158,7 @@ struct SettingsView: View {
                                 ? "流量与用量写入 SQLite。关闭后改用 JSON，互不迁移。"
                                 : "已关闭。重新开启不会自动导入。") {
                         Toggle("", isOn: $prefs.databaseEnabled)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "folder", title: "日志目录",
                                 caption: "~/Library/Application Support/ClaudeBar/logs") {
@@ -185,15 +179,13 @@ struct SettingsView: View {
                                 codexStore.reactivateActive()
                                 providerStore.reactivateActive()
                             }))
-                        .toggleStyle(.instrument)
-                        .tint(Theme.codex)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.codex, faceTint: Theme.codex, showsLabel: false))
                     }
                     SettingTile(icon: "waveform", title: "记录第三方流量",
                                 caption: "非 CC / Codex 客户端经本地代理的请求写入「流量」页。",
                                 tint: Theme.codex) {
                         Toggle("", isOn: $prefs.proxyThirdPartyTrafficEnabled)
-                            .toggleStyle(.instrument)
-                            .tint(Theme.codex)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.codex, faceTint: Theme.codex, showsLabel: false))
                     }
                     SettingTile(icon: "number", title: "端口",
                                 caption: proxyStatusCaption,
@@ -287,8 +279,7 @@ struct SettingsView: View {
                                     VpnSystemProxyController.clearSystemProxyAsync()
                                 }
                             }))
-                        .toggleStyle(.instrument)
-                        .tint(Theme.claude)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
                                 caption: "订阅、节点、系统代理与 TUN。") {
