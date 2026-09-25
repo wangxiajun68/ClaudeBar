@@ -930,6 +930,18 @@ private struct ConnectorUtilityButtonModifier: ViewModifier {
                     .strokeBorder(hovered ? Theme.textPrimary : (accented ? Theme.claude.opacity(0.25) : Theme.hairline))
                     .allowsHitTesting(false)
             }
+            // The same one-shot perimeter the header's controls wear. Without
+            // it the page had two capsule button languages: the header's lit
+            // ring and the card's plain edge. The inverted fill stays — it is
+            // this control's own gesture and the reason it reads as the card's
+            // primary action.
+            .overlay {
+                if accented, !reduceMotion {
+                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.8),
+                                   lineWidth: 1.3)
+                        .padding(0.5)
+                }
+            }
             .hoverState($hovered)
             .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
     }
