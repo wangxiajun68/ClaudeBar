@@ -162,6 +162,10 @@ struct ConnectorsView: View {
             counts: Dictionary(uniqueKeysWithValues: ConnectorPlatform.allCases.map { item in
                 (item, manager.count(kind: kind(of: focus), platform: item))
             }),
+            kindCounts: Dictionary(uniqueKeysWithValues: ConnectorFocus.allCases.map { item in
+                (item, item == .local ? manager.localCLIs.count : manager.count(kind: kind(of: item)))
+            }),
+            localCount: manager.localCLIs.count,
             total: manager.records.count,
             currentCount: kindCount(focus),
             loading: manager.isLoading,
@@ -272,11 +276,10 @@ struct ConnectorsView: View {
 
     private var emptyState: some View {
         VStack(spacing: Theme.Space.s12) {
-            Image(systemName: focus.symbol)
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(Theme.Ink.claude)
-                .frame(width: 52, height: 52)
-                .background(Theme.claude.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.lg))
+            // The mark in the shared well rather than a bare SF Symbol on a
+            // hand-mixed rectangle — the empty state is a surface like any
+            // other, and its mark should be the same object as a card's.
+            GlyphWell(name: focus.symbol, tint: Theme.Ink.claude, size: 52, engaged: true)
             Text(search.isEmpty ? "这里还没有\(focus.title)" : "没有匹配的卡片")
                 .font(Theme.Font.chromeEmph)
             Text(!search.isEmpty || (focus != .local && platform != nil)
@@ -289,10 +292,10 @@ struct ConnectorsView: View {
                     search = ""
                     platform = nil
                 }
-                .buttonStyle(ConnectorHeaderButtonStyle())
+                .headerControl()
             } else if projectPath.isEmpty {
                 Button("选择项目", action: chooseProject)
-                    .buttonStyle(ConnectorHeaderButtonStyle())
+                    .headerControl()
             }
         }
         .frame(maxWidth: .infinity, minHeight: 220)
@@ -314,15 +317,44 @@ struct ConnectorsView: View {
         .tile(tint: Theme.claude)
     }
 
+    /// A notice band. It used to be a flat tinted rectangle with no edge
+    /// (`tint.opacity(0.07)` in a bare `RoundedRectangle`) — colour with nothing
+    /// machined about it, which read as unstyled next to the tile grid. It is
+    /// now the same surface family as everything else: a wash, the inner frame
+    /// ring, and the mark in a well, so a warning still looks like this app.
     private func messageBanner(_ message: String, symbol: String, tint: Color, onDismiss: @escaping () -> Void) -> some View {
         HStack(spacing: Theme.Space.s10) {
-            Image(systemName: symbol).foregroundStyle(tint)
-            Text(message).font(Theme.Font.caption).lineLimit(2)
-            Spacer()
-            Button("关闭", action: onDismiss).buttonStyle(.plain).font(Theme.Font.caption)
+            GlyphWell(name: symbol, tint: tint, size: 26)
+            Text(message)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: Theme.Space.s8)
+            Button("关闭", action: onDismiss)
+                .buttonStyle(.plain)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .contentShape(Rectangle())
         }
-        .padding(Theme.Space.s12)
-        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s10)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                    .fill(Theme.cardSurface)
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                    .fill(tint.opacity(Theme.isDark ? 0.16 : 0.09))
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .strokeBorder(tint.opacity(0.28), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            InnerFrameRing(inset: 2.5, radius: Theme.Radius.md,
+                           tint: tint.opacity(Theme.isDark ? 0.22 : 0.5))
+        }
         .padding(.horizontal, Theme.Space.s24)
         .padding(.bottom, Theme.Space.s8)
     }
@@ -352,6 +384,9 @@ private struct ConnectorInventoryHeader: View {
     let focus: ConnectorFocus
     let platform: ConnectorPlatform?
     let counts: [ConnectorPlatform: Int]
+    /// The three type totals the reading strip prints, keyed by focus kind.
+    let kindCounts: [ConnectorFocus: Int]
+    let localCount: Int
     let total: Int
     let currentCount: Int
     let loading: Bool
@@ -359,63 +394,116 @@ private struct ConnectorInventoryHeader: View {
     let onSelectPlatform: (ConnectorPlatform?) -> Void
     let onRefresh: () -> Void
     let onChooseProject: () -> Void
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s16) {
-            HStack(alignment: .top, spacing: Theme.Space.s12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("连接器")
-                        .font(.system(size: 22, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(loading ? "正在扫描本机与项目配置" :
-                            (focus == .local ? "本机已安装 \(currentCount) 个 CLI" : "共 \(total) 项能力 · 当前分类 \(currentCount) 项"))
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Spacer(minLength: Theme.Space.s8)
-                Button(action: onRefresh) {
-                    Label("刷新", systemImage: "arrow.clockwise")
-                }
-                .disabled(loading)
-                Button(action: onChooseProject) {
-                    Label(projectName ?? "选择项目", systemImage: "folder")
-                        .lineLimit(1)
-                }
-            }
-            .font(Theme.Font.caption)
-            .buttonStyle(ConnectorHeaderButtonStyle())
+    @State private var hovered = false
 
-            if focus != .local {
-                // The platform row is the same segmented capsule as the type
-                // filter below it, with one difference: each item keeps its own
-                // hue, because Claude / Codex / Cursor are identities rather
-                // than entries in one list. Four equal-width bordered cards
-                // (the previous shape) drew a second card grid inside the
-                // header card and made the selection read as "which one is
-                // filled" instead of "where am I".
-                SegmentedCapsule(items: platformItems,
-                                 selection: platform,
-                                 title: { $0?.title ?? "全部" },
-                                 symbol: { item in
-                                     item.map(platformSymbol) ?? "square.grid.2x2"
-                                 },
-                                 count: { item in
-                                     item.map { counts[$0] ?? 0 } ?? currentCount
-                                 },
-                                 tint: Theme.Ink.claude,
-                                 itemTint: { item in
-                                     item.map(platformTint) ?? Theme.Ink.claude
-                                 },
-                                 fillsWidth: true,
-                                 onSelect: onSelectPlatform)
-                    .frame(maxWidth: .infinity)
+    var body: some View {
+        PageHeaderCard(tint: Theme.Ink.claude,
+                       faceTint: Theme.claude,
+                       orbit: orbitReading) {
+            VStack(alignment: .leading, spacing: Theme.Space.s14) {
+                HStack(alignment: .top, spacing: Theme.Space.s12) {
+                    GlyphWell(name: "puzzlepiece.extension",
+                              tint: Theme.Ink.claude, size: 38, engaged: hovered)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("连接器")
+                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(subtitle)
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer(minLength: Theme.Space.s8)
+                    // The header's own buttons are the readout's controls, so
+                    // they take the published instrument button — a capsule
+                    // well with a lit perimeter that travels once on hover.
+                    Button(action: onRefresh) {
+                        Label("刷新", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(loading)
+                    .headerControl()
+                    Button(action: onChooseProject) {
+                        Label(projectName ?? "选择项目", systemImage: "folder")
+                            .lineLimit(1)
+                    }
+                    .headerControl()
+                }
+
+                // The reading strip: the header answers "how much is here"
+                // before the grid does, so the three figures are drawn as one
+                // instrument rather than as three lines of grey text.
+                HStack(spacing: Theme.Space.s16) {
+                    readout("本机 CLI", count: localCount, tint: Theme.Ink.claude)
+                    VerticalHairline().frame(height: 26)
+                    readout("插件", count: kindCounts[.plugin] ?? 0, tint: Theme.Ink.claude)
+                    readout("Skills", count: kindCounts[.skill] ?? 0, tint: Theme.Ink.cursor)
+                    readout("MCP", count: kindCounts[.mcp] ?? 0, tint: Theme.Ink.success)
+                    Spacer(minLength: 0)
+                }
+
+                if focus != .local {
+                    // The platform row is the same segmented capsule as the type
+                    // filter below it, with one difference: each item keeps its own
+                    // hue, because Claude / Codex / Cursor are identities rather
+                    // than entries in one list. Four equal-width bordered cards
+                    // (the previous shape) drew a second card grid inside the
+                    // header card and made the selection read as "which one is
+                    // filled" instead of "where am I".
+                    SegmentedCapsule(items: platformItems,
+                                     selection: platform,
+                                     title: { $0?.title ?? "全部" },
+                                     symbol: { item in
+                                         item.map(platformSymbol) ?? "square.grid.2x2"
+                                     },
+                                     count: { item in
+                                         item.map { counts[$0] ?? 0 } ?? currentCount
+                                     },
+                                     tint: Theme.Ink.claude,
+                                     itemTint: { item in
+                                         item.map(platformTint) ?? Theme.Ink.claude
+                                     },
+                                     fillsWidth: true,
+                                     onSelect: onSelectPlatform)
+                        .frame(maxWidth: .infinity)
+                }
             }
         }
-        .padding(Theme.Space.s16)
-        .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
-                .strokeBorder(Theme.hairline, lineWidth: 1)
-                .allowsHitTesting(false)
+        .hoverState($hovered)
+    }
+
+    /// The header's arc: how much of the whole inventory the current filter
+    /// shows. A header that already states the total should draw where the
+    /// current view sits inside it — the weather card's orbit, used as a
+    /// reading. Hidden while scanning, when the figure is not a reading yet.
+    private var orbitReading: Double? {
+        guard !loading, total > 0 else { return nil }
+        if focus == .local {
+            return localCount > 0 ? 1 : 0
+        }
+        return Double(currentCount) / Double(total)
+    }
+
+    private var subtitle: String {
+        if loading { return "正在扫描本机与项目配置" }
+        if focus == .local { return "本机已安装 \(localCount) 个 CLI" }
+        return "共 \(total) 项能力 · 当前分类 \(currentCount) 项"
+    }
+
+    /// One figure in the header's reading strip: a number the header owns, with
+    /// its own caption. Ink for the digits (they are text), the tint only on the
+    /// rule above them.
+    private func readout(_ label: String, count: Int, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(count)")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textPrimary)
+                .contentTransition(.numericText())
+            HStack(spacing: 4) {
+                Rectangle().fill(tint.opacity(0.55)).frame(width: 8, height: 2)
+                Text(label)
+                    .font(Theme.Font.micro)
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
     }
 
@@ -442,20 +530,54 @@ private struct ConnectorInventoryHeader: View {
     }
 }
 
-private struct ConnectorHeaderButtonStyle: ButtonStyle {
-    /// Same gate as `PressableStyle` / `UiversePressStyle`: the fill change is
-    /// state, the scale is motion, and Reduce Motion turns the latter off.
+/// The header's own control: a capsule *milled into* the header card rather
+/// than a second white chip laid on it, plus the 3D button reference's
+/// **perimeter sweep** — a lit arc that travels the control's own edge once
+/// when the pointer arrives and then stops.
+///
+/// It used to be a flat grey capsule with a grey border and **no hover response
+/// at all** (`bgSecondary` fill, `Theme.hairline` stroke) — the single most
+/// generic object on a page whose complaint was that it read as plain. Two
+/// things fix it, both cheap:
+///
+/// 1. the well is the *recessed* fill (`Theme.fieldWell`) so the button reads as
+///    a control sitting in the band, not another card;
+/// 2. the accent rim and the one-shot sweep say "this is a target" before the
+///    click. The sweep is one trimmed shape and runs only on hover, never on a
+///    loop — a permanent rotating border is chrome that never stops meaning
+///    anything, and it is what the reference does that this deliberately does
+///    not.
+private struct HeaderControlModifier: ViewModifier {
+    @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+    func body(content: Content) -> some View {
+        content
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .foregroundStyle(Theme.textPrimary)
-            .background(configuration.isPressed ? Theme.bgOverlay : Theme.bgSecondary, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+            .background(Theme.fieldWell, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(hovered ? Theme.claude.opacity(0.45) : Theme.hairline,
+                                  lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                if !reduceMotion {
+                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.9), lineWidth: 1.4)
+                        .padding(0.5)
+                }
+            }
+            .overlay { GroundShadow(active: hovered).offset(y: 18).opacity(0.5) }
+            .contentShape(Capsule())
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(Theme.Motion.state, value: hovered)
     }
+}
+
+private extension View {
+    func headerControl() -> some View { modifier(HeaderControlModifier()) }
 }
 
 private enum ConnectorFocus: String, CaseIterable, Identifiable {
@@ -547,12 +669,13 @@ private struct ConnectorCard: View {
                         .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
                     HStack(spacing: 4) {
                         ForEach(record.platforms) { item in
-                            Text(item.title)
-                                .font(Theme.Font.microMedium)
-                                .foregroundStyle(platformTint(item))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(platformTint(item).opacity(0.10), in: Capsule())
+                            // The same pill every other readout in the app uses,
+                            // so a platform chip and a status chip are one
+                            // object. The wash takes the shape hue, the label
+                            // the ink variant.
+                            StatusPill(label: item.title,
+                                       tint: platformFaceTint(item),
+                                       ink: platformTint(item))
                         }
                         Text(record.scope)
                             .font(Theme.Font.micro)
@@ -663,6 +786,17 @@ private struct ConnectorCard: View {
         case .claude: return Theme.Ink.claude
         case .codex: return Theme.Ink.codex
         case .cursor: return Theme.Ink.cursor
+        }
+    }
+
+    /// The same platform hue as a **shape** — the `StatusPill` wash. The ink
+    /// mix lands near-navy behind a pill's own label, which is the mistake the
+    /// ink/shape pair exists to prevent.
+    private func platformFaceTint(_ item: ConnectorPlatform) -> Color {
+        switch item {
+        case .claude: return Theme.claude
+        case .codex: return Theme.codex
+        case .cursor: return Theme.cursor
         }
     }
 }
