@@ -37,7 +37,7 @@ struct ProviderEditorView: View {
             HStack(spacing: 0) {
                 if !singleProvider {
                     sidebar
-                    HairlineDivider()
+                    VerticalHairline()
                 }
                 if model.selected != nil {
                     detailPane
@@ -232,7 +232,7 @@ struct ProviderEditorView: View {
             HStack(alignment: .top, spacing: 0) {
                 modelList
                     .frame(height: 220)
-                HairlineDivider()
+                VerticalHairline()
                 modelDetail
             }
         }
