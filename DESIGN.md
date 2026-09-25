@@ -3,6 +3,11 @@
 CatStatus-class **status sheet**: ice canvas in light, graphite in dark. White
 (or raised dark) cards, SF Rounded metrics. Color lives in charts and status.
 
+Scope: this document describes the **app target** (`Sources/ClaudeBar`). The
+WidgetKit extension (`Sources/Widget`) is compiled separately from only three
+files and cannot reach `Theme` or any shared primitive, so it keeps its own
+drawing; it is not a consumer of this language and is not covered by it.
+
 ## Canvas
 
 - Light: ice `#EEF3F8`, white cards. Dark: `#16181C` canvas, `#252A31` cards.
