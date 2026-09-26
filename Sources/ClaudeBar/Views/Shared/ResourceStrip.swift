@@ -288,7 +288,7 @@ struct ResourceStrip: View {
                         CapacityHardwareMark(disk: false, load: load,
                                              bytes: sampler.host.memoryTotal, tint: tint,
                                              wells: sampler.host.memoryWells,
-                                             wellCaptions: sampler.host.memoryWellCaptions)
+                                             markHeight: 80)
                     case .cpu:
                         // Twelve cores, twelve cells — each lit by that core's
                         // own busy fraction. Empty until the sampler's second
@@ -302,7 +302,7 @@ struct ResourceStrip: View {
                         CapacityHardwareMark(disk: true, load: load,
                                              bytes: sampler.host.diskTotal, tint: tint,
                                              wells: sampler.host.diskWells,
-                                             wellCaptions: sampler.host.diskWellCaptions)
+                                             markHeight: 80)
                     }
                 }
                 // The tile's mark slot: the mini charts are ornaments sized to
