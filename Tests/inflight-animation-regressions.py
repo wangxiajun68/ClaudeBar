@@ -50,6 +50,17 @@ GUARDED = [
     # the app and this test would still pass.
     ('Sources/ClaudeBar/Views/Shared/Interaction.swift', 'struct RollingNumberModifier: ViewModifier'),
     ('Sources/ClaudeBar/Views/Shared/SectionHeader.swift', 'private var trailingView: some View'),
+    # Two more leaves that carried the identical modifier on a per-poll value
+    # and were cleared in the same sweep: the island's collapsed token total
+    # and the island usage card's hero. They are not the obvious hot leaves —
+    # that is exactly why they are pinned here.
+    #
+    # `MetricTile` in `Tile.swift` had the same modifier and lost it in the
+    # same pass, but it is *not* listed: its view also animates hover/press
+    # state, which this guard cannot tell apart from a per-poll value, and the
+    # view has no caller left (docs/technical/17-ui-audit-backlog.md §10).
+    ('Sources/ClaudeBar/Views/Island/NotchIslandView.swift', 'private var wings: some View'),
+    ('Sources/ClaudeBar/Views/Island/IslandComponents.swift', 'private var hero: some View'),
 ]
 
 failures = []
@@ -105,6 +116,26 @@ def top_level_characters(text: str) -> str:
     return ''.join(out)
 
 
+def tile_calls(code: str) -> list[str]:
+    """Every `.tile(...)` call's argument list, paren-balanced.
+
+    A `[^)]*` scan stops inside the nested `DepthLensSpec(...)`, so it would
+    miss a flag that comes after it — which is where `lift: false` sits.
+    """
+    found = []
+    for match in re.finditer(r'\.tile\(', code):
+        index = match.end()
+        depth = 1
+        while index < len(code) and depth:
+            if code[index] == '(':
+                depth += 1
+            elif code[index] == ')':
+                depth -= 1
+            index += 1
+        found.append(code[match.end():index - 1])
+    return found
+
+
 def value_keyed_animations(code: str) -> list[str]:
     """Every `.animation(...)` call whose argument list carries a `value:` label.
 
@@ -149,6 +180,42 @@ for path, signature in GUARDED:
             f'Drop it and let `.contentTransition(.numericText())` animate the '
             f'digits.')
 
+# --- The page band must not lift -------------------------------------------
+#
+# `TileSurface`'s 2pt hover rise moves the card's own frame, and the hover
+# region moves with it: a pointer parked within 2pt of the card's bottom edge
+# is carried out of the card by the rise, re-enters as it drops back, and
+# oscillates once per pointer update — which reads as the header shaking. Two
+# structural properties keep that from coming back:
+#
+#   1. the hit shape is pinned *before* the offset, so the pointer region never
+#      travels with the rise — this is what makes any lifting card safe;
+#   2. the page band opts out (`lift: false`), because it is full-width with its
+#      controls in the lower half and one-per-page, so the rise buys nothing and
+#      only widens the strip that can oscillate.
+tile_source = (root / 'Sources/ClaudeBar/Views/Shared/Tile.swift').read_text()
+tile_surface = without_comments(body_of(tile_source, 'struct TileSurface<Content: View>: View'))
+shape = tile_surface.find('.contentShape(')
+offset = tile_surface.find('.offset(y: lift')
+if shape < 0:
+    failures.append(
+        'Tile.swift: TileSurface has no pinned `.contentShape` — the hit shape '
+        'must be fixed before the hover lift, or the pointer region rides the '
+        'card out of itself and back.')
+elif offset >= 0 and shape > offset:
+    failures.append(
+        'Tile.swift: TileSurface pins `.contentShape` *after* the hover lift; '
+        'it must be applied to the unlifted frame.')
+
+band_source = (root / 'Sources/ClaudeBar/Views/Shared/UiverseSurfaces.swift').read_text()
+band = without_comments(body_of(band_source, 'struct PageHeaderCard<Content: View>: View'))
+if not any(re.search(r'lift:\s*false', call) for call in tile_calls(band)):
+    failures.append(
+        'UiverseSurfaces.swift: PageHeaderCard no longer passes `lift: false`. '
+        'A full-width band that rises on hover carries a pointer parked on its '
+        'bottom edge out of its own hover region and back, which reads as the '
+        'header shaking.')
+
 if failures:
     for failure in failures:
         print(f'FAIL: {failure}', file=sys.stderr)
@@ -156,4 +223,4 @@ if failures:
 
 print('PASS: no implicit value-keyed animation on the per-poll digit '
       'components (RollingNumberText, RollingNumberModifier, '
-      'SectionHeader.trailingView)')
+      'SectionHeader.trailingView, Island wings / usage hero)')

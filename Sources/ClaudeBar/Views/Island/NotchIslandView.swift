@@ -223,7 +223,12 @@ struct NotchIslandView: View {
                 .minimumScaleFactor(0.6)
                 .frame(width: IslandStyle.wingWidth - 8, alignment: .trailing)
                 .padding(.trailing, 8)
-                .animation(.snappy, value: model.usage.today)
+                // No implicit `.animation(value: model.usage.today)` here: the
+                // figure is one of the sampler's 1 Hz outputs, so the modifier
+                // opened a fresh animated transaction on every tick and an
+                // in-flight transaction makes the display cycle re-lay out the
+                // whole hosting view. `.numericText` inside `RollingNumberText`
+                // *is* the roll; see the note in `Interaction.swift`.
                 .id(tokenStyle)
         }
         .padding(.horizontal, IslandStyle.topFlare)

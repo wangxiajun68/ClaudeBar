@@ -64,8 +64,17 @@ card in one grid is the same object as a card in another:
    glyph, because a card's mark belongs in its header where it stays legible and
    keeps its own accessible name.
 4. **Edge + lift** — a hairline that lights up to the accent on hover, and a 2pt
-   lift. Both are hover *state*, never a loop. A corner already occupied by
-   content (a session tile's agent cluster) takes the hue and skips the lens.
+   lift. Both are hover *state*, never a loop. The lift moves the card's own
+   frame, so the hit shape is pinned to the **unlifted** geometry (`.contentShape`
+   before the `.offset`) — otherwise a pointer parked on the card's bottom edge
+   is carried out of the card by the rise and back, once per frame. A full-width
+   **page band** opts out of the lift entirely (`PageHeaderCard` → `lift: false`):
+   its controls sit in the lower half and there is one band per page, so the rise
+   buys nothing and only widens the strip that can oscillate. The same band also
+   skips the lens: a ring stack cropped into a one-control-tall strip reads as a
+   broken circle and runs through the buttons. A corner already occupied by
+   content (a session tile's agent cluster, a provider directory card) takes the
+   hue and skips the lens.
 
 `.tile()` is the grid-cell form and `.panelCard()` the page-level one; both
 draw the same four parts. `.hoverTile()` is `.tile()` for a call site that has
@@ -110,9 +119,12 @@ ornament is one shape rather than a stack of views.
 | `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
 | `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 16 toggles in the app. |
 | `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
+| `headerControl()` | `metanef` switch track | **the page band's own control** — a capsule milled into the band (`Theme.fieldWell`) with a lit rim and the one-shot `PerimeterSweep` on hover. Shared by 连接器 and 模型 so two bands read as the same object. Needs `.buttonStyle(.plain)`: the default bezel draws a second grey rect inside the well. |
+| `adaptiveGlassButton()` / `InstrumentButtonStyle` | `ultimate-3d-btn` | **the one push button.** Quiet is the recessed well; prominent fills with the shape hue, a lit top edge, and a 2pt press down. Both run `PerimeterSweep` once on hover. The name is historical — it is no longer Liquid Glass or a bordered system button. `InstrumentMenuLabel` is the same well for a menu (settings 打开方式, proxy upstream). |
+| `ProviderActionStyle` | `ultimate-3d-btn` | the provider editor's button: same press-down and one-shot perimeter, radius 10 so it sits in a form. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
-| `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the **one** bar-chart card: vertical bars keeping the reference's own two-stop gradient, its top cap dot and its average guide line. `UsageDaySpark` is the seven-bucket period chart; `SourceTriad` is the three-meter share card; `TokenMixStrip` is the stacked token-mix track. One bar shape across all three, so the usage page reads as one card family rather than three charts that happen to be adjacent. |
+| `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the usage page's three cards, one shape family. `UsageDaySpark` is the **rhythm** chart: one column per bucket at the grain of the selected range (日 → that week by day, 月 → each calendar day, 年 → twelve months, 全部 → months, or years past a two-year span), keeping the reference's two-stop gradient, its top cap dot on the peak and its dashed average guide. `SourceTriad` is the **share** track — one full-width segmented bar where a segment's width *is* its share of the period, with the absolute count on a row beneath (free-floating meters let a 99/1 split and a 50/50 split draw the same picture). `TokenMixStrip` is the stacked input/hit/write/output track. All three spring once when the range changes and stay put when a total ticks inside it. |
 | `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
 
 Two reference elements are deliberately **not** translated, and the reason is

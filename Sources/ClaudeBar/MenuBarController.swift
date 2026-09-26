@@ -529,12 +529,40 @@ private final class VpnMenuBarRateView: NSView {
     static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
     static let rateWidth: CGFloat = ceil(("99.9M" as NSString).size(withAttributes: [.font: rateFont]).width) + 1
 
-    /// One cell: a battery tall enough to hold its state mark, then the
-    /// percentage. Charging, direct power and drain are drawn inside the
+    /// One cell: a battery capsule tall enough to hold its state mark, then
+    /// the percentage. Charging, direct power and drain are drawn inside the
     /// gauge, so there is no second line of status text.
+    ///
+    /// **No terminal nub.** The positive post was the one part of this cell
+    /// that carried no reading — the level is the liquid, the state is the
+    /// mark, the number is beside it — and it was the part that made the
+    /// silhouette lopsided: 2.4pt of ink bolted to the right edge pushed the
+    /// shape's optical centre off its geometric one, so the capsule looked
+    /// off-centre inside a cell it in fact filled.
+    ///
+    /// **The proportion is the reading, not a decoration.** A capsule *is* its
+    /// ratio: at 1 ∶ 1 it is a dot, past ~2.2 ∶ 1 it is a bar, and a battery
+    /// glyph has to sit between those to read as a cell. This one is
+    /// **φ² ∶ 1 ≈ 1.618 ∶ 1** — 34 × 21 — the golden rectangle itself, so the
+    /// width is a *function* of the height and the two can never disagree.
+    /// That is what the previous proportions got wrong: 23.4×13.4 was 1.75 ∶ 1
+    /// (the ratio of a business card, arbitrary next to an 11pt rounded
+    /// reading), and the first pass after dropping the nub overshot to 45×18,
+    /// i.e. 2.5 ∶ 1, which is a *bar* — three and a half millimetres of empty
+    /// ellipse either side of a short liquid column. A cell that is most empty
+    /// space reads as a container with nothing in it, which is the opposite of
+    /// what a gauge is for.
+    ///
+    /// At this ratio the corner arcs take exactly a quarter of the width each,
+    /// so the liquid gets the middle half: real travel for the surface, a
+    /// silhouette that is unmistakably a cell, and 11pt less strip than the
+    /// overshoot. When the liquid is full the whole capsule is ink and the
+    /// same 1.618 : 1 is what makes a *solid* rectangle look intentional.
     static let batteryGap: CGFloat = 8
-    static let batteryGlyphWidth: CGFloat = 28
-    static let batteryGlyphHeight: CGFloat = 15
+    static let batteryGlyphHeight: CGFloat = 21
+    /// The golden rectangle: `φ² · height`. See the note above — a ratio, so it
+    /// is written as one instead of as a measured length.
+    static let batteryGlyphWidth: CGFloat = 21 * 1.618
     static let batteryTextGap: CGFloat = 4
     static let batteryTextWidth: CGFloat = 36
 
@@ -627,6 +655,11 @@ private final class VpnMenuBarRateView: NSView {
     /// Room for the battery cell. Hidden entirely on a Mac without one, so a
     /// desktop never pays for the width — `stripWidth(battery:)` is what the
     /// controller asks for.
+    ///
+    /// The cell is one *object* — gauge plus reading — so its width is derived
+    /// from the gauge instead of restating a glyph slot that has to be kept in
+    /// step with it by hand: `batteryGlyphWidth` is the capsule's two numbers,
+    /// and this only adds the divider lead-in and the gap before the digits.
     static var batteryWidth: CGFloat {
         batteryGap + batteryGlyphWidth + batteryTextGap + batteryTextWidth
     }
@@ -771,8 +804,12 @@ private final class VpnMenuBarRateView: NSView {
         guard batteryInstalled else { return }
         let bx = nx + Self.rateWidth + Self.batteryGap
         batteryDivider.frame = NSRect(x: bx - 5, y: 3, width: 1, height: h - 6)
-        batteryIcon.frame = NSRect(x: bx, y: (h - Self.batteryGlyphHeight) / 2,
-                                   width: Self.batteryGlyphWidth, height: Self.batteryGlyphHeight)
+        // Width comes off the glyph's own constants (see `batteryGlyphWidth`),
+        // height off the strip's declared height: the gauge is a capsule, so
+        // its height and its width are the same kind of decision and must not
+        // drift apart in two places.
+        batteryIcon.frame = NSRect(x: bx, y: 0,
+                                   width: Self.batteryGlyphWidth, height: h)
         let tx = bx + Self.batteryGlyphWidth + Self.batteryTextGap
         batteryLabel.frame = NSRect(x: tx, y: (h - 14) / 2, width: Self.batteryTextWidth, height: 14)
         batteryDetail.frame = .zero
@@ -802,8 +839,16 @@ private final class VpnMenuBarRateView: NSView {
     }
 }
 
-/// A quiet battery silhouette. Charging combines a green liquid surface with
-/// a small unboxed state glyph. Only the small glyph repaints while charging.
+/// A battery capsule — the whole cell, and **not** a cell with a post on it.
+/// The liquid's surface ripples, and a bright band travels through it: toward
+/// the high end while charging, out of the cell while discharging. Holding
+/// (plugged, idle) stays still.
+///
+/// With no terminal nub there is no "positive end" for the ink to lean on, so
+/// direction is carried by the *travel* of the two layers and by the state mark
+/// alone (see `drawSheen`, `drawState`). That is the reading the nub only
+/// pretended to give: a 2.4pt stub on a 24pt mark said "battery" to someone
+/// who already knew, and said "clipped" to everyone else.
 private final class BatteryMenuBarGlyph: NSView {
     enum Mark { case none, bolt, plug, drain }
 
@@ -819,6 +864,16 @@ private final class BatteryMenuBarGlyph: NSView {
     private var waveTimer: Timer?
     private var phase: CGFloat = 0
 
+    /// Crests move toward the terminal (right) when charging, and out of the
+    /// cell when the battery is supplying power. Holding has no travel.
+    private var flowsTowardTerminal: Bool? {
+        switch mark {
+        case .bolt: return true
+        case .drain, .none: return false
+        case .plug: return nil
+        }
+    }
+
     override var isHidden: Bool {
         didSet { updateWaveTimer() }
     }
@@ -829,7 +884,7 @@ private final class BatteryMenuBarGlyph: NSView {
     }
 
     private func updateWaveTimer() {
-        guard mark == .bolt, window != nil, !isHiddenOrHasHiddenAncestor,
+        guard flowsTowardTerminal != nil, window != nil, !isHiddenOrHasHiddenAncestor,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             waveTimer?.invalidate()
             waveTimer = nil
@@ -839,12 +894,13 @@ private final class BatteryMenuBarGlyph: NSView {
         let timer = Timer(timeInterval: 1.0 / 12.0, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             guard self.window != nil, !self.isHiddenOrHasHiddenAncestor,
+                  self.flowsTowardTerminal != nil,
                   !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
                 timer.invalidate()
                 self.waveTimer = nil
                 return
             }
-            self.phase += 0.16
+            self.phase += 0.34
             if self.phase > .pi * 2 { self.phase -= .pi * 2 }
             self.needsDisplay = true
         }
@@ -856,40 +912,83 @@ private final class BatteryMenuBarGlyph: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let nubWidth: CGFloat = 2.2
-        let body = NSRect(x: 0.6, y: 0.7,
-                          width: max(8, bounds.width - nubWidth - 2.4),
-                          height: max(6, bounds.height - 1.4))
-        let outline = NSColor.white.withAlphaComponent(0.82)
-        let shell = NSBezierPath(roundedRect: body, xRadius: 3, yRadius: 3)
+        // A capsule, not a rounded rectangle: the height *is* the radius, and
+        // it fills the slot `layout()` handed over — declared width and painted
+        // width are the same rectangle (see the geometry note in
+        // `VpnMenuBarRateView`). The 0.5pt inset on each edge is the hairline's
+        // own breathing room, not a second, smaller capsule.
+        let outlineInset: CGFloat = 0.5
+        let body = bounds.insetBy(dx: outlineInset, dy: outlineInset)
+        let radius = body.height / 2
+        let outline = NSColor.white.withAlphaComponent(0.88)
+        let shell = NSBezierPath(roundedRect: body, xRadius: radius, yRadius: radius)
         outline.setStroke()
-        shell.lineWidth = 1.1
+        shell.lineWidth = 1.15
         shell.stroke()
-        outline.setFill()
-        NSBezierPath(roundedRect: NSRect(x: body.maxX + 1, y: body.midY - 2,
-                                        width: nubWidth, height: 4),
-                     xRadius: 0.8, yRadius: 0.8).fill()
 
-        let inner = body.insetBy(dx: 1.8, dy: 1.8)
+        // The liquid is inset by the wall thickness plus the stroke's half, so
+        // the fill only ever meets the wall — it never eats the outline.
+        let inner = body.insetBy(dx: 1.7, dy: 1.7)
+        let innerRadius = inner.height / 2
         let fraction = CGFloat(min(100, max(0, level))) / 100
-        if mark == .bolt {
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(roundedRect: inner, xRadius: 1.4, yRadius: 1.4).addClip()
-            // Leave a thin air gap at full charge so the wave stays legible.
-            // The adjacent percentage remains the exact capacity reading.
-            let surface = inner.minY + 0.8 + (inner.height - 1.8) * fraction
-            drawWave(in: inner, surface: surface + 0.6, phase: phase + 1.4,
-                     color: NSColor(srgbRed: 0.30, green: 0.88, blue: 0.59, alpha: 0.35))
-            drawWave(in: inner, surface: surface, phase: phase,
-                     color: NSColor(srgbRed: 0.34, green: 0.91, blue: 0.57, alpha: 1))
-            NSGraphicsContext.restoreGraphicsState()
-        } else if fraction > 0 {
-            let fill = NSRect(x: inner.minX, y: inner.minY,
-                              width: max(1, inner.width * fraction), height: inner.height)
-            fillColor.withAlphaComponent(0.92).setFill()
-            NSBezierPath(roundedRect: fill, xRadius: min(1.4, fill.width / 2), yRadius: 1.4).fill()
+        let liquid = liquidColor
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: inner, xRadius: innerRadius, yRadius: innerRadius).addClip()
+        if fraction > 0 {
+            // A hair of air at full charge keeps the surface visible. The
+            // percentage beside the glyph is the exact reading.
+            let surface = inner.minY + 0.7 + (inner.height - 1.6) * fraction
+            let flowing = flowsTowardTerminal != nil
+                && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let signed = phase * (flowsTowardTerminal == true ? -1 : 1)
+            if flowing {
+                drawWave(in: inner, surface: surface + 0.55, phase: signed + 1.6,
+                         amplitude: 0.7, color: liquid.withAlphaComponent(0.38))
+                drawWave(in: inner, surface: surface, phase: signed,
+                         amplitude: 0.85, color: liquid)
+                drawSheen(in: inner, surface: surface, phase: signed,
+                          towardTerminal: flowsTowardTerminal == true)
+            } else {
+                drawWave(in: inner, surface: surface, phase: 0, amplitude: 0, color: liquid)
+            }
         }
+        NSGraphicsContext.restoreGraphicsState()
         drawState(in: inner)
+    }
+
+    /// Charging is green. Drain keeps the level color (white, amber, or red)
+    /// so a low battery still reads as low while the sheen says which way.
+    private var liquidColor: NSColor {
+        switch mark {
+        case .bolt:
+            return NSColor(srgbRed: 0.34, green: 0.91, blue: 0.57, alpha: 1)
+        case .drain, .none, .plug:
+            return fillColor.withAlphaComponent(0.94)
+        }
+    }
+
+    /// A soft vertical band crossing the liquid. One pass is one `phase`
+    /// cycle; charging runs left → right, discharging runs right → left. With
+    /// no nub there is no drawn terminal to name, so the ends are just the ends
+    /// of the liquid. Clipped to the liquid so the highlight never floats in
+    /// the empty air.
+    private func drawSheen(in rect: NSRect, surface: CGFloat, phase: CGFloat, towardTerminal: Bool) {
+        let travel = self.phase / (.pi * 2)
+        let band: CGFloat = 6
+        let span = rect.width + band
+        let x = towardTerminal
+            ? rect.minX - band + span * travel
+            : rect.maxX - span * travel
+        NSGraphicsContext.saveGraphicsState()
+        wavePath(in: rect, surface: surface + 1.2, phase: phase, amplitude: 0.85).addClip()
+        let sheen = NSRect(x: x, y: rect.minY - 1, width: band,
+                           height: max(2, surface - rect.minY + 3))
+        NSGradient(colors: [
+            NSColor.white.withAlphaComponent(0),
+            NSColor.white.withAlphaComponent(0.75),
+            NSColor.white.withAlphaComponent(0)
+        ])?.draw(in: sheen, angle: 0)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func drawState(in rect: NSRect) {
@@ -940,17 +1039,23 @@ private final class BatteryMenuBarGlyph: NSView {
         if mark == .bolt { NSColor.white.setFill(); path.fill() }
     }
 
-    private func drawWave(in rect: NSRect, surface: CGFloat, phase: CGFloat, color: NSColor) {
+    private func drawWave(in rect: NSRect, surface: CGFloat, phase: CGFloat,
+                          amplitude: CGFloat, color: NSColor) {
+        color.setFill()
+        wavePath(in: rect, surface: surface, phase: phase, amplitude: amplitude).fill()
+    }
+
+    private func wavePath(in rect: NSRect, surface: CGFloat, phase: CGFloat,
+                          amplitude: CGFloat) -> NSBezierPath {
         let wave = NSBezierPath()
         wave.move(to: NSPoint(x: rect.minX, y: rect.minY))
         for step in 0...32 {
             let progress = CGFloat(step) / 32
-            let y = surface + sin(progress * .pi * 2 + phase) * 0.65
+            let y = surface + sin(progress * .pi * 2 + phase) * amplitude
             wave.line(to: NSPoint(x: rect.minX + rect.width * progress, y: y))
         }
         wave.line(to: NSPoint(x: rect.maxX, y: rect.minY))
         wave.close()
-        color.setFill()
-        wave.fill()
+        return wave
     }
 }

@@ -49,13 +49,14 @@ enum UsageSource: String, CaseIterable, Identifiable {
 
 /// Granularity for usage aggregation.
 enum UsagePeriod: String, CaseIterable, Identifiable {
-    case day, month, year, custom
+    case day, month, year, all, custom
     var id: String { rawValue }
     var label: String {
         switch self {
         case .day: return "日"
         case .month: return "月"
         case .year: return "年"
+        case .all: return "全部"
         case .custom: return "自定义"
         }
     }
@@ -64,6 +65,7 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
     var compactLabel: String {
         switch self {
         case .custom: return "自定"
+        case .all: return "全部"
         default: return label
         }
     }

@@ -20,7 +20,7 @@ struct UsageHeatmap: View {
         switch period {
         case .day, .custom: return compact ? 28 : 60
         case .month: return compact ? 56 : 132
-        case .year: return compact ? 56 : 108
+        case .year, .all: return compact ? 56 : 108
         }
     }
 
@@ -40,7 +40,7 @@ struct UsageHeatmap: View {
             switch period {
             case .day, .custom:
                 weekStrip(by: by, peak: peak)
-            case .month, .year:
+            case .month, .year, .all:
                 contributionGrid(by: by, peak: peak)
             }
         }
@@ -118,7 +118,7 @@ struct UsageHeatmap: View {
                 // a 365-cell grid just jumped the period to a day the user was
                 // aiming at only approximately. `onSelectMonth` had no caller at
                 // all before this.
-                if period == .year, let onSelectMonth {
+                if period == .year || period == .all, let onSelectMonth {
                     onSelectMonth(date)
                 } else {
                     onSelectDay?(date)
@@ -130,6 +130,16 @@ struct UsageHeatmap: View {
     private var gridInterval: DateInterval {
         switch period {
         case .year:
+            return cal.dateInterval(of: .year, for: reference)
+                ?? DateInterval(start: reference, duration: 365 * 86400)
+        case .all:
+            // The grid is the span that actually has rows, not the 2020 bound
+            // the query uses. Empty history falls back to the reference year.
+            if let first = days.map(\.day).min(),
+               let start = UsageStats.formatter("yyyy-MM-dd").date(from: first) {
+                let end = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+                return DateInterval(start: cal.startOfDay(for: start), end: end)
+            }
             return cal.dateInterval(of: .year, for: reference)
                 ?? DateInterval(start: reference, duration: 365 * 86400)
         default:
@@ -198,6 +208,7 @@ struct UsageHeatmap: View {
         case .day, .custom: return "本周用量，\(days.count) 天有数据"
         case .month: return "本月用量热力图，\(days.count) 天"
         case .year: return "本年用量热力图，\(days.count) 天"
+        case .all: return "全部用量热力图，\(days.count) 天"
         }
     }
 

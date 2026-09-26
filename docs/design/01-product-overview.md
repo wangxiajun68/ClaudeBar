@@ -41,7 +41,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 
 ### 3. 用量统计
 
-按日 / 月 / 年 / 自定义日期聚合各模型 token 消耗，主窗口「用量」页与桌面 Widget（`systemLarge`）共享同一份 App Group 快照；模型花费按内置刊例价估算，见 [技术文档 §15](../technical/15-model-cost.md)。
+按日 / 月 / 年 / 全部 / 自定义日期聚合各模型 token 消耗，主窗口「用量」页与桌面 Widget（`systemLarge`）共享同一份 App Group 快照；模型花费按内置刊例价估算，见 [技术文档 §15](../technical/15-model-cost.md)。
 
 ### 4. 连接器
 

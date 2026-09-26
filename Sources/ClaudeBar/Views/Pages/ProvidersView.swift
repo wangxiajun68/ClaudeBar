@@ -160,18 +160,30 @@ struct ProvidersView: View {
     /// well, the destination's own hue as a wash, and the frame ring the grid
     /// below carries.
     private var header: some View {
+        // The band's anatomy matches 连接器 and 概览: `PageTitle` + its subtitle
+        // on the leading side, the band's own control on the trailing side,
+        // both top-aligned.
+        //
+        // It used to stack the subtitle **above** the button in one trailing
+        // column, which made this the tallest band in the app (74pt against
+        // 68pt) and pushed the button's bottom edge down into the frame ring —
+        // the "错乱/重叠" this page showed. A subtitle belongs under its title,
+        // never stacked over a control that then has to fight it for the same
+        // corner.
         PageHeaderCard(tint: Theme.Ink.cursor, faceTint: Theme.cursor) { engaged in
-            HStack(spacing: Theme.Space.s12) {
-                PageTitle(title: "模型", engaged: engaged)
-                Spacer(minLength: Theme.Space.s12)
-                VStack(alignment: .trailing, spacing: 3) {
+            HStack(alignment: .top, spacing: Theme.Space.s12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    PageTitle(title: "模型", engaged: engaged)
                     Text("发现模型平台，为你的编程工具接入新能力。")
                         .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
-                    Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
-                        Label("自定义", systemImage: "plus")
-                    }.buttonStyle(ProviderActionStyle())
                 }
+                Spacer(minLength: Theme.Space.s12)
+                Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
+                    Label("自定义", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                .headerControl()
             }
         }
         .foregroundStyle(Theme.textPrimary)

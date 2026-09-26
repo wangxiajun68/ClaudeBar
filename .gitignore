@@ -13,6 +13,10 @@ build/
 *.swp
 *~
 
+# Python bytecode from `make test` (Tests/*.py)
+__pycache__/
+*.pyc
+
 # Xcode (not used, but ignore if opened)
 *.xcodeproj/
 *.xcworkspace/

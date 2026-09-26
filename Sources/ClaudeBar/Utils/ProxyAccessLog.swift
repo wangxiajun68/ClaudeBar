@@ -103,27 +103,30 @@ struct ProxyLogEntry: Identifiable, Equatable {
         return "\(time)  \(method.padding(toLength: 4, withPad: " ", startingAt: 0))  \(path)  \(src) \(kindPad)  \(modelBit)\(streamBit)  \(st)  \(dur)  \(size)\(err)"
     }
 
-    /// The token column for this line, as text: `Σ 8.9万 (in …/out …/hit …/write …)`,
-    /// or a bare `Σ …` while the call is still streaming and no usage event
-    /// has arrived. `""` — no column at all — when the call is over and the
-    /// upstream never reported usage. That is what the `—` of a checkless row
-    /// means; it is not a store of zeros.
+    /// Copy-all form of the token column. The on-screen column is
+    /// `LogTokenColumn`, which keeps each bucket in a fixed-width slot;
+    /// this string is the same buckets, in the same order, without the
+    /// parentheses the old line used.
     ///
-    /// `in` is fresh input: `TokenTotals` has already folded the cache hit out
-    /// of the upstream's prompt count, so `in + hit` is the prompt the model
-    /// actually saw.
+    /// `入` is fresh input: `TokenTotals` has already folded the cache hit
+    /// out of the upstream's prompt count, so `入 + 缓存` is the prompt the
+    /// model actually saw. `""` when the call is over and the upstream never
+    /// reported usage — that absence is not a row of zeros.
     var tokenField: String {
         if let totalTokens {
-            // Typed, because `UsageStats.formatTokens` is overloaded (the
-            // style-explicit variant) and a bare reference is ambiguous.
             let f: (Int) -> String = UsageStats.formatTokens
-            // The write bucket is omitted when the upstream never reported
-            // one, rather than printed as a zero: only Anthropic-shaped
-            // traffic has a number to put there.
-            let write = cacheWriteTokens.map { " / write \(f($0))" } ?? ""
-            return "  Σ \(f(totalTokens)) (in \(f(promptTokens ?? 0)) / out \(f(completionTokens ?? 0)) / hit \(f(cacheReadTokens ?? 0))\(write))"
+            var parts = [
+                f(totalTokens),
+                "入 \(f(promptTokens ?? 0))",
+                "出 \(f(completionTokens ?? 0))",
+                "缓存 \(f(cacheReadTokens ?? 0))",
+            ]
+            if let written = cacheWriteTokens {
+                parts.append("写入 \(f(written))")
+            }
+            return "  " + parts.joined(separator: "  ")
         }
-        return isPending ? "  Σ …" : ""
+        return isPending ? "  …" : ""
     }
 }
 

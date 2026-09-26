@@ -248,6 +248,7 @@ enum Theme {
             case popupProvider   // 2-col popup
             case popupUsage      // 2-col popup
             case pageSetting     // settings control tiles
+            case pageSettingDense // short settings tiles, more per row
         }
 
         static func columns(_ preset: Preset) -> [GridItem] {
@@ -260,6 +261,8 @@ enum Theme {
                 [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
             case .pageSetting:
                 [GridItem(.adaptive(minimum: 300), spacing: Space.gridGapPage, alignment: .top)]
+            case .pageSettingDense:
+                [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
             case .popupProvider, .popupUsage:
                 [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
                  GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
@@ -275,6 +278,7 @@ enum Theme {
             case .pageSession: return (nil, 280)
             case .pageUsage, .pageProvider: return (nil, 240)
             case .pageSetting: return (nil, 300)
+            case .pageSettingDense: return (nil, 240)
             case .popupProvider, .popupUsage: return (2, 0)
             case .popupSession: return (1, 0)
             }
@@ -538,6 +542,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(label)
+            .rollingNumber()
             .font(Theme.Font.pill)
             .foregroundColor(ink ?? tint)
             .padding(.horizontal, 7)

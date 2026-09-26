@@ -29,36 +29,28 @@ struct DashboardView: View {
 
     // MARK: Title
 
-    /// The page band: the mark, the machine's live session figures, and refresh.
-    ///
-    /// It was a bare `PageTitle` with a button beside it — the only page in the
-    /// app that opened without a band, so the dashboard's first row was a title
-    /// floating on the canvas while every other destination had a surface. The
-    /// figures it now carries are the ones this page is *about*: how many
-    /// sessions are alive and how many are working right now.
+    /// The page title, the live session figures, and refresh — on the canvas,
+    /// the same way 会话 and 用量 open. A card here had nothing to contain:
+    /// the figures already say how many sessions are working, and a corner
+    /// arc repeating that ratio had no reading of its own.
     private var titleBar: some View {
-        PageHeaderCard(tint: Theme.Ink.claude, faceTint: Theme.claude,
-                       orbit: totalSessionCount > 0
-                           ? Double(runningCount) / Double(totalSessionCount) : nil) { engaged in
-            HStack(spacing: Theme.Space.s12) {
-                PageTitle(title: "概览", engaged: engaged)
-                Spacer(minLength: Theme.Space.s12)
-                HStack(spacing: Theme.Space.s14) {
-                    figure("运行中", runningCount, Theme.statusSuccess, Theme.Ink.success)
-                    VerticalHairline().frame(height: 26)
-                    figure("会话", totalSessionCount, Theme.claude, Theme.Ink.claude)
-                }
-                Button(action: { providerStore.refresh() }) {
-                    HStack(spacing: 5) {
-                        InstrumentGlyph(kind: .refresh, tint: .white)
-                            .frame(width: 17, height: 17)
-                        Text("刷新")
-                    }
-                    .font(Theme.Font.bodySmall)
-                }
-                .adaptiveGlassButton()
-                .tint(Theme.claude)
+        HStack(spacing: Theme.Space.s12) {
+            PageTitle(title: "概览")
+            Spacer(minLength: Theme.Space.s12)
+            HStack(spacing: Theme.Space.s14) {
+                figure("运行中", runningCount, Theme.statusSuccess, Theme.Ink.success)
+                VerticalHairline().frame(height: 26)
+                figure("会话", totalSessionCount, Theme.claude, Theme.Ink.claude)
             }
+            Button(action: { providerStore.refresh() }) {
+                HStack(spacing: 5) {
+                    InstrumentGlyph(kind: .refresh, tint: .white)
+                        .frame(width: 17, height: 17)
+                    Text("刷新")
+                }
+                .font(Theme.Font.bodySmall)
+            }
+            .adaptiveGlassButton(prominent: true, tint: Theme.claude)
         }
     }
 
@@ -141,6 +133,7 @@ struct DashboardView: View {
                 if all.count > cap {
                     Button(action: { onNavigate(.sessions) }) {
                         Label("查看全部 \(all.count) 个会话", systemImage: "arrow.right")
+                            .rollingNumber()
                             .font(Theme.Font.bodySmall)
                     }
                     .buttonStyle(.plain)
@@ -324,6 +317,7 @@ private struct OverviewTile: View {
                         .truncationMode(.tail)
                     Spacer()
                     Text(row.updated)
+                        .rollingNumber()
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)

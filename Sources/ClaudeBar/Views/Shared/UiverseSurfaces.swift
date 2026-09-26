@@ -32,11 +32,14 @@ struct HoverTileModifier: ViewModifier {
     var dense: Bool
     var lens: DepthLensSpec?
     var framed: Bool
+    /// See `TileSurface.lift` — off for a full-width band, which is the case
+    /// where the 2pt rise can carry the pointer out of its own hover region.
+    var lift: Bool = true
     @State private var hovered = false
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, reduceMotion: reduceMotion) {
+                    framed: framed, lift: lift, reduceMotion: reduceMotion) {
             content
         }
         .hoverState($hovered)
@@ -47,8 +50,10 @@ struct HoverTileModifier: ViewModifier {
 
 extension View {
     func hoverTile(tint: Color? = nil, dense: Bool = false,
-                   lens: DepthLensSpec? = nil, framed: Bool = true) -> some View {
-        modifier(HoverTileModifier(tint: tint, dense: dense, lens: lens, framed: framed))
+                   lens: DepthLensSpec? = nil, framed: Bool = true,
+                   lift: Bool = true) -> some View {
+        modifier(HoverTileModifier(tint: tint, dense: dense, lens: lens,
+                                   framed: framed, lift: lift))
     }
 }
 
@@ -604,31 +609,35 @@ struct ConveyorBelt: View {
 /// reason the page read as plain while the cards *below* it were distinct.
 ///
 /// A header earns its place in the family the same way a card does, by carrying
-/// the same four parts:
+/// the parts that still read at this size:
 ///
-/// 1. an accent wash (the page's hue at ~6 %), so the header and the grid under
-///    it are the same object seen twice;
+/// 1. an accent wash (the page's hue at ~9 % light / 15 % dark), so the header
+///    and the grid under it are the same object seen twice;
 /// 2. the **inner frame ring** — the weather card's `::after`. The ring is white
 ///    and only visible *because* of the wash behind it, which is why the two
 ///    always travel together and why a wash-less white rect could never show it;
-/// 3. a **depth lens** off the trailing corner, receding past the edge, so the
-///    header has a foreground and a background rather than a flat fill;
-/// 4. a hairline edge that lifts to the accent when the pointer is anywhere on
+/// 3. a hairline edge that lifts to the accent when the pointer is anywhere on
 ///    the band — a header is a surface you interact with (its buttons, its
 ///    filters), so it should answer a pointer like one.
 ///
-/// The optional `orbit` slot draws the weather card's sky path across the band
-/// with a body sitting at `orbitProgress`. It is a *reading*, not a loop: the
-/// header is usually the page's summary, so the arc shows how far through that
-/// summary's range the page currently is. Pass `nil` for no arc.
+/// The corner lens and the orbit gauge are **not** on this band. A 168pt stack
+/// of rings, or a half-circle gauge, cropped into a strip one control tall
+/// reads as a broken circle and runs through the buttons and the inventory
+/// bar. Grid cards still take a lens; meters still take `OrbitGauge`.
+///
+/// The band is drawn with `lift: false`: it takes the wash, the ring and the
+/// lit edge, but **not** the grid tile's 2pt hover rise. On a grid the
+/// rise is the affordance and the pointer is never parked on the 2pt strip it
+/// vacates; on a full-width band whose buttons and figures sit in its lower
+/// half it is easy to park there, and the lift then carries the pointer out of
+/// the band's own hover region and back — a per-frame shiver. One band per page
+/// also means the rise told the user nothing. See `TileSurface.lift`.
 struct PageHeaderCard<Content: View>: View {
     var tint: Color = Theme.Ink.claude
-    /// The hue for the wash, lens and hairline. Defaults to `tint` — pass a
+    /// The hue for the wash and hairline. Defaults to `tint` — pass a
     /// `Theme.Ink.*` value for text and the raw shape hue here together, so
     /// the band follows the same ink/shape rule as every card.
     var faceTint: Color? = nil
-    /// 0…1, drawn on the sky path when `orbit` is non-nil.
-    var orbit: Double? = nil
     /// The band's content, handed the band's own hover flag.
     ///
     /// It is passed in rather than tracked again by whatever the content
@@ -654,19 +663,8 @@ struct PageHeaderCard<Content: View>: View {
             // dark is the point where the ring reads without the band shouting
             // over the page.
             .tile(tint: face, hovered: hovered,
-                  lens: DepthLensSpec(tint: face, size: 168, rings: 3),
-                  wash: Theme.isDark ? 0.15 : 0.09)
-            .overlay(alignment: .trailing) {
-                if let orbit {
-                    OrbitGauge(progress: orbit, tint: face,
-                               trackTint: face.opacity(0.18),
-                               lineWidth: 3, bodySize: 7, sweep: 180, span: 180)
-                        .frame(width: 58, height: 58)
-                        .padding(.trailing, 13)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            }
+                  wash: Theme.isDark ? 0.15 : 0.09,
+                  lift: false)
             .hoverState($hovered)
     }
 }

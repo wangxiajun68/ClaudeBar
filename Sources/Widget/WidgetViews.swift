@@ -151,7 +151,7 @@ struct WidgetEntryView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatTokens(s.todayTotalTokens, style: s.unitStyle))
                         .font(.system(size: 28, weight: .semibold))
-                        .monospacedDigit()
+                        .widgetRollingNumber()
                         .foregroundColor(p.textPrimary)
                     // "今天" / "9月" / "2026年" — the total belongs to the
                     // period the user is browsing, which is not always today.
@@ -169,7 +169,7 @@ struct WidgetEntryView: View {
                     // `balanceText` already carries its currency symbol.
                     Text(bal)
                         .font(.system(size: 15, weight: .semibold))
-                        .monospacedDigit()
+                        .widgetRollingNumber()
                         .foregroundColor(p.accent)
                 }
             }
@@ -193,6 +193,7 @@ struct WidgetEntryView: View {
                 .lineLimit(1)
             Spacer()
             Text(relativeTime(s.updatedAt))
+                .widgetRollingNumber()
                 .font(.system(size: 9))
                 .foregroundColor(p.textTertiary)
         }
@@ -325,6 +326,7 @@ struct WidgetEntryView: View {
             Spacer()
             Text(detail)
                 .font(.system(size: 9))
+                .widgetRollingNumber()
                 .foregroundColor(p.textTertiary)
         }
         .padding(.horizontal, 16).padding(.top, topPadding).padding(.bottom, 4)
@@ -430,6 +432,7 @@ struct WidgetEntryView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(percentText)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .widgetRollingNumber()
                     .foregroundColor(ink)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -479,4 +482,21 @@ struct WidgetEntryView: View {
         if seconds < 86_400 { return "\(seconds / 3600) 小时前" }
         return "\(seconds / 86_400) 天前"
     }
+}
+
+/// The widget target cannot see `View.rollingNumber()` in the app. This is the
+/// same transition: `.numericText(countsDown: true)`, digits only, no implicit
+/// `.animation(value:)`.
+private struct WidgetRollingNumber: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .monospacedDigit()
+            .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+    }
+}
+
+private extension View {
+    func widgetRollingNumber() -> some View { modifier(WidgetRollingNumber()) }
 }

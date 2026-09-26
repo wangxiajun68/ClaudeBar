@@ -61,14 +61,13 @@ struct ProxyUpstreamPickers: View {
 
     private func followTile(title: String, value: String, tint: Color, empty: Bool) -> some View {
         SettingTile(icon: "arrow.triangle.branch", title: title,
-                    caption: "在「模型」页选择。本地代理开启后走各自供应商，互不影响。",
-                    tint: tint) {
+                    caption: "跟随「模型」页的当前供应商。",
+                    tint: tint, compact: true) {
             if empty {
                 Button("去添加") {
                     NotificationCenter.default.post(.showMainWindow(page: .providers, editor: true))
                 }
-                .adaptiveGlassButton()
-                .tint(tint)
+                .adaptiveGlassButton(tint: tint)
             } else {
                 // The value is a read-out, not a control: keep it in the tile's
                 // own type scale so it does not read as an editable field.
@@ -90,21 +89,23 @@ struct ProxyUpstreamPickers: View {
         providers: [ProxyVendorChoice],
         selection: Binding<UUID?>
     ) -> some View {
-        SettingTile(icon: "arrow.triangle.branch", title: title, caption: caption, tint: tint) {
+        SettingTile(icon: "arrow.triangle.branch", title: title, caption: caption, tint: tint, compact: true) {
             if providers.isEmpty {
                 Text("无供应商")
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textTertiary())
             } else {
-                Picker("", selection: selection) {
-                    Text(followLabel).tag(Optional<UUID>.none)
+                Menu {
+                    Button(followLabel) { selection.wrappedValue = nil }
                     ForEach(providers) { p in
-                        Text(p.menuLabel).tag(Optional(p.id))
+                        Button(p.menuLabel) { selection.wrappedValue = p.id }
                     }
+                } label: {
+                    let current = providers.first { $0.id == selection.wrappedValue }
+                    InstrumentMenuLabel(title: current?.name ?? followLabel, tint: tint)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .tint(tint)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
     }

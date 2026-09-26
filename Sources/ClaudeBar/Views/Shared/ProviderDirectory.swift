@@ -153,7 +153,7 @@ struct ProviderCatalogBrowser: View {
                             // opens with a glyph well and a count.
                             SectionHeader(icon: "bolt.fill", title: "当前激活",
                                           tint: Theme.statusSuccess, ink: Theme.Ink.success,
-                                          count: 1, emptyLabel: "无")
+                                          count: 1, emptyLabel: "无", countBesideTitle: true)
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                                 pinnedCard(pinned, layout: layout)
                             }
@@ -167,7 +167,8 @@ struct ProviderCatalogBrowser: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 SectionHeader(icon: group.symbol, title: group.rawValue,
                                               tint: Theme.Ink.claude,
-                                              count: items.count + ((group == .platform && showsOfficial && !pinned.official) ? 1 : 0))
+                                              count: items.count + ((group == .platform && showsOfficial && !pinned.official) ? 1 : 0),
+                                              countBesideTitle: true)
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                                     if group == .platform && showsOfficial && !pinned.official {
                                         OfficialProviderCard(client: client, isDefault: activeID == nil, onUse: onUseOfficial)
@@ -247,7 +248,8 @@ struct ProviderCatalogBrowser: View {
     private func customSection(_ customs: [Provider]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(icon: "square.and.pencil", title: "自定义供应商",
-                          tint: Theme.Ink.cursor, count: customs.count)
+                          tint: Theme.Ink.cursor, count: customs.count,
+                          countBesideTitle: true)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                 ForEach(customs) { provider in
                     CustomProviderDirectoryCard(provider: provider, active: provider.id == activeID,
@@ -330,16 +332,10 @@ private struct ProviderCardSurface<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) { content }
             .padding(18).frame(maxWidth: .infinity).frame(height: 216, alignment: .topLeading)
             // The directory's state hue (grey / amber / blue / green) is the
-            // card's accent, so the wash, the corner rings and the hover edge
-            // all move through the same four states as the status badge — the
-            // page used to say "state" in three unrelated places (a wash, an
-            // outline, a badge) and only the badge carried the colour.
-            //
-            // The rings carry no glyph: this card's subject is its brand mark,
-            // which lives at the *leading* edge, so a symbol in the corner would
-            // be a second, competing identity.
-            .tile(tint: state.faceColor, hovered: hovered,
-                  lens: DepthLensSpec(tint: state.faceColor, size: 150, rings: 3))
+            // card's accent, so the wash and the hover edge move with the
+            // status badge. No corner lens: a 150pt ring stack on a 216pt
+            // card covered the face and read as a second mark behind the name.
+            .tile(tint: state.faceColor, hovered: hovered)
             .overlay {
                 if selected {
                     RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
@@ -587,7 +583,11 @@ struct ProviderConnectionDetail: View {
                     .disabled(current || provider.authToken.isEmpty || provider.baseURL.isEmpty)
             }
             if !result.detail.isEmpty {
-                Text(result.detail).font(Theme.Font.caption)
+                // `detail` is a latency readout ("142ms · HTTP 200"), so it
+                // rolls with the rest of the app's figures.
+                Text(result.detail)
+                    .rollingNumber()
+                    .font(Theme.Font.caption)
                     .foregroundStyle(result.state == .failed ? Theme.Ink.error : Theme.textSecondary)
                     .textSelection(.enabled)
             }

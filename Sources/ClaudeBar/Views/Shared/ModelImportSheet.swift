@@ -91,11 +91,16 @@ struct ModelImportSheet: View {
                     .adaptiveGlassButton()
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("导入选中 (\(selection.count))") {
+                // The count is inside a button *title*, and `Button("…")` gives no
+                // way to reach the `Text` it builds. Spelling the label out is
+                // what lets the number roll like every other figure in the app
+                // (this one changes on every checkbox).
+                Button {
                     onImport(selection)
+                } label: {
+                    Text("导入选中 (\(selection.count))").rollingNumber()
                 }
-                .adaptiveGlassButton(prominent: true)
-                .tint(Theme.claude)
+                .adaptiveGlassButton(prominent: true, tint: Theme.claude)
                 .disabled(selection.isEmpty)
                 .keyboardShortcut(.defaultAction)
             }

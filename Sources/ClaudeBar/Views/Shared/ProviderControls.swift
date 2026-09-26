@@ -106,12 +106,20 @@ struct ProviderActionStyle: ButtonStyle {
                 }
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(tint.opacity(hovered ? 0.55 : 0.2)))
-                .shadow(color: tint.opacity(prominent && hovered ? 0.16 : 0), radius: 7, y: 3)
+                .overlay {
+                    if !reduceMotion {
+                        PerimeterSweep(active: hovered && enabled, tint: prominent ? .white : tint,
+                                       lineWidth: 1.3)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .allowsHitTesting(false)
+                    }
+                }
+                .shadow(color: .black.opacity(prominent && hovered ? 0.14 : 0), radius: 7, y: 3)
                 .opacity(enabled ? 1 : 0.4)
                 .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+                .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
                 .onHover { if hovered != $0 { hovered = $0 } }
-                .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.75), value: configuration.isPressed)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovered)
         }
     }

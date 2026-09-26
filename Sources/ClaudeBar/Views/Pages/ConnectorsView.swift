@@ -396,33 +396,40 @@ private struct ConnectorInventoryHeader: View {
 
     var body: some View {
         PageHeaderCard(tint: Theme.Ink.claude,
-                       faceTint: Theme.claude,
-                       orbit: orbitReading) { engaged in
+                       faceTint: Theme.claude) { engaged in
             VStack(alignment: .leading, spacing: Theme.Space.s14) {
+                // The band's leading half is the app's shared `PageTitle` +
+                // subtitle, not a hand-typed heading: this header used to draw
+                // its own `GlyphWell(size: 38)` beside a 22pt **semibold**
+                // label, while every other page's title is `PageTitle`'s
+                // 22pt **bold** beside a 34pt well. Two pages, two marks, two
+                // weights — the inconsistency this page's title showed next to
+                // 模型. `PageTitle` also owns the `PageIdentity` mark/hue for
+                // 连接器, so the well can no longer drift from its hue.
                 HStack(alignment: .top, spacing: Theme.Space.s12) {
-                    GlyphWell(name: "puzzlepiece.extension",
-                              tint: Theme.Ink.claude, size: 38, engaged: engaged)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("连接器")
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Theme.textPrimary)
+                        PageTitle(title: "连接器", engaged: engaged)
                         Text(subtitle)
                             .font(Theme.Font.caption)
                             .foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: Theme.Space.s8)
-                    // The header's own buttons are the readout's controls, so
-                    // they take the published instrument button — a capsule
-                    // well with a lit perimeter that travels once on hover.
+                    // The band's own controls take the shared page-band
+                    // button (`.headerControl()`, `InstrumentControls.swift`):
+                    // a capsule milled into the band with a lit perimeter that
+                    // travels once on hover. `.plain` first, because the default
+                    // bezel would draw a second grey rect inside that well.
                     Button(action: onRefresh) {
                         Label("刷新", systemImage: "arrow.clockwise")
                     }
+                    .buttonStyle(.plain)
                     .disabled(loading)
                     .headerControl()
                     Button(action: onChooseProject) {
                         Label(projectName ?? "选择项目", systemImage: "folder")
                             .lineLimit(1)
                     }
+                    .buttonStyle(.plain)
                     .headerControl()
                 }
 
@@ -462,18 +469,6 @@ private struct ConnectorInventoryHeader: View {
                 }
             }
         }
-    }
-
-    /// The header's arc: how much of the whole inventory the current filter
-    /// shows. A header that already states the total should draw where the
-    /// current view sits inside it — the weather card's orbit, used as a
-    /// reading. Hidden while scanning, when the figure is not a reading yet.
-    private var orbitReading: Double? {
-        guard !loading, total > 0 else { return nil }
-        if focus == .local {
-            return localCount > 0 ? 1 : 0
-        }
-        return Double(currentCount) / Double(total)
     }
 
     private var subtitle: String {
@@ -563,56 +558,6 @@ private struct ConnectorInventoryHeader: View {
         case .cursor: "cursorarrow.rays"
         }
     }
-}
-
-/// The header's own control: a capsule *milled into* the header card rather
-/// than a second white chip laid on it, plus the 3D button reference's
-/// **perimeter sweep** — a lit arc that travels the control's own edge once
-/// when the pointer arrives and then stops.
-///
-/// It used to be a flat grey capsule with a grey border and **no hover response
-/// at all** (`bgSecondary` fill, `Theme.hairline` stroke) — the single most
-/// generic object on a page whose complaint was that it read as plain. Two
-/// things fix it, both cheap:
-///
-/// 1. the well is the *recessed* fill (`Theme.fieldWell`) so the button reads as
-///    a control sitting in the band, not another card;
-/// 2. the accent rim and the one-shot sweep say "this is a target" before the
-///    click. The sweep is one trimmed shape and runs only on hover, never on a
-///    loop — a permanent rotating border is chrome that never stops meaning
-///    anything, and it is what the reference does that this deliberately does
-///    not.
-private struct HeaderControlModifier: ViewModifier {
-    @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
-            .background(Theme.fieldWell, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(hovered ? Theme.claude.opacity(0.45) : Theme.hairline,
-                                  lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                if !reduceMotion {
-                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.9), lineWidth: 1.4)
-                        .padding(0.5)
-                }
-            }
-            .overlay { GroundShadow(active: hovered).offset(y: 18).opacity(0.5) }
-            .contentShape(Capsule())
-            .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(Theme.Motion.state, value: hovered)
-    }
-}
-
-private extension View {
-    func headerControl() -> some View { modifier(HeaderControlModifier()) }
 }
 
 private enum ConnectorFocus: String, CaseIterable, Identifiable {

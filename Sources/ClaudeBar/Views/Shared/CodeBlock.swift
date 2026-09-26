@@ -51,8 +51,7 @@ struct CodeBlock: View {
     private var copyButton: some View {
         Button(copied ? "已复制" : "复制") { copy() }
             .font(Theme.Font.caption)
-            .adaptiveGlassButton()
-            .tint(Theme.Ink.codex)
+            .adaptiveGlassButton(tint: Theme.codex, ink: Theme.Ink.codex)
             .fixedSize()
             .help("复制命令")
             .accessibilityLabel(copied ? "已复制" : "复制命令")

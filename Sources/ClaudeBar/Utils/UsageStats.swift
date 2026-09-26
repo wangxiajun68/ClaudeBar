@@ -15,6 +15,12 @@ struct UsageStats {
             return cal.dateInterval(of: .month, for: reference) ?? DateInterval(start: reference, duration: 86400)
         case .year:
             return cal.dateInterval(of: .year, for: reference) ?? DateInterval(start: reference, duration: 86400)
+        case .all:
+            // The rollup is keyed by day, so a wide bound is a range scan, not
+            // a walk of empty years. 2020 is before this app's transcripts.
+            let end = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+            let start = cal.date(from: DateComponents(year: 2020, month: 1, day: 1)) ?? Date(timeIntervalSince1970: 0)
+            return DateInterval(start: start, end: end)
         }
     }
 
@@ -45,6 +51,7 @@ struct UsageStats {
         case .day, .custom: format = "yyyy年M月d日"
         case .month: format = "yyyy年M月"
         case .year: format = "yyyy年"
+        case .all: return "全部记录"
         }
         return formatter(format).string(from: reference)
     }
@@ -63,6 +70,8 @@ struct UsageStats {
             return formatter("M月").string(from: reference)
         case .year:
             return formatter("yyyy年").string(from: reference)
+        case .all:
+            return "全部"
         }
     }
 
@@ -76,6 +85,8 @@ struct UsageStats {
             return cal.date(byAdding: .month, value: amount, to: reference) ?? reference
         case .year:
             return cal.date(byAdding: .year, value: amount, to: reference) ?? reference
+        case .all:
+            return reference
         }
     }
 

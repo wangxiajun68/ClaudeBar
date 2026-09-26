@@ -241,6 +241,7 @@ struct ResourceStrip: View {
                     // height. Wrapping is the honest trade; the hero above keeps
                     // its own single line.
                     Text(caption)
+                        .rollingNumber()
                         .font(Theme.Font.tileLabel)
                         .foregroundColor(tempColor ?? Theme.textTertiary())
                         .lineLimit(2)
@@ -257,26 +258,28 @@ struct ResourceStrip: View {
                         // is already the aggregate, and a mark that only repeats
                         // it is the decoration this whole strip exists to avoid.
                         HardwareSiliconMark(gpu: true, load: load, tint: tint,
-                                            cells: sampler.host.gpuRenderers.map { $0 / 100 })
+                                            cells: sampler.host.gpuRenderers.map { $0 / 100 },
+                                            markHeight: Self.hardwareMarkHeight)
                     case .memory:
                         CapacityHardwareMark(disk: false, load: load,
                                              bytes: sampler.host.memoryTotal, tint: tint,
                                              wells: sampler.host.memoryWells,
-                                             markHeight: 80)
+                                             markHeight: Self.capacityMarkHeight)
                     case .cpu:
                         // Twelve cores, twelve cells — each lit by that core's
                         // own busy fraction. Empty until the sampler's second
                         // tick establishes the baseline, and the mark falls back
                         // to a single lit die until then rather than inventing
                         // per-core numbers.
-                        HardwareSiliconMark(load: load, tint: tint, cells: sampler.host.coreLoad)
+                        HardwareSiliconMark(load: load, tint: tint, cells: sampler.host.coreLoad,
+                                            markHeight: Self.hardwareMarkHeight)
                     case .fans:
                         CompactFanPair(fans: fanMonitor.fans, onToggle: toggleFan)
                     case .disk:
                         CapacityHardwareMark(disk: true, load: load,
                                              bytes: sampler.host.diskTotal, tint: tint,
                                              wells: sampler.host.diskWells,
-                                             markHeight: 80)
+                                             markHeight: Self.capacityMarkHeight)
                     }
                 }
                 // The mark slot. This is the third size it has been, and each
@@ -353,6 +356,13 @@ struct ResourceStrip: View {
     /// four tiles cannot end up with four subtly different marks, and so the
     /// popovers that redraw the same mark at hero size can name the same number.
     static let markSlot = CGSize(width: 176, height: 130)
+
+    /// Illustration height inside `markSlot`. The slot and the card stay put;
+    /// the Lucide mark grows into the space the old 76pt drawing left empty.
+    /// A chip-name line (~14pt) still has to fit under the silicon mark, and
+    /// the capacity label under the DIMM / drive, so these stop short of 130.
+    static let hardwareMarkHeight: CGFloat = 108
+    static let capacityMarkHeight: CGFloat = 120
 
     private func toggleFan(_ fan: FanInfo) {
         if fan.mode.isAutomatic { fanMonitor.setMaxSpeed(fan.id) }
