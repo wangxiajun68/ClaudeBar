@@ -283,46 +283,59 @@ struct PerimeterSweep: View {
     /// How much of the perimeter the lit arc covers, in degrees.
     var span: Double = 130
 
-    /// Fraction of the perimeter the *head* of the arc sits at. Negative while
-    /// the sweep is parked, and the whole overlay is hidden then — a negative
-    /// `to:` on a trim does not render nothing, it renders a wrap-around arc,
-    /// which is how an earlier version leaked a stray circle outside its button.
-    @State private var phase: Double = 0
-    @State private var running = false
+    /// Reduce Motion drops the ornament outright. It is decoration on top of an
+    /// affordance that is already complete without it (the rim and the fill),
+    /// which is the test this file's rules set for what may be removed.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Fraction of the perimeter the *head* of the arc sits at.
+    ///
+    /// The overlay is hidden entirely when `phase` is nil, which is the whole
+    /// trick: a trim with a negative `to:` does **not** render nothing — it
+    /// renders a wrap-around arc, which is how an earlier version of this leaked
+    /// a stray circle outside the control it belonged to. So the parked state is
+    /// `nil`, never a negative number.
+    ///
+    /// One piece of state drives both the drawing and the visibility, and the
+    /// one-shot is a single `task(id:)`: an earlier version ran the fade on a
+    /// timer *and* the travel on a `withAnimation`, which are two clocks that
+    /// can disagree about when the sweep is over.
+    @State private var phase: Double?
+    /// How long the whole one-shot takes. The travel and the fade are the same
+    /// clock, so the arc cannot outlive its own visibility.
+    private let duration: Double = 0.85
 
     var body: some View {
         GeometryReader { geo in
             let radius = min(geo.size.width, geo.size.height) / 2
             let capsule = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            let head = phase ?? 0
             ZStack {
                 // The head: the bright leading third of the sweep.
                 capsule
-                    .trim(from: phase, to: phase + span / 360)
+                    .trim(from: head, to: head + span / 360)
                     .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 // The tail, so the arc reads as travelling rather than as a
                 // blob jumping around the edge.
                 capsule
-                    .trim(from: phase - span / 360 * 0.55, to: phase)
+                    .trim(from: head - span / 360 * 0.55, to: head)
                     .stroke(tint.opacity(0.30),
                             style: StrokeStyle(lineWidth: lineWidth * 0.6, lineCap: .round))
             }
-            .opacity(running ? 1 : 0)
+            .opacity(phase == nil ? 0 : 1)
         }
         .allowsHitTesting(false)
-        .onChange(of: active) { _, on in
-            guard on else { return }
-            // Start just off the leading edge and run past the end, so the arc
-            // enters and leaves rather than appearing in place. 0…1 covers the
-            // whole perimeter; the span overshoot parks it fully off.
-            phase = -span / 360
-            running = true
-            withAnimation(.easeInOut(duration: 0.85)) { phase = 1 }
-        }
-        .onChange(of: running) { _, _ in }
+        // `.task(id:)` is the one-shot: it starts the travel, waits exactly as
+        // long as the travel takes, then parks. A second hover while the first
+        // sweep is still running restarts it (the id changed), and Reduce Motion
+        // simply never starts — the control is complete without the ornament.
         .task(id: active) {
-            guard active else { running = false; return }
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            running = false
+            guard active, !reduceMotion else { phase = nil; return }
+            phase = -span / 360
+            withAnimation(.easeInOut(duration: duration)) { phase = 1.0 + span / 360 }
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            phase = nil
         }
     }
 }
