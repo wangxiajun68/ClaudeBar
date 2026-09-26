@@ -148,7 +148,11 @@ struct CommandPalette: View {
                 .accessibilityLabel("清除搜索")
             }
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .instrumentWell(radius: Theme.Radius.lg, focused: searchFocused,
+                        accent: Theme.Ink.claude, onCard: true)
+        .padding(10)
     }
 
     // MARK: Results

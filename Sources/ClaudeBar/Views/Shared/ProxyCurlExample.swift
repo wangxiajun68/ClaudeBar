@@ -10,8 +10,8 @@ struct ProxyCurlExample: View {
 
     var body: some View {
         SettingTile(icon: "terminal", title: "curl 示例",
-                    caption: "带本机令牌的请求示例；model 以客户端为准。",
-                    tint: Theme.codex) {
+                    caption: "带本机令牌的请求示例。",
+                    tint: Theme.codex, compact: true) {
             Button("查看") { showingExample = true }
                 .adaptiveGlassButton()
         }

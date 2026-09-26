@@ -33,6 +33,13 @@ struct SectionHeader: View {
     var noteTint: Color = Theme.textTertiary()
     /// Shown instead of a count when `count` is zero.
     var emptyLabel: String = "无"
+    /// Place the count immediately after the title.
+    ///
+    /// The default pins it to the trailing edge, which is right when the
+    /// section's grid fills the row. On a directory that often shows one card
+    /// and a wide empty field, that pin leaves the digit floating at the
+    /// window edge with no relation to its heading.
+    var countBesideTitle: Bool = false
 
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
@@ -42,6 +49,9 @@ struct SectionHeader: View {
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
                 .fixedSize()
+            if countBesideTitle {
+                trailingView
+            }
             Spacer(minLength: 0)
             if let note {
                 Text(note)
@@ -50,7 +60,9 @@ struct SectionHeader: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            trailingView
+            if !countBesideTitle {
+                trailingView
+            }
         }
     }
 

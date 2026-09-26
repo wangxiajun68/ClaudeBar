@@ -70,23 +70,19 @@ extension View {
     }
 }
 
-// MARK: - Adaptive glass buttons
+// MARK: - Action buttons
 
 extension View {
-    /// macOS 26+: native Liquid Glass. Earlier: bordered fallback with the same API surface.
-    @ViewBuilder
-    func adaptiveGlassButton(prominent: Bool = false) -> some View {
-        if #available(macOS 26.0, *) {
-            if prominent {
-                buttonStyle(.glassProminent)
-            } else {
-                buttonStyle(.glass)
-            }
-        } else if prominent {
-            buttonStyle(.borderedProminent)
-        } else {
-            buttonStyle(.bordered)
-        }
+    /// The app's push button. The name is historical: it used to be Liquid Glass
+    /// on macOS 26 and a bordered button before that, which is why a page of
+    /// machined tiles still had Aqua chrome in every action slot.
+    ///
+    /// `tint` is the shape hue (rim, and the fill when `prominent`). `ink` is
+    /// the quiet label color when the action is destructive or branded.
+    func adaptiveGlassButton(prominent: Bool = false,
+                             tint: Color = Theme.claude,
+                             ink: Color? = nil) -> some View {
+        buttonStyle(InstrumentButtonStyle(prominent: prominent, tint: tint, ink: ink))
     }
 }
 
@@ -311,12 +307,17 @@ struct RollingNumberText: View {
 /// `Text`-returning form (`Text(_:).rollingNumber()` still being a `Text`)
 /// would have forced every call site to reorder its modifiers.
 struct RollingNumberModifier: ViewModifier {
+    var enabled: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        content
-            .monospacedDigit()
-            .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+        if enabled {
+            content
+                .monospacedDigit()
+                .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+        } else {
+            content
+        }
     }
 }
 
@@ -329,9 +330,12 @@ extension View {
     /// Do **not** put it on a container: the roll belongs to the leaf that
     /// draws the digits, the same way the island's own figures are leaves.
     ///
+    /// Pass `false` when the same `Text` sometimes shows a figure and sometimes
+    /// a label (a JSON value that is a number only in one kind).
+    ///
     /// Reduce Motion turns the roll into an identity transition; the value
     /// still updates, it just stops sliding.
-    func rollingNumber() -> some View {
-        modifier(RollingNumberModifier())
+    func rollingNumber(_ enabled: Bool = true) -> some View {
+        modifier(RollingNumberModifier(enabled: enabled))
     }
 }

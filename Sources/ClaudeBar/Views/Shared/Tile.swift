@@ -28,12 +28,15 @@ struct TileModifier: ViewModifier {
     var lens: DepthLensSpec? = nil
     var framed: Bool = true
     var wash: Double? = nil
+    /// Whether the card rises 2pt under the pointer. See `TileSurface.lift`.
+    var lift: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, wash: wash, reduceMotion: reduceMotion) {
+                    framed: framed, wash: wash, lift: lift,
+                    reduceMotion: reduceMotion) {
             content
         }
     }
@@ -54,6 +57,19 @@ struct TileSurface<Content: View>: View {
     /// grid of small tiles; a page-scale band carries a heavier one so its
     /// white inner frame ring actually reads (`PageHeaderCard`).
     var wash: Double?
+    /// Whether the card rises 2pt under the pointer. **Off for a page band.**
+    ///
+    /// The lift moves the card's own frame, and the hover region travels with
+    /// it, so a pointer resting within 2pt of the card's bottom edge gets
+    /// carried out of the card by the lift, re-enters when it drops back, and
+    /// oscillates — a visible shiver at pointer-update frequency. On a grid
+    /// tile the pointer almost never sits on that 2pt strip, and "the card I am
+    /// about to click answers by lifting" is the affordance; on a *page band*,
+    /// which is full-width and whose buttons and figures sit in its lower half,
+    /// it is easy to hit and the lift means nothing (there is one band per page,
+    /// not a field of them to scan). `PageHeaderCard` passes `false`, so the
+    /// band answers the pointer with its edge and wash instead.
+    var lift: Bool
     var reduceMotion: Bool
     let content: Content
 
@@ -62,7 +78,7 @@ struct TileSurface<Content: View>: View {
     /// `content: { … }` instead of trailing-closure syntax.
     init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
          lens: DepthLensSpec? = nil, framed: Bool = true,
-         wash: Double? = nil, reduceMotion: Bool = false,
+         wash: Double? = nil, lift: Bool = true, reduceMotion: Bool = false,
          @ViewBuilder content: () -> Content) {
         self.tint = tint
         self.hovered = hovered
@@ -70,6 +86,7 @@ struct TileSurface<Content: View>: View {
         self.lens = lens
         self.framed = framed
         self.wash = wash
+        self.lift = lift
         self.reduceMotion = reduceMotion
         self.content = content()
     }
@@ -125,7 +142,13 @@ struct TileSurface<Content: View>: View {
                                    tint: tint == nil ? Theme.innerFrameMuted : Theme.innerFrame)
                 }
             }
-            .offset(y: hovered && !reduceMotion ? -2 : 0)
+            // The hit shape is pinned to the *unlifted* frame and applied
+            // before the lift, so the pointer region never travels with the
+            // 2pt rise. Without this, the region is whatever the offset leaves
+            // behind: a pointer on the card's bottom edge rides the card out of
+            // itself and back, once per frame.
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .offset(y: lift && hovered && !reduceMotion ? -2 : 0)
     }
 }
 
@@ -141,9 +164,9 @@ extension View {
     /// keep its own accessible name, so the lens is hue and depth only.
     func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
               lens: DepthLensSpec? = nil, framed: Bool = true,
-              wash: Double? = nil) -> some View {
+              wash: Double? = nil, lift: Bool = true) -> some View {
         modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
-                              lens: lens, framed: framed, wash: wash))
+                              lens: lens, framed: framed, wash: wash, lift: lift))
     }
 }
 
@@ -197,7 +220,9 @@ struct MetricTile: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .minimumScaleFactor(0.5)
-                        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: value)
+                    // No implicit `.animation(value: value)`: `value` is a live
+                    // readout, and a value-keyed transaction would stay in
+                    // flight on every poll. `.numericText` carries the roll.
             } else {
                 CodexQuotaGauges(windows: quotaWindows, compact: false)
             }
@@ -249,7 +274,7 @@ struct TileGrid<Content: View>: View {
         default: break
         }
         switch preset {
-        case .pageMetric, .pageSession, .pageUsage, .pageProvider, .pageSetting:
+        case .pageMetric, .pageSession, .pageUsage, .pageProvider, .pageSetting, .pageSettingDense:
             self.spacing = spacing ?? Theme.Space.gridGapPage
         case .popupSession, .popupProvider, .popupUsage:
             self.spacing = spacing ?? Theme.Space.gridGap

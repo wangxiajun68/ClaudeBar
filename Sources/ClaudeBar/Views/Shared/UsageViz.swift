@@ -1,49 +1,61 @@
 import SwiftUI
 
-/// Compact CC / Codex / 第三方 share — three vertical meters, not a VPN gauge.
+/// Where this period's tokens came from, as shares of one whole.
 ///
-/// Each meter is a single `LinearGradient` fill rather than a flat one: the
-/// reference bar card's bars are lit from the top, and at this height (6–52pt)
-/// a flat fill reads as a rectangle while a 20 % vertical falloff reads as a
-/// quantity. One fill either way — no extra layers, no extra cost.
+/// Three free-floating bars each had their own length, so a 99 / 1 split and a
+/// 50 / 50 split could look like the same kind of picture. One track is 100 %
+/// of the period: a segment's width *is* its share. The rows underneath name
+/// the absolute count, which the track cannot.
 struct SourceTriad: View {
     let totals: [(source: UsageSource, tokens: Int)]
+    /// The queried span. The track morphs when this changes (a new range) and
+    /// stays put when only the token totals tick inside the same span.
+    var spanKey: String = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Share of the period's *total*, not of the largest source.
-    ///
-    /// Normalising against the peak pinned the leading source to the full 52pt
-    /// in every period, so a 99 / 0.5 / 0.5 split and a 45 / 30 / 25 split drew
-    /// identical meters — the one comparison the triad exists to make. Scaling
-    /// by the sum keeps the height a fraction of the whole, and a period with a
-    /// single source still fills the meter.
     private var total: Int { max(totals.reduce(0) { $0 + $1.tokens }, 1) }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            ForEach(totals, id: \.source) { row in
-                let h = CGFloat(row.tokens) / CGFloat(total)
-                VStack(spacing: 4) {
-                    RollingNumberText(UsageStats.formatTokens(row.tokens))
-                        .font(Theme.Font.microMono)
-                        .monospacedDigit()
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(LinearGradient(colors: [row.source.color.opacity(row.tokens > 0 ? 1 : 0.28),
-                                                      row.source.color.opacity(row.tokens > 0 ? 0.62 : 0.14)],
-                                             startPoint: .top, endPoint: .bottom))
-                        .frame(height: max(6, 52 * h))
-                    Text(row.source.shortLabel)
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textSecondary)
-                        .lineLimit(1)
+        VStack(alignment: .leading, spacing: 12) {
+            GeometryReader { geo in
+                HStack(spacing: 3) {
+                    ForEach(totals, id: \.source) { row in
+                        let share = CGFloat(row.tokens) / CGFloat(total)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(LinearGradient(
+                                colors: [row.source.color.opacity(row.tokens > 0 ? 1 : 0.2),
+                                         row.source.color.opacity(row.tokens > 0 ? 0.55 : 0.1)],
+                                startPoint: .leading, endPoint: .trailing))
+                            .frame(width: row.tokens > 0
+                                   ? max(10, (geo.size.width - 6) * share) : 0)
+                    }
                 }
-                .frame(maxWidth: .infinity)
+            }
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.cardFill(0.06)))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            ForEach(totals, id: \.source) { row in
+                let share = Int((Double(row.tokens) / Double(total) * 100).rounded())
+                HStack(spacing: 8) {
+                    Circle().fill(row.source.color).frame(width: 7, height: 7)
+                    Text(row.source.label)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                    Text("\(share)%")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(row.source.ink)
+                    RollingNumberText(UsageStats.formatTokens(row.tokens))
+                        .font(.system(size: 12, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 64, alignment: .trailing)
+                }
             }
         }
-        .frame(height: 86)
-        .accessibilityLabel("来源用量")
+        .animation(reduceMotion ? nil : .spring(response: 0.48, dampingFraction: 0.84), value: spanKey)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(totals.map { "\($0.source.label) \(UsageStats.formatTokens($0.tokens))" }.joined(separator: "，"))
     }
 }
 
@@ -118,135 +130,198 @@ struct TokenMixStrip: View {
     }
 }
 
-/// Seven period buckets with an average guide and hoverable daily totals.
+/// When the tokens landed, at the grain of the selected range.
 ///
-/// The bars keep the reference chart's own two-stop gradient and its `top` cap
-/// dot, but the hover *scales* the bar rather than re-tinting it: a bar whose
-/// colour changes under the pointer reads as a different series, while a 7 %
-/// scale reads as "this is the one you are on" without touching the encoding.
+/// 日 is the week around that day, 月 is one column per calendar day, 年 is
+/// twelve months, 全部 is one column per month (or per year once the span is
+/// longer than two years). Empty columns stay, short, so a quiet week is
+/// visible as a gap and not dropped from the axis. The spring runs when that
+/// axis changes — a new range — and not when a token total ticks inside it.
 struct UsageDaySpark: View {
     let days: [DayUsage]
-    /// The period the page is on. The buckets describe *the period*, so the
-    /// span has to come from the calendar interval the data was queried with,
-    /// not from the data that came back — see `buckets`.
     let interval: DateInterval
-    @State private var hoveredBucket: Int?
+    var period: UsagePeriod = .month
+    @State private var hovered: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private struct Bucket: Identifiable {
+    private struct Column: Identifiable {
         let id: Int
         let label: String
-        let range: String
+        let showsLabel: Bool
+        let detail: String
         let tokens: Int
+        let peak: Bool
     }
 
-    /// Seven equal *calendar* spans of the period, labelled by the bucket's own
-    /// end date.
-    ///
-    /// This used to chunk the days that actually had data (`index *
-    /// ordered.count / count`), so the label was the last day present in each
-    /// chunk: a sparse month produced labels like "25 25 22 22 22 13 13", which
-    /// name a bucket by whatever happened to be in it rather than by the date
-    /// it covers. Splitting the calendar instead gives one label per span, and
-    /// empty spans read as zero bars — which is information, not noise.
-    ///
-    /// The span comes from `interval` rather than from `days.first`/`days.last`
-    /// for the reason above: a month whose only activity is today returns one
-    /// row, and deriving the span from the data collapsed all seven buckets
-    /// onto that single day — six zero bars and seven axis labels reading the
-    /// same date, under a header saying "2026年9月".
-    private var buckets: [Bucket] {
-        guard !days.isEmpty else { return [] }
+    private var columns: [Column] {
         let totals = Dictionary(days.map { ($0.day, $0.totalTokens) }, uniquingKeysWith: +)
         let cal = Calendar.current
-        // Buckets end on the period's last day, inclusive.
-        let end = cal.startOfDay(for: interval.end.addingTimeInterval(-1))
-        let start = cal.startOfDay(for: interval.start)
-        let spanDays = max(1, (cal.dateComponents([.day], from: start, to: end).day ?? 0) + 1)
-        let count = 7
-        let per = max(1, Int((Double(spanDays) / Double(count)).rounded(.up)))
-        return (0..<count).map { index in
-            let bucketEnd = cal.date(byAdding: .day, value: -(count - 1 - index) * per, to: end) ?? end
-            let bucketStart = cal.date(byAdding: .day, value: -(per - 1), to: bucketEnd) ?? bucketEnd
-            var tokens = 0
-            for offset in 0..<per {
-                if let day = cal.date(byAdding: .day, value: offset, to: bucketStart) {
-                    tokens += totals[Self.key(day)] ?? 0
-                }
+        switch period {
+        case .day, .custom:
+            let week = cal.dateInterval(of: .weekOfYear, for: interval.start) ?? interval
+            return (0..<7).map { offset in
+                let date = cal.date(byAdding: .day, value: offset, to: week.start) ?? week.start
+                let key = Self.key(date)
+                let weekday = cal.veryShortWeekdaySymbols[cal.component(.weekday, from: date) - 1]
+                return Column(id: offset, label: weekday, showsLabel: true,
+                              detail: UsageStats.formatter("M月d日").string(from: date),
+                              tokens: totals[key] ?? 0, peak: false)
             }
-            let first = Self.key(bucketStart), last = Self.key(bucketEnd)
-            return Bucket(id: index, label: String(last.suffix(2)),
-                          range: first == last ? first : "\(first) – \(last)",
-                          tokens: tokens)
+        case .month:
+            let start = cal.startOfDay(for: interval.start)
+            let end = cal.startOfDay(for: interval.end.addingTimeInterval(-1))
+            let count = max(1, (cal.dateComponents([.day], from: start, to: end).day ?? 0) + 1)
+            return (0..<count).map { offset in
+                let date = cal.date(byAdding: .day, value: offset, to: start) ?? start
+                let day = cal.component(.day, from: date)
+                return Column(id: offset, label: "\(day)",
+                              showsLabel: day == 1 || day == 10 || day == 20 || offset == count - 1,
+                              detail: UsageStats.formatter("M月d日").string(from: date),
+                              tokens: totals[Self.key(date)] ?? 0, peak: false)
+            }
+        case .year, .all:
+            return monthColumns(totals: totals, cal: cal)
         }
     }
 
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    private static func key(_ date: Date) -> String { dayFormatter.string(from: date) }
-
-    var body: some View {
-        let rows = buckets
-        let peak = max(rows.map(\.tokens).max() ?? 0, 1)
-        let average = rows.isEmpty ? 0 : rows.reduce(0) { $0 + $1.tokens } / rows.count
-        return GeometryReader { geometry in
-            let barHeight = max(geometry.size.height - 31, 1)
-            let guideY = barHeight * (1 - CGFloat(average) / CGFloat(peak))
-            ZStack(alignment: .topTrailing) {
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: guideY))
-                    path.addLine(to: CGPoint(x: geometry.size.width, y: guideY))
-                }
-                .stroke(Theme.textTertiary().opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .frame(height: barHeight)
-
-                HStack(alignment: .bottom, spacing: 9) {
-                    ForEach(rows) { row in
-                        VStack(spacing: 6) {
-                            Spacer(minLength: 0)
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(LinearGradient(colors: [Color(red: 1, green: 0.37, blue: 0.49),
-                                                              Color(red: 1, green: 0.62, blue: 0.66)],
-                                                     startPoint: .top, endPoint: .bottom))
-                                .frame(maxWidth: 30)
-                                .frame(height: max(6, barHeight * CGFloat(row.tokens) / CGFloat(peak)))
-                                .overlay(alignment: .top) {
-                                    Circle().fill(Theme.cardSurface)
-                                        .frame(width: 7, height: 7)
-                                        .overlay(Circle().strokeBorder(Color(red: 1, green: 0.37, blue: 0.49), lineWidth: 1.5))
-                                        .offset(y: -3)
-                                }
-                                .scaleEffect(hoveredBucket == row.id ? 1.07 : 1)
-                            Text(row.label)
-                                .font(Theme.Font.micro)
-                                .foregroundStyle(hoveredBucket == row.id ? Theme.textPrimary : Theme.textTertiary())
-                        }
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                        .onHover { hoveredBucket = $0 ? row.id : nil }
-                        .help("\(row.range)：\(UsageStats.formatTokens(row.tokens)) Token")
-                    }
-                }
-                Text("均值 \(UsageStats.formatTokens(average))")
-                    .rollingNumber()
-                    .font(Theme.Font.microSemibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Theme.textPrimary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    // `ZStack(alignment: .topTrailing)` puts the badge's top at
-                    // the guide's y only if the stack is the full height; the
-                    // guide is inside a `.frame(height: barHeight)`, which the
-                    // stack centres, so subtracting the badge height alone put
-                    // the badge ~15pt above its own dashed line.
-                    .offset(y: max(0, (geometry.size.height - barHeight) / 2 + guideY - 18))
+    private func monthColumns(totals: [String: Int], cal: Calendar) -> [Column] {
+        let startBound = period == .all
+            ? (days.compactMap { Self.parse($0.day) }.min() ?? interval.start)
+            : interval.start
+        let endBound = period == .all ? Date() : interval.end.addingTimeInterval(-1)
+        var cursor = cal.date(from: cal.dateComponents([.year, .month], from: startBound)) ?? startBound
+        let endMonth = cal.date(from: cal.dateComponents([.year, .month], from: endBound)) ?? endBound
+        var spans: [(date: Date, tokens: Int)] = []
+        while cursor <= endMonth && spans.count < 120 {
+            let prefix = Self.key(cursor).prefix(7)
+            let tokens = totals.reduce(0) { partial, pair in
+                pair.key.hasPrefix(prefix) ? partial + pair.value : partial
+            }
+            spans.append((cursor, tokens))
+            guard let next = cal.date(byAdding: .month, value: 1, to: cursor), next > cursor else { break }
+            cursor = next
+        }
+        let byYear = spans.count > 24
+        if byYear {
+            var years: [Int: Int] = [:]
+            for span in spans {
+                let year = cal.component(.year, from: span.date)
+                years[year, default: 0] += span.tokens
+            }
+            return years.keys.sorted().enumerated().map { index, year in
+                Column(id: index, label: "\(year % 100)", showsLabel: true,
+                       detail: "\(year)年", tokens: years[year] ?? 0, peak: false)
             }
         }
-        .frame(height: 108)
-        .accessibilityLabel("每日 Token 分布，平均 \(UsageStats.formatTokens(average))")
+        return spans.enumerated().map { index, span in
+            let month = cal.component(.month, from: span.date)
+            return Column(id: index, label: "\(month)",
+                          showsLabel: spans.count <= 12 || month == 1 || index == spans.count - 1,
+                          detail: UsageStats.formatter("yyyy年M月").string(from: span.date),
+                          tokens: span.tokens, peak: false)
+        }
+    }
+
+    private var marked: [Column] {
+        let rows = columns
+        let peak = rows.map(\.tokens).max() ?? 0
+        guard peak > 0 else { return rows }
+        return rows.map { row in
+            Column(id: row.id, label: row.label, showsLabel: row.showsLabel,
+                   detail: row.detail, tokens: row.tokens, peak: row.tokens == peak)
+        }
+    }
+
+    private var motionKey: String {
+        let rows = columns
+        return "\(period.rawValue)|\(rows.count)|\(rows.first?.detail ?? "")|\(rows.last?.detail ?? "")"
+    }
+
+    private static func key(_ date: Date) -> String { UsageHeatmap.dayKey(date) }
+
+    private static func parse(_ day: String) -> Date? {
+        UsageStats.formatter("yyyy-MM-dd").date(from: day)
+    }
+
+    /// What the axis is counting, written next to the title by the page.
+    var grainCaption: String {
+        switch period {
+        case .day, .custom: return "这一周，按日"
+        case .month: return "这个月，按日"
+        case .year: return "这一年，按月"
+        case .all: return columns.count <= 24 ? "全部，按月" : "全部，按年"
+        }
+    }
+
+    var body: some View {
+        let rows = marked
+        let peak = max(rows.map(\.tokens).max() ?? 0, 1)
+        let average = rows.isEmpty ? 0 : rows.reduce(0) { $0 + $1.tokens } / max(rows.count, 1)
+        let peakRow = rows.first { $0.peak }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(grainCaption)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if let peakRow, peakRow.tokens > 0 {
+                    Text("峰值 \(peakRow.detail) · \(UsageStats.formatTokens(peakRow.tokens))")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.Ink.cursor)
+                        .lineLimit(1)
+                }
+            }
+            GeometryReader { geometry in
+                let plot = max(geometry.size.height - 16, 1)
+                let guide = plot * (1 - CGFloat(average) / CGFloat(peak))
+                ZStack(alignment: .bottom) {
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: guide))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: guide))
+                    }
+                    .stroke(Theme.textTertiary().opacity(0.45),
+                            style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .frame(height: plot, alignment: .top)
+                    HStack(alignment: .bottom, spacing: rows.count > 16 ? 2 : 4) {
+                        ForEach(rows) { row in
+                            let h = row.tokens == 0
+                                ? 3
+                                : max(6, plot * CGFloat(row.tokens) / CGFloat(peak))
+                            VStack(spacing: 4) {
+                                Spacer(minLength: 0)
+                                RoundedRectangle(cornerRadius: rows.count > 20 ? 2 : 4, style: .continuous)
+                                    .fill(LinearGradient(
+                                        colors: [Theme.chartPurple.opacity(row.peak ? 1 : 0.85),
+                                                 Theme.chartPurple.opacity(row.tokens == 0 ? 0.16 : 0.45)],
+                                        startPoint: .top, endPoint: .bottom))
+                                    .frame(height: h)
+                                    .overlay(alignment: .top) {
+                                        if row.peak {
+                                            Circle().fill(Theme.cardSurface)
+                                                .frame(width: 6, height: 6)
+                                                .overlay(Circle().strokeBorder(Theme.chartPurple, lineWidth: 1.5))
+                                                .offset(y: -3)
+                                        }
+                                    }
+                                Text(row.showsLabel ? row.label : " ")
+                                    .font(.system(size: 9, weight: hovered == row.id ? .semibold : .medium, design: .rounded))
+                                    .foregroundStyle(hovered == row.id || row.peak ? Theme.textPrimary : Theme.textTertiary())
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                            .onHover { hovered = $0 ? row.id : (hovered == row.id ? nil : hovered) }
+                            .help("\(row.detail)：\(UsageStats.formatTokens(row.tokens))")
+                        }
+                    }
+                }
+            }
+            .frame(height: 132)
+            Text("均值 \(UsageStats.formatTokens(average))")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textTertiary())
+        }
+        .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.82), value: motionKey)
+        .accessibilityLabel("\(grainCaption)，峰值 \(UsageStats.formatTokens(peak))，均值 \(UsageStats.formatTokens(average))")
     }
 }

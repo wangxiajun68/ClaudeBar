@@ -116,6 +116,7 @@ struct UsagePanel: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(detail.isEmpty ? " " : detail)
+                .rollingNumber()
                 .font(Theme.Font.micro)
                 .foregroundStyle(Theme.textTertiary())
                 .lineLimit(1)

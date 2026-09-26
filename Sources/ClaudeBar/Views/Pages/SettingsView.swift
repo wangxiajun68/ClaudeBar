@@ -31,11 +31,27 @@ struct SettingsView: View {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s24) {
                 PageTitle(title: "设置")
 
-                // First section: it is the only setting that decides whether the
-                // app is running at all; the rest are grouped by module weight.
-                section("启动", icon: "power") {
+                // Everyday choices share one dense row. A lone toggle used to
+                // be its own section and a full-height card.
+                section("界面", icon: "paintpalette") {
+                    SettingTile(icon: "circle.lefthalf.filled", title: "主题",
+                                caption: "浅色或深色。", compact: true) {
+                        SegmentedCapsule(items: AppearanceMode.allCases,
+                                         selection: prefs.appearance,
+                                         title: { $0.label },
+                                         tint: Theme.Ink.claude,
+                                         onSelect: { prefs.appearance = $0 })
+                    }
+                    SettingTile(icon: "textformat.123", title: "Token 单位",
+                                caption: "万 / 亿，或 K / M。", compact: true) {
+                        SegmentedCapsule(items: [TokenUnitStyle.chinese, .metric],
+                                         selection: prefs.tokenUnitStyle,
+                                         title: { $0.label },
+                                         tint: Theme.Ink.claude,
+                                         onSelect: { prefs.tokenUnitStyle = $0 })
+                    }
                     SettingTile(icon: "power", title: "开机自启",
-                                caption: launchCaption) {
+                                caption: launchCaption, compact: true) {
                         Toggle("", isOn: Binding(
                             get: { launchAtLogin.isOn },
                             // `Binding(get:set:)` rather than `$prefs.x`: the
@@ -45,57 +61,61 @@ struct SettingsView: View {
                             set: { on in launchAtLogin.setEnabled(on) }))
                         .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
+                    SettingTile(icon: "arrow.uturn.forward", title: "继续会话",
+                                caption: resumeTerminalCaption, compact: true) {
+                        Menu {
+                            ForEach(ResumeTerminal.allCases) { terminal in
+                                Button(installedTerminals.contains(terminal) ? terminal.label
+                                       : "\(terminal.label)（未安装）") {
+                                    prefs.resumeTerminal = terminal
+                                }
+                            }
+                        } label: {
+                            InstrumentMenuLabel(title: prefs.resumeTerminal.label, tint: Theme.claude)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                    }
                     if launchAtLogin.needsApproval {
                         SettingTile(icon: "hand.raised", title: "等待系统允许",
-                                    caption: "「系统设置 → 通用 → 登录项」中允许 ClaudeBar。") {
+                                    caption: "在「登录项」里允许 ClaudeBar。", compact: true) {
                             Button("打开") { LaunchAtLogin.openLoginItemsSettings() }
                                 .adaptiveGlassButton()
                         }
                     }
                 }
 
+                section("灵动岛", icon: "capsule.portrait", dense: true) {
+                    SettingTile(icon: "capsule", title: "刘海灵动岛",
+                                caption: "移到刘海展开会话、路由和近 30 天用量。", compact: true) {
+                        Toggle("", isOn: $prefs.notchIslandEnabled)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
+                    }
+                    SettingTile(icon: "waveform", title: "两翼",
+                                caption: "收起时在两侧显示会话和今日用量。", compact: true) {
+                        Toggle("", isOn: $prefs.notchIslandShowsWings)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
+                    }
+                    .disabled(!prefs.notchIslandEnabled)
+                    SettingTile(icon: "checkmark.bubble", title: "完成提醒",
+                                caption: "会话结束时从刘海弹出，6 秒后收起。", compact: true) {
+                        Toggle("", isOn: $prefs.notchIslandAlertsEnabled)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
+                    }
+                    .disabled(!prefs.notchIslandEnabled)
+                    SettingTile(icon: "arrow.up.left.and.arrow.down.right", title: "全屏中显示",
+                                caption: "关闭后，全屏空间不显示。", compact: true) {
+                        Toggle("", isOn: $prefs.notchIslandInFullScreen)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
+                    }
+                    .disabled(!prefs.notchIslandEnabled)
+                }
+
                 PermissionsSection()
 
-                section("电池管理授权", icon: "battery.100percent") {
-                    SettingTile(icon: "lock.shield", title: "授权电池管理",
-                                caption: batteryController.lastError ?? (batteryController.helperInstalled
-                                    ? "已授权。日常启动和重启应用无需重复授权；仅辅助工具代码更新时需重新授权。"
-                                    : "一次管理员授权，安装本机电池辅助工具；之后启动充电管理自动复用。")) {
-                        Button(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "立即授权")) {
-                            batteryController.authorizeHelper()
-                        }
-                        .adaptiveGlassButton()
-                        .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.helperInstalled)
-                    }
-                }
-
-                section("外观", icon: "paintpalette") {
-                    SettingTile(icon: "circle.lefthalf.filled", title: "主题",
-                                caption: "浅色冰面或深色石墨。") {
-                        // The app's own segmented control, not Aqua's. A
-                        // native `.segmented` inside a machined tile was the
-                        // single most generic object on the page — and it sat
-                        // in the tile's only content slot, so the one thing the
-                        // eye landed on was stock chrome.
-                        SegmentedCapsule(items: AppearanceMode.allCases,
-                                         selection: prefs.appearance,
-                                         title: { $0.label },
-                                         tint: Theme.Ink.claude,
-                                         onSelect: { prefs.appearance = $0 })
-                    }
-                    SettingTile(icon: "textformat.123", title: "Token 单位",
-                                caption: "用量数字的量级写法。") {
-                        SegmentedCapsule(items: [TokenUnitStyle.chinese, .metric],
-                                         selection: prefs.tokenUnitStyle,
-                                         title: { $0.label },
-                                         tint: Theme.Ink.claude,
-                                         onSelect: { prefs.tokenUnitStyle = $0 })
-                    }
-                }
-
-                section("模型花费", icon: "banknote") {
+                section("花费", icon: "banknote") {
                     SettingTile(icon: "yensign.circle", title: "显示货币",
-                                caption: costDisplayCaption) {
+                                caption: costDisplayCaption, compact: true) {
                         SegmentedCapsule(items: CostDisplay.allCases,
                                          selection: prefs.costDisplay,
                                          title: { $0.label },
@@ -106,62 +126,33 @@ struct SettingsView: View {
                     // in 分列 mode there is no rate, so a tile about one would
                     // be a control with nothing behind it.
                     if prefs.costDisplay.needsRate {
-                        ExchangeRateTile()
+                        ExchangeRateTile(compact: true)
                     }
                 }
 
-                section("继续会话", icon: "terminal") {
-                    SettingTile(icon: "arrow.uturn.forward", title: "打开方式",
-                                caption: resumeTerminalCaption) {
-                        Picker("", selection: $prefs.resumeTerminal) {
-                            ForEach(ResumeTerminal.allCases) { terminal in
-                                Text(installedTerminals.contains(terminal) ? terminal.label
-                                     : "\(terminal.label)（未安装）")
-                                    .tag(terminal)
-                            }
+                section("本机", icon: "internaldrive", dense: true) {
+                    SettingTile(icon: "lock.shield", title: "电池管理",
+                                caption: batteryController.lastError ?? (batteryController.helperInstalled
+                                    ? "已授权。工具更新后才需要再授一次。"
+                                    : "一次管理员授权，之后自动复用。"),
+                                compact: true) {
+                        Button(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "授权")) {
+                            batteryController.authorizeHelper()
                         }
-                        .pickerStyle(.menu)
-                        .frame(width: 140)
-                        .labelsHidden()
+                        .adaptiveGlassButton()
+                        .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.helperInstalled)
                     }
-                }
-
-                section("灵动岛", icon: "capsule.portrait") {
-                    SettingTile(icon: "capsule", title: "刘海灵动岛",
-                                caption: "鼠标移到刘海展开：运行中的会话、当前路由与近 30 天用量；无刘海的屏幕在菜单栏中央显示。") {
-                        Toggle("", isOn: $prefs.notchIslandEnabled)
-                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
-                    }
-                    SettingTile(icon: "waveform", title: "两翼",
-                                caption: "收起时在刘海两侧显示运行中的会话与今日用量，会遮住紧贴刘海的菜单栏图标。") {
-                        Toggle("", isOn: $prefs.notchIslandShowsWings)
-                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
-                    }
-                    .disabled(!prefs.notchIslandEnabled)
-                    SettingTile(icon: "checkmark.bubble", title: "完成提醒",
-                                caption: "会话结束时从刘海弹出提醒，可一键回到该会话；悬停暂停，6 秒后自动收起。不需要通知权限。") {
-                        Toggle("", isOn: $prefs.notchIslandAlertsEnabled)
-                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
-                    }
-                    .disabled(!prefs.notchIslandEnabled)
-                    SettingTile(icon: "arrow.up.left.and.arrow.down.right", title: "全屏应用中显示",
-                                caption: "关闭时，全屏应用所在的空间不显示灵动岛。") {
-                        Toggle("", isOn: $prefs.notchIslandInFullScreen)
-                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
-                    }
-                    .disabled(!prefs.notchIslandEnabled)
-                }
-
-                section("存储", icon: "internaldrive") {
-                    SettingTile(icon: "cylinder", title: "SQLite 存储",
+                    SettingTile(icon: "cylinder", title: "SQLite",
                                 caption: prefs.databaseEnabled
-                                ? "流量与用量写入 SQLite。关闭后改用 JSON，互不迁移。"
-                                : "已关闭。重新开启不会自动导入。") {
+                                ? "流量与用量写入 SQLite。关闭后改用 JSON。"
+                                : "已关闭。重新开启不会导入旧数据。",
+                                compact: true) {
                         Toggle("", isOn: $prefs.databaseEnabled)
                             .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "folder", title: "日志目录",
-                                caption: "~/Library/Application Support/ClaudeBar/logs") {
+                                caption: "~/Library/Application Support/ClaudeBar/logs",
+                                compact: true) {
                         Button("打开") { NSWorkspace.shared.open(FilePaths.logsDir) }
                             .adaptiveGlassButton()
                     }
@@ -233,10 +224,10 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: Theme.Space.s10) {
                     SectionHeader(icon: "curlybraces", title: "第三方接入", tint: Theme.codex)
-                    TileGrid(.pageSetting) {
+                    TileGrid(.pageSettingDense) {
                         SettingTile(icon: "link", title: "Base URL",
                                     caption: LocalProxyAddress.openaiRoot,
-                                    tint: Theme.codex) {
+                                    tint: Theme.codex, compact: true) {
                             Button("复制") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(LocalProxyAddress.openaiRoot, forType: .string)
@@ -244,8 +235,8 @@ struct SettingsView: View {
                             .adaptiveGlassButton()
                         }
                         SettingTile(icon: "key.horizontal", title: "鉴权",
-                                    caption: "代理注入密钥，不再接受任意 Bearer。",
-                                    tint: Theme.codex) {
+                                    caption: "由代理注入密钥。",
+                                    tint: Theme.codex, compact: true) {
                             Text("令牌")
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.textSecondary)
@@ -254,9 +245,9 @@ struct SettingsView: View {
                     }
                 }
 
-                section("VPN 代理", icon: "globe") {
-                    SettingTile(icon: "globe", title: "VPN 代理",
-                                caption: "托管 mihomo 并接管系统流量。节点在「VPN」页。") {
+                section("VPN", icon: "globe", dense: true) {
+                    SettingTile(icon: "globe", title: "系统代理",
+                                caption: "托管 mihomo，节点在「VPN」页。", compact: true) {
                         Toggle("", isOn: Binding(
                             get: { prefs.vpnEnabled },
                             set: { on in
@@ -282,18 +273,17 @@ struct SettingsView: View {
                         .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
-                                caption: "订阅、节点、系统代理与 TUN。") {
+                                caption: "订阅、节点、系统代理与 TUN。", compact: true) {
                         Button("打开") {
                             NotificationCenter.default.post(.showMainWindow(page: .vpn))
                         }
-                        .adaptiveGlassButton()
-                        .tint(Theme.claude)
+                        .adaptiveGlassButton(tint: Theme.claude)
                     }
                 }
 
-                section("连通性", icon: "antenna.radiowaves.left.and.right") {
-                    SettingTile(icon: "cpu", title: "检测 Claude Code",
-                                caption: currentCCCaption) {
+                section("连通性", icon: "antenna.radiowaves.left.and.right", dense: true) {
+                    SettingTile(icon: "cpu", title: "Claude Code",
+                                caption: currentCCCaption, compact: true) {
                         ConnectivityTileButton(
                             outcome: activeVendorOutcome,
                             helpIdle: providerStore.activeProvider == nil
@@ -303,8 +293,8 @@ struct SettingsView: View {
                         }
                         .disabled(providerStore.activeProvider == nil)
                     }
-                    SettingTile(icon: "terminal", title: "检测 Codex",
-                                caption: currentCodexCaption, tint: Theme.codex) {
+                    SettingTile(icon: "terminal", title: "Codex",
+                                caption: currentCodexCaption, tint: Theme.codex, compact: true) {
                         ConnectivityTileButton(
                             outcome: activeCodexOutcome,
                             helpIdle: codexStore.activeProvider == nil
@@ -320,31 +310,40 @@ struct SettingsView: View {
                     }
                 }
 
-                section("配置文件", icon: "doc.text") {
-                    fileTile("~/.claude/settings.json", FilePaths.settingsFile)
-                    fileTile("~/.claude/claude-bar-providers.json", FilePaths.presetsFile)
-                    fileTile("~/.codex/config.toml", FilePaths.codexConfigFile)
-                    fileTile("~/.codex/auth.json", FilePaths.codexAuthFile)
-                    fileTile("~/.claude/claude-bar-codex-providers.json", FilePaths.codexProvidersFile)
-                }
-
-                section("关于", icon: "info.circle") {
-                    SettingTile(icon: "app", title: "ClaudeBar",
-                                caption: "macOS 15 · swiftc") {
-                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
-                            .font(Theme.Font.captionMono)
-                            .foregroundColor(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: Theme.Space.s10) {
+                    SectionHeader(icon: "doc.text", title: "配置文件")
+                    VStack(spacing: 0) {
+                        fileRow("~/.claude/settings.json", FilePaths.settingsFile)
+                        fileRow("~/.claude/claude-bar-providers.json", FilePaths.presetsFile)
+                        fileRow("~/.codex/config.toml", FilePaths.codexConfigFile)
+                        fileRow("~/.codex/auth.json", FilePaths.codexAuthFile)
+                        fileRow("~/.claude/claude-bar-codex-providers.json", FilePaths.codexProvidersFile)
                     }
+                    .padding(.horizontal, 4)
+                    .panelCard(tint: Theme.claude)
                 }
 
-                Button(role: .destructive) {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Text("退出 ClaudeBar")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    Text("ClaudeBar")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                        .font(Theme.Font.captionMono)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("macOS 15")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textTertiary())
+                    Spacer(minLength: 8)
+                    Button(role: .destructive) {
+                        NSApplication.shared.terminate(nil)
+                    } label: {
+                        Text("退出")
+                    }
+                    .adaptiveGlassButton(prominent: true, tint: Theme.statusError)
                 }
-                .adaptiveGlassButton(prominent: true)
-                .tint(Theme.statusError)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .panelCard(tint: Theme.claude)
             }
             .padding(Theme.Space.s24)
         }
@@ -391,10 +390,11 @@ struct SettingsView: View {
     }
 
     private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,
+                                  dense: Bool = false,
                                   @ViewBuilder content: @escaping () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s10) {
             SectionHeader(icon: icon, title: title, tint: tint)
-            TileGrid(.pageSetting) { content() }
+            TileGrid(dense ? .pageSettingDense : .pageSetting) { content() }
         }
     }
 
@@ -409,13 +409,30 @@ struct SettingsView: View {
         return files
     }
 
-    private func fileTile(_ path: String, _ url: URL) -> some View {
+    private func fileRow(_ path: String, _ url: URL) -> some View {
         let name = (path as NSString).lastPathComponent
-        return SettingTile(icon: "doc", title: name, caption: path) {
+        let present = presentFiles.contains(url)
+        return HStack(spacing: 10) {
+            Image(systemName: "doc")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(present ? Theme.claude : Theme.textTertiary())
+                .frame(width: 16)
+            Text(name)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            Text(path)
+                .font(Theme.Font.captionMono)
+                .foregroundStyle(Theme.textTertiary())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
             Button("打开") { NSWorkspace.shared.open(url) }
                 .adaptiveGlassButton()
-                .disabled(!presentFiles.contains(url))
+                .disabled(!present)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     /// The login item's own state is the caption — there is no remembered
@@ -424,8 +441,7 @@ struct SettingsView: View {
     /// has to read as a failure, not as "on".
     private var launchCaption: String {
         if let err = launchAtLogin.lastError { return err }
-        if launchAtLogin.isOn { return "登录时自动启动。可在「系统设置 → 通用 → 登录项」更改。" }
-        return "登录时自动启动 ClaudeBar。"
+        return "登录时自动启动。"
     }
 
     /// Says what the choice costs the user, not just what it does. The default
@@ -463,11 +479,11 @@ struct SettingsView: View {
     private var resumeTerminalCaption: String {
         switch prefs.resumeTerminal.resolved(installed: installedTerminals) {
         case .otty, .automatic:
-            return "Otty：会话已在某个标签页运行时直接切过去，否则新开标签页 resume。无需自动化权限。"
+            return "已打开则切过去，否则新开标签。无需自动化权限。"
         case .warp:
-            return "Warp：在会话目录新开窗口并执行 resume；需开启“权限与隐私 → 在终端继续会话”。"
+            return "在会话目录新开窗口。需要「在终端继续会话」。"
         case .terminal:
-            return "终端：新开窗口执行 resume；需开启“权限与隐私 → 在终端继续会话”。"
+            return "新开窗口并 resume。需要「在终端继续会话」。"
         }
     }
 
@@ -524,32 +540,39 @@ struct SettingTile<Control: View>: View {
     let title: String
     var caption: String = ""
     var tint: Color = Theme.claude
+    /// One control and a short caption. Drops the reserved caption block and
+    /// the 36pt mark so a toggle does not sit in a card sized for a paragraph.
+    var compact: Bool = false
     @ViewBuilder var control: () -> Control
     @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                GlyphWell(name: icon, tint: tint, size: 36, engaged: hovered)
+        VStack(alignment: .leading, spacing: compact ? 4 : 8) {
+            HStack(alignment: .center, spacing: compact ? 8 : 10) {
+                GlyphWell(name: icon, tint: tint, size: compact ? 26 : 36, engaged: hovered)
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: compact ? 13 : 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 control()
                     .controlSize(.small)
+                    .layoutPriority(1)
             }
-            .frame(height: 40)
-            Text(caption.isEmpty ? " " : caption)
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(3)
-                .frame(minHeight: 42, alignment: .topLeading)
+            .frame(height: compact ? 28 : 40)
+            if !caption.isEmpty {
+                Text(caption)
+                    .rollingNumber()
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(compact ? 2 : 3)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
-        .padding(16)
+        .padding(compact ? 12 : 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tile(tint: tint, hovered: hovered,
-              lens: DepthLensSpec(tint: tint, size: 124))
+              lens: compact ? nil : DepthLensSpec(tint: tint, size: 124))
         .hoverState($hovered)
     }
 }

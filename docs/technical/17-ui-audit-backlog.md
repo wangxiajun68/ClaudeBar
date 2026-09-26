@@ -418,3 +418,14 @@ The same pass checked the rest of the app's per-poll `.animation(_:value:)`
 sites and found nothing else to fix: everywhere else the `value` is
 interaction state (`isHovered`, `isPressed`, `focused`, `selection`, `active`),
 which changes only when the user does something.
+
+**Postscript — the deletion did not stick.** `MetricTile` is back in
+`Sources/ClaudeBar/Views/Shared/Tile.swift` (reintroduced when the Uiverse
+surface work landed on top of this pass), still with **no call site**. The
+judgement above is unchanged and the Uiverse commit agrees with it: it removed
+the same `.animation(value: value)` modifier from the resurrected view rather
+than keeping the pattern alive, and `Tests/inflight-animation-regressions.py`
+deliberately does **not** list it — that guard cannot tell a per-poll value from
+hover state, so it would fail on this view's surviving
+`.animation(value: isHovered)`. Deleting it again is a one-view change with no
+call site to update.

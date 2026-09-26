@@ -267,17 +267,11 @@ struct TrafficView: View {
     private var modeBar: some View {
         HStack(spacing: Theme.Space.s8) {
             PageTitle(title: "流量")
-            HStack(spacing: Theme.Space.s4) {
-                ForEach(TrafficMode.allCases) { m in
-                    let on = mode == m
-                    Button(m.label) { mode = m }
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(on ? Theme.claudeHi : Theme.textSecondary)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(on ? Theme.claude.opacity(0.22) : Theme.cardFill(0.06)))
-                        .buttonStyle(.plain)
-                }
-            }
+            SegmentedCapsule(items: TrafficMode.allCases,
+                             selection: mode,
+                             title: { $0.label },
+                             tint: Theme.Ink.claude,
+                             onSelect: { mode = $0 })
             Spacer()
             StatusPill(
                 label: codexStore.proxyRunning ? "代理已启用" : "代理未启用",
@@ -411,6 +405,7 @@ struct TrafficView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("将删除 \(catalog.records.count) 条记录及其请求 / 响应正文，无法恢复。")
+                .rollingNumber()
         }
     }
 
@@ -418,22 +413,16 @@ struct TrafficView: View {
 
     private var listPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Theme.Space.s4) {
-                ForEach(TrafficFilter.allCases) { f in
-                    let on = filter == f
-                    Button(f.label) { filter = f }
-                        .font(Theme.Font.caption)
-                        .foregroundColor(on ? Theme.claude : Theme.textSecondary)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
-                        .buttonStyle(.plain)
-                }
-                Spacer()
+            HStack(spacing: Theme.Space.s8) {
+                SegmentedCapsule(items: TrafficFilter.allCases,
+                                 selection: filter,
+                                 title: { $0.label },
+                                 tint: Theme.Ink.claude,
+                                 onSelect: { filter = $0 })
+                Spacer(minLength: 8)
                 if !catalog.records.isEmpty {
                     Button("清空") { confirmClear = true }
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.Ink.error)
-                        .buttonStyle(.plain)
+                        .adaptiveGlassButton(tint: Theme.statusError, ink: Theme.Ink.error)
                 }
             }
             .padding(.horizontal, Theme.Space.s12)
@@ -569,30 +558,18 @@ struct TrafficView: View {
 
     private var tabBar: some View {
         HStack(spacing: Theme.Space.s4) {
-            ForEach(TrafficTab.allCases) { t in
-                let on = tab == t
-                Button(t.label) { tab = t }
-                    .font(Theme.Font.bodySmall)
-                    .foregroundColor(on ? Theme.textPrimary : Theme.textSecondary)
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .overlay(alignment: .bottom) {
-                        Capsule().fill(on ? Theme.claude : Color.clear).frame(height: 2)
-                    }
-                    .buttonStyle(.plain)
-            }
+            SegmentedCapsule(items: TrafficTab.allCases,
+                             selection: tab,
+                             title: { $0.label },
+                             tint: Theme.Ink.claude,
+                             onSelect: { tab = $0 })
             Spacer()
             if tab == .conversation {
-                HStack(spacing: Theme.Space.s4) {
-                    ForEach([false, true], id: \.self) { full in
-                        let on = fullRender == full
-                        Button(full ? "完整" : "简洁") { fullRender = full }
-                            .font(Theme.Font.caption)
-                            .foregroundColor(on ? Theme.claude : Theme.textSecondary)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Capsule().fill(on ? Theme.claude.opacity(0.12) : Theme.cardFill(0.06)))
-                            .buttonStyle(.plain)
-                    }
-                }
+                SegmentedCapsule(items: [false, true],
+                                 selection: fullRender,
+                                 title: { $0 ? "完整" : "简洁" },
+                                 tint: Theme.Ink.claude,
+                                 onSelect: { fullRender = $0 })
                 .help("简洁：去掉 system / 脚手架。完整：按请求体顺序渲染全部消息、图片与请求头。")
             }
             Text(currentSummary.map { "\($0.providerName)  \($0.path)" } ?? "")
@@ -628,6 +605,9 @@ struct TrafficView: View {
                     .accessibilityLabel("清除搜索")
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .instrumentWell(radius: Theme.Radius.md, onCard: true)
             .padding(.horizontal, Theme.Space.s16)
             .padding(.vertical, Theme.Space.s8)
             HairlineDivider()
@@ -711,6 +691,7 @@ struct TrafficView: View {
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)
                         Text(subtitle)
+                            .rollingNumber()
                             .font(Theme.Font.caption)
                             .foregroundColor(Theme.textTertiary())
                             .lineLimit(1)

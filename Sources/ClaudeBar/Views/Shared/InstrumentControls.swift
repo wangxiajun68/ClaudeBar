@@ -367,3 +367,204 @@ struct GroundShadow: View {
             .accessibilityHidden(true)
     }
 }
+
+/// **The page band's own control** — a capsule *milled into* the band rather
+/// than a second white chip laid on it, plus the 3D button reference's
+/// **perimeter sweep** — a lit arc that travels the control's own edge once
+/// when the pointer arrives and then stops.
+///
+/// It used to be a flat grey capsule with a grey border and **no hover response
+/// at all** (`bgSecondary` fill, `Theme.hairline` stroke) — the single most
+/// generic object on a page whose complaint was that it read as plain. Two
+/// things fix it, both cheap:
+///
+/// 1. the well is the *recessed* fill (`Theme.fieldWell`) so the button reads as
+///    a control sitting in the band, not another card;
+/// 2. the accent rim and the one-shot sweep say "this is a target" before the
+///    click. The sweep is one trimmed shape and runs only on hover, never on a
+///    loop — a permanent rotating border is chrome that never stops meaning
+///    anything, and it is what the reference does that this deliberately does
+///    not.
+struct HeaderControlModifier: ViewModifier {
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+            // The well and the rim are the control's **whole** surface, so the
+            // button must be `.plain`: the default macOS bezel would draw its
+            // own grey rounded rect *inside* this capsule, which is the muddy
+            // double-grey that made these read as washed-out and disabled.
+            // `.plain` also means `isEnabled` no longer dims the label for us,
+            // so the disabled state is stated below instead of inherited.
+            .background(Theme.fieldWell, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(hovered ? Theme.claude.opacity(0.45) : Theme.hairline,
+                                  lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                if !reduceMotion {
+                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.9), lineWidth: 1.4)
+                        .padding(0.5)
+                }
+            }
+            .overlay { GroundShadow(active: hovered).offset(y: 18).opacity(0.5) }
+            .contentShape(Capsule())
+            .opacity(enabled ? 1 : 0.45)
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(Theme.Motion.state, value: hovered)
+    }
+}
+
+// MARK: - Instrument button (ultimate-3d-btn, quiet)
+
+/// The app's **one** push button, replacing the stock glass / bordered button.
+///
+/// Quiet is a recessed capsule — the same milled well as a field — so a
+/// secondary action reads as a control sitting in the page, not as Aqua chrome.
+/// Prominent fills with the shape hue, keeps a lit top edge, and presses *down*
+/// (the 3D button's active state). Both light their own perimeter once when the
+/// pointer arrives (`PerimeterSweep`); neither spins a border forever, and
+/// neither glitches its label. A glitch on a native control reads as a fault.
+struct InstrumentButtonStyle: ButtonStyle {
+    var prominent = false
+    /// Rim and, when prominent, the fill. A shape hue, not ink.
+    var tint: Color = Theme.claude
+    /// Label color for a quiet button. Prominent always prints white.
+    var ink: Color? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        InstrumentButtonBody(configuration: configuration, prominent: prominent,
+                             tint: tint, ink: ink)
+    }
+}
+
+private struct InstrumentButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    var prominent: Bool
+    var tint: Color
+    var ink: Color?
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let pressed = configuration.isPressed && enabled && !reduceMotion
+        configuration.label
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(prominent ? Color.white : (ink ?? (hovered ? Theme.textPrimary : Theme.textSecondary)))
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .background { plate }
+            .overlay { rim }
+            .overlay {
+                if !reduceMotion {
+                    PerimeterSweep(active: hovered && enabled,
+                                   tint: prominent ? Color.white.opacity(0.95) : tint.opacity(0.9),
+                                   lineWidth: 1.4)
+                        .padding(1)
+                        .clipShape(Capsule())
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(alignment: .bottom) {
+                GroundShadow(active: hovered && enabled && !pressed)
+                    .padding(.horizontal, 8)
+                    .offset(y: 9)
+            }
+            .contentShape(Capsule())
+            .opacity(enabled ? 1 : 0.42)
+            // Press travels down. The hit shape is declared before the offset,
+            // so a 2pt press cannot carry the pointer out of the control.
+            .offset(y: pressed ? (prominent ? 2 : 1) : 0)
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
+    }
+
+    private var plate: some View {
+        Capsule()
+            .fill(prominent ? tint : Theme.fieldWell)
+            .overlay {
+                if prominent {
+                    // Pulls a bright shape hue down so white 12pt type clears
+                    // the body-text contrast floor without inventing a second red.
+                    Capsule().fill(Color.black.opacity(0.22)).allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                if prominent {
+                    Capsule()
+                        .fill(LinearGradient(colors: [.white.opacity(Theme.isDark ? 0.22 : 0.34), .clear],
+                                             startPoint: .top, endPoint: .center))
+                        .allowsHitTesting(false)
+                }
+            }
+            .shadow(color: .black.opacity(prominent ? (hovered ? 0.16 : 0.08) : 0),
+                    radius: prominent ? (hovered ? 8 : 3) : 0,
+                    y: prominent ? (hovered ? 4 : 1) : 0)
+    }
+
+    private var rim: some View {
+        Capsule()
+            .strokeBorder(hovered ? tint.opacity(prominent ? 0.0 : 0.55) : Theme.hairline, lineWidth: 1)
+            .overlay {
+                InnerFrameRing(inset: 2, radius: 14,
+                               tint: hovered ? tint.opacity(0.30) : Theme.innerFrameMuted)
+            }
+            .allowsHitTesting(false)
+    }
+}
+
+/// A menu shown as the same recessed capsule as a field, with a chevron.
+/// Native `.pickerStyle(.menu)` is Aqua chrome inside a machined tile.
+struct InstrumentMenuLabel: View {
+    var title: String
+    var tint: Color = Theme.claude
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Theme.textTertiary())
+        }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+        .padding(.leading, 10)
+        .padding(.trailing, 8)
+        .frame(height: 28)
+        .frame(maxWidth: 168)
+        .instrumentWell(radius: 14, focused: hovered, accent: tint, onCard: true)
+        .overlay {
+            if !reduceMotion {
+                PerimeterSweep(active: hovered, tint: tint.opacity(0.9), lineWidth: 1.2)
+                    .padding(1)
+                    .clipShape(Capsule())
+                    .allowsHitTesting(false)
+            }
+        }
+        .onHover { if hovered != $0 { hovered = $0 } }
+        .animation(Theme.Motion.state, value: hovered)
+    }
+}
+
+extension View {
+    /// The one control shape a page band's buttons take.
+    ///
+    /// Shared by 连接器's 刷新 / 选择项目 and 模型's 自定义: a page band's
+    /// controls are the band's own affordances, so two bands that are meant to
+    /// read as the same object must not dress their buttons differently.
+    func headerControl() -> some View { modifier(HeaderControlModifier()) }
+}

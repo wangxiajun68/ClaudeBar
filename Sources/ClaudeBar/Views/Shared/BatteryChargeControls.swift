@@ -13,6 +13,7 @@ struct BatteryChargeControls: View {
                 Spacer(minLength: 8)
                 if controller.pending { ProgressView().controlSize(.small) }
                 Text(controller.supported == false ? "不可用" : controller.statusText)
+                    .rollingNumber()
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
@@ -80,6 +81,7 @@ struct BatteryChargeControls: View {
                     .font(.system(size: 9))
                     .foregroundStyle(controller.managesLimit ? Theme.chartBlue : Theme.textTertiary())
                 Text(limitCaption)
+                    .rollingNumber()
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textTertiary())
                     .lineLimit(1)

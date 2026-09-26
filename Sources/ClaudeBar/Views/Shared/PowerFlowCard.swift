@@ -203,6 +203,7 @@ private struct PowerFlowContent: View, Equatable {
                 .frame(height: compact ? 84 : 200)
             if !compact {
                 Text(flow.summary)
+                    .rollingNumber()
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                 }
@@ -337,12 +338,27 @@ private struct EnergySankey: View {
                 .foregroundStyle(source ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(tint.opacity(0.85)))
                 .symbolRenderingMode(.hierarchical)
             if roomy {
-                RollingNumberText(detail(box.node))
-                    .font(.system(size: compact ? 10.5 : 16, weight: source ? .semibold : .medium,
-                                  design: .rounded).monospacedDigit())
-                    .foregroundColor(source ? Theme.textPrimary : Theme.textSecondary)
+                if compact, box.node == .batteryOut {
+                    // Percent and watts on one line were scaled down to fit a
+                    // 50pt block ("77% · 8 W" at 0.6). Two short lines keep
+                    // both at a readable size.
+                    VStack(spacing: 0) {
+                        RollingNumberText("\(flow.batteryPercent)%")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                            .foregroundColor(Theme.textPrimary)
+                        RollingNumberText(String(format: "%.0f W", flow.watts(of: box.node)))
+                            .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .lineLimit(1)
+                } else {
+                    RollingNumberText(detail(box.node))
+                        .font(.system(size: compact ? 11 : 16, weight: source ? .semibold : .medium,
+                                      design: .rounded).monospacedDigit())
+                        .foregroundColor(source ? Theme.textPrimary : Theme.textSecondary)
                         .lineLimit(1)
-                    .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(compact ? 0.8 : 0.7)
+                }
             }
             if !compact, box.node == .adapter, let rated = flow.adapterRated, box.span.height >= 84 {
                 Text("\(rated) W 适配器")

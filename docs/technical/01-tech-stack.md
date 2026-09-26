@@ -9,7 +9,7 @@
 |------|------|------|
 | 语言 | Swift 5.9+ | 随 Xcode / Command Line Tools 提供 |
 | UI | SwiftUI + AppKit 混合 | SwiftUI 渲染面板与主窗口内容；AppKit 管理 `NSStatusItem`、`NSPanel`、`NSWindow` |
-| 表面 | 半透明填充 + 发丝线描边 | `panelCard()` / `.tile()` 为静态半透明白填充与细边框，**非** `glassEffect`；macOS 26+ 上部分工具栏按钮经 `adaptiveGlassButton()` 使用原生 Liquid Glass |
+| 表面 | 半透明填充 + 发丝线描边 | `panelCard()` / `.tile()` 为静态半透明白填充与细边框，**非** `glassEffect`；按钮为自绘 `InstrumentButtonStyle`（凹槽 / 填色胶囊 + 悬停一次扫光），仅在 ⌘K 命令面板使用原生 Liquid Glass |
 | Widget | WidgetKit | `systemLarge` 尺寸，`StaticConfiguration` |
 | 数据 | Foundation Codable + JSONSerialization | 模型编码用 Codable；`settings.json` 读写用 JSONSerialization 以保留未知字段 |
 | 数据库 | SQLite3（系统库） | 只读访问 Cursor 的 `state.vscdb` |

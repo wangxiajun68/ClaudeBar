@@ -322,6 +322,7 @@ private struct JSONNodeRow: View {
                 }
 
                 Text(open && node.isContainer ? opener : inlineValue)
+                    .rollingNumber(node.kind == .number || (!open && node.isContainer))
                     .font(Theme.Font.microMono)
                     .foregroundColor(valueColor)
                     .lineLimit(open && node.kind == .string ? 20 : 1)

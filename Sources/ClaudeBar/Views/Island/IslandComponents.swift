@@ -181,7 +181,8 @@ struct IslandSessionRow: View {
                 .truncationMode(.middle)
         } else {
             // Coarse relative time; a 30 s tick is plenty and keeps the
-            // timeline from waking every second.
+            // timeline from waking every second. It rolls: the "5m" in this
+            // line is a figure like every other one on the island.
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 Text("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
                     .rollingNumber()
@@ -348,7 +349,11 @@ struct IslandUsageCard: View {
                 .foregroundStyle(IslandStyle.textSecondary)
                 .lineLimit(1)
         }
-        .animation(.snappy(duration: 0.18), value: value)
+        // No implicit `.animation(value: value)`: `value` is the drifting
+        // sampler reading (and the scrub index's figure), so a value-keyed
+        // transaction stays in flight across every tick. The digits roll
+        // through `.numericText` in `RollingNumberText`; see
+        // `Interaction.swift`.
     }
 
     private var costHero: some View {

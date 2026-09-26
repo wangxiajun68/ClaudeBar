@@ -28,6 +28,7 @@ test:
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
 	python3 Tests/menubar-strip-regressions.py
+	python3 Tests/connection-panel-regressions.py
 	python3 Tests/charge-limit-regressions.py
 	python3 Tests/model-cost-regressions.py
 	python3 Tests/proxy-usage-regressions.py

@@ -125,26 +125,44 @@ struct HardwareDetailPanel: View {
 ///
 /// **What a connection card's click should open**, decided here because the card
 /// is four different claims in one tile (Wi-Fi, AirDrop, Ethernet, a headset) and
-/// "show me more" has to mean one thing for all of them:
+/// "show me more" has to mean one thing for all of them.
 ///
-/// 1. **The route this Mac's traffic takes.** The tile shows the *radio*; this
-///    shows where the radio goes — Wi-Fi and Ethernet on the left, the machine in
-///    the middle, Bluetooth and its accessories on the right, which is the answer
-///    to "why is Claude Code talking to the proxy this slowly". The 流量 page
-///    carries the throughput; this carries the topology.
-/// 2. **The link quality.** Signal is a number before it is a *feeling*: an RSSI
-///    bar with the weak/strong ends named, so a report of "network is bad" has
-///    something to point at.
-/// 3. **The proxy hop.** The local endpoint the provider traffic actually
-///    passes through, and whether it is listening — the one connection in this
-///    machine the app itself owns. It is the same reading the 设置 page shows,
-///    surfaced where the connection question is asked.
-/// 4. **The accessories.** Each headset's battery and how it is attached. Absent
-///    hardware is not a failure, so that block states the reason instead.
+/// The previous version was five stacked blocks — a route diagram, an RSSI bar,
+/// a proxy card, an accessory grid, a caption row — which is a *form*, and a form
+/// is what you draw when the readings have nothing to say to each other. They do:
+/// every one of them is either **this Mac**, the **name it goes by**, a **gate
+/// this traffic passes through**, or a **device sitting on it**. So the panel is
+/// one hub with four rings, and it opens on **one number** instead of a title.
 ///
-/// The 网络 pane and `ControlCenter` are the honest answer to "the rest of it",
-/// hence the one button at the bottom rather than a fifth block of system facts
-/// this app would be re-deriving.
+/// 1. **The answer, not the title.** "连接" named the panel; it did not say what
+///    the connection *is*. The hero is the link's own quality — 很强 · −46 dBm
+///    when the Mac is on Wi-Fi, 已接入 when it is on Ethernet — and a second line
+///    says which radio is carrying it. One glance, no reading.
+/// 2. **Four rings, four state words.** MAC + IP + 两个 DNS 地址 in a mono column
+///    said nothing to anyone who is not debugging, and said it four times. What a
+///    person wants from "show me the connection" is *which way out, under what
+///    name, through what door, with what attached*. Each ring is one of those, and
+///    each carries a word in colour (蓝色是走的路、紫色是代理自己) rather than a
+///    grey paragraph. The one exception is deliberate: a ring with **nothing
+///    attached states why** ("未检测到耳机"), because an empty grid reads as a
+///    loading state.
+/// 3. **The door is the only live thing.** The 本机代理 ring is the one
+///    connection in this machine the app itself owns, so it is the one ring with
+///    an action in it; its 8pt dot fills and breathes white while the endpoint is
+///    listening, which makes it worth keeping in the corner of an eye.
+/// 4. **Export, then hand off.** 复制诊断 copies one buffer with the numbers the
+///    rings now only summarise — that is where MAC, IP and the resolvers went — and
+///    the two system steps stay one click away instead of being re-derived here.
+///
+/// Motion is **one** gesture, and it is hover state rather than a loop: the four
+/// rings animate a shared rotation to `−3°` when the pointer enters the cluster,
+/// so the assembly reads as one hinged panel being turned toward you. One shared
+/// value rather than four staggered entrances is deliberate — it is the same
+/// argument as the card's own hover, which was reworked from a per-frame shiver
+/// into a single state change (`TileSurface.lift`). Reduce Motion pins the angle
+/// at rest. The only thing that keeps moving on its own is the proxy ring's live
+/// dot, which reports a real state (a listener that is up) and stops the moment it
+/// is not.
 struct ConnectionDetailPanel: View {
     private let sampler = ProcessSampler.shared
     private let audio = AudioAccessoryMonitor.shared
@@ -158,270 +176,297 @@ struct ConnectionDetailPanel: View {
     @ObservedObject private var tests = ConnectivityTestCenter.shared
     @Environment(\.openURL) private var openURL
 
-    /// Wide enough for the route diagram to stay a *diagram*: 440 put the three
-    /// nodes and two links within a few points of each other, so the topology
-    /// read as one dense row instead of three stops on a line.
-    private let panelWidth: CGFloat = 480
+    /// Wide enough for the grid to stay a grid: two cards, a 10pt gutter and two
+    /// 22pt margins inside 420 — the popover width the app's detail panels already
+    /// use, so this and `HardwareDetailPanel` do not disagree.
+    private let panelWidth: CGFloat = 420
+
+    /// The gauge's slot. Stated once because `ring`'s frame, its own doc comment
+    /// and the live dot's offset all assume it, and a slot that drifts from the
+    /// drawing is how the old panel would have put a dot outside its ring.
+    static let deviceGauge: CGFloat = 72
+
+    /// `nil` for no link at all, `.some(nil)` for a link with no grade to name
+    /// (Ethernet, or Wi-Fi that has not published an RSSI yet).
+    private var linkGrade: String? {
+        let host = sampler.host
+        guard host.wiredOn || (host.wifiOn && host.wifiRSSI < 0) else { return nil }
+        return WiFiBars.label(for: host.wifiRSSI)
+    }
+
+    private var heroValue: String {
+        let host = sampler.host
+        if host.wiredOn, host.wifiOn, host.wifiRSSI < 0 { return "\(linkGrade ?? "已接入") · 以太网" }
+        if host.wiredOn { return "已接入" }
+        if host.wifiOn, host.wifiRSSI < 0 { return linkGrade ?? "—" }
+        return linkStateWord
+    }
+
+    private var heroUnit: String {
+        let host = sampler.host
+        if host.wiredOn, !host.wifiName.isEmpty { return "以太网 \(host.wifiName)" }
+        if host.wiredOn { return "以太网" }
+        if !host.wifiName.isEmpty { return host.wifiName }
+        if host.wifiOn { return "Wi-Fi 已开启" }
+        if host.bluetoothOn { return "仅蓝牙" }
+        return "没有网络出口"
+    }
+
+    /// −100…−40 is the band macOS itself treats as usable, and the same range the
+    /// tile's grade comes from, so the tick and the word cannot disagree.
+    private var linkPosition: Double? {
+        let host = sampler.host
+        guard host.wifiOn, host.wifiRSSI < 0, !host.wiredOn else { return nil }
+        return min(1, max(0, Double(host.wifiRSSI + 100) / 60))
+    }
+
+    /// The one sentence the whole panel is about: which way this Mac is going out.
+    private var linkStateWord: String {
+        let host = sampler.host
+        if host.wifiOn { return "Wi-Fi 已开启" }
+        if host.bluetoothOn { return "仅蓝牙" }
+        return "离线"
+    }
 
     var body: some View {
         let host = sampler.host
         VStack(alignment: .leading, spacing: 18) {
-            header(host)
-            route(host)
-            if host.wifiOn, host.wifiRSSI < 0 {
-                signal(host)
-            }
-            proxyHop
-            accessories
-            bottomBar
+            // No "连接" heading. The hero is the answer, and a panel that has to
+            // name itself above its own reading is a panel with nothing to say.
+            hero(host)
+            rings(host)
+            tools(host)
         }
         .padding(22)
         .frame(width: panelWidth)
         .background(Theme.cardSurface)
     }
 
-    // MARK: Header
+    // MARK: Hero
 
-    private func header(_ host: ProcessSampler.HostStats) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("连接").font(Theme.Font.displayHero)
-            Spacer()
-            Text(headline(host))
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textSecondary)
-        }
-    }
+    @State private var clusterHovered = false
+    @State private var copied = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// One sentence for the whole card: what the machine is on. Deliberately the
-    /// *link*, not the count of accessories — an earbud connected does not change
-    /// how this Mac reaches the network, and the tile already said both.
-    private func headline(_ host: ProcessSampler.HostStats) -> String {
-        if host.wiredOn, !host.wifiName.isEmpty { return "以太网 · Wi-Fi \(host.wifiName)" }
-        if host.wiredOn { return "以太网" }
-        if !host.wifiName.isEmpty { return host.wifiName }
-        if host.wifiOn { return "Wi-Fi 已开启" }
-        if host.bluetoothOn { return "仅蓝牙" }
-        return "离线"
-    }
+    /// The one-shot flag behind the copy acknowledgement. See `tools`.
+    private struct Track: Identifiable { var id: String { "copied" } }
 
-    // MARK: Route
-
-    /// The topology the tile cannot show: radio → machine → accessories.
-    private func route(_ host: ProcessSampler.HostStats) -> some View {
-        HStack(spacing: 0) {
-            node(host.wiredOn ? "以太网" : "Wi-Fi",
-                 detail: host.wiredOn ? "已接入"
-                       : (host.wifiName.isEmpty ? (host.wifiOn ? "已开启" : "未开启") : host.wifiName),
-                 symbol: host.wiredOn ? "network" : "wifi",
-                 active: host.wiredOn || host.wifiOn)
-            Link(kind: .uplink, tint: Theme.chartBlue)
-            node(HardwareIdentity.shortName, detail: "本机", symbol: "laptopcomputer", active: true)
-            Link(kind: .downlink, tint: Theme.chartPurple)
-            node("蓝牙",
-                 detail: audio.accessories.isEmpty
-                       ? (host.bluetoothOn ? "已开启" : "未开启")
-                       : "\(audio.accessories.count) 个设备",
-                 symbol: "antenna.radiowaves.left.and.right",
-                 active: host.bluetoothOn)
-        }
-        .frame(height: 96)
-        .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Theme.cardFill(0.4))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Theme.hairline, lineWidth: 1)
-        }
-    }
-
-    /// The connector between two nodes. A lit hairline when the hop is live, a
-    /// dashed grey one when it is not — the same distinction the marks make, so
-    /// "off" is drawn rather than merely dimmer.
-    private struct Link: View {
-        enum Kind { case uplink, downlink }
-
-        var kind: Kind
-        var tint: Color
-
-        var body: some View {
-            VStack(spacing: 6) {
-                Text(kind == .uplink ? "上行" : "下行")
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .foregroundColor(Theme.textTertiary())
-                Rectangle()
-                    .fill(tint.opacity(0.45))
-                    .frame(width: 44, height: 2)
-            }
-        }
-    }
-
-    private func node(_ title: String, detail: String, symbol: String, active: Bool) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundColor(active ? Theme.chartBlue : Theme.textTertiary(0.5))
-            Text(title)
-                .font(Theme.Font.chromeEmph)
-                .lineLimit(1)
-            Text(detail)
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .frame(width: 104)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title) \(detail)")
-    }
-
-    // MARK: Signal
-
-    private func signal(_ host: ProcessSampler.HostStats) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("信号强度").font(Theme.Font.chromeEmph)
-                Spacer()
-                if let grade = WiFiBars.label(for: host.wifiRSSI) {
-                    StatusPill(label: grade, tint: Theme.chartBlue)
-                }
-                RollingNumberText("\(host.wifiRSSI) dBm")
-                    .font(Theme.Font.captionMono)
-                    .monospacedDigit()
-            }
-            // −100…−40 is the range macOS itself treats as "usable". Drawn as a
-            // bare track with one marker rather than a filled bar: the reading is
-            // a position on a scale, and a bar that fills would read as a ratio.
-            GeometryReader { proxy in
-                let position = min(1, max(0, Double(host.wifiRSSI + 100) / 60))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.hairline)
-                    Capsule()
-                        .fill(LinearGradient(colors: [Theme.chartBlue, Theme.chartGreen],
-                                             startPoint: .leading, endPoint: .trailing))
-                        .frame(width: proxy.size.width * CGFloat(position))
-                }
-            }
-            .frame(height: 8)
-            HStack {
-                Text("弱 · −100").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
-                Spacer()
-                Text("强 · −40").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
-            }
-        }
-    }
-
-    // MARK: Proxy hop
-
-    /// The one connection this app owns. Same readout as 设置 → 本地代理, surfaced
-    /// where the question is actually asked, plus the test button that already
-    /// knows how to answer it.
-    private var proxyHop: some View {
-        let outcome = tests.outcome(ConnectivityTestCenter.proxyKey)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("本地代理").font(Theme.Font.chromeEmph)
-                Spacer()
-                StatusPill(label: codexStore.proxyRunning ? "监听中" : "未监听",
-                           tint: codexStore.proxyRunning ? Theme.chartGreen : Theme.textSecondary,
-                           ink: codexStore.proxyRunning ? Theme.Ink.success : Theme.textSecondary)
-            }
-            Text(LocalProxyAddress.openaiRoot)
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textSecondary)
-                .textSelection(.enabled)
-            HStack(spacing: 10) {
-                ConnectivityTileButton(outcome: outcome, helpIdle: "检测本机代理") {
-                    tests.testProxy(port: prefs.codexProxyPort, running: codexStore.proxyRunning)
-                }
-                Text(outcome.state == .idle ? "尚未检测" : outcome.detail)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(outcome.state == .failed ? Theme.Ink.error : Theme.textSecondary)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(12)
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Theme.cardFill(0.4))
-        }
-    }
-
-    // MARK: Accessories
-
-    @ViewBuilder private var accessories: some View {
+    private func hero(_ host: ProcessSampler.HostStats) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("蓝牙设备").font(Theme.Font.chromeEmph)
-                Spacer()
-                Button("刷新") { audio.refreshNow() }
-                    .buttonStyle(.plain)
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Ink.claude)
-            }
-            if audio.accessories.isEmpty {
-                Text(audio.unavailableReason
-                     ?? "尚未检测到耳机。连接后自动更新，电量以设备报告为准。")
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(heroValue)
+                    .font(Theme.Font.displayHero)
+                    .foregroundColor(linkGrade != nil ? Theme.Ink.success : Theme.textPrimary)
+                Text(heroUnit)
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
-                    .lineLimit(3)
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 14) {
-                        ForEach(audio.accessories) { accessory in
-                            accessoryCell(accessory)
-                        }
+                    .lineLimit(1)
+            }
+            // A hairline scale with one tick on it, not a bar against a track: the
+            // tick *is* the reading, and a bar that fills would be read as a ratio,
+            // which RSSI is not. On Ethernet (or a radio with no figure yet) the
+            // track is empty and the words carry it alone.
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Theme.hairline)
+                        .frame(height: 2)
+                    if let position = linkPosition {
+                        Capsule()
+                            .fill(Theme.chartBlue)
+                            .frame(width: max(3, proxy.size.width * CGFloat(position)), height: 2)
+                        Capsule()
+                            .fill(Theme.chartBlue)
+                            .frame(width: 4, height: 12)
+                            .offset(x: proxy.size.width * CGFloat(position) - 2)
                     }
                 }
-                .frame(maxHeight: 150)
+                .frame(maxHeight: .infinity)
             }
-        }
-    }
-
-    private func accessoryCell(_ accessory: AudioAccessoryMonitor.Accessory) -> some View {
-        VStack(spacing: 7) {
-            ZStack {
-                Circle().stroke(Theme.cardFill(0.35), lineWidth: 5)
-                if let level = accessory.headline {
-                    Circle()
-                        .trim(from: 0, to: max(0.02, min(1, Double(level) / 100)))
-                        .stroke(accessoryTint(accessory), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                Text(accessory.headline.map { "\($0)%" } ?? "未知")
+            .frame(height: 12)
+            HStack(spacing: 6) {
+                Image(systemName: host.wiredOn ? "cable.connector" : (host.wifiOn ? "wifi" : "wifi.slash"))
+                    .font(.system(size: 10, weight: .medium))
+                Text(trendNote(host))
                     .rollingNumber()
-                    .font(Theme.Font.chromeEmph)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            .frame(width: 56, height: 56)
-            Text(accessory.name).lineLimit(2).multilineTextAlignment(.center)
-            Text(accessoryValue(accessory, count: audio.accessories.count))
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(1)
+            .font(Theme.Font.caption)
+            .foregroundColor(Theme.textSecondary)
         }
-        .font(Theme.Font.caption)
-        .frame(maxWidth: .infinity)
-        .padding(8)
+    }
+
+    /// The figure tells you what it is *about*, so nobody has to guess that −46
+    /// is a signal and not a temperature. Silent while the grade is already the
+    /// answer.
+    private func trendNote(_ host: ProcessSampler.HostStats) -> String {
+        if host.wiredOn { return "以太网已接入" }
+        if host.wifiOn, host.wifiRSSI < 0 { return "-100 弱 / -40 强（dBm）" }
+        if host.wifiOn { return "Wi-Fi 已开启，暂无信号读数" }
+        return "没有可用的网络出口"
+    }
+
+    // MARK: Rings
+
+    /// Four rings, two columns by two.
+    ///
+    /// A `LazyVGrid` over a **fixed** column count, so four rings fill all four
+    /// cells and the fourth never leaves a hole — the thing that made the old
+    /// accessory grid look broken. Two columns rather than three: a 72pt gauge in
+    /// a card is wider than it is tall, three columns squeezed the card to 120pt,
+    /// and that both cropped the longest note ("未检测到耳机") and spent 284pt of
+    /// glyph inside a 376pt field. Two columns give the card 176pt, the note a
+    /// line it can use, and the gauge air enough to be the object it is.
+    private func rings(_ host: ProcessSampler.HostStats) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                  spacing: 10) {
+            ring(kind: .uplink,
+                 title: host.wiredOn ? "以太网" : "Wi-Fi",
+                 value: host.wiredOn ? "已接入"
+                       : (host.wifiName.isEmpty ? (host.wifiOn ? "已开启" : "未开启") : host.wifiName),
+                 note: host.wiredOn ? "外接网口" : "无线电",
+                 level: linkPosition ?? (host.wiredOn ? 1 : nil),
+                 active: host.wiredOn || host.wifiOn)
+            ring(kind: .proxy,
+                 title: "本机代理",
+                 value: codexStore.proxyRunning ? "监听中" : "未监听",
+                 note: "127.0.0.1:\(prefs.codexProxyPort)",
+                 active: codexStore.proxyRunning)
+            ring(kind: .airdrop,
+                 title: "隔空投送",
+                 value: "打开",
+                 note: "Finder 近场",
+                 active: true)
+            ring(kind: .bluetooth,
+                 title: "蓝牙",
+                 value: host.bluetoothOn ? "已开启" : "未开启",
+                 note: audio.accessories.isEmpty
+                       ? "未检测到耳机"
+                       : "\(audio.accessories.count) 个设备",
+                 active: host.bluetoothOn)
+        }
+        // One deskew for the whole assembly, not four staggered entrances: the
+        // rings are a hinged panel, and a panel turns as one piece.
+        .rotationEffect(clusterAngle)
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: clusterHovered)
+        .hoverState($clusterHovered)
+    }
+
+    private var clusterAngle: Angle {
+        // Planar and single-axis on purpose: a two-axis `depthTilt` at a card's
+        // 2.2° is a *card* being picked up, and this cluster is already four cards
+        // in a grid, so `-3` about one axis reads as the panel turning rather than
+        // as four tiles shivering.
+        reduceMotion ? .degrees(0) : (clusterHovered ? .degrees(-3) : .degrees(0))
+    }
+
+    /// Not `private`: `ConnectionRing` below draws one, and the drawing *is* the
+    /// only thing that differs between the four rings.
+    enum RingKind { case uplink, proxy, airdrop, bluetooth }
+
+    /// One instrument: a `deviceGauge`-tall gauge, a title, a **word**, and a note. The word
+    /// is the reading's shape — a state is named, not implied — and the gauge is the
+    /// same state drawn: filled at the tick for the uplink, lit for the live ones,
+    /// dim for the rest. A ring that is off is drawn off, never merely smaller.
+    private func ring(kind: RingKind, title: String, value: String, note: String,
+                      level: Double? = nil, active: Bool) -> some View {
+        let tint = ringTint(kind)
+        return Button {
+            switch kind {
+            case .uplink:
+                NotificationCenter.default.post(.showMainWindow(page: .traffic))
+            case .proxy:
+                tests.testProxy(port: prefs.codexProxyPort, running: codexStore.proxyRunning)
+            case .airdrop:
+                let app = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app/Contents/Applications/AirDrop.app")
+                _ = NSWorkspace.shared.open(app)
+            case .bluetooth:
+                NotificationCenter.default.post(.showMainWindow(page: .settings))
+            }
+        } label: {
+            VStack(spacing: 6) {
+                ConnectionRing(kind: kind, level: level, tint: tint, active: active)
+                    .frame(width: Self.deviceGauge, height: Self.deviceGauge)
+                Text(title)
+                    .font(Theme.Font.chromeEmph)
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(value)
+                    .rollingNumber()
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(active ? tint : Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(note)
+                    .rollingNumber()
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .help(ringHelp(kind, title: title, value: value, note: note))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(accessory.name) \(accessoryValue(accessory, count: audio.accessories.count))")
+        .accessibilityLabel("\(title)，\(value)，\(note)")
     }
 
-    private func accessoryTint(_ accessory: AudioAccessoryMonitor.Accessory) -> Color {
-        switch accessory.connection {
-        case .inUse: return accessory.isCharging == true ? Theme.chartGreen : Theme.chartPurple
-        default: return Theme.textTertiary(0.55)
+    /// Colour says which kind of thing the ring is: 蓝色是这一跳走的路（无线电 /
+    /// 代理 / 近场），紫色是挂在蓝牙上的那台设备。The old panel tinted Sky and
+    /// Earth links by direction (blue / purple) with nothing to justify either.
+    private func ringTint(_ kind: RingKind) -> Color {
+        switch kind {
+        case .uplink: return Theme.chartBlue
+        case .proxy: return Theme.chartPurple
+        case .airdrop: return Theme.chartBlue
+        case .bluetooth: return Theme.chartPurple
         }
     }
 
-    // MARK: Footer
+    private func ringHelp(_ kind: RingKind, title: String, value: String, note: String) -> String {
+        switch kind {
+        case .uplink: return "\(title) \(value) · 打开流量页看路由与吞吐"
+        case .proxy: return "本地代理 \(note) · 点一下检测"
+        case .airdrop: return "打开隔空投送，查看接收范围与附近设备"
+        case .bluetooth: return "蓝牙 \(value) · \(note) · 打开设置看更多"
+        }
+    }
 
-    private var bottomBar: some View {
-        HStack(spacing: 10) {
-            Text("更详细的路由与吞吐在 流量 页；系统级的接口列表在 macOS 的网络设置里。")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textTertiary())
-                .lineLimit(2)
+    // MARK: Tools
+
+    /// The numbers the rings only summarise, in one copyable buffer, plus the two
+    /// system steps this app will not re-derive. Rationale lives in the tooltips.
+    ///
+    /// The copy *answers*, for the same reason the popup's action bar toasts a
+    /// refresh: a control whose whole job is invisible has to say it happened, and
+    /// re-opening a popover to find out whether the clipboard changed is not a
+    /// thing anyone does. `Track` is `nil` until the first copy — a local type, not
+    /// another `VpnStatus`-shaped import, because a derived build's type identity
+    /// cannot be relied on.
+    private func tools(_ host: ProcessSampler.HostStats) -> some View {
+        let track = copied ? Track() : nil
+        return HStack(spacing: 12) {
+            Button {
+                copyDiagnostics(host)
+            } label: {
+                Label("复制诊断", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.plain)
+            .font(Theme.Font.caption)
+            .foregroundColor(Theme.Ink.claude)
+            .help("复制一份可粘贴的文本：出口、信号、代理端点与蓝牙设备")
+            .popover(item: .constant(track)) { _ in
+                Text("已复制连接诊断")
+                    .font(Theme.Font.caption)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
             Spacer(minLength: 8)
             Button("流量明细") {
                 NotificationCenter.default.post(.showMainWindow(page: .traffic))
@@ -429,6 +474,7 @@ struct ConnectionDetailPanel: View {
             .buttonStyle(.plain)
             .font(Theme.Font.caption)
             .foregroundColor(Theme.Ink.claude)
+            .help("吞吐与路由明细")
             Button("打开网络设置") {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
                     openURL(url)
@@ -437,7 +483,228 @@ struct ConnectionDetailPanel: View {
             .buttonStyle(.plain)
             .font(Theme.Font.caption)
             .foregroundColor(Theme.textSecondary)
+            .help("macOS 的接口列表")
         }
+    }
+
+    /// MAC, the proxy endpoint and the resolvers used to be four grey lines of the
+    /// panel. They are not gone, they are *filed*: the one string that opens
+    /// straight into an issue report or a chat.
+    private func copyDiagnostics(_ host: ProcessSampler.HostStats) {
+        var lines: [String] = ["ClaudeBar 连接诊断"]
+        lines.append(host.wiredOn ? "出口：以太网" : "出口：\(host.wifiOn ? "Wi-Fi" : "无")")
+        if !host.wifiName.isEmpty { lines.append("网络名：\(host.wifiName)") }
+        if host.wifiOn, host.wifiRSSI < 0 {
+            lines.append("信号：\(host.wifiRSSI) dBm \(WiFiBars.label(for: host.wifiRSSI) ?? "")")
+        }
+        lines.append("本机代理：\(codexStore.proxyRunning ? "监听中" : "未监听") · \(LocalProxyAddress.openaiRoot)")
+        if audio.accessories.isEmpty {
+            lines.append("蓝牙设备：无")
+        } else {
+            for accessory in audio.accessories {
+                lines.append("蓝牙设备：\(accessory.name) \(accessoryValue(accessory, count: audio.accessories.count))")
+            }
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        copied = true
+    }
+}
+
+/// One ring gauge. Three kinds, three *different* drawings, because four
+/// concentric arcs in four colours were read as four instances of one meter — and
+/// the kind of door is exactly what differs between them.
+///
+/// * `.uplink` — an RSSI arc over a radio-wave interior, with the number's own
+///   fraction filled in. The only ring that measures anything.
+/// * `.proxy` — a full loop with a travelling bod, i.e. traffic going round: the
+///   one endpoint here that is a *process*, so it is the one that moves.
+/// * `.airdrop` — three broadcast arcs out of a receiver, the same drawing the
+///   tile uses, at ring scale.
+/// * `.bluetooth` — a radio mast with two lobes, the mark Bluetooth itself is
+///   drawn from. The count of what is attached is a *word* under the ring rather
+///   than pips on it: at 72pt a third pip would be 4pt of ink, i.e. countable in
+///   the literal sense and unreadable in every other.
+private struct ConnectionRing: View {
+    var kind: ConnectionDetailPanel.RingKind
+    var level: Double?
+    var tint: Color
+    var active: Bool
+    @State private var phase: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The 8pt dot that says "this endpoint is up". Filled and breathing white
+    /// only while the proxy is actually listening — the one thing on the panel
+    /// worth keeping in the corner of an eye.
+    private var live: Bool { active && !reduceMotion }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(active ? tint.opacity(0.22) : Theme.hairline, lineWidth: 2)
+            track
+            core
+            if kind == .proxy {
+                Circle()
+                    .fill(active ? Color.white : Theme.textTertiary(0.4))
+                    .frame(width: 8, height: 8)
+                    .opacity(live ? (phase.truncatingRemainder(dividingBy: 1) > 0.5 ? 1 : 0.45) : 1)
+                    // Rides the gauge's own rim, so it cannot drift off it.
+                    .offset(y: -ConnectionDetailPanel.deviceGauge / 2 + 10)
+            }
+        }
+        .onAppear { if kind == .proxy, live { tick() } }
+        .onDisappear { phase = 0 }
+        .animation(reduceMotion ? nil : .linear(duration: 0.1), value: phase)
+    }
+
+    /// The lit part of the ring: the uplink's own fraction, or a travelling arc
+    /// for the one ring that stands for a running process. The other two have no
+    /// ring to light — their state is the word under them — so they draw nothing
+    /// here rather than a second decoration that says the same thing.
+    @ViewBuilder private var track: some View {
+        switch kind {
+        case .uplink:
+            if let level {
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(1, level)))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+        case .proxy:
+            Circle()
+                .trim(from: 0, to: 0.34)
+                .stroke(active ? tint.opacity(0.85) : Theme.textTertiary(0.3),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(Double(phase) * 360))
+        case .airdrop, .bluetooth:
+            EmptyView()
+        }
+    }
+
+    /// Driven by the same 12-per-second cadence the old ES8 arrival-listener used
+    /// (`setInterval(…, 1000 / 12)`), not by a `TimelineView`: the page already runs
+    /// one clock, and a second one per ring is the kind of doubled work this file's
+    /// header rules out.
+    private func tick() {
+        guard live else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12.0, repeats: true) { _ in
+            Task { @MainActor in
+                phase += 1.0 / 40.0
+                if phase > 1 { phase -= 1 }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @ViewBuilder private var core: some View {
+        let ink = active ? tint : Theme.textSecondary.opacity(0.7)
+        switch kind {
+        case .uplink:
+            WifiRingCore(tint: ink)
+                .frame(width: 30, height: 30)
+        case .proxy:
+            ProxyRingCore(tint: ink)
+                .frame(width: 26, height: 26)
+        case .airdrop:
+            AirDropCore(tint: ink)
+                .frame(width: 30, height: 30)
+        case .bluetooth:
+            BluetoothRingCore(tint: ink)
+                .frame(width: 28, height: 28)
+        }
+    }
+}
+
+private struct WifiRingCore: View {
+    let tint: Color
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / 24
+            context.translateBy(x: (size.width - 24 * scale) / 2, y: (size.height - 24 * scale) / 2)
+            context.scaleBy(x: scale, y: scale)
+            for (radius, alpha) in [(CGFloat(5), 0.45), (9, 0.75), (13, 1.0)] as [(CGFloat, Double)] {
+                var arc = Path()
+                arc.addArc(center: CGPoint(x: 12, y: 18), radius: radius,
+                           startAngle: .degrees(-140), endAngle: .degrees(-40), clockwise: false)
+                context.stroke(arc, with: .color(tint.opacity(alpha)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            }
+            context.fill(Path(ellipseIn: CGRect(x: 10, y: 17, width: 4, height: 4)), with: .color(tint))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct ProxyRingCore: View {
+    let tint: Color
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / 24
+            context.translateBy(x: (size.width - 24 * scale) / 2, y: (size.height - 24 * scale) / 2)
+            context.scaleBy(x: scale, y: scale)
+            // A rack unit: two slots and a bus, i.e. a service with a port.
+            var slots = Path()
+            slots.addRoundedRect(in: CGRect(x: 3, y: 8, width: 18, height: 5), cornerSize: CGSize(width: 1.5, height: 1.5))
+            slots.addRoundedRect(in: CGRect(x: 3, y: 15, width: 18, height: 5), cornerSize: CGSize(width: 1.5, height: 1.5))
+            context.stroke(slots, with: .color(tint), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+            context.fill(Path(ellipseIn: CGRect(x: 5.2, y: 9.8, width: 1.8, height: 1.8)), with: .color(tint))
+            context.fill(Path(ellipseIn: CGRect(x: 5.2, y: 16.8, width: 1.8, height: 1.8)), with: .color(tint))
+            var bus = Path()
+            bus.move(to: CGPoint(x: 9, y: 20.5)); bus.addLine(to: CGPoint(x: 15, y: 20.5))
+            context.stroke(bus, with: .color(tint), style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct AirDropCore: View {
+    let tint: Color
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / 24
+            context.translateBy(x: (size.width - 24 * scale) / 2, y: (size.height - 24 * scale) / 2)
+            context.scaleBy(x: scale, y: scale)
+            for radius in [CGFloat(4), 7, 10] {
+                var arc = Path()
+                arc.addArc(center: CGPoint(x: 12, y: 11), radius: radius,
+                           startAngle: .degrees(135), endAngle: .degrees(405), clockwise: false)
+                context.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+            }
+            var receiver = Path()
+            receiver.move(to: CGPoint(x: 12, y: 12))
+            receiver.addLine(to: CGPoint(x: 7.5, y: 22))
+            receiver.addQuadCurve(to: CGPoint(x: 16.5, y: 22), control: CGPoint(x: 12, y: 24))
+            receiver.closeSubpath()
+            context.fill(receiver, with: .color(tint))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct BluetoothRingCore: View {
+    let tint: Color
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.width, size.height) / 24
+            context.translateBy(x: (size.width - 24 * scale) / 2, y: (size.height - 24 * scale) / 2)
+            context.scaleBy(x: scale, y: scale)
+            // The mast: a vertical spine with two lobes, and the two link lines
+            // that meet it. Drawn from the mark's own geometry, not a font glyph.
+            var mast = Path()
+            mast.move(to: CGPoint(x: 12, y: 2.5))
+            mast.addLine(to: CGPoint(x: 12, y: 21.5))
+            mast.move(to: CGPoint(x: 12, y: 2.5))
+            mast.addLine(to: CGPoint(x: 19, y: 7.5))
+            mast.addLine(to: CGPoint(x: 6, y: 15))
+            mast.move(to: CGPoint(x: 12, y: 21.5))
+            mast.addLine(to: CGPoint(x: 19, y: 16.5))
+            mast.addLine(to: CGPoint(x: 6, y: 9))
+            context.stroke(mast, with: .color(tint),
+                           style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+            context.fill(Path(ellipseIn: CGRect(x: 10.6, y: 1.1, width: 2.8, height: 2.8)), with: .color(tint))
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -461,6 +728,7 @@ struct CapacityHardwareMark: View {
                                  wells: wells)
                 .frame(height: markHeight - 12)
             Text(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
+                .rollingNumber()
                 .font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(Theme.textSecondary)
         }
         .accessibilityLabel("\(disk ? "硬盘" : "内存")容量 \(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)")

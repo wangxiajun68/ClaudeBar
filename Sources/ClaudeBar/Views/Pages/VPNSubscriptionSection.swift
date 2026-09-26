@@ -39,8 +39,7 @@ struct VpnSubscriptionSection: View {
                 .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil)
                 .help("向机场查询剩余流量与有效期（不替换节点配置）")
                 Button("添加链接") { editor = .add }
-                    .adaptiveGlassButton(prominent: true)
-                    .tint(Theme.claude)
+                    .adaptiveGlassButton(prominent: true, tint: Theme.claude)
             }
 
             if let err = store.errorMessage {
@@ -130,6 +129,7 @@ struct VpnSubscriptionSection: View {
                             .foregroundColor(Theme.textTertiary())
                     }
                     Text(trafficSummary(sub))
+                        .rollingNumber()
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
@@ -138,8 +138,7 @@ struct VpnSubscriptionSection: View {
                 Button(runningHere ? "使用中" : (active ? "启动" : "使用")) {
                     activate(sub)
                 }
-                .adaptiveGlassButton(prominent: !runningHere)
-                .tint(Theme.claude)
+                .adaptiveGlassButton(prominent: !runningHere, tint: Theme.claude)
                 .disabled(runningHere || busy)
                 .help(runningHere ? "内核正在用这份订阅" : "切换内核到这份订阅并启动")
                 cardTools(sub, busy: busy)
@@ -306,8 +305,7 @@ private struct VpnSubscriptionEditor: View {
                     onSave(name, url)
                     dismiss()
                 }
-                .adaptiveGlassButton(prominent: true)
-                .tint(Theme.claude)
+                .adaptiveGlassButton(prominent: true, tint: Theme.claude)
                 .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

@@ -12,7 +12,8 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | 层级 | 实现 | 说明 |
 |------|------|------|
 | 内容卡 / 瓦片 | `panelCard()`、`.tile()` | 扁平半透明填充 + 发丝线描边，**非** `glassEffect`；避免主窗口全幅 live blur 的 GPU 纹理开销（约 100 MB 量级） |
-| 工具栏按钮 | `adaptiveGlassButton()` | **仅 macOS 26+** 映射为原生 Liquid Glass（`.glass` / `.glassProminent`）；更早系统回退为 `.bordered` |
+| 工具栏按钮 | `adaptiveGlassButton()` | 铣削胶囊（`InstrumentButtonStyle`）——安静态是凹槽，主操作填色并在按下时下沉 2pt，悬停时描边扫光走一圈。**不是**系统按钮：名字是历史遗留，早先在 macOS 26 上映射到 Liquid Glass，那让一页金属卡片里每个动作位都还是 Aqua 样子 |
+| 页头带控件 | `headerControl()` | 页头带里自己的控件：胶囊铣进带子（`Theme.fieldWell`）+ 亮边，悬停一次 `PerimeterSweep`。连接器与模型共用，两条带子读作同一个物件 |
 | 命令面板 | `GlassEffectContainer` | **仅 macOS 26+** 且**仅**用于 ⌘K `CommandPalette` 结果列表的玻璃容器；其余表面不使用 |
 
 主窗口背景为 `.underWindowBackground` vibrancy；侧边栏与内容区依靠 token 色阶与发丝线分区，而非连续玻璃 morph 或背景光斑。
@@ -31,14 +32,14 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 | 页面 | 要点 |
 |------|------|
-| **DashboardView** | 标题 → 资源条（CPU / GPU / 内存 / 磁盘 / 连接 / 双风扇）→ 能源流向 → 活跃会话总览（网格 + 「查看全部 N 个会话」）。用量对照与用量分布日历已移到用量页 |
+| **DashboardView** | 画布上的标题（会话数 + 刷新控件，**不**包进页头带）→ 资源条（CPU / GPU / 内存 / 磁盘 / 连接 / 双风扇）→ 能源流向 → 活跃会话总览（网格 + 「查看全部 N 个会话」）。用量对照与用量分布日历已移到用量页 |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
-| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；`ProviderDirectoryHost` 渲染供应商目录（Claude + Codex 两栈），配置走 `ProviderConnectionEditor` 弹窗 |
+| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；`ProviderDirectoryHost` 渲染供应商目录（Claude + Codex 两栈），配置走 `ProviderConnectionEditor` 弹窗。页头带是「`PageTitle` + 副标题」一列 + 右侧 `headerControl()` 的「自定义」按钮，两侧 `alignment: .top` |
 | **ConnectorsView** | 连接器：三家客户端的本机 Skills / MCP / 插件，左侧客户端筛选 + 「本机共享」，详情页渲染 SKILL.md、MCP `tools/list` 与插件组成；见 [technical/16](../technical/16-connectors.md) |
-| **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片（每块带自己的估算金额） |
+| **UsageView** | 周期条（日 / 月 / 年 / **全部** / 自定）+ 热力图 + 三张图：来源（占这一时段全部 token 的分段条）、节奏（`UsageDaySpark`，刻度随范围换）、构成（`CacheAnatomyBar` 带缓存命中率）+ 用量模型瓦片（每块带自己的估算金额）。「全部」不显示上一周期 / 下一周期 |
 | **TrafficView** | 只在选中时挂载；昂贵状态由 `MainWindowController` 持有的 `TrafficPageState` 承载，重进无需重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 全部为「`SectionHeader` + `TileGrid(.pageSetting)`」的宫格：启动 / 电池管理授权 / 外观 / 模型花费 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / 代理上游 / 第三方接入 / VPN 代理 / 连通性 / 配置文件 / 关于 |
+| **SettingsView** | 宫格：`SectionHeader` + `TileGrid(.pageSetting)`（自适应 300pt），卡片矮、内容多的分区改用 `.pageSettingDense`（240pt）。分区按用途分：界面（主题 / 单位 / 开机自启 / 继续会话）、灵动岛、**权限与隐私**、花费、本机（电池 / SQLite / 日志）、本地代理、代理上游、第三方接入、VPN、连通性；配置文件是一张列表，关于与退出并成一条 |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -50,16 +51,17 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `ProviderRow.swift` 的 `ProviderTile` 目前**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），刻意保留：它是目录宫格那颗瓦片的唯一成稿，且不引用任何孤立的类型，见 [technical/17](../technical/17-ui-audit-backlog.md) §9。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 没有挂载点，已删除（§3）。
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
-- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（流量的路 / 链路质量 / 本机代理这一跳 / 蓝牙设备），风扇弹出 `FanInternalsPanel`（Lucide `laptop-minimal` 机身 + 两个各自按自己 rpm 转的风扇位）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
+- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（**一台机器 + 四只环**：出口 / 本机代理 / 隔空投送 / 蓝牙，各自说一个带颜色的状态词；顶部是链路质量本身而不是「连接」这个标题；MAC / IP / DNS 归档进底部的「复制诊断」，结构由 `Tests/connection-panel-regressions.py` 锁定），风扇弹出 `FanInternalsPanel`（Lucide `laptop-minimal` 机身 + 两个各自按自己 rpm 转的风扇位）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
 - 风扇使用 精细涡轮插画、中性仪表环及随 RPM 连续旋转的 Core Animation。点击风扇直接切换最大 / 自动；点击卡片其余区域打开详情，详情保留独立调速按钮。机内结构使用高清矢量风格概念插画，不代表精确机型图。
 - `VpnTopChrome.swift`：`VpnNodePickerPanel` / `VpnDelayStyle`（popup 页头的 VPN chip 用它）。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
-- `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。
+- `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、`rollingNumber()`、**`adaptiveGlassButton()`**（实现是 `InstrumentControls.swift` 的 `InstrumentButtonStyle`）。
+- `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`InstrumentButtonStyle`，`adaptiveGlassButton()` 的实现）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
 - `ProxyCurlExample`（与其他设置等大的瓦片，弹出层内查看并复制完整 curl 命令）；检测结果是 `ConnectivityTileButton`（同一文件，设置页与供应商卡共用）。
-- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 300pt）铺 `SettingTile`；代理上游的四个选择、第三方接入的 Base URL / 鉴权 / curl 示例，以及 `PermissionsSection` 的权限卡都走这套（权限卡内容更密，但表面与列宽与页面其余部分一致）。
+- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 300pt）铺 `SettingTile`，内容短的分区传 `dense: true` 换成 `.pageSettingDense`（240pt，一屏更多卡）；代理上游的四个选择、第三方接入的 Base URL / 鉴权 / curl 示例，以及 `PermissionsSection` 的权限卡都走这套（权限卡内容更密，但表面与列宽与页面其余部分一致）。
 - `CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；帮助页的代码块也复用它。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
 - `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。

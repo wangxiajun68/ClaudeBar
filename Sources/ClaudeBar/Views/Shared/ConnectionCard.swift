@@ -43,8 +43,12 @@ struct LinkCard: View {
     private var header: some View {
         HStack(spacing: 6) {
             // A plain badge, not a ringed one: the ring around a small glyph is
-            // read as a spinner (see `ResourceStrip.meter`).
+            // read as a spinner (see `ResourceStrip.meter`). Its size is stated
+            // for the same reason the other five meters state it: unstated, this
+            // badge alone took `InstrumentBadge`'s 24pt default and the header
+            // glyphs on one strip came out two different sizes.
             InstrumentBadge(kind: .link, tint: Theme.chartBlue)
+                .frame(width: 26, height: 26)
             Button { showConnections = true } label: { Label("连接", systemImage: "arrow.up.right") }
                 .buttonStyle(.plain)
                 .font(Theme.Font.chrome)
@@ -104,17 +108,28 @@ fileprivate struct ConnectMetrics {
     var budSymbolSize: CGFloat { partSymbolSize(for: "earbud.left") }
     var caseSymbolSize: CGFloat { partSymbolSize(for: "airpods.chargingcase") }
 
-    /// Both rows are `glyphRow + labelBand + statusBand` tall, and every mark
-    /// draws into exactly those bands, so a 32pt ring and a 28pt arc share one
-    /// centre line.
+    /// Every mark is `glyphRow + labelBand + statusBand` tall, and each one draws
+    /// into exactly those bands, so a headset ring and an Ethernet arc share one
+    /// centre line whatever `dial` is.
     var statusBand: CGFloat { 14 }
 
+    /// `dial` is the *entire* mark, ring and arc included, so it is also the
+    /// mark's optical weight in the row — and at 48 the Wi-Fi ring was the
+    /// biggest object on the dashboard's 资源条, larger than the 26pt badge that
+    /// labels its own tile and larger than anything a connection status has to
+    /// say. 38 is the size at which the four marks read as one group of small
+    /// instruments; the column narrows with the glyph and `labelBand` keeps the
+    /// caption's baseline exact, so the tile's own height, its two-line captions
+    /// and the 已连接 pill above them are all untouched.
+    ///
+    /// The headset parts derive from `dial` (0.42 of it), so the buds, the case
+    /// and the rings shrink together and the pair stays symmetric.
     static func resolve(_ density: ConnectDensity) -> ConnectMetrics {
         switch density {
         case .page:
-            return ConnectMetrics(dial: 32, caption: 10.5, column: 68, gap: 12, labelBand: 16)
+            return ConnectMetrics(dial: 38, caption: 10.5, column: 72, gap: 14, labelBand: 16)
         case .popup:
-            return ConnectMetrics(dial: 28, caption: 10, column: 58, gap: 8, labelBand: 15)
+            return ConnectMetrics(dial: 24, caption: 10, column: 54, gap: 8, labelBand: 15)
         }
     }
 }
@@ -358,6 +373,7 @@ fileprivate struct LinkMark: View {
             InstrumentGlyph(kind: symbol == "network" ? .ethernet : .link, tint: effectiveTint, active: on)
                 .frame(width: metrics.dial, height: metrics.dial)
             Text(caption)
+                .rollingNumber()
                 .font(.system(size: metrics.caption, weight: .medium, design: .rounded))
                 .foregroundColor(on && !captionDim ? Theme.textSecondary : Theme.textTertiary())
                 .lineLimit(1)

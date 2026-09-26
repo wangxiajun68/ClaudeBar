@@ -11,6 +11,7 @@ import SwiftUI
 /// It is also the honest answer to "your rate is wrong" — the user's own bank
 /// rate beats the ECB's mid-market rate for what they actually paid.
 struct ExchangeRateTile: View {
+    var compact: Bool = false
     @ObservedObject private var prefs = AppPreferences.shared
     @ObservedObject private var fx = ExchangeRate.shared
     @State private var draft = ""
@@ -21,7 +22,7 @@ struct ExchangeRateTile: View {
 
     var body: some View {
         SettingTile(icon: "arrow.left.arrow.right", title: "汇率",
-                    caption: caption, tint: Theme.chartGreen) {
+                    caption: caption, tint: Theme.chartGreen, compact: compact) {
             HStack(spacing: 6) {
                 rateField
                 Button(fx.isFetching ? "查询中…" : "更新") { fx.refresh() }
@@ -49,9 +50,11 @@ struct ExchangeRateTile: View {
                 // finish editing on a settings tile.
                 .onChange(of: editing) { _, isEditing in if !isEditing { commit() } }
         } else {
-            Button(buttonLabel) {
+            Button {
                 draft = fx.effectiveRate.map { String(format: "%.4f", $0) } ?? ""
                 editing = true
+            } label: {
+                Text(buttonLabel).rollingNumber()
             }
             .adaptiveGlassButton()
             .help(fx.isManual ? "改为使用实时汇率；点击可编辑手动值" : "手动指定汇率；设定后不再联网查询")

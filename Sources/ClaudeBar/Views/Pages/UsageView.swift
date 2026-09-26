@@ -18,6 +18,7 @@ struct UsageView: View {
         // days happen to have rows in them.
         let interval = UsageStats.interval(for: providerStore.usagePeriod,
                                            reference: providerStore.usageReferenceDate)
+        let spanKey = "\(providerStore.usagePeriod.rawValue)|\(providerStore.usageDays.first?.day ?? "")|\(providerStore.usageDays.last?.day ?? "")|\(providerStore.usageDays.count)"
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
@@ -44,27 +45,31 @@ struct UsageView: View {
                     }
 
                     HStack(spacing: 8) {
-                        Button(action: { shiftUsage(-1) }) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(Theme.textSecondary)
-                                .frame(width: 28, height: 28)
-                                .background(Theme.bgOverlay, in: Circle())
+                        if providerStore.usagePeriod != .all {
+                            Button(action: { shiftUsage(-1) }) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Theme.textSecondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(Theme.bgOverlay, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("上一周期")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("上一周期")
                         Text(periodLabel)
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundColor(Theme.textPrimary)
-                        Button(action: { shiftUsage(1) }) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(Theme.textSecondary)
-                                .frame(width: 28, height: 28)
-                                .background(Theme.bgOverlay, in: Circle())
+                        if providerStore.usagePeriod != .all {
+                            Button(action: { shiftUsage(1) }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Theme.textSecondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(Theme.bgOverlay, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("下一周期")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("下一周期")
                         Spacer()
                         if providerStore.usageLoading {
                             ProgressView().scaleEffect(0.6)
@@ -112,26 +117,29 @@ struct UsageView: View {
                         Text("来源")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundColor(Theme.textPrimary)
-                        SourceTriad(totals: providerStore.usageTotalBySource)
+                        Text("占这一时段的全部 token")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(Theme.textSecondary)
+                        SourceTriad(totals: providerStore.usageTotalBySource, spanKey: spanKey)
                     }
                     .padding(Theme.Space.s16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .panelCard(tint: Theme.claude)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("每日")
+                        Text("节奏")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundColor(Theme.textPrimary)
-                        UsageDaySpark(days: providerStore.usageDays, interval: interval)
-                        TokenMixStrip(stats: providerStore.usageStats)
+                        UsageDaySpark(days: providerStore.usageDays, interval: interval,
+                                      period: providerStore.usagePeriod)
                     }
                     .padding(Theme.Space.s16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .panelCard(tint: Theme.chartAmber)
+                    .panelCard(tint: Theme.chartPurple)
                 }
 
-                if providerStore.usageStats.contains(where: { $0.cacheReadTokens > 0 || $0.cacheCreationTokens > 0 }) {
-                    CacheAnatomyBar(stats: providerStore.usageStats)
+                if !providerStore.usageStats.isEmpty {
+                    CacheAnatomyBar(stats: providerStore.usageStats, spanKey: spanKey)
                         .padding(Theme.Space.s16)
                         .panelCard(tint: Theme.chartGreen)
                 }

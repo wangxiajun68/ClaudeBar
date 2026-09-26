@@ -147,6 +147,7 @@ struct ProxyLogView: View {
                     ? "代理已启用。每次转发会在此留下一行（方法、路径、状态、耗时、令牌用量），不记录请求体或响应体。"
                     : "启用本地代理或供应商上的流量记录后，转发请求会显示在这里。")
                  : "共 \(log.entries.count) 行，没有一行同时满足当前的类型筛选与搜索词。")
+                .rollingNumber()
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .fixedSize(horizontal: false, vertical: true)
@@ -166,14 +167,11 @@ struct ProxyLogView: View {
                                 .foregroundColor(color(for: row))
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            // Token column, right-aligned: a new row's counts
-                            // appear here the moment its usage event lands,
-                            // without the metadata line reflowing.
-                            RollingNumberText(row.tokenField)
-                                .font(Theme.Font.console)
-                                .foregroundColor(Theme.textTertiary())
-                                .monospacedDigit()
-                                .lineLimit(1)
+                            // Fixed-width buckets, so 入 / 出 / 缓存 line up down
+                            // the page. A new row's counts land here when its
+                            // usage event arrives, without the metadata line
+                            // reflowing.
+                            LogTokenColumn(entry: row)
                                 .layoutPriority(1)
                         }
                         .help(row.consoleLine)
@@ -242,5 +240,49 @@ struct ProxyLogView: View {
         NSPasteboard.general.setString(text, forType: .string)
         copied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+    }
+}
+
+/// One request's token buckets, each in a fixed slot.
+///
+/// The old line was one string (`Σ 25.4万 (in 25.3万 / out 452 / hit 0)`).
+/// Shorter numbers started further right, so nothing lined up. 合计, 入, 出,
+/// 缓存 and 写入 now each own a width, and a missing bucket is `—` rather
+/// than a hole that shifts the rest.
+struct LogTokenColumn: View {
+    let entry: ProxyLogEntry
+
+    private static let number: CGFloat = 72
+    private static let label: CGFloat = 26
+
+    var body: some View {
+        if entry.totalTokens != nil || entry.isPending {
+            HStack(spacing: 10) {
+                figure(entry.totalTokens, pending: entry.isPending && entry.totalTokens == nil, strong: true)
+                labeled("入", entry.promptTokens)
+                labeled("出", entry.completionTokens)
+                labeled("缓存", entry.cacheReadTokens)
+                labeled("写入", entry.cacheWriteTokens)
+            }
+            .lineLimit(1)
+        }
+    }
+
+    private func labeled(_ title: String, _ value: Int?) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(Theme.Font.console)
+                .foregroundStyle(Theme.textTertiary().opacity(0.8))
+                .frame(width: Self.label, alignment: .trailing)
+            figure(value, pending: false, strong: false)
+        }
+    }
+
+    private func figure(_ value: Int?, pending: Bool, strong: Bool) -> some View {
+        let text = pending ? "…" : (value.map(UsageStats.formatTokens) ?? "—")
+        return RollingNumberText(text)
+            .font(Theme.Font.console)
+            .foregroundStyle(strong ? Theme.textSecondary : Theme.textTertiary())
+            .frame(width: Self.number, alignment: .trailing)
     }
 }

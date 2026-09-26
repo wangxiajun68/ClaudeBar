@@ -81,6 +81,7 @@ struct PanelHeader: View {
                 .foregroundColor(Theme.textPrimary)
             statusDot
             Text(proxyFact)
+                .rollingNumber()
                 .font(.system(size: 11, design: .rounded))
                 .foregroundColor(codexStore.proxyRunning ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
@@ -238,7 +239,9 @@ private struct HeaderSwitchChip<Popover: View>: View {
     }
 
     private var subtitleLabel: some View {
-        Text(subtitle).font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
+        Text(subtitle)
+            .rollingNumber()
+            .font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
             .lineLimit(1).truncationMode(.middle)
     }
 

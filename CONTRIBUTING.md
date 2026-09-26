@@ -86,7 +86,7 @@ VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该�
 ### UI
 
 - **设计 token** — 颜色、字体、间距、圆角、动画统一使用 `Theme/Theme.swift`。
-- **按钮样式** — 使用 `adaptiveGlassButton()`，不要直接写 `.buttonStyle(.glass)`（macOS 26 专属）。
+- **按钮样式** — 动作按钮用 `adaptiveGlassButton()`（名字是历史遗留，实现是 `InstrumentButtonStyle`，不是系统玻璃按钮）；页头带里的控件用 `.buttonStyle(.plain)` + `.headerControl()`。不要写 `.buttonStyle(.glass)` / `.bordered`。
 - **文案** — 用户可见字符串使用中文；代码标识符使用英文。
 
 ### 构建验证
