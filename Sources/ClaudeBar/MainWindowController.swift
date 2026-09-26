@@ -63,6 +63,21 @@ final class MainWindowController {
         observeVisibility(of: window)
     }
 
+    /// Show the window, optionally routing it to a destination first.
+    ///
+    /// The destination is parked on `ProviderStore.navigationRequest` instead of
+    /// being posted as a second notification: a freshly installed
+    /// `NSHostingView` subscribes to `NotificationCenter` only when its first
+    /// display pass runs — measured at ~50 ms, exactly the 50–150 ms
+    /// `installContent` costs — so a trailing page post was published before
+    /// `MainWindowView` existed and the window opened on whatever page it last
+    /// remembered. A published value is replayed to the next subscriber
+    /// instead of missed. See `ProviderStore.NavigationRequest`.
+    func showWindow(on destination: ProviderStore.NavigationRequest.Destination) {
+        providerStore.requestNavigation(destination)
+        showWindow()
+    }
+
     /// Drop the SwiftUI graph when the window closes.
     ///
     /// `isReleasedWhenClosed = false` keeps the `NSWindow` alive across

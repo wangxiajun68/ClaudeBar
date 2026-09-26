@@ -24,6 +24,18 @@ final class MenuBarController: NSObject {
     private let providerStore: ProviderStore
     private let codexProviderStore: CodexProviderStore
     private var isOpen = false
+    /// Set when the click-outside monitor dismissed the popup for a mouse-down
+    /// that landed on the status item itself. AppKit runs that monitor *before*
+    /// the item's action for the same mouse-down, so without this the action
+    /// saw a popup that had just been hidden and re-opened it — the icon could
+    /// never dismiss its own popup. Set and cleared on the main thread only.
+    private var closingFromStatusItem = false
+    /// Re-positions the open panel when the display arrangement changes (a
+    /// monitor unplugged, a resolution switch). `sizeAndPosition` re-derives
+    /// the screen on every `show()`, but nothing re-ran it while the panel was
+    /// already up, so the popup stayed clamped to the old screen until it was
+    /// closed and reopened. The island registers the same notification.
+    private var screenObserver: NSObjectProtocol?
 
     init(providerStore: ProviderStore, codexProviderStore: CodexProviderStore) {
         self.providerStore = providerStore
@@ -179,6 +191,13 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func statusItemClicked() {
+        // The click that got here was already seen by the dismissal monitor
+        // (the icon is outside the panel rect), which hid the popup. Reopening
+        // it would make the icon a no-op toggle — see `closingFromStatusItem`.
+        if closingFromStatusItem {
+            closingFromStatusItem = false
+            return
+        }
         if isOpen { hide() } else { show() }
     }
 
@@ -210,15 +229,34 @@ final class MenuBarController: NSObject {
         isOpen = true
         UIWakePolicy.setPopupOpen(true)
         installMonitors()
+        observeScreenChanges()
     }
 
     private func hide() {
+        hide(deferringMonitorRemoval: false)
+    }
+
+    /// `hide()` is reachable from inside the local monitor's own callback
+    /// (`handleLocalMouseDown` → here), and `removeMonitors()` would then tear
+    /// down the very monitor whose handler is still on the stack — while that
+    /// handler is still going to return the event to the dispatcher. Nothing
+    /// provably breaks today, but dismantling a monitor from within its own
+    /// invocation is not a supported shape, so that path defers it a turn.
+    private func hide(deferringMonitorRemoval: Bool) {
+        closingFromStatusItem = false
         panel?.orderOut(nil)
         hostingView?.removeFromSuperview()
         hostingView = nil
         isOpen = false
         UIWakePolicy.setPopupOpen(false)
-        removeMonitors()
+        if deferringMonitorRemoval {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isOpen else { return }
+                self.removeMonitors()
+            }
+        } else {
+            removeMonitors()
+        }
     }
 
     // MARK: - Panel
@@ -236,12 +274,12 @@ final class MenuBarController: NSObject {
         // 并中止（点击菜单栏图标崩溃）。AutoresizingMask 同样铺满且不参与约束引擎。
         hosting.autoresizingMask = [.width, .height]
         // Same arrangement as the main window and the notch island: no size
-        // feedback into AppKit. The default sizing options make every layout
+        // feedback into AppKit. The default sizing options make *every* layout
         // pass walk the whole view graph (`invalidateSizeConstraints` →
-        // `minSize()` → `sizeThatFits`) — and the popup animates a staggered
-        // `appearLift` on open, so that walk lands on exactly the frames the
-        // user watches. `sizeAndPosition` supplies an explicit viewport;
-        // only the session list scrolls inside its allocated space.
+        // `minSize()` → `sizeThatFits`), and a popup that is opened, resized by
+        // its own content and scrolled re-lays out constantly. `sizeAndPosition`
+        // supplies an explicit viewport; only the session list scrolls inside
+        // its allocated space.
         hosting.sizingOptions = []
         hostingView = hosting
     }
@@ -318,8 +356,23 @@ final class MenuBarController: NSObject {
         if let content = panel.contentView { hostingView?.frame = content.bounds }
     }
 
-    // MARK: - Dismissal (click outside)
-
+    /// Dismissal (click outside) for the rectangular panel.
+    ///
+    /// The panel's *rect* is not the popup: `PanelState`'s popovers
+    /// (`HeaderSwitchChip`, `CompactBatteryChargeControl`) open as separate
+    /// `_NSPopoverWindow`s that AppKit places outside it — measured on a
+    /// 1728×1117 screen, the battery control lands 189pt left of the panel and
+    /// 40pt below it. A click there is "outside the panel" by frame, so the old
+    /// test dismissed the popup on the first click anywhere in those popovers,
+    /// which is why the charging modes and the model switcher needed a second
+    /// click. They are child windows of the panel (`window.parent`), so that is
+    /// the test: inside the panel rect, or inside a window hanging off it.
+    ///
+    /// `parent` is the right member for a *popover*. A `confirmationDialog` /
+    /// `.alert` off a panel is an `_NSAlertPanel` attached by `sheetParent`
+    /// instead — measured, see `docs/technical/17-ui-audit-backlog.md` §6 — so
+    /// the day a dialog lands in this panel it needs its own clause here.
+    ///
     /// Local monitor catches mouse-downs delivered to OUR app windows.
     private func installMonitors() {
         removeMonitors()
@@ -338,10 +391,29 @@ final class MenuBarController: NSObject {
 
     private func handleLocalMouseDown(_ event: NSEvent) {
         guard let panel = panel, isOpen else { return }
-        // If the click is not in our panel, dismiss.
-        let location = NSEvent.mouseLocation
-        if !panel.frame.contains(location) {
-            hide()
+        if panel.frame.contains(NSEvent.mouseLocation) { return }
+        if let window = event.window, window !== panel, window.parent === panel { return }
+        hide(deferringMonitorRemoval: true)
+        // Only the status item's own mouse-down is followed by
+        // `statusItemClicked`, and only that one has to be swallowed. Matching
+        // on the item's window (not its frame) keeps a click on any other
+        // window from arming a suppression that would eat the next icon click.
+        if let window = event.window, window === statusItem.button?.window {
+            closingFromStatusItem = true
+        }
+    }
+
+    /// Only while open: a closed panel has no position to fix, and `show()`
+    /// re-derives everything anyway.
+    private func observeScreenChanges() {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isOpen, let panel = self.panel else { return }
+                self.sizeAndPosition(panel)
+            }
         }
     }
 

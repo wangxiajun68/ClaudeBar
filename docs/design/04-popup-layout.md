@@ -3,13 +3,13 @@
 > ClaudeBar 设计文档 · §4
 > 相关：[主窗口与设计系统](05-main-window-and-theme.md) · 技术文档 [视图层](../technical/05-view-layer.md)
 
-面板宽 424pt（`MenuBarView` 固定宽度），垂直自适应（最高占满屏幕可见区 -8，上限 820pt）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `ResourceStrip`。从上到下：
+面板宽 424pt（`MenuBarView` 固定宽度），垂直自适应（最高占满屏幕可见区 -8，上限 820pt）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `Views/Shared/MachineKpiStrip.swift`。从上到下：
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │ ClaudeBar   [VPN 启停 · 节点]              [刷新]  ← PanelHeader
 ├─────────────────────────────────────────────────────┤
-│ MachineKpiStrip：进程资源 + 风扇转速（dense）          │
+│ MachineKpiStrip：进程资源（+ 在用耳机）+ 风扇转速        │
 ├─────────────────────────────────────────────────────┤
 │ PowerFlowCard(compact)  能源流向（有内置电池时）       │
 ├─────────────────────────────────────────────────────┤
@@ -51,7 +51,7 @@ VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarR
 
 popup 内不铺供应商宫格：`PanelHeader` 的 Claude Code / Codex chip 打开 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
 
-主窗口的供应商宫格（`TileGrid` + `ProviderTile`，`Views/ProviderRow.swift`）是另一条路径，见 [design/05](05-main-window-and-theme.md)：
+主窗口的供应商宫格（`ProviderDirectoryHost` + `ProviderConnectionEditor`）是另一条路径，见 [design/05](05-main-window-and-theme.md)：
 
 - 瓦片头：Provider 名 + 活跃胶囊（激活瓦片左缘 2px accent 竖条）。
 - 活跃模型行（case-insensitive 匹配 `ANTHROPIC_MODEL`）+ 模型总数。
@@ -59,7 +59,7 @@ popup 内不铺供应商宫格：`PanelHeader` 的 Claude Code / Codex chip 打�
 
 ## 用量区
 
-`UsagePanel` 固定 272pt 高，只放三样东西：
+`UsagePanel` 固定 244pt 高，只放三样东西：
 
 - 顶部 `日 / 月 / 年 / 指定` 周期切换 chips + 「重新统计」按钮。选「指定」时日期选择器走 **popover**（`.graphical`），不再内联展开把面板撑高。
 - 两列汇总：**「Token 用量」**（副行「所选时段累计」）与 **「花费」**（按刊例价估算；副行「另有 $43.20」/「N 个未计价」/「暂无用量」）。

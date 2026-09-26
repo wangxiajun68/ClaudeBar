@@ -1,10 +1,15 @@
 import SwiftUI
-import Charts
 
-/// Analysis first, then power controls, session details and the usage calendar.
-/// Shares the selected usage period with the usage page.
+/// Resource status, power controls and active sessions.
 struct DashboardView: View {
-    @ProviderState([.configuration, .sessions, .usage]) var providerStore: ProviderStore
+    /// `.sessions` only. Nothing in this body reads a configuration field, and
+    /// `.configuration` publishes on `refreshBalance`'s first line
+    /// (`balanceLoading = true`) plus every `refresh()`'s `currentEnv` /
+    /// `hasSettingsFile` write — so a balance fetch for an account this page
+    /// does not show re-derived `overviewRows` (the `SessionTitle.condense` +
+    /// `replacingOccurrences` pass the comment below exists to do once) and
+    /// rebuilt `DashboardView(onNavigate:)`'s non-diffable closure.
+    @ProviderState(.sessions) var providerStore: ProviderStore
     /// Injected by the window so a tile tap navigates to the page.
     var onNavigate: (AppPage) -> Void = { _ in }
 
@@ -13,10 +18,8 @@ struct DashboardView: View {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
                 ResourceStrip()
-                metricRow
                 PowerFlowCard()
                 sessionOverview
-                usageTop
             }
             .padding(Theme.Space.s24)
         }
@@ -41,13 +44,6 @@ struct DashboardView: View {
             .adaptiveGlassButton()
             .tint(Theme.claude)
         }
-    }
-
-    // MARK: Analysis
-
-    private var metricRow: some View {
-        DashboardAnalysisView(refreshStats: providerStore.usageStats,
-                              refreshDays: providerStore.usageDays)
     }
 
     private var aliveCount: Int { providerStore.aliveSessions.count }
@@ -94,9 +90,10 @@ struct DashboardView: View {
             // `SessionTitle.condense` pass (five `replacingOccurrences` + a
             // scalar-width reduce) per row. Reading the property twice — once
             // for the grid, once for the overflow count — doubled that on
-            // every poll and every usage publish.
+            // every poll.
             let all = overviewRows
-            let rows = all.prefix(8)
+            let cap = Self.overviewCap
+            let rows = all.prefix(cap)
             if rows.isEmpty {
                 Text("暂无活跃会话")
                     .font(Theme.Font.body)
@@ -109,7 +106,7 @@ struct DashboardView: View {
                         OverviewTile(row: row) { onNavigate(.sessions) }
                     }
                 }
-                if all.count > 8 {
+                if all.count > cap {
                     Button(action: { onNavigate(.sessions) }) {
                         Label("查看全部 \(all.count) 个会话", systemImage: "arrow.right")
                             .font(Theme.Font.bodySmall)
@@ -121,8 +118,28 @@ struct DashboardView: View {
             }
         }
         .padding(Theme.Space.s16)
-        .panelCard()
+        // The accent wash + ring, same as the session tiles inside it, so the
+        // card and its grid are one block rather than a panel holding cards.
+        // Raw `claude`, not `Ink.claude`: the ink variant is the *text* mix and
+        // would make the wash darker than the tiles it contains.
+        .panelCard(tint: Theme.claude)
     }
+
+    /// How many session tiles the overview card shows before handing off to
+    /// the sessions page.
+    ///
+    /// Six, i.e. two full rows: `TileGrid(.pageSession)` is adaptive at a 280pt
+    /// minimum, so the default window (1120pt, minus the 24pt page padding each
+    /// side) lays out three columns, and two rows is what fits above the fold at
+    /// the default 720pt window height — with a battery installed
+    /// (`PowerFlowCard` plus its controls) not even one row is fully visible.
+    ///
+    /// The number itself matters less than its being reachable: this used to be
+    /// `prefix(8)` tested against `all.count > 8`, which can never both hold, so
+    /// the "查看全部" button never rendered and any session past the eighth was
+    /// invisible on the page with no hint that more existed. Whatever the cap is,
+    /// the overflow line below has to be able to fire.
+    private static let overviewCap = 6
 
     /// Unified view-model for one overview tile across all three platforms.
     struct OverviewRow: Identifiable {
@@ -197,94 +214,6 @@ struct DashboardView: View {
         return claudeRows + cursorRows + externalRows
     }
 
-    // MARK: Usage calendar
-
-    /// The overview always draws a whole month. It used to share the usage
-    /// page's period, so choosing one day collapsed this card into seven
-    /// weekday tiles fed by a single day's rows.
-    private var usageTop: some View {
-        DashboardUsageCalendar()
-    }
-}
-
-private struct DashboardUsageCalendar: View {
-    @State private var anchor = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? Date()
-    @State private var days: [DayUsage] = []
-    @State private var selected: Date?
-    @State private var loading = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            HStack(spacing: 8) {
-                Text("用量分布")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                Spacer(minLength: 8)
-                Button { shift(-1) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textSecondary)
-                Text(UsageStats.formatter("yyyy年M月").string(from: anchor))
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(minWidth: 88)
-                Button { shift(1) } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(canGoForward ? Theme.textSecondary : Theme.textTertiary())
-                .disabled(!canGoForward)
-            }
-            UsageHeatmap(days: days, period: .month, reference: anchor, onSelectDay: { selected = $0 })
-            Text(selectionCaption)
-                .font(Theme.Font.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-            if !loading && days.isEmpty {
-                StandbyEmptyState(label: "这个月暂无用量")
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-        }
-        .padding(Theme.Space.s16)
-        .panelCard()
-        .task(id: anchor) {
-            loading = true
-            let month = anchor
-            let fetched = await Task.detached(priority: .utility) {
-                let interval = Calendar.current.dateInterval(of: .month, for: month)
-                    ?? DateInterval(start: month, duration: 86400)
-                return UsageIndex.fetchDaily(in: interval)
-            }.value
-            guard !Task.isCancelled else { return }
-            days = fetched
-            loading = false
-        }
-    }
-
-    private var canGoForward: Bool {
-        let cal = Calendar.current
-        guard let next = cal.date(byAdding: .month, value: 1, to: anchor) else { return false }
-        return next <= (cal.dateInterval(of: .month, for: Date())?.start ?? Date())
-    }
-
-    private var selectionCaption: String {
-        guard let selected else { return "整月分布。点某一天看当天 Token。" }
-        let label = UsageStats.formatter("M月d日").string(from: selected)
-        let key = UsageHeatmap.dayKey(selected)
-        guard let day = days.first(where: { $0.day == key }) else { return "\(label) · 无用量" }
-        return "\(label) · \(UsageStats.formatTokens(day.totalTokens))"
-    }
-
-    private func shift(_ months: Int) {
-        guard let next = Calendar.current.date(byAdding: .month, value: months, to: anchor) else { return }
-        anchor = next
-        selected = nil
-    }
 }
 
 // MARK: - Session overview tile
@@ -370,7 +299,8 @@ private struct OverviewTile: View {
             }
             .padding(Theme.Space.s12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .tile(hovered: isHovered)
+            .tile(tint: row.tint, hovered: isHovered,
+                  lens: DepthLensSpec(tint: row.tint, size: 118))
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -380,4 +310,3 @@ private struct OverviewTile: View {
         .accessibilityHint("在会话页查看")
     }
 }
-

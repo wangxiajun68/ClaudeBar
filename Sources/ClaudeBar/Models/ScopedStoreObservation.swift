@@ -46,6 +46,27 @@ extension EnvironmentValues {
 
 /// A non-observing store reference plus a field-scoped invalidation signal.
 /// Actions still operate on the canonical store; no duplicate data is kept.
+///
+/// **A view that uses this must be mounted under `\.providerSource`.** Every
+/// shipped mount does it (`MainWindowController.installContent`,
+/// `MenuBarController.makeHostingView`), and the requirement is real: this is
+/// the *only* read of that value in the app, so a mount that forgets it
+/// resolves to `nil` and traps in the SwiftUI update pass, not at the call
+/// site —
+///
+///     ProviderState.update() → EmbeddedDynamicPropertyBox.update(property:phase:)
+///     → DynamicBody.updateValue() → AG::Graph::update_attribute
+///     Exception Type: EXC_BREAKPOINT (SIGTRAP)
+///
+/// which is exactly the two crash reports of 2026-09-26 01:55 and 02:03 (both
+/// launched with `responsibleProc = ChatGPT`, i.e. from the UI-preview harness
+/// in the `codex/ui-redesign` worktree — its `UIPreviewProbe` builds
+/// `NSHostingView` wrappers around the pages and passes only `.environmentObject`,
+/// never the value). Reproduced in one binary, two arms, 4/4: `DashboardView()`
+/// straight into an `NSHostingView` traps with exit 133 and
+/// `ProviderState.update()` as the top app frame; the same view with
+/// `.environment(\.providerSource, store)` runs indefinitely. See
+/// `docs/technical/17-ui-audit-backlog.md` §8.
 @propertyWrapper struct ProviderState: DynamicProperty {
     @Environment(\.providerSource) private var source
     @Environment(\.surfaceIsVisible) private var visible
@@ -89,7 +110,7 @@ extension ProviderStore {
         if fields.contains(.configuration) {
             out += [changes($providers), changes($activeProviderID), changes($currentEnv),
                     changes($hasSettingsFile), changes($errorMessage), changes($importSummary),
-                    changes($balanceAmounts), changes($supplierBalances), changes($balanceLoading),
+                    changes($balanceAmounts), changes($balanceLoading),
                     changes($balanceText), changes($collapsedProviderIDs)]
         }
         if fields.contains(.usage) {

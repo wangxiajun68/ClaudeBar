@@ -73,7 +73,7 @@ struct CursorSessionCardView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered, dense: true)
+        .tile(tint: Theme.cursor, hovered: isHovered, dense: true)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

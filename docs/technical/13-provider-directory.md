@@ -72,4 +72,4 @@ Codex 的 Chat 上游必须经过现有本地 Responses → Chat 转换，不依
 
 Codex 最新版本的 `state_*.sqlite` 以只读模式读取，`archived = 0` 决定主会话卡片成员。进程持有文件、最近写入、最新 task 生命周期仅决定运行状态，不能排除空闲主会话。索引标题用于区分同一个项目中的多个会话。缺少 rollout 时保留索引信息；子代理通过索引 source 和 rollout 元数据双重排除。索引不可用时保留旧版近期文件扫描回退。
 
-`Tests/codex-session-regressions.py` 使用临时数据库和日志测试空闲、运行、崩溃遗留 open turn、缺失／损坏日志、归档、子代理和标题。不会改写用户的 Codex 数据。
+`Tests/codex-session-regressions.py` 使用临时数据库和日志测试空闲、运行、崩溃遗留 open turn、缺失／损坏日志、归档、子代理分类和标题。不会改写用户的 Codex 数据。`Tests/e2e-codex-tree.py` 是它的另一半：monitor 交出的东西 → `externalSessionTree` / 各计数器，合成 fixture 常跑，加 `CLAUDEBAR_E2E_REAL_INDEX=1` 时再对真实 `~/.codex` 索引断言一遍（main 有内容、没有 helper 被当成 main、每个 helper 的 parent 都在同一次扫描里）。它要编整个 app target（约 2 分钟），所以**不在 `make test` 里**。

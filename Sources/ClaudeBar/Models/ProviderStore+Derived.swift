@@ -20,14 +20,28 @@ extension ProviderStore {
     /// Is any Claude session busy (drives brand pulse / status icon).
     var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.status == .busy } }
 
-    /// Visible Codex sessions (unarchived main threads when indexed).
-    var aliveExternalSessions: [ExternalSessionInfo] { externalSessions.filter(\.isAlive) }
+    /// Visible Codex **threads** — roots only.
+    ///
+    /// `externalSessions` carries sub-agents too, because that is the only
+    /// place `externalSessionTree` can find them, but a helper is not a session
+    /// a user can act on: no resume, no card of its own, it exists in the list
+    /// solely to hang under its parent. Every list and every counter that means
+    /// "sessions" therefore filters helpers out *here*, in one place, rather
+    /// than each surface deciding for itself — that split is what keeps the
+    /// swarm tree and the numbers shown beside it from drifting apart.
+    var aliveExternalSessions: [ExternalSessionInfo] {
+        externalSessions.filter { $0.isAlive && !$0.isSubagent }
+    }
 
-    /// External sessions currently mid-turn.
-    var activeExternalCount: Int { externalSessions.filter(\.isActive).count }
+    /// External threads currently mid-turn. Roots only, for the same reason as
+    /// `aliveExternalSessions`: the pill this feeds reads as "N running" beside
+    /// a session count, so it has to be a subset of that population.
+    var activeExternalCount: Int {
+        externalSessions.filter { $0.isAlive && !$0.isSubagent && $0.isActive }.count
+    }
 
     /// Any external session busy.
-    var anyExternalBusy: Bool { externalSessions.contains { $0.isActive } }
+    var anyExternalBusy: Bool { activeExternalCount > 0 }
 
     /// One node of the Codex session tree: a user session plus the sub-agents
     /// it spawned (recursively, though Codex currently only nests one level).
@@ -64,8 +78,13 @@ extension ProviderStore {
     }
 
     /// Visible main threads, including idle unarchived Codex tasks. Helpers
-    /// are never promoted to main cards; any supplied active children stay
-    /// attached to their parent.
+    /// are never promoted to main cards; active children attach to their parent.
+    ///
+    /// Helpers come from the same published array as the mains — they have to,
+    /// since they carry the `parentThreadId` this needs — and the `isSubagent`
+    /// test below is what keeps them out of `roots()`. A helper whose parent is
+    /// gone (or which is no longer the parent's most recent fan-out) is dropped
+    /// by `childrenOf` lookups finding no home, and `roots()` will not adopt it.
     func externalSessionTree(kind: ExternalAgentKind) -> [ExternalSessionNode] {
         if let cached = externalTreeCache[kind] { return cached }
         let alive = externalSessions.filter { $0.kind == kind && $0.isAlive }

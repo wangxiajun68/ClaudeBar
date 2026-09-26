@@ -112,6 +112,16 @@ enum ExternalAgentKind: String, CaseIterable {
     /// leaves `task_started` without `task_complete`) stops counting as live
     /// after this long without a write.
     var orphanedTurnWindow: TimeInterval { 10 * 60 }
+
+    /// How recently a sub-agent must have been written to be returned.
+    ///
+    /// A sub-agent is a *child of a live session*, so only a currently-running
+    /// fan-out matters; unlike a main thread it is never something the user
+    /// resumes, so holding its rollout open after the run ends buys nothing.
+    /// Bounded well inside `busyWindow`/`orphanedTurnWindow`, which is what
+    /// makes the tree's `⋯N` badge mean "running now" rather than "ran
+    /// sometime today".
+    var subagentRecencyWindow: TimeInterval { 5 * 60 }
 }
 
 /// Which Codex rollouts a running `codex` process holds open right now.
@@ -177,13 +187,31 @@ enum CodexProcessScan {
 /// Lists unarchived interactive Codex threads and reads live rollout state.
 /// Membership matches Codex's own default thread list: `archived = 0` and a
 /// session source of `cli`, `vscode`, `atlas`, or `chatgpt`. `codex exec` and
-/// MCP one-shots (`exec`, `mcp`) stay out, as do sub-agents and threads the
-/// agent created for itself. Pure file metadata + a bounded head/tail read
-/// per file, run off-main by `ProviderStore`.
+/// MCP one-shots (`exec`, `mcp`) stay out. Pure file metadata + a bounded
+/// head/tail read per file, run off-main by `ProviderStore`.
+///
+/// Sub-agents are returned *alongside* the main threads rather than filtered
+/// out, because the session page groups them under the thread that spawned
+/// them (`ProviderStore.externalSessionTree` builds its `childrenOf` from rows
+/// where `isSubagent`). They are never roots: `roots()` drops them, so an
+/// orphaned helper cannot become a card. `fetchActive()` is the flat,
+/// main-threads-only view of the same scan.
 struct ExternalSessionMonitor {
 
+    /// Main threads plus the sub-agent rows the tree needs to attach them.
+    /// `fetchActive` clients want `main` only; the two are separated here so
+    /// neither has to re-derive which rows are which.
+    struct Scan {
+        var main: [ExternalSessionInfo] = []
+        var subagents: [ExternalSessionInfo] = []
+    }
+
+    static func scan() -> Scan {
+        fetchCodex()
+    }
+
     static func fetchActive() -> [ExternalSessionInfo] {
-        fetchCodex().sorted { $0.updatedAt > $1.updatedAt }
+        scan().main.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: Codex
@@ -211,16 +239,28 @@ struct ExternalSessionMonitor {
     /// every cache access goes through this.
     private static let codexCacheLock = NSLock()
 
-    private static func fetchCodex() -> [ExternalSessionInfo] {
+    private static func fetchCodex() -> Scan {
         let root = ExternalAgentKind.codex.rootDir
         let now = Date().timeIntervalSince1970
         let holders = CodexProcessScan.openRollouts()
         if let indexed = indexedCodexSessions(now: now, holders: holders) { return indexed }
         // A session is only surfaced if its file was touched within the
-        // recency window. Codex nests by year/month/day; cap the walk at the
-        // 3 most recent months so a long Codex history never walks the whole
-        // tree.
+        // recency window. Codex nests by `YYYY/MM/DD`, so the window also
+        // bounds the walk: only the year and month directories it can reach
+        // are worth listing at all. Without this the fallback ran a
+        // `contentsOfDirectory` over every day of every month of every year on
+        // each poll — cheap on a short history, unbounded on a long one, and
+        // it is the *fallback* path that runs when the index is unreadable.
+        //
+        // Both levels are zero-padded, so directory names sort by time; the
+        // comparison is still done on parsed integers rather than on the
+        // strings, because "9" and "09" are both real names for September in
+        // the wild and only the numbers compare correctly.
         let cutoff = now - ExternalAgentKind.codex.recencyWindow
+        let cutoffParts = Calendar.current.dateComponents([.year, .month],
+                                                         from: Date(timeIntervalSince1970: cutoff))
+        let cutoffYear = cutoffParts.year ?? 0
+        let cutoffMonth = cutoffParts.month ?? 1
 
         // Files that aged out of the window can never be reported again.
         codexCacheLock.lock()
@@ -229,13 +269,17 @@ struct ExternalSessionMonitor {
         }
         codexCacheLock.unlock()
 
-        var results: [ExternalSessionInfo] = []
+        var scan = Scan()
         let fm = FileManager.default
-        guard let yearDirs = try? fm.contentsOfDirectory(atPath: root).sorted().reversed() else { return [] }
+        guard let yearDirs = try? fm.contentsOfDirectory(atPath: root).sorted().reversed() else { return Scan() }
         yearLoop: for year in yearDirs {
+            guard let yearValue = Int(year) else { continue }
+            guard yearValue >= cutoffYear else { break yearLoop }
             let yearPath = "\(root)/\(year)"
             guard let months = try? fm.contentsOfDirectory(atPath: yearPath).sorted().reversed() else { continue }
             for month in months {
+                guard let monthValue = Int(month) else { continue }
+                if yearValue == cutoffYear && monthValue < cutoffMonth { break }
                 let monthPath = "\(yearPath)/\(month)"
                 guard let days = try? fm.contentsOfDirectory(atPath: monthPath).sorted().reversed() else { continue }
                 for day in days {
@@ -247,9 +291,17 @@ struct ExternalSessionMonitor {
                         if holders[path] == nil,
                            now - meta.mtime > ExternalAgentKind.codex.orphanedTurnWindow { continue }
                         let parsed = codexFields(path: path, meta: meta)
-                        guard parsed.metadataKnown,
-                              isInteractiveMain(source: parsed.sourceKind, threadSource: parsed.threadSource),
-                              parsed.parentThreadId == nil, parsed.spawnDepth == 0 else { continue }
+                        guard parsed.metadataKnown else { continue }
+                        let isHelper = parsed.threadSource == "subagent" || parsed.parentThreadId != nil
+                        // A helper is only useful while its fan-out is running —
+                        // it is never a card and never resumable — so it ages out
+                        // fast; a main thread keeps the session-level window.
+                        if isHelper, now - meta.mtime > ExternalAgentKind.codex.subagentRecencyWindow { continue }
+                        guard isHelper
+                            ? parsed.parentThreadId != nil
+                            : isInteractiveMain(source: parsed.sourceKind, threadSource: parsed.threadSource)
+                                && parsed.spawnDepth == 0
+                        else { continue }
                         // `task_complete` is the authoritative end of a Codex
                         // task, including dispatched sub-agents. Old rollout
                         // formats without lifecycle events get only the brief
@@ -261,7 +313,7 @@ struct ExternalSessionMonitor {
                         let holder = holders[path]
                         let alive = isLive(holder: holder, openTask: parsed.hasOpenTask, updated: meta.mtime, now: now)
                         guard alive else { continue }
-                        results.append(ExternalSessionInfo(
+                        let info = ExternalSessionInfo(
                             kind: .codex,
                             sessionId: sessionId,
                             cwd: parsed.cwd,
@@ -279,15 +331,16 @@ struct ExternalSessionMonitor {
                             spawnDepth: parsed.spawnDepth,
                             holderPID: holder?.pid,
                             inDesktop: holder?.inDesktop ?? false
-                        ))
+                        )
+                        if isHelper { scan.subagents.append(info) } else { scan.main.append(info) }
                     }
                 }
             }
-            // History is capped: once a year's scan has crossed the window,
-            // older years cannot qualify. Stop after 2 years max walk.
-            if results.count > 400 { break yearLoop }
+            // A runaway history is capped by count as well as by date: the
+            // walk stays bounded even if a directory tree is malformed.
+            if scan.main.count > 400 { break yearLoop }
         }
-        return results
+        return scan
     }
 
     private struct IndexedThread {
@@ -337,7 +390,7 @@ struct ExternalSessionMonitor {
     }
 
     private static func indexedCodexSessions(now: TimeInterval,
-                                             holders: [String: CodexProcessScan.Holder]) -> [ExternalSessionInfo]? {
+                                             holders: [String: CodexProcessScan.Holder]) -> Scan? {
         indexLock.lock()
         defer { indexLock.unlock() }
         if Date().timeIntervalSince(indexReadAt) >= 10 {
@@ -349,17 +402,27 @@ struct ExternalSessionMonitor {
         codexCacheLock.lock()
         codexFileCache = codexFileCache.filter { paths.contains($0.key) }
         codexCacheLock.unlock()
-        return rows.compactMap { row -> ExternalSessionInfo? in
+        var scan = Scan()
+        for row in rows {
             let meta = fileMeta(path: row.path, cutoff: 0)
             // Membership is authoritative even for idle or missing rollouts.
             let parsed = meta.map { codexFields(path: row.path, meta: $0) }
-            guard isInteractiveMain(source: row.source, threadSource: row.threadSource),
-                  parsed?.parentThreadId == nil, parsed?.threadSource != "subagent",
-                  (parsed?.spawnDepth ?? 0) == 0 else { return nil }
             let updated = meta?.mtime ?? row.updated
+            // A rollout is a helper when the index says so or the file header
+            // carries a parent; `threadSource` alone is not enough for rows
+            // written before that column existed.
+            let isHelper = parsed?.threadSource == "subagent" || parsed?.parentThreadId != nil
+            if isHelper {
+                // Only while its fan-out is live — see `subagentRecencyWindow`.
+                guard let parent = parsed?.parentThreadId, !parent.isEmpty,
+                      now - updated <= ExternalAgentKind.codex.subagentRecencyWindow else { continue }
+            } else {
+                guard isInteractiveMain(source: row.source, threadSource: row.threadSource),
+                      (parsed?.spawnDepth ?? 0) == 0 else { continue }
+            }
             let holder = holders[row.path]
             let live = isLive(holder: holder, openTask: parsed?.hasOpenTask, updated: updated, now: now)
-            return ExternalSessionInfo(
+            let info = ExternalSessionInfo(
                 kind: .codex, sessionId: row.id,
                 cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
                 startedAt: row.created * 1000, updatedAt: updated * 1000,
@@ -370,7 +433,9 @@ struct ExternalSessionMonitor {
                 parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",
                 agentNickname: parsed?.agentNickname ?? "", spawnDepth: parsed?.spawnDepth ?? 0,
                 holderPID: holder?.pid, inDesktop: holder?.inDesktop ?? false, title: row.title)
+            if isHelper { scan.subagents.append(info) } else { scan.main.append(info) }
         }
+        return scan
     }
 
     private static func readThreadIndex() -> [IndexedThread]? {
@@ -413,7 +478,8 @@ struct ExternalSessionMonitor {
         while step == SQLITE_ROW {
             let source = string(5)
             let threadSource = hasThreadSource ? string(7) : ""
-            if isInteractiveMain(source: source, threadSource: threadSource) {
+            let kind = threadKind(source: source, threadSource: threadSource)
+            if kind != .excluded {
                 rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
                                           created: sqlite3_column_double(stmt, 3), updated: sqlite3_column_double(stmt, 4),
                                           title: string(6), source: source, threadSource: threadSource))
@@ -421,6 +487,33 @@ struct ExternalSessionMonitor {
             step = sqlite3_step(stmt)
         }
         return step == SQLITE_DONE ? rows : nil
+    }
+
+    /// What an index row *is*, since the tree needs the helpers as well as the
+    /// mains.
+    ///
+    /// `readThreadIndex` used to keep only rows `isInteractiveMain` accepted,
+    /// which by construction is exactly the set that excludes helpers — so no
+    /// sub-agent from the index ever reached the tree, and the swarm surfaces
+    /// stayed empty even though `state_*.sqlite` has carried 129
+    /// `thread_source = 'subagent'` rows with their `parent_thread_id` all
+    /// along. The split now happens here and the *consumer*
+    /// (`ProviderStore.externalSessionTree`) decides what to do with each.
+    enum ThreadKind { case main, helper, excluded }
+
+    private static func threadKind(source: String, threadSource: String) -> ThreadKind {
+        let thread = threadSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if thread == "subagent" || thread == "agent_created_thread" || thread.contains("subagent") {
+            return .helper
+        }
+        let raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.lowercased().contains("subagent") { return .helper }
+        if let data = raw.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["subagent"] != nil {
+            return .helper
+        }
+        return isInteractiveMain(source: source, threadSource: threadSource) ? .main : .excluded
     }
 
     /// Head/tail fields for `path`, re-reading only when mtime or size moved.

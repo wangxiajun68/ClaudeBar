@@ -25,7 +25,6 @@ ClaudeBar/
 │   │   │   ├── ScopedStoreObservation.swift ← 按字段合并的 store 观察
 │   │   │   ├── BatteryChargeController.swift ← 电池控制状态机
 │   │   │   ├── IslandLiveModel.swift     ← 灵动岛数据（见 §10）
-│   │   │   ├── ProviderEditorModel.swift / CodexEditorModel.swift
 │   │   │   ├── CodexProxyState.swift
 │   │   │   ├── SettingsManager.swift / AppConfig.swift / AppPreferences.swift
 │   │   │   ├── WidgetSnapshot.swift / WidgetSnapshotWriter.swift

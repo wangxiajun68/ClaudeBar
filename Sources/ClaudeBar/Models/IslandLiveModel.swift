@@ -106,7 +106,8 @@ struct IslandUsage: Equatable {
 ///
 /// Everything is reduced to small `Equatable` snapshots and de-duplicated
 /// before it is published, so a `ProviderStore` poll that changes nothing the
-/// island shows (heartbeats, subagent trees, balances…) never re-renders it.
+/// island shows (heartbeats, subagent trees, other windows' figures) never
+/// re-renders it.
 @MainActor
 final class IslandLiveModel: ObservableObject {
     @Published private(set) var sessions: [IslandSession] = []
@@ -115,11 +116,6 @@ final class IslandLiveModel: ObservableObject {
     @Published private(set) var claudeRoute = ""
     @Published private(set) var codexRoute = ""
     @Published private(set) var vpnRunning = false
-    /// Account balances and Codex windows for the island's rotating glance.
-    /// Published only when the values change, not on the session poll.
-    @Published private(set) var balances: [ProviderStore.SupplierBalance] = []
-    @Published private(set) var quotaWindows: [CodexQuotaWindow] = []
-
     /// A session that just went busy → idle. Fires once per transition.
     let finished = PassthroughSubject<IslandSession, Never>()
 
@@ -129,22 +125,6 @@ final class IslandLiveModel: ObservableObject {
     let quotaReset = PassthroughSubject<CodexQuotaWindow, Never>()
 
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
-
-    /// The row a session sits in, or nil once it is gone. The session strip
-    /// uses this to keep its dwell on the *session* rather than on the slot
-    /// index it happened to occupy before the list changed under it.
-    func index(of session: IslandSession) -> Int? {
-        sessions.firstIndex { $0.id == session.id }
-    }
-
-    /// Busy agent families, most urgent first, without repeats.
-    var busyAgents: [IslandAgent] {
-        var seen: [IslandAgent] = []
-        for session in sessions where session.isBusy && !seen.contains(session.agent) {
-            seen.append(session.agent)
-        }
-        return seen
-    }
 
     private weak var providerStore: ProviderStore?
     private var cancellables: Set<AnyCancellable> = []
@@ -188,21 +168,14 @@ final class IslandLiveModel: ObservableObject {
             .sink { [weak self] in self?.codexRoute = $0 }
             .store(in: &cancellables)
 
-        providerStore.$supplierBalances
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.balances = $0 }
-            .store(in: &cancellables)
-
         codexStore.$quotaWindows
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] windows in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.quotaWindows = windows
-                    // Edge-detect before publishing, so the 4.2 s glance poll
-                    // cannot re-announce a window that merely stayed low.
+                    // Edge-detect before publishing, so a poll that merely
+                    // re-reports a window that stayed low cannot re-announce it.
                     for window in self.quotaResetDetector.record(windows) {
                         self.quotaReset.send(window)
                     }

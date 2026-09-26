@@ -64,7 +64,6 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 - **展开态高度是常数**，不再随会话数量变化：`6`（`contentTopGap`）+ `110`（会话区 `sessionStripHeight`）+ `8`（`sectionGap`）+ `156`（用量卡）+ `12`（`bottomPadding`）= **292pt**。会话多于一屏时在会话格内部**滚动**（原生 `ScrollView` + `LazyVGrid`，2 列 × 2 行，每行 44pt、行距 4pt），提示行写「N 个会话 · 上下滑动查看更多」。
 - 用量卡下半部是**今日 / 今日花费**两个 hero，下接 42pt 的 30 天直方图（`Canvas` 一次绘制，悬停即横向滑动查看任意一天），底部一行是本月节奏与来源分段条。
 - 提醒不会打断展开态（展开时列表里本来就能看到）；新的完成事件会替换正在显示的提醒。
-- **闲置说明**：`IslandGlanceReel`（右下角轮播卡片：额度 / 本机 / 当前模型 / 余额）与它的定尺寸几何目前**没有挂载点** —— 展开态改为「会话格 + 用量卡」两段后不再渲染它，`IslandStyle` 里那组 `glanceCard*` / `pager*` 常量只服务于它和 `Tests/island-reel-regressions.py`。保留是为了让轮播随时能挂回去；它不参与当前任何布局。
 
 提醒条有两种 payload（`IslandAlert`）：**会话完成**（忙→闲）与 **Codex 额度重置**。两者共用同一条状、同一个 6s 倒计时和同一条展开路径，因为它们都是「你等的那个东西刚刚变真了」。区别只在文案、图标与动作：完成是薄荷色对勾 + 「继续」按钮，额度是琥珀色回环箭头 + 窗口名胶囊（无处可跳）。
 
@@ -115,7 +114,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时给出菜单栏高度的伪刘海 |
 | `Models/IslandLiveModel.swift` | 会话扁平化与去重、完成事件、额度重置边沿、路由 / VPN、会话花费与后台用量计算 |
 | `Views/Island/NotchIslandView.swift` | `IslandStyle`、根视图、两翼、提醒、展开顶栏、会话格与用量卡 |
-| `Views/Island/IslandComponents.swift` | Agent 标志与轨道、会话行、上下文油量、用量卡与花费 hero、`Canvas` 直方图、来源分段条；另含未挂载的 `IslandGlanceReel` 轮播 |
+| `Views/Island/IslandComponents.swift` | Agent 标志与轨道、会话行、上下文油量、用量卡与花费 hero、`Canvas` 直方图、来源分段条 |
 | `Views/Island/IslandShape.swift` | 可动画的刘海形状（上沿内凹圆角 + 下沿圆角；顶边开口，描边不贴屏幕边） |
 
 ### 4.2 窗口
@@ -198,7 +197,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 - 两翼会盖住紧贴刘海的菜单栏图标，因此可关。
 - 屏幕录制 / 截图会拍到打开的灵动岛（未设置 `sharingType = .none`）。
-- 展开态不再使用右下角的轮播卡片（额度 / 本机 / 余额），那些数字改由菜单栏 popup 与主窗口承载；`IslandGlanceReel` 与其几何常量仍在源码里，可随时挂回。
-- 后续可做：多屏各显示一个；把轮播作为展开态的可选第二页。
+- 展开态不使用右下角的轮播卡片（额度 / 本机 / 余额），那些数字由菜单栏 popup 与主窗口承载；曾经的 `IslandGlanceReel` 与它的几何常量已删除（见 [technical/17](../technical/17-ui-audit-backlog.md) §4），展开态就是 header + 会话格 + 用量卡。
+- 后续可做：多屏各显示一个。
 
 **返回** [设计文档](README.md)

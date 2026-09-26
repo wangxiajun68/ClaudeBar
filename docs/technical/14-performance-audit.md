@@ -67,4 +67,4 @@
 5. 主窗口遮挡/最小化，同时展开 popup 或灵动岛；关闭后检查 CPU/GPU 回落。
 6. 浅色/深色、Reduce Motion、60 Hz 与 ProMotion、低电量模式。
 
-记录主线程与渲染耗时的 p50/p95/p99、hitch 次数、峰值内存、关闭后 CPU。60 Hz 每帧预算约 16.67 ms，120 Hz 约 8.33 ms；数据更新 10 Hz 不等于显示刷新 10 FPS。装饰 TimelineView 中仍有 12/20 Hz 采样，这些效果的平滑度应单独验收，不能用页面平均 FPS 掩盖。
+记录主线程与渲染耗时的 p50/p95/p99、hitch 次数、峰值内存、关闭后 CPU。60 Hz 每帧预算约 16.67 ms，120 Hz 约 8.33 ms；数据更新 10 Hz 不等于显示刷新 10 FPS。装饰动效现在没有 12/20 Hz 的 `TimelineView` 采样了（`LoadRing` 与灵动岛轮播卡都已删除）：装饰一律走 `NSViewRepresentable` + Core Animation，由渲染服务器插值。剩下两处 `TimelineView` 是灵动岛会话行的 30 秒周期相对时间，与 `HardwareIllustration` 读数扫光的 30 Hz（`paused:` 由读数、窗口可见性、减弱动效三者共同决定）。这两处的平滑度仍应单独验收，不能用页面平均 FPS 掩盖。

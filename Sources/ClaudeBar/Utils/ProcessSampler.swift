@@ -19,11 +19,15 @@ import Observation
 final class ProcessSampler {
     static let shared = ProcessSampler()
 
+    /// Which surface is asking for the sampler, so a scope can be dropped
+    /// without stopping the others. There used to be an `island` case, set by
+    /// the glance reel; the reel is deleted and nothing sets it, so it is gone
+    /// rather than left as a scope no surface can enter — a stale case here
+    /// reads as a live feature (see `docs/technical/17-ui-audit-backlog.md` §4).
     enum MonitorScope: Hashable {
         case popup
         case dashboard
         case sessions
-        case island
     }
 
     enum Key: Hashable {
@@ -68,6 +72,32 @@ final class ProcessSampler {
         var memoryUsed: UInt64 = 0
         var memoryTotal: UInt64 = 0
         var coreCount: Int = 1
+        /// Busy fraction per logical core, 0…1, in core order. Empty until the
+        /// sampler's second tick establishes the baseline.
+        var coreLoad: [Double] = []
+        /// GPU core count as the driver publishes it, and the three sub-unit
+        /// readings (device / renderer / tiler) as 0…100. Zero and empty on a
+        /// machine whose driver publishes neither.
+        var gpuCoreCount: Int = 0
+        var gpuRenderers: [Double] = []
+        /// Physical memory by page category, in bytes. These are the *real*
+        /// buckets `vm_statistics64` reports — not an apportionment of
+        /// `memoryUsed`, which is `active + inactive + speculative + wired +
+        /// compressed − purgeable − external` and would double-count two of
+        /// them. `used` is the sampler's own pressure figure and is the one the
+        /// percentage on screen comes from; the parts are for the mark.
+        ///
+        /// They do **not** sum to `used`: `free` counts bytes that are nobody's
+        /// (`speculative` is a subset of neither), and the categories are
+        /// sampled independently. That is why they are carried as raw bytes and
+        /// normalised by the mark rather than as pre-divided shares.
+        var memoryActive: UInt64 = 0
+        var memoryWired: UInt64 = 0
+        var memoryCompressed: UInt64 = 0
+        var memoryCached: UInt64 = 0
+        /// `free_count + speculative_count` — what is genuinely available,
+        /// which is the number a person means by "空闲".
+        var memoryFree: UInt64 = 0
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
         /// Battery cell temperature, when the SMC reports one. Distinct from
@@ -121,6 +151,32 @@ final class ProcessSampler {
             if celsius >= 75 { return Theme.statusWarning }
             return nil
         }
+
+        /// The memory mark's own reading: the page categories the percentage is
+        /// made of, each normalised by *physical* memory — the denominator a
+        /// person means by "用了多少内存".
+        ///
+        /// A share, not a stacked sum: `active` and `cached` each count bytes
+        /// that are nobody else's, and stacking them would claim the machine
+        /// was using more than it has. The mark draws one well per category
+        /// against the same total for that reason.
+        var memoryWells: [Double] {
+            guard memoryTotal > 0 else { return [] }
+            let total = Double(memoryTotal)
+            let bytes = [memoryActive, memoryWired, memoryCompressed]
+            guard bytes.contains(where: { $0 > 0 }) else { return [] }
+            return bytes.map { min(1, Double($0) / total) }
+        }
+
+        /// The disk mark's own reading: used and free, each against capacity.
+        /// Two wells rather than a percentage, because that is what a capacity
+        /// mark is for — the figure above it already says how full it is.
+        var diskWells: [Double] {
+            guard diskTotal > 0 else { return [] }
+            let used = min(diskUsed, diskTotal)
+            return [Double(used) / Double(diskTotal), Double(diskTotal - used) / Double(diskTotal)]
+        }
+
     }
 
     struct Point: Equatable {
@@ -155,6 +211,17 @@ final class ProcessSampler {
     private var temperatureSampleAt: TimeInterval = -.infinity
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
+    /// Per-core busy fraction, in *logical core* order (0…`coreCount`-1), the
+    /// counterpart of `hostCPUPercent`'s single aggregate figure. Empty until
+    /// the second sample — the first one only establishes a baseline.
+    ///
+    /// `PROCESSOR_CPU_LOAD_INFO` returns the same CPU_STATE_* counters that
+    /// `HOST_CPU_LOAD_INFO` does, once per core, so the two never disagree
+    /// about the machine: the array's mean is the aggregate (modulo the
+    /// per-sample rounding). That matters because the strip draws both — a
+    /// twelve-core glyph whose cells average to something other than the number
+    /// printed underneath it is worse than no glyph at all.
+    private var lastPerCoreTicks: [(user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)] = []
     private var claudeRoots: [pid_t] = []
     private var index = ProcessIndex()
     private var lastDiscoveryAt: TimeInterval = 0
@@ -329,12 +396,23 @@ final class ProcessSampler {
         // cheaper than the GPU and temperature reads beside it, which *are*
         // still tiered because they are the expensive ones.
         let battery = HardwareSensors.batteryStatus()
+        // One `vm_statistics64` serves both the pressure figure and the mark's
+        // parts, so the two cannot be read a tick apart.
+        let memory = memoryBreakdown()
         let hostSnap = HostStats(
             cpu: hostCPUPercent(),
             gpu: gpu.utilization,
-            memoryUsed: hostMemoryUsed(),
+            memoryUsed: memory.used,
             memoryTotal: ProcessInfo.processInfo.physicalMemory,
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
+            coreLoad: hostCoreLoad(),
+            gpuCoreCount: gpu.coreCount,
+            gpuRenderers: gpu.renderers,
+            memoryActive: memory.active,
+            memoryWired: memory.wired,
+            memoryCompressed: memory.compressed,
+            memoryCached: memory.cached,
+            memoryFree: memory.free,
             cpuTemperatureCelsius: foreground ? cpuTemperature : nil,
             gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
             batteryTemperatureCelsius: foreground ? batteryTemperature : nil,
@@ -532,7 +610,74 @@ final class ProcessSampler {
         return Double(dUser + dSys + dNice) / Double(total) * 100
     }
 
+    /// One busy fraction per logical core, in core order.
+    ///
+    /// Sibling of `hostCPUPercent`, and it exists for the same reason the fan
+    /// rotors read real RPM: the dashboard's CPU mark draws `coreCount` cells,
+    /// and a cell that is not wired to a real core is a decoration wearing a
+    /// measurement's clothes. The alternative — one glyph with a single
+    /// brightness — was rejected because it would have to pick a number, and
+    /// any single number here is either the aggregate (already printed three
+    /// lines below) or a lie about 12 independent cores.
+    ///
+    /// Cost: one `host_processor_info` per tick. It is the same class of call
+    /// as the `host_statistics` beside it, system-wide and O(cores), and it is
+    /// already inside the sampler's tick — no new timer, no new wake-up.
+    ///
+    /// The returned array is allocated by the kernel and must be handed back;
+    /// `defer` does that on every path out, including the failure ones.
+    private func hostCoreLoad() -> [Double] {
+        var cpuCount: natural_t = 0
+        var info: processor_info_array_t?
+        var infoCount: mach_msg_type_number_t = 0
+        let kr = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO,
+                                     &cpuCount, &info, &infoCount)
+        guard kr == KERN_SUCCESS, let info else { return [] }
+        defer {
+            vm_deallocate(mach_task_self_,
+                          vm_address_t(bitPattern: info),
+                          vm_size_t(infoCount) * vm_size_t(MemoryLayout<integer_t>.stride))
+        }
+        let cores = Int(cpuCount)
+        guard cores > 0, Int(infoCount) >= cores * Int(CPU_STATE_MAX) else { return [] }
+        let stateMax = Int(CPU_STATE_MAX)
+        var next: [(user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)] = []
+        next.reserveCapacity(cores)
+        for core in 0..<cores {
+            let base = core * stateMax
+            next.append((user: UInt32(bitPattern: info[base + Int(CPU_STATE_USER)]),
+                         system: UInt32(bitPattern: info[base + Int(CPU_STATE_SYSTEM)]),
+                         idle: UInt32(bitPattern: info[base + Int(CPU_STATE_IDLE)]),
+                         nice: UInt32(bitPattern: info[base + Int(CPU_STATE_NICE)])))
+        }
+        // The core count can change under us (a core coming online), and a
+        // mismatched baseline would difference two different cores' counters.
+        let prev = lastPerCoreTicks.count == cores ? lastPerCoreTicks : nil
+        lastPerCoreTicks = next
+        guard let prev else { return [] }
+        return (0..<cores).map { core in
+            let now = next[core], before = prev[core]
+            let dUser = UInt64(now.user &- before.user)
+            let dSys = UInt64(now.system &- before.system)
+            let dIdle = UInt64(now.idle &- before.idle)
+            let dNice = UInt64(now.nice &- before.nice)
+            let total = dUser + dSys + dIdle + dNice
+            guard total > 0 else { return 0 }
+            return Double(dUser + dSys + dNice) / Double(total)
+        }
+    }
+
     private func hostMemoryUsed() -> UInt64 {
+        memoryBreakdown().used
+    }
+
+    /// The real page buckets behind `hostMemoryUsed`, in one `vm_statistics64`
+    /// call. Split out because the dashboard's memory mark draws the parts and
+    /// the hero figure is their own pressure sum — two reads of the same counter
+    /// set could disagree at the boundary, and a mark that contradicts the
+    /// number above it is worse than no mark.
+    private func memoryBreakdown() -> (used: UInt64, active: UInt64, wired: UInt64,
+                                       compressed: UInt64, cached: UInt64, free: UInt64) {
         var vm = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
@@ -541,7 +686,7 @@ final class ProcessSampler {
                 host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
         }
-        guard kr == KERN_SUCCESS else { return 0 }
+        guard kr == KERN_SUCCESS else { return (0, 0, 0, 0, 0, 0) }
         let page = UInt64(vm_kernel_page_size)
         let active = UInt64(vm.active_count) &* page
         let inactive = UInt64(vm.inactive_count) &* page
@@ -551,7 +696,8 @@ final class ProcessSampler {
         let purgeable = UInt64(vm.purgeable_count) &* page
         let external = UInt64(vm.external_page_count) &* page
         let used = active &+ inactive &+ speculative &+ wired &+ compressed &- purgeable &- external
-        return min(used, ProcessInfo.processInfo.physicalMemory)
+        return (min(used, ProcessInfo.processInfo.physicalMemory), active, wired, compressed,
+                inactive &+ purgeable, UInt64(vm.free_count) &* page &+ speculative)
     }
 
     private func footprint(pid: pid_t) -> UInt64 {

@@ -3,8 +3,37 @@ import SwiftUI
 // MARK: - Agent mark
 
 /// An agent family's mark in a tinted well. While busy, a short arc orbits
-/// it — a single `rotationEffect` driven by a repeating animation, so the
-/// render server interpolates it without re-running any view body.
+/// it.
+///
+/// The orbit is `DecorativeMotion(kind: .arc)` — a Core Animation layer the
+/// render server interpolates, gated on the window's occlusion state, the same
+/// way the fan rotors and the rest of the app's decoration are.
+///
+/// The version this replaced drove the same arc with SwiftUI `.rotationEffect`
+/// under a `repeatForever`, which held an animated transaction open for as long
+/// as the badge was busy; while a transaction is in flight *every* display
+/// cycle re-runs the whole hosting view's layout, and the island's panel is the
+/// full expanded box (640 × 386) even while collapsed. The two were measured
+/// against each other rather than against a mutated build — same launcher, same
+/// `-g` tree, the bundle swapped under a fixed path and sampled three times
+/// each, alternating old / new / old / new so machine load cannot bias one arm:
+///
+/// | arm | `NSHostingView.layout()` share of main-thread samples | median |
+/// |---|---|---|
+/// | old, SwiftUI `repeatForever` | 49.5 / 48.7 / 51.4, 41.7 / 44.7 / 49.0 | 48.8 % |
+/// | new, Core Animation `.arc`  | 36.3 / 28.9 / 39.0, 28.2 / 34.2 / 29.5 | 31.9 % |
+///
+/// The ranges are disjoint, and the `runAnimationGroup` sample counts move with
+/// them (≈420 while the old arc ran, ≈285 for the new one), which is the
+/// transaction count the explanation predicts. What the arc costs on top of
+/// that is its layer's presence in the display list, not an animation: forcing
+/// `active: false` so the view is still mounted but never animates measures
+/// 33.4 %, inside the new arm's range, while taking the badge's orbit out of
+/// the tree altogether measures 25.2 %.
+///
+/// `DecorativeMotion` already checks both gates the old version had — the
+/// window's visibility and `accessibilityReduceMotion` — via its callers'
+/// `surfaceIsVisible`, so nothing here has to.
 struct IslandAgentBadge: View {
     let agent: IslandAgent
     var busy = false
@@ -46,24 +75,18 @@ struct IslandAgentMark: View {
 }
 
 /// A 100°, gradient-tailed arc spinning once every 1.1 s.
+///
+/// The shape lives in `DecorativeMotion(kind: .arc)` and is drawn by Core
+/// Animation, so this view does no per-frame work and never holds an animated
+/// transaction open. `active` carries the "busy" gate; the render-server layer
+/// stops itself when its window is hidden.
 struct IslandOrbit: View {
     let color: Color
     var lineWidth: CGFloat = 2
-    @State private var spinning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Circle()
-            .trim(from: 0, to: 0.28)
-            .stroke(AngularGradient(colors: [color.opacity(0), color], center: .center,
-                                    startAngle: .degrees(0), endAngle: .degrees(100)),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .animation(spinning ? .linear(duration: 1.1).repeatForever(autoreverses: false) : nil,
-                       value: spinning)
-            .onAppear { spinning = !reduceMotion }
-            .onDisappear { spinning = false }
-            .onChange(of: reduceMotion) { _, reduce in spinning = !reduce }
+        DecorativeMotion(kind: .arc, tint: color, active: !reduceMotion, lineWidth: lineWidth)
     }
 }
 
@@ -245,544 +268,6 @@ struct IslandMarkWell: View {
     }
 }
 
-// MARK: - Rotating glance
-
-/// One module of a glance card: an instrument glyph (or a product mark) in a
-/// tinted well, a figure, and the label that figure is in.
-///
-/// A module is the card's *only* building block, so the grid is uniform by
-/// construction: 20pt well + value line (14) + caption line (11), two rows and
-/// two columns, and every page — two modules or four — lands on the same
-/// baseline as every other page.
-private struct IslandMark: Identifiable {
-    let id: String
-    /// `InstrumentGlyph` kind. Cards use the app's own icon family rather than
-    /// whatever SF Symbol happened to read well at 11pt, so a 磁盘 here and a
-    /// 磁盘 in the dashboard are the same drawing.
-    let kind: InstrumentGlyph.Kind
-    let tint: Color
-    let value: String
-    let caption: String
-    /// Set when the module is better served by a real product mark (the routes).
-    var mark: IslandAgent? = nil
-
-    init(id: String, kind: InstrumentGlyph.Kind, tint: Color, value: String, caption: String,
-         mark: IslandAgent? = nil) {
-        self.id = id
-        self.kind = kind
-        self.tint = tint
-        self.value = value
-        self.caption = caption
-        self.mark = mark
-    }
-
-    /// The gauges and the balance card need a figure with a symbol in front of
-    /// it; everything else is a bare index.
-    init(id: String, symbol: String, tint: Color, value: String, caption: String) {
-        self.init(id: id, kind: InstrumentGlyph.kind(for: symbol) ?? .config,
-                  tint: tint, value: value, caption: caption)
-    }
-}
-
-/// One page of the island's right-hand reel. Identity stays stable so a
-/// host-stat refresh does not restart the playback task.
-private struct IslandGlance: Identifiable {
-    let id: String
-    let title: String
-    let marks: [IslandMark]
-    /// The one band that is always the same width on every page: the card.
-    var columns = 2
-}
-
-/// Auto-advancing status in the space beside the sessions. Playback lives on
-/// this view; the rest of the island does not tick with it.
-///
-/// Every page is the same 2×2 module grid under a section band, and pages are
-/// *grouped by subject* rather than by whatever data happened to arrive:
-/// 额度 → 余额 → 算力 → 内存 → 网络 → 外设 → 会话 → 用量 → 路由. Six of those are
-/// hardware, so the old single "本机 / 网络与磁盘" pair no longer mixes CPU%,
-/// disk capacity and VPN state in one breath.
-struct IslandGlanceReel: View {
-    let balances: [ProviderStore.SupplierBalance]
-    let quota: [CodexQuotaWindow]
-    let sessions: [IslandSession]
-    let usage: IslandUsage
-    let claudeRoute: String
-    let codexRoute: String
-    let vpnRunning: Bool
-    @State private var index = 0
-    @State private var paused = false
-    @State private var host = ProcessSampler.shared.host
-    @State private var fanRPM: [Int] = FanMonitor.shared.fans.prefix(2).map(\.rpm)
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Page id of the network card — the one page whose marks come from the
-    /// traffic stream, and so the one page rendered by `NetworkGlancePage`.
-    static let networkPageID = "network"
-
-    private var slides: [IslandGlance] {
-        var frames: [IslandGlance] = []
-        if !quota.isEmpty {
-            frames.append(IslandGlance(id: "quota", title: "Codex 额度", marks: quotaMarks))
-        }
-        if !balances.isEmpty {
-            frames.append(IslandGlance(id: "balance", title: "供应商余额", marks: balanceMarks))
-        }
-        frames.append(IslandGlance(id: "compute", title: "算力", marks: computeMarks))
-        frames.append(IslandGlance(id: "memory", title: "内存与存储", marks: memoryMarks))
-        // Marks are drawn by `NetworkGlancePage`; the frame is here for the
-        // pager count and the page order.
-        frames.append(IslandGlance(id: Self.networkPageID, title: "网络", marks: []))
-        if !peripheralMarks.isEmpty {
-            frames.append(IslandGlance(id: "peripheral", title: "电源与外设", marks: peripheralMarks))
-        }
-        if !agentMarks.isEmpty {
-            frames.append(IslandGlance(id: "sessions", title: "会话", marks: agentMarks))
-        }
-        frames.append(IslandGlance(id: "usage", title: "用量", marks: usageMarks))
-        let routes = Array(routeMarks.prefix(2))
-        if !routes.isEmpty {
-            frames.append(IslandGlance(id: "route", title: "当前模型", marks: routes,
-                                       columns: routes.count))
-        }
-        return frames
-    }
-
-    // MARK: quotal
-
-    /// Remaining allowance per Codex window, in the order the quota fetcher
-    /// returns them (primary window first). Only two windows ever exist, so the
-    /// pair reads as one sentence: "5 小时窗口还剩 39%，重置在 2 小时 21 分后".
-    private var quotaMarks: [IslandMark] {
-        quota.prefix(2).map { window in
-            let remaining = Int(max(0, min(100, 100 - window.usedPercent)).rounded())
-            // The clock, not the wait: "5 天后" is the same caption on every
-            // poll, while "9月29日 14:30" is a fact you can act on. The wait is
-            // still on the hover text.
-            let when = window.resetClock.replacingOccurrences(of: " 重置", with: "")
-            return IslandMark(id: window.label,
-                              // Two half-open gauges would read as the same
-                              // instrument twice; the bars mirror what the
-                              // dashboard draws for the same two windows.
-                              kind: window.label.contains("5") ? .quota : .tokens,
-                              tint: remaining <= 10 ? IslandStyle.coral : IslandStyle.cobalt,
-                              value: "\(remaining)%",
-                              caption: when.isEmpty ? window.label : when)
-        }
-    }
-
-    // MARK: balance
-
-    /// Provider balances, one module each. The currency symbol is already in
-    /// the amount, so the caption is free to be the thing you actually cannot
-    /// see anywhere else on the island: which account the money is in.
-    private var balanceMarks: [IslandMark] {
-        balances.prefix(4).map { balance in
-            IslandMark(id: balance.id.uuidString, symbol: "creditcard", tint: IslandStyle.mint,
-                       value: balance.amount, caption: balance.name)
-        }
-    }
-
-    // MARK: compute
-
-    /// CPU and GPU load, then the two temperatures that say whether that load
-    /// is a problem. Temperature modules are only added when the sensors
-    /// actually answer, so a machine without SMC does not show two blanks.
-    private var computeMarks: [IslandMark] {
-        var marks = [
-            IslandMark(id: "cpu", kind: .cpu, tint: IslandStyle.mint,
-                       value: "\(Int(host.cpu.rounded()))%", caption: "CPU 负载"),
-            IslandMark(id: "gpu", kind: .gpu, tint: IslandStyle.cobalt,
-                       value: "\(Int(host.gpu.rounded()))%", caption: "GPU 负载"),
-        ]
-        if let celsius = host.cpuTemperatureCelsius, celsius > 0 {
-            marks.append(IslandMark(id: "cpu-temp", kind: .power,
-                                    tint: temperatureTint(celsius),
-                                    value: "\(Int(celsius.rounded()))°C", caption: "CPU 温度"))
-        }
-        if let celsius = host.gpuTemperatureCelsius, celsius > 0 {
-            marks.append(IslandMark(id: "gpu-temp", kind: .power,
-                                    tint: temperatureTint(celsius),
-                                    value: "\(Int(celsius.rounded()))°C", caption: "GPU 温度"))
-        }
-        return marks
-    }
-
-    /// The dashboard's own thresholds: normal below 75°, amber below 85°.
-    private func temperatureTint(_ celsius: Double) -> Color {
-        if celsius >= 85 { return IslandStyle.coral }
-        if celsius >= 75 { return IslandStyle.amber }
-        return IslandStyle.textSecondary
-    }
-
-    // MARK: memory & storage
-
-    /// Memory and storage as *absolute* usage with the machine's own capacity
-    /// as the caption. "84%" alone says nothing about whether it is time to
-    /// close something; "13.5/16.0 GB" does.
-    private var memoryMarks: [IslandMark] {
-        let memoryUsed = ProcessSampler.Snapshot(memoryBytes: host.memoryUsed).memoryLabel
-        let memoryTotal = ProcessSampler.Snapshot(memoryBytes: host.memoryTotal).memoryLabel
-        let diskUsed = ProcessSampler.Snapshot(memoryBytes: host.diskUsed).memoryLabel
-        let diskTotal = ProcessSampler.Snapshot(memoryBytes: host.diskTotal).memoryLabel
-        let pressure = host.memoryPressureLevel
-        return [
-            IslandMark(id: "mem", kind: .memory,
-                       tint: pressure >= 4 ? IslandStyle.coral
-                           : (pressure >= 2 ? IslandStyle.amber : IslandStyle.violet),
-                       value: memoryUsed,
-                       caption: "内存 · 共 \(memoryTotal)"),
-            IslandMark(id: "disk", kind: .disk, tint: IslandStyle.violet,
-                       value: "\(Int(host.diskPercent.rounded()))%",
-                       caption: "磁盘 · 共 \(diskTotal)"),
-        ]
-    }
-
-    // MARK: network
-    //
-    // The network page's marks live on `NetworkGlancePage` below, which is the
-    // single observer of the traffic stream.
-
-    // MARK: power & peripherals
-
-    /// Battery, its draw and its temperature — the three things the hardware
-    /// strip answers when you are on battery, and the ones the old card
-    /// dropped entirely.
-    private var peripheralMarks: [IslandMark] {
-        var marks: [IslandMark] = []
-        if host.batteryInstalled {
-            marks.append(IslandMark(id: "battery",
-                                    kind: .battery,
-                                    tint: host.batteryPercent <= 20 ? IslandStyle.coral
-                                        : (host.batteryCharging ? IslandStyle.mint : IslandStyle.violet),
-                                    value: "\(host.batteryPercent)%",
-                                    caption: host.batteryCharging ? "电池 · 充电中" : "电池 · 放电中"))
-        }
-        if let watts = adapterWatts {
-            marks.append(IslandMark(id: "adapter", kind: .power, tint: IslandStyle.amber,
-                                    value: String(format: "%.0f W", abs(watts)), caption: "电源输入"))
-        }
-        if let celsius = host.batteryTemperatureCelsius, celsius > 0 {
-            marks.append(IslandMark(id: "battery-temp", kind: .power, tint: temperatureTint(celsius),
-                                    value: String(format: "%.0f°C", celsius), caption: "电池温度"))
-        }
-        if let fan = fanRPM.first {
-            marks.append(IslandMark(id: "fan-0", kind: .fan, tint: IslandStyle.clay,
-                                    value: "\(fan)", caption: fanRPM.count > 1 ? "左风扇 RPM" : "风扇 RPM"))
-        }
-        return marks
-    }
-
-    /// Adapter input when it is plugged in, battery draw when it is not.
-    private var adapterWatts: Double? {
-        host.batteryExternalPower ? host.powerInputWatts
-            : (host.powerBatteryWatts.map { abs($0) } ?? host.powerSystemWatts)
-    }
-
-    // MARK: sessions
-
-    /// One module per agent family that has sessions: how many are alive and
-    /// how many of them are working right now.
-    private var agentMarks: [IslandMark] {
-        IslandAgent.allCases.compactMap { agent in
-            let group = sessions.filter { $0.agent == agent }
-            guard !group.isEmpty else { return nil }
-            let busy = group.filter(\.isBusy).count
-            return IslandMark(id: agent.rawValue, kind: agent.markKind,
-                              tint: IslandStyle.color(agent),
-                              value: "\(group.count)",
-                              caption: busy > 0 ? "\(agent.label) · \(busy) 运行中" : "\(agent.label) · 空闲")
-        }
-    }
-
-    // MARK: usage
-
-    /// Today and the month, with the two facts that give them scale: how today
-    /// compares with yesterday, and how far through the month we are.
-    private var usageMarks: [IslandMark] {
-        var marks = [
-            IslandMark(id: "today", kind: .tokens, tint: IslandStyle.mint,
-                       value: UsageStats.formatTokens(usage.today), caption: "今日 Token"),
-            IslandMark(id: "month", kind: .tokens, tint: IslandStyle.cobalt,
-                       value: UsageStats.formatTokens(usage.month), caption: "本月 Token"),
-        ]
-        if let pace = IslandUsage.pace(usage.today, usage.yesterday) {
-            marks.append(IslandMark(id: "pace", kind: .overview,
-                                    tint: pace >= 1 ? IslandStyle.amber : IslandStyle.mint,
-                                    value: "\(Int((pace * 100).rounded()))%",
-                                    caption: "对比昨日"))
-        }
-        marks.append(IslandMark(id: "calls", kind: .traffic, tint: IslandStyle.amber,
-                                value: usage.todayCalls.formatted(), caption: "今日调用"))
-        if let cost = usage.todayCost.cost.dominant {
-            marks.append(IslandMark(id: "cost", kind: .cost, tint: IslandStyle.amber,
-                                    value: ModelPricing.format(cost.amount, currency: cost.currency),
-                                    caption: "今日花费"))
-        }
-        return marks
-    }
-
-    // MARK: routes
-
-    private var routeMarks: [IslandMark] {
-        var marks: [IslandMark] = []
-        if !claudeRoute.isEmpty {
-            marks.append(routeMark(id: "claude", mark: .claude, tint: IslandStyle.clay,
-                                   title: "Claude Code", route: claudeRoute))
-        }
-        if !codexRoute.isEmpty {
-            marks.append(routeMark(id: "codex", mark: .codex, tint: IslandStyle.cobalt,
-                                   title: "Codex", route: codexRoute))
-        }
-        return marks
-    }
-
-    /// "DeepSeek · v4" is a provider and a model, not one string: the model is
-    /// what you set, the provider is what answers. Split them into the value
-    /// and the caption so the module says both.
-    private func routeMark(id: String, mark: IslandAgent, tint: Color,
-                           title: String, route: String) -> IslandMark {
-        let parts = route.split(separator: "·", maxSplits: 1).map {
-            $0.trimmingCharacters(in: .whitespaces)
-        }
-        let provider = parts.first ?? route
-        let model = parts.count > 1 ? parts[1] : ""
-        return IslandMark(id: id, kind: mark.markKind, tint: tint,
-                          value: model.isEmpty ? provider : model,
-                          caption: model.isEmpty ? title : "\(title) · \(provider)",
-                          mark: mark)
-    }
-
-    var body: some View {
-        let frames = slides
-        let current = frames.isEmpty ? 0 : min(index, frames.count - 1)
-        ZStack(alignment: .top) {
-            if frames.indices.contains(current) {
-                // The network page is the only one whose marks depend on the
-                // 4 Hz traffic stream, so it is the only one that observes
-                // `VpnLiveRates`. Observing it here rebuilt every page (and
-                // re-ran `String(format:)`, `VpnFormat.bytes` and the memory
-                // labels for all ~9 of them) four times a second.
-                if frames[current].id == Self.networkPageID {
-                    NetworkGlancePage(host: host, vpnRunning: vpnRunning)
-                        .id(frames[current].id)
-                        .transition(reduceMotion ? .opacity : .asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 8)),
-                            removal: .opacity.combined(with: .offset(y: -8))))
-                } else {
-                    glance(frames[current])
-                        .id(frames[current].id)
-                        .transition(reduceMotion ? .opacity : .asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 8)),
-                            removal: .opacity.combined(with: .offset(y: -8))))
-                }
-            }
-        }
-        .frame(width: IslandStyle.glanceCardSize.width,
-               height: IslandStyle.glanceCardSize.height,
-               alignment: .top)
-        .padding(IslandStyle.glanceCardPadding)
-        .frame(width: IslandStyle.glanceReelWidth,
-               height: IslandStyle.glanceReelHeight,
-               alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.045))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        // The pager is pinned from the outer box, so it holds one line while
-        // the reel turns and no page can move it.
-        .overlay(alignment: .bottom) {
-            pager(frames: frames, current: current)
-                .padding(.bottom, IslandStyle.pagerInset)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        // Edge-triggered: `.active` re-fires on every pointer move, and the
-        // write is unconditional, so hovering across the reel used to
-        // invalidate it (and rebuild all ~9 glance pages) at pointer rate.
-        .onContinuousHover { phase in
-            switch phase {
-            case .active: if !paused { paused = true }
-            case .ended: if paused { paused = false }
-            }
-        }
-        .onTapGesture {
-            guard frames.count > 1 else { return }
-            let next = (current + 1) % frames.count
-            if reduceMotion { index = next } else { withAnimation(.easeInOut(duration: 0.45)) { index = next } }
-        }
-        .onAppear {
-            // The reel is the only island surface that shows host stats, so it
-            // is what tells the sampler its numbers are on screen.
-            ProcessSampler.shared.setScope(.island, active: true)
-            ProcessSampler.shared.start()
-            FanMonitor.shared.start()
-        }
-        .onDisappear {
-            ProcessSampler.shared.setScope(.island, active: false)
-            FanMonitor.shared.stop()
-        }
-        .task(id: frames.map(\.id).joined(separator: "|")) {
-            await play(count: frames.count)
-        }
-        .help("自动切换额度、余额、算力、内存、网络、外设、会话和用量，点击看下一张")
-    }
-
-    /// Pager dots: one fixed strip pinned to the card's bottom edge. Never
-    /// measured out of the current card's content, so the dots hold their
-    /// line while the reel turns.
-    private func pager(frames: [IslandGlance], current: Int) -> some View {
-        HStack(spacing: 4) {
-            ForEach(frames.indices, id: \.self) { item in
-                Capsule()
-                    .fill(Color.white.opacity(item == current ? 0.85 : 0.22))
-                    .frame(width: item == current ? 12 : 4, height: 4)
-            }
-        }
-        .frame(height: IslandStyle.pagerDotHeight)
-    }
-
-    private func glance(_ frame: IslandGlance) -> some View {
-        IslandGlanceCard(frame: frame)
-    }
-
-    private func play(count: Int) async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(4.2))
-            if Task.isCancelled { return }
-            let fresh = ProcessSampler.shared.host
-            if fresh != host { host = fresh }
-            let rpms = FanMonitor.shared.fans.prefix(2).map(\.rpm)
-            if rpms != fanRPM { fanRPM = rpms }
-            guard !paused, count > 1 else { continue }
-            let next = (index + 1) % count
-            if reduceMotion {
-                index = next
-            } else {
-                withAnimation(.easeInOut(duration: 0.45)) { index = next }
-            }
-        }
-    }
-}
-
-/// The fixed grid every glance page is drawn on: a section band over a
-/// `frame.columns`-wide grid of fixed-height modules. Shared by the reel and by
-/// the network page, which is rendered on its own so only it observes the
-/// traffic stream.
-private struct IslandGlanceCard: View {
-    let frame: IslandGlance
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: IslandStyle.cardTitleGap) {
-            Text(frame.title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(IslandStyle.textTertiary)
-                .lineLimit(1)
-                .frame(height: IslandStyle.cardTitleHeight, alignment: .leading)
-            Group {
-                if frame.marks.count >= 4 {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4),
-                                             count: frame.columns),
-                              spacing: IslandStyle.markRowSpacing) {
-                        ForEach(frame.marks.prefix(4)) { markCell($0) }
-                    }
-                } else {
-                    HStack(spacing: 4) {
-                        ForEach(frame.marks) { markCell($0) }
-                    }
-                }
-            }
-            .frame(maxWidth: 160)
-            .frame(maxWidth: .infinity)
-        }
-        // The card body is a fixed box: title band + two module rows. A reel of
-        // cards can then never disagree about height.
-        .frame(height: IslandStyle.cardBodyHeight, alignment: .top)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// One fixed-height module: the well, a value and a caption always occupy
-    /// the same box, so a card never resizes the lane while the reel turns.
-    private func markCell(_ mark: IslandMark) -> some View {
-        VStack(spacing: IslandStyle.markCellSpacing) {
-            if let agent = mark.mark {
-                IslandMarkWell(mark: agent, tint: mark.tint)
-            } else {
-                IslandMarkWell(kind: mark.kind, tint: mark.tint)
-            }
-            RollingNumberText(mark.value)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(IslandStyle.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .frame(height: IslandStyle.markValueHeight)
-            Text(mark.caption)
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .foregroundStyle(IslandStyle.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(height: IslandStyle.markCaptionHeight)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: IslandStyle.markCellHeight, alignment: .top)
-    }
-}
-
-/// The island's network page. Split out of `IslandGlanceReel` so that the
-/// 4 Hz `VpnLiveRates` stream invalidates only this card, instead of the reel
-/// and every page it holds.
-private struct NetworkGlancePage: View {
-    let host: ProcessSampler.HostStats
-    let vpnRunning: Bool
-    /// The 4 Hz traffic stream, observed *here* rather than on the reel — that
-    /// is the whole point of this view existing.
-    @ObservedObject private var rates = VpnLiveRates.shared
-
-    var body: some View {
-        IslandGlanceCard(frame: IslandGlance(id: IslandGlanceReel.networkPageID,
-                                            title: "网络",
-                                            marks: marks))
-    }
-
-    private var marks: [IslandMark] {
-        let rssi = host.wifiRSSI
-        let quality: String = {
-            guard host.wifiOn, rssi < 0 else { return host.wifiOn ? "开" : "关" }
-            if rssi >= -55 { return "强" }
-            if rssi >= -70 { return "中" }
-            return "弱"
-        }()
-        let address = host.wifiName.isEmpty ? (host.wiredOn ? "有线" : "Wi-Fi") : host.wifiName
-        var marks = [
-            IslandMark(id: "wifi", kind: .link,
-                       tint: host.wifiOn ? IslandStyle.cobalt : IslandStyle.textSecondary,
-                       value: quality, caption: address),
-            IslandMark(id: "vpn", kind: .vpn,
-                       tint: vpnRunning ? IslandStyle.mint : IslandStyle.textSecondary,
-                       value: vpnRunning ? "已连接" : "关闭", caption: "VPN 代理"),
-        ]
-        // Throughput only once the proxy has actually seen traffic; an idle
-        // VPN that has never carried a byte would otherwise claim "0.0 KB/s"
-        // as if it were a reading.
-        let speedDown = rates.speedDown
-        let speedUp = rates.speedUp
-        if speedDown > 0 || speedUp > 0 {
-            marks.append(IslandMark(id: "down", kind: .traffic, tint: IslandStyle.mint,
-                                    value: VpnFormat.bytes(speedDown).trimmingCharacters(in: .whitespaces),
-                                    caption: "下载 /s"))
-            marks.append(IslandMark(id: "up", kind: .traffic, tint: IslandStyle.cobalt,
-                                    value: VpnFormat.bytes(speedUp).trimmingCharacters(in: .whitespaces),
-                                    caption: "上传 /s"))
-        }
-        return marks
-    }
-}
-
 // MARK: - Usage card
 
 /// Today's number, a 30-day histogram you can scrub by hovering, and the
@@ -791,6 +276,9 @@ struct IslandUsageCard: View {
     let usage: IslandUsage
     @State private var scrubIndex: Int?
     @State private var histogramWidth: CGFloat = 1
+    /// Re-identifies this card's figures when the token unit style changes —
+    /// see `TokenStyleGenerationKey`.
+    @Environment(\.tokenStyleGeneration) private var tokenStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -825,6 +313,9 @@ struct IslandUsageCard: View {
                         .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
                 )
         )
+        // Scoped to this card's own figures: the identity change that re-renders
+        // them must not reach the session strip or the header beside it.
+        .id(tokenStyle)
     }
 
     private func index(at x: CGFloat) -> Int? {

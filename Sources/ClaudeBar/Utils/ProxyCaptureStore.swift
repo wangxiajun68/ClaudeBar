@@ -20,6 +20,7 @@ struct CaptureSummary: Identifiable, Equatable {
     var promptTokens: Int?
     var completionTokens: Int?
     var cacheReadTokens: Int?
+    var cacheWriteTokens: Int?
     var error: String?
     var preview: String
 }
@@ -247,6 +248,7 @@ final class ProxyCaptureStore {
                 "prompt_tokens": assembler.promptTokens.map { .int(Int64($0)) } ?? .null,
                 "completion_tokens": assembler.completionTokens.map { .int(Int64($0)) } ?? .null,
                 "cache_read_tokens": assembler.cacheReadTokens.map { .int(Int64($0)) } ?? .null,
+                "cache_write_tokens": assembler.cacheWriteTokens.map { .int(Int64($0)) } ?? .null,
                 "error": error.map { .text($0) } ?? .null,
                 "model": assembler.model.isEmpty ? .null : .text(assembler.model),
             ])
@@ -266,6 +268,7 @@ final class ProxyCaptureStore {
                 $0.promptTokens = assembler.promptTokens
                 $0.completionTokens = assembler.completionTokens
                 $0.cacheReadTokens = assembler.cacheReadTokens
+                $0.cacheWriteTokens = assembler.cacheWriteTokens
                 $0.error = error
                 if !assembler.model.isEmpty { $0.model = assembler.model }
             }
@@ -288,6 +291,7 @@ final class ProxyCaptureStore {
                 $0.promptTokens = assembler.promptTokens
                 $0.completionTokens = assembler.completionTokens
                 $0.cacheReadTokens = assembler.cacheReadTokens
+                $0.cacheWriteTokens = assembler.cacheWriteTokens
                 $0.error = error
                 if !assembler.model.isEmpty { $0.model = assembler.model }
             }
@@ -317,7 +321,8 @@ final class ProxyCaptureStore {
                 at: ended,
                 input: assembler.promptTokens ?? 0,
                 output: assembler.completionTokens ?? 0,
-                cacheRead: assembler.cacheReadTokens ?? 0)
+                cacheRead: assembler.cacheReadTokens ?? 0,
+                cacheWrite: assembler.cacheWriteTokens ?? 0)
         }
     }
 
@@ -340,6 +345,7 @@ final class ProxyCaptureStore {
             SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
                    c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
                    c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
+                   c.cache_write_tokens,
                    p.request_json, p.rewritten_json, p.response_json, p.raw_sse,
                    COALESCE(p.request_headers, '')
             FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
@@ -348,6 +354,7 @@ final class ProxyCaptureStore {
             SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
                    c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
                    c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
+                   c.cache_write_tokens,
                    p.request_json, p.rewritten_json, p.response_json, '',
                    COALESCE(p.request_headers, '')
             FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
@@ -357,11 +364,11 @@ final class ProxyCaptureStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, id)
         guard sqlite3_step(stmt) == SQLITE_ROW, let summary = rowToSummary(stmt) else { return nil }
-        let request = text(stmt, 17)
+        let request = text(stmt, 18)
         return makeDetail(id: id, summary: summary, request: request,
-                          rewritten: text(stmt, 18), response: text(stmt, 19),
-                          sse: includeRaw ? text(stmt, 20) : "",
-                          requestHeadersJSON: text(stmt, 21),
+                          rewritten: text(stmt, 19), response: text(stmt, 20),
+                          sse: includeRaw ? text(stmt, 21) : "",
+                          requestHeadersJSON: text(stmt, 22),
                           includePayloads: includePayloads, includeTools: includeTools)
     }
 
@@ -449,6 +456,7 @@ final class ProxyCaptureStore {
                 prompt_tokens INTEGER,
                 completion_tokens INTEGER,
                 cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
                 error TEXT,
                 preview TEXT
             );
@@ -463,6 +471,11 @@ final class ProxyCaptureStore {
             CREATE INDEX IF NOT EXISTS captures_started ON captures(started_at DESC);
             """, nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil)
+        // Older databases predate the cache-write column. The capture rows are
+        // a rolling 120-entry window of raw traffic, so a NULL here means "not
+        // recorded then" — not defensible to re-derive, and not worth a
+        // rebuild that would throw away the rows.
+        sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil)
         return db
     }
 
@@ -540,6 +553,7 @@ final class ProxyCaptureStore {
             kind: kind, source: source, providerName: provider, model: model,
             path: path, isStream: stream, state: .pending, httpStatus: 0,
             promptTokens: nil, completionTokens: nil, cacheReadTokens: nil,
+            cacheWriteTokens: nil,
             error: nil, preview: preview)
     }
 
@@ -549,7 +563,7 @@ final class ProxyCaptureStore {
         let sql = """
             SELECT id, started_at, ended_at, first_token_at, kind, source, provider_name, model, path,
                    is_stream, state, http_status, prompt_tokens, completion_tokens, cache_read_tokens,
-                   error, preview
+                   error, preview, cache_write_tokens
             FROM captures ORDER BY id DESC LIMIT \(listLimit)
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -691,6 +705,10 @@ final class ProxyCaptureStore {
                         row.cacheReadTokens = Int(n)
                     case ("cache_read_tokens", .null):
                         row.cacheReadTokens = nil
+                    case ("cache_write_tokens", .int(let n)):
+                        row.cacheWriteTokens = Int(n)
+                    case ("cache_write_tokens", .null):
+                        row.cacheWriteTokens = nil
                     case ("error", .text(let s)):
                         row.error = s
                     case ("error", .null):
@@ -756,6 +774,7 @@ final class ProxyCaptureStore {
             promptTokens: optInt(stmt, 12),
             completionTokens: optInt(stmt, 13),
             cacheReadTokens: optInt(stmt, 14),
+            cacheWriteTokens: optInt(stmt, 17),
             error: err.isEmpty ? nil : err,
             preview: text(stmt, 16))
     }

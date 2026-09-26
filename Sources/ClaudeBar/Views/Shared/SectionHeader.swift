@@ -15,8 +15,22 @@ struct SectionHeader: View {
     var ink: Color? = nil
     var count: Int? = nil
     /// Second component of the count, e.g. busy/active split ("● 1B · 2I").
+    ///
+    /// Must be a *subset* of `count`: the pill is rendered as
+    /// `"\(activeCount)B · \(count - activeCount)I"`, so a value drawn from a
+    /// wider population (sessions plus their sub-agents, say) reads as a
+    /// negative idle figure.
     var activeCount: Int? = nil
     var activeSymbol: String = "B"
+    /// Muted text laid out immediately before the count pill — for a tally that
+    /// belongs to the same section but is not the count itself (the sub-agents
+    /// beside the sessions that spawned them).
+    ///
+    /// It sits *in* this row rather than as an overlay on the header so it can
+    /// never overlap the pill: an overlay cannot know the pill's width, and a
+    /// fixed trailing inset was correct only for one session count.
+    var note: String? = nil
+    var noteTint: Color = Theme.textTertiary()
     /// Shown instead of a count when `count` is zero.
     var emptyLabel: String = "无"
 
@@ -29,6 +43,13 @@ struct SectionHeader: View {
                 .lineLimit(1)
                 .fixedSize()
             Spacer(minLength: 0)
+            if let note {
+                Text(note)
+                    .font(Theme.Font.microMedium)
+                    .foregroundStyle(noteTint)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             trailingView
         }
     }
@@ -40,19 +61,28 @@ struct SectionHeader: View {
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             } else if let activeCount {
+                // No implicit `.animation(value: ...)` here either, and for
+                // the same reason as the branch below: `activeCount` / `count`
+                // are session-poll outputs, so a value-keyed modifier opens a
+                // new animated transaction every poll. It bought nothing —
+                // `StatusPill` is plain `Text`, there is no transition for an
+                // implicit animation to interpolate.
                 StatusPill(
                     label: "\(activeCount)\(activeSymbol) · \(count - activeCount)I",
                     tint: activeCount > 0 ? tint : Theme.textSecondary,
                     ink: activeCount > 0 ? (ink ?? tint) : Theme.textSecondary
                 )
-                .animation(Theme.Animation.smooth, value: activeCount)
-                .animation(Theme.Animation.smooth, value: count)
             } else {
+                // No implicit `.animation(value: count)`: the count is one of
+                // the session poll's outputs (2.5-5 s), so the modifier opened
+                // a new animated transaction every poll, and an in-flight
+                // transaction makes every display cycle re-layout the whole
+                // hosting view. The digits roll via `.numericText` inside
+                // `RollingNumberText` — that transition *is* the animation.
                 RollingNumberText("\(count)")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(Theme.textSecondary)
-                        .animation(Theme.Animation.smooth, value: count)
             }
         }
     }

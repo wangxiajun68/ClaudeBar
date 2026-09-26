@@ -7,14 +7,9 @@ struct UsagePanel: View {
     @State private var showCustomDatePicker = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             header
-                .popover(isPresented: $showCustomDatePicker) {
-                    DatePicker("选择日期", selection: $providerStore.usageReferenceDate,
-                               displayedComponents: [.date])
-                        .datePickerStyle(.graphical)
-                        .padding(12)
-                }
+                .overlay(alignment: .bottomLeading) { datePickerAnchor }
             usageSummary
             UsageHeatmap(
                 days: providerStore.usageDays,
@@ -49,8 +44,32 @@ struct UsagePanel: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(height: 272, alignment: .top)
+        .padding(.vertical, 6)
+        .frame(height: 244, alignment: .top)
+    }
+
+    /// The date picker hangs off an empty sibling of the header, not off the
+    /// header itself.
+    ///
+    /// `PeriodTabs` and 重新统计 both live *inside* `header`. SwiftUI anchors a
+    /// popover's click-outside dismissal to the whole subtree of whatever it is
+    /// attached to, so attaching it to `header` puts the two controls that are
+    /// supposed to drive the picker inside the region that dismisses it: the
+    /// period chips' first click while the picker was open would close it
+    /// without reaching `selectPeriod`. The probe in
+    /// `docs/technical/17-ui-audit-backlog.md` §6 could not drive a synthetic
+    /// click far enough to confirm the symptom, but the anchoring rule is
+    /// documented and the fix is free, so the anchor is kept out of the controls
+    /// either way. Zero-size and inert: nothing here draws or hit-tests.
+    private var datePickerAnchor: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .popover(isPresented: $showCustomDatePicker) {
+                DatePicker("选择日期", selection: $providerStore.usageReferenceDate,
+                           displayedComponents: [.date])
+                    .datePickerStyle(.graphical)
+                    .padding(12)
+            }
     }
 
     private var header: some View {
@@ -83,7 +102,7 @@ struct UsagePanel: View {
                 ModelPricing.format($0.amount, currency: $0.currency)
             } ?? "—", detail: costDetail(estimate))
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private func summaryMetric(_ title: String, value: String, detail: String) -> some View {
@@ -119,8 +138,18 @@ struct UsagePanel: View {
 
     private func selectPeriod(_ period: UsagePeriod) {
         if period == .custom {
-            withAnimation(Theme.Animation.smooth) { showCustomDatePicker.toggle() }
-            providerStore.usagePeriod = .custom
+            // Toggle, not "always open": the same chip closes the picker, and
+            // that click used to leave the popup on a 自定义 period the user
+            // never chose (the reference date keeps its old value, so the
+            // figures silently switched to a single day).
+            let opening = !showCustomDatePicker
+            withAnimation(Theme.Animation.smooth) { showCustomDatePicker = opening }
+            if opening {
+                providerStore.usagePeriod = .custom
+            } else if providerStore.usagePeriod == .custom {
+                providerStore.usagePeriod = .month
+                providerStore.usageReferenceDate = Date()
+            }
         } else {
             showCustomDatePicker = false
             providerStore.usagePeriod = period

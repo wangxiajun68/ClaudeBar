@@ -26,7 +26,7 @@
 │        │     └── NSPanel                                        │
 │        │           └── MenuBarView                            │
 │        │                 ├── PanelHeader（模型 / VPN chip）    │
-│        │                 ├── ResourceStrip（CPU/GPU/风扇）     │
+│        │                 ├── MachineKpiStrip（CPU/GPU/内存/风扇）│
 │        │                 └── Popup/ Providers · Sessions · Usage │
 │        │                                                      │
 │        ├── ProviderStore (Claude Code 状态中枢)                │

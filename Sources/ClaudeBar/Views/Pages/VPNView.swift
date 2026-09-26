@@ -414,40 +414,20 @@ struct VPNView: View {
 
     private var groupTabs: some View {
         let live = Set(manager.livePath)
+        let names = orderedGroups.map(\.name)
+        // Two different facts, two different marks. The previous shape encoded
+        // both in one tint: `active` made the label blue *and* filled a capsule,
+        // `viewing` only drew a border, so "the core is exiting through this
+        // group" and "I am looking at this group" were the same colour at two
+        // strengths. The dot is the live fact; the sliding pill is the browses
+        // fact — and it is the same pill the connector and provider filters use.
         return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(orderedGroups) { group in
-                    let viewing = group.name == currentGroup?.name
-                    let active = live.contains(group.name)
-                    Button {
-                        selectedGroup = group.name
-                    } label: {
-                        HStack(spacing: 5) {
-                            if active {
-                                Circle()
-                                    .fill(Theme.claude)
-                                    .frame(width: 5, height: 5)
-                            }
-                            Text(group.name)
-                                .font(Theme.Font.caption)
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(active ? Theme.claude : (viewing ? Theme.textPrimary : Theme.textSecondary))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .fill(active ? Theme.claude.opacity(0.16) : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .strokeBorder(viewing && !active ? Theme.hairline : Color.clear, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help(active ? "当前出口所在分组" : "浏览节点（不会切换出口）")
-                }
-            }
+            SegmentedCapsule(items: names,
+                             selection: currentGroup?.name ?? names.first ?? "",
+                             title: { $0 },
+                             tint: Theme.Ink.claude,
+                             dotted: { live.contains($0) },
+                             onSelect: { selectedGroup = $0 })
         }
     }
 
@@ -592,6 +572,19 @@ struct VPNView: View {
             VpnLogConsole()
         } label: {
             sectionLabel("日志", icon: "text.alignleft")
+                .overlay(alignment: .trailing) {
+                    if !logsOpen { CollapsedLogBadge() }
+                }
+        }
+        // The console is where a failure is diagnosed, so open it when the core
+        // is not running properly. A page that is *already open* when the
+        // failure lands is the common case — `waitUntilReady` gives up 15 s
+        // after the spawn, and the termination handler can fire at any time —
+        // so this cannot be `onAppear` alone: the page stays mounted and
+        // `onAppear` never runs again.
+        .onAppear { if case .failed = manager.state { logsOpen = true } }
+        .onChange(of: manager.state) { _, state in
+            if case .failed = state { logsOpen = true }
         }
     }
 
@@ -786,8 +779,12 @@ private struct VPNTrafficStrip: View {
 }
 
 /// Site probes + 测速 + exit IP. Isolated so delay ticks do not rebuild the mosaic.
-/// 测速 is a fixed 52pt slot; IP is a fixed 168pt trailing slot — the old
-/// HStack reflowed whenever the IP string or "测速"/"…" swapped width.
+/// 测速 keeps a fixed 52pt slot, and the site row lives in a horizontal
+/// `ScrollView` that takes the remaining width (`maxWidth: .infinity`) — so a
+/// change in the exit-IP string shortens the scroller's viewport instead of
+/// shoving the probes sideways, and 测速 ↔ spinner swaps nothing but its own
+/// 52pt box. Neither side is a fixed-width slot in code; the layout is stable
+/// because the *scroller* absorbs all the slack.
 private struct VPNProbeRow: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var probe = VpnNetProbe.shared
@@ -1017,6 +1014,34 @@ struct VpnSpeedChart: View {
 }
 
 // MARK: - Log console
+
+/// The collapsed console's trailing badge.
+///
+/// Its own view on purpose: `VpnLogStore` grows on every core line — a node
+/// delay test logs several lines per node, so a 26-node 测速 writes dozens —
+/// and observing it from `VPNView` re-evaluated the whole page (header,
+/// subscription list, mosaic and console) twice per line, for a badge that is
+/// not even rendered once the console is open.
+///
+/// It reports the *state*, not a line count: the ring buffer caps at 500, so a
+/// three-line failure and a 500-line one both ended up reading "500 行" and the
+/// count could not say how bad things were.
+private struct CollapsedLogBadge: View {
+    @ObservedObject private var logStore = VpnLogStore.shared
+    @ObservedObject private var manager = VpnManager.shared
+
+    var body: some View {
+        let failed: Bool = { if case .failed = manager.state { return true }; return false }()
+        let lines = logStore.lines.count
+        // Nothing worth announcing: a healthy core that has simply been up for
+        // a while is not news.
+        if failed || lines > 0 {
+            StatusPill(label: failed ? "启动失败 · 查看日志" : "\(lines) 行",
+                       tint: failed ? Theme.statusError : Theme.statusWarning,
+                       ink: failed ? Theme.Ink.error : Theme.Ink.warning)
+        }
+    }
+}
 
 private struct VpnLogConsole: View {
     @ObservedObject private var logStore = VpnLogStore.shared
