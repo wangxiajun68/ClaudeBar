@@ -126,8 +126,8 @@ enum Theme {
     }
     static var sidebarFill: Color { bgSecondary }
 
-    /// The recessed well a *field* sits in — `InstrumentField`（搜索框
-    /// `InstrumentSearchField` 也复用它）。
+    /// The recessed well a *field* or *switch track* sits in — `InstrumentField`
+    /// and `InstrumentToggleStyle`.
     ///
     /// A recessed control is not a raised card tinted down: it is the canvas
     /// pushed in. On the ice canvas that is a touch **deeper** than `bgPrimary`
@@ -157,6 +157,7 @@ enum Theme {
         static let s8: CGFloat = 8
         static let s10: CGFloat = 10
         static let s12: CGFloat = 12
+        static let s14: CGFloat = 14
         static let s16: CGFloat = 16
         static let s24: CGFloat = 24
         static let s32: CGFloat = 32
@@ -546,14 +547,25 @@ struct StatusPill: View {
 }
 
 /// Page heading used by every main-window destination.
+///
+/// The mark lights up when the pointer is on the *heading*. Inside a
+/// `PageHeaderCard` the band already tracks the pointer for the entire header,
+/// and two `.onHover` regions over overlapping targets is the doubled-work
+/// pattern this codebase avoids — so a band passes `engaged:` down and does not
+/// add a second tracker. `nil` keeps the self-contained behaviour for a page
+/// whose heading stands alone.
 struct PageTitle: View {
     let title: String
+    /// Externally owned hover state. `nil` = track it here.
+    var engaged: Bool? = nil
     @State private var hovered = false
+
+    private var isEngaged: Bool { engaged ?? hovered }
 
     var body: some View {
         HStack(spacing: 10) {
             GlyphWell(name: PageIdentity.symbol(title), tint: PageIdentity.ink(title),
-                      size: 34, engaged: hovered)
+                      size: 34, engaged: isEngaged)
             Text(title)
                 .font(Theme.Font.displayHero)
                 .tracking(Theme.Tracking.titleSmall)
@@ -561,7 +573,8 @@ struct PageTitle: View {
                 .lineLimit(1)
                 .fixedSize()
         }
-        .onHover { if hovered != $0 { hovered = $0 } }
+        // Only own the pointer when nobody above us does.
+        .onHover { if engaged == nil, hovered != $0 { hovered = $0 } }
         .accessibilityAddTraits(.isHeader)
     }
 }

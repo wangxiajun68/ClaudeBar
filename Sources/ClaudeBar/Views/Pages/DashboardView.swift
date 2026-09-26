@@ -29,20 +29,54 @@ struct DashboardView: View {
 
     // MARK: Title
 
+    /// The page band: the mark, the machine's live session figures, and refresh.
+    ///
+    /// It was a bare `PageTitle` with a button beside it — the only page in the
+    /// app that opened without a band, so the dashboard's first row was a title
+    /// floating on the canvas while every other destination had a surface. The
+    /// figures it now carries are the ones this page is *about*: how many
+    /// sessions are alive and how many are working right now.
     private var titleBar: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            PageTitle(title: "概览")
-            Spacer()
-            Button(action: { providerStore.refresh() }) {
-                HStack(spacing: 5) {
-                    InstrumentGlyph(kind: .refresh, tint: .white)
-                        .frame(width: 17, height: 17)
-                    Text("刷新")
+        PageHeaderCard(tint: Theme.Ink.claude, faceTint: Theme.claude,
+                       orbit: totalSessionCount > 0
+                           ? Double(runningCount) / Double(totalSessionCount) : nil) { engaged in
+            HStack(spacing: Theme.Space.s12) {
+                PageTitle(title: "概览", engaged: engaged)
+                Spacer(minLength: Theme.Space.s12)
+                HStack(spacing: Theme.Space.s14) {
+                    figure("运行中", runningCount, Theme.statusSuccess, Theme.Ink.success)
+                    VerticalHairline().frame(height: 26)
+                    figure("会话", totalSessionCount, Theme.claude, Theme.Ink.claude)
                 }
+                Button(action: { providerStore.refresh() }) {
+                    HStack(spacing: 5) {
+                        InstrumentGlyph(kind: .refresh, tint: .white)
+                            .frame(width: 17, height: 17)
+                        Text("刷新")
+                    }
                     .font(Theme.Font.bodySmall)
+                }
+                .adaptiveGlassButton()
+                .tint(Theme.claude)
             }
-            .adaptiveGlassButton()
-            .tint(Theme.claude)
+        }
+    }
+
+    /// One figure in the band: the number (text → ink) over its caption, with
+    /// the rule above it in the shape hue.
+    private func figure(_ label: String, _ value: Int, _ face: Color, _ ink: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(value)")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(ink)
+                .contentTransition(.numericText())
+            HStack(spacing: 4) {
+                Rectangle().fill(face.opacity(0.55)).frame(width: 8, height: 2)
+                Text(label)
+                    .font(Theme.Font.micro)
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
     }
 
@@ -70,20 +104,21 @@ struct DashboardView: View {
     /// actions (resume / reveal) live.
     private var sessionOverview: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            HStack {
-                Text("活跃会话")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .fixedSize()
-                Spacer()
-                StatusPill(
-                    label: "\(runningCount) 运行中 / \(totalSessionCount)",
-                    tint: runningCount > 0 ? Theme.claude : Theme.statusIdle,
-                    ink: runningCount > 0 ? Theme.Ink.claude : Theme.Ink.idle
-                )
-            }
-            .padding(.horizontal, Theme.Space.s4)
+            // A hand-rolled title + pill was a second section-header idiom;
+            // `SectionHeader` already is the title, the well and the count.
+            // Plain `count`, not `activeCount`: `runningCount` mixes
+            // `busySessionCount` (alive Claude, busy) with `activeCursorCount`
+            // and `activeExternalCount`, which filter the *full* cursor /
+            // external lists rather than their alive subsets — so it is not
+            // guaranteed to be a subset of `totalSessionCount`, and a
+            // 运行中-exceeds-总数 poll would print a negative idle figure
+            // ("5B · -1I"). The running figure is the band's job; this pill is
+            // the total.
+            SectionHeader(icon: "rectangle.stack", title: "活跃会话",
+                          tint: runningCount > 0 ? Theme.claude : Theme.statusIdle,
+                          ink: runningCount > 0 ? Theme.Ink.claude : Theme.Ink.idle,
+                          count: totalSessionCount)
+                .padding(.horizontal, Theme.Space.s4)
 
             // Derived once: `overviewRows` maps every live session through
             // `displayTitle` / `currentActivity` / `contextLabel` and a
@@ -95,11 +130,9 @@ struct DashboardView: View {
             let cap = Self.overviewCap
             let rows = all.prefix(cap)
             if rows.isEmpty {
-                Text("暂无活跃会话")
-                    .font(Theme.Font.body)
-                    .foregroundColor(Theme.textTertiary())
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 28)
+                StandbyEmptyState(label: "暂无活跃会话",
+                                  symbol: "rectangle.stack",
+                                  tint: Theme.textSecondary, block: true)
             } else {
                 TileGrid(.pageSession) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { _, row in

@@ -3,6 +3,16 @@
 CatStatus-class **status sheet**: ice canvas in light, graphite in dark. White
 (or raised dark) cards, SF Rounded metrics. Color lives in charts and status.
 
+Scope: this document describes the **app target** (`Sources/ClaudeBar`). The
+WidgetKit extension (`Sources/Widget`) is compiled separately from only three
+files and cannot reach `Theme` or any shared primitive, so it keeps its own
+drawing; it is not a consumer of this language and is not covered by it.
+
+# ClaudeBar visual language
+
+CatStatus-class **status sheet**: ice canvas in light, graphite in dark. White
+(or raised dark) cards, SF Rounded metrics. Color lives in charts and status.
+
 ## Canvas
 
 - Light: ice `#EEF3F8`, white cards. Dark: `#16181C` canvas, `#252A31` cards.
@@ -79,6 +89,38 @@ says "waiting", never what a working machine is doing — and it repeated a figu
 already printed three lines below it, at a smaller size and a lower contrast.
 The live reading belongs to the mark on the right: Lucide's icon for the part,
 with its own lane of bars beneath.
+
+## Controls
+
+The surface language above says what a card *is*; this says what a control does
+when touched. Both live in `Views/Shared/` and both answer the same two rules —
+motion is a one-shot state change or a gated Core Animation layer, and every
+ornament is one shape rather than a stack of views.
+
+| Control | Reference | What it is |
+| --- | --- | --- |
+| `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
+| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 20 toggles in the app. |
+| `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
+| `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
+| `InstrumentRing` | `stat-widget` pill | a conic reading ring around a value — "how much of the whole", where `OrbitGauge` is "where on the dial". |
+| `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
+| `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
+
+Two reference elements are deliberately **not** translated, and the reason is
+scale rather than taste:
+
+- The 3D button's glitch text and click shockwave. A glitch on a native macOS
+  control reads as a rendering fault, not as intent, and the ripple is a touch
+  metaphor with no pointer analogue. The perimeter sweep already carries the
+  part worth keeping — "this control is live, and the pointer arrived".
+- The deep machine-faceplate toggle. A 2.5D plated switch with glow trails is a
+  *hero* control; every switch in this app is one row of a settings tile, and
+  the `metanef` track is the honest translation at that size.
+
+`HairlineDivider` is the only rule; a native `Divider()` is a different grey in
+light and dark and belongs to no family. `SectionHeader` is the only section
+heading and `StatusPill` the only capsule readout.
 
 ## Machine marks
 

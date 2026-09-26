@@ -43,9 +43,7 @@ struct SettingsView: View {
                             // read back after that is the system's, not the
                             // one that was asked for.
                             set: { on in launchAtLogin.setEnabled(on) }))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .tint(Theme.claude)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     if launchAtLogin.needsApproval {
                         SettingTile(icon: "hand.raised", title: "等待系统允许",
@@ -74,39 +72,35 @@ struct SettingsView: View {
                 section("外观", icon: "paintpalette") {
                     SettingTile(icon: "circle.lefthalf.filled", title: "主题",
                                 caption: "浅色冰面或深色石墨。") {
-                        Picker("", selection: $prefs.appearance) {
-                            ForEach(AppearanceMode.allCases) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                        .labelsHidden()
+                        // The app's own segmented control, not Aqua's. A
+                        // native `.segmented` inside a machined tile was the
+                        // single most generic object on the page — and it sat
+                        // in the tile's only content slot, so the one thing the
+                        // eye landed on was stock chrome.
+                        SegmentedCapsule(items: AppearanceMode.allCases,
+                                         selection: prefs.appearance,
+                                         title: { $0.label },
+                                         tint: Theme.Ink.claude,
+                                         onSelect: { prefs.appearance = $0 })
                     }
                     SettingTile(icon: "textformat.123", title: "Token 单位",
                                 caption: "用量数字的量级写法。") {
-                        Picker("", selection: $prefs.tokenUnitStyle) {
-                            ForEach([TokenUnitStyle.chinese, .metric], id: \.self) { style in
-                                Text(style.label).tag(style)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                        .labelsHidden()
+                        SegmentedCapsule(items: [TokenUnitStyle.chinese, .metric],
+                                         selection: prefs.tokenUnitStyle,
+                                         title: { $0.label },
+                                         tint: Theme.Ink.claude,
+                                         onSelect: { prefs.tokenUnitStyle = $0 })
                     }
                 }
 
                 section("模型花费", icon: "banknote") {
                     SettingTile(icon: "yensign.circle", title: "显示货币",
                                 caption: costDisplayCaption) {
-                        Picker("", selection: $prefs.costDisplay) {
-                            ForEach(CostDisplay.allCases) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 180)
-                        .labelsHidden()
+                        SegmentedCapsule(items: CostDisplay.allCases,
+                                         selection: prefs.costDisplay,
+                                         title: { $0.label },
+                                         tint: Theme.Ink.claude,
+                                         onSelect: { prefs.costDisplay = $0 })
                     }
                     // Only rendered once a conversion is actually asked for —
                     // in 分列 mode there is no rate, so a tile about one would
@@ -136,32 +130,24 @@ struct SettingsView: View {
                     SettingTile(icon: "capsule", title: "刘海灵动岛",
                                 caption: "鼠标移到刘海展开：运行中的会话、当前路由与近 30 天用量；无刘海的屏幕在菜单栏中央显示。") {
                         Toggle("", isOn: $prefs.notchIslandEnabled)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "waveform", title: "两翼",
                                 caption: "收起时在刘海两侧显示运行中的会话与今日用量，会遮住紧贴刘海的菜单栏图标。") {
                         Toggle("", isOn: $prefs.notchIslandShowsWings)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                     SettingTile(icon: "checkmark.bubble", title: "完成提醒",
                                 caption: "会话结束时从刘海弹出提醒，可一键回到该会话；悬停暂停，6 秒后自动收起。不需要通知权限。") {
                         Toggle("", isOn: $prefs.notchIslandAlertsEnabled)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                     SettingTile(icon: "arrow.up.left.and.arrow.down.right", title: "全屏应用中显示",
                                 caption: "关闭时，全屏应用所在的空间不显示灵动岛。") {
                         Toggle("", isOn: $prefs.notchIslandInFullScreen)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     .disabled(!prefs.notchIslandEnabled)
                 }
@@ -172,9 +158,7 @@ struct SettingsView: View {
                                 ? "流量与用量写入 SQLite。关闭后改用 JSON，互不迁移。"
                                 : "已关闭。重新开启不会自动导入。") {
                         Toggle("", isOn: $prefs.databaseEnabled)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.claude)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "folder", title: "日志目录",
                                 caption: "~/Library/Application Support/ClaudeBar/logs") {
@@ -195,17 +179,13 @@ struct SettingsView: View {
                                 codexStore.reactivateActive()
                                 providerStore.reactivateActive()
                             }))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .tint(Theme.codex)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.codex, faceTint: Theme.codex, showsLabel: false))
                     }
                     SettingTile(icon: "waveform", title: "记录第三方流量",
                                 caption: "非 CC / Codex 客户端经本地代理的请求写入「流量」页。",
                                 tint: Theme.codex) {
                         Toggle("", isOn: $prefs.proxyThirdPartyTrafficEnabled)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                            .tint(Theme.codex)
+                            .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.codex, faceTint: Theme.codex, showsLabel: false))
                     }
                     SettingTile(icon: "number", title: "端口",
                                 caption: proxyStatusCaption,
@@ -222,7 +202,7 @@ struct SettingsView: View {
                         // curl snippet, the help text) advertising a port the
                         // listener was not on.
                         TextField("15721", text: $codexPortDraft)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(InstrumentFieldStyle(focused: codexPortFocused))
                             .frame(width: 88)
                             .multilineTextAlignment(.trailing)
                             .focused($codexPortFocused)
@@ -299,9 +279,7 @@ struct SettingsView: View {
                                     VpnSystemProxyController.clearSystemProxyAsync()
                                 }
                             }))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .tint(Theme.claude)
+                        .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
                                 caption: "订阅、节点、系统代理与 TUN。") {

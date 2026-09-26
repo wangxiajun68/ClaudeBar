@@ -165,7 +165,7 @@ struct PowerFlowCard: View {
                 PowerFlowContent(flow: PowerFlow(host: host), compact: compact)
                     .equatable()
                 if !compact {
-                    Divider().padding(.horizontal, 18)
+                    HairlineDivider().padding(.horizontal, 18)
                     BatteryChargeControls().padding(18)
                 }
             }
@@ -398,7 +398,7 @@ private struct EnergySankey: View {
         .fixedSize()
         .padding(.horizontal, compact ? 6 : 12)
         .padding(.vertical, compact ? 3 : 6)
-        .background(Theme.cardSurface.opacity(0.94), in: RoundedRectangle(cornerRadius: compact ? 7 : 12))
+        .background(Theme.cardSurface.opacity(0.94), in: RoundedRectangle(cornerRadius: compact ? 7 : 12, style: .continuous))
     }
 }
 

@@ -158,10 +158,6 @@ struct TrafficView: View {
     private var conversationQueryBinding: Binding<String> {
         Binding(get: { state.conversationQuery }, set: { state.conversationQuery = $0 })
     }
-    private var rawSliceBinding: Binding<RawSlice> {
-        Binding(get: { state.rawSlice }, set: { state.rawSlice = $0 })
-    }
-
     enum TrafficMode: String, CaseIterable, Identifiable {
         case inspector, log
         var id: String { rawValue }
@@ -451,15 +447,11 @@ struct TrafficView: View {
             HairlineDivider()
 
             if filtered.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    Text("暂无记录")
-                        .font(Theme.Font.body)
-                        .foregroundColor(Theme.textSecondary)
-                    Text("在供应商上启用流量记录后，Claude Code 与 Codex 的请求将显示于此。")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                StandbyEmptyState(label: "暂无记录",
+                                  symbol: "arrow.left.arrow.right",
+                                  tint: Theme.Ink.claude,
+                                  caption: "在供应商上启用流量记录后，Claude Code 与 Codex 的请求将显示于此。",
+                                  block: true)
                 .padding(Theme.Space.s16)
                 Spacer()
             } else {
@@ -690,7 +682,7 @@ struct TrafficView: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
     }
 
     @ViewBuilder
@@ -729,7 +721,7 @@ struct TrafficView: View {
                     }
                     .padding(Theme.Space.s12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -780,7 +772,7 @@ struct TrafficView: View {
                     }
                     .padding(Theme.Space.s12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .background(Theme.cardFill(0.05), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                 }
             }
             .padding(Theme.Space.s16)
@@ -791,13 +783,13 @@ struct TrafficView: View {
     private var rawPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s8) {
-                Picker("", selection: rawSliceBinding) {
-                    ForEach(RawSlice.allCases) { s in
-                        Text(s.label).tag(s)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 280)
+                // Four panes of one record — the app's segmented control.
+                SegmentedCapsule(items: RawSlice.allCases,
+                                 selection: rawSlice,
+                                 title: { $0.label },
+                                 tint: Theme.Ink.claude,
+                                 onSelect: { rawSlice = $0 })
+                    .fixedSize()
                 Spacer()
                 rawToolButton("展开") { jsonFold.expandAll() }
                 rawToolButton("收起") { jsonFold.collapseAll() }
@@ -890,7 +882,7 @@ struct TrafficView: View {
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(roleColor(role).opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .background(roleColor(role).opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
     }
 
     private func compactStat(_ label: String, _ value: String) -> some View {

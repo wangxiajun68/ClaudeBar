@@ -591,3 +591,137 @@ struct ConveyorBelt: View {
             .accessibilityHidden(true)
     }
 }
+
+// MARK: - Page header card (weather card frame ring, at page scale)
+
+/// The band that opens a page: a live count, a title, and the page's own
+/// controls, on **one** surface from the tile family.
+///
+/// This is the piece that fixes the specific complaint that 「连接器页面太平庸」.
+/// Every page used to open with a hand-rolled white rounded rectangle and a 1px
+/// grey border — `ConnectorInventoryHeader` literally inlined `panelCard` minus
+/// its wash and minus its inner frame ring (`ConnectorsView.swift:414-419`) —
+/// which is the exact shape of a generic admin dashboard's header and the exact
+/// reason the page read as plain while the cards *below* it were distinct.
+///
+/// A header earns its place in the family the same way a card does, by carrying
+/// the same four parts:
+///
+/// 1. an accent wash (the page's hue at ~6 %), so the header and the grid under
+///    it are the same object seen twice;
+/// 2. the **inner frame ring** — the weather card's `::after`. The ring is white
+///    and only visible *because* of the wash behind it, which is why the two
+///    always travel together and why a wash-less white rect could never show it;
+/// 3. a **depth lens** off the trailing corner, receding past the edge, so the
+///    header has a foreground and a background rather than a flat fill;
+/// 4. a hairline edge that lifts to the accent when the pointer is anywhere on
+///    the band — a header is a surface you interact with (its buttons, its
+///    filters), so it should answer a pointer like one.
+///
+/// The optional `orbit` slot draws the weather card's sky path across the band
+/// with a body sitting at `orbitProgress`. It is a *reading*, not a loop: the
+/// header is usually the page's summary, so the arc shows how far through that
+/// summary's range the page currently is. Pass `nil` for no arc.
+struct PageHeaderCard<Content: View>: View {
+    var tint: Color = Theme.Ink.claude
+    /// The hue for the wash, lens and hairline. Defaults to `tint` — pass a
+    /// `Theme.Ink.*` value for text and the raw shape hue here together, so
+    /// the band follows the same ink/shape rule as every card.
+    var faceTint: Color? = nil
+    /// 0…1, drawn on the sky path when `orbit` is non-nil.
+    var orbit: Double? = nil
+    /// The band's content, handed the band's own hover flag.
+    ///
+    /// It is passed in rather than tracked again by whatever the content
+    /// contains: the band already has a pointer region over the whole header,
+    /// and a page mark inside it that opened a second one would be two
+    /// trackers for overlapping targets — the doubled work this file's header
+    /// rules out. `PageTitle(engaged:)` takes it.
+    @ViewBuilder var content: (Bool) -> Content
+
+    @State private var hovered = false
+
+    private var face: Color { faceTint ?? tint }
+
+    var body: some View {
+        content(hovered)
+            .padding(.horizontal, Theme.Space.s16)
+            .padding(.vertical, Theme.Space.s12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // A band this size needs a heavier wash than a 200-card grid does:
+            // at the grid's 5.5 % the white inner frame ring has nothing to sit
+            // on and the band still reads as a plain white rectangle, which is
+            // the exact failure this surface exists to fix. 9 % light / 15 %
+            // dark is the point where the ring reads without the band shouting
+            // over the page.
+            .tile(tint: face, hovered: hovered,
+                  lens: DepthLensSpec(tint: face, size: 168, rings: 3),
+                  wash: Theme.isDark ? 0.15 : 0.09)
+            .overlay(alignment: .trailing) {
+                if let orbit {
+                    OrbitGauge(progress: orbit, tint: face,
+                               trackTint: face.opacity(0.18),
+                               lineWidth: 3, bodySize: 7, sweep: 180, span: 180)
+                        .frame(width: 58, height: 58)
+                        .padding(.trailing, 13)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .hoverState($hovered)
+    }
+}
+
+// MARK: - Instrument KPI tile ornament (stat-widget ring + ground shadow)
+
+/// The `stat-widget`'s conic reading ring, at tile scale: a value circled by the
+/// share of its own range, with the plate inside.
+///
+/// Distinct from `OrbitGauge` on purpose. `OrbitGauge` is a *trim* with a body
+/// riding the end of the arc — a pointer at a position. This is a *ring* whose
+/// filled portion is the reading, with the number printed in its middle: the
+/// two answer different questions ("where on the dial" vs "how much of the
+/// whole"), and the machine tiles want the second.
+///
+/// The ring is a conic gradient (the reference's `conic-gradient`, native), so
+/// it is one drawn layer per tile and never a stroked path with a computed
+/// trim — a `Canvas` over a grid of them would rebuild per frame under scroll.
+struct InstrumentRing: View {
+    /// 0…1 on the ring's own range.
+    var progress: Double
+    var tint: Color
+    var size: CGFloat = 40
+    var thickness: CGFloat = 4
+    /// The plate's own fill — `cardSurface` on a white tile, so the number
+    /// reads on the same ground as the tile around it.
+    var plate: Color = Theme.cardSurface
+
+    private var clamped: Double { progress.isFinite ? min(1, max(0, progress)) : 0 }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(tint.opacity(0.16), lineWidth: thickness)
+            Circle()
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: tint.opacity(0.55), location: 0),
+                            .init(color: tint, location: max(0.001, clamped * 0.72)),
+                            .init(color: tint, location: max(0.002, clamped)),
+                            .init(color: .clear, location: min(1, clamped + 0.001))
+                        ]),
+                        center: .center,
+                        startAngle: .degrees(-90),
+                        endAngle: .degrees(270)
+                    )
+                )
+                .mask(Circle().strokeBorder(tint, lineWidth: thickness))
+            Circle()
+                .fill(plate)
+                .padding(thickness)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}

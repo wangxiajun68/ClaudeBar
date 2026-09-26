@@ -54,14 +54,29 @@ enum ProviderCardState: Equatable {
     }
 }
 
+/// The provider card's state readout: the shared pill, plus the state's own
+/// glyph.
+///
+/// It was a `Label` in a hand-rolled capsule with its own fill opacities
+/// (0.15 / 0.09) and its own padding (8 / 5) — the same object as `StatusPill`
+/// drawn with different numbers, which is how the app ended up with two
+/// capsule readouts that never quite matched side by side. Same well now, and
+/// the glyph rides in it.
 struct ProviderStatusBadge: View {
     let state: ProviderCardState
     var body: some View {
-        Label(state.title, systemImage: state.icon)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(state.color).lineLimit(1).fixedSize()
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(state.color.opacity(Theme.isDark ? 0.15 : 0.09), in: Capsule())
+        HStack(spacing: 4) {
+            Image(systemName: state.icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(state.title)
+        }
+        .font(Theme.Font.pill)
+        .foregroundStyle(state.color)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(state.faceColor.opacity(0.12)))
     }
 }
 
@@ -93,7 +108,7 @@ struct ProviderActionStyle: ButtonStyle {
                     .strokeBorder(tint.opacity(hovered ? 0.55 : 0.2)))
                 .shadow(color: tint.opacity(prominent && hovered ? 0.16 : 0), radius: 7, y: 3)
                 .opacity(enabled ? 1 : 0.4)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
                 .onHover { if hovered != $0 { hovered = $0 } }
                 .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.75), value: configuration.isPressed)
@@ -102,12 +117,18 @@ struct ProviderActionStyle: ButtonStyle {
     }
 }
 
+/// The provider editors' input. It used to be its own recipe — `Theme.bgPrimary`
+/// in a radius-10 box with a `textSecondary` 0.18 hairline — a fourth field
+/// surface that disagreed with the other three on radius, fill and stroke. It
+/// now wears `InstrumentField`, so an editor field and a search box are the
+/// same object.
 struct ProviderInputStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration.textFieldStyle(.plain)
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(Theme.bgPrimary, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.18)))
+        InstrumentField(onCard: true) {
+            configuration
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+        }
     }
 }
 
@@ -156,9 +177,11 @@ struct ProviderModelSelector: View {
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
             }.padding(.horizontal, 10).frame(height: 44)
-                .background(Theme.bgPrimary.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.textSecondary.opacity(0.14)))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                // The model selector is a field the user opens rather than
+                // types into — same well, same rim, so it reads as one of the
+                // inputs around it instead of as a fourth box design.
+                .instrumentWell(radius: Theme.Radius.md, onCard: false)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }.buttonStyle(.plain)
             .disabled(!providers.contains { !$0.models.isEmpty })
             .help(target.map { "选择待激活模型：" + $0.1.name } ?? "请先配置模型")
@@ -230,21 +253,23 @@ private struct ProviderModelPicker: View {
                                             if current { Text("使用中").font(Theme.Font.caption).foregroundStyle(Theme.Ink.success) }
                                             else if !ProviderCardState.isReady(provider) { Text("待完善").font(Theme.Font.caption).foregroundStyle(ProviderCardState.incomplete.color) }
                                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                            .background(ProviderCardState.ready.color.opacity(item == highlighted || item == selected ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 9))
+                                            .background(ProviderCardState.ready.color.opacity(item == highlighted || item == selected ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                                             .contentShape(Rectangle())
                                     }.buttonStyle(.plain).disabled(!ProviderCardState.isReady(provider)).id(item)
                                 }
                             }
                         }
                         if providers.allSatisfy({ provider in !provider.models.contains { matches($0, provider: provider) } }) {
-                            Text("没有匹配模型，可在配置中拉取或添加。")
-                                .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary).padding(.vertical, 20)
+                            StandbyEmptyState(label: "没有匹配模型，可在配置中拉取或添加。",
+                                              symbol: "magnifyingglass",
+                                              tint: Theme.textSecondary)
+                                .padding(.vertical, Theme.Space.s12)
                         }
                     }
                 }.frame(height: 260)
                     .onChange(of: highlighted) { _, item in if let item { reader.scrollTo(item) } }
             }
-            Divider()
+            HairlineDivider()
             Label("选择不会切换连接；回到卡片点击激活。", systemImage: "info.circle")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
         }.padding(18).frame(width: 400).foregroundStyle(Theme.textPrimary).background(Theme.cardSurface)

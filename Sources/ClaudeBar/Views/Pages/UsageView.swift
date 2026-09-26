@@ -152,13 +152,12 @@ struct UsageView: View {
     private var platformBreakdown: some View {
         let total = providerStore.usageTotalBySource.reduce(0) { $0 + $1.tokens }
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            Text("按平台")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(Theme.textPrimary)
+            SectionHeader(icon: "square.grid.2x2", title: "按平台",
+                          tint: Theme.claude, ink: Theme.Ink.claude,
+                          count: providerStore.usageBySource.values.flatMap { $0 }.count)
             if total == 0 && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
+                StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
+                                  tint: Theme.textSecondary, block: true)
             } else {
                 TileGrid(.pageUsage) {
                     ForEach(UsageSource.allCases) { source in
@@ -176,13 +175,12 @@ struct UsageView: View {
 
     private var modelBreakdown: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            Text("按模型")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(Theme.textPrimary)
+            SectionHeader(icon: "cube", title: "按模型",
+                          tint: Theme.cursor, ink: Theme.Ink.cursor,
+                          count: providerStore.usageStats.count)
             if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
+                StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
+                                  tint: Theme.textSecondary, block: true)
             } else {
                 TileGrid(.pageUsage) {
                     // Hoisted: `maxUsageTokens` is a computed property over the
@@ -206,19 +204,15 @@ struct UsageView: View {
         let groups = providerGroups
         let total = groups.reduce(0) { $0 + $1.total.totalTokens }
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("按供应商")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(Theme.textPrimary)
-                Text("按当前模型配置归属")
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.textTertiary())
-                    .help("历史会话未记录请求时的供应商；同名模型涉及多个供应商时计入未归属")
-            }
+            SectionHeader(icon: "building.2", title: "按供应商",
+                          tint: Theme.statusSuccess, ink: Theme.Ink.success,
+                          count: groups.count,
+                          note: "按当前模型配置归属",
+                          noteTint: Theme.textTertiary())
+                .help("历史会话未记录请求时的供应商；同名模型涉及多个供应商时计入未归属")
             if total == 0 && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量")
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
+                StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
+                                  tint: Theme.textSecondary, block: true)
             } else {
                 TileGrid(.pageUsage) {
                     ForEach(groups) { group in
@@ -386,7 +380,7 @@ private struct UsageProviderCard: View {
 
                 if open {
                     VStack(alignment: .leading, spacing: 8) {
-                        Divider()
+                        HairlineDivider()
                         Text("模型明细")
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)
@@ -487,14 +481,13 @@ private struct UsagePlatformCard: View {
 
                 if open {
                     VStack(alignment: .leading, spacing: 8) {
-                        Divider()
+                        HairlineDivider()
                         Text("模型明细")
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)
                         if ranked.isEmpty {
-                            Text("暂无用量")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textTertiary())
+                            StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
+                                              tint: Theme.textSecondary)
                         } else {
                             ForEach(Array(ranked.prefix(4))) { model in
                                 HStack(spacing: 8) {
