@@ -15,6 +15,9 @@ struct ExchangeRateTile: View {
     @ObservedObject private var fx = ExchangeRate.shared
     @State private var draft = ""
     @State private var editing = false
+    /// Drives the field's focus rim, so the box is lit while it is being typed
+    /// into — the same affordance `InstrumentSearchField` has.
+    @FocusState private var rateFocused: Bool
 
     var body: some View {
         SettingTile(icon: "arrow.left.arrow.right", title: "汇率",
@@ -35,7 +38,8 @@ struct ExchangeRateTile: View {
     private var rateField: some View {
         if editing {
             TextField("7.2", text: $draft)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(InstrumentFieldStyle(focused: rateFocused))
+                .focused($rateFocused)
                 .frame(width: 72)
                 .multilineTextAlignment(.trailing)
                 .onSubmit(commit)

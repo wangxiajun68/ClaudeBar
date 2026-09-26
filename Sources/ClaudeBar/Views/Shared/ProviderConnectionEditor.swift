@@ -89,7 +89,7 @@ struct ProviderConnectionEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.5)
+            HairlineDivider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     credentials
@@ -103,7 +103,7 @@ struct ProviderConnectionEditor: View {
                     }
                 }.padding(24)
             }
-            Divider().opacity(0.5)
+            HairlineDivider()
             footer
         }
         .frame(width: 640, height: 680)
@@ -176,10 +176,12 @@ struct ProviderConnectionEditor: View {
             Text(draft.wireAPI == "chat" ? "通过本地转换接入 Codex。" : "使用供应商原生 Responses 接口。")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             Toggle("切换时保留官方登录", isOn: $draft.preserveOfficialLogin)
+                .toggleStyle(.instrument)
                 .font(Theme.Font.bodySmall)
             Text("只决定 auth.json 留不留。有 Key 时这条路由写成 requires_openai_auth = false，不再用 ChatGPT 套餐额度锁住输入。")
                 .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             Toggle("不向云端持久化 Responses", isOn: $draft.disableResponseStorage)
+                .toggleStyle(.instrument)
                 .font(Theme.Font.bodySmall)
         }
     }
@@ -254,8 +256,10 @@ struct ProviderConnectionEditor: View {
             }
             if client == .claude {
                 Toggle("禁用压缩", isOn: $draft.models[index].disableCompact)
+                    .toggleStyle(.instrument)
                     .font(Theme.Font.caption)
                 Toggle("禁用实验性 Beta", isOn: $draft.models[index].disableExperimentalBetas)
+                    .toggleStyle(.instrument)
                     .font(Theme.Font.caption)
             } else {
                 Text("Codex 将压缩上限限制为窗口的 90%。留空则不写入，运行时按窗口 × 90% 计算。")

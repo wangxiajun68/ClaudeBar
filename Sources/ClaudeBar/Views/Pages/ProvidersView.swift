@@ -106,9 +106,21 @@ struct ProvidersView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = f.error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(Theme.Font.caption).foregroundStyle(Theme.Ink.error)
-                    .padding(.horizontal, 24).padding(.bottom, 12)
+                // A raw red `Label` was the one error in the app with no band
+                // behind it; every other page states a failure on a surface.
+                HStack(spacing: Theme.Space.s10) {
+                    GlyphWell(name: "exclamationmark.circle", tint: Theme.Ink.error, size: 26)
+                    Text(error)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                    Spacer(minLength: Theme.Space.s8)
+                }
+                .padding(.horizontal, Theme.Space.s12)
+                .padding(.vertical, Theme.Space.s10)
+                .panelCard(radius: Theme.Radius.md, tint: Theme.statusError)
+                .padding(.horizontal, Theme.Space.s24)
+                .padding(.bottom, Theme.Space.s12)
             }
             directoryToolbar
             connectionStrip(f)
@@ -140,20 +152,32 @@ struct ProvidersView: View {
         .onAppear { providerStore.refreshBalance() }
     }
 
+    /// The page band. It was a hand-typed 26pt bold title with no page mark
+    /// (`Text("供应商").font(.system(size: 26, weight: .bold, design: .rounded))`)
+    /// — a *third* title scale in a file whose neighbour page uses
+    /// `PageTitle` — over a subtitle and a bordered button. It is now the same
+    /// `PageHeaderCard` the connectors page opens with: the page mark in a
+    /// well, the destination's own hue as a wash, and the frame ring the grid
+    /// below carries.
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("供应商").font(.system(size: 26, weight: .bold, design: .rounded))
-                Text("发现模型平台，为你的编程工具接入新能力。")
-                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+        PageHeaderCard(tint: Theme.Ink.cursor, faceTint: Theme.cursor) { engaged in
+            HStack(spacing: Theme.Space.s12) {
+                PageTitle(title: "模型", engaged: engaged)
+                Spacer(minLength: Theme.Space.s12)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("发现模型平台，为你的编程工具接入新能力。")
+                        .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
+                        Label("自定义", systemImage: "plus")
+                    }.buttonStyle(ProviderActionStyle())
+                }
             }
-            Spacer()
-            Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
-                Label("自定义", systemImage: "plus")
-            }.buttonStyle(ProviderActionStyle())
         }
-        .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)
         .foregroundStyle(Theme.textPrimary)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.top, Theme.Space.s8)
+        .padding(.bottom, Theme.Space.s16)
     }
 
     private var clientSwitcher: some View {
@@ -187,26 +211,44 @@ struct ProvidersView: View {
         .padding(.horizontal, 24)
     }
 
+    /// The live connection strip. It used to be a bare dot and a line of text
+    /// floating straight on the canvas — no surface, a 6pt `Circle` for a
+    /// status mark, and 28pt side padding where every sibling row uses 24. It
+    /// is now a band from the same family as the rest of the page: the mark in
+    /// a `GlyphWell`, the state in a `StatusPill`, and the whole row on a
+    /// `panelCard` so it reads as the page's summary line rather than as stray
+    /// text above the grid.
     private func connectionStrip(_ f: Facts) -> some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Circle().fill(f.activeID == nil ? Theme.textSecondary : Theme.statusSuccess).frame(width: 6, height: 6)
+        let active = f.providers.first { $0.id == f.activeID }
+        let live = f.activeID != nil
+        let face = live ? Theme.statusSuccess : Theme.textSecondary
+        return HStack(spacing: Theme.Space.s12) {
+            GlyphWell(name: live ? "bolt.fill" : "bolt.slash",
+                      tint: live ? Theme.Ink.success : Theme.textSecondary, size: 28)
+            HStack(spacing: Theme.Space.s6) {
                 Text("当前连接").foregroundStyle(Theme.textSecondary)
-                Text(f.providers.first { $0.id == f.activeID }?.name ?? "官方 / 默认")
+                Text(active?.name ?? "官方 / 默认")
                     .fontWeight(.semibold).lineLimit(1)
             }
+            StatusPill(label: live ? "使用中" : "未选择",
+                       tint: face,
+                       ink: live ? Theme.Ink.success : Theme.textSecondary)
             Text("\(f.providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
-            if let provider = f.providers.first(where: { $0.id == f.activeID }),
-               let model = currentModel(provider, activeID: f.activeID) {
+            if let provider = active, let model = currentModel(provider, activeID: f.activeID) {
                 Text(model).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
                     .layoutPriority(-1)
             }
             Spacer(minLength: 8)
-            Toggle("仅显示已配置", isOn: $configuredOnly).toggleStyle(.checkbox)
+            Toggle("仅显示已配置", isOn: $configuredOnly)
+                .toggleStyle(.instrument)
                 .foregroundStyle(Theme.textSecondary).fixedSize()
         }
         .font(Theme.Font.caption).foregroundStyle(Theme.textPrimary)
-        .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 16)
+        .padding(.horizontal, Theme.Space.s14)
+        .padding(.vertical, Theme.Space.s10)
+        .panelCard(radius: Theme.Radius.md, tint: live ? Theme.statusSuccess : nil)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.bottom, Theme.Space.s12)
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: f.activeID)
     }
 

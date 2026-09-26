@@ -74,16 +74,16 @@ struct CommandPalette: View {
 
                     VStack(spacing: 0) {
                         searchBar
-                        Divider().opacity(0.2)
+                        HairlineDivider()
                         resultsList
                     }
                     .frame(width: 460)
                     .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                        RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
                             .fill(Theme.cardSurface)
                     }
                     .overlay {
-                        RoundedRectangle(cornerRadius: Theme.Radius.xl)
+                        RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous)
                             .strokeBorder(Theme.hairline, lineWidth: 1)
                     }
                     .shadowCard(radius: 24, y: 12, opacity: 0.12)
@@ -274,7 +274,7 @@ private struct CommandRow: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
                         .fill(item.tint.opacity(isSelected ? 0.25 : 0.12))
                         .frame(width: 30, height: 30)
                     AppGlyph(name: item.icon, size: 13, box: 16)
@@ -301,7 +301,7 @@ private struct CommandRow: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                     .fill(isSelected ? Theme.accent.opacity(0.10) : (isHovered ? Theme.cardFill(0.06) : Color.clear))
             }
             .contentShape(Rectangle())

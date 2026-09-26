@@ -27,12 +27,13 @@ struct TileModifier: ViewModifier {
     var dense: Bool = false
     var lens: DepthLensSpec? = nil
     var framed: Bool = true
+    var wash: Double? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, reduceMotion: reduceMotion) {
+                    framed: framed, wash: wash, reduceMotion: reduceMotion) {
             content
         }
     }
@@ -48,6 +49,11 @@ struct TileSurface<Content: View>: View {
     var dense: Bool
     var lens: DepthLensSpec?
     var framed: Bool
+    /// Base accent wash at rest, overridden when a surface needs its own
+    /// strength. The default (5.5 % light / 11 % dark) is tuned for a dense
+    /// grid of small tiles; a page-scale band carries a heavier one so its
+    /// white inner frame ring actually reads (`PageHeaderCard`).
+    var wash: Double?
     var reduceMotion: Bool
     let content: Content
 
@@ -56,15 +62,23 @@ struct TileSurface<Content: View>: View {
     /// `content: { … }` instead of trailing-closure syntax.
     init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
          lens: DepthLensSpec? = nil, framed: Bool = true,
-         reduceMotion: Bool = false,
+         wash: Double? = nil, reduceMotion: Bool = false,
          @ViewBuilder content: () -> Content) {
         self.tint = tint
         self.hovered = hovered
         self.dense = dense
         self.lens = lens
         self.framed = framed
+        self.wash = wash
         self.reduceMotion = reduceMotion
         self.content = content()
+    }
+
+    /// The wash actually painted: the surface's own strength when it asked for
+    /// one, otherwise the grid default, deepened on hover in both cases.
+    private var restWash: Double {
+        let base = wash ?? (Theme.isDark ? 0.11 : 0.055)
+        return hovered ? base * 1.7 : base
     }
 
     var body: some View {
@@ -79,9 +93,7 @@ struct TileSurface<Content: View>: View {
                         .fill(Theme.cardSurface)
                     if tint != nil {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(accent.opacity(Theme.isDark
-                                                 ? (hovered ? 0.17 : 0.11)
-                                                 : (hovered ? 0.10 : 0.055)))
+                            .fill(accent.opacity(restWash))
                     }
                     if let lens {
                         DepthLens(spec: lens, engaged: hovered)
@@ -128,9 +140,89 @@ extension View {
     /// card's mark belongs in its header, where it is legible and where it can
     /// keep its own accessible name, so the lens is hue and depth only.
     func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
-              lens: DepthLensSpec? = nil, framed: Bool = true) -> some View {
+              lens: DepthLensSpec? = nil, framed: Bool = true,
+              wash: Double? = nil) -> some View {
         modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
-                              lens: lens, framed: framed))
+                              lens: lens, framed: framed, wash: wash))
+    }
+}
+
+// MARK: - Metric tile
+
+/// Label / value / detail metric tile — the one primitive behind Dashboard
+/// stats and other headline numbers. The detail line is always rendered
+/// (space-reserved when empty) so tiles in a row stay equal height.
+struct MetricTile: View {
+    let label: String
+    let value: String
+    var detail: String = ""
+    var tint: Color? = nil
+    var icon: String? = nil
+    var instrumentIcon: InstrumentGlyph.Kind? = nil
+    var pill: String? = nil
+    /// Readable counterpart of `tint` for the pill text; see `StatusPill`.
+    var pillInk: Color? = nil
+    var valueFont: SwiftUI.Font = Theme.Font.displayMetricSmall
+    var dense: Bool = false
+    var quotaWindows: [CodexQuotaWindow] = []
+    var action: (() -> Void)? = nil
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let content = VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            HStack(spacing: 8) {
+                if let instrumentIcon {
+                    InstrumentBadge(kind: instrumentIcon, size: dense ? 22 : 26,
+                                    tint: tint ?? Theme.Ink.claude, engaged: isHovered)
+                } else if let icon {
+                    GlyphWell(name: icon, tint: tint ?? Theme.Ink.claude, size: dense ? 20 : 22, engaged: isHovered)
+                }
+                Text(label)
+                    .font(Theme.Font.tileLabel)
+                    .tracking(Theme.Tracking.caption)
+                    .foregroundColor(Theme.textSecondary)
+                Spacer(minLength: 4)
+                if let pill {
+                    StatusPill(label: pill,
+                               tint: tint ?? Theme.statusSuccess,
+                               ink: pillInk ?? (tint == nil ? Theme.Ink.success : tint))
+                }
+            }
+            if quotaWindows.isEmpty {
+                RollingNumberText(value)
+                    .font(Theme.Font.displayMetricSmall)
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .minimumScaleFactor(0.5)
+                        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: value)
+            } else {
+                CodexQuotaGauges(windows: quotaWindows, compact: false)
+            }
+            Text(detail.isEmpty ? " " : detail)
+                .font(Theme.Font.tileDetail)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(dense ? Theme.Space.s12 : Theme.Space.s16)
+        .frame(maxWidth: .infinity, minHeight: dense ? 96 : 112, maxHeight: .infinity, alignment: .topLeading)
+        .tile(hovered: isHovered, dense: dense)
+        .contentShape(RoundedRectangle(cornerRadius: dense ? Theme.Radius.md : Theme.Radius.lg, style: .continuous))
+        .hoverState($isHovered)
+        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: isHovered)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label)，\(value)\(detail.isEmpty ? "" : "，\(detail)")")
+
+        if let action {
+            Button(action: action) { content }
+                .buttonStyle(.pressable)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        } else {
+            content
+        }
     }
 }
 

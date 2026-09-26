@@ -116,7 +116,7 @@ struct VpnNodePickerPanel: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(live ? Theme.claude.opacity(0.16) : Color.clear)
             )
             .contentShape(Rectangle())

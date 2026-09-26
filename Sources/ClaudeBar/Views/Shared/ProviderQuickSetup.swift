@@ -22,7 +22,7 @@ struct ProviderQuickSetup: View {
                 Button { dismiss() } label: { Image(systemName: "xmark") }
                     .buttonStyle(ProviderActionStyle()).help("关闭配置")
             }.padding(24)
-            Divider().opacity(0.5)
+            HairlineDivider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     HStack {
@@ -47,7 +47,7 @@ struct ProviderQuickSetup: View {
                         Text(draft.wireAPI == "chat" ? "通过本地转换接入 Codex" : "使用供应商原生 Responses 接口")
                             .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                     }
-                    Divider().padding(.vertical, 4)
+                    HairlineDivider().padding(.vertical, 4)
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 5) {
                             Label("模型", systemImage: "square.stack.3d.up").font(.system(size: 15, weight: .semibold))
@@ -87,7 +87,7 @@ struct ProviderQuickSetup: View {
                     }
                 }.padding(24)
             }
-            Divider().opacity(0.5)
+            HairlineDivider()
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("保存配置，再激活").font(Theme.Font.bodySmall).fontWeight(.medium)
@@ -132,7 +132,7 @@ struct ProviderIdentityMark: View {
             }
         }
         .frame(width: size, height: size)
-        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3))
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
         .accessibilityHidden(true)
     }
 }

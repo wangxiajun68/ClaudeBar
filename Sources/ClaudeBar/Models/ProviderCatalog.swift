@@ -21,6 +21,17 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
     enum Category: String, CaseIterable, Identifiable {
         case platform = "模型平台", coding = "Coding / Token Plan", gateway = "聚合与自建"
         var id: String { rawValue }
+
+        /// The mark the directory's section header draws for this group. Kept
+        /// here beside the label because the two are the same identity, and a
+        /// header built from a raw value string had no way to carry one.
+        var symbol: String {
+            switch self {
+            case .platform: return "building.columns"
+            case .coding: return "chevron.left.forwardslash.chevron.right"
+            case .gateway: return "arrow.triangle.branch"
+            }
+        }
     }
     let id: String
     let name: String

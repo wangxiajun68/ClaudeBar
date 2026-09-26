@@ -130,8 +130,15 @@ struct MenuBarView: View {
 
     private var sessionsPanel: some View { SessionsPanelView() }
 
+    /// The popup's action bar — the highest-frequency control row in the app.
+    ///
+    /// It is now the `mymiamo` glass menu: **one** milled capsule the ten items
+    /// share (`IconChipRow`), a hairline rule before the destructive action, and
+    /// items that light up on hover rather than each carrying its own resting
+    /// chip. Ten bordered squares in a flat line was the plainest object on the
+    /// surface a user sees most often, and the fix is the group, not the glyph.
     private var actionBar: some View {
-        HStack(spacing: Theme.Space.s4) {
+        IconChipRow(spacing: Theme.Space.s2) {
             if ProcessSampler.shared.host.batteryInstalled {
                 CompactBatteryChargeControl()
             }
@@ -184,7 +191,13 @@ struct MenuBarView: View {
                        color: Theme.textSecondary) {
                 AppPreferences.shared.appearance = appearance == .dark ? .light : .dark
             }
-            Spacer()
+            Spacer(minLength: Theme.Space.s4)
+            // 退出 is separated by a rule, not just by a gap: it is the one item
+            // on this row that ends the app, and it used to sit flush against
+            // 深色 with nothing but 4pt between them.
+            VerticalHairline()
+                .frame(height: 18)
+                .padding(.horizontal, Theme.Space.s2)
             iconButton("power", help: "退出", color: Theme.statusError) {
                 NSApplication.shared.terminate(nil)
             }

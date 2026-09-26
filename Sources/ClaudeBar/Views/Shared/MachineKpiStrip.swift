@@ -275,6 +275,7 @@ private struct MachineKpiButton: View {
     /// The host tooltip, built once by the strip and shared by its cells.
     var help: String = ""
     @State private var open = false
+    @State private var hovered = false
     var body: some View {
         Button { open = true } label: {
             VStack(alignment: .leading, spacing: 6) {
@@ -289,9 +290,26 @@ private struct MachineKpiButton: View {
                 }
                 RollingNumberText(value).font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
             }.padding(.horizontal, 9).padding(.vertical, 10)
-                .frame(maxWidth: .infinity, minHeight: 62, maxHeight: .infinity, alignment: .leading).background(Theme.cardSurface)
+                .frame(maxWidth: .infinity, minHeight: 62, maxHeight: .infinity, alignment: .leading)
+                .background(Theme.cardSurface)
+                // A quiet accent rule under the cell's own reading, in the
+                // cell's hue, and — the `stat-widget` detail — a ground shadow
+                // that appears with the hover lift, so the cell reads as picked
+                // up rather than as a rectangle that changed shade.
+                .overlay(alignment: .bottom) {
+                    GeometryReader { geo in
+                        Capsule()
+                            .fill(kind.tint.opacity(0.55))
+                            .frame(width: max(3, geo.size.width * min(1, max(0, load))), height: 2)
+                    }
+                    .frame(height: 2)
+                    .padding(.horizontal, 9)
+                    .allowsHitTesting(false)
+                }
         }
         .buttonStyle(.pressable)
+        .overlay { if hovered { GroundShadow(active: true).offset(y: 30) } }
+        .hoverState($hovered)
         .help(help)
         .popover(isPresented: $open) {
             if kind == .memory { MemoryDetailPanel() }

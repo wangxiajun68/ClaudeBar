@@ -216,8 +216,30 @@ struct ResourceStrip: View {
                 // it is drawn in the shape of the hardware it describes: twelve
                 // cells for twelve cores, one column per GPU sub-unit. That
                 // mark states the reading; this one only names the tile.
-                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
-                    .frame(width: 28, height: 28)
+                // The tile's own reading, drawn as `stat-widget`'s conic ring.
+                //
+                // This is a *different* figure from the big mark on the right,
+                // which is why it earns its place where the old `LoadRing` did
+                // not: the mark shows the hardware's own shape (twelve cells,
+                // one per core), and this ring shows the one aggregate the tile
+                // is named for, as a fraction of its range. A ring around a
+                // value is not a spinner — it does not rotate, it fills — and
+                // at this size it is the fastest thing on the tile to read.
+                //
+                // The fans have no single 0…1 reading, so they keep the plain
+                // badge and state themselves in the pill instead.
+                if kind == .fans {
+                    InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
+                        .frame(width: 28, height: 28)
+                } else {
+                    InstrumentRing(progress: load, tint: tint, size: 28, thickness: 3)
+                        .overlay {
+                            InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link,
+                                            tint: tint)
+                                .frame(width: 19, height: 19)
+                        }
+                        .accessibilityHidden(true)
+                }
                 Text(label)
                     .font(Theme.Font.chrome)
                     .foregroundColor(Theme.textSecondary)
@@ -265,7 +287,8 @@ struct ResourceStrip: View {
                     case .memory:
                         CapacityHardwareMark(disk: false, load: load,
                                              bytes: sampler.host.memoryTotal, tint: tint,
-                                             wells: sampler.host.memoryWells)
+                                             wells: sampler.host.memoryWells,
+                                             wellCaptions: sampler.host.memoryWellCaptions)
                     case .cpu:
                         // Twelve cores, twelve cells — each lit by that core's
                         // own busy fraction. Empty until the sampler's second
@@ -278,26 +301,21 @@ struct ResourceStrip: View {
                     case .disk:
                         CapacityHardwareMark(disk: true, load: load,
                                              bytes: sampler.host.diskTotal, tint: tint,
-                                             wells: sampler.host.diskWells)
+                                             wells: sampler.host.diskWells,
+                                             wellCaptions: sampler.host.diskWellCaptions)
                     }
                 }
-                // The tile's mark slot. Large on purpose: the mark *is* the
-                // reading, so it gets the room that says so. The slot is taller
-                // than it is wide because the mark is two stacked lanes — a
-                // Lucide icon on top and the reading bar underneath — and
-                // squeezing them into a short box is what made an earlier attempt
-                // illegible.
-                .frame(width: 128, height: 104)
-                // No `.transaction { animation = nil }` here any more. It existed
-                // to stop a sampler tick from interpolating the *old* static
-                // marks; the marks are now driven by `TimelineView`, and
-                // suppressing animation on this subtree would freeze exactly the
-                // motion that is the point.
+                // The tile's mark slot: the mini charts are ornaments sized to
+                // the slot by design.
+                .frame(width: 112, height: 80)
                 .clipped()
+                .transaction { tx in
+                    if kind != .fans { tx.animation = nil }
+                }
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: .infinity, alignment: .topLeading)
         // The meter carries its own hue into the tile surface: the accent wash
         // is what the inner frame ring sits on, and the hover edge then agrees
         // with the hero number's tint. No lens here — the tile's mark occupies

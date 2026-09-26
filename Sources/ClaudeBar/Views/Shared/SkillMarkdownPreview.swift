@@ -27,8 +27,8 @@ struct SkillMarkdownPreview: View {
                 ProgressView("正在读取 Skill 文档")
                     .frame(maxWidth: .infinity, minHeight: 180)
             } else if let message {
-                ContentUnavailableView(message, systemImage: "doc.text")
-                    .frame(maxWidth: .infinity, minHeight: 180)
+                StandbyEmptyState(label: message, symbol: "doc.text",
+                                  tint: Theme.Ink.claude, block: true)
             } else {
                 LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -96,7 +96,7 @@ struct SkillMarkdownPreview: View {
                 .overlay(alignment: .leading) {
                     // Raw `claude`, not `Ink.claude`: this is a 2pt *rule*, and
                     // the ink mix at half alpha is a near-invisible dark line.
-                    RoundedRectangle(cornerRadius: 1).fill(Theme.claude.opacity(0.5)).frame(width: 2)
+                    RoundedRectangle(cornerRadius: 1, style: .continuous).fill(Theme.claude.opacity(0.5)).frame(width: 2)
                 }
         case .code(let language, let value):
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -122,7 +122,7 @@ struct SkillMarkdownPreview: View {
                 }
             }
             .padding(Theme.Space.s12)
-            .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         case .table(let rows):
             ScrollView(.horizontal) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -140,9 +140,9 @@ struct SkillMarkdownPreview: View {
                         if rowIndex < rows.count - 1 { HairlineDivider() }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
             }
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.hairline))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
         case .rule:
             HairlineDivider().padding(.vertical, Theme.Space.s4)
         }

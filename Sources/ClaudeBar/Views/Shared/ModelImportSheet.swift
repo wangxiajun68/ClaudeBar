@@ -9,6 +9,7 @@ struct ModelImportSheet: View {
 
     @State private var selection: Set<String>
     @State private var filter = ""
+    @FocusState private var filterFocused: Bool
 
     init(candidates: [String], existingNames: Set<String>,
          onImport: @escaping (Set<String>) -> Void, onCancel: @escaping () -> Void) {
@@ -37,7 +38,8 @@ struct ModelImportSheet: View {
                 .foregroundColor(Theme.textSecondary)
 
             TextField("筛选模型名称", text: $filter)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(InstrumentFieldStyle(focused: filterFocused))
+                .focused($filterFocused)
 
             HStack(spacing: Theme.Space.s8) {
                 Button("全选可导入") { selectAllImportable() }
