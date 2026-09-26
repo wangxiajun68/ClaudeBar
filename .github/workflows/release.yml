@@ -39,7 +39,7 @@ jobs:
         run: bash Sources/build.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ClaudeBar-${{ steps.version.outputs.version }}-macOS-arm64
           path: |
