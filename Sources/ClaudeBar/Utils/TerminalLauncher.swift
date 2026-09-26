@@ -26,10 +26,21 @@ enum ResumeTerminal: String, CaseIterable, Identifiable {
 
     /// The concrete app a choice lands on: 自动 prefers Otty, then Warp, then
     /// Terminal; an uninstalled choice degrades the same way.
-    var resolved: ResumeTerminal {
-        if self != .automatic, isInstalled { return self }
-        if ResumeTerminal.otty.isInstalled { return .otty }
-        if ResumeTerminal.warp.isInstalled { return .warp }
+    var resolved: ResumeTerminal { resolved(installed: nil) }
+
+    /// Same rule, against a caller-supplied "what is installed" set.
+    ///
+    /// `isInstalled` is a LaunchServices lookup plus a file stat, so a view that
+    /// renders this (and the picker's four options) paid seven such probes per
+    /// body pass. Settings caches the set from its 5 s scan and passes it here,
+    /// which keeps this the single place the preference is resolved.
+    func resolved(installed: Set<ResumeTerminal>?) -> ResumeTerminal {
+        func has(_ choice: ResumeTerminal) -> Bool {
+            installed.map { $0.contains(choice) } ?? choice.isInstalled
+        }
+        if self != .automatic, has(self) { return self }
+        if has(.otty) { return .otty }
+        if has(.warp) { return .warp }
         return .terminal
     }
 

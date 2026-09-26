@@ -35,47 +35,13 @@ enum IslandStyle {
     static var expandedLaneHeight: CGFloat { sessionStripHeight }
     static let usageCardHeight: CGFloat = 156
 
-    /// The rotating glance card is a *fixed box*. Every band inside it is a
-    /// named constant, so no card can be taller than another, and the reel can
-    /// never resize the session lane (and so the island) when it turns.
-    ///
-    /// The card is the same 2×2 grid of *modules* on every page — a section
-    /// name, an icon, a figure and a unit — so a four-mark hardware page and a
-    /// two-mark quota page sit on the same baseline grid.
+    /// The one module of the agent mark's icon well: its geometry is a
+    /// constant so a `Canvas`-drawn product mark and an instrument glyph
+    /// reserve exactly the same square. That equality is what lets
+    /// `IslandMarkWell` draw either family without a second size, and it is
+    /// the last surviving constant from the deleted glance reel — see
+    /// `docs/technical/17-ui-audit-backlog.md` §4.
     static let markWellSize: CGFloat = 20
-    static let markValueHeight: CGFloat = 14
-    /// The caption line reserves its box even when empty, so a two-up and a
-    /// four-up card end on the same baseline.
-    static let markCaptionHeight: CGFloat = 11
-    static let markCellSpacing: CGFloat = 2
-    static let markRowSpacing: CGFloat = 6
-    static let cardTitleHeight: CGFloat = 12
-    static let cardTitleGap: CGFloat = 6
-    static let glanceCardPadding: CGFloat = 10
-
-    static let markCellHeight: CGFloat = markWellSize + markCellSpacing
-        + markValueHeight + markCellSpacing + markCaptionHeight
-    static let cardBodyHeight: CGFloat = cardTitleHeight + cardTitleGap + 2 * markCellHeight + markRowSpacing
-    /// Card contents, then the padding ring around them.
-    static let glanceCardSize = CGSize(width: 188, height: cardBodyHeight)
-    static let glanceReelWidth: CGFloat = glanceCardSize.width + 2 * glanceCardPadding
-    static let glanceReelHeight: CGFloat = cardBodyHeight + 2 * glanceCardPadding + reelPagerBand
-
-    /// Reserve a separate pager band below the complete two-row body.
-    static let reelReservesPager = true
-    static var reelPagerBand: CGFloat { reelReservesPager ? pagerInset + pagerDotHeight : 0 }
-    static var cardContentBand: CGFloat {
-        cardBodyHeight
-    }
-
-    /// How far into the card the pager sits, measured up from the card's
-    /// bottom edge. Only reachable when the lane is at least this tall.
-    static var pagerRestingInset: CGFloat { pagerInset + pagerDotHeight }
-
-    /// The pager is pinned from the card's *outer* box, so no page can move it
-    /// and the dots never affect a page's layout.
-    static let pagerDotHeight: CGFloat = 4
-    static let pagerInset: CGFloat = 9
 
     /// Fixed transparent panel; every morph happens inside it. Derived from
     /// the tallest island there is (two session rows on the tallest notch),
@@ -138,6 +104,27 @@ struct IslandActions {
     var expandFromAlert: () -> Void
 }
 
+/// The token-unit style, carried as an environment *value* rather than as an
+/// `.id()` on the island.
+///
+/// The figures that format tokens are leaves (`RollingNumberText`), and their
+/// inputs — the numbers — do not change when the unit style does, so they need
+/// an identity change to re-render. Applying it here lets each leaf take it:
+/// the three that exist (the wing total, the usage card's hero and month line)
+/// re-identify, and nothing else on the island does. An `.id()` on the island
+/// itself reset the whole panel instead — see the comment at that site.
+struct TokenStyleGenerationKey: EnvironmentKey {
+    static let defaultValue = TokenUnitStyle.chinese
+}
+
+extension EnvironmentValues {
+    var tokenStyleGeneration: TokenUnitStyle {
+        get { self[TokenStyleGenerationKey.self] }
+        set { self[TokenStyleGenerationKey.self] = newValue }
+    }
+}
+
+
 // MARK: - Root
 
 /// Root of the island panel. One black shape morphs between three sizes —
@@ -191,9 +178,17 @@ struct NotchIslandView: View {
         .frame(width: size.width, height: size.height)
         .clipShape(shape)
         // Token figures are formatted deep in child views whose inputs do not
-        // change with the unit style; a new identity re-renders them. The
-        // style flips only from Settings, so the reset is never visible.
-        .id(tokenStyle)
+        // change with the unit style, so they are re-identified from the one
+        // view that owns that style instead of from an identity change applied
+        // to the whole island.
+        //
+        // `.id(tokenStyle)` used to sit *here*, on the shape — so flipping the
+        // unit in Settings threw away the identity of the silhouette, the rim
+        // stroke and every child: an expanded island lost its `IslandIconButton`
+        // hover, the session strip's scroll position and the usage card's scrub
+        // index. The style still only flips from Settings, but the reset is now
+        // scoped to the figures that actually need re-rendering.
+        .environment(\.tokenStyleGeneration, tokenStyle)
         // Collapsed must be edge-less to melt into the notch; the rim light
         // only appears once the island has grown out of it.
         .overlay {
@@ -229,6 +224,7 @@ struct NotchIslandView: View {
                 .frame(width: IslandStyle.wingWidth - 8, alignment: .trailing)
                 .padding(.trailing, 8)
                 .animation(.snappy, value: model.usage.today)
+                .id(tokenStyle)
         }
         .padding(.horizontal, IslandStyle.topFlare)
         .frame(height: state.notch.height)

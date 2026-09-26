@@ -52,8 +52,9 @@ enum HelpBlock {
 
 // MARK: - Entry
 
-/// One collapsible article. `id` doubles as the accordion's open-set key, so it
-/// must stay stable across edits.
+/// One article in the manual. `id` is both the rail row's identity and the
+/// reader's selection key, so it must stay stable across edits — renaming one
+/// drops the reader back to the first article.
 struct HelpEntry: Identifiable {
     let id: String
     let chapter: HelpChapter
@@ -66,10 +67,10 @@ struct HelpEntry: Identifiable {
     let keywords: String
     /// Flattened, lowercased text the page searches. Built once here rather
     /// than per keystroke — `recompute()` runs on every character typed, and
-    /// re-flattening 35 articles each time is the same shape of mistake
-    /// `ProxyLogView` documents. (A `lazy var` would be the obvious way to
-    /// express that, but its getter is mutating and the filter closure only has
-    /// a `let` entry.)
+    /// re-flattening every article's body each time is the same shape of
+    /// mistake `ProxyLogView` documents. (A `lazy var` would be the obvious way
+    /// to express that, but its getter is mutating and the filter closure only
+    /// has a `let` entry.)
     let haystack: String
 
     init(id: String, chapter: HelpChapter, title: String, summary: String,

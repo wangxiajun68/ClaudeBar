@@ -31,32 +31,34 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 | 页面 | 要点 |
 |------|------|
-| **DashboardView** | 标题 → 资源条 → **用量对照**（7 / 14 / 28 天，来源堆叠柱 + 此前总量虚线 + 刊例价估算 + 「Token 去了哪些模型」）→ 能源流向 → 活跃会话总览 → **用量分布日历**（可翻月，点某天看当天 Token） |
+| **DashboardView** | 标题 → 资源条（CPU / GPU / 内存 / 磁盘 / 连接 / 双风扇）→ 能源流向 → 活跃会话总览（网格 + 「查看全部 N 个会话」）。用量对照与用量分布日历已移到用量页 |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
-| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；Claude + Codex 两栈自适应网格 + 编辑器 |
+| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；`ProviderDirectoryHost` 渲染供应商目录（Claude + Codex 两栈），配置走 `ProviderConnectionEditor` 弹窗 |
 | **ConnectorsView** | 连接器：三家客户端的本机 Skills / MCP / 插件，左侧客户端筛选 + 「本机共享」，详情页渲染 SKILL.md、MCP `tools/list` 与插件组成；见 [technical/16](../technical/16-connectors.md) |
 | **UsageView** | 周期 chips + 热力图 + `CacheAnatomyBar` + 用量模型瓦片（每块带自己的估算金额） |
-| **TrafficView** | 首次进入后常驻内存（`trafficMounted`），避免每次切 tab 重建 |
+| **TrafficView** | 只在选中时挂载；昂贵状态由 `MainWindowController` 持有的 `TrafficPageState` 承载，重进无需重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
 | **SettingsView** | 全部为「`SectionHeader` + `TileGrid(.pageSetting)`」的宫格：启动 / 电池管理授权 / 外观 / 模型花费 / 继续会话 / 灵动岛 / **权限与隐私** / 存储 / 本机代理 / 代理上游 / 第三方接入 / VPN 代理 / 连通性 / 配置文件 / 关于 |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
 
-- `Tile.swift`：`TileGrid` + `MetricTile` + `.tile()` modifier（与 `panelCard()` 同族的半透明表面，密度更高）。
+- `Tile.swift`：`TileGrid` + `.tile()` / `.hoverTile()` modifier。表面本身（底 + 强调水洗 + 内嵌白环 + 角上深度环 + 悬停描边与抬升）定义在 `Views/Shared/UiverseSurfaces.swift`，`panelCard()` 与 `.tile()` 是同一套的两种密度；与 `panelCard()` 同族的半透明表面，密度更高。
+- `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`LoadRing` 已删除（曾是唯一按读数调速的装饰：一条光的弧，转速 ∝ 负载，<5% 完全静止；约 96° 的弧在图标尺寸上读作「转圈等待」且复述下方数字，故视图与装饰 kind 一并移除）、`ShineSweep` + `.depthTilt()`（只给单张 hero 卡）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
 - `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageBar.swift` 的 `UsageModelTile` / `UsageStackBar` 已并入）。
 - `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
-- `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件插画。
-- `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` / `MetricTile` 的 `ink:` 参数即此。
-- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
-- `VpnTopChrome.swift`：`VpnNodeMenu` / `VpnNodePickerPanel` / `VpnDelayStyle`（popup 与卡片共用）。
+- `ProviderRow.swift` 的 `ProviderTile` 目前**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），刻意保留：它是目录宫格那颗瓦片的唯一成稿，且不引用任何孤立的类型，见 [technical/17](../technical/17-ui-audit-backlog.md) §9。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 没有挂载点，已删除（§3）。
+- `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
+- `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
+- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后不再套 `LoadRing`——弧在这个尺寸读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
+- `VpnTopChrome.swift`：`VpnNodePickerPanel` / `VpnDelayStyle`（popup 页头的 VPN chip 用它）。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、**`adaptiveGlassButton()`**。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ConnectivityProbeButton`、`ProxyCurlExample`（与其他设置等大的瓦片，弹出层内查看并复制完整 curl 命令）。
-- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 200pt）铺 `SettingTile`；代理上游的四个选择与第三方接入的 Base URL / 鉴权 / curl 示例都走这套。
+- `ProxyCurlExample`（与其他设置等大的瓦片，弹出层内查看并复制完整 curl 命令）；检测结果是 `ConnectivityTileButton`（同一文件，设置页与供应商卡共用）。
+- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 300pt）铺 `SettingTile`；代理上游的四个选择、第三方接入的 Base URL / 鉴权 / curl 示例，以及 `PermissionsSection` 的权限卡都走这套（权限卡内容更密，但表面与列宽与页面其余部分一致）。
 - `CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；帮助页的代码块也复用它。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
 - `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。
@@ -78,7 +80,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 ### 表面与排版
 
-- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 发丝线描边；`.tile()` = 更密的瓦片变体；`shadowCard()`、`cardFill()`、`sidebarFill`、`divider` / `hairline`；`HairlineDivider` 提供去卡片化的发丝线分区。
+- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 强调水洗 + 内嵌白环 + 发丝线描边；`.tile()` = 更密的瓦片变体，两者共用 `UiverseSurfaces.swift` 的四个部件（底 / 水洗 / 角上深度环 / 内白环 + 悬停描边）；`shadowCard()`、`cardFill()`、`sidebarFill`、`divider` / `hairline`；`HairlineDivider` 提供去卡片化的发丝线分区。
 - **字体**：SF Pro 单族；`displayMetric*` + `.monospacedDigit()`；瓦片字阶 `tileValue` / `tileLabel` / `tileDetail`；popup 密度别名 `rowTitle` / `micro*` / `badgeMono`。
 - **宫格**：`GridLayout.Preset`（`pageMetric` 4 等分、`pageSession` / `pageUsage` / `pageProvider` 自适应、popup 2 列预设）+ `Space.gridGap` / `gridGapPage`。
 - **动效**：`bouncy` / `smooth` / `pulse` / `snappy` + `Motion.page` / `Motion.state`——全部状态驱动。

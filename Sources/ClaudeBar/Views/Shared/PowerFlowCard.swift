@@ -164,14 +164,18 @@ struct PowerFlowCard: View {
             VStack(spacing: 0) {
                 PowerFlowContent(flow: PowerFlow(host: host), compact: compact)
                     .equatable()
-                Divider().padding(.horizontal, compact ? 10 : 18)
-                if compact {
-                    CompactBatteryChargeControl().padding(10)
-                } else {
+                if !compact {
+                    Divider().padding(.horizontal, 18)
                     BatteryChargeControls().padding(18)
                 }
             }
-            .panelCard()
+            // The energy card takes the battery's own hue: the Sankey's nodes
+            // are already yellow / amber / green / blue, and a neutral panel
+            // around them read as a container holding a chart. The wash is
+            // shallow enough that the ribbons still carry the colour — and it
+            // is the *shape* amber (`chartAmber`), not `Ink.warning`, which is
+            // mixed dark enough to read as a warm brown behind the ribbons.
+            .panelCard(tint: Theme.chartAmber)
         }
     }
 }

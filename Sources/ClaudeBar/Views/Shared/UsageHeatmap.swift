@@ -19,7 +19,7 @@ struct UsageHeatmap: View {
     static func height(for period: UsagePeriod, compact: Bool) -> CGFloat {
         switch period {
         case .day, .custom: return compact ? 28 : 60
-        case .month: return compact ? 72 : 132
+        case .month: return compact ? 56 : 132
         case .year: return compact ? 56 : 108
         }
     }
@@ -33,6 +33,9 @@ struct UsageHeatmap: View {
         // period-change animation rebuilt it too.
         let by = byDay
         let peak = max(Double(by.values.max() ?? 1), 1)
+        // Read once per render instead of inline in the view tree below, where
+        // it was evaluated again for every frame of the period-change animation.
+        let summary = accessibilityText
         return Group {
             switch period {
             case .day, .custom:
@@ -43,7 +46,7 @@ struct UsageHeatmap: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height(for: period, compact: compact))
-        .accessibilityLabel(accessibilityText)
+        .accessibilityLabel(summary)
         .animation(Theme.Motion.state, value: period)
     }
 
@@ -72,6 +75,11 @@ struct UsageHeatmap: View {
                     .buttonStyle(.plain)
                     .frame(width: cell, height: geo.size.height)
                     .help(item.help)
+                    // `.help` is a tooltip, not a label: without this the cell
+                    // announces the weekday glyph alone — seven buttons reading
+                    // "一 二 三 …" in zh_CN, with the date and the token count
+                    // (which is the whole point of the strip) unreadable.
+                    .accessibilityLabel(item.help)
                 }
             }
         }
@@ -105,7 +113,16 @@ struct UsageHeatmap: View {
             .contentShape(Rectangle())
             .onTapGesture { location in
                 guard let date = layout.date(at: location, cal: cal) else { return }
-                onSelectDay?(date)
+                // In the year grid a cell is one day of one month, and drilling
+                // into that month is what a click means there; `onSelectDay` on
+                // a 365-cell grid just jumped the period to a day the user was
+                // aiming at only approximately. `onSelectMonth` had no caller at
+                // all before this.
+                if period == .year, let onSelectMonth {
+                    onSelectMonth(date)
+                } else {
+                    onSelectDay?(date)
+                }
             }
         }
     }
@@ -230,112 +247,20 @@ private struct HeatLayout {
     }
 }
 
-/// Sliding-pill period strip. Compact mode uses two-character labels so
-/// 「自定义」 cannot wrap in the 400pt popup.
+/// Sliding-pill period strip, rendered by the shared `SegmentedCapsule` so the
+/// usage page and the popup read as the same control as the connector and
+/// provider filters. Compact mode uses two-character labels so 「自定义」
+/// cannot wrap in the 400pt popup.
 struct PeriodTabs: View {
     var period: UsagePeriod
     var compact: Bool = false
     var onSelect: (UsagePeriod) -> Void
-    @Namespace private var pill
 
     var body: some View {
-        HStack(spacing: 1) {
-            ForEach(UsagePeriod.allCases) { p in
-                let on = period == p
-                Button {
-                    onSelect(p)
-                } label: {
-                    Text(compact ? p.compactLabel : p.label)
-                        .font(.system(size: compact ? 10 : 11, weight: on ? .semibold : .medium, design: .rounded))
-                        .foregroundColor(on ? Theme.textPrimary : Theme.textTertiary())
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, compact ? 6 : 8)
-                        .padding(.vertical, 5)
-                        .background {
-                            if on {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Theme.cardSurface)
-                                    .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-                                    .matchedGeometryEffect(id: "pill", in: pill)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(2)
-        .background(Theme.cardFill(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .animation(Theme.Motion.state, value: period)
-    }
-}
-
-/// CatStatus-style remaining / share bar.
-struct QuotaRow: View {
-    enum Mode { case remaining, share }
-
-    let title: String
-    var subtitle: String = ""
-    let used: Double
-    var remainingLabel: String? = nil
-    var trailing: String = ""
-    var mode: Mode = .remaining
-
-    private var clamped: Double { min(max(used, 0), 1) }
-    private var remain: Double { 1 - clamped }
-    private var fill: Double { mode == .remaining ? remain : clamped }
-    private var fillColor: Color {
-        if mode == .share { return Theme.chartPurple }
-        return remain > 0.2 ? Theme.chartGreen : Theme.statusWarning
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                RollingNumberText(remainingLabel ?? defaultTrailing)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundColor(mode == .remaining ? fillColor : Theme.textSecondary)
-                }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.cardFill(0.08))
-                    Capsule()
-                        .fill(fillColor)
-                        .frame(width: max(4, geo.size.width * fill))
-                        .animation(Theme.Motion.state, value: fill)
-                }
-            }
-            .frame(height: 6)
-            if mode == .remaining {
-                HStack {
-                    Text("用量 \(Int((clamped * 100).rounded()))%")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(Theme.textTertiary())
-                    Spacer()
-                    if !trailing.isEmpty {
-                        Text(trailing)
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textTertiary())
-                    }
-                }
-            }
-        }
-    }
-
-    private var defaultTrailing: String {
-        mode == .remaining
-            ? "剩余 \(Int((remain * 100).rounded()))%"
-            : "\(Int((clamped * 100).rounded()))%"
+        SegmentedCapsule(items: UsagePeriod.allCases,
+                         selection: period,
+                         title: { compact ? $0.compactLabel : $0.label },
+                         tint: Theme.Ink.cursor,
+                         onSelect: onSelect)
     }
 }

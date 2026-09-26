@@ -78,7 +78,11 @@ struct SessionCardView: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(Theme.Animation.smooth, value: agentTotals.running)
-        .tile(hovered: isHovered, dense: true)
+        // Same hue the full-page session tile takes. A popup column carries all
+        // three agent families, so the accent is the only thing that makes a
+        // row's family readable before the title is. No lens: a dense row has
+        // no corner to spare and the ornament would sit under the status pill.
+        .tile(tint: Theme.claude, hovered: isHovered, dense: true)
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

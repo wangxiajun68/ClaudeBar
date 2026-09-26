@@ -41,6 +41,13 @@ extension ButtonStyle where Self == UiversePressStyle {
 
 /// One-shot lift on appear. Delay is staggered so stacked popup sections
 /// cascade without animating every inner cell (that would hitch scroll).
+///
+/// **Currently no call site.** It used to stagger the popup's sections on open;
+/// those `.appearLift(...)` calls were removed, and DESIGN.md's "popup sections
+/// lift in once" now describes nothing in the code. Kept because the stagger
+/// *shape* — a one-shot per section, never per inner cell — is the right one
+/// for a surface that wants it, and the `onAppear`-guarded `@State` is the
+/// non-obvious half of getting it right.
 struct AppearLift: ViewModifier {
     var delay: Double = 0
     @State private var shown = false
@@ -179,6 +186,31 @@ struct IconChip: View {
 
 /// The island's per-digit roll, shared by the island, the menu-bar popup and
 /// the main window. Only the glyphs move; the view's frame stays put.
+///
+/// **`.numericText` only — no implicit `.animation(value:)`.** A previous
+/// version also carried `.animation(.snappy(duration: 0.38), value: value)`,
+/// which made this the app's worst idle cost. Every instance is driven by a
+/// value the sampler updates once a second (a hero percentage, a session
+/// count, a context label), so the modifier opened a *fresh* animated
+/// transaction on every tick, and an in-flight transaction makes the display
+/// cycle run the whole hosting view's layout + display list. The `sample`
+/// signature moved cleanly: `+[NSAnimationContext runAnimationGroup:]` inside
+/// `NSHostingView.layout()` fell from 31 % of main-thread samples to 13 %, and
+/// `stepIdle` (the display-cycle observer re-laying out the window every
+/// frame) from 56 % to 3 %. `.numericText` already animates the digits, so
+/// removing the modifier costs the roll nothing: the transition *is* the
+/// animation.
+///
+/// The `ps -p PID -o time=` delta on the dashboard is a *noisy* metric on this
+/// machine (a Chrome renderer holds half a core, and the app's own idle figure
+/// swings 10-27 % between 20 s windows with no interaction). Treat the sample
+/// attribution above as the evidence and the CPU delta as corroboration only.
+///
+/// The rule is the one `UiverseSurfaces.swift` states for repeating motion,
+/// applied to *implicit* motion: on a hot surface, a modifier keyed to a
+/// per-second value is not free even when the value rarely changes.
+/// `Tests/inflight-animation-regressions.py` holds this and
+/// `SectionHeader.trailingView` to it.
 struct RollingNumberText: View {
     let value: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -189,6 +221,5 @@ struct RollingNumberText: View {
         Text(value)
             .monospacedDigit()
             .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
-            .animation(reduceMotion ? nil : .snappy(duration: 0.38), value: value)
     }
 }

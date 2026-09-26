@@ -60,7 +60,8 @@ struct CodexProvider: Codable, Identifiable, Equatable {
         models.first { $0.id == activeModelID } ?? models.first
     }
 
-    /// Display adapter for `ProviderTile` — IDs are preserved so activate/capture
+    /// Display adapter for a provider tile (`ProviderTile`, unmounted — see
+    /// `docs/technical/17-ui-audit-backlog.md` §9) — IDs are preserved so activate/capture
     /// still target this Codex row.
     var asDisplayProvider: Provider {
         var p = Provider(

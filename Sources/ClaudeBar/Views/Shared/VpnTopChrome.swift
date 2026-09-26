@@ -1,59 +1,13 @@
 import SwiftUI
 
-/// Custom popover (not `Menu`) so delay sits in a fixed trailing column
-/// and can be colored. Native menus cannot align or tint per-field.
-struct VpnNodeMenu: View {
-    @ObservedObject private var manager = VpnManager.shared
-    @ObservedObject private var prefs = AppPreferences.shared
-    @State private var open = false
-
-    var body: some View {
-        Button { open.toggle() } label: {
-            HStack(spacing: 5) {
-                AppGlyph(name: "globe", size: 11)
-                    .foregroundColor(manager.isRunning ? Theme.claude : Theme.textSecondary)
-                Text(labelText)
-                    .font(Theme.Font.micro)
-                    .foregroundColor(manager.isRunning ? Theme.claude : Theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 88, alignment: .leading)
-                if manager.isRunning, let delay = manager.resolvedDelay(manager.liveLeafName) {
-                    Text(VpnDelayStyle.text(delay))
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(VpnDelayStyle.color(delay))
-                }
-                AppGlyph(name: "chevron.down", size: 8)
-                    .foregroundColor(Theme.textTertiary())
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                    .fill(manager.isRunning ? Theme.claude.opacity(0.14) : Theme.cardFill(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                    .strokeBorder(manager.isRunning ? Theme.claude.opacity(0.4) : Theme.hairline, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .help(manager.isRunning ? "停止代理或切换节点（与 VPN 页同步）" : "启动代理并选择节点")
-        .popover(isPresented: $open, arrowEdge: .bottom) {
-            VpnNodePickerPanel(isPresented: $open)
-        }
-        .onAppear {
-            if manager.isRunning { Task { await manager.refreshProxies() } }
-        }
-    }
-
-    private var labelText: String {
-        if manager.state == .starting { return "启动中…" }
-        if manager.isRunning { return manager.liveLeafName ?? "代理" }
-        return "启动代理"
-    }
-}
-
+/// The popup's VPN picker: the node list with per-node delay, plus the
+/// start/stop action.
+///
+/// Presented by `PanelHeader`'s VPN chip, which owns its own label (the running
+/// node and its delay) — so this view is only the panel behind it. A companion
+/// `VpnNodeMenu` used to wrap the same panel in its own bordered chip for the
+/// unmounted `VpnPowerCard`; both were deleted, and this is the one VPN
+/// control that ships. `VpnDelayStyle` below is shared with the chip.
 struct VpnNodePickerPanel: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var prefs = AppPreferences.shared
@@ -93,14 +47,28 @@ struct VpnNodePickerPanel: View {
                 // Neither set changes between two rows of the same render.
                 let livePath = Set(manager.livePath)
                 let testingNodes = manager.testingNodes
+                // `proxies` carries every node's delay, so the fallback is only
+                // for a name the controller has no row for — which is what
+                // `resolvedDelay` would answer too. Leaving it verbatim meant
+                // the *hoist* was defeated for exactly the rows it was written
+                // for, since `resolvedDelay` walks the whole selector chain per
+                // row.
+                // `[String: Int?]` would make every subscript a double
+                // optional; `compactMapValues` keeps the tested rows and lets
+                // an untested one read as "no measurement".
                 let delays = Dictionary(manager.proxies.map { ($0.name, $0.delay) },
                                         uniquingKeysWith: { first, _ in first })
+                    .compactMapValues { $0 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(group.nodes, id: \.self) { name in
+                        // Enumerated, not `id: \.self`: node names repeat inside
+                        // a real subscription's group, and duplicate identity
+                        // makes SwiftUI churn the whole list — the same fix
+                        // `VPNView` documents for its grid.
+                        ForEach(Array(group.nodes.enumerated()), id: \.offset) { _, name in
                             nodeRow(group: group.name, name: name,
                                     live: livePath.contains(name),
-                                    delay: delays[name] ?? manager.resolvedDelay(name),
+                                    delay: delays[name],
                                     testing: testingNodes.contains(name))
                         }
                     }
@@ -111,8 +79,7 @@ struct VpnNodePickerPanel: View {
             } else {
                 Button("打开 VPN 页") {
                     isPresented = false
-                    NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                    NotificationCenter.default.post(name: .openVPNPage, object: nil)
+                    NotificationCenter.default.post(.showMainWindow(page: .vpn))
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.Ink.claude)
@@ -186,6 +153,15 @@ struct VpnNodePickerPanel: View {
             prefs.vpnEnabled = true
             prefs.vpnSystemProxyEnabled = true
             manager.syncRuntime()
+            // The VPN page does this in the same place (`syncSystemProxy`), and
+            // it is not redundant with the apply that `waitUntilReady` performs
+            // once the core answers: the reason to re-apply *here* is the
+            // crash-orphan case. A force-quit inside `clearSystemProxyAsync`'s
+            // window leaves macOS still pointing at a mixed port nothing owns,
+            // and `syncRuntime` → `startCore` only spawns a process — it cannot
+            // repair a stale system-proxy entry that was never cleared.
+            VpnSystemProxyController.applySystemProxy(port: prefs.vpnMixedPort)
+            if prefs.vpnGuardEnabled { VpnProxyGuard.shared.start() }
         }
     }
 }

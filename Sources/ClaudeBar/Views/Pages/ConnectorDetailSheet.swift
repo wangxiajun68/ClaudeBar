@@ -108,7 +108,11 @@ struct ConnectorDetailSheet: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                if !toolsLoading && record.mcpConnection != nil {
+                // Also offered when the *first* read failed: a record whose
+                // configuration has no recognisable command or URL reports that
+                // as `toolsError`, and gating on `mcpConnection != nil` hid the
+                // only button that could retry it.
+                if !toolsLoading && (record.mcpConnection != nil || toolsError != nil) {
                     Button("重新读取") { Task { await loadTools() } }
                         .adaptiveGlassButton()
                 }

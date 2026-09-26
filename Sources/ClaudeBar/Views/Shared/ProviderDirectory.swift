@@ -251,11 +251,22 @@ struct ProviderCatalogBrowser: View {
 }
 
 /// Shares the client's toolbar row; only the category control collapses on narrow windows.
+///
+/// The wide form is the app's `SegmentedCapsule`, not a bespoke
+/// `matchedGeometryEffect` row: this page and the connectors toolbar sat side by
+/// side in the same family of "filter what the grid shows" controls and were
+/// built two different ways, so the same gesture read as two different
+/// controls. The menu form stays a `Picker` — it only appears when the row has
+/// no width to give.
 struct ProviderCategoryFilter: View {
     @Binding var category: ProviderCatalogEntry.Category?
     var compact = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var filterAnimation
+
+    /// `nil` is the 全部 entry, kept in the same list so it slides under the
+    /// same selection pill as the three real categories.
+    private var items: [ProviderCatalogEntry.Category?] {
+        [nil] + ProviderCatalogEntry.Category.allCases.map { Optional($0) }
+    }
 
     var body: some View {
         Group {
@@ -265,26 +276,13 @@ struct ProviderCategoryFilter: View {
                     ForEach(ProviderCatalogEntry.Category.allCases) { Text($0.rawValue).tag(Optional($0)) }
                 }.pickerStyle(.menu)
             } else {
-                HStack(spacing: 4) {
-                    filter("全部", value: nil)
-                    ForEach(ProviderCatalogEntry.Category.allCases) { filter($0.rawValue, value: $0) }
-                }
+                SegmentedCapsule(items: items,
+                                 selection: category,
+                                 title: { $0?.rawValue ?? "全部" },
+                                 tint: Theme.claude,
+                                 onSelect: { category = $0 })
             }
-        }.padding(4).background(Theme.bgOverlay, in: RoundedRectangle(cornerRadius: 12))
-            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: category)
-    }
-    private func filter(_ title: String, value: ProviderCatalogEntry.Category?) -> some View {
-        Button { category = value } label: {
-            Text(title).font(Theme.Font.caption).fontWeight(category == value ? .semibold : .regular)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .foregroundStyle(category == value ? Theme.textPrimary : Theme.textSecondary)
-                .background {
-                    if category == value {
-                        RoundedRectangle(cornerRadius: 8).fill(Theme.cardSurface)
-                            .matchedGeometryEffect(id: "category", in: filterAnimation)
-                    }
-                }
-        }.buttonStyle(.plain).accessibilityAddTraits(category == value ? .isSelected : [])
+        }
     }
 }
 
@@ -301,6 +299,10 @@ struct ProviderDirectorySearch: View {
             }
         }.font(Theme.Font.bodySmall).padding(10)
             .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 10))
+            // The same inset ring the tile and the panel card wear, so a field
+            // on a toolbar is recognisably the same family as the surfaces it
+            // sits between rather than a bare rectangle.
+            .innerFrame(inset: 2.5, radius: 10)
     }
 }
 
@@ -322,20 +324,25 @@ private struct ProviderCardSurface<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) { content }
             .padding(18).frame(maxWidth: .infinity).frame(height: 216, alignment: .topLeading)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16).fill(Theme.cardSurface)
-                    if state != .unconfigured {
-                        RoundedRectangle(cornerRadius: 16).fill(state.color.opacity(Theme.isDark ? 0.14 : 0.08))
-                    }
+            // The directory's state hue (grey / amber / blue / green) is the
+            // card's accent, so the wash, the corner rings and the hover edge
+            // all move through the same four states as the status badge — the
+            // page used to say "state" in three unrelated places (a wash, an
+            // outline, a badge) and only the badge carried the colour.
+            //
+            // The rings carry no glyph: this card's subject is its brand mark,
+            // which lives at the *leading* edge, so a symbol in the corner would
+            // be a second, competing identity.
+            .tile(tint: state.faceColor, hovered: hovered,
+                  lens: DepthLensSpec(tint: state.faceColor, size: 150, rings: 3))
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                        .strokeBorder(Theme.chartBlue.opacity(0.6), lineWidth: 1.5)
+                        .allowsHitTesting(false)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(
-                selected || hovered ? Theme.chartBlue.opacity(0.6) :
-                    state.color.opacity(state == .unconfigured ? 0.14 : 0.35)))
-            .shadow(color: .black.opacity(hovered ? 0.06 : 0), radius: 10, y: 5)
-            .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovered)
+            .hoverState($hovered)
             .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: state)
     }
 }
@@ -503,83 +510,5 @@ private struct OfficialProviderCard: View {
                     .help("切回官方连接，清除第三方覆盖，保留供应商配置")
             }.frame(height: 32)
         }
-    }
-}
-
-struct ProviderConnectionDetail: View {
-    let provider: Provider
-    let client: ProviderClient
-    let active: Bool
-    let currentModel: String?
-    let wireAPI: String
-    let onAddModels: (Set<String>) -> Void
-    let outcome: (ModelConfig) -> ConnectivityOutcome
-    let onActivate: (UUID) -> Void
-    let onTest: (ModelConfig) -> Void
-    let onEdit: () -> Void
-    let onCapture: () -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 12) {
-                    ProviderIdentityMark(entry: ProviderCatalogEntry.matching(baseURL: provider.baseURL), name: provider.name, size: 44)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(provider.name).font(.system(size: 21, weight: .semibold, design: .rounded))
-                        Text(active ? "当前用于 \(client.title)" : "已保存 · 随时切换").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer()
-                    Button("编辑", action: onEdit).buttonStyle(ProviderActionStyle())
-                }
-                Text(provider.baseURL.isEmpty ? "尚未填写接口地址" : provider.baseURL)
-                    .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
-                    .textSelection(.enabled).lineLimit(2)
-                HStack {
-                    Label(provider.authToken.isEmpty ? "尚未填写 Key" : "已保存 API Key", systemImage: "key.horizontal")
-                    Spacer()
-                    Toggle("记录流量", isOn: Binding(get: { provider.captureEnabled }, set: { _ in onCapture() }))
-                        .toggleStyle(.switch).controlSize(.small)
-                }.font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-                Divider()
-                HStack {
-                    Text("模型").font(.system(size: 16, weight: .semibold, design: .rounded))
-                    Spacer()
-                    ProviderModelFetchButton(baseURL: provider.baseURL, apiKey: provider.authToken, wireAPI: wireAPI,
-                        existingNames: Set(provider.models.map { $0.name.lowercased() }), onImport: onAddModels)
-                }
-                if provider.models.isEmpty {
-                    Button("添加模型", action: onEdit).buttonStyle(ProviderActionStyle())
-                }
-                ForEach(provider.models) { model in
-                    modelRow(model)
-                }
-            }.padding(24)
-        }
-    }
-    private func modelRow(_ model: ModelConfig) -> some View {
-        let result = outcome(model)
-        let current = active && currentModel == model.name
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(model.name).font(.system(size: 13, weight: .medium, design: .monospaced)).textSelection(.enabled)
-            HStack(spacing: 10) {
-                if current { Label("使用中", systemImage: "checkmark.circle.fill").font(Theme.Font.caption).foregroundStyle(Theme.Ink.success) }
-                Spacer()
-                Button { onTest(model) } label: {
-                    HStack(spacing: 5) {
-                        if result.state == .running { ProgressView().controlSize(.mini) }
-                        Text(result.state == .running ? "检测中" : "检测连接")
-                    }
-                }.disabled(result.state == .running).buttonStyle(ProviderActionStyle()).controlSize(.small)
-                Button(current ? "已启用" : "切换使用") { onActivate(model.id) }
-                    .buttonStyle(ProviderActionStyle(prominent: true))
-                    .disabled(current || provider.authToken.isEmpty || provider.baseURL.isEmpty)
-            }
-            if !result.detail.isEmpty {
-                Text(result.detail).font(Theme.Font.caption)
-                    .foregroundStyle(result.state == .failed ? Theme.Ink.error : Theme.textSecondary)
-                    .textSelection(.enabled)
-            }
-        }.padding(.vertical, 12)
-            .overlay(alignment: .bottom) { Divider() }
     }
 }

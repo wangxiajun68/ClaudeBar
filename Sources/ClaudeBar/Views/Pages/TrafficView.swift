@@ -27,6 +27,16 @@ final class TrafficPageState: ObservableObject {
     /// Guards out-of-order async detail loads; survives remount so a load
     /// started before unmount still lands correctly.
     var loadGen = 0
+    /// False between `onDisappear` and the next `onAppear`.
+    ///
+    /// `loadGen` alone cannot guard the full-render pass: `rebuildFullTurns`
+    /// reads the generation but never bumps it, so two rebuilds queued back to
+    /// back (a fast `payloadsLoaded` → `fullRender` flip) both capture the same
+    /// value and the cancelled one's completion block still passes its guard —
+    /// writing a stale `fullTurns` into a remounted view. It also cannot cover
+    /// unmount at all, since `onDisappear` bumps the generation *for* the
+    /// in-flight load it expects to accept after remount.
+    var mounted = false
     let detailQueue = DispatchQueue(label: "com.claudebar.capture-detail", qos: .userInitiated)
     var detailWork: DispatchWorkItem?
     var fullWork: DispatchWorkItem?
@@ -200,12 +210,30 @@ struct TrafficView: View {
     /// drives while anything is streaming. Cache it, exactly as `ProxyLogView`
     /// already does, and recompute only when an input changes.
     @State private var filteredCache: [CaptureSummary] = []
+    /// `Self.stamp` of the record list the cache was built from.
+    @State private var recordsStamp = ""
     /// `clearAll` deletes every captured request and its payload — the only
     /// copy, no undo — and it used to be a single click on a plain text
     /// button. The VPN module already confirms its destructive action.
     @State private var confirmClear = false
 
+    /// What a filter pass actually depends on: the row identity plus the three
+    /// fields the predicate reads. A status/duration-only patch leaves it
+    /// unchanged.
+    private static func stamp(_ records: [CaptureSummary]) -> String {
+        var hasher = Hasher()
+        for rec in records {
+            hasher.combine(rec.id)
+            hasher.combine(rec.model)
+            hasher.combine(rec.providerName)
+            hasher.combine(rec.preview)
+            hasher.combine(rec.kind)
+        }
+        return String(hasher.finalize())
+    }
+
     private func recomputeFiltered() {
+        recordsStamp = Self.stamp(catalog.records)
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         filteredCache = catalog.records.filter { rec in
             switch filter {
@@ -324,6 +352,11 @@ struct TrafficView: View {
             // second time for the same publish (and a count-only handler would
             // miss an in-place record update anyway, hence the deferral).
             DispatchQueue.main.async {
+                // Cheap guard: a record publish that does not change what the
+                // filter reads (an in-place status/duration patch) must not
+                // re-run the O(rows × 3 lowercased()) pass and re-diff the
+                // 120-row list behind it.
+                guard recordsStamp != Self.stamp(catalog.records) else { return }
                 recomputeFiltered()
                 if selectedID == nil { selectedID = filtered.first?.id }
             }
@@ -341,8 +374,19 @@ struct TrafficView: View {
             }
         }
         .onAppear {
+            // Before anything else: a load whose completion block is still
+            // queued may land during this appear pass, and a stale `mounted`
+            // would drop a legitimate result.
+            state.mounted = true
+            // Re-assert the selection, not just fill an empty one: a record
+            // publish deferred by `onReceive` can land after a previous
+            // `onDisappear` and leave `selectedID` pointing at a row that is no
+            // longer in `filtered` — the list renders no highlight and the
+            // detail pane sits on its empty state until the user clicks a row.
             recomputeFiltered()
-            if selectedID == nil { selectedID = filtered.first?.id }
+            if selectedID == nil || !filtered.contains(where: { $0.id == selectedID }) {
+                selectedID = filtered.first?.id
+            }
             selectedLive = currentSummary.flatMap { streams.live[$0.id] }
             rebuildConversation()
         }
@@ -353,6 +397,7 @@ struct TrafficView: View {
             rebuildConversation()
         }
         .onDisappear {
+            state.mounted = false
             state.loadGen += 1
             state.detailWork?.cancel()
             state.fullWork?.cancel()
@@ -511,7 +556,12 @@ struct TrafficView: View {
                 compactStat("HTTP", rec.httpStatus == 0 ? "—" : "\(rec.httpStatus)")
                 compactStat("输入", rec.promptTokens.map(UsageStats.formatTokens) ?? "—")
                 compactStat("输出", rec.completionTokens.map(UsageStats.formatTokens) ?? "—")
-                compactStat("缓存", rec.cacheReadTokens.map(UsageStats.formatTokens) ?? "—")
+                // 命中 / 写入, not one lumped 缓存: they are separate buckets at
+                // separate prices, and 输入 above excludes both.
+                compactStat("命中", rec.cacheReadTokens.map(UsageStats.formatTokens) ?? "—")
+                if let written = rec.cacheWriteTokens {
+                    compactStat("写入", UsageStats.formatTokens(written))
+                }
                 Spacer(minLength: 0)
             }
             if let err = rec.error, rec.state == .error || rec.state == .aborted {
@@ -920,7 +970,8 @@ struct TrafficView: View {
         let work = DispatchWorkItem {
             let turns = CaptureTranscript.turns(from: raw, mode: .full, mediaDir: dir)
             DispatchQueue.main.async {
-                guard id == selectedID, generation == state.loadGen, fullRender else { return }
+                guard id == selectedID, generation == state.loadGen,
+                      state.mounted, fullRender else { return }
                 fullTurns = turns
                 rebuildConversation()
             }

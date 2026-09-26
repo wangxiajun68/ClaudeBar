@@ -8,12 +8,6 @@ class ProviderStore: ObservableObject {
     @Published var hasSettingsFile: Bool = false
     @Published var errorMessage: String? = nil
     @Published var importSummary: String? = nil
-    struct SupplierBalance: Identifiable, Equatable {
-        let id: UUID
-        let name: String
-        let amount: String
-    }
-    @Published var supplierBalances: [SupplierBalance] = []
     /// Provider id → display amount. Both client stacks share this map.
     @Published var balanceAmounts: [UUID: String] = [:]
     @Published var balanceText: String? = nil
@@ -91,6 +85,62 @@ class ProviderStore: ObservableObject {
     }
     var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
     private var externalCompletionDetector = ConfirmedCompletionDetector<String>()
+
+    /// Cross-surface page requests, relayed to whoever currently owns the main
+    /// window's content. Posted by the menu-bar popup and by other pages
+    /// (设置 → 打开 VPN 页, the Wi-Fi permission chip) through
+    /// `MainWindowController.showWindow(on:)`.
+    ///
+    /// This lives on the store — the one object every surface already holds a
+    /// reference to — rather than being threaded through `MainWindowView`'s
+    /// initializer: `installContent` rebuilds that view on every reopen, and a
+    /// view-typed property would have made `ProviderStore` depend on it.
+    /// `@Published` means a request outlives the window's teardown and is
+    /// replayed to the next subscriber.
+    @Published private(set) var navigationRequest: NavigationRequest?
+
+    /// A page a caller asked for before the window could route it.
+    ///
+    /// These used to be `NotificationCenter` posts, which do not survive a
+    /// window that had to be built first: a freshly installed `NSHostingView`
+    /// subscribes to the center only when its first display pass runs —
+    /// measured at ~50 ms, exactly the 50–150 ms `installContent` costs — so
+    /// the page post was published before `MainWindowView` existed and the
+    /// window opened on the page it had last remembered. A published value is
+    /// replayed instead of missed.
+    ///
+    /// The token makes repeated requests distinguishable, so asking for the
+    /// same page twice still routes twice.
+    struct NavigationRequest: Equatable {
+        let destination: Destination
+        let token: Int
+
+        enum Destination: Equatable {
+            case page(AppPage)
+            /// Same page, plus "open the editor for the active provider" —
+            /// what the popup's 「管理模型」 and its empty-state 「去添加供应商」
+            /// actually mean.
+            case editor(AppPage)
+        }
+    }
+
+    private var navigationCounter = 0
+
+    /// Ask for a page to be shown. Applied by whoever owns the main window's
+    /// content at the time this is watched; see `MainWindowView`.
+    func requestNavigation(_ destination: NavigationRequest.Destination) {
+        navigationCounter += 1
+        navigationRequest = NavigationRequest(destination: destination, token: navigationCounter)
+    }
+
+    /// Marks a request as handled. The window's shell is its only consumer —
+    /// an editor request is handed to the page as a `@State` flag — so the
+    /// request can be dropped as soon as it has been routed, and a later
+    /// reopen (or a revisit of the page) cannot replay it.
+    func clearNavigation(_ taken: NavigationRequest) {
+        guard navigationRequest == taken else { return }
+        navigationRequest = nil
+    }
 
     /// Initial state is populated by the AppDelegate once the status item and
     /// main window are wired up — calling `refresh()` here would run file I/O
@@ -217,7 +267,11 @@ class ProviderStore: ObservableObject {
     private func refreshAnyBusy() {
         let claude = sessions.contains { $0.isAlive && ($0.status == .busy || $0.toolPending) }
         let cursor = cursorSessions.contains { $0.status == .active || $0.toolPending }
-        let external = externalSessions.contains { $0.isActive }
+        // Roots only: a helper is a child of a session that is itself in this
+        // array, so counting it would double-report the same run and make the
+        // poll cadence flip on a fan-out that the user's own turn already
+        // accounts for.
+        let external = activeExternalCount > 0
         let busy = claude || cursor || external
         if anySessionBusy != busy {
             anySessionBusy = busy
@@ -323,21 +377,38 @@ class ProviderStore: ObservableObject {
 
     /// Scan Codex sessions. Same
     /// off-main scan + unchanged-publish skip as the other two sources.
+    ///
+    /// Publishes main threads *and* the sub-agents the swarm tree attaches to
+    /// them. The publish set is therefore not what any counter means: every
+    /// surface that answers "how many Codex sessions / how many are running"
+    /// reads `ProviderStore+Derived` (`aliveExternalSessions`,
+    /// `activeExternalCount`, `anyExternalBusy`, `externalSessionTree`), and
+    /// each of them drops helpers or counts only the roots — single place, so
+    /// the two populations cannot drift apart again. Publishing helpers also
+    /// keeps `isSubagent`-aware consumers correct by construction rather than
+    /// depending on the monitor having filtered them out upstream.
     private func refreshExternalSessions() {
         guard !externalScanPending else { return }
         externalScanPending = true
         Task.detached(priority: .utility) {
-            let result = ExternalSessionMonitor.fetchActive()
+            let scan = ExternalSessionMonitor.scan()
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.externalScanPending = false
+                var seen = Set<String>()
+                let result = (scan.main + scan.subagents)
+                    .sorted { $0.updatedAt > $1.updatedAt }
+                    .filter { seen.insert($0.id).inserted }
                 if self.externalSessions == result { return }
                 self.externalSessions = result
                 let completed = self.externalCompletionDetector.record(result.map {
                     (id: $0.id, isBusy: $0.isActive, completionID: $0.completionID)
                 })
                 for id in completed {
-                    if let session = result.first(where: { $0.id == id }) {
+                    // Only roots have anything to resume, and "a Codex run
+                    // finished" is a claim about the user's own turn, so a
+                    // helper's completion is not a notification.
+                    if let session = result.first(where: { $0.id == id && !$0.isSubagent }) {
                         NotificationService.shared.notifyIdle(external: session)
                     }
                 }
@@ -748,7 +819,7 @@ class ProviderStore: ObservableObject {
                 group.ids.append((candidate.id, candidate.name))
                 groups[key] = group
             }
-            var balances: [SupplierBalance] = []
+            var ordered: [(name: String, amount: String)] = []
             var amounts: [UUID: String] = [:]
             for provider in groups.values {
                 guard !Task.isCancelled else { return }
@@ -757,12 +828,11 @@ class ProviderStore: ObservableObject {
                 guard let result else { continue }
                 for (id, name) in provider.ids {
                     amounts[id] = result.display
-                    balances.append(SupplierBalance(id: id, name: name, amount: result.display))
+                    ordered.append((name, result.display))
                 }
             }
-            if supplierBalances != balances { supplierBalances = balances }
             if balanceAmounts != amounts { balanceAmounts = amounts }
-            let display = balances.map { "\($0.name) · \($0.amount)" }.joined(separator: " / ")
+            let display = ordered.map { "\($0.name) · \($0.amount)" }.joined(separator: " / ")
             balanceText = display.isEmpty ? nil : display
             writeWidgetSnapshot()
             balanceLoading = false
@@ -955,7 +1025,14 @@ class ProviderStore: ObservableObject {
                     relativeUpdated: s.relativeUpdated
                 )
             },
-            externalSessions: externalSessions.prefix(5).map { s in
+            // `aliveExternalSessions`, not the raw array: since the swarm tree
+            // landed, `externalSessions` carries sub-agents as well (they have
+            // to be there for `externalSessionTree` to attach them), and a
+            // helper is not a session the widget should list or count. This
+            // read was `externalSessions.prefix(5)` while the array was
+            // main-only; it is the one call site outside `ProviderStore+Derived`
+            // that reads the array for a *count*, which is why it is called out.
+            externalSessions: aliveExternalSessions.prefix(5).map { s in
                 WidgetSnapshot.ExternalSessionSummary(
                     id: s.id,
                     status: s.isActive ? "busy" : "idle",

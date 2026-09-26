@@ -11,6 +11,9 @@ struct ProviderConnectionModel: Identifiable, Equatable {
     var id: UUID
     var name: String
     var reasoningEffort = ""
+    /// Codex model's context window. Claude keeps the same value in
+    /// `contextTokens` below, under the name its own config uses; the sheet
+    /// shows one field per client and each maps to that client's key.
     var contextWindow = ""
     var autoCompactTokenLimit = ""
     var contextTokens = ""
@@ -203,19 +206,60 @@ struct ProviderConnectionEditor: View {
                     .disabled(draft.pendingModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             ForEach(draft.models) { model in
-                HStack(spacing: 8) {
-                    Button { draft.activeModelID = model.id } label: {
-                        Image(systemName: model.id == draft.activeModelID ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(model.id == draft.activeModelID ? ProviderCardState.ready.color : Theme.textSecondary)
-                    }.buttonStyle(.plain).help("设为默认模型")
-                    Text(model.name).font(Theme.Font.bodySmall).lineLimit(1)
-                    Spacer()
-                    Button {
-                        draft.models.removeAll { $0.id == model.id }
-                        if draft.activeModelID == model.id { draft.activeModelID = draft.models.first?.id }
-                    } label: { Image(systemName: "minus") }
-                        .buttonStyle(ProviderActionStyle()).help("移除 " + model.name)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button { draft.activeModelID = model.id } label: {
+                            Image(systemName: model.id == draft.activeModelID ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(model.id == draft.activeModelID ? ProviderCardState.ready.color : Theme.textSecondary)
+                        }.buttonStyle(.plain).help("设为默认模型")
+                        Text(model.name).font(Theme.Font.bodySmall).lineLimit(1)
+                        Spacer()
+                        Button {
+                            draft.models.removeAll { $0.id == model.id }
+                            if draft.activeModelID == model.id { draft.activeModelID = draft.models.first?.id }
+                        } label: { Image(systemName: "minus") }
+                            .buttonStyle(ProviderActionStyle()).help("移除 " + model.name)
+                    }
+                    modelOptions(model)
                 }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    /// Per-model fields the generic editor used to be the only home for.
+    ///
+    /// `Views/ProviderEditorView.swift` and `Views/CodexProviderEditorView.swift`
+    /// had these and now have no call site, so without this the values would
+    /// survive a round-trip through `ProvidersView` (`connectionDraft` seeds
+    /// them, `saveConnection` writes them back) but could never be *set* again.
+    /// Each client keeps its own key — Claude `contextTokens` /
+    /// `autoCompactWindow`, Codex `contextWindow` / `autoCompactTokenLimit` —
+    /// because that is what the two config files expect, so the window field
+    /// binds to whichever one this client reads.
+    @ViewBuilder private func modelOptions(_ model: ProviderConnectionModel) -> some View {
+        let index = draft.models.firstIndex { $0.id == model.id }
+        if let index {
+            HStack(alignment: .top, spacing: 12) {
+                field("上下文窗口") {
+                    TextField(client == .codex ? "400000" : "1000000",
+                              text: client == .codex
+                                  ? $draft.models[index].contextWindow
+                                  : $draft.models[index].contextTokens)
+                }
+                field("自动压缩阈值") {
+                    TextField(client == .codex ? "360000" : "1000000",
+                              text: $draft.models[index].autoCompactTokenLimit)
+                }
+            }
+            if client == .claude {
+                Toggle("禁用压缩", isOn: $draft.models[index].disableCompact)
+                    .font(Theme.Font.caption)
+                Toggle("禁用实验性 Beta", isOn: $draft.models[index].disableExperimentalBetas)
+                    .font(Theme.Font.caption)
+            } else {
+                Text("Codex 将压缩上限限制为窗口的 90%。留空则不写入，运行时按窗口 × 90% 计算。")
+                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
         }
     }

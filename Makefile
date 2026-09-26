@@ -23,7 +23,6 @@ test:
 	python3 Tests/core-regressions.py
 	python3 Tests/performance-regressions.py
 	python3 Tests/rendering-regressions.py
-	python3 Tests/island-reel-regressions.py
 	python3 Tests/local-endpoint-regressions.py
 	python3 Tests/provider-icon-regressions.py
 	python3 Tests/session-title-regressions.py
@@ -31,3 +30,7 @@ test:
 	python3 Tests/menubar-strip-regressions.py
 	python3 Tests/charge-limit-regressions.py
 	python3 Tests/model-cost-regressions.py
+	python3 Tests/proxy-usage-regressions.py
+	python3 Tests/codex-session-regressions.py
+	python3 Tests/inflight-animation-regressions.py
+	python3 Tests/machine-mark-regressions.py

@@ -107,10 +107,37 @@ enum Theme {
     // MARK: Surfaces
     static var divider: Color { isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08) }
     static var hairline: Color { divider }
+
+    /// The inner frame ring (`InnerFrameRing`). The reference card draws it in
+    /// pure white; on the ice canvas a white ring over a white card is nothing,
+    /// so light mode uses a soft top-lit white that still reads as a lit edge,
+    /// and dark mode the honest white at low alpha.
+    static var innerFrame: Color {
+        isDark ? Color.white.opacity(0.16) : Color.white.opacity(0.85)
+    }
+
+    /// The same ring on a surface with **no** accent wash under it, where a
+    /// lit white edge would be invisible: an engraved hairline instead.
+    static var innerFrameMuted: Color {
+        isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.055)
+    }
     static func cardFill(_ opacity: Double = 0.04) -> Color {
         isDark ? Color.white.opacity(min(1, opacity * 2.4)) : Color.black.opacity(opacity)
     }
     static var sidebarFill: Color { bgSecondary }
+
+    /// The recessed well a *field* sits in — `InstrumentField`（搜索框
+    /// `InstrumentSearchField` 也复用它）。
+    ///
+    /// A recessed control is not a raised card tinted down: it is the canvas
+    /// pushed in. On the ice canvas that is a touch **deeper** than `bgPrimary`
+    /// (a hole catches less light than the surface around it); in dark mode it
+    /// is a touch darker than the graphite canvas for the same reason. Getting
+    /// the direction wrong is how a "recessed" field ends up reading as a
+    /// second white card with a grey border, which is what the app had.
+    static var fieldWell: Color {
+        isDark ? Color(hex: 0x101216) : Color(hex: 0xE6ECF4)
+    }
 
     static var windowNSColor: NSColor {
         isDark
@@ -194,7 +221,9 @@ enum Theme {
         static let tileMicroValue = SwiftUI.Font.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit()
         static let tileLabel = SwiftUI.Font.system(size: 11, weight: .semibold)
         static let tileDetail = SwiftUI.Font.caption2
-        /// Nav tabs, card titles, settings titles — one size so chrome doesn't drift.
+        /// Nav tabs and card titles — one size so chrome doesn't drift.
+        /// (Settings *tiles* are one step up, 15pt rounded, so they read as a
+        /// page's content rather than as chrome; see `SettingTile`.)
         static let chrome = SwiftUI.Font.system(size: 13, weight: .medium, design: .rounded)
         static let chromeEmph = SwiftUI.Font.system(size: 13, weight: .semibold, design: .rounded)
         static let brand = SwiftUI.Font.system(size: 16, weight: .semibold, design: .rounded)
@@ -229,7 +258,7 @@ enum Theme {
             case .pageUsage, .pageProvider:
                 [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
             case .pageSetting:
-                [GridItem(.adaptive(minimum: 200), spacing: Space.gridGapPage, alignment: .top)]
+                [GridItem(.adaptive(minimum: 300), spacing: Space.gridGapPage, alignment: .top)]
             case .popupProvider, .popupUsage:
                 [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
                  GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
@@ -244,7 +273,7 @@ enum Theme {
             case .pageMetric: return (4, 0)
             case .pageSession: return (nil, 280)
             case .pageUsage, .pageProvider: return (nil, 240)
-            case .pageSetting: return (nil, 200)
+            case .pageSetting: return (nil, 300)
             case .popupProvider, .popupUsage: return (2, 0)
             case .popupSession: return (1, 0)
             }
@@ -287,9 +316,15 @@ enum Theme {
     }
 
     /// The same per-model hue as readable text, index-aligned with
-    /// `barColor(for:)`. A usage tile paints the model's share as a bar *and*
-    /// as a "38 %" pill; the bar wants `barColor`, the pill wants this one
-    /// (the raw hues land at 1.8–3.4:1 on the light canvas).
+    /// `barColor(for:)`.
+    ///
+    /// **Currently no call site.** It was written for a usage tile that painted
+    /// the model's share as a bar *and* a "38 %" pill; that pill does not exist
+    /// on the shipped tile (`UsageModelCard` shows the percentage through
+    /// `CacheHitBadge` and the cost line, both on normal text colours), so
+    /// `barColor` is used alone. Kept rather than deleted because the pairing is
+    /// the rule — a bar takes the raw hue, any text over it takes the ink — and
+    /// the next tile that labels a bar needs both halves.
     static func barInk(for model: String) -> Color {
         let palette: [Color] = [
             Ink.claude,
@@ -348,30 +383,55 @@ extension View {
 
 // MARK: - Panel card (translucent surface; native glass buttons on macOS 26+)
 
-/// The primary content surface: translucent fill with a hairline border.
-/// On macOS 26+, toolbar buttons use native Liquid Glass via `adaptiveGlassButton()`.
+/// The primary *content* surface: an optional accent wash over `cardSurface`,
+/// a hairline edge, and the same inset frame ring the tiles carry, so a page's
+/// summary panels and its tile grid read as one surface family.
+///
+/// This is the non-interactive sibling of `.tile()`: no hover state, no lift.
+/// A panel is a container (a page's header card, a chart's backing), so it has
+/// nothing to answer a pointer with; the ring and the wash are what tie it to
+/// the tiles it sits among.
+///
+/// `tint` at 5–10 % is deliberately shallow: the ring is white, and a white
+/// ring over a saturated fill is what makes the reference card read as a lit
+/// panel. Passing a tint here and a tint to the tiles inside the panel keeps
+/// one hue running through the whole block.
 struct PanelCardModifier: ViewModifier {
     var radius: CGFloat = Theme.Radius.lg
     var fill: Double = 1
     var tint: Color? = nil
+    var framed: Bool = true
 
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(tint?.opacity(0.10) ?? Theme.cardSurface)
-                    .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+                ZStack {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Theme.cardSurface)
+                    if let tint {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(tint.opacity(Theme.isDark ? 0.12 : 0.06))
+                    }
+                }
+                .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Theme.hairline, lineWidth: 1)
             }
+            .overlay {
+                if framed {
+                    InnerFrameRing(inset: 3, radius: radius,
+                                   tint: tint == nil ? Theme.innerFrameMuted : Theme.innerFrame)
+                }
+            }
     }
 }
 
 extension View {
-    func panelCard(radius: CGFloat = Theme.Radius.lg, fill: Double = 1, tint: Color? = nil) -> some View {
-        modifier(PanelCardModifier(radius: radius, fill: fill, tint: tint))
+    func panelCard(radius: CGFloat = Theme.Radius.lg, fill: Double = 1,
+                   tint: Color? = nil, framed: Bool = true) -> some View {
+        modifier(PanelCardModifier(radius: radius, fill: fill, tint: tint, framed: framed))
     }
 }
 

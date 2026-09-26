@@ -7,6 +7,10 @@ struct LinkCard: View {
     var accessory: AudioAccessoryMonitor.Accessory?
     var accessoryCount: Int
     var unavailableReason: String?
+    /// `dense` tightens the vertical gaps for the popup's denser track. Its
+    /// only caller is the dashboard's `ResourceStrip`, which passes `false`;
+    /// the popup's machine readout is `MachineKpiStrip`, not this card — so the
+    /// compact spacing this describes is currently unreachable.
     var dense: Bool
 
     var body: some View {
@@ -21,7 +25,10 @@ struct LinkCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: dense ? 112 : 124, maxHeight: .infinity, alignment: .topLeading)
-        .tile(dense: dense)
+        // The connection card has no single hue — its four marks are green /
+        // blue / violet — so it takes the plain tile (engraved inner frame, no
+        // wash) and answers the pointer with the hover edge alone.
+        .hoverTile(dense: dense)
         .help(helpText())
         .contentShape(Rectangle())
         .accessibilityAction(named: "查看连接地图") { showConnections = true }
@@ -436,8 +443,7 @@ struct WiFiConnectionMark: View {
             if switchedOn {
                 permission.request()
             } else {
-                NotificationCenter.default.post(name: .showMainWindow, object: nil)
-                NotificationCenter.default.post(name: .openSettingsPage, object: nil)
+                NotificationCenter.default.post(.showMainWindow(page: .settings))
             }
         } label: {
             VStack(spacing: 0) {

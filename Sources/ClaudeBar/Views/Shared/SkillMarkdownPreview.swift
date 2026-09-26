@@ -94,7 +94,9 @@ struct SkillMarkdownPreview: View {
                 .padding(.leading, Theme.Space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1).fill(Theme.Ink.claude.opacity(0.5)).frame(width: 2)
+                    // Raw `claude`, not `Ink.claude`: this is a 2pt *rule*, and
+                    // the ink mix at half alpha is a near-invisible dark line.
+                    RoundedRectangle(cornerRadius: 1).fill(Theme.claude.opacity(0.5)).frame(width: 2)
                 }
         case .code(let language, let value):
             VStack(alignment: .leading, spacing: Theme.Space.s8) {

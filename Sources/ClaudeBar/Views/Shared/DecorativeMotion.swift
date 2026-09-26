@@ -4,14 +4,17 @@ import SwiftUI
 /// Repeating decoration is interpolated by the render server. No timer,
 /// TimelineView, per-frame path construction, or SwiftUI layout is involved.
 struct DecorativeMotion: NSViewRepresentable {
-    enum Kind { case sparkles, sweep, orbit, pulse, scan }
+    enum Kind { case sparkles, sweep, orbit, pulse, scan, conveyor, arc }
     let kind: Kind
     var tint: Color = .white
     var active: Bool
+    /// Stroke width for `kind == .arc`; ignored by the others. `nil` means a
+    /// default proportional to the view's size.
+    var lineWidth: CGFloat?
 
     func makeNSView(context: Context) -> MotionLayerView { MotionLayerView() }
     func updateNSView(_ view: MotionLayerView, context: Context) {
-        view.apply(kind: kind, tint: NSColor(tint), active: active)
+        view.apply(kind: kind, tint: NSColor(tint), active: active, lineWidth: lineWidth)
     }
     static func dismantleNSView(_ view: MotionLayerView, coordinator: ()) { view.stop() }
 }
@@ -20,6 +23,7 @@ final class MotionLayerView: NSView {
     private var kind: DecorativeMotion.Kind = .sparkles
     private var tint = NSColor.white
     private var active = false
+    private var lineWidth: CGFloat?
     private var lastSize: CGSize = .zero
     private var tracks: [(CALayer, CAAnimation)] = []
     private var running = false
@@ -35,11 +39,12 @@ final class MotionLayerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
 
-    func apply(kind: DecorativeMotion.Kind, tint: NSColor, active: Bool) {
-        let rebuild = self.kind != kind || self.tint != tint
+    func apply(kind: DecorativeMotion.Kind, tint: NSColor, active: Bool, lineWidth: CGFloat? = nil) {
+        let rebuild = self.kind != kind || self.tint != tint || self.lineWidth != lineWidth
         self.kind = kind
         self.tint = tint
         self.active = active
+        self.lineWidth = lineWidth
         if rebuild || lastSize != bounds.size { rebuildLayers() }
         updatePlayback()
     }
@@ -70,6 +75,7 @@ final class MotionLayerView: NSView {
         for (target, animation) in tracks { target.add(animation, forKey: "decoration") }
         running = true
     }
+
     private func motion(_ key: String, from: Double, to: Double,
                         duration: Double, autoreverses: Bool = false) -> CABasicAnimation {
         let animation = CABasicAnimation(keyPath: key)
@@ -191,6 +197,127 @@ final class MotionLayerView: NSView {
             line.opacity = 0.85
             layer.addSublayer(line)
             tracks.append((line, motion("transform.translation.x", from: -24, to: 24, duration: 1.6)))
+        case .conveyor:
+            // The belt card's travelling ticks. One gradient carrying a whole
+            // run of ticks slides by exactly one tick pitch per cycle, so the
+            // pattern is continuous at the loop point — a single moving band
+            // would read as a scan line, not a belt.
+            //
+            // The travel is `transform.translation.x`, not `position.x`:
+            // `position` *is* how a layer's frame is placed, so animating it
+            // would yank the belt off the strip on the first frame.
+            let pitch = max(14, h * 0.9)
+            let ticks = max(3, Int(ceil(w / pitch)) + 3)
+            let span = CGFloat(ticks) * pitch
+            let belt = CAGradientLayer()
+            belt.startPoint = CGPoint(x: 0, y: 0.5)
+            belt.endPoint = CGPoint(x: 1, y: 0.5)
+            // `locations` are fractions of the layer's *own* width, so the layer
+            // must be exactly `ticks` pitches wide for one 4-stop group to span
+            // exactly one pitch. It is anchored one pitch left of the strip and
+            // travelled by exactly `pitch`: at that point the pattern has moved
+            // onto itself, so the loop point is invisible, and the extra two
+            // ticks keep the strip covered for the whole cycle.
+            // (A frame of `span * 2` with a travel of `pitch` shifted the
+            // pattern by half a group, which reads as a hitch every 1.1 s.)
+            belt.frame = CGRect(x: -pitch, y: 0, width: span, height: h)
+            let stops = ticks * 4
+            belt.locations = (0...stops).map { NSNumber(value: Double($0) / Double(stops)) }
+            belt.colors = (0...stops).map { index in
+                let phase = index % 4
+                let alpha: CGFloat = phase == 1 ? 0.85 : (phase == 2 ? 0.35 : 0)
+                return tint.withAlphaComponent(alpha).cgColor
+            }
+            layer.addSublayer(belt)
+            let travel = CABasicAnimation(keyPath: "transform.translation.x")
+            travel.fromValue = 0
+            travel.toValue = pitch
+            travel.duration = 1.1
+            travel.repeatCount = .infinity
+            travel.timingFunction = CAMediaTimingFunction(name: .linear)
+            tracks.append((belt, travel))
+        case .arc:
+            // `IslandOrbit`: a 100° gradient-tailed arc, one turn per 1.1 s.
+            //
+            // Ported from SwiftUI (`.trim` + `.stroke(AngularGradient)` +
+            // `.rotationEffect` under a `repeatForever`). That version kept an
+            // animated transaction in flight for as long as the island drew a
+            // busy badge, and while a transaction is in flight *every* display
+            // cycle re-runs the whole hosting view's layout — the island's
+            // panel is the full expanded box even when collapsed, so each one
+            // laid out 640 × 386. Swapping the two builds under the same
+            // launcher and sampling them alternately puts the share of
+            // main-thread samples inside `NSHostingView.layout()` at a median
+            // 48.8 % for the old arc and 31.9 % for this one, disjoint ranges,
+            // with the transaction count falling from ≈420 to ≈285. See
+            // `docs/technical/17-ui-audit-backlog.md` §7.
+            //
+            // Composition, from the inside out: a conic gradient carries the
+            // fade, a shape trims it to the arc's 100°, and the whole thing
+            // spins.
+            //
+            // Two conventions have to line up to reproduce the original, and
+            // each was measured rather than assumed. The harness renders the
+            // layers through `bitmapImageRepForCachingDisplay` and reads the
+            // alpha back out at one-degree steps along the stroke's centreline,
+            // so these are numbers, not impressions:
+            //
+            //  * The conic's `locations` are fractions of the **whole turn**,
+            //    not of the trimmed arc. So the ramp has to *stop* at `sweep`:
+            //    `[clear, tint]` at `[0, sweep]` fades steadily across the arc,
+            //    matching the original's `AngularGradient(endAngle: 100°)`. An
+            //    earlier three-stop version — `[0, .9·sweep, sweep]` — held full
+            //    tint across most of the arc and then dropped off a cliff, so the
+            //    port read as a heavy ring segment rather than a tail.
+            //  * The trim path must start where the conic's phase 0 is, or the
+            //    taper falls outside the trimmed span and the whole arc lights up
+            //    flat. An earlier version used `CGPath(ellipseIn:)` with
+            //    `strokeStart`/`strokeEnd`, whose start point is a quarter turn
+            //    away from the phase — enough to trigger exactly that failure.
+            //    Here `startAngle: -.pi / 2` with `clockwise: false` is the
+            //    combination that lines up; sweeping the offset in quarter turns
+            //    and scoring each against the original gives a mean |Δalpha| of
+            //    2.50/255 for this one against 29–38/255 for the others, whose
+            //    bands balloon from 56° wide to 92–107° (the flat-lighting
+            //    signature).
+            //
+            // What is left is a constant quarter turn between where this arc
+            // sits and where the original sits. Chasing it is not worthwhile: a
+            // conic is periodic, so re-anchoring phase 0 also slides the ramp,
+            // and the one attempt to do both regressed to the flat case above.
+            // The arc never stops rotating and its head bears no fixed relation
+            // to the badge, so a viewer has nothing to compare the phase against.
+            //
+            // At the best alignment the profiles match to 2.50/255 mean: both
+            // fade 0 → full tint over ~100°, 54–56° of them above half brightness.
+            // Rotation direction was checked the same way, by sampling the head
+            // at two known times: +16° here against +14° on the original over
+            // the same interval — both clockwise on screen.
+            let width = lineWidth ?? max(1.5, w * 0.075)
+            let sweep: CGFloat = 0.28
+            let ring = CAGradientLayer()
+            ring.frame = bounds
+            ring.type = .conic
+            ring.startPoint = CGPoint(x: 0.5, y: 0.5)
+            ring.endPoint = CGPoint(x: 0.5, y: 0)
+            ring.colors = [tint.withAlphaComponent(0).cgColor, tint.cgColor]
+            ring.locations = [0, NSNumber(value: Double(sweep))]
+            let tail = CAShapeLayer()
+            let path = CGMutablePath()
+            path.addArc(center: CGPoint(x: w / 2, y: h / 2),
+                        radius: max(0, (min(w, h) - width) / 2),
+                        startAngle: -.pi / 2,
+                        endAngle: -.pi / 2 + .pi * 2 * sweep,
+                        clockwise: false)
+            tail.path = path
+            tail.fillColor = nil
+            tail.strokeColor = NSColor.white.cgColor
+            tail.lineWidth = width
+            tail.lineCap = .round
+            tail.contentsScale = window?.backingScaleFactor ?? 2
+            ring.mask = tail
+            layer.addSublayer(ring)
+            tracks.append((ring, motion("transform.rotation.z", from: 0, to: .pi * 2, duration: 1.1)))
         }
     }
 }

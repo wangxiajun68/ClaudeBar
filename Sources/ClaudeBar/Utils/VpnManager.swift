@@ -1220,9 +1220,13 @@ extension VpnManager {
             trafficHandshakeLogged = false
             for try await line in bytes.lines {
                 if Task.isCancelled { return }
-                // bytes.lines can resume off the main actor; hop back so
-                // @Published speeds actually refresh the menu bar + page.
-                await MainActor.run { applyTrafficLine(line) }
+                // Parse *here*, on the stream's own thread. Only the two Int64s
+                // cross to the main actor: hopping the whole line meant a JSON
+                // parse plus a `Date()` on main for every line of a stream that
+                // never ends, which is the cost `VpnLiveRates` documents having
+                // moved off the main actor.
+                guard let sample = Self.parseTrafficLine(line) else { continue }
+                await MainActor.run { applyTrafficSample(sample) }
             }
         } catch is CancellationError {
             return
@@ -1231,16 +1235,20 @@ extension VpnManager {
         }
     }
 
-    private func applyTrafficLine(_ line: String) {
+    /// One `/traffic` line → the pair of counters it carries. Runs off the main
+    /// actor; `nil` for the blank keep-alive lines the stream emits.
+    private nonisolated static func parseTrafficLine(_ line: String) -> (up: Int64, down: Int64)? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let data = trimmed.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return }
-        let up = JSONCoerce.int64Val(obj["up"])
-        let down = JSONCoerce.int64Val(obj["down"])
+        else { return nil }
+        return (JSONCoerce.int64Val(obj["up"]), JSONCoerce.int64Val(obj["down"]))
+    }
+
+    private func applyTrafficSample(_ sample: (up: Int64, down: Int64)) {
         lastTrafficSampleAt = Date()
-        VpnLiveRates.shared.applyStream(up: up, down: down)
+        VpnLiveRates.shared.applyStream(up: sample.up, down: sample.down)
     }
 
     private func pollConnections() async {
