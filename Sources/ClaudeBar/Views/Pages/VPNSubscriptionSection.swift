@@ -125,6 +125,7 @@ struct VpnSubscriptionSection: View {
                                 .foregroundColor(Theme.textSecondary)
                         }
                         Text("\(sub.nodeCount) 节点")
+                            .rollingNumber()
                             .font(Theme.Font.micro)
                             .foregroundColor(Theme.textTertiary())
                     }

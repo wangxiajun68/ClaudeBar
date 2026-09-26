@@ -44,13 +44,14 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 ## 共享交互层（`Views/Shared/`）
 
 - `Tile.swift`：`TileGrid` + `.tile()` / `.hoverTile()` modifier。表面本身（底 + 强调水洗 + 内嵌白环 + 角上深度环 + 悬停描边与抬升）定义在 `Views/Shared/UiverseSurfaces.swift`，`panelCard()` 与 `.tile()` 是同一套的两种密度；与 `panelCard()` 同族的半透明表面，密度更高。
-- `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`LoadRing` 已删除（曾是唯一按读数调速的装饰：一条光的弧，转速 ∝ 负载，<5% 完全静止；约 96° 的弧在图标尺寸上读作「转圈等待」且复述下方数字，故视图与装饰 kind 一并移除）、`ShineSweep` + `.depthTilt()`（只给单张 hero 卡）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
+- `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep` + `.depthTilt()`（只给单张 hero 卡）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
 - `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageBar.swift` 的 `UsageModelTile` / `UsageStackBar` 已并入）。
 - `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
 - `ProviderRow.swift` 的 `ProviderTile` 目前**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），刻意保留：它是目录宫格那颗瓦片的唯一成稿，且不引用任何孤立的类型，见 [technical/17](../technical/17-ui-audit-backlog.md) §9。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 没有挂载点，已删除（§3）。
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
-- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后不再套 `LoadRing`——弧在这个尺寸读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
+- `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（流量的路 / 链路质量 / 本机代理这一跳 / 蓝牙设备），风扇弹出 `FanInternalsPanel`（Lucide `laptop-minimal` 机身 + 两个各自按自己 rpm 转的风扇位）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
+- 风扇使用 精细涡轮插画、中性仪表环及随 RPM 连续旋转的 Core Animation。点击风扇直接切换最大 / 自动；点击卡片其余区域打开详情，详情保留独立调速按钮。机内结构使用高清矢量风格概念插画，不代表精确机型图。
 - `VpnTopChrome.swift`：`VpnNodePickerPanel` / `VpnDelayStyle`（popup 页头的 VPN chip 用它）。
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。

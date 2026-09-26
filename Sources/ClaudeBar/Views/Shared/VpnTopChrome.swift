@@ -135,6 +135,7 @@ struct VpnNodePickerPanel: View {
                     .scaleEffect(0.7)
             } else {
                 Text(VpnDelayStyle.text(delay))
+                    .rollingNumber()
                     .font(.system(size: 11, design: .monospaced).weight(.medium))
                     .foregroundColor(VpnDelayStyle.color(delay))
             }

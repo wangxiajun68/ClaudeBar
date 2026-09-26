@@ -68,6 +68,8 @@ require_file "$SOURCES_DIR/Models/ProviderStore.swift"
 require_file "$SOURCES_DIR/Theme/Theme.swift"
 require_file "$WIDGET_DIR/WidgetViews.swift"
 require_file "$WIDGET_DIR/WidgetProvider.swift"
+# The detailed internal illustration is bundled for offline use.
+require_file "$SOURCES_DIR/Resources/macbook-internals-illustration.png"
 if [ ! -e "$WIDGET_DIR/WidgetSnapshot.swift" ]; then
     echo "ERROR: $WIDGET_DIR/WidgetSnapshot.swift is a broken or missing symlink" >&2
     exit 1
@@ -108,6 +110,9 @@ RESOURCES_DIR="$CONTENTS/Resources"
 mkdir -p "$RESOURCES_DIR"
 cp "$PROJECT_DIR/Sources/Licenses/Lucide.txt" "$RESOURCES_DIR/Lucide.txt"
 cp -R "$PROJECT_DIR/Sources/ProviderIcons" "$RESOURCES_DIR/ProviderIcons"
+# Offline internal illustration and its provenance.
+cp "$SOURCES_DIR/Resources/macbook-internals-illustration.png" "$RESOURCES_DIR/"
+cp "$SOURCES_DIR/Resources/ASSET-LICENSES.md" "$RESOURCES_DIR/"
 
 # Copy app icon
 ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon.icns"

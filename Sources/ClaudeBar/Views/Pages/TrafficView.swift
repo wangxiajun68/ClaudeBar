@@ -1110,7 +1110,7 @@ private struct TrafficRow: View {
                 Text(rec.kind.label)
                 Text(rec.isStream ? "stream" : "json")
                 if let p = rec.promptTokens, let c = rec.completionTokens {
-                    Text("\(p)/\(c)")
+                    Text("\(p)/\(c)").rollingNumber()
                 }
             }
             .font(Theme.Font.captionMono)

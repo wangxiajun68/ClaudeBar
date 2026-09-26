@@ -460,10 +460,9 @@ private struct SegmentedItem: View {
                     .fixedSize()
                 if let count {
                     Text("\(count)")
+                        .rollingNumber()
                         .font(Theme.Font.microMono)
-                        .monospacedDigit()
                         .foregroundStyle(active ? tint : Theme.textTertiary())
-                        .contentTransition(.numericText())
                     if fillsWidth { Spacer(minLength: 0) }
                 }
             }
@@ -669,59 +668,5 @@ struct PageHeaderCard<Content: View>: View {
                 }
             }
             .hoverState($hovered)
-    }
-}
-
-// MARK: - Instrument KPI tile ornament (stat-widget ring + ground shadow)
-
-/// The `stat-widget`'s conic reading ring, at tile scale: a value circled by the
-/// share of its own range, with the plate inside.
-///
-/// Distinct from `OrbitGauge` on purpose. `OrbitGauge` is a *trim* with a body
-/// riding the end of the arc — a pointer at a position. This is a *ring* whose
-/// filled portion is the reading, with the number printed in its middle: the
-/// two answer different questions ("where on the dial" vs "how much of the
-/// whole"), and the machine tiles want the second.
-///
-/// The ring is a conic gradient (the reference's `conic-gradient`, native), so
-/// it is one drawn layer per tile and never a stroked path with a computed
-/// trim — a `Canvas` over a grid of them would rebuild per frame under scroll.
-struct InstrumentRing: View {
-    /// 0…1 on the ring's own range.
-    var progress: Double
-    var tint: Color
-    var size: CGFloat = 40
-    var thickness: CGFloat = 4
-    /// The plate's own fill — `cardSurface` on a white tile, so the number
-    /// reads on the same ground as the tile around it.
-    var plate: Color = Theme.cardSurface
-
-    private var clamped: Double { progress.isFinite ? min(1, max(0, progress)) : 0 }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(tint.opacity(0.16), lineWidth: thickness)
-            Circle()
-                .fill(
-                    AngularGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: tint.opacity(0.55), location: 0),
-                            .init(color: tint, location: max(0.001, clamped * 0.72)),
-                            .init(color: tint, location: max(0.002, clamped)),
-                            .init(color: .clear, location: min(1, clamped + 0.001))
-                        ]),
-                        center: .center,
-                        startAngle: .degrees(-90),
-                        endAngle: .degrees(270)
-                    )
-                )
-                .mask(Circle().strokeBorder(tint, lineWidth: thickness))
-            Circle()
-                .fill(plate)
-                .padding(thickness)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }

@@ -525,6 +525,7 @@ struct VPNView: View {
                         .foregroundColor(Theme.Ink.error)
                 } else if let delay {
                     Text("\(min(delay, 9999))")
+                        .rollingNumber()
                         .foregroundColor(delayColor(delay))
                 } else {
                     Text("测")
@@ -815,6 +816,7 @@ private struct VPNProbeRow: View {
                                 Text(site.name)
                                     .foregroundColor(Theme.textSecondary)
                                 Text(siteDelayLabel(site.delay))
+                                    .rollingNumber()
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundColor(siteDelayColor(site.delay))
                                     .frame(width: 36, alignment: .trailing)

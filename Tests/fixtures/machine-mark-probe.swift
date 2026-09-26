@@ -9,6 +9,14 @@ enum Theme {
     static let cardSurface = Color(white: 0.98)
 }
 
+/// The probe compiles `HardwareIllustration` standalone, and that file now names
+/// `InstrumentGlyph.Kind` in its bridge from the app's shared symbol table to
+/// these marks. The real enum is a 28-case view-layer type with no bearing on the
+/// geometry, so the probe carries the four cases the bridge can return.
+enum InstrumentGlyph {
+    enum Kind { case cpu, gpu, memory, disk }
+}
+
 struct ProbeKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var surfaceIsVisible: Bool { get { self[ProbeKey.self] } set { self[ProbeKey.self] = newValue } }

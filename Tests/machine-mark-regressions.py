@@ -4,7 +4,8 @@
 Four things are locked in, each of them one edit away from silently regressing:
 
 1. **The outlines are Lucide's.** `LucideHardwareGeometry.swift` is generated
-   from Lucide's own `cpu` / `gpu` / `memory-stick` / `hard-drive` SVGs. The
+   from Lucide's own `cpu` / `gpu` / `memory-stick` / `hard-drive` SVGs (plus
+   `laptop-minimal` and `fan`, which the fan popover and the rotor draw). The
    check re-runs the generator's expectations: every mark is authored on the
    24pt grid, inside it, and the file still says it is generated. An earlier
    version hand-authored four silhouettes on a Canvas, and the result was
@@ -43,13 +44,13 @@ assert 'generated' in geometry.lower(), \
     'LucideHardwareGeometry must keep saying it is generated'
 assert 'Tools/gen-lucide-hardware.py' in geometry, \
     'the generated file must name its generator'
-for name in ('cpu', 'gpu', 'memory-stick', 'hard-drive'):
+for name in ('cpu', 'gpu', 'memory-stick', 'hard-drive', 'laptop-minimal', 'fan'):
     assert f'Lucide `{name}`' in geometry, f'{name} geometry missing from the generated file'
 # Authored on the 24pt grid, and nothing may stray outside it.
 coords = [float(v) for v in re.findall(r'(?:x|y): (-?\d+(?:\.\d+)?)', geometry)]
 assert coords and min(coords) >= -0.001 and max(coords) <= 24.001, \
     f'every Lucide coordinate must lie on the 24pt grid, got {min(coords)}…{max(coords)}'
-for kind in ('cpu', 'gpu', 'memory', 'disk'):
+for kind in ('cpu', 'gpu', 'memory', 'disk', 'laptop', 'fan'):
     assert f'case .{kind}:' in geometry, f'the generated file must define {kind}'
 # The generator itself must exist and be re-runnable.
 assert (root / 'Tools/gen-lucide-hardware.py').is_file(), 'the generator is missing'
@@ -63,7 +64,7 @@ assert 'TimelineView' in illustration, \
     'the mark must be driven by a timeline so it actually moves'
 
 # --- 4. The ring is gone from every header call site ------------------------
-meter = strip[strip.index('private func meter('):strip.index('private func toggleFan(')]
+meter = strip[strip.index('private func meter('):strip.index('private func cpuAttributionCaption(')]
 assert not call_sites(meter), 'ResourceStrip.meter must not wrap its glyph in a LoadRing'
 assert 'InstrumentBadge(kind: InstrumentGlyph.kind(for: icon)' in meter
 assert 'ZStack' not in meter.split('HStack(spacing: 6)')[1].split('Text(label)')[0], \

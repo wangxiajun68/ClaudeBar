@@ -503,6 +503,7 @@ private struct UsagePlatformCard: View {
                             }
                             if ranked.count > 4 {
                                 Text("另有 \(ranked.count - 4) 个模型")
+                                    .rollingNumber()
                                     .font(Theme.Font.micro)
                                     .foregroundColor(Theme.textTertiary())
                             }

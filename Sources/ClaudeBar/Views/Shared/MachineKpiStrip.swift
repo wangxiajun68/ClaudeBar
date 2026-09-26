@@ -135,6 +135,14 @@ struct MachineKpiStrip: View {
                 // battery it used to encode as a rate is already the badge's own
                 // dial — a percentage, which is the honest shape for it — and
                 // the tooltip still carries the bytes.
+                //
+                // The badge's dial is trimmed to the *battery level*, so it
+                // stops short of a full circle and reads as a gauge. A headset
+                // at 100 % is the one case where the trim is the whole ring, and
+                // "a closed ring at 20pt" is precisely the ornament this row was
+                // told to give up. Past 90 % the dial therefore recedes and the
+                // glyph carries the state on its own; the level is still the
+                // figure under the label and the bytes are still in the tooltip.
                 HeadsetBadge(accessory: audioMonitor.accessories.first,
                              charging: audioCharging, level: audioLevel)
                     .frame(width: 20, height: 20)
@@ -217,10 +225,22 @@ private struct HeadsetBadge: View {
         return charging ? Theme.Ink.success : Theme.chartPurple
     }
 
+    /// Where the dial stops chasing a full circle.
+    ///
+    /// A 2.5pt ring at 20pt reads as a circle whether its trim is 40 % or 100 %,
+    /// and the whole cell is one of four identical marks in a row that were
+    /// explicitly told to stop looking like rings — the same objection that
+    /// removed `LoadRing` from this row. So the dial is a *gauge* again above
+    /// this value: it fades out and the glyph carries the state alone (colour
+    /// for charging, brightness for idle). Below it the trim is short enough to
+    /// be unmistakably a reading, and the ring is what makes "how full" legible
+    /// at a glance — which is the one thing a percentage at 9pt cannot do.
+    private static let dialCeiling = 0.90
+
     var body: some View {
         ZStack {
             Circle().stroke(Theme.cardFill(0.18), lineWidth: 2.5)
-            if let level {
+            if let level, level < Self.dialCeiling {
                 Circle()
                     .trim(from: 0, to: max(0.02, min(1, level)))
                     .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
@@ -231,6 +251,41 @@ private struct HeadsetBadge: View {
                 .foregroundColor(tint)
         }
         .padding(2.5)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The mark in one menu-bar KPI cell.
+///
+/// It draws Lucide's own geometry (`HardwareIllustration`), the same mark the
+/// 概览 tile for that reading draws, at the cell's own size — so CPU is a
+/// processor, GPU a card, 内存 a DIMM, and none of them is a closed ring. The
+/// label and the figure beside it stay SF-adjacent and unchanged: this swap is
+/// about the four marks that were reading as circles, not about the typography.
+///
+/// No reading lane. The `HardwareIllustration` this draws from is the *tile's*
+/// mark, and it reserves a lane under the icon for one bar per unit; a 15pt
+/// glyph has nowhere to put 12 of them, and the cell already prints the figure
+/// under the label. It hands in a plain view of the geometry instead.
+private struct HardwareKpiGlyph: View {
+    let kind: MachineKpiButton.Kind
+    var size: CGFloat = 15
+
+    var body: some View {
+        let mark = HardwareIllustration.mark(for: kind.glyphKind)
+        Canvas { context, canvas in
+            guard let mark else { return }
+            let outline = LucideHardwareGeometry.path(for: HardwareIllustration.outline(for: mark))
+            let scale = min(canvas.width, canvas.height) / LucideHardwareGeometry.grid
+            var c = context
+            c.translateBy(x: (canvas.width - LucideHardwareGeometry.grid * scale) / 2,
+                          y: (canvas.height - LucideHardwareGeometry.grid * scale) / 2)
+            c.scaleBy(x: scale, y: scale)
+            c.stroke(outline,
+                     with: .color(kind.tint),
+                     style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
@@ -247,19 +302,23 @@ private struct MachineKpiButton: View {
             }
         }
 
-        var icon: String {
-            switch self {
-            case .cpu: return "cpu"
-            case .gpu: return "square.3.layers.3d"
-            case .memory: return "memorychip"
-            }
-        }
-
         var tint: Color {
             switch self {
             case .cpu: return Theme.chartGreen
             case .gpu: return Theme.chartBlue
             case .memory: return Theme.chartAmber
+            }
+        }
+
+        /// Which entry of the one symbol table this cell's mark stands for. The
+        /// cell's own three cases are `private`, while the table is the app's
+        /// shared vocabulary, so the mapping is stated here rather than by
+        /// re-spelling `"cpu"` / `"memorychip"` at the call site.
+        var glyphKind: InstrumentGlyph.Kind {
+            switch self {
+            case .cpu: return .cpu
+            case .gpu: return .gpu
+            case .memory: return .memory
             }
         }
     }
@@ -280,12 +339,22 @@ private struct MachineKpiButton: View {
         Button { open = true } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
-                    // No ring behind the glyph. The popup is 424pt wide and four
-                    // to five cells share it, so an ornament here is the most
-                    // expensive thing a cell can carry — and this one said
-                    // "waiting" (a spinner) about a machine that was working,
-                    // while repeating the figure printed directly below it.
-                    SignatureGlyph(name: kind.icon, tint: kind.tint, size: 15)
+                    // No ring behind the glyph — and the glyph is not a ring
+                    // either. The popup is 424pt wide and four to five cells
+                    // share it, so an ornament here is the most expensive thing
+                    // a cell can carry; every one of them said "waiting" (a
+                    // spinner) about a machine that was working, while repeating
+                    // the figure printed directly below it.
+                    //
+                    // `kind.icon` is the *overview* icon set (`cpu`,
+                    // `square.3.layers.3d`, `memorychip`), which
+                    // `InstrumentGlyph` draws as a rectangle with pins, three
+                    // stacked slabs and a ring-outlined chip — the last two are
+                    // closed rings and read as the circles this cell was
+                    // supposed to have given up. The 概览 tiles already settled
+                    // this; the popup is the same four readings and now uses the
+                    // same four marks, through the same one symbol table.
+                    HardwareKpiGlyph(kind: kind, size: 15)
                     Text(kind.label).font(Theme.Font.kpi).foregroundColor(Theme.textSecondary)
                 }
                 RollingNumberText(value).font(.system(size: 16, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)

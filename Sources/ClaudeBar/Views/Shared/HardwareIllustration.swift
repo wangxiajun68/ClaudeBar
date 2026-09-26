@@ -64,7 +64,16 @@ struct HardwareIllustration: View {
                 // and the DIMM's chip windows. Giving the reading its own lane
                 // keeps the icon legible as an icon and the reading legible as a
                 // reading — neither has to compromise for the other.
-                let laneH = max(13, size.height * 0.22)
+                // The lane is sized from the icon, not from the box: at 130pt
+                // the old `height * 0.22` gave the icon a hair under half the
+                // slot and the bars a lane thicker than the gap between two
+                // DIMM pads. Tying the lane to the *icon's* side keeps the mark
+                // the same drawing at every size the app hands it — 176×130 on
+                // the strip, 130×92 in a popover — which is what lets the two
+                // be read as one mark rather than as two drawings of one idea.
+                // The clamp is what keeps a 62pt popover mark from paying 20pt
+                // of its height for a lane.
+                let laneH = min(max(12, size.height * 0.17), max(12, size.height * 0.26))
                 let iconH = size.height - laneH - 7
                 let side = min(size.width, iconH)
                 let s = side / Self.grid
@@ -91,6 +100,32 @@ struct HardwareIllustration: View {
             }
         }
         .accessibilityHidden(true)
+    }
+
+    /// The one place the app decides which *other* kind of glyph stands in for a
+    /// machine mark.
+    ///
+    /// `InstrumentGlyph` owns one symbol table (`InstrumentGlyph.kind(for:)`);
+    /// it is what the navigation, the tiles and every popover name their marks
+    /// with. It has no case for the Lucide hardware marks because they are a
+    /// different drawing on a different grid — but a surface that wants to
+    /// *show* a machine reading and already holds an `InstrumentGlyph.Kind`
+    /// should not have to grow a second switch to find its way here. Hence this
+    /// bridge, which is the whole of the mapping.
+    ///
+    /// Only the four marks that exist on both sides are here. There is
+    /// deliberately no case for `.fan`: a fan is a rotor whose speed is a
+    /// reading in its own right (`LucideRotor`), and drawing it as a static
+    /// outline with a bar under it would be the one place the app states a fan's
+    /// speed twice.
+    static func mark(for kind: InstrumentGlyph.Kind) -> Kind? {
+        switch kind {
+        case .cpu: return .cpu
+        case .gpu: return .gpu
+        case .memory: return .memory
+        case .disk: return .disk
+        default: return nil
+        }
     }
 
     static func outline(for kind: Kind) -> LucideHardwareGeometry.Kind {

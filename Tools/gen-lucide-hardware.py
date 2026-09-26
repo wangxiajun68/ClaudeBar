@@ -35,6 +35,17 @@ ICONS = {
     "gpu": "gpu",
     "memory": "memory-stick",
     "disk": "hard-drive",
+    # The fan card's popover draws a laptop with the fans inside it; the chassis
+    # outline is Lucide's `laptop-minimal` for the same reason the four marks are
+    # Lucide's: invented geometry does not look designed.
+    "laptop": "laptop-minimal",
+    # The blade silhouette inside each of the popover's two fan bays. A rotor
+    # blade is the one shape this repo must not invent: the tile's `RotorBlade`
+    # was already a hand-fit Bézier, and a second hand-fit blade in the popover
+    # would be a second guess at the same curve — so both now come from Lucide's
+    # `fan`, which is four 6.08-radius arcs and so is exactly a rotor seen face
+    # on. `Resources/fan-blade.tsv` carries it in SwiftUI's unit space.
+    "fan": "fan",
 }
 RAW = "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/{}.svg"
 ROOT = Path(__file__).resolve().parents[1]
@@ -271,6 +282,11 @@ def convert(svg: str) -> list[str]:
                 calls.append(
                     f"p.addRect(CGRect(x: {fmt(x)}, y: {fmt(y)}, "
                     f"width: {fmt(w)}, height: {fmt(h)}))")
+        elif kind == "line":
+            x1, y1 = float(get("x1") or 0), float(get("y1") or 0)
+            x2, y2 = float(get("x2") or 0), float(get("y2") or 0)
+            calls.append(f"p.move(to: CGPoint(x: {fmt(x1)}, y: {fmt(y1)}))")
+            calls.append(f"p.addLine(to: CGPoint(x: {fmt(x2)}, y: {fmt(y2)}))")
         else:
             raise SystemExit(f"unsupported element <{kind}> — extend the generator")
     if not calls:
@@ -319,7 +335,7 @@ enum LucideHardwareGeometry {{
         return p
     }}
 
-    enum Kind {{ case cpu, gpu, memory, disk }}
+    enum Kind {{ case cpu, gpu, memory, disk, laptop, fan }}
 }}
 '''
     OUT.write_text(out)

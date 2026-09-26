@@ -76,6 +76,7 @@ struct PanelHeader: View {
                 .fill(runningCount > 0 ? Theme.chartGreen : Theme.Ink.idle)
                 .frame(width: 6, height: 6)
             Text(runningCount > 0 ? "\(runningCount) 会话" : "空闲")
+                .rollingNumber()
                 .font(Theme.Font.section)
                 .foregroundColor(Theme.textPrimary)
             statusDot

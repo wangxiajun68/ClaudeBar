@@ -31,6 +31,7 @@ struct SessionCardView: View {
                 Spacer()
                 if agentTotals.total > 0 {
                     Label("\(agentTotals.total)", systemImage: "point.3.connected.trianglepath.dotted")
+                        .rollingNumber()
                         .font(Theme.Font.micro)
                         .foregroundColor(agentTotals.running > 0 ? Theme.statusBusy : Theme.textTertiary())
                         .labelStyle(.titleAndIcon)

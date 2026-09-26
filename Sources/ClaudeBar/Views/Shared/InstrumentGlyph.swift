@@ -124,12 +124,8 @@ struct InstrumentGlyph: View, Animatable {
                 line([CGPoint(x:12,y:10),CGPoint(x:12,y:16)],ink)
                 line([CGPoint(x:5,y:20),CGPoint(x:5,y:16),CGPoint(x:19,y:16),CGPoint(x:19,y:20)],ink)
             case .fan:
-                for i in 0..<3 {
-                    var blade = c
-                    blade.translateBy(x:12,y:12)
-                    blade.rotate(by:.degrees(Double(i)*120 + phase*35))
-                    blade.fill(RotorBlade().path(in:CGRect(x:-10,y:-10,width:20,height:20)),with:.color(ink))
-                }
+                let symbol = c.resolve(Image(systemName: "fanblades.fill"))
+                c.draw(symbol, in: CGRect(x: 3, y: 3, width: 18, height: 18))
             case .config:
                 box(4,4,6,6,ink,radius:2)
                 box(14,4,6,6,ink,radius:2)
@@ -237,22 +233,6 @@ struct InstrumentGlyph: View, Animatable {
             }
         }
         .accessibilityHidden(true)
-    }
-}
-
-/// A single flowing silhouette shared by the static icon and live rotor.
-struct RotorBlade: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x:rect.minX+x*rect.width,y:rect.minY+y*rect.height)
-        }
-        path.move(to:p(0.47,0.42))
-        path.addCurve(to:p(0.67,0.08),control1:p(0.38,0.19),control2:p(0.49,0.03))
-        path.addCurve(to:p(0.55,0.44),control1:p(0.92,0.16),control2:p(0.73,0.41))
-        path.addQuadCurve(to:p(0.47,0.42),control:p(0.51,0.48))
-        path.closeSubpath()
-        return path
     }
 }
 

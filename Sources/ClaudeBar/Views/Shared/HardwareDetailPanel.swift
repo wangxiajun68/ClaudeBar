@@ -104,7 +104,7 @@ struct HardwareDetailPanel: View {
                     .frame(width: 104)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name).font(Theme.Font.chromeEmph)
-                    Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                    Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").rollingNumber().font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     RollingNumberText(String(format: "%.1f%%", load)).font(Theme.Font.displayMetric).monospacedDigit()
                 }
                 Spacer()
@@ -113,7 +113,7 @@ struct HardwareDetailPanel: View {
             HStack {
                 Label(sampler.host.temperatureLabel(celsius: gpu ? sampler.host.gpuTemperatureCelsius : sampler.host.cpuTemperatureCelsius) ?? "温度暂无读数", systemImage: "thermometer.medium")
                 Spacer()
-                Text("峰值 \(Int((values.max() ?? 0) * 100))%")
+                Text("峰值 \(Int((values.max() ?? 0) * 100))%").rollingNumber()
             }.font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
             Text(caption)
                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -121,61 +121,323 @@ struct HardwareDetailPanel: View {
     }
 }
 
+/// The connection tile's popover.
+///
+/// **What a connection card's click should open**, decided here because the card
+/// is four different claims in one tile (Wi-Fi, AirDrop, Ethernet, a headset) and
+/// "show me more" has to mean one thing for all of them:
+///
+/// 1. **The route this Mac's traffic takes.** The tile shows the *radio*; this
+///    shows where the radio goes — Wi-Fi and Ethernet on the left, the machine in
+///    the middle, Bluetooth and its accessories on the right, which is the answer
+///    to "why is Claude Code talking to the proxy this slowly". The 流量 page
+///    carries the throughput; this carries the topology.
+/// 2. **The link quality.** Signal is a number before it is a *feeling*: an RSSI
+///    bar with the weak/strong ends named, so a report of "network is bad" has
+///    something to point at.
+/// 3. **The proxy hop.** The local endpoint the provider traffic actually
+///    passes through, and whether it is listening — the one connection in this
+///    machine the app itself owns. It is the same reading the 设置 page shows,
+///    surfaced where the connection question is asked.
+/// 4. **The accessories.** Each headset's battery and how it is attached. Absent
+///    hardware is not a failure, so that block states the reason instead.
+///
+/// The 网络 pane and `ControlCenter` are the honest answer to "the rest of it",
+/// hence the one button at the bottom rather than a fifth block of system facts
+/// this app would be re-deriving.
 struct ConnectionDetailPanel: View {
     private let sampler = ProcessSampler.shared
     private let audio = AudioAccessoryMonitor.shared
+    @ObservedObject private var prefs = AppPreferences.shared
+    /// Injected, not a singleton: this panel is presented from the 概览 strip,
+    /// and the window already owns the one `CodexProviderStore` it hands to
+    /// every page through the environment. Reaching for a `shared` here would
+    /// mean the popup and the 设置 page could hold two stores describing one
+    /// listener.
+    @EnvironmentObject private var codexStore: CodexProviderStore
+    @ObservedObject private var tests = ConnectivityTestCenter.shared
+    @Environment(\.openURL) private var openURL
+
+    /// Wide enough for the route diagram to stay a *diagram*: 440 put the three
+    /// nodes and two links within a few points of each other, so the topology
+    /// read as one dense row instead of three stops on a line.
+    private let panelWidth: CGFloat = 480
+
     var body: some View {
         let host = sampler.host
         VStack(alignment: .leading, spacing: 18) {
-            HStack { Text("连接地图").font(Theme.Font.displayHero); Spacer(); Button("刷新") { audio.refreshNow() } }
-            HStack(spacing: 0) {
-                node("Wi-Fi", detail: host.wifiOn ? (host.wifiName.isEmpty ? "已开启" : host.wifiName) : "未开启", symbol: "wifi", active: host.wifiOn)
-                Rectangle().fill(Theme.chartBlue.opacity(0.4)).frame(height: 2)
-                node(HardwareIdentity.shortName, detail: "本机", symbol: "laptopcomputer", active: true)
-                Rectangle().fill(Theme.chartPurple.opacity(0.4)).frame(height: 2)
-                node("蓝牙", detail: host.bluetoothOn ? "已开启" : "未开启", symbol: "antenna.radiowaves.left.and.right", active: host.bluetoothOn)
-            }.frame(height: 110)
-            if host.wifiOn && host.wifiRSSI < 0 {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack { Text("信号强度"); Spacer(); RollingNumberText("\(host.wifiRSSI) dBm").monospacedDigit() }
-                    GeometryReader { proxy in
-                        Capsule().fill(Theme.hairline)
-                        Capsule().fill(LinearGradient(colors: [Theme.chartBlue, Theme.chartGreen], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: proxy.size.width * CGFloat(min(1, max(0, Double(host.wifiRSSI + 100) / 60))))
-                    }.frame(height: 8)
-                    HStack { Text("弱 · −100"); Spacer(); Text("强 · −40") }.font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+            header(host)
+            route(host)
+            if host.wifiOn, host.wifiRSSI < 0 {
+                signal(host)
+            }
+            proxyHop
+            accessories
+            bottomBar
+        }
+        .padding(22)
+        .frame(width: panelWidth)
+        .background(Theme.cardSurface)
+    }
+
+    // MARK: Header
+
+    private func header(_ host: ProcessSampler.HostStats) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("连接").font(Theme.Font.displayHero)
+            Spacer()
+            Text(headline(host))
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
+        }
+    }
+
+    /// One sentence for the whole card: what the machine is on. Deliberately the
+    /// *link*, not the count of accessories — an earbud connected does not change
+    /// how this Mac reaches the network, and the tile already said both.
+    private func headline(_ host: ProcessSampler.HostStats) -> String {
+        if host.wiredOn, !host.wifiName.isEmpty { return "以太网 · Wi-Fi \(host.wifiName)" }
+        if host.wiredOn { return "以太网" }
+        if !host.wifiName.isEmpty { return host.wifiName }
+        if host.wifiOn { return "Wi-Fi 已开启" }
+        if host.bluetoothOn { return "仅蓝牙" }
+        return "离线"
+    }
+
+    // MARK: Route
+
+    /// The topology the tile cannot show: radio → machine → accessories.
+    private func route(_ host: ProcessSampler.HostStats) -> some View {
+        HStack(spacing: 0) {
+            node(host.wiredOn ? "以太网" : "Wi-Fi",
+                 detail: host.wiredOn ? "已接入"
+                       : (host.wifiName.isEmpty ? (host.wifiOn ? "已开启" : "未开启") : host.wifiName),
+                 symbol: host.wiredOn ? "network" : "wifi",
+                 active: host.wiredOn || host.wifiOn)
+            Link(kind: .uplink, tint: Theme.chartBlue)
+            node(HardwareIdentity.shortName, detail: "本机", symbol: "laptopcomputer", active: true)
+            Link(kind: .downlink, tint: Theme.chartPurple)
+            node("蓝牙",
+                 detail: audio.accessories.isEmpty
+                       ? (host.bluetoothOn ? "已开启" : "未开启")
+                       : "\(audio.accessories.count) 个设备",
+                 symbol: "antenna.radiowaves.left.and.right",
+                 active: host.bluetoothOn)
+        }
+        .frame(height: 96)
+        .frame(maxWidth: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.cardFill(0.4))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1)
+        }
+    }
+
+    /// The connector between two nodes. A lit hairline when the hop is live, a
+    /// dashed grey one when it is not — the same distinction the marks make, so
+    /// "off" is drawn rather than merely dimmer.
+    private struct Link: View {
+        enum Kind { case uplink, downlink }
+
+        var kind: Kind
+        var tint: Color
+
+        var body: some View {
+            VStack(spacing: 6) {
+                Text(kind == .uplink ? "上行" : "下行")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundColor(Theme.textTertiary())
+                Rectangle()
+                    .fill(tint.opacity(0.45))
+                    .frame(width: 44, height: 2)
+            }
+        }
+    }
+
+    private func node(_ title: String, detail: String, symbol: String, active: Bool) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .medium))
+                .foregroundColor(active ? Theme.chartBlue : Theme.textTertiary(0.5))
+            Text(title)
+                .font(Theme.Font.chromeEmph)
+                .lineLimit(1)
+            Text(detail)
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(width: 104)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) \(detail)")
+    }
+
+    // MARK: Signal
+
+    private func signal(_ host: ProcessSampler.HostStats) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("信号强度").font(Theme.Font.chromeEmph)
+                Spacer()
+                if let grade = WiFiBars.label(for: host.wifiRSSI) {
+                    StatusPill(label: grade, tint: Theme.chartBlue)
+                }
+                RollingNumberText("\(host.wifiRSSI) dBm")
+                    .font(Theme.Font.captionMono)
+                    .monospacedDigit()
+            }
+            // −100…−40 is the range macOS itself treats as "usable". Drawn as a
+            // bare track with one marker rather than a filled bar: the reading is
+            // a position on a scale, and a bar that fills would read as a ratio.
+            GeometryReader { proxy in
+                let position = min(1, max(0, Double(host.wifiRSSI + 100) / 60))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.hairline)
+                    Capsule()
+                        .fill(LinearGradient(colors: [Theme.chartBlue, Theme.chartGreen],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: proxy.size.width * CGFloat(position))
                 }
             }
-            HStack(spacing: 24) { WiFiConnectionMark(host: host); AirDropConnectionMark() }
-            if host.wiredOn { Label("以太网已接入", systemImage: "network").font(Theme.Font.chrome) }
+            .frame(height: 8)
+            HStack {
+                Text("弱 · −100").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                Spacer()
+                Text("强 · −40").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+            }
+        }
+    }
+
+    // MARK: Proxy hop
+
+    /// The one connection this app owns. Same readout as 设置 → 本地代理, surfaced
+    /// where the question is actually asked, plus the test button that already
+    /// knows how to answer it.
+    private var proxyHop: some View {
+        let outcome = tests.outcome(ConnectivityTestCenter.proxyKey)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("本地代理").font(Theme.Font.chromeEmph)
+                Spacer()
+                StatusPill(label: codexStore.proxyRunning ? "监听中" : "未监听",
+                           tint: codexStore.proxyRunning ? Theme.chartGreen : Theme.textSecondary,
+                           ink: codexStore.proxyRunning ? Theme.Ink.success : Theme.textSecondary)
+            }
+            Text(LocalProxyAddress.openaiRoot)
+                .font(Theme.Font.captionMono)
+                .foregroundColor(Theme.textSecondary)
+                .textSelection(.enabled)
+            HStack(spacing: 10) {
+                ConnectivityTileButton(outcome: outcome, helpIdle: "检测本机代理") {
+                    tests.testProxy(port: prefs.codexProxyPort, running: codexStore.proxyRunning)
+                }
+                Text(outcome.state == .idle ? "尚未检测" : outcome.detail)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(outcome.state == .failed ? Theme.Ink.error : Theme.textSecondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Theme.cardFill(0.4))
+        }
+    }
+
+    // MARK: Accessories
+
+    @ViewBuilder private var accessories: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("蓝牙设备").font(Theme.Font.chromeEmph)
+                Spacer()
+                Button("刷新") { audio.refreshNow() }
+                    .buttonStyle(.plain)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.Ink.claude)
+            }
             if audio.accessories.isEmpty {
-                Text("尚未检测到耳机。连接后自动更新，电量以设备报告为准。").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                Text(audio.unavailableReason
+                     ?? "尚未检测到耳机。连接后自动更新，电量以设备报告为准。")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(3)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110))], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 14) {
                         ForEach(audio.accessories) { accessory in
-                            VStack(spacing: 7) {
-                                ZStack {
-                                    Circle().stroke(Theme.hairline, lineWidth: 5)
-                                    Circle().trim(from: 0, to: CGFloat(accessory.headline ?? 0) / 100)
-                                        .stroke(Theme.chartPurple, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90))
-                                    Text(accessory.headline.map { "\($0)%" } ?? "未知").font(Theme.Font.chromeEmph)
-                                }.frame(width: 62, height: 62)
-                                Text(accessory.name).lineLimit(2)
-                                Text(accessory.connection.label).foregroundColor(Theme.textSecondary)
-                            }.font(Theme.Font.caption).padding(8)
+                            accessoryCell(accessory)
                         }
                     }
-                }.frame(maxHeight: 160)
+                }
+                .frame(maxHeight: 150)
             }
-        }.padding(22).frame(width: 440).background(Theme.cardSurface)
+        }
     }
-    private func node(_ title: String, detail: String, symbol: String, active: Bool) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 24)).foregroundColor(active ? Theme.chartBlue : Theme.textSecondary)
-            Text(title).font(Theme.Font.chromeEmph)
-            Text(detail).font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(2)
-        }.frame(width: 110)
+
+    private func accessoryCell(_ accessory: AudioAccessoryMonitor.Accessory) -> some View {
+        VStack(spacing: 7) {
+            ZStack {
+                Circle().stroke(Theme.cardFill(0.35), lineWidth: 5)
+                if let level = accessory.headline {
+                    Circle()
+                        .trim(from: 0, to: max(0.02, min(1, Double(level) / 100)))
+                        .stroke(accessoryTint(accessory), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                Text(accessory.headline.map { "\($0)%" } ?? "未知")
+                    .rollingNumber()
+                    .font(Theme.Font.chromeEmph)
+            }
+            .frame(width: 56, height: 56)
+            Text(accessory.name).lineLimit(2).multilineTextAlignment(.center)
+            Text(accessoryValue(accessory, count: audio.accessories.count))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+        }
+        .font(Theme.Font.caption)
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(accessory.name) \(accessoryValue(accessory, count: audio.accessories.count))")
+    }
+
+    private func accessoryTint(_ accessory: AudioAccessoryMonitor.Accessory) -> Color {
+        switch accessory.connection {
+        case .inUse: return accessory.isCharging == true ? Theme.chartGreen : Theme.chartPurple
+        default: return Theme.textTertiary(0.55)
+        }
+    }
+
+    // MARK: Footer
+
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            Text("更详细的路由与吞吐在 流量 页；系统级的接口列表在 macOS 的网络设置里。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button("流量明细") {
+                NotificationCenter.default.post(.showMainWindow(page: .traffic))
+            }
+            .buttonStyle(.plain)
+            .font(Theme.Font.caption)
+            .foregroundColor(Theme.Ink.claude)
+            Button("打开网络设置") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
+                    openURL(url)
+                }
+            }
+            .buttonStyle(.plain)
+            .font(Theme.Font.caption)
+            .foregroundColor(Theme.textSecondary)
+        }
     }
 }
 

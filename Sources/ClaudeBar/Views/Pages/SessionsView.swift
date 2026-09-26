@@ -429,7 +429,7 @@ private struct SessionTileFull: View {
             RollingNumberText("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
                 .lineLimit(1)
             if wf.runningCount > 0 {
-                Text("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
+                Text("(\(wf.runningCount)●)").rollingNumber().font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
             }
             Spacer()
         }
@@ -679,6 +679,7 @@ private struct ExternalSessionTile: View {
             if !agents.isEmpty {
                 let running = agents.filter(\.isActive).count
                 Text(running > 0 ? "\(running) 运行中" : "全部空闲")
+                    .rollingNumber()
                     .font(Theme.Font.caption)
                     .foregroundColor(running > 0 ? Theme.externalHi : Theme.textTertiary())
             }

@@ -232,6 +232,7 @@ struct UsageDaySpark: View {
                     }
                 }
                 Text("均值 \(UsageStats.formatTokens(average))")
+                    .rollingNumber()
                     .font(Theme.Font.microSemibold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 7)

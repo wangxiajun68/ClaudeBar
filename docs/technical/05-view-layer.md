@@ -22,9 +22,23 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - `.tile(tint:hovered:dense:lens:framed:)` 是宫格形态；`.hoverTile(...)` 是"这个点的 body 没有别处要用 hover"时的简写（同一个 target 不开两个 `.onHover`）。
 - **角上已有内容的卡片不加 `lens`**（会话瓦片的角上是子 agent 簇），只取 `tint` 的水洗。
 - `SegmentedCapsule` 是唯一的筛选 / 分段控件：一个胶囊井 + 一颗 `matchedGeometryEffect` 滑动药丸，连接器的类型与平台筛选、供应商的客户端与分类筛选、用量的周期条、VPN 的分组条都走它。
-- `OrbitGauge`（额度表盘：trim 弧 + 沿弧走的圆点）、`ConveyorBelt`（扫描中那种"正在持续做事"的走带，`DecorativeMotion.kind == .conveyor`）、`ShineSweep` + `.depthTilt()`（一次性扫光与 3D 倾斜，**只给单张 hero 卡**，不进 `.tile()`）。这里**已经没有 `LoadRing`**：它曾是唯一按读数调速的装饰（一条光的弧绕在机器图标背后，转速 ∝ 读数，<5% 完全静止，读数变化时用 `timeOffset` 就地重定时），但约 96° 的弧在 22–28pt 上读起来就是「转圈 = 等待」，而且它复述了下方三行已经印出的数字 —— 视图与 `DecorativeMotion.loadRing` 一并删除。实时读数改由右侧的 mark 承担：**上层是 Lucide 官方图标（`cpu` / `gpu` / `memory-stick` / `hard-drive`，由 `Tools/gen-lucide-hardware.py` 生成到 `LucideHardwareGeometry.swift`），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，条高即读数**，另有一条按读数调速的扫光（`TimelineView` 驱动，<4%、减弱动效或不可见时停止）（见 `HardwareIllustration` 与 [DESIGN.md](../../DESIGN.md) 的 Machine marks）。
+- `OrbitGauge`（额度表盘：trim 弧 + 沿弧走的圆点）、`ConveyorBelt`（扫描中那种"正在持续做事"的走带，`DecorativeMotion.kind == .conveyor`）、`ShineSweep` + `.depthTilt()`（一次性扫光与 3D 倾斜，**只给单张 hero 卡**，不进 `.tile()`）。这里**已经没有 `LoadRing`，也没有取代它的 `InstrumentRing`**：两者都曾是按读数调速的装饰（一条光的弧 / 一圈 conic 环绕在机器图标背后，转速 ∝ 读数，<5% 完全静止，读数变化时用 `timeOffset` 就地重定时），但弧与环在 20–28pt 上读起来都是「转圈 = 等待」，而且它们复述了下方三行已经印出的数字 —— 视图、`DecorativeMotion.loadRing` 与 `InstrumentRing` 一并删除。
+
+实时读数改由右侧的 mark 承担：**上层是 Lucide 官方图标（`cpu` / `gpu` / `memory-stick` / `hard-drive`，由 `Tools/gen-lucide-hardware.py` 生成到 `LucideHardwareGeometry.swift`；同一脚本还生成 `laptop-minimal` 与 `fan`），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，条高即读数**，另有一条按读数调速的扫光（`TimelineView` 驱动，<4%、减弱动效或不可见时停止）（见 `HardwareIllustration` 与 [DESIGN.md](../../DESIGN.md) 的 Machine marks）。mark 的尺寸是 `ResourceStrip.markSlot`（176×130），瓦片与 popover 共用同一个常量。
+
+风扇使用共享结构插画的涡轮区域，缺失时回退到 SF Symbols `fanblades.fill`（`LucideRotor.swift` 保留旧文件名）。Core Animation 按 RPM 就地重定时，低于 80 RPM、窗口不可见或减弱动效时停转。详情使用随包分发的高清矢量风格概念插画，保留电路、散热管、电池细节；图中双风扇按各自 RPM 动画，按钮独立控制风速。
 - 成本口径：装饰是几何而不是动画（每个 `Canvas` 只画一次）；两处会动的东西（扫光、走带）都由 `surfaceIsVisible` + 减弱动效双重门控；3D 倾斜只在被悬停的那一张上。见 [DESIGN.md](../../DESIGN.md) 的 Motion / performance。
 
+
+## 数字滚动（`Views/Shared/Interaction.swift`）— 全局唯一一条
+
+所有界面上**会变动的数字**都是同一个逐位滚动效果（灵动岛 token 数字的那个）：`monospacedDigit()` + `.contentTransition(.numericText(countsDown: true))`，**不带**任何隐式 `.animation(_:value:)`。
+
+- **一个定义，两种写法**：`View.rollingNumber()` 是公共方法（`RollingNumberModifier`，内部门控 `accessibilityReduceMotion`），`RollingNumberText(_:)` 是同一 transition 的薄包装（让调用处一眼看出"这里渲染的是一个数字"）。二者共用同一个 modifier，不存在第二份实现。
+- **加在哪一层**：加在**渲染数字的那个 `Text` / `Label` 叶子上**，不是容器上——容器上会连带整棵子树进出 transition。数字夹在句子里（"共 N 个可用 · 已选 M 个"）也照样加：`.numericText` 只滚数字字形，周围文案不动。
+- **不要再用裸的 `.contentTransition(.numericText())`**：那正是重复实现；一律走 `rollingNumber()`。
+- 同样地，**不要给这些叶子补 `.animation(_:value:)`**：值每秒/每次轮询都变，隐式动画会让事务常驻在飞，每个显示周期都重排整个 hosting view（见 [08-performance.md](08-performance.md)），而 `.numericText` 自己就是动画。`Tests/inflight-animation-regressions.py` 把这条钉在 `RollingNumberText` 上。
+- 静态文案（路径、版本号、模型名、确认弹窗里一次算好的计数）不需要滚动——没有"变动"可言。
 
 ## `MenuBarView` + `Views/Popup/` — 菜单栏 popup
 
