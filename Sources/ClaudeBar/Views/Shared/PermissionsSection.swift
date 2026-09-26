@@ -10,6 +10,7 @@ struct PermissionsSection: View {
         VStack(alignment: .leading, spacing: Theme.Space.s10) {
             SectionHeader(icon: "hand.raised", title: "权限与隐私", tint: Theme.claude)
             Text("已开启 \(center.enabledCount) / \(AppPermission.allCases.count) 项 · 打开开关才会向系统请求，关闭后不再调用对应接口。")
+                .rollingNumber()
                 .font(Theme.Font.caption)
                 .foregroundStyle(Theme.textSecondary)
             // The page's own grid, not a second one: at 220pt this row laid

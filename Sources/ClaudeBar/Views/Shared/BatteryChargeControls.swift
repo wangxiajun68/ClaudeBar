@@ -58,6 +58,7 @@ struct BatteryChargeControls: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 Text("\(Int(BatteryChargeController.minLimit))%")
+                    .rollingNumber()
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textTertiary())
                 Slider(value: $controller.threshold,

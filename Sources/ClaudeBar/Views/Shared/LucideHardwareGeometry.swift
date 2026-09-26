@@ -112,9 +112,32 @@ enum LucideHardwareGeometry {
             p.addLine(to: CGPoint(x: 2.054, y: 12.013))
             p.move(to: CGPoint(x: 6, y: 16))
             p.addLine(to: CGPoint(x: 6.01, y: 16))
+        /// Lucide `laptop-minimal`.
+        case .laptop:
+            p.addRoundedRect(in: CGRect(x: 3, y: 4, width: 18, height: 12), cornerSize: CGSize(width: 2, height: 2))
+            p.move(to: CGPoint(x: 2, y: 20))
+            p.addLine(to: CGPoint(x: 22, y: 20))
+        /// Lucide `fan`.
+        case .fan:
+            p.move(to: CGPoint(x: 10.827, y: 16.379))
+            p.addCurve(to: CGPoint(x: 4.2486, y: 15.6711), control1: CGPoint(x: 8.6864, y: 17.4607), control2: CGPoint(x: 6.1101, y: 17.1835))
+            p.addCurve(to: CGPoint(x: 2.209, y: 9.377), control1: CGPoint(x: 2.3872, y: 14.1587), control2: CGPoint(x: 1.5884, y: 11.6937))
+            p.addLine(to: CGPoint(x: 7.621, y: 10.827))
+            p.addCurve(to: CGPoint(x: 8.3289, y: 4.2486), control1: CGPoint(x: 6.5393, y: 8.6864), control2: CGPoint(x: 6.8165, y: 6.1101))
+            p.addCurve(to: CGPoint(x: 14.623, y: 2.209), control1: CGPoint(x: 9.8413, y: 2.3872), control2: CGPoint(x: 12.3063, y: 1.5884))
+            p.addLine(to: CGPoint(x: 13.173, y: 7.621))
+            p.addCurve(to: CGPoint(x: 19.7514, y: 8.3289), control1: CGPoint(x: 15.3136, y: 6.5393), control2: CGPoint(x: 17.8899, y: 6.8165))
+            p.addCurve(to: CGPoint(x: 21.791, y: 14.623), control1: CGPoint(x: 21.6128, y: 9.8413), control2: CGPoint(x: 22.4116, y: 12.3063))
+            p.addLine(to: CGPoint(x: 16.379, y: 13.173))
+            p.addCurve(to: CGPoint(x: 15.6711, y: 19.7514), control1: CGPoint(x: 17.4607, y: 15.3136), control2: CGPoint(x: 17.1835, y: 17.8899))
+            p.addCurve(to: CGPoint(x: 9.377, y: 21.791), control1: CGPoint(x: 14.1587, y: 21.6128), control2: CGPoint(x: 11.6937, y: 22.4116))
+            p.addLine(to: CGPoint(x: 10.827, y: 16.379))
+            p.closeSubpath()
+            p.move(to: CGPoint(x: 12, y: 12))
+            p.addLine(to: CGPoint(x: 12, y: 12.01))
         }
         return p
     }
 
-    enum Kind { case cpu, gpu, memory, disk }
+    enum Kind { case cpu, gpu, memory, disk, laptop, fan }
 }

@@ -81,12 +81,20 @@ and category filter, the usage period tabs and the VPN group tabs.
 `ConveyorBelt` is the travelling-tick strip used where a surface is *doing*
 something continuous, so liveness is drawn rather than pulsed.
 
-There is no rate-driven ornament on a machine mark, and the one that existed is
+There is no rate-driven ornament on a machine mark, and the two that existed are
 gone. `LoadRing` was a lit arc circling the tile's *small* glyph, turning at a
-rate proportional to the tile's own percentage; it was removed, view and
-decoration kind together. A ~96° arc at 22–28pt reads as a **spinner** — which
-says "waiting", never what a working machine is doing — and it repeated a figure
-already printed three lines below it, at a smaller size and a lower contrast.
+rate proportional to the tile's own percentage; `InstrumentRing` was the same
+idea redrawn as a conic ring around it. Both were removed, views and decoration
+kind together. A ~96° arc — and a ring, whichever way its ink is laid out — at
+20–28pt reads as a **spinner**, which says "waiting", never what a working
+machine is doing, and both repeated a figure already printed three lines below at
+a smaller size and a lower contrast.
+
+That rule is about *small* glyphs. It is not a rule against motion, and it is not
+a rule about **rings as such**: an arc that encodes one reading is the honest
+shape for that reading, and the machine marks below use them. What it rules out is
+a rotating or ringed ornament standing where a caption belongs.
+
 The live reading belongs to the mark on the right: Lucide's icon for the part,
 with its own lane of bars beneath.
 
@@ -103,7 +111,6 @@ ornament is one shape rather than a stack of views.
 | `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 16 toggles in the app. |
 | `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
-| `InstrumentRing` | `stat-widget` pill | a conic reading ring around a value — "how much of the whole", where `OrbitGauge` is "where on the dial". |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
 | `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the **one** bar-chart card: vertical bars keeping the reference's own two-stop gradient, its top cap dot and its average guide line. `UsageDaySpark` is the seven-bucket period chart; `SourceTriad` is the three-meter share card; `TokenMixStrip` is the stacked token-mix track. One bar shape across all three, so the usage page reads as one card family rather than three charts that happen to be adjacent. |
 | `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
@@ -158,8 +165,8 @@ The rules that keep this a *reading* rather than a decoration:
 1. **The lane moves, and only when there is something to say.** A light sweep
    crosses each bar at a rate proportional to the tile's own figure — 2.9 s per
    sweep at idle-ish, 0.6 s at full — so the strip is visibly working. **Below
-   4 % it stops** (the `SoftRotor` discipline, `rpm >= 80`), and Reduce Motion or
-   an off-screen surface stops it too. The sweep is derived from absolute time,
+   4 % it stops** (the `LucideRotor` discipline, `rpm >= 80`), and Reduce Motion
+   or an off-screen surface stops it too. The sweep is derived from absolute time,
    so a load change speeds it up rather than restarting it, and it is driven by
    `TimelineView` inside the mark rather than by a second timer.
 2. **A bar is a measurement or it is not drawn.** Twelve cores draw twelve bars;
@@ -204,6 +211,30 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
    ice canvas; brand and live status stay outside it. At narrow widths tabs
    lose glyphs before labels, preserving the full destination list.
 
+## Numbers
+
+Every figure that can change — a count, a percentage, a token total, a rate, a
+delay, a selection tally — rolls per digit with the island's own effect:
+`monospacedDigit()` + `.contentTransition(.numericText())`, and **no** implicit
+`.animation(_:value:)`.
+
+- One definition, two spellings, in `Views/Shared/Interaction.swift`:
+  `View.rollingNumber()` (the common method) and `RollingNumberText(_:)` (the
+  same transition, so a call site reads as a *figure*). Both route through the
+  one modifier; there is no second implementation.
+- Apply it to the **leaf** that renders the digits — a bare `Text`, or a
+  `Label` whose title is a number — never to a container, and never to a whole
+  island/panel. A figure inside a sentence takes it too: `.numericText` rolls
+  only the digit glyphs, so the surrounding copy stays put.
+- Do not reach for a raw `.contentTransition(.numericText())` at a call site:
+  that is the duplicate this replaces.
+- Do not add `.animation(_:value:)` beside it. The value changes every poll, so
+  an implicit animation leaves a transaction permanently in flight and every
+  display cycle re-lays out the whole hosting view. `.numericText` *is* the
+  animation. (`Tests/inflight-animation-regressions.py`.)
+- Static copy — paths, version strings, model names, a count computed once for
+  a confirmation sentence — stays plain: there is nothing to roll.
+
 ## Motion / performance
 
 - Popup sections lift in once on open — never stagger inner cells. (The
@@ -227,13 +258,23 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
   reduce-motion: the status-button shine (`ShineSweep`, a single 0.55 s sweep
   when hover begins) and the conveyor belt (`DecorativeMotion.kind == .conveyor`,
   a Core Animation layer). Neither repeats a SwiftUI animation.
-- The machine marks are static `Canvas` geometry, redrawn only when the
-  sampler publishes a new reading (every 2 s, 1 s while a window is frontmost,
-  and the marks are inside the strip's own `.transaction { animation = nil }`
-  so a tick repaints once rather than interpolating). Nothing about them runs
-  per frame. The rate-driven `LoadRing` that used to sit behind each meter is
-  gone: its five Core Animation layers were the strip's only per-frame cost, and
-  what they bought — a spinner reading as "waiting" — was the wrong idea.
+- The machine marks are `Canvas` geometry, redrawn only when the sampler
+  publishes a new reading (every 2 s, 1 s while a window is frontmost) — but the
+  sweep across their reading lanes is driven by a `TimelineView` at 30 Hz, paused
+  by the same three-way gate as every other ornament: the reading (below 4 % the
+  mark is still), `surfaceIsVisible`, and reduce-motion. So an idle machine
+  animates nothing, and a visible one pays for one canvas redraw per 33 ms, not
+  for a view graph. The rate-driven `LoadRing` that used to sit behind each meter
+  is gone: its five Core Animation layers were the strip's only per-frame cost,
+  and what they bought — a spinner reading as "waiting" — was the wrong idea.
+- Overview fan instruments use native SF Symbols within a quiet
+  neutral ring. Core Animation retimes rotation in place as RPM changes;
+  below 80 RPM, off-screen, and Reduce Motion all stop the rotation.
+  The fan buttons directly toggle max / auto; the rest of the tile opens details.
+  Detail-panel turbines use circular crops from the internal illustration.
+  Internals use a bundled detailed vector-style PNG illustration. It is a
+  conceptual overview, not an exact host-specific board map or a true SVG.
+  Both illustrated fans animate independently using the shared turbine crops.
 - The 3D card's tilt is a **hero** treatment, not part of `.tile()`: only
   `ConnectorCard` opts in via `.depthTilt()`, and only while that one card is
   hovered, so at most one subtree is ever rasterised in 3D. It stays off

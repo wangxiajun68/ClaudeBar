@@ -192,6 +192,7 @@ struct ProviderConnectionEditor: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("模型", systemImage: "square.stack.3d.up").font(.system(size: 15, weight: .semibold))
                     Text("已选 \(draft.modelNames.count) 个 · 带勾的是默认模型")
+                        .rollingNumber()
                         .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

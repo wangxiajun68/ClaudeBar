@@ -333,6 +333,7 @@ struct AgentSwarmView: View {
     /// faceless: a count, not a cell pretending to be an agent.
     private func overflowTile(_ count: Int, grid: SwarmGrid) -> some View {
         Text("+\(count)")
+            .rollingNumber()
             .font(Theme.Font.microMono)
             .foregroundColor(Theme.textTertiary(0.7))
             .frame(width: grid.cardWidth, height: grid.cardHeight)

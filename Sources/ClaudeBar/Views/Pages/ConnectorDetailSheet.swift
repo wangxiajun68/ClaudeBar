@@ -103,8 +103,8 @@ struct ConnectorDetailSheet: View {
                     .foregroundStyle(Theme.textPrimary)
                 if !toolsLoading && toolsError == nil {
                     Text("\(tools.count)")
+                        .rollingNumber()
                         .font(Theme.Font.microMedium)
-                        .monospacedDigit()
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

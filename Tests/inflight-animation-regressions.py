@@ -43,6 +43,12 @@ root = Path(__file__).resolve().parents[1]
 # animation.
 GUARDED = [
     ('Sources/ClaudeBar/Views/Shared/Interaction.swift', 'struct RollingNumberText: View'),
+    # The common method the whole app routes its digits through. The wrapper
+    # above no longer carries the transition itself, so the guard has to sit on
+    # the definition that does — otherwise a `.animation(value:)` added to
+    # `RollingNumberModifier` would reopen the cost on every rolling figure in
+    # the app and this test would still pass.
+    ('Sources/ClaudeBar/Views/Shared/Interaction.swift', 'struct RollingNumberModifier: ViewModifier'),
     ('Sources/ClaudeBar/Views/Shared/SectionHeader.swift', 'private var trailingView: some View'),
 ]
 
@@ -149,4 +155,5 @@ if failures:
     sys.exit(1)
 
 print('PASS: no implicit value-keyed animation on the per-poll digit '
-      'components (RollingNumberText, SectionHeader.trailingView)')
+      'components (RollingNumberText, RollingNumberModifier, '
+      'SectionHeader.trailingView)')

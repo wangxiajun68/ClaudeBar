@@ -67,10 +67,9 @@ struct DashboardView: View {
     private func figure(_ label: String, _ value: Int, _ face: Color, _ ink: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(value)")
+                .rollingNumber()
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .monospacedDigit()
                 .foregroundStyle(ink)
-                .contentTransition(.numericText())
             HStack(spacing: 4) {
                 Rectangle().fill(face.opacity(0.55)).frame(width: 8, height: 2)
                 Text(label)

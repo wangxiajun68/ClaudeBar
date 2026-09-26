@@ -9,6 +9,7 @@ struct ResourceStrip: View {
     @State private var showGPU = false
     @State private var showMemory = false
     @State private var showDisk = false
+    @State private var showFans = false
 
     var body: some View {
         // One shared string for the CPU / GPU / 风扇 tiles. `meter(...)` used to
@@ -203,43 +204,15 @@ struct ResourceStrip: View {
     ) -> some View {
         let content = VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                // No ring here.
-                //
-                // Each tile's header used to wrap its glyph in a `LoadRing`: a
-                // ~96° arc travelling at a rate proportional to the tile's own
-                // reading. It read as a **spinner**, which is a lie — a spinner
-                // means "waiting", and nothing on this strip is ever waiting for
-                // the machine. It also duplicated the figure printed three
-                // lines under it, at a smaller size and a lower contrast.
-                //
-                // The live reading belongs to the big mark on the right, where
-                // it is drawn in the shape of the hardware it describes: twelve
-                // cells for twelve cores, one column per GPU sub-unit. That
-                // mark states the reading; this one only names the tile.
-                // The tile's own reading, drawn as `stat-widget`'s conic ring.
-                //
-                // This is a *different* figure from the big mark on the right,
-                // which is why it earns its place where the old `LoadRing` did
-                // not: the mark shows the hardware's own shape (twelve cells,
-                // one per core), and this ring shows the one aggregate the tile
-                // is named for, as a fraction of its range. A ring around a
-                // value is not a spinner — it does not rotate, it fills — and
-                // at this size it is the fastest thing on the tile to read.
-                //
-                // The fans have no single 0…1 reading, so they keep the plain
-                // badge and state themselves in the pill instead.
-                if kind == .fans {
-                    InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
-                        .frame(width: 28, height: 28)
-                } else {
-                    InstrumentRing(progress: load, tint: tint, size: 28, thickness: 3)
-                        .overlay {
-                            InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link,
-                                            tint: tint)
-                                .frame(width: 19, height: 19)
-                        }
-                        .accessibilityHidden(true)
-                }
+                // The glyph only names the tile. No ring — not the old
+                // `LoadRing` (a rotating arc, i.e. a spinner) and not the
+                // `InstrumentRing` that replaced it: a ring drawn *around* a
+                // 28pt icon is read as a spinner whichever way its ink is laid
+                // out, and a tile that looks like it is waiting is worse than a
+                // tile with no ornament at all. The reading is the big mark on
+                // the right and the figure beside it; this is the caption.
+                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
+                    .frame(width: 26, height: 26)
                 Text(label)
                     .font(Theme.Font.chrome)
                     .foregroundColor(Theme.textSecondary)
@@ -253,25 +226,26 @@ struct ResourceStrip: View {
                 }
             }
 
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
                     RollingNumberText(hero)
                             .font(Theme.Font.displayMetric)
                             .monospacedDigit()
                             .foregroundColor(tempColor ?? heroTint)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
-                    // The caption shares the row with the mark, and the mark is
-                    // deliberately large; so the caption scales down before it
-                    // truncates. "已使用 375.3 GB / 460.4…" loses the number that
-                    // matters, which is worse than slightly smaller type.
+                    // Two lines, left to wrap. The caption carries the numbers a
+                    // person actually came for ("已使用 375.3 GB / 460.4 GB"), and
+                    // one line beside a mark this size got them truncated to
+                    // "460.4…" — losing the figure that matters to save 12pt of
+                    // height. Wrapping is the honest trade; the hero above keeps
+                    // its own single line.
                     Text(caption)
                         .font(Theme.Font.tileLabel)
                         .foregroundColor(tempColor ?? Theme.textTertiary())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
+                        .lineLimit(2)
                         .allowsTightening(true)
-                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
                 }
                 Spacer(minLength: 4)
@@ -305,17 +279,31 @@ struct ResourceStrip: View {
                                              markHeight: 80)
                     }
                 }
-                // The tile's mark slot: the mini charts are ornaments sized to
-                // the slot by design.
-                .frame(width: 112, height: 80)
+                // The mark slot. This is the third size it has been, and each
+                // step was forced by the same fact: the mark *is* the reading,
+                // so every point it gives up is a point the twelve-core lane
+                // loses. 112×80 was a texture, 150×112 was countable, and
+                // 176×130 is the size at which the icon is legible *as that
+                // part* — a processor, a graphics card, a DIMM, a drive bay —
+                // without reading the caption, which is the whole point of the
+                // tiles.
+                //
+                // The caption paid for it out of the same row budget: the mark
+                // grows into the height the *label* gives up, never into the
+                // figure. 8pt label + 24pt figure + two caption lines is what is
+                // left, which is why 176 is the widest this may get — past that
+                // the caption beside it starts truncating again.
+                //
+                // No `.transaction { animation = nil }` any more: it existed to
+                // stop a sampler tick interpolating the *old* static marks, and
+                // the marks are now driven by `TimelineView` — suppressing
+                // animation on this subtree would freeze the motion.
+                .frame(width: Self.markSlot.width, height: Self.markSlot.height)
                 .clipped()
-                .transaction { tx in
-                    if kind != .fans { tx.animation = nil }
-                }
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 168, maxHeight: .infinity, alignment: .topLeading)
         // The meter carries its own hue into the tile surface: the accent wash
         // is what the inner frame ring sits on, and the hover edge then agrees
         // with the hero number's tint. No lens here — the tile's mark occupies
@@ -346,18 +334,29 @@ struct ResourceStrip: View {
                     .buttonStyle(.pressable)
                     .help("查看启动磁盘占用图表")
                     .popover(isPresented: $showDisk) { DiskUsagePanel() }
+            } else if kind == .fans {
+                // Child buttons own fan control; tapping the surrounding tile opens details.
+                content
+                    .contentShape(Rectangle())
+                    .onTapGesture { showFans = true }
+                    .accessibilityAction(named: Text("查看散热详情")) { showFans = true }
+                    .help("点击风扇调速，点击卡片其他区域查看散热详情")
+                    .popover(isPresented: $showFans) { FanInternalsPanel() }
             } else {
                 content
             }
         }
     }
 
+    /// The box every mark on the strip is handed — CPU / GPU silicon, the DIMM
+    /// and the drive bay at full size, the fan pair inside it. One constant, so
+    /// four tiles cannot end up with four subtly different marks, and so the
+    /// popovers that redraw the same mark at hero size can name the same number.
+    static let markSlot = CGSize(width: 176, height: 130)
+
     private func toggleFan(_ fan: FanInfo) {
-        if fan.mode.isAutomatic {
-            fanMonitor.setMaxSpeed(fan.id)
-        } else {
-            fanMonitor.setAutomatic(fan.id)
-        }
+        if fan.mode.isAutomatic { fanMonitor.setMaxSpeed(fan.id) }
+        else { fanMonitor.setAutomatic(fan.id) }
     }
 
     private func cpuAttributionCaption() -> String {

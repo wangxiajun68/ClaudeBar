@@ -279,6 +279,12 @@ struct IconChipRow<Content: View>: View {
 /// per-second value is not free even when the value rarely changes.
 /// `Tests/inflight-animation-regressions.py` holds this and
 /// `SectionHeader.trailingView` to it.
+///
+/// This is the **one** definition of the roll: `View.rollingNumber()` below
+/// carries the identical transition, and this wrapper exists only so a figure
+/// reads as a *figure* at the call site. Every numeric `Text` in the app — on
+/// every page, in the popup, on the island — goes through one of the two, so
+/// "所有数字都逐位滚动" is one rule, not one rule per screen.
 struct RollingNumberText: View {
     let value: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -287,7 +293,45 @@ struct RollingNumberText: View {
 
     var body: some View {
         Text(value)
+            .rollingNumber()
+    }
+}
+
+// MARK: - Rolling figures
+
+/// The app's one digit-roll: `.numericText` carried by the value change itself,
+/// with no implicit `.animation(_:value:)` — see the `RollingNumberText` note
+/// above for why that modifier is the app's worst idle cost.
+///
+/// Applied as a `ViewModifier` (not a `Text` method) so that **any** view that
+/// renders a figure can take it without giving up its own type: a `Text` keeps
+/// every `Text`-only modifier (`lineLimit`, `minimumScaleFactor`, …) chained
+/// after `.rollingNumber()`, and a styled label rolled in place needs no
+/// restructure. It is the common method the whole app routes through; the
+/// `Text`-returning form (`Text(_:).rollingNumber()` still being a `Text`)
+/// would have forced every call site to reorder its modifiers.
+struct RollingNumberModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
             .monospacedDigit()
             .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+    }
+}
+
+extension View {
+    /// Give a figure the island's per-digit roll.
+    ///
+    /// Use it on the `Text` that *renders the number* — a bare count, a
+    /// percentage, a token figure, or a sentence with a figure inside it (the
+    /// transition rolls only the digits, so the surrounding copy stays put).
+    /// Do **not** put it on a container: the roll belongs to the leaf that
+    /// draws the digits, the same way the island's own figures are leaves.
+    ///
+    /// Reduce Motion turns the roll into an identity transition; the value
+    /// still updates, it just stops sliding.
+    func rollingNumber() -> some View {
+        modifier(RollingNumberModifier())
     }
 }

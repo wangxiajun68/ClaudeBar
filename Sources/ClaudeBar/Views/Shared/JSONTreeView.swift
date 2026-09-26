@@ -183,6 +183,7 @@ struct JSONTreeView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         if truncated > 0 {
                             Text("共 \(events.count + truncated) 个事件，显示最后 \(events.count) 个")
+                                .rollingNumber()
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.Ink.warning)
                                 .padding(.bottom, 4)

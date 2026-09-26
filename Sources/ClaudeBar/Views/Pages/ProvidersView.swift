@@ -233,7 +233,7 @@ struct ProvidersView: View {
             StatusPill(label: live ? "使用中" : "未选择",
                        tint: face,
                        ink: live ? Theme.Ink.success : Theme.textSecondary)
-            Text("\(f.providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
+            Text("\(f.providers.count) 个已保存配置").rollingNumber().foregroundStyle(Theme.textSecondary).fixedSize()
             if let provider = active, let model = currentModel(provider, activeID: f.activeID) {
                 Text(model).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
                     .layoutPriority(-1)

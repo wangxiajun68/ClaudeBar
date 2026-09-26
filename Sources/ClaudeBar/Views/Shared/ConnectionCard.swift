@@ -30,14 +30,21 @@ struct LinkCard: View {
         // wash) and answers the pointer with the hover edge alone.
         .hoverTile(dense: dense)
         .help(helpText())
+        // The whole card opens the map, like every other tile on the strip —
+        // only the title was clickable before, which made this the one card whose
+        // obvious target did nothing. `contentShape` is what extends the hit area
+        // over the gaps between the marks.
         .contentShape(Rectangle())
+        .onTapGesture { showConnections = true }
         .accessibilityAction(named: "查看连接地图") { showConnections = true }
         .popover(isPresented: $showConnections) { ConnectionDetailPanel() }
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            InstrumentBadge(kind: .link)
+            // A plain badge, not a ringed one: the ring around a small glyph is
+            // read as a spinner (see `ResourceStrip.meter`).
+            InstrumentBadge(kind: .link, tint: Theme.chartBlue)
             Button { showConnections = true } label: { Label("连接", systemImage: "arrow.up.right") }
                 .buttonStyle(.plain)
                 .font(Theme.Font.chrome)
@@ -371,7 +378,10 @@ fileprivate struct LinkMark: View {
 }
 
 /// RSSI is represented by a textual grade beside the connection glyph.
-private enum WiFiBars {
+/// The one place a Wi-Fi RSSI becomes words. Shared, not `private`, because the
+/// connection panel names the same grade the tile does — two vocabularies for one
+/// reading is how a tile and its popover end up disagreeing.
+enum WiFiBars {
     static func symbol(for rssi: Int) -> String {
         rssi < -80 ? "wifi.exclamationmark" : "wifi"
     }
@@ -387,9 +397,10 @@ private enum WiFiBars {
 }
 
 /// Charge and connection are separate claims; both are stated when both are
-/// true, so 充电中 is never read as 已连接. Shared by the card's help text and
-/// the headset cell so the two cannot describe the same headset differently.
-private func accessoryValue(_ accessory: AudioAccessoryMonitor.Accessory, count: Int) -> String {
+/// true, so 充电中 is never read as 已连接. Shared by the card's help text, the
+/// headset cell and `ConnectionDetailPanel` — the three must not describe one
+/// headset differently.
+func accessoryValue(_ accessory: AudioAccessoryMonitor.Accessory, count: Int) -> String {
     var parts: [String] = []
     if let left = accessory.left?.percent { parts.append("左 \(left)%") }
     if let right = accessory.right?.percent { parts.append("右 \(right)%") }

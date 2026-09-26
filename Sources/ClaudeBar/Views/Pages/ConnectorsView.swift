@@ -204,8 +204,8 @@ struct ConnectorsView: View {
                 })
                 Spacer(minLength: Theme.Space.s8)
                 Text("\(count) 项")
+                    .rollingNumber()
                     .font(Theme.Font.microMedium)
-                    .monospacedDigit()
                     .foregroundStyle(Theme.textSecondary)
             }
             InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
@@ -520,10 +520,9 @@ private struct ConnectorInventoryHeader: View {
                             .font(Theme.Font.micro)
                             .foregroundStyle(Theme.textSecondary)
                         Text("\(part.count)")
+                            .rollingNumber()
                             .font(Theme.Font.microSemibold)
-                            .monospacedDigit()
                             .foregroundStyle(part.ink)
-                            .contentTransition(.numericText())
                     }
                 }
                 Spacer(minLength: 0)
@@ -535,10 +534,9 @@ private struct ConnectorInventoryHeader: View {
                         .font(Theme.Font.micro)
                         .foregroundStyle(Theme.textSecondary)
                     Text("\(localCount)")
+                        .rollingNumber()
                         .font(Theme.Font.microSemibold)
-                        .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
-                        .contentTransition(.numericText())
                 }
             }
         }
@@ -890,6 +888,7 @@ private struct LocalCLICard: View {
             Spacer(minLength: 0)
             HStack {
                 Text(relatedCount > 0 ? "\(relatedCount) 项关联能力" : "本机命令")
+                    .rollingNumber()
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()

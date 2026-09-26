@@ -34,6 +34,7 @@ struct ModelImportSheet: View {
                 .foregroundColor(Theme.textPrimary)
 
             Text("共 \(candidates.count) 个可用 · 已选 \(selection.count) 个")
+                .rollingNumber()
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
 

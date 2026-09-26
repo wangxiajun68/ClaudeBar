@@ -30,6 +30,7 @@ struct CursorSessionCardView: View {
                 Spacer()
                 if agentCount > 0 {
                     Label("\(agentCount)", systemImage: "point.3.connected.trianglepath.dotted")
+                        .rollingNumber()
                         .font(Theme.Font.micro)
                         .foregroundColor(running > 0 ? Theme.statusBusy : Theme.textTertiary())
                         .labelStyle(.titleAndIcon)

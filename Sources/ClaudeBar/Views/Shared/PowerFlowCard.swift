@@ -346,6 +346,7 @@ private struct EnergySankey: View {
             }
             if !compact, box.node == .adapter, let rated = flow.adapterRated, box.span.height >= 84 {
                 Text("\(rated) W 适配器")
+                    .rollingNumber()
                     .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)
