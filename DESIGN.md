@@ -100,11 +100,12 @@ ornament is one shape rather than a stack of views.
 | Control | Reference | What it is |
 | --- | --- | --- |
 | `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
-| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 20 toggles in the app. |
+| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 16 toggles in the app. |
 | `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
 | `InstrumentRing` | `stat-widget` pill | a conic reading ring around a value — "how much of the whole", where `OrbitGauge` is "where on the dial". |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
+| `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the **one** bar-chart card: vertical bars keeping the reference's own two-stop gradient, its top cap dot and its average guide line. `UsageDaySpark` is the seven-bucket period chart; `SourceTriad` is the three-meter share card; `TokenMixStrip` is the stacked token-mix track. One bar shape across all three, so the usage page reads as one card family rather than three charts that happen to be adjacent. |
 | `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
 
 Two reference elements are deliberately **not** translated, and the reason is
