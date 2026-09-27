@@ -55,6 +55,7 @@ docs/
 | 08 | [error-handling](design/08-error-handling.md) | 失败场景与降级 |
 | 09 | [build-and-distribution](design/09-build-and-distribution.md) | 构建、分发与平台要求 |
 | 10 | [notch-island](design/10-notch-island.md) | 刘海灵动岛与权限与隐私开关 |
+| — | [weather-observatory](design/weather-observatory.md) | 概览问候带与天气详情 popover |
 
 完整索引：[design/README.md](design/README.md)
 

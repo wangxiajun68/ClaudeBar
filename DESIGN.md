@@ -293,3 +293,28 @@ delay, a selection tally — rolls per digit with the island's own effect:
   scrolling grids of 200 cards.
 - The main navigation uses one static elevated surface; only tab hover and
   selection animate. No full-width material blur or scrolling tab strip.
+
+## Greeting weather observatory
+
+This is a scoped extension for `GreetingCard`, not a replacement for the app's
+ice / graphite surfaces. The greeting, weather, compact forecast rail, model
+readings and usage share one continuous sky, a 24pt outer corner and hairline
+dividers. Keep these rows open; do not put cards inside the band.
+
+- Weather owns this surface's palette. `SkyPalette` supplies pale ink over
+  condition-specific blue, slate or night gradients; no reading uses the
+  theme-aware neutral palette. A scrim protects text over the atmosphere.
+- The six-date rail means today plus five future dates. Its small SF Symbols
+  open a native 620pt detail popover; temperature ranges, precipitation, wind
+  and the solar horizon belong there. The detail view keeps the same open
+  composition, with a sliding date underline and gentle pointer magnification.
+- Celestial placement uses the reading's coordinates and actual time. A future
+  selection previews local noon and is labelled as a daytime forecast. Closing
+  details or choosing “回到现在” restores current conditions.
+- Weather motion lives in a `Canvas`; its timeline pauses for Reduce Motion
+  and hidden surfaces. Cloud, precipitation and wind movement are illustrative.
+  Sun, moon and bright-star positions use low-precision astronomy, not a
+  navigation-grade sky chart.
+
+Implementation, verification commands and visual references:
+[Weather observatory](docs/design/weather-observatory.md).

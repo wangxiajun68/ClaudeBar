@@ -529,9 +529,22 @@ struct GlyphWell: View {
     var tint: Color = Theme.textSecondary
     var size: CGFloat = 22
     var engaged = false
+    /// `nil` = an SF Symbol (the default). `false` / `true` = that client's own
+    /// brand mark, which is what a well holding **Claude Code / Codex** should
+    /// carry: a `terminal` glyph says "a command line", and the two clients are
+    /// not two command lines any more than `cursorarrow.rays` is Cursor.
+    /// `false`/`true` is `ProductBrandMark`'s own convention, so the caller's
+    /// type does not have to map itself onto the mark's.
+    var brand: Bool? = nil
 
     var body: some View {
-        SignatureGlyph(name: name, tint: tint, size: size * 0.64, engaged: engaged)
+        Group {
+            if let brand {
+                ProductBrandMark(codex: brand)
+            } else {
+                SignatureGlyph(name: name, tint: tint, size: size * 0.64, engaged: engaged)
+            }
+        }
             .frame(width: size, height: size)
             .background {
                 RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)

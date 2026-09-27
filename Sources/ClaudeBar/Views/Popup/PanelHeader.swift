@@ -31,6 +31,7 @@ struct PanelHeader: View {
                     eyebrow: "CC",
                     title: ccModel,
                     subtitle: ccVendor,
+                    mark: { CodexModelMark(codex: false, style: .inline) },
                     tint: Theme.claude, ink: Theme.Ink.claude
                 ) { _ in
                     ModelSwitchList(kind: .claude, panel: panel)
@@ -39,6 +40,7 @@ struct PanelHeader: View {
                     eyebrow: "Codex",
                     title: codexModel,
                     subtitle: codexSubtitle,
+                    mark: { CodexModelMark(codex: true, style: .inline) },
                     quotaWindows: codexStore.quotaWindows,
                     tint: Theme.codex, ink: Theme.Ink.codex,
                     quotaLoading: codexStore.quotaLoading,
@@ -179,6 +181,15 @@ private struct HeaderSwitchChip<Popover: View>: View {
     let eyebrow: String
     let title: String
     let subtitle: String
+    /// The chip's own mark, drawn in the eyebrow row by `CodexModelMark`.
+    ///
+    /// It carries no `value` or `note` of its own: those lines are drawn below
+    /// in the chip's own type, so the mark is only ever the glyph. The eyebrow
+    /// row is the one place on this chip where the family can be stated by the
+    /// real brand artwork instead of by the word — and the same mark then stands
+    /// on the dashboard's client card at 38pt, which is what keeps the two
+    /// surfaces naming the two families with one drawing.
+    var mark: (() -> CodexModelMark)? = nil
     var quotaWindows: [CodexQuotaWindow] = []
     /// Chip accent — also drives the eyebrow, which is text.
     var tint: Color
@@ -194,7 +205,12 @@ private struct HeaderSwitchChip<Popover: View>: View {
         VStack(alignment: .leading, spacing: 3) {
             Button { open.toggle() } label: {
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 4) {
+                        if let mark {
+                            mark()
+                                .frame(width: 13, height: 13)
+                                .accessibilityHidden(true)
+                        }
                         Text(eyebrow).font(Theme.Font.eyebrow).foregroundColor(ink ?? tint)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.down")

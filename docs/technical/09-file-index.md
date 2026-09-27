@@ -14,7 +14,11 @@
 | `Views/Island/*.swift` | 灵动岛形状、根视图与 `IslandStyle`、会话行、用量卡（`Canvas` 直方图）、完成提醒 |
 | `Utils/PermissionCenter.swift` | 权限清单 `AppPermission`、线程安全开关 `PermissionGate`、系统授权状态 `PermissionCenter` |
 | `Utils/CurrentLocation.swift` | 问候卡天气的单次定位 fix（`CLLocationManager`，千米精度）：仅在「当前位置」开关打开后请求，关闭即丢弃坐标 |
-| `Utils/WeatherFetcher.swift` | wttr.in 取天气（无 key）；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
+| `Utils/WeatherFetcher.swift` | 天气读数的共享源 `WeatherStore`：优先 Open-Meteo，失败退回 wttr.in；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
+| `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数 |
+| `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
+| `Views/Shared/WeatherExplorer.swift` | 天气详情 popover：六日选择轨、共享刻度温区、太阳高度曲线 `SolarHorizon` 与各项读数；无嵌套面板底 |
+| `Views/Shared/CodexModelMark.swift` | 概览状态单上的客户端 mark：品牌图形 + 一条 Codex 额度 lane（一窗口一条、条高即剩余；可选按读数调速扫光） |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
 | `Utils/OttyBridge.swift` | `otty-cli` socket IPC（`pane list`，勿用 `panes` 简写）：按 `agent_session_id` 聚焦已有窗格；活会话 `reveal` 只聚焦不新建；已结束会话才新开标签 resume |

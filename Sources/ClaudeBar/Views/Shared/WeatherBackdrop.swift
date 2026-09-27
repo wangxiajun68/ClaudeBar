@@ -23,6 +23,8 @@ struct WeatherBackdrop: View {
     let isDay: Bool?
     /// 0…100. Widens a shower so drizzle and a downpour are different pictures.
     var intensity: Int = 40
+    var astronomy: SkyAstronomy.Snapshot? = nil
+    var windKph: Double = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.surfaceIsVisible) private var surfaceVisible
@@ -38,7 +40,7 @@ struct WeatherBackdrop: View {
     /// a breathing sun, or fog, and 12–16 Hz is enough to read as motion.
     private var frameInterval: Double {
         switch sky {
-        case .rain, .snow, .thunder: return 1.0 / 30
+        case .drizzle, .rain, .sleet, .snow, .hail, .thunder: return 1.0 / 30
         case .fog, .partly, .cloudy: return 1.0 / 16
         case .clear: return 1.0 / 12
         }
@@ -52,7 +54,7 @@ struct WeatherBackdrop: View {
                 let t = timeline.date.timeIntervalSince(start)
                 var c = ctx
                 Self.draw(sky: sky, night: night, palette: palette,
-                          intensity: intensity, t: t, size: size, ctx: &c)
+                          intensity: intensity, astronomy: astronomy, windKph: windKph, t: reduceMotion ? 3 : t, size: size, ctx: &c)
             }
         }
         .onAppear { start = Date() }
@@ -63,17 +65,113 @@ struct WeatherBackdrop: View {
     // MARK: - Drawing
 
     private static func draw(sky: WeatherReading.Sky, night: Bool, palette: SkyPalette,
-                             intensity: Int, t: TimeInterval, size: CGSize,
+                             intensity: Int, astronomy: SkyAstronomy.Snapshot?, windKph: Double, t: TimeInterval, size: CGSize,
                              ctx: inout GraphicsContext) {
+        drawWind(speed: windKph, t: t, size: size, ctx: &ctx)
         drawLight(palette: palette, t: t, size: size, ctx: &ctx)
+        if let astronomy { drawCelestial(astronomy, sky: sky, size: size, t: t, ctx: &ctx) }
         switch sky {
-        case .clear: drawClear(night: night, size: size, t: t, ctx: &ctx)
-        case .partly: drawPartly(night: night, size: size, t: t, ctx: &ctx)
+        case .clear: if astronomy == nil { drawClear(night: night, size: size, t: t, ctx: &ctx) }
+        case .partly: drawPartly(night: night, celestial: astronomy == nil, size: size, t: t, ctx: &ctx)
         case .cloudy: drawCloudy(night: night, size: size, t: t, ctx: &ctx)
         case .fog: drawFog(size: size, t: t, ctx: &ctx)
         case .rain: drawRain(night: night, size: size, intensity: intensity, t: t, ctx: &ctx)
         case .snow: drawSnow(night: night, size: size, t: t, ctx: &ctx)
         case .thunder: drawThunder(size: size, intensity: intensity, t: t, ctx: &ctx)
+        case .drizzle:
+            drawFog(size: size, t: t, ctx: &ctx)
+            stroke(streaks(count: 46, speed: 0.24, length: 0.026, angle: 0.16, seed: 224737, t: t, size: size), width: 0.6, color: .white.opacity(0.35), ctx: &ctx)
+        case .sleet:
+            drawRain(night: night, size: size, intensity: 20, t: t, ctx: &ctx)
+            drawSnow(night: night, size: size, t: t * 1.5, ctx: &ctx)
+        case .hail:
+            drawThunder(size: size, intensity: intensity, t: t, ctx: &ctx)
+            var pellets = Path()
+            for i in 0..<36 {
+                let phase = (t * 0.7 + Double(i) * 0.137).truncatingRemainder(dividingBy: 1)
+                let x = Double((i * 137) % 991) / 991 * size.width
+                let y = phase * size.height
+                pellets.addEllipse(in: CGRect(x: x, y: y, width: 2.5, height: 3.5))
+            }
+            ctx.fill(pellets, with: .color(.white.opacity(0.7)))
+        }
+    }
+
+    private static func drawWind(speed: Double, t: Double, size: CGSize, ctx: inout GraphicsContext) {
+        guard speed > 18 else { return }
+        var paths = Path()
+        for i in 0..<5 {
+            let phase = (t / max(3, 18 - speed * 0.2) + Double(i) * 0.23).truncatingRemainder(dividingBy: 1)
+            let x = phase * (size.width + 240) - 120
+            let y = size.height * (0.15 + Double(i) * 0.16)
+            paths.move(to: CGPoint(x: x, y: y))
+            paths.addQuadCurve(to: CGPoint(x: x + 100, y: y - 8), control: CGPoint(x: x + 50, y: y - 18))
+        }
+        ctx.stroke(paths, with: .color(.white.opacity(0.10)), style: StrokeStyle(lineWidth: 0.8, lineCap: .round))
+    }
+
+    /// Panorama projection: east → south → west, wrapped through north.
+    /// Height is the actual horizon altitude; objects below it are hidden.
+    private static func point(_ position: SkyAstronomy.Position, size: CGSize) -> CGPoint {
+        CGPoint(x: (position.azimuth / 360) * size.width,
+                y: size.height * (0.78 - position.altitude / 90 * 0.69))
+    }
+
+    private static func drawCelestial(_ astro: SkyAstronomy.Snapshot, sky: WeatherReading.Sky,
+                                      size: CGSize, t: Double, ctx: inout GraphicsContext) {
+        let clarity: Double = sky == .clear ? 1 : sky == .partly ? 0.8 : sky == .cloudy ? 0.22 : 0.08
+        let darkness = min(1, max(0, (-astro.sun.altitude - 3) / 12))
+        var stars = ctx
+        stars.opacity = darkness * clarity
+        for (index, star) in SkyAstronomy.stars.enumerated() {
+            let position = SkyAstronomy.star(raHours: star.0, declination: star.1, in: astro)
+            guard position.altitude > 0 else { continue }
+            let p = point(position, size: size)
+            let r = star.2
+            let alpha = 0.65 + 0.35 * sin(t * 0.5 + Double(index))
+            stars.fill(Path(ellipseIn: CGRect(x: p.x-r, y: p.y-r, width: r*2, height: r*2)),
+                       with: .color(.white.opacity(alpha)))
+            if r > 1.4 {
+                var cross = Path()
+                cross.move(to: CGPoint(x: p.x-4, y: p.y)); cross.addLine(to: CGPoint(x: p.x+4, y: p.y))
+                cross.move(to: CGPoint(x: p.x, y: p.y-4)); cross.addLine(to: CGPoint(x: p.x, y: p.y+4))
+                stars.stroke(cross, with: .color(.white.opacity(alpha * 0.3)), lineWidth: 0.5)
+            }
+        }
+        // A sunset is light scattered along the horizon, not an orange sun at noon.
+        if astro.twilight > 0 {
+            let p = point(astro.sun, size: size)
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .radialGradient(
+                Gradient(colors: [Color(hex: 0xF5A56B).opacity(astro.twilight * 0.42), .clear]),
+                center: p, startRadius: 0, endRadius: size.width * 0.65))
+        }
+        var celestial = ctx
+        celestial.opacity = clarity
+        if astro.sun.altitude > -1 {
+            drawSun(at: point(astro.sun, size: size), size: size, t: t, ctx: &celestial)
+        }
+        if astro.moon.altitude > 0 {
+            let p = point(astro.moon, size: size), r = min(22.0, size.height * 0.065)
+            celestial.opacity *= max(0.25, darkness)
+            celestial.fill(Path(ellipseIn: CGRect(x: p.x-r*3, y: p.y-r*3, width: r*6, height: r*6)),
+                           with: .radialGradient(Gradient(colors: [.white.opacity(0.16), .clear]), center: p, startRadius: 0, endRadius: r*3))
+            // Sample the illuminated hemisphere into a single path, including waxing/waning orientation.
+            var phase = Path()
+            let k = cos(astro.moonPhase * 2 * .pi)
+            let side = astro.moonPhase < 0.5 ? 1.0 : -1.0
+            for i in 0...40 {
+                let y = -r + 2*r*Double(i)/40
+                let x = sqrt(max(0, r*r-y*y)) * side
+                let p = CGPoint(x: p.x+x, y: p.y+y)
+                if i == 0 { phase.move(to: p) } else { phase.addLine(to: p) }
+            }
+            for i in stride(from: 40, through: 0, by: -1) {
+                let y = -r + 2*r*Double(i)/40
+                let x = sqrt(max(0, r*r-y*y)) * side * k
+                phase.addLine(to: CGPoint(x: p.x+x, y: p.y+y))
+            }
+            phase.closeSubpath()
+            celestial.fill(phase, with: .color(SkyPalette.moon))
         }
     }
 
@@ -82,7 +180,7 @@ struct WeatherBackdrop: View {
     /// single radial fill.
     private static func drawLight(palette: SkyPalette, t: TimeInterval, size: CGSize,
                                   ctx: inout GraphicsContext) {
-        let phase = (t / 22).truncatingRemainder(dividingBy: 1)
+        let phase = 0.5 + 0.35 * sin(t / 28)
         let center = CGPoint(x: CGFloat(phase) * size.width, y: size.height * 0.28)
         let radius = max(size.width, size.height) * 0.55
         ctx.fill(Path(CGRect(origin: .zero, size: size)),
@@ -118,9 +216,9 @@ struct WeatherBackdrop: View {
             lobe.scaleBy(x: 1.35, y: 0.68)
             lobe.fill(Path(ellipseIn: CGRect(x: -rr, y: -rr, width: rr * 2, height: rr * 2)),
                       with: .radialGradient(Gradient(stops: [
-                        .init(color: lit.opacity(0.58), location: 0),
-                        .init(color: body.opacity(0.38), location: 0.32),
-                        .init(color: body.opacity(0.08), location: 0.72),
+                        .init(color: lit.opacity(0.74), location: 0),
+                        .init(color: body.opacity(0.52), location: 0.32),
+                        .init(color: body.opacity(0.16), location: 0.72),
                         .init(color: .clear, location: 1)
                       ]), center: .zero, startRadius: 0, endRadius: rr))
         }
@@ -192,9 +290,9 @@ struct WeatherBackdrop: View {
 
     // MARK: Partly / cloudy / fog
 
-    private static func drawPartly(night: Bool, size: CGSize, t: TimeInterval,
+    private static func drawPartly(night: Bool, celestial: Bool = true, size: CGSize, t: TimeInterval,
                                    ctx: inout GraphicsContext) {
-        drawClear(night: night, size: size, t: t, ctx: &ctx)
+        if celestial { drawClear(night: night, size: size, t: t, ctx: &ctx) }
         let body = Color.white.opacity(night ? 0.22 : 0.82)
         let shadow = Color.black.opacity(night ? 0.30 : 0.16)
         let lit = Color.white.opacity(night ? 0.40 : 0.98)
@@ -527,7 +625,7 @@ struct SkyPalette {
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xF2F5F8),
                           isLightGround: false, highlight: Color(hex: 0xFFFFFF))
             }
-        case .rain:
+        case .rain, .drizzle, .sleet:
             if night {
                 self.init(top: Color(hex: 0x152033), bottom: Color(hex: 0x101820),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xB9D7FF),
@@ -547,7 +645,7 @@ struct SkyPalette {
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xF4FBFF),
                           isLightGround: false, highlight: Color(hex: 0xFFFFFF))
             }
-        case .thunder:
+        case .thunder, .hail:
             self.init(top: Color(hex: 0x12161F), bottom: Color(hex: 0x243044),
                       ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFD772),
                       isLightGround: false, highlight: Color(hex: 0xFFC24D))

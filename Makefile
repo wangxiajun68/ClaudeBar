@@ -25,9 +25,11 @@ test:
 	python3 Tests/rendering-regressions.py
 	python3 Tests/local-endpoint-regressions.py
 	python3 Tests/provider-icon-regressions.py
+	python3 Tests/product-mark-regressions.py
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
 	python3 Tests/greeting-data-regressions.py
+	python3 Tests/weather-astronomy-regressions.py
 	python3 Tests/menubar-strip-regressions.py
 	python3 Tests/connection-panel-regressions.py
 	python3 Tests/charge-limit-regressions.py

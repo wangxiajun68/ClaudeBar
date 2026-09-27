@@ -1,53 +1,90 @@
 import SwiftUI
+import AppKit
 
-/// Resolution-independent product marks, drawn locally without image decoding.
+/// The two client families' **real brand marks**, bundled offline: Anthropic's
+/// "A\" mark for CC / Claude Code, OpenAI's knot for Codex.
+///
+/// These are the same artwork the rest of the app already uses for these two
+/// clients — `ProviderIdentityMark` names CC with `anthropic` and Codex with
+/// `openai` on the official-provider card and in the provider directory, and
+/// `Sources/ProviderIcons/README.md` pins them to LobeHub
+/// `@lobehub/icons-static-png@1.97.1`. Nothing here redraws a brand by eye.
+///
+/// What this file owns is the **tile**, and that tile has one job that a bare
+/// PNG cannot do: a mark that is pure black on a dark card, or pure white on a
+/// light one, is *invisible*. So the artwork sits on `Theme.bgSecondary` in a
+/// rounded square — the light well the panel header, the island and the
+/// dashboard tiles all draw the clients in, and the same treatment
+/// `ProviderIdentityMark` gives the provider page.
+///
+/// The artwork is normalised by `Tools/gen-brand-marks.py`, not used raw. Raw,
+/// each PNG carries its own margin to the edge of a square canvas: measured on
+/// the four bundled files that is 33.5pt of the 13pt header tile for Anthropic
+/// and 32.5pt for OpenAI at the same size, which puts the mark at 65% of an
+/// already-small tile and reads as a smudge. The generator trims that margin and
+/// writes every mark back at `KEEP` (80%) of its canvas — and, because Anthropic
+/// is nearly twice as wide as it is tall while OpenAI is square, it reserves one
+/// shared *side*. Both marks then stand the same width in the same tile, which is
+/// what lets a CC chip and a Codex chip sit side by side in one row.
 struct ProductBrandMark: View {
+    /// `false` = CC / Claude Code (Anthropic), `true` = Codex (OpenAI).
     let codex: Bool
+    /// Draw the icon well behind the artwork. Off for a caller that has already
+    /// put the mark in a well of its own.
+    var well = true
+
+    private var asset: String { codex ? "openai" : "anthropic" }
 
     var body: some View {
-        Canvas { context, size in
-            let side = min(size.width, size.height)
-            context.translateBy(x: (size.width - side) / 2, y: (size.height - side) / 2)
-            context.scaleBy(x: side / 100, y: side / 100)
-            if codex {
-                // Scalloped Codex silhouette with its terminal chevron and cursor.
-                var outline = Path()
-                outline.move(to: CGPoint(x: 21, y: 25))
-                outline.addCurve(to: CGPoint(x: 51, y: 12), control1: CGPoint(x: 20, y: 7), control2: CGPoint(x: 42, y: 2))
-                outline.addCurve(to: CGPoint(x: 79, y: 27), control1: CGPoint(x: 69, y: 4), control2: CGPoint(x: 85, y: 13))
-                outline.addCurve(to: CGPoint(x: 89, y: 54), control1: CGPoint(x: 99, y: 31), control2: CGPoint(x: 99, y: 47))
-                outline.addCurve(to: CGPoint(x: 70, y: 84), control1: CGPoint(x: 98, y: 72), control2: CGPoint(x: 84, y: 89))
-                outline.addCurve(to: CGPoint(x: 40, y: 89), control1: CGPoint(x: 64, y: 100), control2: CGPoint(x: 47, y: 99))
-                outline.addCurve(to: CGPoint(x: 14, y: 71), control1: CGPoint(x: 20, y: 98), control2: CGPoint(x: 8, y: 86))
-                outline.addCurve(to: CGPoint(x: 12, y: 43), control1: CGPoint(x: 0, y: 64), control2: CGPoint(x: 1, y: 49))
-                outline.addCurve(to: CGPoint(x: 21, y: 25), control1: CGPoint(x: 5, y: 30), control2: CGPoint(x: 11, y: 23))
-                outline.closeSubpath()
-                context.fill(outline, with: .linearGradient(Gradient(colors: [Color(red: 0.62, green: 0.54, blue: 1), Color(red: 0.24, green: 0.32, blue: 0.95)]), startPoint: CGPoint(x: 30, y: 8), endPoint: CGPoint(x: 65, y: 95)))
-                var terminal = Path()
-                terminal.move(to: CGPoint(x: 29, y: 36))
-                terminal.addLine(to: CGPoint(x: 40, y: 51))
-                terminal.addLine(to: CGPoint(x: 29, y: 66))
-                terminal.move(to: CGPoint(x: 51, y: 67))
-                terminal.addLine(to: CGPoint(x: 72, y: 67))
-                context.stroke(terminal, with: .color(.white), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            if let image = Self.image(asset, dark: Theme.isDark) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    // The generator already normalised the margin, so this only
+                    // has to leave the well's own breathing room — a fraction of
+                    // the tile, because the tile is the thing that scales.
+                    .padding(side * (well ? 0.17 : 0.04))
+                    .frame(width: side, height: side)
+                    .background {
+                        if well {
+                            RoundedRectangle(cornerRadius: side * 0.28, style: .continuous)
+                                .fill(Theme.bgSecondary)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: side * 0.28, style: .continuous))
             } else {
-                // Claude's irregular radial asterisk; each tapered ray has its own length.
-                let radii: [CGFloat] = [43, 37, 44, 36, 42, 40, 44, 35, 43, 39, 45, 36]
-                var star = Path()
-                for (index, radius) in radii.enumerated() {
-                    let angle = CGFloat(index) * .pi / 6 - .pi / 2
-                    let direction = CGPoint(x: cos(angle), y: sin(angle))
-                    let normal = CGPoint(x: -direction.y, y: direction.x)
-                    let width: CGFloat = index.isMultiple(of: 3) ? 4 : 3
-                    star.move(to: CGPoint(x: 50 + direction.x * 8 + normal.x * 4, y: 50 + direction.y * 8 + normal.y * 4))
-                    star.addLine(to: CGPoint(x: 50 + direction.x * radius + normal.x * width, y: 50 + direction.y * radius + normal.y * width))
-                    star.addLine(to: CGPoint(x: 50 + direction.x * radius - normal.x * width, y: 50 + direction.y * radius - normal.y * width))
-                    star.addLine(to: CGPoint(x: 50 + direction.x * 8 - normal.x * 4, y: 50 + direction.y * 8 - normal.y * 4))
-                    star.closeSubpath()
-                }
-                star.addEllipse(in: CGRect(x: 39, y: 39, width: 22, height: 22))
-                context.fill(star, with: .color(Color(red: 0.82, green: 0.43, blue: 0.31)))
+                // A missing bundle resource must not read as "no client": fall
+                // back to the family's own instrument glyph rather than a blank.
+                InstrumentBadge(kind: codex ? .config : .sessions,
+                                size: side * 0.62,
+                                tint: codex ? Theme.Ink.codex : Theme.Ink.claude)
+                    .frame(width: side, height: side)
             }
-        }.accessibilityLabel(codex ? "Codex" : "Claude Code")
+        }
+        .accessibilityLabel(codex ? "Codex" : "Claude Code")
+    }
+
+    /// Where the bundled PNGs live. The app leaves this at `Bundle.main`; the
+    /// render fixture points it at `Sources/BrandAssets`, because a slice with
+    /// no app bundle would otherwise quietly draw the missing-asset fallback and
+    /// a blank brand mark would pass every render check.
+    nonisolated(unsafe) static var resourceRoot: URL? = Bundle.main.resourceURL?
+        .appendingPathComponent("BrandAssets", isDirectory: true)
+
+    /// Decoded once per variant and kept: the mark is drawn on the dashboard
+    /// strip, the island and the provider grid, and `NSImage(contentsOf:)` reads
+    /// and decodes a PNG on every call.
+    private static let cache = NSCache<NSString, NSImage>()
+
+    private static func image(_ asset: String, dark: Bool) -> NSImage? {
+        let key = "\(asset)-\(dark ? "dark" : "light")"
+        if let hit = cache.object(forKey: key as NSString) { return hit }
+        guard let root = resourceRoot,
+              let image = NSImage(contentsOf: root.appendingPathComponent("\(key).png")) else { return nil }
+        cache.setObject(image, forKey: key as NSString)
+        return image
     }
 }

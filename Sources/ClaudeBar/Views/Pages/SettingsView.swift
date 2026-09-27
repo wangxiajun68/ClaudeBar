@@ -301,7 +301,7 @@ struct SettingsView: View {
 
                 section("连通性", icon: "antenna.radiowaves.left.and.right", dense: true) {
                     SettingTile(icon: "cpu", title: "Claude Code",
-                                caption: currentCCCaption, compact: true) {
+                                caption: currentCCCaption, compact: true, brand: false) {
                         ConnectivityTileButton(
                             outcome: activeVendorOutcome,
                             helpIdle: providerStore.activeProvider == nil
@@ -312,7 +312,7 @@ struct SettingsView: View {
                         .disabled(providerStore.activeProvider == nil)
                     }
                     SettingTile(icon: "terminal", title: "Codex",
-                                caption: currentCodexCaption, tint: Theme.codex, compact: true) {
+                                caption: currentCodexCaption, tint: Theme.codex, compact: true, brand: true) {
                         ConnectivityTileButton(
                             outcome: activeCodexOutcome,
                             helpIdle: codexStore.activeProvider == nil
@@ -575,13 +575,17 @@ struct SettingTile<Control: View>: View {
     /// One control and a short caption. Drops the reserved caption block and
     /// the 36pt mark so a toggle does not sit in a card sized for a paragraph.
     var compact: Bool = false
+    /// `nil` = the SF Symbol `icon`; otherwise that client's own brand mark, so
+    /// the tile titled 连接 Claude Code / Codex carries the product's own glyph
+    /// rather than a generic `terminal` both clients would share.
+    var brand: Bool? = nil
     @ViewBuilder var control: () -> Control
     @State private var hovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 8) {
             HStack(alignment: .center, spacing: compact ? 8 : 10) {
-                GlyphWell(name: icon, tint: tint, size: compact ? 26 : 36, engaged: hovered)
+                GlyphWell(name: icon, tint: tint, size: compact ? 26 : 36, engaged: hovered, brand: brand)
                 Text(title)
                     .font(.system(size: compact ? 13 : 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)

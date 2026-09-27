@@ -2,12 +2,39 @@ import SwiftUI
 
 /// A handwritten salutation beside a condensed signature. Both are installed
 /// macOS faces; the fallback keeps every machine legible without font downloads.
+///
+/// The entrance is the card's own and is unchanged: the script "Hello" rises
+/// 12pt into place on one spring while the signature tightens its tracking from
+/// -4 to -1.8 on a slower one, 80ms behind. What changed is only *when* it
+/// runs. It used to be a `onAppear`-only latch — one entry per view lifetime —
+/// and an entrance you can only ever see once is a fact about the view, not
+/// about the greeting. The greeting is also re-armed when the pointer arrives,
+/// so pointing at the name replays the same entrance, and leaving eases it back
+/// out through the *same two springs*, in reverse.
+///
+/// Leaving is the same animation, not a second one: every animated property
+/// reads `presented`, so the pointer leaving is just that value going back to
+/// its start. Nothing here opens a separate transaction — an earlier version
+/// wrapped the re-arm in its own `.easeOut`, which put a visible hitch in front
+/// of the entrance and made the hover replay look nothing like the card's own.
+///
+/// Reduce Motion keeps every end position and drops the travel, exactly as it
+/// did before: the type is still there, it just arrives rather than moves in.
+/// The hover target is the *drawn* greeting plus a little breathing room, not
+/// the full width of the card, so the animation does not fire from the pointer
+/// crossing the clock or the weather beside it.
 struct SkyGreeting: View {
     let name: String
     let palette: SkyPalette
     var animated = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var opened = false
+    @Environment(\.surfaceIsVisible) private var surfaceVisible
+    /// Pointer is on the greeting.
+    @State private var hovering = false
+    /// The greeting is drawn in its arrived position — the state the card opens
+    /// into, and the state a hover returns it to. This is the old `opened`
+    /// latch; the only thing that differs is what sets it back to `false`.
+    @State private var presented = false
 
     private var script: String {
         NSFont(name: "SnellRoundhand-Bold", size: 100) == nil ? "HelveticaNeue-LightItalic" : "SnellRoundhand-Bold"
@@ -24,9 +51,34 @@ struct SkyGreeting: View {
         }
         .foregroundStyle(palette.ink)
         .shadow(color: palette.isLightGround ? .clear : .black.opacity(0.12), radius: 12, x: 0, y: 4)
-        .onAppear { opened = true }
+        // Two triggers, one entrance: the card opening, and the pointer
+        // arriving on the name.
+        .onAppear { presented = true }
+        .onHover { inside in
+            guard surfaceVisible else { return }
+            guard hovering != inside else { return }
+            hovering = inside
+            // Leaving hands the same springs their start value back; no
+            // transaction is opened here, so the retreat*is* the entrance run
+            // backwards.
+            presented = inside
+            // The pointer can arrive while the entrance is still in flight, so
+            // the re-arm is deferred to the next frame. A press inside the same
+            // transaction as the rewind would be coalesced into it and the
+            // replay would start from wherever the entrance had got to.
+            if inside { rearmNextFrame() }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Hello，\(name)")
+    }
+
+    /// Put the value back to `true` one frame after the pointer landed, so the
+    /// springs have a start position to travel from.
+    private func rearmNextFrame() {
+        Task { @MainActor in
+            await Task.yield()
+            presented = true
+        }
     }
 
     private func phrase(hello: CGFloat, name size: CGFloat) -> some View {
@@ -35,15 +87,19 @@ struct SkyGreeting: View {
                 .font(.custom(script, size: hello))
                 .tracking(-2)
                 .rotationEffect(.degrees(-5), anchor: .bottomLeading)
-                .offset(y: opened || reduceMotion || !animated ? 0 : 12)
-                .animation(reduceMotion || !animated ? nil : .spring(response: 1.1, dampingFraction: 0.8), value: opened)
+                .offset(y: presented || reduceMotion || !animated ? 0 : 12)
+                .animation(reduceMotion || !animated ? nil : .spring(response: 1.1, dampingFraction: 0.8), value: presented)
             Text(name)
                 .font(.custom(signature, size: size))
-                .tracking(opened || reduceMotion || !animated ? -1.8 : -4)
-                .animation(reduceMotion || !animated ? nil : .spring(response: 1.2, dampingFraction: 0.9).delay(0.08), value: opened)
+                .tracking(presented || reduceMotion || !animated ? -1.8 : -4)
+                .animation(reduceMotion || !animated ? nil : .spring(response: 1.2, dampingFraction: 0.9).delay(0.08), value: presented)
         }
         .fixedSize()
         .padding(.top, 6)
         .padding(.bottom, 12)
+        // The hit shape is the greeting itself, sized by the drawn type — the
+        // whole card is a button and must not become the greeting's hover
+        // region, or the animation would fire from anywhere on the surface.
+        .contentShape(Rectangle().inset(by: -10))
     }
 }

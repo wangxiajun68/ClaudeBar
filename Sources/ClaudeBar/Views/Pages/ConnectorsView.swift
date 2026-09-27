@@ -463,6 +463,12 @@ private struct ConnectorInventoryHeader: View {
                                      itemTint: { item in
                                          item.map(platformTint) ?? Theme.Ink.claude
                                      },
+                                     // Claude / Codex / Cursor are *identities*,
+                                     // and this row already keeps their own hues
+                                     // for the same reason. Their SF Symbols were
+                                     // the last place the app said "a command
+                                     // line" where the product had a mark.
+                                     brand: platformBrand,
                                      fillsWidth: true,
                                      onSelect: onSelectPlatform)
                         .frame(maxWidth: .infinity)
@@ -548,6 +554,17 @@ private struct ConnectorInventoryHeader: View {
         case .claude: Theme.Ink.claude
         case .codex: Theme.Ink.codex
         case .cursor: Theme.Ink.cursor
+        }
+    }
+
+    /// The two clients whose artwork is bundled draw it; Cursor keeps its
+    /// symbol, because `cursorarrow.rays` *is* its icon rather than a stand-in
+    /// for one.
+    private func platformBrand(_ item: ConnectorPlatform?) -> Bool? {
+        switch item {
+        case .claude: false
+        case .codex: true
+        default: nil
         }
     }
 

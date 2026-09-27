@@ -2,12 +2,7 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// The one reading a weather card needs: where, how warm, what sky, and — for
-/// the clock card's day/night switch — whether the sun is up.
-///
-/// Deliberately not a forecast model. The card shows *current* conditions and
-/// the day's high / low; a five-day strip would be a second product living
-/// inside a dashboard tile.
+/// Current conditions and optional daily forecasts for the same location.
 struct WeatherReading: Equatable {
     /// The place name as a person would say it ("上海 · 浦东新区").
     var place: String
@@ -31,16 +26,27 @@ struct WeatherReading: Equatable {
     /// pictures rather than the same one at a different label.
     var rainChance: Int
     var observedAt: Date
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    var timezone: String = TimeZone.current.identifier
+    var forecast: [WeatherDay] = []
+    var forecastNote: String? = nil
+    var source = "wttr.in"
+
+    func astronomy(at date: Date) -> SkyAstronomy.Snapshot? {
+        guard let latitude, let longitude else { return nil }
+        return SkyAstronomy.snapshot(date: date, latitude: latitude, longitude: longitude)
+    }
 
     /// The sky family the animations are built on. Several WMO / WW codes are
     /// the same weather to a viewer ("patchy rain nearby" and "light drizzle"
     /// both mean *it is raining*), so the drawing is keyed on this, never on
     /// the raw code.
     enum Sky: String {
-        case clear, partly, cloudy, fog, rain, snow, thunder
+        case clear, partly, cloudy, fog, drizzle, rain, sleet, snow, hail, thunder
 
         /// Every sky the card can draw, for the regression sweep.
-        static let all: [Sky] = [.clear, .partly, .cloudy, .fog, .rain, .snow, .thunder]
+        static let all: [Sky] = [.clear, .partly, .cloudy, .fog, .drizzle, .rain, .sleet, .snow, .hail, .thunder]
     }
 
     var sky: Sky { Self.sky(for: conditionCode) }
@@ -61,18 +67,20 @@ struct WeatherReading: Equatable {
         case 116: return .partly                         // Partly cloudy
         case 119, 122: return .cloudy                    // Cloudy / Overcast
         case 143, 248, 260: return .fog                  // Mist / Fog
-        case 176, 263, 266, 293, 296, 299, 302, 305, 308, 311, 314,
+        case 263, 266, 51, 53, 55: return .drizzle
+        case 176, 293, 296, 299, 302, 305, 308, 311, 314,
              353, 356, 359: return .rain
-        case 179, 182, 185, 281, 284, 317, 320, 362, 365, 374, 377: return .rain
-        case 200, 227, 230, 386, 389, 392, 395: return .thunder
-        case 323, 326, 329, 332, 335, 338, 350, 368, 371: return .snow
+        case 179, 182, 185, 281, 284, 317, 320, 362, 365, 374, 377, 56, 57, 66, 67: return .sleet
+        case 200, 386, 389, 392, 395: return .thunder
+        case 227, 230, 323, 326, 329, 332, 335, 338, 350, 368, 371: return .snow
         case 0, 1: return .clear                         // WMO clear / mainly clear
         case 2: return .partly
         case 3: return .cloudy
         case 45, 48: return .fog
-        case 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82: return .rain
+        case 61, 63, 65, 80, 81, 82: return .rain
         case 71, 73, 75, 77, 85, 86: return .snow
-        case 95, 96, 99: return .thunder
+        case 95: return .thunder
+        case 96, 99: return .hail
         default: return .cloudy
         }
     }
@@ -89,6 +97,9 @@ struct WeatherReading: Equatable {
         case .rain: return rainChance >= 60 ? "有雨" : "阵雨"
         case .snow: return "有雪"
         case .thunder: return "雷雨"
+        case .drizzle: return "毛毛雨"
+        case .sleet: return "雨夹雪"
+        case .hail: return "雷暴冰雹"
         }
     }
 
@@ -97,21 +108,8 @@ struct WeatherReading: Equatable {
     var temperatureText: String { "\(Int(temperatureC.rounded()))°" }
 }
 
-/// wttr.in's `j1` payload for a named place. Chosen over the alternatives for
-/// three reasons, in order:
-///
-///  1. **No API key.** A dashboard card may not add a signup step to a local
-///     mac app, and every keyed provider (OpenWeather, WeatherAPI) does.
-///  2. **No account, and no location unless the user opts in.** A city name
-///     in the URL is the default. Coordinates (`lat,lon`, the same endpoint)
-///     are used only after 设置 → 权限与隐私 → 当前位置 is on — see
-///     `CurrentLocation`. There is still no IP-geolocation hop.
-///  3. It returns the day's high / low, the sunrise / sunset and the next hours'
-///     rain chance in the same response, so one request fills the card.
-///
-/// With 当前位置 off, the query is `AppPreferences.weatherCity` (default 上海).
-/// A failure is not an error state: the card falls back to the clock, and the
-/// tooltip says why.
+/// Open-Meteo current + six-day weather, with wttr.in as a current-only fallback.
+/// Named cities or permission-gated coordinates are provided by WeatherStore.
 enum WeatherFetcher {
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -135,17 +133,16 @@ enum WeatherFetcher {
     }
 
     static func fetch(city: String) async -> WeatherReading? {
+        // Resolve once; Open-Meteo supplies one coherent current + six-day payload.
+        if let reading = await WeatherForecastFetcher.fetch(query: city) { return reading }
         guard let url = url(city: city) else { return nil }
-        var request = URLRequest(url: url)
-        request.setValue("ClaudeBar/1.13 (macOS weather card)", forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            return parse(data)
-        } catch {
-            return nil
-        }
+            let (data, response) = try await session.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  var reading = parse(data) else { return nil }
+            reading.forecastNote = "预报暂不可用 · 点击刷新重试"
+            return reading
+        } catch { return nil }
     }
 
     /// Pure, so the mapping can be exercised without a network — see
@@ -205,7 +202,9 @@ enum WeatherFetcher {
             sunrise: sunrise,
             sunset: sunset,
             rainChance: rainChance,
-            observedAt: Date()
+            observedAt: Date(),
+            latitude: ((root["nearest_area"] as? [[String: Any]])?.first?["latitude"] as? String).flatMap(Double.init),
+            longitude: ((root["nearest_area"] as? [[String: Any]])?.first?["longitude"] as? String).flatMap(Double.init)
         )
     }
 
