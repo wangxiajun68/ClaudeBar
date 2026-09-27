@@ -34,8 +34,17 @@ jobs:
       # them died on `ModuleNotFoundError: No module named 'PIL'`. They were
       # only absent from CI until now because CI ran a hand-copied subset of
       # the list (see below).
+      #
+      # A venv rather than `pip install --user`: the runner's Python is
+      # Homebrew's, so PEP 668 refuses the install outright and the only way
+      # past it is `--break-system-packages`, which edits the interpreter the
+      # rest of the image shares. Prepending the venv's `bin` to PATH makes
+      # the plain `python3` in `make test` resolve to it instead.
       - name: Python imaging deps
-        run: python3 -m pip install --user Pillow numpy
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet Pillow numpy
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Build (no install)
         env:
