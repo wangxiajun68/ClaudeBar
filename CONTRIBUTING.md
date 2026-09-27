@@ -44,10 +44,12 @@ make build      # 编译、本机自签「ClaudeBar Dev」、安装到 /Applicat
 bash Sources/build.sh
 CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
 CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
-python3 Tests/ui-regressions.py && python3 Tests/core-regressions.py
+make test   # 清单只在 Makefile 里，CI 也是调用它
 ```
 
 `Tests/` 下是**源码切片回归**：脚本从 `Sources/` 里切出待测函数，拼成一段临时 Swift 用 `swiftc` 编译运行。不需要启动 App、不写用户配置、不联网（只需 Python 3 标准库与 `swiftc`）。CI 在构建后跑同一组。改动被测函数名时记得同步脚本里的切片锚点。
+
+**例外**：`Tests/product-mark-regressions.py` 与 `Tests/machine-mark-regressions.py` 要用 Pillow / numpy 解码品牌 PNG（同样的两个包也是 `Tools/gen-brand-marks.py` 与 `Tools/make-claudebar-mark.py` 的依赖），CI 里由 "Python imaging deps" 那一步安装：`python3 -m pip install --user Pillow numpy`。
 
 VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该文件再设 `MIHOMO_SKIP_DOWNLOAD=1`。
 

@@ -27,6 +27,16 @@ jobs:
           swiftc --version
           cat VERSION
 
+      # Pillow + numpy are what decode the brand PNGs. Two suites
+      # (`product-mark` and `machine-mark`) and two generators
+      # (`gen-brand-marks.py`, `make-claudebar-mark.py`) need them, and the
+      # runner does not ship them — the first CI run that actually invoked
+      # them died on `ModuleNotFoundError: No module named 'PIL'`. They were
+      # only absent from CI until now because CI ran a hand-copied subset of
+      # the list (see below).
+      - name: Python imaging deps
+        run: python3 -m pip install --user Pillow numpy
+
       - name: Build (no install)
         env:
           CLAUDEBAR_SKIP_INSTALL: "1"
