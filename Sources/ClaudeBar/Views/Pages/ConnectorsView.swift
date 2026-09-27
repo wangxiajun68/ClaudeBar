@@ -855,39 +855,36 @@ private struct LocalCLICard: View {
     }
 }
 
+/// The connector card's own action buttons.
+///
+/// `accented` is the *suggested* action (启用 on a disabled connector), not a
+/// second button family: it fills the app's one machined pill with the accent
+/// instead of the well tone. The inverted white fill on hover is kept because it
+/// is this card's own gesture — a dense card of small controls needs one thing
+/// that visibly takes over when the pointer arrives — but the body, the rim, the
+/// lit top edge and the press all come from `InstrumentButtonStyle`, so a
+/// connector button and a page-band button are finally the same object.
 private struct ConnectorUtilityButtonModifier: ViewModifier {
     let accented: Bool
     @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
-            .font(Theme.Font.microSemibold)
-            .foregroundStyle(hovered ? (Theme.isDark ? Color.black : .white) :
-                             (accented ? Theme.Ink.claude : Theme.textPrimary))
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(hovered ? Theme.textPrimary : (accented ? Theme.claude.opacity(0.11) : Theme.bgOverlay),
-                        in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(hovered ? Theme.textPrimary : (accented ? Theme.claude.opacity(0.25) : Theme.hairline))
-                    .allowsHitTesting(false)
-            }
-            // The same one-shot perimeter the header's controls wear. Without
-            // it the page had two capsule button languages: the header's lit
-            // ring and the card's plain edge. The inverted fill stays — it is
-            // this control's own gesture and the reason it reads as the card's
-            // primary action.
-            .overlay {
-                if accented, !reduceMotion {
-                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.8),
-                                   lineWidth: 1.3)
-                        .padding(0.5)
-                }
-            }
+            .buttonStyle(ConnectorUtilityButtonStyle(accented: accented,
+                                                     hovered: $hovered))
             .hoverState($hovered)
-            .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
+    }
+}
+
+private struct ConnectorUtilityButtonStyle: ButtonStyle {
+    let accented: Bool
+    @Binding var hovered: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        InstrumentButtonStyle(prominent: accented, tint: Theme.claude,
+                              filled: accented || hovered)
+            .makeBody(configuration: configuration)
+            .environment(\.isEnabled, true)
     }
 }
 

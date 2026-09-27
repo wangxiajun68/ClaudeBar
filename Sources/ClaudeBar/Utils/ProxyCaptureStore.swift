@@ -121,6 +121,18 @@ final class CaptureStreams: ObservableObject {
 
 /// Sidecar recorder for the local proxy. SQLite writes happen off-main.
 /// List UI observes `catalog`; the selected inspector observes `streams`.
+///
+/// **The list is loaded on a background queue, not in `init`.** The first
+/// traffic-page mount used to pay for the whole store: `init` took the recursive
+/// lock, opened SQLite, recovered orphaned rows, pruned and read the 120-row
+/// list — all on the main thread, at the instant the user clicked 流量. Sampling
+/// one page switch put `ProxyCaptureStore.init` plus its `loadCurrentBackend`
+/// chain (with `pruneLocked`'s DELETEs) at ~25 % of the *entire* switch's leaf
+/// samples, which is why a click into that page read as a hitch. Nothing in the
+/// store's public API requires the rows to exist synchronously: every reader is
+/// a SwiftUI body observing `catalog`, so an empty list for one frame is the
+/// correct state before the load finishes — and a launch with no traffic ever
+/// recorded no longer touches the database at all until the page is opened.
 final class ProxyCaptureStore {
     static let shared = ProxyCaptureStore()
 
@@ -128,6 +140,10 @@ final class ProxyCaptureStore {
     let streams = CaptureStreams()
 
     private let lock = NSRecursiveLock()
+    /// Set once the first list load has published; guards against a second
+    /// background load being queued while one is in flight.
+    private var listLoaded = false
+    private let loadQueue = DispatchQueue(label: "com.claudebar.capture-load", qos: .userInitiated)
     private var db: OpaquePointer?
     private var openFailed = false
     private var pendingLive: [Int64: CaptureLive] = [:]
@@ -146,24 +162,47 @@ final class ProxyCaptureStore {
         return dir.appendingPathComponent("proxy-capture.db")
     }()
 
-    private init() {
+    private init() {}
+
+    /// Read the list off-main and publish it, once per process.
+    ///
+    /// Called from `TrafficView.onAppear` — the only surface that renders the
+    /// list. The load is idempotent: a second call while one is in flight (a
+    /// fast page switch away and back) is a no-op, and a later call after the
+    /// first finished re-reads, which is what a user returning to the page
+    /// expects after the proxy has been writing rows behind it.
+    func loadListIfNeeded(force: Bool = false) {
         lock.lock()
-        let rows = loadCurrentBackendLocked()
+        if listLoaded && !force { lock.unlock(); return }
         lock.unlock()
-        publishList(rows)
+        loadQueue.async { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            // Re-check under the lock: two queued loads must not both run, and
+            // the first one to get here wins.
+            if self.listLoaded && !force { self.lock.unlock(); return }
+            let rows = self.loadCurrentBackendLocked()
+            self.listLoaded = true
+            self.lock.unlock()
+            self.publishList(rows)
+        }
     }
 
     /// Close SQLite (if open) and reload from the backend selected in Settings.
     func reloadPersistence() {
-        lock.lock()
-        closeDatabaseLocked()
-        let rows = loadCurrentBackendLocked()
-        lock.unlock()
-        DispatchQueue.main.async { [weak self] in
+        loadQueue.async { [weak self] in
             guard let self else { return }
-            self.catalog.records = rows
-            self.catalog.livePreview = [:]
-            self.streams.live = [:]
+            self.lock.lock()
+            self.closeDatabaseLocked()
+            let rows = self.loadCurrentBackendLocked()
+            self.listLoaded = true
+            self.lock.unlock()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.catalog.records = rows
+                self.catalog.livePreview = [:]
+                self.streams.live = [:]
+            }
         }
     }
 
@@ -508,10 +547,23 @@ final class ProxyCaptureStore {
     }
 
     private func publishList(_ rows: [CaptureSummary]) {
+        let apply: () -> Void = { [weak self] in
+            guard let self else { return }
+            // A capture that started while this read was in flight is not in
+            // `rows` (the SELECT ran before its INSERT committed). Keep it —
+            // replacing wholesale would make the row the user just triggered
+            // vanish until the next reload, and `patchMain` looks records up by
+            // id, so a dropped row also stops receiving its live updates.
+            let known = Set(rows.map(\.id))
+            let extra = self.catalog.records.filter { !known.contains($0.id) }
+            self.catalog.records = extra.isEmpty
+                ? rows
+                : (extra + rows).sorted { $0.id > $1.id }
+        }
         if Thread.isMainThread {
-            catalog.records = rows
+            apply()
         } else {
-            DispatchQueue.main.async { [weak self] in self?.catalog.records = rows }
+            DispatchQueue.main.async(execute: apply)
         }
     }
 

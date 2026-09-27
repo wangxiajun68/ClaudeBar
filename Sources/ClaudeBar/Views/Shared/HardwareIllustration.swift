@@ -39,6 +39,9 @@ struct HardwareIllustration: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.surfaceIsVisible) private var surfaceVisible
+    /// The sweep's clock, started when the mark appears — see `phase(level:at:)`
+    /// for why it is not an absolute date.
+    @State private var sweepStart = Date()
 
     /// Lucide's own grid. The outline is authored in these units.
     static let grid = LucideHardwareGeometry.grid
@@ -88,17 +91,21 @@ struct HardwareIllustration: View {
                 var icon = c
                 icon.translateBy(x: iconRect.minX, y: iconRect.minY)
                 icon.scaleBy(x: s, y: s)
+                // The path itself is cached per kind — see
+                // `LucideHardwareGeometry.path(for:)`. It is a constant drawing,
+                // and this closure can run once per display cycle.
                 let outline = LucideHardwareGeometry.path(for: Self.outline(for: kind))
                 icon.fill(outline, with: .color(tint.opacity(0.09)))
                 icon.stroke(outline, with: .color(tint),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
                 // 2. The reading, in its own lane.
-                let t = Self.phase(level: level, at: timeline.date)
+                let t = Self.phase(level: level, at: timeline.date.timeIntervalSince(sweepStart))
                 Self.drawReading(kind: kind, level: level, cells: cells, wells: wells,
                                  t: t, tint: tint, lane: lane, ctx: &c)
             }
         }
+        .onAppear { sweepStart = Date() }
         .accessibilityHidden(true)
     }
 
@@ -146,10 +153,17 @@ struct HardwareIllustration: View {
         visible && !reduceMotion && clamp(level) >= 0.04
     }
 
-    /// 0…1 for one sweep. Rate ∝ the reading, derived from absolute time so a
-    /// load change speeds the sweep up rather than restarting it.
-    static func phase(level: Double, at date: Date) -> Double {
-        let secs = date.timeIntervalSinceReferenceDate * (0.35 + clamp(level) * 1.35)
+    /// 0…1 for one sweep. Rate ∝ the reading.
+    ///
+    /// `time` is seconds since the mark appeared, *not* since the reference
+    /// date. Deriving it from an absolute clock means each mark's sweep phase
+    /// depends on the instant the app was launched — two tiles handed the same
+    /// reading could sit at visibly different points of the same sweep, and the
+    /// phase jumped whenever `TimelineView` was resumed after a pause (a hidden
+    /// window, Reduce Motion being turned off), landing the sweep mid-flight
+    /// instead of at its start.
+    static func phase(level: Double, at time: TimeInterval) -> Double {
+        let secs = time * (0.35 + clamp(level) * 1.35)
         return secs.truncatingRemainder(dividingBy: 1)
     }
 
@@ -167,10 +181,21 @@ struct HardwareIllustration: View {
     private static func drawReading(kind: Kind, level: Double, cells: [Double],
                                     wells: [Double], t: Double, tint: Color,
                                     lane: CGRect, ctx: inout GraphicsContext) {
-        let values: [Double]
+        // `cells.map(clamp)` allocated once per frame per mark; this runs at
+        // display rate for up to four marks at a time.
+        var values: [Double]
         switch kind {
-        case .cpu, .gpu: values = cells.isEmpty ? [level] : cells.map(clamp)
-        case .memory, .disk: values = (wells.isEmpty ? [level] : wells).map(clamp)
+        case .cpu, .gpu:
+            if cells.isEmpty {
+                values = [level]
+            } else {
+                values = cells
+                for index in values.indices { values[index] = clamp(values[index]) }
+            }
+        case .memory, .disk:
+            let source = wells.isEmpty ? [level] : wells
+            values = source
+            for index in values.indices { values[index] = clamp(values[index]) }
         }
 
         // The lane's own track, so the bars read as a gauge on a rail rather

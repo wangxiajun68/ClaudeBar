@@ -358,6 +358,16 @@ enum Theme {
         static let smooth = SwiftUI.Animation.smooth(duration: 0.20, extraBounce: 0)
         static let pulse = SwiftUI.Animation.easeInOut(duration: 1.1)
         static let snappy = SwiftUI.Animation.bouncy(duration: 0.18, extraBounce: 0.10)
+
+        /// The digit roll, and only the digit roll.
+        ///
+        /// `.snappy`'s 0.10 extra bounce is pleasant for a surface that moves a
+        /// few times a session; the roll runs on a 1 Hz reading, and bounce
+        /// *lengthens* the transition — a rolling figure is then still travelling
+        /// when its next value arrives, so the digits never land. 0.20 s settles
+        /// well inside the sampler's period and reads as the number turning
+        /// rather than as the number springing.
+        static let roll = SwiftUI.Animation.smooth(duration: 0.20, extraBounce: 0)
     }
 
     enum Motion {
@@ -418,6 +428,13 @@ struct PanelCardModifier: ViewModifier {
                             .fill(tint.opacity(Theme.isDark ? 0.12 : 0.06))
                     }
                 }
+                // `.shadow` here is *not* the cost `TileSurface`'s was, and was
+                // A/B'd to be sure: replacing this one with a layer-backed
+                // shadow left the dashboard at 384 → 386 frames per 6 s (no
+                // change), while doing the same to the tiles alone took it to
+                // 734. So the expense tracks the shadowed subtree — the tiles'
+                // background carries `DepthLens`, the panels' is two rounded
+                // rects — and a layer per panel would buy nothing to pay for.
                 .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
             }
             .overlay {

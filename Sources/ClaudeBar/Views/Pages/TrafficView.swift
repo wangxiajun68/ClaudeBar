@@ -368,6 +368,11 @@ struct TrafficView: View {
             // queued may land during this appear pass, and a stale `mounted`
             // would drop a legitimate result.
             state.mounted = true
+            // The capture list is read off-main now (`ProxyCaptureStore` used to
+            // open SQLite, recover orphans and prune inside `init`, on the main
+            // thread, at the instant this page was clicked — the switch's single
+            // largest app-side cost). Idempotent and cheap when already loaded.
+            ProxyCaptureStore.shared.loadListIfNeeded()
             // Re-assert the selection, not just fill an empty one: a record
             // publish deferred by `onReceive` can land after a previous
             // `onDisappear` and leave `selectedID` pointing at a row that is no
@@ -422,7 +427,7 @@ struct TrafficView: View {
                 Spacer(minLength: 8)
                 if !catalog.records.isEmpty {
                     Button("清空") { confirmClear = true }
-                        .adaptiveGlassButton(tint: Theme.statusError, ink: Theme.Ink.error)
+                        .adaptiveGlassButton(tint: Theme.statusError, ink: .white, filled: true)
                 }
             }
             .padding(.horizontal, Theme.Space.s12)

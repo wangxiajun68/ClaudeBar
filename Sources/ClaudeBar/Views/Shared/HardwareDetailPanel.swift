@@ -530,12 +530,10 @@ private struct ConnectionRing: View {
     var level: Double?
     var tint: Color
     var active: Bool
-    @State private var phase: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The 8pt dot that says "this endpoint is up". Filled and breathing white
-    /// only while the proxy is actually listening — the one thing on the panel
-    /// worth keeping in the corner of an eye.
+    /// The 8pt dot that says "this endpoint is up" — filled and breathing white
+    /// only while the proxy is actually listening.
     private var live: Bool { active && !reduceMotion }
 
     var body: some View {
@@ -545,17 +543,31 @@ private struct ConnectionRing: View {
             track
             core
             if kind == .proxy {
-                Circle()
-                    .fill(active ? Color.white : Theme.textTertiary(0.4))
-                    .frame(width: 8, height: 8)
-                    .opacity(live ? (phase.truncatingRemainder(dividingBy: 1) > 0.5 ? 1 : 0.45) : 1)
-                    // Rides the gauge's own rim, so it cannot drift off it.
-                    .offset(y: -ConnectionDetailPanel.deviceGauge / 2 + 10)
+                // The blink is a Core Animation layer, not a SwiftUI value.
+                //
+                // It used to be a `Timer` firing 12×/s into `@State phase`, with
+                // `.animation(.linear(duration: 0.1), value: phase)` on this
+                // stack: a fresh animated transaction every 83 ms, i.e. one in
+                // flight essentially always while the panel was up. An in-flight
+                // transaction makes the display cycle re-run the whole hosting
+                // view's layout — this panel shares that hosting view with the
+                // scrolling dashboard — and the timer was never invalidated, so
+                // it outlived the popover and kept mutating a `@State` box whose
+                // view was gone. `DecorativeMotion` is the app's established
+                // replacement: one `CALayer`, interpolated by the render server,
+                // stopped when the window is occluded.
+                ZStack {
+                    Circle()
+                        .fill(active ? Color.white.opacity(0.45) : Theme.textTertiary(0.4))
+                    if live {
+                        DecorativeMotion(kind: .pulse, tint: .white, active: true)
+                    }
+                }
+                .frame(width: 8, height: 8)
+                // Rides the gauge's own rim, so it cannot drift off it.
+                .offset(y: -ConnectionDetailPanel.deviceGauge / 2 + 10)
             }
         }
-        .onAppear { if kind == .proxy, live { tick() } }
-        .onDisappear { phase = 0 }
-        .animation(reduceMotion ? nil : .linear(duration: 0.1), value: phase)
     }
 
     /// The lit part of the ring: the uplink's own fraction, or a travelling arc
@@ -572,29 +584,18 @@ private struct ConnectionRing: View {
                     .rotationEffect(.degrees(-90))
             }
         case .proxy:
-            Circle()
-                .trim(from: 0, to: 0.34)
-                .stroke(active ? tint.opacity(0.85) : Theme.textTertiary(0.3),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(Double(phase) * 360))
+            // The travelling arc is Core Animation too: same reason as the dot
+            // above. `.arc` is the island badge's own gradient-tailed arc, so
+            // "this endpoint is a running process" reads exactly as it does on
+            // the island.
+            DecorativeMotion(kind: .arc, tint: tint, active: active,
+                             lineWidth: 3)
+                .frame(width: ConnectionDetailPanel.deviceGauge,
+                       height: ConnectionDetailPanel.deviceGauge)
+                .opacity(active ? 0.85 : 0.3)
         case .airdrop, .bluetooth:
             EmptyView()
         }
-    }
-
-    /// Driven by the same 12-per-second cadence the old ES8 arrival-listener used
-    /// (`setInterval(…, 1000 / 12)`), not by a `TimelineView`: the page already runs
-    /// one clock, and a second one per ring is the kind of doubled work this file's
-    /// header rules out.
-    private func tick() {
-        guard live else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12.0, repeats: true) { _ in
-            Task { @MainActor in
-                phase += 1.0 / 40.0
-                if phase > 1 { phase -= 1 }
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     @ViewBuilder private var core: some View {

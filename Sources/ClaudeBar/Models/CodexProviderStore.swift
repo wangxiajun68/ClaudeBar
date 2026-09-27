@@ -26,10 +26,15 @@ final class CodexProviderStore: ObservableObject {
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
     private var quotaTask: Task<Void, Never>?
+    /// Background quota poll. Re-armed on every manual refresh so the two
+    /// paths never stack, and invalidated on deinit.
+    private var quotaTimer: Timer?
     /// Weak back-ref so proxy lifecycle can see Claude capture flags.
     weak var claudePeer: ProviderStore?
 
     init() {}
+
+    deinit { quotaTimer?.invalidate() }
 
     // MARK: - Load / Save
 
@@ -301,6 +306,10 @@ final class CodexProviderStore: ObservableObject {
         // order previously let a transient failure overwrite valid windows.
         guard quotaTask == nil else { return }
         quotaLoading = true
+        // A manual refresh re-arms the poll, so the next automatic one is a
+        // full interval away: tapping refresh in the popup must not be
+        // followed seconds later by a background poll re-entering the spinner.
+        if quotaTimer != nil { startQuotaPolling() }
         quotaTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.quotaTask = nil }
@@ -308,6 +317,23 @@ final class CodexProviderStore: ObservableObject {
             self.quotaWindows = snapshot.windows
             self.quotaNote = snapshot.note
             self.quotaLoading = false
+        }
+    }
+
+    // MARK: - Background quota poll
+
+    /// Start (or restart) the periodic quota poll.
+    ///
+    /// Called once at launch, right after `ProviderStore.refresh()` has kicked
+    /// off the first fetch. Every manual refresh re-arms the timer, so tapping
+    /// the refresh button always leaves a full interval before the next
+    /// automatic one rather than racing it.
+    func startQuotaPolling() {
+        quotaTimer?.invalidate()
+        quotaTimer = Timer.scheduledTimer(
+            withTimeInterval: AppConfig.quotaPollInterval, repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshQuota() }
         }
     }
 

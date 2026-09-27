@@ -59,6 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store.refresh()
 
+        // The first quota fetch already ran inside `store.refresh()` (it calls
+        // `peer?.refreshQuota()`); arm the background poll after it so the two
+        // never start in the same tick.
+        codexStore.startQuotaPolling()
+
         ScreenshotHotKey.shared.startIfEnabled()
 
         // Fetches only when the saved preference already asks for a converted

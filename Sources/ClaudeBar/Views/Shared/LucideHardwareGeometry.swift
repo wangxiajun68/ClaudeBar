@@ -19,7 +19,27 @@ enum LucideHardwareGeometry {
     static let grid: CGFloat = 24
 
     /// The outline of one hardware mark, in Lucide's coordinate space.
+    ///
+    /// Cached: the geometry is a pure function of `kind` (the file is generated
+    /// from lucide's SVGs and never varies at runtime), and the hot reader is a
+    /// `Canvas` that runs once per display cycle while a machine mark animates.
+    /// Rebuilding the CPU outline is 30-plus path commands — allocation and
+    /// hashing in Core Graphics' path storage — per call, and the mark is drawn
+    /// on four tiles of the dashboard strip.
+    ///
+    /// `@MainActor` because every caller is a SwiftUI body; the cache is filled
+    /// on first use and never invalidated, so no lock is needed.
+    @MainActor private static var cache: [Kind: Path] = [:]
+
+    @MainActor
     static func path(for kind: Kind) -> Path {
+        if let hit = cache[kind] { return hit }
+        let built = buildPath(for: kind)
+        cache[kind] = built
+        return built
+    }
+
+    private static func buildPath(for kind: Kind) -> Path {
         var p = Path()
         switch kind {
         /// Lucide `cpu`.

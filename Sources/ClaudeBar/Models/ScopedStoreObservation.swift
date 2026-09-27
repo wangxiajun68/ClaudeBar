@@ -115,7 +115,8 @@ extension ProviderStore {
         }
         if fields.contains(.usage) {
             out += [changes($usageStats), changes($usageDays), changes($usageBySource),
-                    changes($usageDaysBySource), changes($usagePeriod), changes($usageReferenceDate), changes($usageLoading)]
+                    changes($usageDaysBySource), changes($usagePeriod), changes($usageReferenceDate),
+                    changes($usageLoading), changes($todayUsage)]
         }
         if fields.contains(.sessions) {
             out += [changes($sessions), changes($cursorSessions), changes($externalSessions)]

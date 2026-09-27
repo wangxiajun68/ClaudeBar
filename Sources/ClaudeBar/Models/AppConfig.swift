@@ -26,6 +26,15 @@ enum AppConfig {
     /// sparkline. At the default 2.5s poll this covers the last minute.
     static let heartbeatLength = 24
 
+    /// Background ChatGPT quota poll.
+    ///
+    /// Minutes, not seconds: quota windows move on a 5-hour / 7-day schedule,
+    /// and every poll spawns a short-lived `codex app-server` (up to ~20 s of
+    /// process lifetime). The only thing that needs this to be timely is the
+    /// island's rollover alert, and 15 minutes of lag on a window that just
+    /// reset is not something a user perceives.
+    static let quotaPollInterval: TimeInterval = 900
+
     // MARK: - Widget snapshot
 
     /// UserDefaults key (in the shared App Group suite) under which the

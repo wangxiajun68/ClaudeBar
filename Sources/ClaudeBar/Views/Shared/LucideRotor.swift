@@ -12,12 +12,38 @@ struct LucideRotor: View {
     var artwork: CGImage? = FanArtwork.leftRotor
 
     @State private var mounted = false
+    /// The gauge's own fraction, quantised — see `gauge`.
+    @State private var gauge = 0.0
     @Environment(\.surfaceIsVisible) private var windowVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Below ~80 rpm a rotor's blades are not moving in any way a person would
     /// see; stopping there keeps an idle machine's chrome perfectly still.
     private var spinning: Bool { mounted && windowVisible && rpm >= 80 && !reduceMotion }
+
+    /// The fraction the rim gauge is drawn at, quantised to a visible step.
+    ///
+    /// A fan's RPM is a *noisy* reading — SMC reports a slightly different value
+    /// most ticks — so driving `.animation(_:value: rpm)` from it opened a fresh
+    /// animated transaction every 2 s poll, whatever the fan was actually doing.
+    /// A transaction in flight makes every display cycle re-lay out the whole
+    /// hosting view, so a rotor at a steady speed still paid the app's most
+    /// expensive per-cycle cost.
+    ///
+    /// The gauge is a 2pt arc around a 48pt circle; 1.5 % of it is about 1 pt of
+    /// arc, which is the smallest change worth interpolating. So the value is
+    /// snapped to a 1.5 % grid: a wobble that does not cross a step produces an
+    /// equal value, and `onChange` therefore opens no transaction. The rotor's
+    /// `degreesPerSecond` keeps reading the live `rpm`, so the blades still track
+    /// the true speed. Reduce Motion pins the arc to 0 — it still shows the speed
+    /// as a length, it just stops interpolating, which is what a `nil` animation
+    /// did.
+    private var gaugeValue: Double {
+        guard !reduceMotion else { return 0 }
+        let raw = min(1, max(0, Double(rpm) / Double(max(maxRPM, 1))))
+        let step = 0.015
+        return (raw / step).rounded() * step
+    }
 
     /// Degrees per second, 12 at the floor of the visible range and 58 at rated
     /// max — about 30 s to 6 s per turn. Linear in `rpm / maxRPM` because the
@@ -39,17 +65,30 @@ struct LucideRotor: View {
             Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 2)
                 .padding(size * 0.10)
             Circle()
-                .trim(from: 0, to: min(1, max(0, Double(rpm) / Double(max(maxRPM, 1)))))
+                .trim(from: 0, to: gauge)
                 .stroke(tint.opacity(forced ? 0.95 : 0.65), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .padding(size * 0.10)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: rpm)
             }
             RotorLayer(tint: NSColor(tint), degreesPerSecond: degreesPerSecond, artwork: artwork)
                 .frame(width: size * (showsHousing ? 0.74 : 1), height: size * (showsHousing ? 0.74 : 1))
         }
         .frame(width: size, height: size)
-        .onAppear { mounted = true }
+        .onAppear {
+            mounted = true
+            // No animation on the first paint: the gauge appears at its reading
+            // rather than sweeping up to it from zero.
+            gauge = gaugeValue
+        }
+        .onChange(of: rpm) { _, _ in
+            // Only ever reassigned at a quantised step, and the write itself is
+            // the animation's `value:` key — so a wobbling RPM that does not
+            // cross a step opens no transaction at all.
+            let next = gaugeValue
+            guard next != gauge else { return }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.6)) { gauge = next }
+        }
+        .onChange(of: reduceMotion) { _, _ in gauge = gaugeValue }
         .onDisappear { mounted = false }
         .accessibilityHidden(true)
     }

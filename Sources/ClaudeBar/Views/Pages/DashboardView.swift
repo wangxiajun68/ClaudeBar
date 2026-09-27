@@ -17,6 +17,7 @@ struct DashboardView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
+                DashboardGlanceStrip()
                 ResourceStrip()
                 PowerFlowCard()
                 sessionOverview

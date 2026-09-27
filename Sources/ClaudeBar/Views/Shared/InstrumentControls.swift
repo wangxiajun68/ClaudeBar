@@ -423,26 +423,53 @@ struct HeaderControlModifier: ViewModifier {
     }
 }
 
-// MARK: - Instrument button (ultimate-3d-btn, quiet)
+// MARK: - Instrument button (the 3D press)
 
-/// The app's **one** push button, replacing the stock glass / bordered button.
+/// The app's **one** push button.
 ///
-/// Quiet is a recessed capsule — the same milled well as a field — so a
-/// secondary action reads as a control sitting in the page, not as Aqua chrome.
-/// Prominent fills with the shape hue, keeps a lit top edge, and presses *down*
-/// (the 3D button's active state). Both light their own perimeter once when the
-/// pointer arrives (`PerimeterSweep`); neither spins a border forever, and
-/// neither glitches its label. A glitch on a native control reads as a fault.
+/// Quiet and prominent are the **same plate at two intentions**. Prominent fills
+/// with the shape hue; quiet is the same machined plate in the well tone. A flat
+/// blue capsule next to a flat grey one was two languages in one band, and both
+/// read as a system pill with a tint poured on.
+///
+/// The plate is the Uiverse push-button material, scaled to a 32pt control:
+/// a lit lip, a shade that falls to the bottom edge, a contact shadow, and a
+/// gloss that arrives with the pointer. Hover lifts it (`scale 1.02`) and runs
+/// a rim highlight; press compresses it. The rim is `DecorativeMotion`'s sweep
+/// — a Core Animation rotation, paused unless the pointer is on the control and
+/// the surface is visible. It is not `PerimeterSweep`: that one-shot is a
+/// SwiftUI transaction, and a highlight that should last exactly as long as the
+/// hover wants a layer that starts and stops with `active`.
+///
+/// What the references do that this does not: per-letter flicker, a glitch, an
+/// infinite idle spin, and a skewed hero plate. A glitch on a native control
+/// reads as a fault, and splitting a label into a view per glyph is a layout
+/// per character on every toolbar button in the window.
 struct InstrumentButtonStyle: ButtonStyle {
     var prominent = false
-    /// Rim and, when prominent, the fill. A shape hue, not ink.
+    /// Rim and, with `filled`, the body. A shape hue, not ink.
     var tint: Color = Theme.claude
-    /// Label color for a quiet button. Prominent always prints white.
+    /// Quiet buttons stay white by default: the reference's label is white on the
+    /// plate, and the plate is dark enough in both themes to carry it. Pass a
+    /// hue only where the label itself is the signal (a destructive action) —
+    /// see `InstrumentButtonBody.tall` for the one case that keeps 4.5:1 on a
+    /// light body.
     var ink: Color? = nil
+    /// Fills the body with `tint` instead of the well tone. `prominent` is the
+    /// page's primary action; a destructive button is normally this too, because
+    /// "filled with the danger hue" is the loudest thing it can be without
+    /// inventing a second shape.
+    var filled: Bool? = nil
+    /// The reference's own proportions: a taller pill with a rung-up label, for a
+    /// hero action. Left off, the button keeps the app's control height so a
+    /// toolbar of 刷新 / 选择项目 / 自定义 stays level with its fields.
+    var tall: Bool = false
+
+    private var isFilled: Bool { filled ?? prominent }
 
     func makeBody(configuration: Configuration) -> some View {
         InstrumentButtonBody(configuration: configuration, prominent: prominent,
-                             tint: tint, ink: ink)
+                             tint: tint, ink: ink, filled: isFilled, tall: tall)
     }
 }
 
@@ -451,75 +478,163 @@ private struct InstrumentButtonBody: View {
     var prominent: Bool
     var tint: Color
     var ink: Color?
+    var filled: Bool
+    var tall: Bool
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.surfaceIsVisible) private var surfaceVisible
+
+    /// The plate's geometry, derived off one height so the capsule is a true pill
+    /// and the cap radius never exceeds half the shorter side.
+    private var height: CGFloat { tall ? 44 : 32 }
 
     var body: some View {
-        let pressed = configuration.isPressed && enabled && !reduceMotion
+        let down = configuration.isPressed && enabled
+        let lit = hovered && enabled && !down
+
         configuration.label
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(prominent ? Color.white : (ink ?? (hovered ? Theme.textPrimary : Theme.textSecondary)))
-            .padding(.horizontal, 12)
-            .frame(minHeight: 28)
-            .background { plate }
-            .overlay { rim }
-            .overlay {
-                if !reduceMotion {
-                    PerimeterSweep(active: hovered && enabled,
-                                   tint: prominent ? Color.white.opacity(0.95) : tint.opacity(0.9),
-                                   lineWidth: 1.4)
-                        .padding(1)
-                        .clipShape(Capsule())
-                        .allowsHitTesting(false)
-                }
-            }
-            .background(alignment: .bottom) {
-                GroundShadow(active: hovered && enabled && !pressed)
-                    .padding(.horizontal, 8)
-                    .offset(y: 9)
-            }
+            .font(.system(size: tall ? 14 : 12.5, weight: .semibold, design: .rounded))
+            // A near-black label was the previous light-mode default on the accent;
+            // these read as an action, and the reference prints the label in white.
+            .foregroundStyle(labelColor)
+            // A 1pt drop, not the reference's 2px grey smear: at 12.5pt the smear
+            // just dirties the counters.
+            .shadow(color: filled ? .black.opacity(0.28) : .clear, radius: 0, y: 1)
+            .padding(.horizontal, tall ? 22 : 15)
+            .frame(height: height)
+            .background { plateFill }
+            .overlay { gloss(lit: lit, down: down) }
+            .overlay { rim(lit: lit, down: down) }
+            .overlay { topLight(lit: lit) }
+            .clipShape(Capsule())
+            // After the clip: the sweep is a stroke centred on the rim, and
+            // clipping it would shave the outer half of the highlight.
+            .overlay { edgeSweep(lit: hovered && enabled) }
             .contentShape(Capsule())
-            .opacity(enabled ? 1 : 0.42)
-            // Press travels down. The hit shape is declared before the offset,
-            // so a 2pt press cannot carry the pointer out of the control.
-            .offset(y: pressed ? (prominent ? 2 : 1) : 0)
+            // The plate's two drop shadows, **owned by a layer rather than the
+            // view graph** — see `LayerShadow` in `Tile.swift` for the method
+            // and the numbers. `.shadow(...)` is a display-list filter: it
+            // re-runs every display cycle the button's subtree is visited, and
+            // `.compositingGroup()` above it makes the whole button one more
+            // compositing unit. This button is the app's most-repeated
+            // component — the provider directory alone carries 8 of them per
+            // card — and the cost is per *button*, not per button class.
+            //
+            // Measured (provider directory, deep scroll, SCStream paints over
+            // 19 s, alternating arms): `.shadow` **1272** (p50 16.5 ms, >20 ms
+            // 73) vs layer **2072** (p50 8.4 ms, >20 ms 0) — 66.6 → 108.6 fps.
+            //
+            // The two build the same picture: the tinted one is the reference's
+            // `:before`, fuller and lower, the black one its `:after`. A layer
+            // carries a single shadow, so `LayerShadow` takes the second as a
+            // sibling layer instead. `filled` gates the tinted one exactly as
+            // `.clear` did.
+            .background {
+                LayerShadow(radius: down ? 1 : (lit ? 8 : 3),
+                            y: down ? 0 : (lit ? 5 : 2),
+                            opacity: lit ? 0.22 : 0.14,
+                            cornerRadius: height / 2,
+                            surface: .clear,
+                            color: .black,
+                            underRadius: down ? 0 : (lit ? 8 : 4),
+                            underY: down ? 0 : 2,
+                            underOpacity: filled ? (down ? 0.08 : (lit ? 0.40 : 0.18)) : 0,
+                            underColor: tint)
+            }
+            .opacity(enabled ? 1 : 0.38)
+            // Hover grows the drawing, not the layout slot, so a toolbar of
+            // mixed buttons does not reflow. Press compresses; Reduce Motion
+            // keeps the colour change and drops the transform.
+            .scaleEffect(reduceMotion ? 1 : (down ? 0.96 : (lit ? 1.02 : 1)))
             .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: hovered)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
     }
 
-    private var plate: some View {
-        Capsule()
-            .fill(prominent ? tint : Theme.fieldWell)
-            .overlay {
-                if prominent {
-                    // Pulls a bright shape hue down so white 12pt type clears
-                    // the body-text contrast floor without inventing a second red.
-                    Capsule().fill(Color.black.opacity(0.22)).allowsHitTesting(false)
-                }
-            }
-            .overlay {
-                if prominent {
-                    Capsule()
-                        .fill(LinearGradient(colors: [.white.opacity(Theme.isDark ? 0.22 : 0.34), .clear],
-                                             startPoint: .top, endPoint: .center))
-                        .allowsHitTesting(false)
-                }
-            }
-            .shadow(color: .black.opacity(prominent ? (hovered ? 0.16 : 0.08) : 0),
-                    radius: prominent ? (hovered ? 8 : 3) : 0,
-                    y: prominent ? (hovered ? 4 : 1) : 0)
+    /// White on a filled plate; on the well tone the label keeps the app's
+    /// primary text, which is the only pairing that clears the body-text contrast
+    /// floor in both themes.
+    private var labelColor: Color {
+        if let ink { return ink }
+        if filled { return .white }
+        return Theme.textPrimary
     }
 
-    private var rim: some View {
-        Capsule()
-            .strokeBorder(hovered ? tint.opacity(prominent ? 0.0 : 0.55) : Theme.hairline, lineWidth: 1)
+    /// Body plus the milling. The hover used to multiply the whole fill by
+    /// 0.92, which washed the accent out — the plate looked flatter the moment
+    /// it was asked to respond. Depth stays in the gradient; hover adds the
+    /// gloss on top of an unchanged body.
+    private var plateFill: some View {
+        let body = filled ? tint : Theme.fieldWell
+        return Capsule()
+            .fill(body)
             .overlay {
-                InnerFrameRing(inset: 2, radius: 14,
-                               tint: hovered ? tint.opacity(0.30) : Theme.innerFrameMuted)
+                Capsule().fill(
+                    LinearGradient(stops: [
+                        .init(color: .white.opacity(filled ? 0.38 : (Theme.isDark ? 0.14 : 0.34)), location: 0.00),
+                        .init(color: .white.opacity(filled ? 0.08 : 0.08), location: 0.22),
+                        .init(color: .clear, location: 0.48),
+                        .init(color: .black.opacity(filled ? 0.20 : (Theme.isDark ? 0.28 : 0.06)), location: 1.00),
+                    ], startPoint: .top, endPoint: .bottom)
+                )
+                .allowsHitTesting(false)
             }
+    }
+
+    /// The reference's `::after`: a highlight gathered at the top edge that
+    /// fades in with the pointer and peaks on press. Opacity only — the
+    /// gradient itself does not move.
+    private func gloss(lit: Bool, down: Bool) -> some View {
+        Capsule()
+            .fill(
+                LinearGradient(stops: [
+                    .init(color: .white, location: 0.00),
+                    .init(color: Color.white.opacity(0.55), location: 0.14),
+                    .init(color: tint.opacity(filled ? 0.15 : 0.28), location: 0.32),
+                    .init(color: .clear, location: 0.58),
+                ], startPoint: .top, endPoint: .bottom)
+            )
+            .opacity(down ? 0.62 : (lit ? 0.36 : 0))
             .allowsHitTesting(false)
+    }
+
+    /// Resting edge is the body one step darker. Hover picks up the highlight
+    /// hue; press goes brighter still — the reference's active border, without
+    /// a second shape.
+    private func rim(lit: Bool, down: Bool) -> some View {
+        let resting = Color.black.opacity(filled ? 0.22 : (Theme.isDark ? 0.55 : 0.14))
+        let hot = (filled ? Color.white : tint).opacity(down ? 0.85 : 0.55)
+        return Capsule()
+            .strokeBorder(lit || down ? hot : resting, lineWidth: 1)
+            .allowsHitTesting(false)
+    }
+
+    /// The lit top edge. Present at rest — it is what tells a person the
+    /// surface is raised — and brighter under the pointer.
+    private func topLight(lit: Bool) -> some View {
+        Capsule()
+            .strokeBorder(
+                LinearGradient(colors: [
+                    .white.opacity(lit ? 0.70 : (filled ? 0.46 : (Theme.isDark ? 0.22 : 0.80))),
+                    .clear
+                ], startPoint: .top, endPoint: .center),
+                lineWidth: 1
+            )
+            .padding(0.5)
+            .allowsHitTesting(false)
+    }
+
+    /// Rim highlight for as long as the pointer stays. The layer is resident
+    /// so the first hover does not allocate a view mid-gesture; `active` is
+    /// what starts the rotation, and occlusion stops it if the window is covered.
+    private func edgeSweep(lit: Bool) -> some View {
+        DecorativeMotion(kind: .sweep,
+                         tint: filled ? .white : tint,
+                         active: lit && !reduceMotion && surfaceVisible)
+            .opacity(lit && !reduceMotion ? 0.9 : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

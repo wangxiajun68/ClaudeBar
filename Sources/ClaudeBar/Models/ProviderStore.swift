@@ -39,6 +39,17 @@ class ProviderStore: ObservableObject {
     private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
+    /// Today's totals, independent of `usagePeriod`.
+    ///
+    /// The dashboard's 今日花费 / 今日 Token cards are a fixed window while
+    /// everything else on the usage surfaces follows the period chips, so they
+    /// cannot read `usageStats` — that is the *selected* period (default 当前月),
+    /// and a card labelled 今日 showing a month's total is exactly the kind of
+    /// confidently wrong number this app's cost rules exist to avoid. Queried
+    /// alongside the period in the same detached pass, so no second timer and no
+    /// second scan runs for it.
+    @Published private(set) var todayUsage = TodayUsage()
+
     @Published var usagePeriod: UsagePeriod = .month {
         didSet { if usagePeriod != oldValue { refreshUsage(rescan: false) } }
     }
@@ -876,8 +887,10 @@ class ProviderStore: ObservableObject {
                     let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
                     let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
+                    let today = Self.queryTodayUsage()
                     await MainActor.run { [weak self] in
                         guard let self, !self.usageRefreshQueued else { return }
+                        self.publishTodayUsage(today)
                         self.publishUsage(quick, quickSources, days, daysBySource)
                     }
                 }
@@ -889,6 +902,7 @@ class ProviderStore: ObservableObject {
                 let finalSources = Self.queryUsageBySource(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
                 let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
+                let today = Self.queryTodayUsage()
 
                 let next: (again: Bool, rescan: Bool) = await MainActor.run {
                     if self.usageRefreshQueued {
@@ -899,6 +913,7 @@ class ProviderStore: ObservableObject {
                     }
                     // Publish and release the gate in one main-actor transaction.
                     // A new refresh cannot start between these operations.
+                    self.publishTodayUsage(today)
                     self.publishUsage(final, finalSources, days, daysBySource)
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
@@ -954,6 +969,34 @@ class ProviderStore: ObservableObject {
 
     private static func queryUsageBySource(in interval: DateInterval) -> [UsageSource: [ModelUsage]] {
         UsageIndex.fetchBySource(in: interval)
+    }
+
+    /// Today's fixed-window totals, read where the period aggregates are read.
+    ///
+    /// Two day bounds, not one: the pace caption ("昨日的 96%") is the only
+    /// thing that makes a single day's figure readable, and querying yesterday
+    /// here costs one more indexed range scan instead of a second pass over the
+    /// same rollup from the view.
+    private static func queryTodayUsage(now: Date = Date(), calendar: Calendar = .current) -> TodayUsage {
+        let dayStart = calendar.startOfDay(for: now)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? now
+        let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: dayStart) ?? dayStart
+
+        let today = UsageIndex.fetch(in: DateInterval(start: dayStart, end: dayEnd))
+        var out = TodayUsage()
+        out.tokens = today.reduce(0) { $0 + $1.totalTokens }
+        out.calls = today.reduce(0) { $0 + $1.calls }
+        out.cost = ModelPricing.estimate(today)
+        out.yesterdayTokens = UsageIndex.fetch(in: DateInterval(start: yesterdayStart, end: dayStart))
+            .reduce(0) { $0 + $1.totalTokens }
+        return out
+    }
+
+    /// Same assign-only-what-changed rule as `publishUsage`: an FSEvents
+    /// rescan that finds the same day totals must not re-render the dashboard
+    /// cards or the popup for it.
+    private func publishTodayUsage(_ fresh: TodayUsage) {
+        if todayUsage != fresh { todayUsage = fresh }
     }
 
     private var usageWatcherStarted = false

@@ -276,8 +276,13 @@ enum CodexQuotaFetcher {
 
     private static func codexExecutable() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // ChatGPT.app moved the bundled CLI into `codex-cli/bin` (codex
+        // 0.158 reads the layout from `codex-package.json`). Older installs
+        // still ship it directly under Resources, so try both.
         var candidates = [
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
             "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
             "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
             "\(home)/.local/bin/codex",
             "/opt/homebrew/bin/codex",

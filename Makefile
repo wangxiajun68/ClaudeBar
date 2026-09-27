@@ -34,5 +34,6 @@ test:
 	python3 Tests/proxy-usage-regressions.py
 	python3 Tests/codex-session-regressions.py
 	python3 Tests/inflight-animation-regressions.py
+	python3 Tests/card-shadow-regressions.py
 	python3 Tests/machine-mark-regressions.py
 	python3 Tests/fan-rotor-regressions.py

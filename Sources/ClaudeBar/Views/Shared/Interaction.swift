@@ -73,16 +73,23 @@ extension View {
 // MARK: - Action buttons
 
 extension View {
-    /// The app's push button. The name is historical: it used to be Liquid Glass
-    /// on macOS 26 and a bordered button before that, which is why a page of
-    /// machined tiles still had Aqua chrome in every action slot.
+    /// The app's push button — the machined pill described on
+    /// `InstrumentButtonStyle`. The name is historical: it was Liquid Glass on
+    /// macOS 26 and a bordered button before that, which is why a page of
+    /// machined tiles used to have Aqua chrome in every action slot.
     ///
-    /// `tint` is the shape hue (rim, and the fill when `prominent`). `ink` is
-    /// the quiet label color when the action is destructive or branded.
+    /// `tint` is the shape hue: the body when `prominent`, and the glow under the
+    /// plate always. `filled` overrides whether the body takes the hue — a
+    /// destructive action wants a filled body without claiming to be the page's
+    /// primary button. `ink` overrides the label where the label is itself the
+    /// signal. `tall` takes the hero proportions.
     func adaptiveGlassButton(prominent: Bool = false,
                              tint: Color = Theme.claude,
-                             ink: Color? = nil) -> some View {
-        buttonStyle(InstrumentButtonStyle(prominent: prominent, tint: tint, ink: ink))
+                             ink: Color? = nil,
+                             filled: Bool? = nil,
+                             tall: Bool = false) -> some View {
+        buttonStyle(InstrumentButtonStyle(prominent: prominent, tint: tint, ink: ink,
+                                          filled: filled, tall: tall))
     }
 }
 
@@ -283,13 +290,21 @@ struct IconChipRow<Content: View>: View {
 /// "所有数字都逐位滚动" is one rule, not one rule per screen.
 struct RollingNumberText: View {
     let value: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// See `RollingNumberModifier.rolls` — false keeps the figure live and drops
+    /// the transition (a reading faster than the roll can settle, or a surface
+    /// no one is looking at).
+    var rolls = true
 
-    init(_ value: String) { self.value = value }
+    init(_ value: String, rolls: Bool = true) {
+        self.value = value
+        self.rolls = rolls
+    }
 
     var body: some View {
         Text(value)
-            .rollingNumber()
+            // The figure itself is the transition's key, so the roll runs when
+            // this number changed — not when anything else in the view did.
+            .rollingNumber(valueKey: value, rolls: rolls)
     }
 }
 
@@ -308,16 +323,108 @@ struct RollingNumberText: View {
 /// would have forced every call site to reorder its modifiers.
 struct RollingNumberModifier: ViewModifier {
     var enabled: Bool = true
+    /// The rendered figure, when the caller has it as a string. This is what the
+    /// roll's transition is keyed on: the transition should run because *this*
+    /// number changed, not because some value in the view happened to tick.
+    var valueKey: String? = nil
+    /// Whether the change this render is drawing is already stage.
+    ///
+    /// The caller sets this only when it *knows* the figures move as part of an
+    /// animation it opened itself — the island's "plane a day" pass, where the
+    /// 30-day scrub sweeps every bar and the figures together. Everywhere else
+    /// the modifier opens the transition itself (see below), because a
+    /// `withAnimation` at the call site is usually not available: see the note
+    /// under `rollingNumber(_:)`.
+    var animated: Bool = false
+
+    /// Whether this figure rolls at all.
+    ///
+    /// The digit roll is a transition, so it runs on its own display cycle every
+    /// time the number changes — for a 1 Hz reading that is a redraw of the
+    /// surface per tick, whether or not anyone is looking at it. These are the
+    /// figures that must **not** roll:
+    ///
+    /// - **a surface nobody is looking at.** The island's panel is mounted on
+    ///   every display, over full-screen apps, forever; its collapsed wings tick
+    ///   with the sampler. Rolling a number no one can see buys a per-tick
+    ///   display cycle for nothing. The owners already track this
+    ///   (`UIWakePolicy.hasVisibleWindow`, `surfaceIsVisible` in a `body`); the
+    ///   figure asks via `rolls` instead of each owner remembering to gate.
+    /// - **a value fed at >1 Hz.** The resource strip's CPU / GPU / 内存 / 硬盘
+    ///   heroes sample as often as once a second while a detail popover is open.
+    ///   At that rate the transition never settles: the tile is mid-roll when the
+    ///   next reading lands, so it never shows a readable frame and it redraws
+    ///   the whole card per sample. Coat every other figure in the app.
+    ///
+    /// A figure that is *not* rolling still updates; it just swaps, and it does
+    /// not keep an animated transaction alive between readings.
+    var rolls: Bool = true
+
+    /// What the roll's transition is keyed on.
+    ///
+    /// `.numericText` says what happens to the glyphs **during a transition**;
+    /// it does not create one. SwiftUI runs a content transition only when the
+    /// change arrives inside an animation transaction (`withAnimation`, or an
+    /// `.animation` SwiftUI itself opened). A plain state write from a 1 Hz
+    /// sampler — what feeds almost every figure in this app — arrives in a
+    /// *non-animated* transaction, so the digits swapped instantly and the roll
+    /// was invisible in the running app.
+    ///
+    /// The fix used to be an implicit `.animation(_:value:)` on each figure, and
+    /// that had a real cost: keyed on a value the sampler updates once a second,
+    /// it opened a *fresh* animated transaction on every tick. While any
+    /// transaction is in flight, every display cycle re-runs the whole hosting
+    /// view's layout and display list — not only the cycles where the
+    /// interpolated property moves. Measured on the dashboard:
+    /// `+[NSAnimationContext runAnimationGroup:]` inside `NSHostingView.layout()`
+    /// for 31 % of main-thread samples with it, 13 % without
+    /// (docs/technical/08-performance.md).
+    ///
+    /// So the transaction is opened once here, keyed on the **rendered value**,
+    /// rather than by a modifier sitting on a per-poll input. It still only runs
+    /// when a figure actually changed, nothing stays resident on a 1 Hz value,
+    /// and the app keeps exactly one definition of the roll. Doing it here rather
+    /// than at each call site is also the only form a `Text` can take:
+    /// `withAnimation` needs a data source to write to, and a figure is usually a
+    /// *computed string* handed to a leaf — `RollingNumberText(UsageStats.formatTokens(n))`
+    /// has no source to write to and no way to wrap its parent's update.
+    struct Transition: Equatable {
+        var value: String
+        /// Reduce Motion makes the roll an identity transition: the value still
+        /// updates, it just stops sliding.
+        var reduceMotion: Bool
+        /// Upstream already animates this change; leave that transaction alone
+        /// instead of nesting one inside it (see `rollingNumber(_:)`).
+        var delegated: Bool
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @Environment(\.surfaceIsVisible) private var surfaceIsVisible
 
     func body(content: Content) -> some View {
         if enabled {
             content
                 .monospacedDigit()
-                .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+                .contentTransition(reduceMotion || !rolls || !surfaceIsVisible
+                                   ? .identity : .numericText(countsDown: true))
+                .transaction(value: transition) { transaction in
+                    guard !reduceMotion, !animated, transaction.animation == nil else { return }
+                    transaction.animation = Theme.Animation.roll
+                }
         } else {
             content
         }
+    }
+
+    /// Keyed on the rendered value, so it is `Equatable` without the modifier
+    /// having to know the figure's type — a `String(describing:)` of the styled
+    /// `Content` collapses to the same per-value key for a leaf whose value
+    /// changed and stays stable for one that did not.
+    private var transition: Transition {
+        Transition(value: valueKey ?? String(describing: Self.self),
+                   reduceMotion: reduceMotion || !rolls || !surfaceIsVisible,
+                   delegated: animated)
     }
 }
 
@@ -335,7 +442,21 @@ extension View {
     ///
     /// Reduce Motion turns the roll into an identity transition; the value
     /// still updates, it just stops sliding.
-    func rollingNumber(_ enabled: Bool = true) -> some View {
-        modifier(RollingNumberModifier(enabled: enabled))
+    ///
+    /// `rolls: false` keeps the figure live but drops the transition — for a
+    /// reading that arrives faster than the roll can settle (the resource
+    /// strip's 1 Hz sensors) or for a surface no one is looking at. See
+    /// `RollingNumberModifier.rolls`.
+    ///
+    /// `animated: true` means "the change I am handing you is already inside a
+    /// transaction I opened" — the island's day scrub, where the bars and the
+    /// figures move as one spring. Leave it alone for every ordinary figure: the
+    /// modifier opens the roll's own transition, and a `withAnimation` at the
+    /// call site usually is not available anyway (the value is a computed string,
+    /// so there is no data source for `withAnimation` to write to).
+    func rollingNumber(_ enabled: Bool = true, valueKey: String? = nil,
+                       rolls: Bool = true, animated: Bool = false) -> some View {
+        modifier(RollingNumberModifier(enabled: enabled, valueKey: valueKey,
+                                       animated: animated, rolls: rolls))
     }
 }

@@ -80,48 +80,26 @@ struct ProviderStatusBadge: View {
     }
 }
 
-/// Native keyboard behavior with authored hover, press, focus, and disabled states.
+/// The keyboard behaviour the app's push button must have — focus ring, space /
+/// Return, disabled — with **no** authored chrome.
+///
+/// Every state this used to draw (a faded fill, a rim, the one-shot perimeter
+/// sweep, a press offset) now belongs to `InstrumentButtonStyle`, and this app
+/// has exactly one push-button language. Two hand-rolled copies of it is how the
+/// same page ended up with a rounded *rectangle* button beside a capsule one.
+///
+/// The style is kept as a name because the provider card passes it positionally
+/// at the call site (`ProviderActionStyle(prominent:)`) and because these buttons
+/// sit inside a dense card where the capsule's own proportions would fight the
+/// row; it now renders that capsule regardless. Callers wanting the accent body
+/// ask for it with `prominent:` exactly as before.
 struct ProviderActionStyle: ButtonStyle {
     var prominent = false
-    var tint: Color = Theme.isDark ? Color(hex: 0xA9BFFF) : Color(hex: 0x3657C8)
+    var tint: Color = Theme.claude
 
     func makeBody(configuration: Configuration) -> some View {
-        ActionBody(configuration: configuration, prominent: prominent, tint: tint)
-    }
-    private struct ActionBody: View {
-        let configuration: Configuration
-        let prominent: Bool
-        let tint: Color
-        @State private var hovered = false
-        @Environment(\.isEnabled) private var enabled
-        @Environment(\.accessibilityReduceMotion) private var reduceMotion
-        var body: some View {
-            configuration.label
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 12).frame(minHeight: 32)
-                .foregroundStyle(prominent ? (Theme.isDark ? Color(hex: 0x17223B) : Color.white) : tint)
-                .background {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(prominent ? tint : tint.opacity(hovered ? 0.14 : 0.07))
-                }
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(tint.opacity(hovered ? 0.55 : 0.2)))
-                .overlay {
-                    if !reduceMotion {
-                        PerimeterSweep(active: hovered && enabled, tint: prominent ? .white : tint,
-                                       lineWidth: 1.3)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .allowsHitTesting(false)
-                    }
-                }
-                .shadow(color: .black.opacity(prominent && hovered ? 0.14 : 0), radius: 7, y: 3)
-                .opacity(enabled ? 1 : 0.4)
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
-                .onHover { if hovered != $0 { hovered = $0 } }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: hovered)
-        }
+        InstrumentButtonStyle(prominent: prominent, tint: tint, filled: prominent)
+            .makeBody(configuration: configuration)
     }
 }
 

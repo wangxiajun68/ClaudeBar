@@ -339,7 +339,7 @@ struct SettingsView: View {
                     } label: {
                         Text("退出")
                     }
-                    .adaptiveGlassButton(prominent: true, tint: Theme.statusError)
+                    .adaptiveGlassButton(prominent: true, tint: Theme.statusError, filled: true)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)

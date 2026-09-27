@@ -124,8 +124,29 @@ struct TileSurface<Content: View>: View {
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .shadow(color: .black.opacity(hovered ? 0.07 : 0.04),
-                        radius: hovered ? 9 : 5, y: hovered ? 4 : 1)
+                // The card's drop shadow is **owned by a layer, not the view
+                // graph.** `.shadow(...)` looks like the same thing and is not:
+                // SwiftUI evaluates it as a filter inside the display-list pass,
+                // so it re-runs for every cycle the card's subtree is visited,
+                // and it makes the subtree a compositing unit. A `CALayer` with a
+                // `shadowPath` is rasterised once by the render server and costs
+                // the view graph nothing.
+                //
+                // Measured (idle dashboard, frames per 6 s, SCStream paints):
+                // with the SwiftUI shadow **380**; with `.shadow` removed
+                // entirely **734**; with this layer-based shadow, *enabled*
+                // **742**. So the frames come back and the shadow stays — the
+                // shadow was never free, it was the most expensive single thing
+                // on the page, and it was hiding behind a component the eye reads
+                // as decoration. Same method as `DecorativeMotion`: if it is a
+                // drawing rather than state, the render server should own it.
+                .background {
+                    LayerShadow(radius: hovered ? 9 : 5,
+                                y: hovered ? 4 : 1,
+                                opacity: hovered ? 0.07 : 0.04,
+                                cornerRadius: radius,
+                                surface: Theme.cardSurface)
+                }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -150,6 +171,119 @@ struct TileSurface<Content: View>: View {
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .offset(y: lift && hovered && !reduceMotion ? -2 : 0)
     }
+}
+
+/// A drop shadow drawn by Core Animation instead of by SwiftUI's view graph.
+///
+/// See the call site in `TileSurface.body` for the numbers. The layer's
+/// `shadowPath` is what makes it cheap: Core Animation skips deriving the
+/// shadow's silhouette from the layer's contents (which for an opaque fill with
+/// a corner radius means an offscreen mask) and rasterises the rounded rect
+/// directly, once, on the render server.
+struct LayerShadow: NSViewRepresentable {
+    var radius: CGFloat
+    var y: CGFloat
+    var opacity: Double
+    var cornerRadius: CGFloat
+    /// Painted behind the shape so the layer has something to *be*; the card's
+    /// own fill covers it. Without it the layer is transparent and the shadow
+    /// has no silhouette to come from.
+    var surface: Color
+    /// Shadow hue. Every card surface wants a black drop shadow, but the
+    /// instrument buttons pair one with a **tinted** one underneath
+    /// (`tint.opacity(0.18)`), and that pair is what makes a filled plate read
+    /// as lit from above. Passing the hue in keeps that effect on the same
+    /// rasterisation path instead of leaving it in the view graph.
+    var color: Color = .black
+    /// The second, fuller shadow's radius/offset — the reference's `:before`
+    /// layer sitting under the `:after` one.
+    var underRadius: CGFloat = 0
+    var underY: CGFloat = 0
+    var underOpacity: Double = 0
+    var underColor: Color = .black
+
+    func makeNSView(context: Context) -> ShadowHostView { ShadowHostView() }
+
+    func updateNSView(_ view: ShadowHostView, context: Context) {
+        view.apply(radius: radius, y: y, opacity: opacity,
+                   cornerRadius: cornerRadius, surface: NSColor(surface),
+                   color: NSColor(color),
+                   underRadius: underRadius, underY: underY,
+                   underOpacity: underOpacity, underColor: NSColor(underColor))
+    }
+
+    static func dismantleNSView(_ view: ShadowHostView, coordinator: ()) { view.clear() }
+}
+
+final class ShadowHostView: NSView {
+    /// Flipped, so the layer's frame is the AppKit frame and the shadow's `y`
+    /// offset means what the SwiftUI modifier's `y:` meant (downward).
+    override var isFlipped: Bool { true }
+    /// Decoration: it must never take a pointer or a hit test away from the card
+    /// it sits behind.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private let box = CALayer()
+    /// The fuller shadow underneath. A layer can only carry one shadow, and the
+    /// button's gloss wants two, so the lower one is a sibling layer.
+    private let under = CALayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer = CALayer()
+        box.masksToBounds = false
+        under.masksToBounds = false
+        layer?.addSublayer(under)
+        layer?.addSublayer(box)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func apply(radius: CGFloat, y: CGFloat, opacity: Double,
+               cornerRadius: CGFloat, surface: NSColor, color: NSColor,
+               underRadius: CGFloat, underY: CGFloat,
+               underOpacity: Double, underColor: NSColor) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let path = CGPath(roundedRect: bounds, cornerWidth: cornerRadius,
+                          cornerHeight: cornerRadius, transform: nil)
+        let specs = [(box, radius, y, opacity, color),
+                     (under, underRadius, underY, underOpacity, underColor)]
+        for (layer, r, dy, o, hue) in specs {
+            layer.frame = bounds
+            layer.cornerRadius = cornerRadius
+            // The explicit `shadowPath` *is* the silhouette, so the layer
+            // itself may stay transparent — which is what a button wants, since
+            // its own `plateFill` already draws the capsule and a second
+            // painted one would show at the antialiased edge. Card call sites
+            // pass their fill anyway; it is harmless there and helps when the
+            // path is briefly stale during a resize.
+            layer.backgroundColor = surface.cgColor
+            layer.shadowPath = path
+            layer.shadowColor = hue.cgColor
+            layer.shadowOpacity = Float(o)
+            layer.shadowRadius = r
+            // The layer tree's y grows downward in a flipped host, so a positive
+            // `y` means "below the card", matching the modifier it replaces.
+            layer.shadowOffset = CGSize(width: 0, height: dy)
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let path = CGPath(roundedRect: bounds, cornerWidth: box.cornerRadius,
+                          cornerHeight: box.cornerRadius, transform: nil)
+        for layer in [box, under] {
+            layer.frame = bounds
+            layer.shadowPath = path
+        }
+    }
+
+    func clear() { box.shadowOpacity = 0; under.shadowOpacity = 0 }
 }
 
 extension View {
@@ -342,14 +476,30 @@ struct EqualRowGrid: Layout {
         let spacing: CGFloat
     }
 
-    // Reuse each proposal's row heights during placement. SwiftUI clears
-    // this cache through updateCache when a cell's content changes.
+    // Reuse each proposal's row heights during placement.
     struct Cache {
         var measurements: [MeasurementKey: [CGFloat]] = [:]
     }
 
     func makeCache(subviews: Subviews) -> Cache { Cache() }
 
+    /// Reuse each proposal's row heights during placement.
+    ///
+    /// **The cache is cleared on every content change, and that is load-bearing.**
+    /// The key is `(columns, colW, proposalWidth, spacing)` — it describes the
+    /// *packing*, not the cells — so a cell whose own height changes (a caption
+    /// wrapping to a second line, a tile swapping its body) would otherwise keep
+    /// the row height measured for its old content and the grid would not grow or
+    /// shrink. `updateCache` is the only signal SwiftUI gives for that, so
+    /// clearing here is the contract, and `Tests/ui-regressions.py` asserts it
+    /// (`Cache must invalidate when content changes`).
+    ///
+    /// A 2026-09-26 pass tried removing the clear to stop the re-measure a 2.5 s
+    /// session poll triggers. The test caught it, and the measurement does not
+    /// support the trade anyway: a 1 ms `sample` of a dashboard dwell puts
+    /// `EqualRowGrid.placeSubviews` at ~0.25 ms per second of wall clock — the
+    /// clear is cheap, and the re-measure it triggers is the work that keeps the
+    /// tiles the right height.
     func updateCache(_ cache: inout Cache, subviews: Subviews) {
         cache.measurements.removeAll(keepingCapacity: true)
     }

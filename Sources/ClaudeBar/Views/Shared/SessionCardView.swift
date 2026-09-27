@@ -78,7 +78,12 @@ struct SessionCardView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .animation(Theme.Animation.smooth, value: agentTotals.running)
+        // Nothing on this card is animated by the count changing — the pill is
+        // plain text and the figure rides `RollingNumberText`'s own roll — so an
+        // implicit `.animation(_:value:)` keyed on `agentTotals.running` was an
+        // animated transaction opened by every session poll (2.5 s busy, 5 s
+        // idle) that had nothing to interpolate. Only the hover lift below is a
+        // state change worth animating, and `.tile`/`.hoverState` carry their own.
         // Same hue the full-page session tile takes. A popup column carries all
         // three agent families, so the accent is the only thing that makes a
         // row's family readable before the title is. No lens: a dense row has

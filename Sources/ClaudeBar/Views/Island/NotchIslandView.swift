@@ -216,7 +216,7 @@ struct NotchIslandView: View {
 
             Color.clear.frame(width: state.notch.width)
 
-            RollingNumberText(UsageStats.formatTokens(model.usage.today))
+            RollingNumberText(UsageStats.formatTokens(model.usage.today), rolls: false)
                 .font(.system(size: 11.5, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(IslandStyle.textPrimary)
                 .lineLimit(1)
@@ -227,8 +227,16 @@ struct NotchIslandView: View {
                 // figure is one of the sampler's 1 Hz outputs, so the modifier
                 // opened a fresh animated transaction on every tick and an
                 // in-flight transaction makes the display cycle re-lay out the
-                // whole hosting view. `.numericText` inside `RollingNumberText`
-                // *is* the roll; see the note in `Interaction.swift`.
+                // whole hosting view. The shared roll opens its transaction on
+                // the value instead — see `Interaction.swift`.
+                //
+                // `rolls: false`: this wing is drawn on a panel that is on
+                // screen permanently and repainted on every tick of the usage
+                // sampler, and `UIWakePolicy` deliberately does *not* count the
+                // collapsed island as a visible window. The collapsed readout is a
+                // glance at a moving total, not a figure anyone reads digit by
+                // digit, so it should not cost a display cycle of its own on a
+                // surface the app has already decided is not being looked at.
                 .id(tokenStyle)
         }
         .padding(.horizontal, IslandStyle.topFlare)
@@ -548,6 +556,16 @@ private struct IslandGlint: View {
 // MARK: - Pieces
 
 /// Today against yesterday as a 14pt ring — full at parity, amber beyond.
+///
+/// The ring is only ever drawn in the *collapsed* wings (see `leftWing`), i.e.
+/// on the one surface that is on screen permanently and that `UIWakePolicy`
+/// deliberately does not count as visible. `pace` is today's total against
+/// yesterday's, so it changes on every usage-index pass — an FSEvents transcript
+/// burst can move it several times a second. An `.animation(.snappy, value:)`
+/// there opened an animated transaction on each of those, and an in-flight
+/// transaction makes every display cycle re-lay out the whole hosting view — for
+/// a 14pt ring on a panel nobody is looking at. `trim(to:)` on a `Shape` is
+/// `Animatable`, so dropping the modifier costs only the interpolation.
 private struct IslandPaceRing: View {
     let pace: Double?
 
@@ -561,7 +579,6 @@ private struct IslandPaceRing: View {
                         style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
-        .animation(.snappy, value: value)
         .help(pace.map { "今日为昨日的 \(Int(($0 * 100).rounded()))%" } ?? "昨日无用量")
     }
 }

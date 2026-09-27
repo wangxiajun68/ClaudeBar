@@ -135,3 +135,31 @@ struct ModelUsage: Identifiable, Hashable {
         return Array(agg.values)
     }
 }
+
+/// Today's totals — a fixed local-day window.
+///
+/// The dashboard's 今日 Token / 今日花费 cards must not read `usageStats`: that
+/// array is the usage page's *selected* period (default 当前月), so a card
+/// labelled 今日 would print a month under a day's name. This is queried from
+/// the same detached pass that produces the period aggregates, so the fixed
+/// window costs one extra `UsageIndex` range scan per refresh and no second
+/// timer.
+struct TodayUsage: Equatable {
+    var tokens = 0
+    var calls = 0
+    /// Yesterday's tokens, for the pace caption ("昨日的 96%"). Not a card of
+    /// its own — a day-over-day total is the only thing that makes a single
+    /// day's figure mean anything.
+    var yesterdayTokens = 0
+    /// `ModelPricing.estimate` over today's per-model rows, computed once where
+    /// the rows are read rather than per render: slug canonicalisation runs two
+    /// regex compilations per model.
+    var cost = ModelPricing.Estimate()
+
+    /// `today / yesterday`, nil when there is nothing to compare against.
+    var pace: Double? {
+        yesterdayTokens > 0 ? Double(tokens) / Double(yesterdayTokens) : nil
+    }
+
+    var isEmpty: Bool { tokens == 0 && calls == 0 && cost.isEmpty }
+}

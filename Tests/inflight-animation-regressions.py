@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""No implicit `.animation(_:value:)` keyed on a value that ticks.
+"""No implicit `.animation(_:value:)` keyed on a value that ticks — and the
+transaction that actually makes the digit roll run.
 
 `.animation(_:value:)` opens an animated transaction every time `value`
 changes. While any transaction is in flight, *every* display cycle makes
@@ -31,6 +32,20 @@ that value changes. If the answer is "every poll", key on something coarse (a
 mode, a phase, a status) and let `.contentTransition(.numericText())` carry the
 digits — that transition *is* the animation.
 
+The `.transaction(value:)` half of this file guards a second, opposite failure.
+`.contentTransition(.numericText())` only says what happens to the glyphs
+*during* a transition; it does not create one. Removing the `.animation(value:)`
+left every figure in a non-animated transaction, so the digits swapped with no
+roll — the numbers stopped moving even though the transition was still declared.
+A `RollingNumberModifier` without its `.transaction(value:)` is that bug, so it
+is asserted here rather than trusted to survive the next "these numbers are
+expensive" pass.
+
+(Measured with the island harness: with `.transaction(value:)` the figure is
+caught mid-flight, the new value sliding up over the old one; without it the
+frame after the change already shows the final value, and no frame ever shows
+two digits at once.)
+
 See docs/technical/08-performance.md and docs/technical/17-ui-audit-backlog.md.
 """
 from pathlib import Path
@@ -61,7 +76,34 @@ GUARDED = [
     # view has no caller left (docs/technical/17-ui-audit-backlog.md §10).
     ('Sources/ClaudeBar/Views/Island/NotchIslandView.swift', 'private var wings: some View'),
     ('Sources/ClaudeBar/Views/Island/IslandComponents.swift', 'private var hero: some View'),
+    # Three more found in the 2026-09-26 pass, each keyed on a value a *poller*
+    # owns rather than on a pointer or a mode. None of them is a figure — they
+    # are a gauge arc, a pace ring and a pill label — so `.numericText` cannot
+    # take over for them; the right answer was to drop the modifier (or, for
+    # `LucideRotor`, to key it on a quantised value that only changes when the
+    # drawing visibly does).
+    #
+    # `SessionCardView`: `agentTotals.running` is derived from `subagents` +
+    # `workflows`, i.e. a `ProviderStore.$sessions` output republished every
+    # 2.5 s busy / 5 s idle. Nothing in that card interpolates on the count.
+    ('Sources/ClaudeBar/Views/Shared/SessionCardView.swift', 'var body: some View'),
+    # `IslandPaceRing`: `pace` is today's total against yesterday's, so it moves
+    # on *every* usage-index pass — an FSEvents transcript burst can move it
+    # several times a second. It is drawn only in the collapsed wings, on the
+    # one surface `UIWakePolicy` deliberately does not count as visible.
+    ('Sources/ClaudeBar/Views/Island/NotchIslandView.swift', 'struct IslandPaceRing: View'),
+    # `LucideRotor`: the rim gauge used to animate on `rpm` directly, and SMC
+    # reports a slightly different RPM most 2 s polls, so a fan at a steady
+    # speed still opened a transaction every tick. It is now keyed on `gauge`,
+    # a 1.5 % quantisation of the same reading — so a `value:` is correct here
+    # and only a `value: rpm` would be the bug. Asserted separately below
+    # rather than with the blanket rule.
 ]
+
+# `value:` is allowed here, but only on the quantised key. Keeping the rule in
+# the same file means a later "let's animate the rpm" edit is caught with the
+# same message the other components give.
+ROTOR_BODY = ('Sources/ClaudeBar/Views/Shared/LucideRotor.swift', 'var body: some View')
 
 failures = []
 
@@ -180,6 +222,54 @@ for path, signature in GUARDED:
             f'Drop it and let `.contentTransition(.numericText())` animate the '
             f'digits.')
 
+# --- The roll must actually run --------------------------------------------
+#
+# The mirror image of the rule above: the digits need a transaction to move in,
+# and the one place that may open it is the shared modifier, keyed on the
+# rendered value. Assert both halves — the call, and that it is keyed on the
+# value rather than sitting on a per-poll input.
+roll_source = without_comments(
+    (root / 'Sources/ClaudeBar/Views/Shared/Interaction.swift').read_text())
+roll_body = body_of(roll_source, 'struct RollingNumberModifier: ViewModifier')
+if '.transaction(value:' not in roll_body:
+    failures.append(
+        'Interaction.swift: RollingNumberModifier no longer opens a '
+        '`.transaction(value:)`. `.numericText` needs an animated transaction to '
+        'run in, and a figure fed by the sampler arrives in a plain one, so '
+        'without this the digits swap instantly and the roll is invisible in the '
+        'running app — which is exactly the regression this guards.')
+elif not re.search(r'\.transaction\(value:\s*transition', roll_body):
+    failures.append(
+        'Interaction.swift: RollingNumberModifier opens a transaction keyed on '
+        'something other than the rendered value. A key that does not change with '
+        'the figure is a fresh transaction per poll (the cost this file exists '
+        'to prevent); one keyed on the value animates only the change being '
+        'drawn.')
+
+# --- The fan gauge may animate, but not on the raw reading -------------------
+#
+# The one component where a `value:` is correct: the rotor's rim gauge. It has
+# to be keyed on the *quantised* fraction, because SMC reports a slightly
+# different RPM most polls and a key on `rpm` would therefore open a transaction
+# on every one of them, for a change of a fraction of a point of arc.
+#
+# Asserted on the *write* rather than on the presence of `gaugeValue`: the
+# property is named in `.onAppear` and in the Reduce Motion branch as well, so
+# "the file mentions it" passes even when the animated write reads `rpm`
+# straight (confirmed with a negative control — that reintroduction first
+# slipped past a check written that way).
+rotor_source = without_comments(
+    (root / 'Sources/ClaudeBar/Views/Shared/LucideRotor.swift').read_text())
+rotor_body = body_of(rotor_source, ROTOR_BODY[1])
+if 'withAnimation' in rotor_body and not re.search(
+        r'let\s+next\s*=\s*gaugeValue', rotor_body):
+    failures.append(
+        'LucideRotor.swift: the rim gauge is animated from something other than '
+        '`gaugeValue`. Keyed on the raw reading it opens a transaction on every '
+        'fan poll — SMC wobbles the RPM most ticks — for a change too small to '
+        'see. Route the write through `gaugeValue`, which quantises to the '
+        'smallest step worth interpolating.')
+
 # --- The page band must not lift -------------------------------------------
 #
 # `TileSurface`'s 2pt hover rise moves the card's own frame, and the hover
@@ -223,4 +313,5 @@ if failures:
 
 print('PASS: no implicit value-keyed animation on the per-poll digit '
       'components (RollingNumberText, RollingNumberModifier, '
-      'SectionHeader.trailingView, Island wings / usage hero)')
+      'SectionHeader.trailingView, Island wings / usage hero), and the shared '
+      'roll opens its own transaction')
