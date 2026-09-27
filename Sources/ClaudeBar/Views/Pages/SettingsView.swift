@@ -25,6 +25,11 @@ struct SettingsView: View {
     @State private var installedTerminals: Set<ResumeTerminal> = []
     @State private var codexPortDraft = ""
     @FocusState private var codexPortFocused: Bool
+    /// The weather city, typed. Committed on blur / submit so a half-typed name
+    /// never reaches a public endpoint (and so the card does not fire a request
+    /// per keystroke).
+    @State private var weatherCityDraft = ""
+    @FocusState private var weatherCityFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -60,6 +65,19 @@ struct SettingsView: View {
                             // one that was asked for.
                             set: { on in launchAtLogin.setEnabled(on) }))
                         .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
+                    }
+                    SettingTile(icon: "cloud.sun", title: "天气城市",
+                                caption: "概览问候卡按城市名取天气，**不**请求定位权限。留空则只显示时钟。",
+                                compact: true) {
+                        TextField("上海", text: $weatherCityDraft)
+                            .textFieldStyle(InstrumentFieldStyle(focused: weatherCityFocused))
+                            .frame(width: 108)
+                            .multilineTextAlignment(.trailing)
+                            .focused($weatherCityFocused)
+                            .onSubmit { commitWeatherCity() }
+                            .onChange(of: weatherCityFocused) { _, on in
+                                if !on { commitWeatherCity() }
+                            }
                     }
                     SettingTile(icon: "arrow.uturn.forward", title: "继续会话",
                                 caption: resumeTerminalCaption, compact: true) {
@@ -133,14 +151,14 @@ struct SettingsView: View {
                 section("本机", icon: "internaldrive", dense: true) {
                     SettingTile(icon: "lock.shield", title: "电池管理",
                                 caption: batteryController.lastError ?? (batteryController.helperInstalled
-                                    ? "已授权。工具更新后才需要再授一次。"
+                                    ? "辅助工具已安装；实际运行状态见电池管理面板。"
                                     : "一次管理员授权，之后自动复用。"),
                                 compact: true) {
                         Button(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "授权")) {
                             batteryController.authorizeHelper()
                         }
                         .adaptiveGlassButton()
-                        .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.helperInstalled)
+                        .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.processIsRunning || batteryController.helperInstalled)
                     }
                     SettingTile(icon: "cylinder", title: "SQLite",
                                 caption: prefs.databaseEnabled
@@ -350,6 +368,7 @@ struct SettingsView: View {
         .background(Theme.bgPrimary)
         .onAppear {
             codexPortDraft = String(prefs.codexProxyPort)
+            weatherCityDraft = prefs.weatherCity
             installedTerminals = Set(ResumeTerminal.allCases.filter(\.isInstalled))
         }
         // Keep the draft honest when the value is changed from elsewhere (the
@@ -387,6 +406,19 @@ struct SettingsView: View {
         guard port != prefs.codexProxyPort else { return }
         prefs.codexProxyPort = port
         codexStore.restartProxyAndReactivate()
+    }
+
+    /// Commit the weather city. Trimmed, and an unchanged value is a no-op —
+    /// the card re-fetches only when the string actually moved, because
+    /// wttr.in is a shared public endpoint and a blur that changes nothing
+    /// should not cost a request.
+    private func commitWeatherCity() {
+        let city = weatherCityDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        weatherCityDraft = city
+        guard city != prefs.weatherCity else { return }
+        // `weatherCity`'s `didSet` writes UserDefaults; the card's own
+        // `onReceive` on the publisher is what re-fetches.
+        prefs.weatherCity = city
     }
 
     private func section<C: View>(_ title: String, icon: String, tint: Color = Theme.claude,

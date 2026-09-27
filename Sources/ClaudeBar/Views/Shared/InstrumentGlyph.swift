@@ -4,7 +4,7 @@ import SwiftUI
 /// Compact labels stay monochrome; only live instruments use semantic color.
 struct InstrumentGlyph: View, Animatable {
     enum Kind { case cpu, gpu, memory, disk, link, ethernet, fan, config, balance, sessions, tokens, quota, vpn, battery, refresh
-        case overview, traffic, settings, help, power, notification, folder, search, appearance, camera, cost }
+        case overview, traffic, settings, help, power, notification, folder, search, appearance, camera, cost, weather, clock }
     var kind: Kind
     var tint: Color = Theme.chartBlue
     var level: Double = 0
@@ -44,6 +44,8 @@ struct InstrumentGlyph: View, Animatable {
         case "banknote": return .cost
         case "arrow.clockwise": return .refresh
         case "cylinder": return .disk
+        case "cloud.sun", "cloud.sun.fill", "sun.max": return .weather
+        case "clock", "clock.fill": return .clock
         default: return nil
         }
     }
@@ -213,6 +215,30 @@ struct InstrumentGlyph: View, Animatable {
                 folder.addLines([CGPoint(x:3,y:4),CGPoint(x:9,y:4),CGPoint(x:12,y:7),CGPoint(x:21,y:7),CGPoint(x:21,y:20),CGPoint(x:3,y:20),CGPoint(x:3,y:7)])
                 c.stroke(folder,with:.color(ink),style:stroke)
                 line([CGPoint(x:7,y:12-phase),CGPoint(x:17,y:12-phase)],ink.opacity(0.4))
+            case .weather:
+                // Sun behind a cloud: the card's own mark. The sun keeps the
+                // shape hue so it reads on the ice canvas even at 26pt.
+                circle(16.5, 7.5, 3.4, Theme.chartAmber, fill: true)
+                for (dx, dy) in [(-1.0, -1.0), (0.0, -1.35), (1.0, -1.0),
+                                 (-1.35, 0.0), (1.35, 0.0), (-1.0, 1.0),
+                                 (0.0, 1.35), (1.0, 1.0)] {
+                    line([CGPoint(x: 16.5 + dx * 4.4, y: 7.5 + dy * 4.4),
+                          CGPoint(x: 16.5 + dx * 6.1, y: 7.5 + dy * 6.1)],
+                         Theme.chartAmber.opacity(0.85))
+                }
+                var cloud = Path()
+                cloud.addEllipse(in: CGRect(x: 3.0, y: 9.5, width: 7.6, height: 7.6))
+                cloud.addEllipse(in: CGRect(x: 7.2, y: 7.4, width: 9.4, height: 9.4))
+                cloud.addEllipse(in: CGRect(x: 12.4, y: 10.0, width: 7.2, height: 7.2))
+                cloud.addRoundedRect(in: CGRect(x: 3.4, y: 12.4, width: 16.4, height: 6.4),
+                                     cornerSize: CGSize(width: 3.2, height: 3.2))
+                c.fill(cloud, with: .color(ink.opacity(0.16)))
+                c.stroke(cloud, with: .color(ink), style: stroke)
+            case .clock:
+                circle(12, 12, 9.2, ink)
+                line([CGPoint(x: 12, y: 12 - 5.4 + phase), CGPoint(x: 12, y: 12)], ink)
+                line([CGPoint(x: 12, y: 12), CGPoint(x: 12 + 4.6, y: 12 + 1.6)], ink)
+                circle(12, 12, 0.9, ink, fill: true)
             case .search:
                 circle(10,10,6+phase,ink)
                 line([CGPoint(x:15,y:15),CGPoint(x:21,y:21)],ink)

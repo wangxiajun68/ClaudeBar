@@ -30,6 +30,8 @@ typedef struct { const char *name; Packet meta; uint8_t original[32]; } Key;
 static io_connect_t smc, powerPort;
 static Key charge[2], adapter;
 static int chargeCount, hasAdapter, owned, sleeping, mode, limit = 80, applied = POWER_SYSTEM;
+static int terminal, dischargePaused, policyReset;
+static const char *notice = "";
 static unsigned long revision;
 static double heartbeat;
 static double monotonic(void);
@@ -127,11 +129,25 @@ static int battery(int *percent, int *plugged, int *lidClosed) {
     if (lid) CFRelease(lid);
     return valid && *percent >= 0 && *percent <= 100;
 }
+// Physical AC can read disconnected while our adapter-disconnect key is set.
+static int evaluate(int percent, int plugged, int lid) {
+    notice = "";
+    if (mode == BAT_DISCHARGE && (percent <= limit || lid)) mode = BAT_LIMIT;
+    int next = battery_decision(mode, limit, percent, policyReset ? POWER_SYSTEM : applied);
+    if (next != POWER_DISCHARGE) return next;
+    if (lid) dischargePaused = 1;
+    if (!hasAdapter) notice = "discharge_unsupported";
+    else if (lid) notice = "lid_closed";
+    else if (dischargePaused) notice = "discharge_paused";
+    else if (!plugged && applied != POWER_DISCHARGE) notice = "adapter_required";
+    else return POWER_DISCHARGE;
+    return POWER_HOLD;
+}
 static void report(int percent) {
     char line[512];
     int count = snprintf(line, sizeof line,
-        "{\"revision\":%lu,\"mode\":%d,\"limit\":%d,\"state\":%d,\"percent\":%d,\"dischargeSupported\":%s,\"sleeping\":%s,\"error\":\"%s\"}\n",
-        revision, mode, limit, applied, percent, hasAdapter ? "true" : "false", sleeping ? "true" : "false", errorCode);
+        "{\"revision\":%lu,\"mode\":%d,\"limit\":%d,\"state\":%d,\"percent\":%d,\"dischargeSupported\":%s,\"sleeping\":%s,\"error\":\"%s\",\"notice\":\"%s\",\"terminal\":%s}\n",
+        revision, mode, limit, applied, percent, hasAdapter ? "true" : "false", sleeping ? "true" : "false", errorCode, notice, terminal ? "true" : "false");
     // A caller that stops reading must not block the battery safety loop.
     if (count < 0 || count >= (int)sizeof line || write(STDOUT_FILENO, line, (size_t)count) != count) stopping = 1;
 }
@@ -140,7 +156,7 @@ static void power_event(void *ref, io_service_t service, natural_t type, void *a
     (void)ref; (void)service;
     if (type == kIOMessageCanSystemSleep) IOAllowPowerChange(powerPort, (long)argument);
     if (type == kIOMessageSystemWillSleep) {
-        sleeping = 1;
+        sleeping = 1; dischargePaused = 1;
         if (!restore()) { errorCode = "restore_failed"; stopping = 1; }
         if (mode == BAT_DISCHARGE) mode = BAT_LIMIT;
         report(-1);
@@ -154,15 +170,15 @@ static int serve(void) {
     int lock = open("/var/run/claudebar-battery.lock", O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC, 0600);
     struct stat st;
     if (lock < 0 || fstat(lock, &st) || !S_ISREG(st.st_mode) || st.st_uid != 0 || st.st_nlink != 1 ||
-        (st.st_mode & 0022) || flock(lock, LOCK_EX|LOCK_NB)) { errorCode = "already_running"; report(-1); return 1; }
-    if (!discover()) { errorCode = "unsupported"; report(-1); return 1; }
+        (st.st_mode & 0022) || flock(lock, LOCK_EX|LOCK_NB)) { errorCode = "already_running"; terminal = 1; report(-1); return 1; }
+    if (!discover()) { errorCode = "unsupported"; terminal = 1; report(-1); return 1; }
     // Refuse to take over a setting already owned by another battery utility.
     for (int i = 0; i < chargeCount; i++) for (unsigned j = 0; j < charge[i].meta.info.size; j++)
-        if (charge[i].original[j]) { errorCode = "external_control"; report(-1); return 1; }
-    if (hasAdapter && adapter.original[0]) { errorCode = "external_control"; report(-1); return 1; }
+        if (charge[i].original[j]) { errorCode = "external_control"; terminal = 1; report(-1); return 1; }
+    if (hasAdapter && adapter.original[0]) { errorCode = "external_control"; terminal = 1; report(-1); return 1; }
     IONotificationPortRef notifications = NULL; io_object_t notifier = 0;
     powerPort = IORegisterForSystemPower(NULL, &notifications, power_event, &notifier);
-    if (!powerPort) { errorCode = "sleep_monitor_failed"; report(-1); return 1; }
+    if (!powerPort) { errorCode = "sleep_monitor_failed"; terminal = 1; report(-1); return 1; }
     CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(notifications), kCFRunLoopDefaultMode);
     signal(SIGTERM, signal_stop); signal(SIGINT, signal_stop); signal(SIGHUP, signal_stop); signal(SIGPIPE, SIG_IGN);
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
@@ -181,6 +197,8 @@ static int serve(void) {
             if (!battery_parse_command(buffer, &nextMode, &nextLimit, &nextRevision)) {
                 errorCode = "invalid_command"; stopping = 1; break;
             }
+            if (nextRevision <= revision) continue;
+            dischargePaused = 0; policyReset = 1;
             mode = nextMode; limit = nextLimit; revision = nextRevision; heartbeat = monotonic(); lastTick = 0;
         }
         if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) stopping = 1;
@@ -189,20 +207,17 @@ static int serve(void) {
         if (!sleeping && monotonic() - lastTick >= 2) {
             lastTick = monotonic(); int percent = -1, plugged = 0, lid = 1;
             if (!battery(&percent, &plugged, &lid)) { errorCode = "battery_unavailable"; stopping = 1; break; }
-            if (mode == BAT_DISCHARGE && (percent <= limit || lid)) mode = BAT_LIMIT;
-            if (mode == BAT_DISCHARGE && !hasAdapter) { errorCode = "discharge_unsupported"; stopping = 1; break; }
-            if (mode == BAT_DISCHARGE && applied != POWER_DISCHARGE && !plugged) {
-                errorCode = "adapter_required"; mode = BAT_LIMIT;
-            } else errorCode = "";
-            int next = battery_decision(mode, limit, percent, applied);
+            errorCode = "";
+            int next = evaluate(percent, plugged, lid);
             if (!apply(next)) { errorCode = "write_failed"; stopping = 1; break; }
+            policyReset = 0;
             report(percent);
             if (mode == BAT_SYSTEM && revision > 0) stopping = 1;
         }
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.25, false);
     }
     if (!restore()) errorCode = "restore_failed";
-    mode = BAT_SYSTEM; report(-1);
+    mode = BAT_SYSTEM; terminal = 1; report(-1);
     IODeregisterForSystemPower(&notifier); IOServiceClose(powerPort); IONotificationPortDestroy(notifications);
     IOServiceClose(smc); close(lock);
     return errorCode[0] ? 1 : 0;

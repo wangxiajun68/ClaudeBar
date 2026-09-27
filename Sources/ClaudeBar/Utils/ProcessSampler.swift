@@ -238,6 +238,30 @@ final class ProcessSampler {
 
     private var visibilityCancel: AnyCancellable?
 
+    /// Refresh only battery telemetry after a control acknowledgement, even if
+    /// the general resource sampler is suspended or on a slower cadence.
+    func refreshBattery(completion: (@MainActor (HardwareSensors.BatteryStatus) -> Void)? = nil) {
+        queue.async { [weak self] in
+            let battery = HardwareSensors.batteryStatus()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                var snapshot = self.host
+                snapshot.batteryInstalled = battery.installed
+                snapshot.batteryPercent = battery.percent
+                snapshot.batteryCharging = battery.charging
+                snapshot.batteryExternalPower = battery.externalPower
+                snapshot.batteryChargingWatts = battery.chargingWatts
+                snapshot.powerInputWatts = battery.inputWatts
+                snapshot.powerSystemWatts = battery.systemWatts
+                snapshot.powerBatteryWatts = battery.batteryWatts
+                snapshot.powerIsEstimated = battery.powerIsEstimated
+                snapshot.adapterRatedWatts = battery.externalPower ? battery.adapterRatedWatts : nil
+                self.host = snapshot
+                completion?(battery)
+            }
+        }
+    }
+
     func start() {
         queue.async { [weak self] in
             guard let self, self.timer == nil else { return }

@@ -17,10 +17,7 @@ struct LinkCard: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Spacer(minLength: dense ? 8 : 12)
-            ConnectLaneRow(host: host,
-                           accessory: accessory,
-                           count: accessoryCount,
-                           density: dense ? .popup : .page)
+            summary
             Spacer(minLength: 0)
         }
         .padding(14)
@@ -40,6 +37,33 @@ struct LinkCard: View {
         .popover(isPresented: $showConnections) { ConnectionDetailPanel() }
     }
 
+    private var status: ConnectionStatus { ConnectionStatus(host: host) }
+
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(status.title)
+                    .font(.system(size: dense ? 15 : 18, weight: .semibold, design: .rounded))
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            ConnectionSignalScale(rssi: status.rssi, compact: true)
+            HStack(spacing: 6) {
+                Text(status.rssi.map { "\(WiFiBars.label(for: $0) ?? "") · \($0) dBm" } ?? status.subtitle)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+                if let accessory, accessory.connection == .inUse {
+                    Image(systemName: "headphones").foregroundColor(Theme.chartPurple)
+                    if let level = accessory.headline, !accessory.isStale { Text("\(level)%") }
+                }
+            }
+            .font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var header: some View {
         HStack(spacing: 6) {
             // A plain badge, not a ringed one: the ring around a small glyph is
@@ -49,7 +73,7 @@ struct LinkCard: View {
             // glyphs on one strip came out two different sizes.
             InstrumentBadge(kind: .link, tint: Theme.chartBlue)
                 .frame(width: 26, height: 26)
-            Button { showConnections = true } label: { Label("连接", systemImage: "arrow.up.right") }
+            Button { showConnections = true } label: { Text("连接") }
                 .buttonStyle(.plain)
                 .font(Theme.Font.chrome)
                 .foregroundColor(Theme.textSecondary)
@@ -61,7 +85,7 @@ struct LinkCard: View {
     /// Whole-card state: is this Mac on a network at all? Independent of the
     /// headset, which is a mark with its own state.
     private var linkState: (String, Color) {
-        if host.wiredOn || !host.wifiName.isEmpty || host.wifiRSSI < 0 { return ("已连接", Theme.Ink.success) }
+        if status.attached { return ("已接入", Theme.Ink.success) }
         if host.wifiOn { return ("Wi-Fi 已开启", Theme.textSecondary) }
         if host.bluetoothOn { return ("本机", Theme.textSecondary) }
         return ("离线", Theme.Ink.idle)
@@ -568,5 +592,68 @@ private struct AirDropGlyph: View {
             context.fill(receiver, with: .color(tint))
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// Shared state vocabulary for the overview and its inspector. A powered radio
+/// alone is not an association; Ethernet does not establish the default route.
+struct ConnectionStatus {
+    let host: ProcessSampler.HostStats
+    var rssi: Int? { host.wifiOn && host.wifiRSSI < 0 ? host.wifiRSSI : nil }
+    var wifiAttached: Bool { host.wifiOn && (!host.wifiName.isEmpty || rssi != nil) }
+    var attached: Bool { host.wiredOn || wifiAttached }
+    var symbol: String { host.wiredOn ? "cable.connector" : (wifiAttached ? "wifi" : "wifi.slash") }
+    var title: String {
+        if host.wiredOn { return wifiAttached ? "以太网 + Wi-Fi" : "以太网" }
+        if wifiAttached { return host.wifiName.isEmpty ? "Wi-Fi 已接入" : host.wifiName }
+        return host.wifiOn ? "Wi-Fi 等待连接" : "未接入网络"
+    }
+    var subtitle: String {
+        if host.wiredOn { return wifiAttached ? "两个网络接口已接入" : "有线网络已接入" }
+        if wifiAttached { return "无线网络已接入" }
+        return host.wifiOn ? "无线已开启，尚无接入信息" : "Wi-Fi 已关闭"
+    }
+}
+
+/// A calibrated RSSI ruler. Its ticks are signal levels, not time buckets.
+/// Only new measurements animate; no polling or decorative frame loop.
+struct ConnectionSignalScale: View {
+    let rssi: Int?
+    var compact: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var position: Double? { rssi.map { min(1, max(0, Double($0 + 100) / 60)) } }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    HStack(alignment: .bottom, spacing: compact ? 3 : 4) {
+                        ForEach(0..<30, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: 1.5)
+                                .fill(position.map { Double(index) / 29 <= $0 ? Theme.chartBlue : Theme.hairline } ?? Theme.hairline)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: compact ? 10 : 12 + CGFloat(index) * 0.7)
+                        }
+                    }.frame(maxHeight: .infinity, alignment: .bottom)
+                    if !compact, let position {
+                        Circle().fill(Theme.chartBlue).frame(width: 6, height: 6)
+                            .offset(x: max(0, min(geometry.size.width - 6, (geometry.size.width - 6) * position)), y: -20)
+                    }
+                }
+            }
+            .frame(height: compact ? 10 : 44)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: rssi)
+            if !compact {
+                HStack {
+                    Text("−100 · 弱")
+                    Spacer()
+                    Text("−70")
+                    Spacer()
+                    Text("−40 · 强")
+                }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rssi.map { "Wi-Fi 信号 \($0) dBm，刻度负 100 至负 40 dBm" } ?? "Wi-Fi 信号暂无读数")
     }
 }

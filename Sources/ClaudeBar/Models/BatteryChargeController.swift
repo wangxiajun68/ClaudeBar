@@ -8,13 +8,7 @@ final class BatteryChargeController {
     enum Mode: Int, CaseIterable, Identifiable {
         case system, limit, hold, discharge
         var id: Int { rawValue }
-        /// Short label for the four buttons, in the order a user reasons about
-        /// them: turn management on, charge, discharge, hand it back to macOS.
-        ///
-        /// `.hold` used to read "暂停充电", which is wrong twice over: the
-        /// helper's `BAT_HOLD` means "charge up to the limit and hold there",
-        /// not "stop charging", and "暂停" is near-synonymous with `.limit`'s
-        /// old "充到上限" — two adjacent buttons a user could not tell apart.
+        static var displayOrder: [Mode] { [.limit, .hold, .discharge, .system] }
         var label: String {
             switch self {
             case .system: return "还原系统"
@@ -23,23 +17,18 @@ final class BatteryChargeController {
             case .discharge: return "放电"
             }
         }
-
-        /// Full sentence for the button's tooltip, where the short label's
-        /// ambiguity is resolved.
         var title: String {
             switch self {
-            case .system: return "还原系统充电管理"
-            case .limit: return "启动充电上限管理"
-            case .hold: return "充电到上限后保持"
-            case .discharge: return "放电到上限"
+            case .system: return "恢复系统充电管理并停止辅助进程"
+            case .limit: return "高于目标时放电，低于目标时充电，到目标后保持"
+            case .hold: return "充电到目标后保持；高于目标时仅停充"
+            case .discharge: return "接电放电到目标后转为自动管理；合盖或休眠会暂停主动放电"
             }
         }
-
         var symbol: String {
             switch self {
             case .system: return "arrow.counterclockwise"
             case .limit: return "bolt.fill"
-            // A battery filling rather than a pause bar: `.hold` does charge.
             case .hold: return "battery.100percent.bolt"
             case .discharge: return "battery.50percent"
             }
@@ -54,15 +43,19 @@ final class BatteryChargeController {
         let dischargeSupported: Bool
         let sleeping: Bool
         let error: String
+        let notice: String
+        let terminal: Bool
     }
     private struct Capabilities: Decodable { let supported: Bool; let dischargeSupported: Bool }
+    private struct Request {
+        let mode: Mode
+        let limit: Int
+        let revision: UInt64
+    }
     static let shared = BatteryChargeController()
-
-    /// Lowest limit the privileged helper accepts — `policy.h` rejects
-    /// `limit < 20`. Exposed so the slider cannot offer a value the helper
-    /// would refuse, instead of hard-coding 20 in the view.
     static let minLimit: Double = 20
     private(set) var mode = Mode.system
+    private(set) var savedMode = Mode.system
     private(set) var state = 0
     private(set) var supported: Bool?
     private(set) var dischargeSupported = false
@@ -71,6 +64,11 @@ final class BatteryChargeController {
     private(set) var authorizingHelper = false
     private(set) var sleeping = false
     private(set) var lastError: String?
+    private(set) var probeError: String?
+    private(set) var probing = false
+    private(set) var notice = ""
+    private(set) var measuredText = ""
+    private(set) var reportedPercent: Int?
     var threshold: Double {
         didSet {
             let value = min(100, max(Self.minLimit, threshold.rounded()))
@@ -83,23 +81,23 @@ final class BatteryChargeController {
     private var input: FileHandle?
     private var timer: Timer?
     private var responseTimeout: Task<Void, Never>?
+    private var inFlight: Request?
+    private var desiredMode: Mode?
     private(set) var pendingMessage = "正在应用充电设置…"
     private var revision: UInt64 = 0
     private var generation = UUID()
-    private var probing = false
     private var shuttingDown = false
-    private var recoveryUnconfirmed = false
+    private(set) var recoveryUnconfirmed = false
     private var restorationConfirmed = false
-
-    private var resumeStarted = false
+    private var lastResponseAt: TimeInterval = 0
+    private var stateChangedAt: TimeInterval = 0
+    private var measurementGeneration = UUID()
+    private var resuming = false
 
     private init() {
         let stored = UserDefaults.standard.object(forKey: "batteryChargeLimit") as? Int ?? 80
         threshold = Double(min(100, max(Int(Self.minLimit), stored)))
-        if let raw = UserDefaults.standard.object(forKey: "batteryChargeMode") as? Int,
-           let saved = Mode(rawValue: raw) {
-            mode = saved
-        }
+        savedMode = Mode(rawValue: UserDefaults.standard.integer(forKey: "batteryChargeMode")) ?? .system
     }
 
     func refreshHelperAuthorization() async {
@@ -109,18 +107,19 @@ final class BatteryChargeController {
     }
 
     func authorizeHelper() {
-        guard !authorizingHelper, !pending else { return }
+        guard !authorizingHelper, !pending, !processIsRunning else { return }
         authorizingHelper = true
         lastError = nil
         Task {
             let failure = await Task.detached(priority: .userInitiated) {
                 BatteryHelperInstaller.installIfNeeded()
             }.value
-            helperInstalled = await Task.detached(priority: .utility) {
-                BatteryHelperInstaller.isInstalled()
-            }.value
+            await refreshHelperAuthorization()
             lastError = failure
             authorizingHelper = false
+            guard failure == nil, !shuttingDown else { return }
+            if supported == nil { probe(retry: true) }
+            else { resumePersistedMode() }
         }
     }
 
@@ -128,126 +127,149 @@ final class BatteryChargeController {
         if recoveryUnconfirmed { return "充电状态未确认 · 请检查电池状态" }
         if pending { return pendingMessage }
         if sleeping { return "休眠期间由系统管理" }
-        if mode != .system && process == nil {
-            return helperInstalled ? "正在恢复上次的充电管理…" : "上次的充电管理待恢复 · 点当前模式重新授权"
-        }
+        if process == nil && savedMode != .system { return "上次的管理待恢复 · 点击模式重试" }
         switch state {
-        case 1: return "允许充电 · 上限 \(appliedLimit)%"
-        case 2: return mode == .hold ? "已暂停充电" : "上限保持中 · 暂停充电"
-        case 3: return "正在使用电池 · 放电至 \(appliedLimit)%"
+        case 1: return "已允许充电 · 目标 \(appliedLimit)%"
+        case 2: return "已停止充电 · 目标 \(appliedLimit)%"
+        case 3: return "已切换电池供电 · 放电至 \(appliedLimit)%"
         default: return "由 macOS 管理充电"
         }
     }
 
-    func probe() {
-        guard !probing, supported == nil else { return }
-        probing = true
+    func probe(retry: Bool = false) {
+        guard !probing, retry || (supported == nil && probeError == nil) else { return }
+        probing = true; probeError = nil
         Task {
             let result = await Task.detached(priority: .utility) { () -> Data? in
                 guard let url = BatteryHelperInstaller.bundledURL else { return nil }
-                let process = Process(), output = Pipe()
-                process.executableURL = url; process.arguments = ["--probe"]
-                process.standardOutput = output; process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return nil }
+                let child = Process(), output = Pipe()
+                child.executableURL = url; child.arguments = ["--probe"]
+                child.standardOutput = output; child.standardError = FileHandle.nullDevice
+                guard (try? child.run()) != nil else { return nil }
+                let deadline = DispatchWorkItem { if child.isRunning { child.terminate() } }
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5, execute: deadline)
+                defer { deadline.cancel() }
                 let data = output.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                return process.terminationStatus == 0 ? data : nil
+                child.waitUntilExit()
+                return child.terminationStatus == 0 ? data : nil
             }.value
             probing = false
+            guard !shuttingDown else { return }
             if let result, let capabilities = try? JSONDecoder().decode(Capabilities.self, from: result) {
                 supported = capabilities.supported; dischargeSupported = capabilities.dischargeSupported
-            } else { supported = false }
-            resumePersistedMode()
+                resumePersistedMode()
+            } else {
+                supported = nil
+                probeError = "无法检测电池控制能力，请重试；若辅助工具缺失，请重新安装应用。"
+            }
         }
     }
 
-    /// The last confirmed mode is the one the user left on. Quitting closes the
-    /// helper, which hands the battery back to macOS; the next launch puts that
-    /// mode back instead of leaving the controls on「还原系统」.
     private func resumePersistedMode() {
-        guard !resumeStarted, mode != .system, supported == true else { return }
-        resumeStarted = true
+        guard !resuming, savedMode != .system, supported == true,
+              !pending, !authorizingHelper, process == nil, !shuttingDown else { return }
+        resuming = true
         Task {
             await refreshHelperAuthorization()
-            guard helperInstalled, !shuttingDown, process == nil else { return }
-            apply(mode)
+            resuming = false
+            guard helperInstalled, !pending, process == nil, !shuttingDown else { return }
+            apply(savedMode)
         }
     }
 
-    /// Whether dragging the limit slider should take effect immediately.
-    ///
-    /// True only once charge management is actually running: the helper owns a
-    /// limit only in a managing mode, and system mode has no limit to change.
-    /// Before the helper is up, a drag is just a stored preference — it must
-    /// not silently start a privileged process.
     var managesLimit: Bool {
-        process != nil && (mode == .limit || mode == .hold || mode == .discharge)
+        process != nil && input != nil && !recoveryUnconfirmed && !sleeping && mode != .system
+    }
+    var processIsRunning: Bool { process != nil }
+    var isRestoring: Bool { desiredMode == .system || (process != nil && input == nil) }
+    var limitConfirmed: Bool { managesLimit && !pending && appliedLimit == Int(threshold) }
+
+    func canApply(_ requested: Mode) -> Bool {
+        guard !shuttingDown, !authorizingHelper, !sleeping else { return false }
+        guard process == nil || input != nil else { return false }
+        if requested == .system { return !isRestoring }
+        return supported == true && !pending && (!recoveryUnconfirmed || process == nil)
+            && (requested != .discharge || dischargeSupported)
     }
 
-    /// Whether the privileged helper is up at all, in any mode.
-    var processIsRunning: Bool { process != nil }
-
-    /// Re-send the current mode with a new limit, for a slider that applies as
-    /// the user lets go. Unlike `apply(_:)` this never installs or starts the
-    /// helper — that is the explicit "启动充电管理" action — and it drops the
-    /// send while a previous one is still in flight, because the helper applies
-    /// commands in revision order and a mid-drag flood would queue behind them.
+    // The slider changes the latest intent, never the mode of an older command.
+    // A single in-flight command is acknowledged before the latest intent is sent.
     func setLimit(_ value: Int) {
-        guard managesLimit, !shuttingDown else { return }
-        let target = min(100, max(Int(Self.minLimit), value))
-        guard target != appliedLimit else { return }
-        // `pending` is not set here: the drag is continuous, and flipping the
-        // busy state on every release would strobe the toolbar. The reply
-        // updates `appliedLimit`, which is what the slider reads back.
-        revision += 1
-        send("set \(mode.rawValue) \(target) \(revision)\n")
+        threshold = Double(min(100, max(Int(Self.minLimit), value)))
+        guard !shuttingDown, !isRestoring else { return }
+        if pending { return } // Authorization and replies use the latest threshold.
+        guard managesLimit, Int(threshold) != appliedLimit else { return }
+        desiredMode = mode
+        dispatchRequest()
     }
 
     func apply(_ requested: Mode) {
-        guard !pending, !authorizingHelper, !shuttingDown else { return }
-        // A disconnected child must finish recovery before another command.
-        guard process == nil || input != nil else { return }
+        guard canApply(requested) else { return }
+        desiredMode = requested
+        if requested == .system {
+            savedMode = .system
+            UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+        }
+        if pending {
+            pendingMessage = "正在结束当前操作并还原系统…"
+            return
+        } // Allow system restoration to supersede an in-flight operation.
         if requested == .system && process == nil {
-            mode = .system; state = 0; lastError = nil
-            UserDefaults.standard.set(Mode.system.rawValue, forKey: "batteryChargeMode")
+            savedMode = .system
+            UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+            desiredMode = nil
+            if !recoveryUnconfirmed { mode = .system; state = 0; lastError = nil }
             return
         }
-        guard requested == .system || supported == true else { return }
-        guard requested != .discharge || dischargeSupported else { return }
-        let target = Int(threshold)
         pending = true; lastError = nil
-        pendingMessage = process == nil ? "正在检查辅助工具与系统授权…" : "正在应用充电设置…"
+        if process != nil { dispatchRequest(); return }
+        pendingMessage = "正在检查辅助工具与系统授权…"
         Task {
-            if process == nil {
-                let failure = await Task.detached(priority: .userInitiated) { BatteryHelperInstaller.installIfNeeded() }.value
-                guard !shuttingDown else { return }
-                helperInstalled = failure == nil
-                if let failure { lastError = failure; pending = false; return }
-                pendingMessage = "正在连接电池控制…"
-                do { try start() } catch { lastError = "无法启动电池控制：\(error.localizedDescription)"; pending = false; return }
+            let failure = await Task.detached(priority: .userInitiated) { BatteryHelperInstaller.installIfNeeded() }.value
+            guard !shuttingDown else { return }
+            helperInstalled = failure == nil
+            if let failure { lastError = failure; pending = false; desiredMode = nil; return }
+            // A restore requested during authorization cancels enabling management.
+            if desiredMode == .system {
+                pending = false; desiredMode = nil; savedMode = .system
+                UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+                return
             }
-            revision += 1
-            send("set \(requested.rawValue) \(target) \(revision)\n")
-            if pending { awaitResponse() }
+            do { try start() }
+            catch { lastError = "无法启动电池控制：\(error.localizedDescription)"; pending = false; desiredMode = nil; return }
+            dispatchRequest()
         }
     }
 
-    /// Authorization can take as long as the user needs; only time the helper
-    /// response after it has launched and received a command.
+    private func dispatchRequest() {
+        guard inFlight == nil, let desiredMode, input != nil, !shuttingDown else { return }
+        revision += 1
+        let request = Request(mode: desiredMode, limit: Int(threshold), revision: revision)
+        inFlight = request; pending = true
+        measurementGeneration = UUID(); measuredText = ""
+        pendingMessage = desiredMode == .system ? "正在恢复系统充电管理…" : "正在应用目标 \(request.limit)%…"
+        send("set \(request.mode.rawValue) \(request.limit) \(request.revision)\n")
+        if pending { awaitResponse() }
+    }
+
     private func awaitResponse() {
         responseTimeout?.cancel()
         let token = generation
         responseTimeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(8)) } catch { return }
             guard let self, self.generation == token, self.pending else { return }
-            self.lastError = "电池控制响应超时，已断开控制连接；请检查充电状态后重试。"
-            self.recoveryUnconfirmed = true
-            self.pending = false
-            self.timer?.invalidate(); self.timer = nil
-            // EOF asks the helper to restore the original settings. Never
-            // kill it while it may be performing that restoration.
-            try? self.input?.close(); self.input = nil
+            if self.sleeping { self.awaitResponse(); return }
+            self.disconnect("电池控制响应超时，已断开连接并请求恢复系统管理。")
         }
+    }
+
+    private func heartbeat() {
+        guard input != nil, !shuttingDown else { return }
+        if !sleeping && ProcessInfo.processInfo.systemUptime - lastResponseAt > 8 {
+            disconnect("电池状态超过 8 秒未更新，已断开连接并请求恢复系统管理。")
+            return
+        }
+        send("ping\n")
     }
 
     private func start() throws {
@@ -264,9 +286,12 @@ final class BatteryChargeController {
         outgoing.fileHandleForWriting.closeFile()
         input = incoming.fileHandleForWriting; process = child
         restorationConfirmed = false
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.send("ping\n") }
+        lastResponseAt = ProcessInfo.processInfo.systemUptime
+        let heartbeatTimer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.heartbeat() }
         }
+        RunLoop.main.add(heartbeatTimer, forMode: .common)
+        timer = heartbeatTimer
         let handle = outgoing.fileHandleForReading
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var buffer = Data()
@@ -284,43 +309,108 @@ final class BatteryChargeController {
                 while let newline = buffer.firstIndex(of: 10) {
                     let line = Data(buffer[..<newline]); buffer.removeSubrange(...newline)
                     if let status = try? JSONDecoder().decode(Status.self, from: line) {
-                        Task { @MainActor in self?.receive(status, token: token) }
+                        DispatchQueue.main.async { self?.receive(status, token: token) }
                     }
                 }
                 if buffer.count > 65536 { break }
             }
             try? handle.close()
             child.waitUntilExit()
-            Task { @MainActor in self?.ended(token: token, code: child.terminationStatus) }
+            DispatchQueue.main.async { self?.ended(token: token, code: child.terminationStatus) }
         }
     }
 
+    private func disconnect(_ error: String) {
+        lastError = error; recoveryUnconfirmed = true
+        pending = false; inFlight = nil; desiredMode = nil
+        responseTimeout?.cancel(); responseTimeout = nil
+        timer?.invalidate(); timer = nil
+        measurementGeneration = UUID(); measuredText = ""
+        try? input?.close(); input = nil
+    }
+
     private func send(_ message: String) {
-        do { try input?.write(contentsOf: Data(message.utf8)) }
-        catch {
-            lastError = "控制连接中断，辅助工具将恢复系统管理。"
-            pending = false
-            recoveryUnconfirmed = true
-            responseTimeout?.cancel(); responseTimeout = nil
-            timer?.invalidate(); timer = nil
-            try? input?.close(); input = nil
-        }
+        guard let input else { disconnect("控制连接已断开，等待恢复系统管理。"); return }
+        do { try input.write(contentsOf: Data(message.utf8)) }
+        catch { disconnect("控制连接中断，辅助工具将恢复系统管理。") }
     }
 
     private func receive(_ status: Status, token: UUID) {
         guard generation == token else { return }
+        // Terminal reports describe recovery, not a new user preference. They
+        // can have revision 0 when startup fails before accepting a command.
+        if status.terminal {
+            restorationConfirmed = status.state == 0 && status.error != "restore_failed"
+            recoveryUnconfirmed = !restorationConfirmed
+            if !status.error.isEmpty { lastError = Self.message(for: status.error) }
+            pending = false; inFlight = nil; desiredMode = nil
+            responseTimeout?.cancel(); responseTimeout = nil
+            timer?.invalidate(); timer = nil
+            try? input?.close(); input = nil
+            mode = .system; state = status.state; sleeping = false
+            measurementGeneration = UUID(); measuredText = ""
+            ProcessSampler.shared.refreshBattery()
+            return
+        }
+        guard !shuttingDown, input != nil else { return }
+        lastResponseAt = ProcessInfo.processInfo.systemUptime
+        sleeping = status.sleeping
+        // A sleep notification may precede acceptance of our newest command.
+        // Track connectivity/sleep without treating that older revision as an ack.
+        if sleeping { measurementGeneration = UUID(); measuredText = ""; return }
+        guard status.revision == revision else { return }
         dischargeSupported = status.dischargeSupported
-        if !status.error.isEmpty { lastError = Self.message(for: status.error) }
-        if status.error == "restore_failed" { recoveryUnconfirmed = true }
-        restorationConfirmed = status.mode == 0 && status.state == 0 && status.error != "restore_failed"
-        guard status.revision >= revision else { return }
+        lastError = status.error.isEmpty ? nil : Self.message(for: status.error)
+        if state != status.state { stateChangedAt = lastResponseAt }
         mode = Mode(rawValue: status.mode) ?? .system
         state = status.state; appliedLimit = status.limit; sleeping = status.sleeping
-        pending = false
-        responseTimeout?.cancel(); responseTimeout = nil
-        if status.error.isEmpty {
-            recoveryUnconfirmed = false
+        reportedPercent = status.percent >= 0 ? status.percent : nil
+        notice = Self.noticeText(status.notice)
+        recoveryUnconfirmed = status.error == "restore_failed"
+        if let request = inFlight, request.revision == status.revision {
+            inFlight = nil
+            responseTimeout?.cancel(); responseTimeout = nil
+            // Respect helper transitions (e.g. completed manual discharge), unless
+            // the user explicitly superseded this request with system restoration.
+            if desiredMode == request.mode { desiredMode = mode }
+            if desiredMode != mode || (desiredMode != .system && Int(threshold) != request.limit) {
+                dispatchRequest()
+                return
+            }
+            pending = false; desiredMode = nil
+            if mode == .system {
+                timer?.invalidate(); timer = nil
+                try? input?.close(); input = nil
+            }
+            if status.error.isEmpty {
+                savedMode = mode
+                UserDefaults.standard.set(mode.rawValue, forKey: "batteryChargeMode")
+            }
+        } else if mode != .system && status.error.isEmpty {
+            savedMode = mode
             UserDefaults.standard.set(mode.rawValue, forKey: "batteryChargeMode")
+        }
+        refreshMeasurement()
+    }
+
+    private func refreshMeasurement() {
+        let token = UUID(); measurementGeneration = token
+        if measuredText.isEmpty { measuredText = "指令已确认 · 正在读取实际电池状态…" }
+        ProcessSampler.shared.refreshBattery { [weak self] battery in
+            guard let self, self.measurementGeneration == token, !self.shuttingDown else { return }
+            guard battery.installed, let watts = battery.batteryWatts else {
+                self.measuredText = "指令已确认 · 暂无实际电池读数"
+                return
+            }
+            let description = watts > 0.5 ? "充电中" : watts < -0.5 ? "电池供电中" : "电池基本空闲"
+            let mismatch = (self.state == 3 && watts >= -0.5) || (self.state == 2 && watts > 0.5)
+            if mismatch {
+                self.measuredText = ProcessInfo.processInfo.systemUptime - self.stateChangedAt < 10
+                    ? "指令已确认 · 等待电流变化（实测\(description)）"
+                    : "指令已确认，但实测仍为\(description) · 请检查电源状态"
+            } else {
+                self.measuredText = "实测 \(battery.percent)% · \(description)"
+            }
         }
     }
 
@@ -330,16 +420,30 @@ final class BatteryChargeController {
         timer?.invalidate(); timer = nil
         try? input?.close(); input = nil; process = nil
         mode = .system; state = 0; sleeping = false; pending = false
-        if code != 0 && !restorationConfirmed { recoveryUnconfirmed = true }
-        if code != 0 && lastError == nil { lastError = "电池控制异常停止（\(code)），请检查充电状态后重新启用。" }
+        inFlight = nil; desiredMode = nil; notice = ""
+        measurementGeneration = UUID(); measuredText = ""
+        recoveryUnconfirmed = !restorationConfirmed
+        if !restorationConfirmed && lastError == nil {
+            lastError = "电池控制已停止（\(code)），未收到恢复确认；请检查充电状态。"
+        }
     }
 
-    /// Closing the pipe is the helper's recovery signal, even if the app crashes.
     func shutdown() {
         shuttingDown = true
         responseTimeout?.cancel(); responseTimeout = nil
         timer?.invalidate(); timer = nil
+        measurementGeneration = UUID()
         try? input?.close(); input = nil
+    }
+
+    private static func noticeText(_ value: String) -> String {
+        switch value {
+        case "discharge_unsupported": return "此机型仅支持限充，无法主动降到目标电量。"
+        case "adapter_required": return "未检测到电源输入，使用电池自然放电；接电后继续管理。"
+        case "lid_closed": return "合盖期间暂停主动放电。"
+        case "discharge_paused": return "合盖或休眠后已暂停主动放电；点击「启动管理」可恢复。"
+        default: return ""
+        }
     }
 
     private static func message(for error: String) -> String {

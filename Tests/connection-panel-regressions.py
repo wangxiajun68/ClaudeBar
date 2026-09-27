@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
-"""The connection panel is an instrument board, not a form.
+"""The connection inspector reports state; it does not claim reachability.
 
-The panel was rebuilt from five stacked blocks into a hub with four rings. Three
-things about that rebuild are *structural* rather than visual, and each of them
-is the kind of decision that silently reverts: a numbers block creeping back in,
-an empty cell reappearing in the ring grid, or the four rings collapsing into one
-repeated drawing. This asserts them from the source, no app launch.
+The panel has been through two rewrites, and both times the regression to guard
+against was structural rather than visual: a numbers deck creeping back in, and
+*claims* — a listener or an attached interface being reported as working
+internet.
 
-The one thing it cannot assert is taste. It asserts the shape.
+The previous version was a hub of four rings (出口 / 本机代理 / 隔空投送 / 蓝牙).
+It is now three stacked sections (网络 / 本机代理 / 附近与设备) sharing one state
+vocabulary and one signal scale with the tile that opens it. What is asserted
+here is what those two versions agree on and what the *reason* for the rewrite
+was:
+
+  * every section is present, and the address material stays in 复制诊断;
+  * no ring machinery comes back — the rings measured a position where what a
+    person needs is a word;
+  * the card and the panel speak one vocabulary (`ConnectionStatus`) and draw
+    one ruler (`ConnectionSignalScale`), so a reading cannot differ between a
+    tile and its own popover;
+  * neither surface states or implies reachability: a listening local proxy is
+    a process, an attached interface is a link, and neither is the internet.
+
+See docs/technical/08-performance.md for why `.shadow`-free drawing matters here
+and docs/design/05-main-window-and-theme.md for the design intent.
 """
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[1]
 panel = (root / 'Sources/ClaudeBar/Views/Shared/HardwareDetailPanel.swift').read_text()
@@ -19,35 +35,25 @@ start = panel.index('struct ConnectionDetailPanel: View {')
 end = panel.index('struct CapacityHardwareMark: View {')
 body = panel[start:end]
 
-# --- 1. Every ring is present, and they are four *different* drawings ---
-for kind in ['.uplink', '.proxy', '.airdrop', '.bluetooth']:
-    assert kind in body, f"the {kind} ring is gone from the panel"
+# --- 1. The three sections are all present, in reading order ---
+# 网络 first (what the machine is attached to), then the one connection the app
+# itself owns, then what is attached over the air.
+for section in ['private var network', 'private var proxy', 'private var devices']:
+    assert section in body, f"the panel lost its {section} section"
+assert body.index('private var network') < body.index('private var proxy') < body.index('private var devices'), \
+    "the panel's sections are out of reading order"
 
-# The uplink ring is the only one that measures a position, and the bluetooth
-# ring is the only one reporting a device count. If both lost their figure the
-# four rings would be four buttons.
-assert 'linkPosition' in body, "the uplink ring no longer carries a level"
-assert '"\\(audio.accessories.count) 个设备"' in body, \
-    "the bluetooth ring no longer counts attached devices"
-
-# Three distinct cores, not one arc stroked four times: the old panel's four
-# concentric trims in four tints read as one meter repeated.
-for core in ['WifiRingCore', 'ProxyRingCore', 'AirDropCore', 'BluetoothRingCore']:
-    assert f'struct {core}' in panel, f"{core} is missing — the rings collapsed into one drawing"
-
-# --- 2. The grid has no conditional cell ---
-# `LazyVGrid` with fixed columns is what keeps 0, 1, 2, 3 and 4 accessories from
-# leaving a hole. A conditional `if` inside the grid is how it came back before.
-rings_start = body.index('private func rings(')
-rings = body[rings_start:body.index('private var clusterAngle')]
-assert 'LazyVGrid' in rings, "the ring grid is no longer a grid"
-assert 'if ' not in rings.split('GridItem')[0], \
-    "a conditional climbed into the ring grid's column list"
+# --- 2. No ring machinery came back ---
+# The four-ring hub drew a position (`linkPosition`), rotated a cluster
+# (`clusterAngle`) and drew four bespoke `*RingCore` shapes. All three were
+# removed for the same reason: a ring states "how much", and the question here
+# is "which way out, through what door, with what attached".
+for banned in ['RingCore', 'linkPosition', 'clusterAngle']:
+    assert banned not in body, f"the four-ring hub is back on the panel ({banned})"
 
 # --- 3. No address deck came back ---
 # MAC, IP and the resolvers belong in 复制诊断, not on the surface. Only *code*
-# counts: the doc comment above the panel names them on purpose, to record where
-# they went.
+# counts: a doc comment may name them on purpose, to record where they went.
 code = "\n".join(line for line in body.splitlines()
                  if not line.lstrip().startswith("//"))
 for banned in ['MAC', 'DNS', '网关', '子网', 'en0', 'resolver']:
@@ -58,18 +64,47 @@ for line in code.splitlines():
     assert not (stripped.startswith('Text("') and ('192.168' in stripped or '255.255' in stripped)), \
         f"a raw address literal is being printed: {stripped}"
 
-# --- 4. The tile's badge states its size, like every other meter's does ---
-# Unstated, `InstrumentBadge` takes its 24pt default, which is how one strip
-# ended up with two badge sizes on it.
+# --- 4. The card and the panel share one vocabulary and one ruler ---
+# Two places naming the same link differently is how a tile and its own popover
+# end up disagreeing; two RSSI scales is how the same −46 dBm draws at two
+# lengths. Both components are declared once, in the card's file, and read by
+# the panel — asserted by declaration, not by substring: a `ConnectionStatus_X`
+# or a second local copy in the panel must fail here, and a bare "does the name
+# appear" check would pass on both.
+def declares(source: str, name: str) -> bool:
+    # `\b` after the name: `ConnectionStatus_X` is a different declaration and
+    # must not satisfy this (nor a bare "does the name appear" check).
+    return re.search(rf'^\s*(?:fileprivate |private )?struct {name}\b', source, re.M) is not None
+
+
+for name, call in [('ConnectionStatus', 'ConnectionStatus(host:'),
+                   ('ConnectionSignalScale', 'ConnectionSignalScale(rssi:')]:
+    assert declares(card, name), f"{name} is gone from the tile — it must not move"
+    assert not declares(panel, name), \
+        f"the panel declares its own {name}; the tile and its popover must share one"
+    assert call in body, f"the panel no longer reads {name}"
+
+# --- 5. Neither surface claims reachability ---
+# The rule the whole inspector exists to keep: the local proxy is a process this
+# app owns, an attached interface is a link, and a *listener* is not evidence of
+# working internet. The panel says so, both times it could be misread.
+assert '网络接入状态不代表互联网可用性' in body, \
+    "the panel stopped stating that an attached interface is not internet access"
+assert '不代表上游模型可用' in body, \
+    "the panel stopped stating that a responding local proxy is not a working upstream"
+for claim in ['已连接互联网', '联网正常', '可以上网', '网络正常']:
+    assert claim not in code, f"the panel claims reachability: {claim}"
+
+# --- 6. The tile keeps the shape it opens the panel from ---
+# One badge size on the strip (the other five meters state theirs), and the whole
+# card is the target: only the title used to be clickable, which made this the
+# one tile whose obvious target did nothing.
 assert 'InstrumentBadge(kind: .link, tint: Theme.chartBlue)\n                .frame(width: 26, height: 26)' in card, \
     "the connection tile's header badge lost its explicit 26pt frame"
+assert '.onTapGesture { showConnections = true }' in card and \
+    '.popover(isPresented: $showConnections) { ConnectionDetailPanel() }' in card, \
+    "the connection tile no longer opens the inspector from the whole card"
 
-# --- 5. The card's marks stay small ---
-# 48pt was the biggest object on the dashboard strip. A regression would be
-# silent, which is exactly why it is pinned.
-assert 'dial: 38' in card and 'column: 72' in card, \
-    "the page-density connection marks no longer resolve to 38pt / 72pt"
-assert 'dial: 48' not in card, "the 48pt mark came back"
-
-print("PASS: connection panel is a four-ring hub (no address deck, no empty cell, "
-      "three distinct ring drawings); the tile keeps its small marks and one badge size")
+print("PASS: connection inspector is three sections (no rings, no address deck), "
+      "shares one state vocabulary and one RSSI ruler with its tile, and states "
+      "that a link and a listener are not internet access")

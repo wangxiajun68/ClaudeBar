@@ -11,8 +11,8 @@ static int battery_decision(int mode, int limit, int percent, int previous) {
         return POWER_SYSTEM;
     if (mode == BAT_SYSTEM) return POWER_SYSTEM;
     if (percent < 20) return POWER_CHARGE;
-    if (mode == BAT_HOLD) return POWER_HOLD;
-    if (mode == BAT_DISCHARGE && percent > limit) return POWER_DISCHARGE;
+    // Management actively converges to the target; charge-only never disconnects AC.
+    if ((mode == BAT_LIMIT || mode == BAT_DISCHARGE) && percent > limit) return POWER_DISCHARGE;
     if (percent >= limit) return POWER_HOLD;
     // Two percentage points of hysteresis prevent toggling at the limit.
     if (previous == POWER_HOLD && percent > limit - 2) return POWER_HOLD;

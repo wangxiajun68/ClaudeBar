@@ -120,11 +120,11 @@ struct PowerFlow: Equatable {
         case .charging:
             return "电源输入 \(w(input ?? 0))：\(w(load ?? 0)) 供整机运行，\(w(battery)) 充入电池。"
         case .assisting:
-            return "整机需要 \(w(load ?? 0))，电源只能提供 \(w(input ?? 0))，电池补足其余 \(w(battery))。"
+            return "电源输入 \(w(input ?? 0))，电池提供 \(w(battery))，共同为整机供电。"
         case .holding:
-            return "电池不充不放（已充满或优化充电暂停），电源 \(w(input ?? load ?? 0)) 直接供整机。"
+            return "电池基本空闲，电源 \(w(input ?? load ?? 0)) 直接供整机。"
         case .onBattery:
-            return "未接电源，电池以 \(w(battery)) 为整机供电。"
+            return "当前由电池以 \(w(battery)) 为整机供电。"
         }
     }
 

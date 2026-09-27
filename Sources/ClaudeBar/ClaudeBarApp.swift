@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // and its non-activating popup panel work regardless of this policy.
         NSApp.setActivationPolicy(.regular)
         AppearanceSync.apply()
+        BatteryChargeController.shared.probe()
 
         let store = ProviderStore()
         providerStore = store

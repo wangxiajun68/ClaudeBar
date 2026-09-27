@@ -8,99 +8,79 @@ struct BatteryChargeControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("充电控制").font(Theme.Font.chromeEmph)
-                Spacer(minLength: 8)
-                if controller.pending { ProgressView().controlSize(.small) }
-                Text(controller.supported == false ? "不可用" : controller.statusText)
-                    .rollingNumber()
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                RollingNumberText("\(Int(controller.threshold))%")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            if controller.supported == false {
-                Text("当前机型或系统暂不支持充电控制。")
-                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
-            } else {
-                HStack(spacing: 8) {
-                    ForEach(BatteryChargeController.Mode.allCases) { mode in
-                        modeButton(mode)
-                    }
+            HStack {
+                Text("电池管理").font(Theme.Font.chromeEmph)
+                Spacer()
+                if controller.pending || controller.probing || controller.authorizingHelper {
+                    ProgressView().controlSize(.small)
                 }
-                limitSlider
+                Text("目标 \(Int(controller.threshold))%")
+                    .font(Theme.Font.bodySmall).monospacedDigit()
+            }
+            Text(controller.probing ? "正在检测电池控制能力…" : controller.statusText)
+                .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if controller.supported == false || controller.probeError != nil {
+                Text(controller.probeError ?? "当前机型不支持电池控制。")
+                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                Button("重新检测") { controller.probe(retry: true) }
+                    .disabled(controller.probing)
+            }
+            HStack(spacing: 8) {
+                ForEach(BatteryChargeController.Mode.displayOrder) { mode in modeButton(mode) }
+            }
+            limitSlider
+            if !controller.notice.isEmpty {
+                Text(controller.notice).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+            } else if controller.supported == true && !controller.dischargeSupported {
+                Text("此机型仅支持限充，无法主动降到目标电量。")
+                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+            }
+            if !controller.measuredText.isEmpty {
+                Text(controller.measuredText).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
             }
             if let error = controller.lastError {
                 Label(error, systemImage: "exclamationmark.circle")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.Ink.warning)
-                    .lineLimit(2)
+                    .font(Theme.Font.caption).foregroundStyle(Theme.Ink.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onAppear { controller.probe() }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: controller.mode)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: controller.pending)
     }
 
-    /// The charge limit as a continuous control.
-    ///
-    /// Drags apply on release, but only once charge management is running: the
-    /// helper is what owns a limit, and starting it is the explicit "启动管理"
-    /// action. With management off a drag just remembers the preference, and
-    /// the caption says so — silently launching a privileged process from a
-    /// slider would be a surprise.
-    ///
-    /// The range is 20–100, not 0–100: `policy.h` rejects a limit below 20, so
-    /// a slider that could reach it would offer states the helper refuses.
-    @ViewBuilder private var limitSlider: some View {
+    private var limitSlider: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
-                Text("\(Int(BatteryChargeController.minLimit))%")
-                    .rollingNumber()
-                    .font(Theme.Font.micro)
-                    .foregroundStyle(Theme.textTertiary())
-                Slider(value: $controller.threshold,
-                       in: BatteryChargeController.minLimit...100,
-                       step: 1) { editing in
-                    // `false` is the release. Apply only then, so a drag does
-                    // not queue a dozen commands behind the helper's revision
-                    // check.
-                    if !editing { controller.setLimit(Int(controller.threshold)) }
-                }
-                .tint(Theme.chartBlue)
-                .controlSize(.small)
+                Text("20%")
+                // Binding handles pointer, keyboard and accessibility changes alike.
+                Slider(value: Binding(get: { controller.threshold }, set: { controller.setLimit(Int($0)) }),
+                       in: BatteryChargeController.minLimit...100, step: 1)
+                    .tint(Theme.chartBlue).controlSize(.small)
+                    .accessibilityLabel("管理目标电量")
+                    .accessibilityValue("\(Int(controller.threshold))%")
                 Text("100%")
-                    .font(Theme.Font.micro)
-                    .foregroundStyle(Theme.textTertiary())
             }
-            HStack(spacing: 6) {
-                Image(systemName: controller.managesLimit ? "checkmark.circle.fill" : "info.circle")
-                    .font(.system(size: 9))
-                    .foregroundStyle(controller.managesLimit ? Theme.chartBlue : Theme.textTertiary())
-                Text(limitCaption)
-                    .rollingNumber()
-                    .font(Theme.Font.micro)
-                    .foregroundStyle(Theme.textTertiary())
-                    .lineLimit(1)
-            }
+            .font(Theme.Font.micro).foregroundStyle(Theme.textTertiary())
+            Label(limitCaption, systemImage: controller.limitConfirmed ? "checkmark.circle.fill" : "info.circle")
+                .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var limitCaption: String {
+        if controller.isRestoring { return "正在还原系统 · 目标仅保存，不会重新启动管理" }
+        if controller.pending { return "目标待确认 · 上次生效 \(controller.appliedLimit)%" }
         if controller.managesLimit {
-            return "松手即生效 · 当前上限 \(controller.appliedLimit)%"
+            return controller.limitConfirmed ? "已生效 \(controller.appliedLimit)% · 更改目标自动应用"
+                : "目标尚未生效 · 当前上限 \(controller.appliedLimit)%"
         }
-        if controller.mode == .system && controller.processIsRunning == false {
-            return "尚未启动充电管理 · 此为保存值，点「启动管理」后才生效"
-        }
-        return "点「启动管理」后，拖动即生效"
+        return "目标仅保存 · 点击模式启用管理"
     }
 
     private func modeButton(_ mode: BatteryChargeController.Mode) -> some View {
-        let selected = controller.mode == mode
+        let selected = !controller.pending && !controller.recoveryUnconfirmed && controller.mode == mode
+            && (mode != .system || (!controller.processIsRunning && controller.savedMode == .system))
         let blocked = mode == .discharge && !controller.dischargeSupported
         return Button { controller.apply(mode) } label: {
             VStack(spacing: 4) {
@@ -123,11 +103,9 @@ struct BatteryChargeControls: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(blocked || controller.pending || controller.supported == nil)
+        .disabled(!controller.canApply(mode))
         .opacity(blocked ? 0.4 : 1)
-        .help(mode == .discharge
-              ? "连接电源时使用电池，降到上限后自动停止；合盖会结束放电。"
-              : mode.title + "。首次启用需管理员授权；退出后由系统管理，下次启动会恢复这次的模式。")
+        .help(blocked ? "此机型未检测到主动放电能力，只能限制充电。" : mode.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

@@ -38,7 +38,7 @@
 | `Views/Shared/HardwareIllustration.swift` | 本机负载的实时 mark，分两条 lane：上层是 Lucide 图标（说明这是哪个部件），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存 / 硬盘按容量区域，条高即读数；另有按读数调速的扫光（<4%、减弱动效或不可见时停止）。浮层共用同一 mark（`HardwareDetailPanel.swift`） |
 | `Views/Shared/LucideRotor.swift` | 插画涡轮裁切、SF Symbols 回退与 Core Animation 旋转层；就地改速，停转与恢复保持相位 |
 | `Views/Shared/FanInternalsPanel.swift` | 风扇卡的 popover：Lucide `laptop-minimal` 机身 + 左右两个风扇位（各自按自己的 rpm 转、各自一圈按自己最大值填充的转速弧）+ 每个风扇一行读数与「拉满 / 恢复自动」。机身轮廓是 `ChassisOutline`（`Shape`），因为把 24pt 的图标 `aspectRatio(.fit)` 进这么宽的框只会缩成一张缩略图 |
-| `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：链路质量当标题 + 出口 / 本机代理 / 隔空投送 / 蓝牙四只环，各自一种画法的 `*RingCore`；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
+| `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：网络 / 本机代理 / 附近与设备三段，顶部是链路本身的状态而非「连接」这个标题，RSSI 刻度与 `ConnectionStatus` 词汇表和卡片共用；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
 | `Resources/macbook-internals-illustration.png` | 独立生成的详细结构插画（PNG，非 SVG）；来源与提示词见 `ASSET-LICENSES.md`，随应用离线分发 |
 | `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
 | `Views/Shared/UiverseSurfaces.swift` | 表面语言单点：`TileSurface` 的四个部件（底 + 强调水洗 / `InnerFrameRing` / `DepthLens` / 悬停描边 + 抬升，`lift:` 可关）、`SegmentedCapsule`（唯一的筛选胶囊）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep`、`.depthTilt()` 与 `PageHeaderCard`；`LoadRing` 与 `InstrumentRing` 均已删除（弧与环在图标尺寸上读作「转圈等待」且复述下方数字）；见 [DESIGN.md](../../DESIGN.md) 的 Surfaces 与 Machine marks |

@@ -21,7 +21,7 @@
 | 09 | [file-index.md](09-file-index.md) | Swift 文件职责速查 | 快速定位代码 |
 | 10 | [extension-guide.md](10-extension-guide.md) | 扩展功能检查清单 | 加新能力前 |
 | 11 | [vpn.md](11-vpn.md) | mihomo sidecar、系统代理、测速 | 改 VPN 页 / 内核 |
-| 12 | [battery-control.md](12-battery-control.md) | 电池限充 / 暂停 / 放电、特权辅助进程 | 改能源卡 / 电池控制 |
+| 12 | [battery-control.md](12-battery-control.md) | 电池目标 / 自动管理 / 充电 / 放电、特权辅助进程。[battery-control-audit-2026-09-27.md](12-battery-control-audit-2026-09-27.md) 是那一轮深度审查的现场记录（问题清单 + 修复记录） | 改能源卡 / 电池控制 |
 | 13 | [provider-directory.md](13-provider-directory.md) | 供应商目录、协议核查、Codex 会话监控 | 改模型页 / 会话判定 |
 | 14 | [performance-audit.md](14-performance-audit.md) | 桌面 / popup / 灵动岛的刷新与渲染审查 | 优化卡顿 / 掉帧 |
 | 15 | [model-cost.md](15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配规则 | 改价格 / 加模型 |

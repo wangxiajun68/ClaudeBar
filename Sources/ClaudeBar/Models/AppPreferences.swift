@@ -205,6 +205,20 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(notchIslandInFullScreen, forKey: "notchIslandInFullScreen") }
     }
 
+    // MARK: 概览问候卡
+
+    /// 天气卡查询的城市名。wttr.in 按名字取天气，**不**请求定位权限——
+    /// 这也是选择它的原因之一（见 `WeatherFetcher`）。留空即不查天气，
+    /// 卡上只剩时钟。
+    @Published var weatherCity: String {
+        didSet { UserDefaults.standard.set(weatherCity, forKey: "weatherCity") }
+    }
+
+    /// 概览问候卡的副标题用哪种称呼：本机名（默认）或机型芯片名。
+    @Published var greetingShowsChip: Bool {
+        didSet { UserDefaults.standard.set(greetingShowsChip, forKey: "greetingShowsChip") }
+    }
+
     private var didSetReady = false
 
     private init() {
@@ -212,6 +226,8 @@ final class AppPreferences: ObservableObject {
         appearance = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: "appearanceMode") ?? "") ?? .light
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
+        weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
+        greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
         // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:
         // the stored value is a number, and a 0 rate is not a rate.
         let manual = UserDefaults.standard.double(forKey: "manualUSDToCNY")

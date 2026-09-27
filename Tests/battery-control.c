@@ -32,7 +32,7 @@ static void reset_fixture(void) {
     adapter.name = "CHIE"; adapter.meta.key = fourcc("CHIE"); adapter.meta.info.size = 1;
     chargeCount = 1; hasAdapter = 1; owned = 0; applied = POWER_SYSTEM;
     rejectCharge = rejectAdapter = writes = adapterFirst = stopping = sleeping = 0;
-    errorCode = "";
+    errorCode = ""; terminal = dischargePaused = policyReset = 0; notice = "";
 }
 int main(void) {
     int parsedMode, parsedLimit; unsigned long parsedRevision;
@@ -46,9 +46,9 @@ int main(void) {
     for (int l = 20; l <= 100; l++) {
         for (int p = 0; p <= 100; p++) {
             assert(battery_decision(BAT_SYSTEM, l, p, POWER_HOLD) == POWER_SYSTEM);
-            assert(battery_decision(BAT_LIMIT, l, p, POWER_CHARGE) == (p >= l ? POWER_HOLD : POWER_CHARGE));
+            assert(battery_decision(BAT_LIMIT, l, p, POWER_CHARGE) == (p > l ? POWER_DISCHARGE : p == l ? POWER_HOLD : POWER_CHARGE));
             assert(battery_decision(BAT_DISCHARGE, l, p, POWER_CHARGE) == (p > l ? POWER_DISCHARGE : p == l ? POWER_HOLD : POWER_CHARGE));
-            assert(battery_decision(BAT_HOLD, l, p, POWER_HOLD) == (p < 20 ? POWER_CHARGE : POWER_HOLD));
+            assert(battery_decision(BAT_HOLD, l, p, POWER_CHARGE) == (p >= l ? POWER_HOLD : POWER_CHARGE));
         }
     }
     assert(battery_decision(BAT_LIMIT, 80, 79, POWER_HOLD) == POWER_HOLD);
@@ -57,6 +57,29 @@ int main(void) {
     assert(battery_decision(BAT_DISCHARGE, 19, 21, POWER_DISCHARGE) == POWER_SYSTEM);
     assert(battery_decision(BAT_LIMIT, 80, -1, POWER_HOLD) == POWER_SYSTEM);
     assert(battery_decision(99, 80, 90, POWER_HOLD) == POWER_SYSTEM);
+
+    // The actual helper's capability/lid/adapter gates, including virtual AC loss.
+    reset_fixture(); mode = BAT_LIMIT; limit = 80;
+    assert(evaluate(95, 1, 0) == POWER_DISCHARGE);
+    assert(apply(evaluate(95, 1, 0)) && fakeCharge[0] == 1 && fakeAdapter[0] == 8);
+    assert(evaluate(90, 0, 0) == POWER_DISCHARGE); // our key hides AC
+    assert(apply(evaluate(80, 0, 0)) && !fakeAdapter[0]);
+    assert(evaluate(79, 1, 0) == POWER_HOLD);
+    assert(evaluate(78, 1, 0) == POWER_CHARGE);
+    reset_fixture(); mode = BAT_HOLD; limit = 80;
+    assert(evaluate(50, 1, 0) == POWER_CHARGE);
+    assert(evaluate(95, 1, 0) == POWER_HOLD);
+    applied = POWER_HOLD; policyReset = 1;
+    assert(evaluate(79, 1, 0) == POWER_CHARGE);
+    reset_fixture(); mode = BAT_LIMIT; hasAdapter = 0;
+    assert(evaluate(95, 1, 0) == POWER_HOLD && !strcmp(notice, "discharge_unsupported"));
+    reset_fixture(); mode = BAT_LIMIT;
+    assert(evaluate(95, 0, 0) == POWER_HOLD && !strcmp(notice, "adapter_required"));
+    assert(evaluate(95, 1, 0) == POWER_DISCHARGE);
+    assert(evaluate(95, 1, 1) == POWER_HOLD && dischargePaused);
+    assert(evaluate(95, 1, 0) == POWER_HOLD && !strcmp(notice, "discharge_paused"));
+    reset_fixture(); mode = BAT_DISCHARGE;
+    assert(evaluate(80, 1, 0) == POWER_HOLD && mode == BAT_LIMIT);
 
     reset_fixture(); assert(apply(POWER_HOLD)); assert(fakeCharge[0] == 1 && !fakeAdapter[0]);
     int before = writes; assert(apply(POWER_HOLD)); assert(writes == before); // no redundant writes
@@ -76,6 +99,7 @@ int main(void) {
     power_event(NULL, 0, kIOMessageSystemWillSleep, NULL);
     assert(sleeping && mode == BAT_LIMIT && !owned && !fakeAdapter[0] && !fakeCharge[0]);
     power_event(NULL, 0, kIOMessageSystemHasPoweredOn, NULL); assert(!sleeping);
+    assert(evaluate(95, 1, 0) == POWER_HOLD && dischargePaused);
     reset_fixture(); chargeCount = 2;
     charge[0].name = "CH0B"; charge[0].meta.key = fourcc("CH0B"); charge[0].meta.info.size = 1;
     charge[1].name = "CH0C"; charge[1].meta.key = fourcc("CH0C"); charge[1].meta.info.size = 1;
