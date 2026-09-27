@@ -22,6 +22,41 @@ final class CodexProviderStore: ObservableObject {
     @Published var quotaWindows: [CodexQuotaWindow] = []
     @Published var quotaLoading = false
     @Published var quotaNote: String? = nil
+    @Published var creditBalance: String? = nil
+    @Published private(set) var configuredModel: String? = nil
+    @Published private(set) var usesOfficialAccount = false
+    @Published private(set) var configuredProviderID: UUID? = nil
+
+    /// Read-only reconciliation for display, never activates a route or rewrites
+    /// credentials. An unmatched external switch must not show another wallet.
+    func refreshConfiguredModel() {
+        let config = CodexConfigWriter.readSelection()
+        let model = config?.model
+        configuredModel = model?.isEmpty == false ? model : nil
+        if let config {
+            usesOfficialAccount = config.providerKey == "openai"
+                || config.providerKey == CodexConfigWriter.officialHTTPProviderID
+            if usesOfficialAccount {
+                configuredProviderID = nil
+            } else if config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        == LocalProxyAddress.codexBase.trimmingCharacters(in: CharacterSet(charactersIn: "/")) {
+                configuredProviderID = activeProviderID
+            } else {
+                let matches = providers.filter {
+                    $0.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        == config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                }
+                // Multiple wallets on one host are ambiguous after an external switch.
+                configuredProviderID = matches.count == 1 ? matches.first?.id : nil
+            }
+        } else {
+            configuredProviderID = nil
+            if let data = try? Data(contentsOf: FilePaths.codexAuthFile),
+               let auth = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                usesOfficialAccount = CodexConfigWriter.hasOfficialLogin(auth)
+            } else { usesOfficialAccount = false }
+        }
+    }
 
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
@@ -39,6 +74,7 @@ final class CodexProviderStore: ObservableObject {
     // MARK: - Load / Save
 
     func load() {
+        defer { refreshConfiguredModel() }
         if FileManager.default.fileExists(atPath: FilePaths.codexProvidersFile.path),
            let data = try? Data(contentsOf: FilePaths.codexProvidersFile),
            let file = try? JSONDecoder().decode(CodexProvidersFile.self, from: data) {
@@ -102,6 +138,7 @@ final class CodexProviderStore: ObservableObject {
                    $0.name.caseInsensitiveCompare(current.model) == .orderedSame
                }) {
                 providers[idx].activeModelID = model.id
+                refreshConfiguredModel()
             }
             save()
             break
@@ -300,6 +337,7 @@ final class CodexProviderStore: ObservableObject {
     /// ChatGPT subscription windows (5 小时 / 7 天), read through the
     /// authenticated Codex App Server account API.
     func refreshQuota() {
+        refreshConfiguredModel()
         // `load()` is immediately followed by `ProviderStore.refresh()` at
         // launch, and refresh can also be tapped repeatedly. Never spawn two
         // app-server instances for the same account query: their completion
@@ -316,6 +354,7 @@ final class CodexProviderStore: ObservableObject {
             let snapshot = await CodexQuotaFetcher.fetch()
             self.quotaWindows = snapshot.windows
             self.quotaNote = snapshot.note
+            self.creditBalance = snapshot.creditBalance
             self.quotaLoading = false
         }
     }
@@ -405,6 +444,7 @@ final class CodexProviderStore: ObservableObject {
             activeProviderID = providerID
             if let idx = providers.firstIndex(where: { $0.id == providerID }) {
                 providers[idx].activeModelID = model.id
+                refreshConfiguredModel()
             }
             save()
             syncProxyRuntime()

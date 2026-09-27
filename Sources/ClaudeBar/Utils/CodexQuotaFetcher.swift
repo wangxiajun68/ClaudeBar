@@ -53,6 +53,8 @@ enum CodexQuotaFetcher {
         var windows: [CodexQuotaWindow] = []
         /// Shown when there is nothing to graph.
         var note: String? = nil
+        /// Account credits have no currency guarantee; preserve the API unit.
+        var creditBalance: String? = nil
     }
 
     static func fetch() async -> Snapshot {
@@ -208,10 +210,20 @@ enum CodexQuotaFetcher {
         let windows = [rate["primary"], rate["secondary"]]
             .compactMap { $0 as? [String: Any] }
             .compactMap(parseWindow)
-        guard !windows.isEmpty else {
-            return Snapshot(note: "当前账户没有 Codex 额度窗口")
-        }
-        return Snapshot(windows: windows)
+        let credits = creditBalance(rate["credits"] as? [String: Any])
+        return Snapshot(windows: windows,
+                        note: windows.isEmpty ? "当前账户没有 Codex 额度窗口" : nil,
+                        creditBalance: credits)
+    }
+
+    static func creditBalance(_ credits: [String: Any]?) -> String? {
+        guard let credits else { return nil }
+        if credits["unlimited"] as? Bool == true { return "不限量" }
+        // An absent balance is unknown, even when hasCredits is false.
+        let raw = (credits["balance"] as? String)
+            ?? (credits["balance"] as? NSNumber)?.stringValue
+        guard let raw, let value = Double(raw), value.isFinite, value >= 0 else { return nil }
+        return value.formatted(.number.precision(.fractionLength(0...2))) + " Credits"
     }
 
     private static func parseWindow(_ window: [String: Any]) -> CodexQuotaWindow? {

@@ -200,7 +200,7 @@ enum WeatherFetcher {
             windKph: double("windspeedKmph") ?? 0,
             windDirection: current["winddir16Point"] as? String ?? "",
             isDay: int("isdaytime").map { $0 == 1 } ?? dayGuess(
-                observedHour: (current["observation_time"] as? String).flatMap(hourOfDay),
+                localObservation: current["localObsDateTime"] as? String,
                 sunrise: sunrise, sunset: sunset),
             sunrise: sunrise,
             sunset: sunset,
@@ -224,21 +224,15 @@ enum WeatherFetcher {
         return "\(city) · \(region)"
     }
 
-    private static func hourOfDay(_ observation: String) -> Int? {
-        // "09:06 AM" → 9
-        let parts = observation.split(separator: ":", maxSplits: 1)
-        guard let hour = parts.first.flatMap({ Int($0.trimmingCharacters(in: .whitespaces)) }) else { return nil }
-        let upper = observation.uppercased()
-        if upper.contains("PM"), hour != 12 { return hour + 12 }
-        if upper.contains("AM"), hour == 12 { return 0 }
-        return hour
-    }
-
-    /// When the source omits its day/night flag, sunrise / sunset decide it.
-    private static func dayGuess(observedHour: Int?, sunrise: String, sunset: String) -> Bool? {
-        guard let hour = observedHour else { return nil }
-        guard let rise = minutes(sunrise), let set = minutes(sunset) else { return nil }
-        let now = hour * 60
+    /// Observation_time is UTC; astronomy is local. Compare local minutes so
+    /// evening skies do not stay sunny and sunrise does not round to the hour.
+    private static func dayGuess(localObservation: String?, sunrise: String, sunset: String) -> Bool? {
+        guard let localObservation else { return nil }
+        let clock: String
+        if let space = localObservation.firstIndex(of: " "), localObservation.prefix(upTo: space).contains("-") {
+            clock = String(localObservation[localObservation.index(after: space)...])
+        } else { clock = localObservation }
+        guard let now = minutes(clock), let rise = minutes(sunrise), let set = minutes(sunset) else { return nil }
         return now >= rise && now < set
     }
 
@@ -248,11 +242,12 @@ enum WeatherFetcher {
         guard parts.count == 2 else { return nil }
         let hourPart = parts[0].trimmingCharacters(in: .whitespaces)
         let minutePart = parts[1].prefix(while: \.isNumber)
-        guard let hour = Int(hourPart), let minute = Int(minutePart) else { return nil }
+        guard let hour = Int(hourPart), let minute = Int(minutePart),
+              (0...23).contains(hour), (0...59).contains(minute) else { return nil }
         let isPM = trimmed.uppercased().contains("PM")
         let isAM = trimmed.uppercased().contains("AM")
-        var hour24 = hour % 12
-        if isPM { hour24 += 12 }
+        var hour24 = hour
+        if isPM { hour24 = hour % 12 + 12 }
         if isAM { hour24 = hour % 12 }
         return hour24 * 60 + minute
     }
@@ -269,9 +264,8 @@ enum WeatherFetcher {
 /// move faster than that at the resolution a city name gives), the request is
 /// single-flight, and a failure keeps the last good reading rather than
 /// blanking the card — the same discipline the proxy / usage stores use. The
-/// card is *not* on a timer: it refreshes when it appears and when the stale
-/// window has passed on a later appearance, so a dashboard left open overnight
-/// makes one request per window instead of one per second.
+/// card checks freshness while visible at roughly 15-minute intervals. Hidden
+/// windows cancel that task; reappearing checks freshness immediately.
 @Observable
 @MainActor
 final class WeatherStore {

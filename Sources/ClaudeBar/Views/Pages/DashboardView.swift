@@ -1,14 +1,6 @@
 import SwiftUI
 
-/// Resource status, power controls and active sessions.
-///
-/// The page opens with `GreetingCard` — a sky, HELLO, the clock, and the weather
-/// — rather than the four-figure `DashboardGlanceStrip` that used to be
-/// here. Every figure in that row (额度 / 模型 / 花费 / Token) already had a
-/// deeper home on this page or the pages one click away, so the strip was a
-/// second, shallower copy of numbers a person scrolls past anyway; the slot it
-/// spent is the page's most-visible one, and it now carries the four things
-/// nothing else in the app says.
+/// Resource status, active models, daily usage, power controls and sessions.
 struct DashboardView: View {
     /// `.sessions` only. Nothing in this body reads a configuration field, and
     /// `.configuration` publishes on `refreshBalance`'s first line
@@ -25,7 +17,7 @@ struct DashboardView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
-                GreetingCard()
+                GreetingCard(onNavigate: onNavigate)
                 ResourceStrip()
                 PowerFlowCard()
                 sessionOverview

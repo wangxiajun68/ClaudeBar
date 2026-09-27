@@ -319,6 +319,12 @@ enum CodexConfigWriter {
 
     /// Read the managed top-level keys back for reconcile-on-load.
     static func readCurrent() -> (model: String, providerKey: String, wireAPI: String, baseURL: String)? {
+        guard let selection = readSelection(), !selection.model.isEmpty else { return nil }
+        return selection
+    }
+
+    /// Unlike readCurrent, a default-model account still has a selection.
+    static func readSelection() -> (model: String, providerKey: String, wireAPI: String, baseURL: String)? {
         guard let text = try? String(contentsOf: FilePaths.codexConfigFile, encoding: .utf8) else { return nil }
         let doc = parse(text)
         var values: [String: String] = [:]
@@ -335,8 +341,8 @@ enum CodexConfigWriter {
             }
             values[key] = value
         }
-        guard let model = values["model"], !model.isEmpty else { return nil }
-        let providerKey = values["model_provider"] ?? "custom"
+        let model = values["model"] ?? ""
+        let providerKey = values["model_provider"] ?? "openai"
         var wireAPI = "responses"
         var baseURL = ""
         if let section = doc.sections.first(where: { $0.name == "model_providers.\(providerKey)" }) {

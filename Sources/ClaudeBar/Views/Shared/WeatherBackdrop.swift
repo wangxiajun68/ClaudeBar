@@ -104,19 +104,25 @@ struct WeatherBackdrop: View {
         _ = shadow
         let cx = x * size.width
         let cy = y * size.height
-        let s = scale * size.height
+        let s = scale * min(size.height, 440)
         let lobes: [(CGFloat, CGFloat, CGFloat)] = [
             (-0.70, 0.12, 0.28), (-0.36, -0.02, 0.36), (0.00, -0.16, 0.44),
             (0.38, -0.04, 0.34), (0.72, 0.12, 0.26), (-0.10, 0.16, 0.30),
         ]
         for (dx, dy, r) in lobes {
             let rr = r * s
-            let rect = CGRect(x: cx + dx * s - rr, y: cy + dy * s - rr * 0.72,
-                              width: rr * 2, height: rr * 1.44)
-            let center = CGPoint(x: rect.midX, y: rect.midY - rr * 0.12)
-            ctx.fill(Path(ellipseIn: rect), with: .radialGradient(
-                Gradient(colors: [lit, body, body.opacity(0)]),
-                center: center, startRadius: rr * 0.04, endRadius: rr))
+            // Scale a circular, fully fading density field into a cloud lobe.
+            // Clipping a radial fill to an ellipse left a hard "bubble" rim.
+            var lobe = ctx
+            lobe.translateBy(x: cx + dx * s, y: cy + dy * s)
+            lobe.scaleBy(x: 1.35, y: 0.68)
+            lobe.fill(Path(ellipseIn: CGRect(x: -rr, y: -rr, width: rr * 2, height: rr * 2)),
+                      with: .radialGradient(Gradient(stops: [
+                        .init(color: lit.opacity(0.58), location: 0),
+                        .init(color: body.opacity(0.38), location: 0.32),
+                        .init(color: body.opacity(0.08), location: 0.72),
+                        .init(color: .clear, location: 1)
+                      ]), center: .zero, startRadius: 0, endRadius: rr))
         }
     }
 
@@ -129,12 +135,12 @@ struct WeatherBackdrop: View {
                 let x = starX(i) * size.width
                 let y = starY(i) * size.height
                 let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.6 + Double(i % 5) * 0.25) + Double(i)))
-                let r = size.height * (0.008 + Double((i * 37) % 5) * 0.004)
+                let r = 0.65 + Double((i * 37) % 5) * 0.28
                 ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
                          with: .color(SkyPalette.moon.opacity((0.35 + Double(i % 3) * 0.2) * twinkle)))
             }
-            let c = CGPoint(x: size.width * 0.62, y: size.height * 0.30)
-            let r = size.height * 0.42
+            let c = CGPoint(x: size.width * 0.76, y: min(size.height * 0.15, 76))
+            let r = min(size.height * 0.14, 56)
             ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 2.2, y: c.y - r * 2.2,
                                             width: r * 4.4, height: r * 4.4)),
                      with: .radialGradient(Gradient(colors: [SkyPalette.moon.opacity(0.28),
@@ -151,7 +157,7 @@ struct WeatherBackdrop: View {
                            with: .color(.black))
             }
         } else {
-            drawSun(at: CGPoint(x: size.width * 0.60, y: size.height * 0.30),
+            drawSun(at: CGPoint(x: size.width * 0.78, y: min(size.height * 0.13, 65)),
                     size: size, t: t, ctx: &ctx)
         }
     }
@@ -160,24 +166,17 @@ struct WeatherBackdrop: View {
     /// the clear sky's motion; the disc breathing is too small to notice alone.
     private static func drawSun(at c: CGPoint, size: CGSize, t: TimeInterval,
                                 ctx: inout GraphicsContext) {
-        let spin = t * 0.25
-        for i in 0..<10 {
-            var ray = ctx
-            ray.translateBy(x: c.x, y: c.y)
-            ray.rotate(by: .radians(spin + Double(i) * .pi / 5))
-            let tall = i.isMultiple(of: 2)
-            let len = size.height * (tall ? 0.95 : 0.68)
-            let w = max(1.4, size.height * 0.012)
-            let rect = CGRect(x: -w / 2, y: -len, width: w, height: len * 0.55)
-            ray.fill(Path(roundedRect: rect, cornerRadius: w / 2),
-                     with: .linearGradient(
-                        Gradient(colors: [SkyPalette.sun.opacity(0),
-                                          SkyPalette.sun.opacity(tall ? 0.32 : 0.16)]),
-                        startPoint: CGPoint(x: 0, y: -len),
-                        endPoint: CGPoint(x: 0, y: -len * 0.2)))
+        // Diffuse light drifts across the card. No hard triangular rays.
+        for i in 0..<3 {
+            let x = c.x + CGFloat(sin(t * 0.08 + Double(i) * 2.1)) * size.width * 0.12
+            let center = CGPoint(x: x, y: c.y + CGFloat(i) * 22)
+            let radius = max(size.width * 0.34, size.height * 0.7)
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .radialGradient(
+                Gradient(colors: [SkyPalette.sunCore.opacity(0.10), SkyPalette.sun.opacity(0.03), .clear]),
+                center: center, startRadius: 0, endRadius: radius))
         }
         let pulse = 1 + 0.04 * sin(t / 9 * 2 * .pi)
-        let r = size.height * 0.30 * pulse
+        let r = min(size.height * 0.08, 40) * pulse
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 3.2, y: c.y - r * 3.2,
                                         width: r * 6.4, height: r * 6.4)),
                  with: .radialGradient(
@@ -186,10 +185,9 @@ struct WeatherBackdrop: View {
                                       SkyPalette.sun.opacity(0)]),
                     center: c, startRadius: r * 0.2, endRadius: r * 3.2))
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                 with: .color(SkyPalette.sun))
-        ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.62, y: c.y - r * 0.62,
-                                        width: r * 1.24, height: r * 1.24)),
-                 with: .color(SkyPalette.sunCore))
+                 with: .radialGradient(Gradient(colors: [SkyPalette.sunCore, SkyPalette.sun]),
+                                           center: c, startRadius: 0, endRadius: r))
+
     }
 
     // MARK: Partly / cloudy / fog
@@ -270,11 +268,11 @@ struct WeatherBackdrop: View {
         // Far: a mist of hairlines. Mid: the curtain. Near: a few drops with
         // a bright head and a tail that fades — a uniform stroke reads as a
         // pencil line, which is what the last shower looked like.
-        let far = streaks(count: 48 + Int(load * 36), speed: 0.38, length: 0.18,
+        let far = streaks(count: 48 + Int(load * 36), speed: 0.38, length: 0.07,
                           angle: 0.08, seed: 104729, t: t, size: size)
-        let mid = streaks(count: 22 + Int(load * 16), speed: 0.55, length: 0.36,
+        let mid = streaks(count: 22 + Int(load * 16), speed: 0.55, length: 0.12,
                           angle: 0.14, seed: 224737, t: t, size: size)
-        let near = streaks(count: 8 + Int(load * 6), speed: 0.78, length: 0.52,
+        let near = streaks(count: 8 + Int(load * 6), speed: 0.78, length: 0.20,
                            angle: 0.20, seed: 479909, t: t, size: size)
         stroke(far, width: 0.6, color: Color(hex: 0xD5E4F5).opacity(0.28), ctx: &ctx)
         stroke(mid, width: 0.9, color: Color.white.opacity(0.42), ctx: &ctx)
@@ -298,7 +296,8 @@ struct WeatherBackdrop: View {
             let s = Double((i * seed) % 997) / 997
             let travel = (t * speed + s).truncatingRemainder(dividingBy: 1)
             let y = -len + CGFloat(travel) * (size.height + len)
-            let x = CGFloat(0.02 + s * 0.98) * size.width + y * shear * 0.40
+            let horizontal = Double((i * 1299709 + seed * 17) % 991) / 991
+            let x = CGFloat(horizontal) * size.width + y * shear * 0.40
             out.append(Streak(start: CGPoint(x: x, y: y),
                               end: CGPoint(x: x + len * shear, y: y + len),
                               travel: travel))
@@ -374,9 +373,9 @@ struct WeatherBackdrop: View {
         // Three depths. Near flakes are larger and slower to sway, which reads
         // as depth of field without a blur pass.
         let depths: [(fall: Double, radius: CGFloat, alpha: Double, sway: Double)] = [
-            (0.10, 0.010, 0.45, 0.008),
-            (0.16, 0.018, 0.78, 0.014),
-            (0.24, 0.030, 0.95, 0.020),
+            (0.05, 0.0025, 0.45, 0.008),
+            (0.09, 0.004, 0.78, 0.014),
+            (0.14, 0.006, 0.95, 0.020),
         ]
         for i in 0..<36 {
             let seed = Double((i * 524287) % 1000) / 1000
@@ -409,15 +408,16 @@ struct WeatherBackdrop: View {
 
         // One strike per ~4.5 s. The spike is the first tenth of the cycle;
         // the rest is dark, so it reads as lightning and not as a pulse.
-        let cycle = 4.5
+        let cycle = 12.0
         let phase = t.truncatingRemainder(dividingBy: cycle) / cycle
         let flash = phase < 0.08 ? pow(1 - phase / 0.08, 2.4) : 0
         if flash > 0.02 {
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
                      with: .color(SkyPalette.flash.opacity(0.55 * flash)))
         }
+        guard flash > 0.02 else { return }
         var bolt = ctx
-        bolt.translateBy(x: size.width * 0.58, y: size.height * 0.12)
+        bolt.translateBy(x: size.width * 0.78, y: size.height * 0.08)
         let s = size.height * 0.70
         let path = Path { p in
             p.move(to: CGPoint(x: 0.08 * s, y: 0))
@@ -428,10 +428,10 @@ struct WeatherBackdrop: View {
             p.addLine(to: CGPoint(x: -0.04 * s, y: 1.20 * s))
         }
         bolt.stroke(path, with: .color(SkyPalette.bolt.opacity(0.25 + 0.55 * flash)),
-                    style: StrokeStyle(lineWidth: max(3, size.height * 0.09),
+                    style: StrokeStyle(lineWidth: max(3, size.height * 0.012),
                                        lineCap: .round, lineJoin: .round))
         bolt.stroke(path, with: .color(SkyPalette.flash.opacity(0.55 + 0.45 * flash)),
-                    style: StrokeStyle(lineWidth: max(1.2, size.height * 0.018),
+                    style: StrokeStyle(lineWidth: max(1.2, size.height * 0.003),
                                        lineCap: .round, lineJoin: .round))
     }
 
@@ -439,7 +439,7 @@ struct WeatherBackdrop: View {
 
     private static func drift(_ from: Double, _ to: Double, _ t: Double) -> CGFloat {
         let span = to - from
-        let travel = (t.truncatingRemainder(dividingBy: 1) + 1).truncatingRemainder(dividingBy: 1)
+        let travel = 0.5 + 0.5 * sin(t * 2 * .pi)
         return CGFloat(from + span * travel)
     }
 
@@ -556,7 +556,13 @@ struct SkyPalette {
 
     /// No reading: the page's own ice, dark type. It must not announce a sky.
     static var neutral: SkyPalette {
-        SkyPalette(top: Color(hex: 0xE7EEF6), bottom: Color(hex: 0xD5DEEA),
+        if Theme.isDark {
+            return SkyPalette(top: Color(hex: 0x293747), bottom: Color(hex: 0x17222E),
+                              ink: Color(hex: 0xF7FAFF), inkSoft: Color(hex: 0xD8E2F0),
+                              accent: Color(hex: 0xCBDFFF), isLightGround: false,
+                              highlight: .white)
+        }
+        return SkyPalette(top: Color(hex: 0xE7EEF6), bottom: Color(hex: 0xD5DEEA),
                    ink: Color(hex: 0x1B2331), inkSoft: Color(hex: 0x5A6675),
                    accent: Color(hex: 0x1D4FB8), isLightGround: true,
                    highlight: Color(hex: 0xFFFFFF))
