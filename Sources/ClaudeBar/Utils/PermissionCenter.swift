@@ -22,6 +22,7 @@ enum AppPermission: String, CaseIterable, Identifiable {
     case automation
     case bluetooth
     case location
+    case currentLocation
     case cursorData
 
     var id: String { rawValue }
@@ -34,6 +35,7 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .automation: return "在终端继续会话"
         case .bluetooth: return "蓝牙与耳机电量"
         case .location: return "Wi-Fi 名称"
+        case .currentLocation: return "当前位置"
         case .cursorData: return "读取 Cursor 会话"
         }
     }
@@ -46,7 +48,7 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .screenRecording: return "屏幕录制"
         case .automation: return "自动化"
         case .bluetooth: return "蓝牙"
-        case .location: return "定位服务"
+        case .location, .currentLocation: return "定位服务"
         case .cursorData: return "无系统弹窗"
         }
     }
@@ -64,7 +66,9 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .bluetooth:
             return "连接卡片显示蓝牙开关，读取 AirPods 等耳机电量。"
         case .location:
-            return "macOS 把 Wi-Fi 名称视为位置信息；只读名称与信号，不定位。"
+            return "macOS 把 Wi-Fi 名称视为位置信息；只读名称与信号，不读取坐标。"
+        case .currentLocation:
+            return "概览问候卡按当前所在位置取天气。关闭后改用「天气城市」，不再读取位置。"
         case .cursorData:
             return "只读打开 Cursor 的 state.vscdb，列出进行中的 Cursor 会话。"
         }
@@ -78,6 +82,7 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .automation: return "terminal"
         case .bluetooth: return "headphones"
         case .location: return "wifi"
+        case .currentLocation: return "location.fill"
         case .cursorData: return "cursorarrow.rays"
         }
     }
@@ -103,7 +108,7 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .screenRecording: anchor = "com.apple.preference.security?Privacy_ScreenCapture"
         case .automation: anchor = "com.apple.preference.security?Privacy_Automation"
         case .bluetooth: anchor = "com.apple.preference.security?Privacy_Bluetooth"
-        case .location: anchor = "com.apple.preference.security?Privacy_LocationServices"
+        case .location, .currentLocation: anchor = "com.apple.preference.security?Privacy_LocationServices"
         case .cursorData: return nil
         }
         return URL(string: "x-apple.systempreferences:" + anchor)
@@ -188,6 +193,13 @@ final class PermissionCenter: ObservableObject {
                 MainActor.assumeIsolated { self?.refreshStatus() }
             }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .permissionDidChange)
+            .compactMap { $0.object as? AppPermission }
+            .filter { $0 == .currentLocation }
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshStatus() }
+            }
+            .store(in: &cancellables)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshStatus() }
@@ -219,6 +231,7 @@ final class PermissionCenter: ObservableObject {
             UserDefaults.standard.set(on, forKey: permission.defaultsKey)
         }
         enabled[permission] = on
+        if permission == .currentLocation, !on { CurrentLocation.shared.stop() }
         if on { request(permission) }
         NotificationCenter.default.post(name: .permissionDidChange, object: permission)
         scheduleStatusRefresh()
@@ -246,6 +259,8 @@ final class PermissionCenter: ObservableObject {
             }
         case .location:
             WiFiNameAuthorization.shared.request()
+        case .currentLocation:
+            CurrentLocation.shared.start()
         case .widgetData, .automation, .cursorData:
             // Widget: the next snapshot write asks (posted via
             // `.permissionDidChange`). Automation: macOS asks per target app
@@ -255,6 +270,15 @@ final class PermissionCenter: ObservableObject {
     }
 
     // MARK: - Status
+
+    private static func locationStatus(_ status: CLAuthorizationStatus) -> PermissionStatus {
+        switch status {
+        case .authorizedAlways, .authorizedWhenInUse: return .granted
+        case .denied, .restricted: return .denied
+        case .notDetermined: return .notDetermined
+        @unknown default: return .askOnUse
+        }
+    }
 
     func refreshStatus() {
         var next = statuses
@@ -270,14 +294,8 @@ final class PermissionCenter: ObservableObject {
             @unknown default: return .askOnUse
             }
         }()
-        next[.location] = {
-            switch WiFiNameAuthorization.shared.status {
-            case .authorizedAlways, .authorizedWhenInUse: return .granted
-            case .denied, .restricted: return .denied
-            case .notDetermined: return .notDetermined
-            @unknown default: return .askOnUse
-            }
-        }()
+        next[.location] = Self.locationStatus(WiFiNameAuthorization.shared.status)
+        next[.currentLocation] = Self.locationStatus(CurrentLocation.shared.status)
         if next != statuses { statuses = next }
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in

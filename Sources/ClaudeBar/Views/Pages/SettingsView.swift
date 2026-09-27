@@ -67,7 +67,7 @@ struct SettingsView: View {
                         .toggleStyle(InstrumentToggleStyle(tint: Theme.Ink.claude, faceTint: Theme.claude, showsLabel: false))
                     }
                     SettingTile(icon: "cloud.sun", title: "天气城市",
-                                caption: "概览问候卡按城市名取天气，**不**请求定位权限。留空则只显示时钟。",
+                                caption: "未开启「权限与隐私 → 当前位置」时，问候卡按这个城市取天气。留空则只显示时钟。",
                                 compact: true) {
                         TextField("上海", text: $weatherCityDraft)
                             .textFieldStyle(InstrumentFieldStyle(focused: weatherCityFocused))

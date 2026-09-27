@@ -19,7 +19,7 @@
 └─────────────────────────────────────────────────────┘
 ```
 
-VPN 运行时 **status item** 本身显示图标 + 双行 ↓/↑（`VpnMenuBarRateView`），不占用 popup 高度。popup 内的 VPN 入口是 `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`）。
+**status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是 `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`）。
 
 > settings.json 缺失且 Codex 列表为空时，供应商/会话/用量替换为「未找到 settings.json」警告卡；资源条与 VPN 页头仍在。
 

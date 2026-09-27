@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Resource status, power controls and active sessions.
 ///
-/// The page opens with `GreetingCard` — weather, date, clock, and which machine
-/// this is — rather than the four-figure `DashboardGlanceStrip` that used to be
+/// The page opens with `GreetingCard` — a sky, HELLO, the clock, and the weather
+/// — rather than the four-figure `DashboardGlanceStrip` that used to be
 /// here. Every figure in that row (额度 / 模型 / 花费 / Token) already had a
 /// deeper home on this page or the pages one click away, so the strip was a
 /// second, shallower copy of numbers a person scrolls past anyway; the slot it

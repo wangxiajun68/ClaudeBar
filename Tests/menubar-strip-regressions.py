@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""The menu-bar strip must fit inside the width it declares, and the battery
-cell must keep the silhouette it was drawn to.
+"""The menu-bar strip must fit inside the width it declares, and the rates it
+carries must say which side of the tunnel they came from.
 
-Two separate pieces of arithmetic. The battery cell is one object — a capsule
-gauge plus the percentage beside it — so its slot is derived from the glyph's
-own constants; a terminal nub bolted onto the right edge used to be painted
-*outside* that slot, which is the overhang this test was written for. The nub is
-gone (it carried no reading and pushed the capsule's optical centre off its
-geometric one); re-adding it, or widening the capsule without re-deriving the
-cell, must fail here rather than in the menu bar.
+Two pieces of arithmetic and one of meaning. The battery cell is one object — a
+capsule gauge plus the percentage beside it — so its slot is derived from the
+glyph's own constants; a terminal nub bolted onto the right edge used to be
+painted *outside* that slot, which is the overhang this test was written for.
+The nub is gone (it carried no reading and pushed the capsule's optical centre
+off its geometric one); re-adding it, or widening the capsule without
+re-deriving the cell, must fail here rather than in the menu bar.
+
+The meaning is the colour. The strip is now always up — the rates belong to the
+machine when no tunnel is running and to the proxy when one is — so the two
+readings are distinguished by hue: green through the tunnel, resting white
+otherwise. A green number over a stopped tunnel would claim traffic was being
+proxied when nothing is, and a white number while mihomo is carrying the traffic
+would hide the fact that it is. Both directions are asserted on the colours the
+production code hands to the labels, and the tunnel state must not be able to
+change the widths (the strip no longer changes shape with the VPN).
 
 
 `VpnMenuBarRateView` draws into a fixed frame on top of the status item and
@@ -30,6 +39,23 @@ start = source.index('private final class VpnMenuBarRateView: NSView {')
 # The custom battery gauge follows the strip class in the same file.
 body = source[start:]
 
+# Source-level: nothing on this strip may be gated on the tunnel again. The
+# battery refresh and the rate sampler both answer machine questions that are
+# true with the VPN down, and gating them meant a Mac with no VPN (and a MacBook
+# with one stopped) showed a bare mark — the readings that do not need a VPN
+# were exactly the ones that refused to appear without one.
+controller = source[source.index('final class MenuBarController'):start]
+refresh = controller[controller.index('private func refreshMenuBarBattery'):]
+refresh = refresh[:refresh.index('\n    }\n')]
+assert 'VpnManager.shared.isRunning' not in refresh, (
+    'the menu-bar battery refresh is gated on the VPN again — a MacBook with the '
+    'tunnel down would show a bare mark instead of its charge')
+tick = controller[controller.index('private func tickVpnRate'):]
+tick = tick[:tick.index('\n    }\n')]
+assert 'SystemThroughput.shared' in tick, (
+    'the strip no longer reads the machine throughput, so its rates would be '
+    'blank (or stale) whenever no tunnel is up')
+
 swift = r'''
 import AppKit
 
@@ -49,6 +75,7 @@ BODY
             // right-most painted edge. `layout()` reads `batteryInstalled`, so
             // drive it through the same flag the controller sets.
             view.update(icon: nil, down: "999.9K", up: "999.9K",
+                        tunneled: true,
                         battery: .init(installed: hasBattery, percent: 42, charging: false,
                                        externalPower: false, watts: -16, estimated: false))
             view.frame = NSRect(x: 0, y: 0, width: width, height: h)
@@ -76,6 +103,36 @@ BODY
                              && view.batteryDetailIsHidden,
                              "a Mac without a battery must hide the whole cell")
             }
+
+            // The tunnel state must not change the strip's shape. The rates are
+            // on both sides of it now, so a width that tracked `isRunning` would
+            // resize the status item on every connect / disconnect.
+            let greenColour = view.downLabelTextColor
+            let greenLabelMaxX = view.downLabelFrameMaxX
+            view.update(icon: nil, down: "999.9K", up: "999.9K",
+                        tunneled: false,
+                        battery: .init(installed: hasBattery, percent: 42, charging: false,
+                                       externalPower: false, watts: -16, estimated: false))
+            view.frame = NSRect(x: 0, y: 0, width: width, height: h)
+            view.layout()
+            let whiteColour = view.downLabelTextColor
+            precondition(view.downLabelFrameMaxX == greenLabelMaxX,
+                         "the rate column moved when the tunnel state changed")
+            // Green only while the traffic is the tunnel's: a green number over a
+            // stopped proxy claims a proxy that is not there.
+            precondition(greenColour != whiteColour,
+                         "the rates must be coloured differently on either side of the "
+                         + "tunnel, got \(greenColour) both times")
+            guard let green = greenColour.usingColorSpace(.sRGB),
+                  let white = whiteColour.usingColorSpace(.sRGB) else {
+                preconditionFailure("the rate colours must be convertible sRGB values")
+            }
+            precondition(green.greenComponent > green.redComponent + 0.3
+                         && green.greenComponent > green.blueComponent + 0.3,
+                         "the tunnel colour must read as green, got \(green)")
+            precondition(abs(white.redComponent - white.greenComponent) < 0.05
+                         && abs(white.greenComponent - white.blueComponent) < 0.05,
+                         "the untunnelled colour must read as the resting white, got \(white)")
         }
 
         // The gauge is a capsule with no post, and its width is the golden
@@ -115,6 +172,8 @@ BODY
         precondition(holding.detail == "电源直供" && holding.mode == .holding)
 
         print("PASS: menu-bar strip fits its declared width with and without a battery; "
+              + "the rates are green through the tunnel and resting white outside it, "
+              + "without changing the strip's shape; "
               + "the gauge is a 21pt-tall 1.618:1 capsule with no terminal post; "
               + "charging, discharging, and holding have distinct labels")
     }

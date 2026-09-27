@@ -16,7 +16,24 @@ import Darwin
 /// this app's voice is the wrong read for a one-line card caption; the short
 /// host name is also what a person answers when asked "which machine".
 enum MachineIdentity {
-    /// The greeting's name. Never empty: an unresolvable host falls back to "Mac".
+    /// The person in `HELLO wangxiajun`.
+    ///
+    /// `kern.hostname` on this Mac is `wangxiajundeMacBook-Pro-8`: the name,
+    /// then `de` (的), then the model. The greeting wants the name. A host
+    /// that does not carry a MacBook suffix stays whole, and still falls
+    /// back to "Mac" when the name cannot be read.
+    static var greetingName: String {
+        let host = displayName
+        for marker in ["deMacBook", "s-MacBook", "-MacBook", "MacBook"] {
+            guard let range = host.range(of: marker, options: .caseInsensitive) else { continue }
+            let prefix = host[..<range.lowerBound]
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-_ "))
+            if prefix.count >= 2 { return String(prefix) }
+        }
+        return host
+    }
+
+    /// The greeting's machine. Never empty: an unresolvable host falls back to "Mac".
     static let displayName: String = {
         let raw = sysctlString("kern.hostname") ?? ""
         let short = raw.replacingOccurrences(of: ".local", with: "")

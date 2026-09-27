@@ -30,15 +30,15 @@ struct TileModifier: ViewModifier {
     var wash: Double? = nil
     /// Whether the card rises 2pt under the pointer. See `TileSurface.lift`.
     var lift: Bool = true
-    /// The card's own ground, in place of `Theme.cardSurface`. See
-    /// `TileSurface.base` — only the weather band passes one.
-    var base: AnyShapeStyle? = nil
+    /// A ground **view** drawn over the opaque base fill, under the accent
+    /// wash. See `TileSurface.ground` — only the weather band passes one.
+    var ground: AnyView? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, wash: wash, lift: lift, base: base,
+                    framed: framed, wash: wash, lift: lift, ground: ground,
                     reduceMotion: reduceMotion) {
             content
         }
@@ -72,15 +72,27 @@ struct TileSurface<Content: View>: View {
     /// it is easy to hit and the lift means nothing (there is one band per page,
     /// not a field of them to scan). `PageHeaderCard` passes `false`, so the
     /// band answers the pointer with its edge and wash instead.
-    /// The card's ground. `nil` is `Theme.cardSurface`, which is every card in
-    /// the app. The weather band passes its own gradient: it is the one surface
-    /// whose *ground* carries a reading (the sky, and whether the sun is up),
-    /// and painting that as an accent wash over white would have made it a tint
-    /// of a white card rather than a sky. Everything else about the surface —
-    /// the depth lens, the inner frame ring, the hover edge, the layer shadow —
-    /// is unchanged, so the weather band is still the same object as every other
-    /// card in the app.
-    var base: AnyShapeStyle?
+    /// A ground **view** drawn over the opaque base fill and under the accent
+    /// wash. `nil` — every card in the app but one.
+    ///
+    /// The weather band passes its sky here: it is the one surface whose *ground*
+    /// carries a reading (which sky, and whether the sun is up), and painting
+    /// that as an accent wash over white would have made it a tint of a white
+    /// card rather than a sky. Everything else about the surface — the depth
+    /// lens, the inner frame ring, the hover edge, the Core Animation layer
+    /// shadow — is unchanged, so the weather band is still the same object as
+    /// every other card.
+    ///
+    /// **A view, not a `ShapeStyle`.** The obvious spelling is
+    /// `base: AnyShapeStyle?` fed to `.fill(_:)`, and it silently draws nothing:
+    /// a custom `ShapeStyle` whose `resolve(in:)` returns a `View` satisfies the
+    /// compiler but renders as a no-op fill, so the card falls back to
+    /// `Theme.cardSurface` and every figure on it lands on white. Measured —
+    /// `RoundedRectangle.fill(<view-backed style>)` leaves the pixels untouched
+    /// while `.fill(LinearGradient(...))` paints — which is why the ground is a
+    /// view stacked in the background, and why the base stays an opaque
+    /// `Color` fill under it.
+    var ground: AnyView?
     var lift: Bool
     var reduceMotion: Bool
     let content: Content
@@ -90,7 +102,7 @@ struct TileSurface<Content: View>: View {
     /// `content: { … }` instead of trailing-closure syntax.
     init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
          lens: DepthLensSpec? = nil, framed: Bool = true,
-         wash: Double? = nil, lift: Bool = true, base: AnyShapeStyle? = nil,
+         wash: Double? = nil, lift: Bool = true, ground: AnyView? = nil,
          reduceMotion: Bool = false,
          @ViewBuilder content: () -> Content) {
         self.tint = tint
@@ -100,7 +112,7 @@ struct TileSurface<Content: View>: View {
         self.framed = framed
         self.wash = wash
         self.lift = lift
-        self.base = base
+        self.ground = ground
         self.reduceMotion = reduceMotion
         self.content = content()
     }
@@ -121,7 +133,14 @@ struct TileSurface<Content: View>: View {
             .background {
                 ZStack(alignment: lens?.align ?? .topTrailing) {
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(base ?? AnyShapeStyle(Theme.cardSurface))
+                        .fill(Theme.cardSurface)
+                    // The card's own ground, over the opaque base and under the
+                    // accent wash — so a ground that forgets a pixel still lands
+                    // on a real surface rather than on nothing.
+                    if let ground {
+                        ground
+                            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    }
                     if tint != nil {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(accent.opacity(restWash))
@@ -313,10 +332,10 @@ extension View {
     func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
               lens: DepthLensSpec? = nil, framed: Bool = true,
               wash: Double? = nil, lift: Bool = true,
-              base: AnyShapeStyle? = nil) -> some View {
+              ground: AnyView? = nil) -> some View {
         modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
                               lens: lens, framed: framed, wash: wash, lift: lift,
-                              base: base))
+                              ground: ground))
     }
 }
 

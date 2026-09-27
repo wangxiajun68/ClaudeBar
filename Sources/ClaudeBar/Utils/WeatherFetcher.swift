@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -101,18 +102,16 @@ struct WeatherReading: Equatable {
 ///
 ///  1. **No API key.** A dashboard card may not add a signup step to a local
 ///     mac app, and every keyed provider (OpenWeather, WeatherAPI) does.
-///  2. **No location permission and no account.** A city name in the URL means
-///     the app never has to ask macOS for 定位 — the permission this codebase
-///     spends a whole settings section keeping opt-in — and never has to ship
-///     an IP-geolocation hop whose answer (a datacenter, behind a proxy) is
-///     routinely in another country.
+///  2. **No account, and no location unless the user opts in.** A city name
+///     in the URL is the default. Coordinates (`lat,lon`, the same endpoint)
+///     are used only after 设置 → 权限与隐私 → 当前位置 is on — see
+///     `CurrentLocation`. There is still no IP-geolocation hop.
 ///  3. It returns the day's high / low, the sunrise / sunset and the next hours'
 ///     rain chance in the same response, so one request fills the card.
 ///
-/// The city is a preference (`AppPreferences.weatherCity`, default 上海), so a
-/// user who does not live there changes one string instead of granting
-/// location. A failure is not an error state: the card falls back to the
-/// clock, and the tooltip says why.
+/// With 当前位置 off, the query is `AppPreferences.weatherCity` (default 上海).
+/// A failure is not an error state: the card falls back to the clock, and the
+/// tooltip says why.
 enum WeatherFetcher {
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -290,36 +289,97 @@ final class WeatherStore {
     static let staleAfter: TimeInterval = 15 * 60
 
     private var inflight: Task<Void, Never>?
+    /// A refresh arrived while a request was in flight (a location fix landing
+    /// on top of a city fetch). Run one more pass when the current one ends.
+    private var rerun = false
 
     private var city: String { AppPreferences.shared.weatherCity }
+
+    private init() {
+        NotificationCenter.default.publisher(for: .permissionDidChange)
+            .compactMap { $0.object as? AppPermission }
+            .receive(on: RunLoop.main)
+            .sink { permission in
+                guard permission == .currentLocation else { return }
+                MainActor.assumeIsolated { WeatherStore.shared.refresh() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private var cancellables: Set<AnyCancellable> = []
 
     /// Whether the card should show a figure at all.
     var hasReading: Bool { reading != nil }
 
-    /// Fetch unless the current reading is fresh. Safe to call from
-    /// `onAppear` / `onChange` — it is a no-op in the common case.
+    /// Fetch unless the current reading is fresh. A location switch with no
+    /// fix yet always fetches: a city reading from two minutes ago must not
+    /// hide the position the user just allowed.
     func refreshIfStale() {
+        if PermissionGate.allows(.currentLocation), CurrentLocation.shared.query == nil {
+            refresh()
+            return
+        }
         if let fetchedAt, Date().timeIntervalSince(fetchedAt) < Self.staleAfter { return }
         refresh()
     }
 
     /// Force a fetch (the card's own refresh affordance, and the city change).
+    /// With 当前位置 on and a fix in hand, the query is `lat,lon`. Without a
+    /// fix yet, this asks for one and returns; the fix calls back into here.
     func refresh() {
-        guard inflight == nil else { return }
-        let city = self.city
+        guard inflight == nil else { rerun = true; return }
+        if PermissionGate.allows(.currentLocation) {
+            switch CurrentLocation.shared.status {
+            case .authorizedAlways, .authorizedWhenInUse:
+                if let query = CurrentLocation.shared.query {
+                    fetch(query: query, fallbackNote: nil)
+                } else {
+                    loading = true
+                    CurrentLocation.shared.requestFix()
+                }
+                return
+            case .notDetermined:
+                loading = true
+                CurrentLocation.shared.requestFix()
+                return
+            default:
+                fetch(query: city, fallbackNote: "定位未允许，显示天气城市")
+                return
+            }
+        }
+        fetch(query: city, fallbackNote: nil)
+    }
+
+    /// Location failed or was refused. The city name is the fallback, and the
+    /// note is why the card is not showing where you are.
+    func refreshFromCity(note: String) {
+        guard inflight == nil else { rerun = true; return }
+        fetch(query: city, fallbackNote: note)
+    }
+
+    private func fetch(query: String, fallbackNote: String?) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            loading = false
+            note = reading == nil ? "未设置天气城市" : note
+            return
+        }
         loading = true
         inflight = Task { [weak self] in
-            let result = await WeatherFetcher.fetch(city: city)
+            let result = await WeatherFetcher.fetch(city: trimmed)
             guard let self else { return }
             self.loading = false
             self.inflight = nil
             if let result {
                 self.reading = result
                 self.fetchedAt = Date()
-                self.note = nil
+                self.note = fallbackNote
             } else {
-                // Keep the last good reading; only the *note* changes.
                 self.note = self.reading == nil ? "天气暂不可用" : "天气更新失败，显示上次读数"
+            }
+            if self.rerun {
+                self.rerun = false
+                self.refresh()
             }
         }
     }

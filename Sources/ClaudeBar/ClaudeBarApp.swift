@@ -35,6 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             VpnSystemProxyController.clearSystemProxy()
         }
 
+        // The menu bar's ↓/↑ strip is always on screen, and without a tunnel
+        // the reading it carries is the machine's own throughput, so the
+        // sampler starts with the app rather than with the VPN.
+        SystemThroughput.shared.start()
+
         let controller = MenuBarController(providerStore: store, codexProviderStore: codexStore)
         controller.setup()
         menuBarController = controller
@@ -158,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the ordinary Quit menu item.
     func applicationWillTerminate(_ notification: Notification) {
         BatteryChargeController.shared.shutdown()
+        SystemThroughput.shared.stop()
         // Detach the rate accessory first: it hangs off the status-bar button
         // and its `objectWillChange` sink can fire during the rest of teardown.
         menuBarController?.teardownVpnRateDisplay()

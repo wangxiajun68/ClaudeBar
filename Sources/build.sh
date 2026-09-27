@@ -263,9 +263,9 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>用于在资源条中显示蓝牙开关状态。</string>
     <key>NSLocationUsageDescription</key>
-    <string>用于显示当前 Wi-Fi 网络名称，不采集地理位置。</string>
+    <string>用于在你打开「当前位置」后为概览显示当地天气，以及在打开「Wi-Fi 名称」后显示当前网络名称。</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>用于在连接卡片中显示当前 Wi-Fi 网络名称与信号强度。macOS 将 Wi-Fi 名称视为可用于定位的信息，因此读取它需要此授权；ClaudeBar 只读取名称与信号，不会定位。</string>
+    <string>用于在你打开「当前位置」后为概览显示当地天气，以及在打开「Wi-Fi 名称」后显示当前网络名称。未打开对应开关时不会读取位置。</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>NSAppTransportSecurity</key>

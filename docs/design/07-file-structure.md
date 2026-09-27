@@ -37,6 +37,9 @@ ClaudeBar/
 │   │   │   ├── FanMonitor.swift         ← SMC 风扇 / 温度
 │   │   │   ├── SessionMonitor.swift / CursorSessionMonitor.swift / ExternalSessionMonitor.swift
 │   │   │   ├── PermissionCenter.swift   ← 权限清单与系统授权状态（见 §10）
+│   │   │   ├── CurrentLocation.swift    ← 问候卡天气的单次定位 fix（「当前位置」开关）
+│   │   │   ├── WeatherFetcher.swift     ← wttr.in 取天气；有定位用坐标，否则用天气城市
+│   │   │   ├── SystemThroughput.swift   ← 各网卡字节计数；隧道关闭时菜单栏 ↓/↑ 的来源
 │   │   │   ├── TerminalLauncher.swift / SessionHost.swift / OttyBridge.swift ← 回到会话
 │   │   │   ├── NotchGeometry.swift      ← 刘海尺寸（见 §10）
 │   │   │   ├── BatteryHelperInstaller.swift ← 电池辅助进程的安装与校验

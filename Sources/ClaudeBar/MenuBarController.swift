@@ -85,16 +85,24 @@ final class MenuBarController: NSObject {
         let accessory = VpnMenuBarRateView()
         rateAccessory = accessory
         button.addSubview(accessory)
+        // Three publishers, because the strip now reads three things: the
+        // tunnel's own rates, the tunnel's state (which decides *whose* rates
+        // those are and what colour they take), and the machine's throughput.
+        // `SystemThroughput` only publishes when a sample differs, so an idle
+        // Mac costs nothing here.
         rateCancel = VpnLiveRates.shared.objectWillChange
             .receive(on: DispatchQueue.main)
             .merge(with: VpnManager.shared.objectWillChange.receive(on: DispatchQueue.main))
+            .merge(with: SystemThroughput.shared.objectWillChange.receive(on: DispatchQueue.main))
             .sink { [weak self] in
                 MainActor.assumeIsolated { self?.tickVpnRate() }
             }
         // The general host sampler sleeps when no window is open. Read only
         // battery sensors here, off the main thread, while this strip is
         // visible; the fixed eight-second cadence keeps watts useful without
-        // waking the whole CPU/GPU sampling pipeline.
+        // waking the whole CPU/GPU sampling pipeline. The strip is the only
+        // surface that is always on screen, so this is also the battery reading
+        // the menu bar shows when no tunnel is running.
         batteryTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshMenuBarBattery() }
         }
@@ -122,57 +130,84 @@ final class MenuBarController: NSObject {
         lastRateKey = nil
     }
 
+    /// Repaint the status item: icon, dual-line ↓/↑, and the battery cell on a
+    /// laptop.
+    ///
+    /// Nothing here is gated on the tunnel. The strip is on screen all day and
+    /// every reading it carries is true with the VPN down — the battery is the
+    /// machine's charge, and the rates are the machine's throughput (see
+    /// `SystemThroughput`). Gating them on `VpnManager.isRunning` meant a
+    /// machine with no VPN showed a bare 18pt mark: the readings that do not
+    /// need a VPN were exactly the ones that refused to appear without one.
+    ///
+    /// What *does* change with the tunnel is which rates are shown and how they
+    /// are coloured:
+    ///
+    /// - **Tunnel up** — mihomo's own counters, the bytes this proxy is
+    ///   carrying, painted green. Green says "through the tunnel"; it is the
+    ///   only colour on this strip and it is not decoration.
+    /// - **Tunnel down** — the kernel's interface counters, i.e. everything
+    ///   this Mac is sending and receiving whatever carries it, painted the
+    ///   resting white. A green rate with no tunnel would claim traffic was
+    ///   being proxied when nothing is.
     @MainActor
     private func tickVpnRate() {
         guard let button = statusItem.button, let accessory = rateAccessory else { return }
         let running = VpnManager.shared.isRunning
-        if running {
-            let down = VpnMenuBarRateView.rateText(VpnLiveRates.shared.speedDown)
-            let up = VpnMenuBarRateView.rateText(VpnLiveRates.shared.speedUp)
-            let host = ProcessSampler.shared.host
-            let fallback = VpnMenuBarRateView.BatteryReading(
-                installed: host.batteryInstalled,
-                percent: host.batteryPercent,
-                charging: host.batteryCharging,
-                externalPower: host.batteryExternalPower,
-                watts: host.powerBatteryWatts,
-                estimated: host.powerIsEstimated)
-            let battery = menuBarBattery ?? fallback
-            if menuBarBattery == nil { refreshMenuBarBattery() }
-            // The key uses the displayed watt precision: sensor noise below
-            // one watt must not resize or repaint the menu-bar accessory.
-            let key = "\(down)|\(up)|\(battery.displayKey)"
-            guard key != lastRateKey else { return }
-            lastRateKey = key
-            button.image = nil
-            accessory.isHidden = false
-            accessory.update(icon: rateIcon, down: down, up: up, battery: battery)
-            let width = VpnMenuBarRateView.stripWidth(battery: battery.installed)
-            let length = width + 6
-            // Rate text never changes this length. Measuring "999.9K" against
-            // "1.0M" used to resize the status item and shove the whole strip.
-            if accessory.frame.width != width {
-                accessory.frame = NSRect(x: 0, y: 1, width: width, height: 20)
-            }
-            if statusItem.length != length { statusItem.length = length }
-            button.toolTip = battery.installed
-                ? "下载 \(down) · 上传 \(up)\n\(battery.tooltip)"
-                : "下载 \(down) · 上传 \(up)"
-        } else {
-            menuBarBattery = nil
-            guard lastRateKey != nil else { return }
-            lastRateKey = nil
-            accessory.isHidden = true
-            accessory.frame = .zero
-            button.image = MenuBarMark.image()
-            button.toolTip = "ClaudeBar"
-            statusItem.length = NSStatusItem.squareLength
+        let battery = currentBattery() ?? .absent
+        let source = running ? VpnLiveRates.shared : nil
+        let down = VpnMenuBarRateView.rateText(source?.speedDown ?? SystemThroughput.shared.down)
+        let up = VpnMenuBarRateView.rateText(source?.speedUp ?? SystemThroughput.shared.up)
+        // The key uses the displayed watt precision: sensor noise below one watt
+        // must not resize or repaint the menu-bar accessory.
+        let key = "\(down)|\(up)|\(running)|\(battery.displayKey)"
+        guard key != lastRateKey else { return }
+        lastRateKey = key
+        accessory.update(icon: rateIcon, down: down, up: up,
+                         tunneled: running, battery: battery)
+        let width = VpnMenuBarRateView.stripWidth(battery: battery.installed)
+        // Rate text never changes this length. Measuring "999.9K" against
+        // "1.0M" used to resize the status item and shove the whole strip.
+        if accessory.frame.width != width {
+            accessory.frame = NSRect(x: 0, y: 1, width: width, height: 20)
         }
+        let length = width + 6
+        if statusItem.length != length { statusItem.length = length }
+        button.image = nil
+        accessory.isHidden = false
+        // The tooltip names the source the colour is standing in for: the two
+        // numbers mean different things on either side of the tunnel.
+        let sourceLabel = running ? "隧道速率" : "系统速率"
+        let direction = "\(sourceLabel) 下载 \(down) · 上传 \(up)"
+        button.toolTip = battery.installed ? "\(direction)\n\(battery.tooltip)" : direction
     }
 
+    /// The freshest reading available: the menu bar's own eight-second sample
+    /// when it has one, the general sampler's host snapshot as the seed for the
+    /// first frame and the fallback if that sample has not landed yet.
+    @MainActor
+    private func currentBattery() -> VpnMenuBarRateView.BatteryReading? {
+        if let menuBarBattery { return menuBarBattery }
+        let host = ProcessSampler.shared.host
+        guard host.batteryInstalled else { return nil }
+        refreshMenuBarBattery()
+        return VpnMenuBarRateView.BatteryReading(
+            installed: host.batteryInstalled,
+            percent: host.batteryPercent,
+            charging: host.batteryCharging,
+            externalPower: host.batteryExternalPower,
+            watts: host.powerBatteryWatts,
+            estimated: host.powerIsEstimated)
+    }
+
+    /// A missing pack is deliberately **not** remembered: `batteryStatus()`
+    /// reports "no battery" both for a desktop and for a read that failed, so
+    /// latching that answer would let one failed probe on a MacBook retire its
+    /// charge readout until relaunch. The probe is an IORegistry read on a
+    /// background thread, once per eight-second tick.
     @MainActor
     private func refreshMenuBarBattery() {
-        guard VpnManager.shared.isRunning, !batteryRefreshPending else { return }
+        guard !batteryRefreshPending else { return }
         batteryRefreshPending = true
         Task { [weak self] in
             let sample = await Task.detached(priority: .utility) {
@@ -182,7 +217,7 @@ final class MenuBarController: NSObject {
             }.value
             guard let self else { return }
             self.batteryRefreshPending = false
-            guard VpnManager.shared.isRunning else { return }
+            guard sample.0 else { return }
             self.menuBarBattery = VpnMenuBarRateView.BatteryReading(
                 installed: sample.0, percent: sample.1, charging: sample.2,
                 externalPower: sample.3, watts: sample.4, estimated: sample.5)
@@ -579,6 +614,13 @@ private final class VpnMenuBarRateView: NSView {
 
         var level: Int { min(100, max(0, percent)) }
 
+        /// A machine with no pack behind the `AppleSmartBattery` node. Named
+        /// rather than defaulted because every other reading here is a claim
+        /// about a battery that exists.
+        static let absent = BatteryReading(
+            installed: false, percent: 0, charging: false,
+            externalPower: false, watts: nil, estimated: false)
+
         var mode: Mode {
             guard externalPower else { return .discharging }
             if let watts, watts.isFinite, watts < -0.5 { return .pluggedDischarge }
@@ -653,16 +695,18 @@ private final class VpnMenuBarRateView: NSView {
     }
 
     /// Room for the battery cell. Hidden entirely on a Mac without one, so a
-    /// desktop never pays for the width — `stripWidth(battery:)` is what the
-    /// controller asks for.
+    /// desktop never pays for the width — `stripWidth(rates:battery:)` is what
+    /// the controller asks for.
     ///
     /// The cell is one *object* — gauge plus reading — so its width is derived
     /// from the gauge instead of restating a glyph slot that has to be kept in
     /// step with it by hand: `batteryGlyphWidth` is the capsule's two numbers,
-    /// and this only adds the divider lead-in and the gap before the digits.
-    static var batteryWidth: CGFloat {
-        batteryGap + batteryGlyphWidth + batteryTextGap + batteryTextWidth
-    }
+    /// and `cellWidth` only adds the gap before the digits. The lead-in
+    /// (`batteryGap`) belongs to *where the cell starts*, not to the cell, so it
+    /// is added by `stripWidth` — the cell is preceded by the digits when the
+    /// rates are up and by the icon when they are not, and both need one gap.
+    static var cellWidth: CGFloat { batteryGlyphWidth + batteryTextGap + batteryTextWidth }
+    static var batteryWidth: CGFloat { batteryGap + cellWidth }
     static var ratesWidth: CGFloat {
         iconSide + iconToArrow + arrowColumn + arrowToText + rateWidth
     }
@@ -717,7 +761,7 @@ private final class VpnMenuBarRateView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func update(icon: NSImage?, down: String, up: String,
-                battery: BatteryReading) {
+                tunneled: Bool, battery: BatteryReading) {
         iconView.image = icon
         downLabel.stringValue = down
         upLabel.stringValue = up
@@ -736,16 +780,27 @@ private final class VpnMenuBarRateView: NSView {
         batteryDetail.isHidden = true
         // All labels use white over the fixed dark capsule, independent of the
         // menu bar's appearance and whatever wallpaper sits underneath it.
-        let downColor = Self.rateColor(down)
-        let upColor = Self.rateColor(up)
+        let downColor = Self.rateColor(down, tunneled: tunneled)
+        let upColor = Self.rateColor(up, tunneled: tunneled)
         downLabel.textColor = downColor
         upLabel.textColor = upColor
         downArrow.contentTintColor = downColor
         upArrow.contentTintColor = upColor
     }
 
-    /// Bright activity → full-strength label; idle → dimmed.
-    private static func rateColor(_ text: String) -> NSColor {
+    /// The one colour on this strip: the rates are green while they are coming
+    /// through the tunnel, and the resting white otherwise. Green is not
+    /// decoration — it is the claim that these bytes are being proxied, and it
+    /// goes out the moment the tunnel does (the numbers under it then describe
+    /// the machine, not the proxy).
+    ///
+    /// Activity still sets the strength on top of the hue: bright activity →
+    /// full-strength label, idle → dimmed. Both readings are dimmable, so an
+    /// idle tunnel is a dim green rather than losing its colour entirely.
+    private static let tunnelGreen = NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)
+
+    private static func rateColor(_ text: String, tunneled: Bool) -> NSColor {
+        let base = tunneled ? tunnelGreen : NSColor.white
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         let value = Double(trimmed.dropLast(1)) ?? 0 // strip unit letter
         let unit = trimmed.last.map(String.init) ?? ""
@@ -755,9 +810,9 @@ private final class VpnMenuBarRateView: NSView {
         case "M": kb = value * 1024
         default: kb = value
         }
-        if kb < 1 { return NSColor.white.withAlphaComponent(0.55) }
-        if kb < 1024 { return NSColor.white.withAlphaComponent(0.8) }
-        return .white
+        if kb < 1 { return base.withAlphaComponent(0.55) }
+        if kb < 1024 { return base.withAlphaComponent(0.8) }
+        return base
     }
 
     // MARK: Test accessors
@@ -786,6 +841,8 @@ private final class VpnMenuBarRateView: NSView {
     var batteryIconIsHidden: Bool { batteryIcon.isHidden }
     var batteryLabelIsHidden: Bool { batteryLabel.isHidden }
     var batteryDetailIsHidden: Bool { batteryDetail.isHidden }
+    var downLabelTextColor: NSColor { downLabel.textColor ?? .white }
+    var upLabelTextColor: NSColor { upLabel.textColor ?? .white }
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
     override var fittingSize: NSSize { intrinsicContentSize }

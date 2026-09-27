@@ -186,6 +186,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | 在终端继续会话 | 自动化 | 不发 Apple Event，改为复制命令 + 在目录打开终端 |
 | 蓝牙与耳机电量 | 蓝牙 | 不读蓝牙控制器、不跑 `system_profiler SPBluetoothDataType` |
 | Wi-Fi 名称 | 定位服务 | 不读 SSID，网络卡片显示"在设置中开启" |
+| 当前位置 | 定位服务 | 问候卡按「天气城市」取名，不读坐标 |
 | 读取 Cursor 会话 | 无系统弹窗（默认开） | 不读 Cursor 数据库 |
 
 实现：`AppPermission` 清单 + `PermissionGate.allows(_:)`（直接读 `UserDefaults`，任意线程可调）+

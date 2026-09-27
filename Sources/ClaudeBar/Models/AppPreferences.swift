@@ -207,9 +207,8 @@ final class AppPreferences: ObservableObject {
 
     // MARK: 概览问候卡
 
-    /// 天气卡查询的城市名。wttr.in 按名字取天气，**不**请求定位权限——
-    /// 这也是选择它的原因之一（见 `WeatherFetcher`）。留空即不查天气，
-    /// 卡上只剩时钟。
+    /// 天气卡在「当前位置」关闭时查询的城市名。留空且未开定位，则不查天气，
+    /// 卡上只剩时钟。开了定位之后，这个名字只是定位失败时的退路。
     @Published var weatherCity: String {
         didSet { UserDefaults.standard.set(weatherCity, forKey: "weatherCity") }
     }

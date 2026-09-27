@@ -33,6 +33,11 @@ DerivedData/
 # Accidental screenshots dropped at repo root
 /screenshot-*.png
 /ClaudeBar-*.png
+/*.png
+/288
+
+# Local design prototypes (not shipped; node_modules is not tracked)
+/Prototypes/
 
 # Stray env-expansion leftover (literal directory named {{HOMEBREW_PREFIX}})
 /[{{][{]HOMEBREW_PREFIX[}][}]/

@@ -6,12 +6,15 @@
 | 文件 | 职责 |
 |------|------|
 | `ClaudeBarApp.swift` | AppDelegate：激活策略、启动时序、`claudebar://`、空闲通知 Resume |
-| `MenuBarController.swift` | NSStatusItem + NSPanel；`MenuBarMark` 矢量模板标；VPN 速率 + 电池条 `VpnMenuBarRateView`（宽度由布局常量推导，`Tests/menubar-strip-regressions.py` 锁定宽度与无头 1.618∶1 胶囊） |
+| `MenuBarController.swift` | NSStatusItem + NSPanel；`MenuBarMark` 矢量模板标；常驻速率 + 电池条 `VpnMenuBarRateView`（宽度由布局常量推导，`Tests/menubar-strip-regressions.py` 锁定宽度、隧道内外两色与无头 1.618∶1 胶囊） |
+| `Utils/SystemThroughput.swift` | 机器总吞吐：`getifaddrs(AF_LINK)` 读各网卡 `if_data` 字节数，按接口做 `UInt32` 回绕差分后求和；隧道关闭时菜单栏 ↓/↑ 的来源 |
 | `NotchIslandController.swift` | 刘海灵动岛：`NotchIslandState`（收起 / 提醒 / 展开）、固定尺寸面板、热区与离开判定、完成提醒计时 |
 | `Models/IslandLiveModel.swift` | 灵动岛数据：三家会话扁平化、忙→闲完成事件、当前路由、VPN、今日 / 本月 / 30 天用量 |
 | `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时的伪刘海 |
 | `Views/Island/*.swift` | 灵动岛形状、根视图与 `IslandStyle`、会话行、用量卡（`Canvas` 直方图）、完成提醒 |
 | `Utils/PermissionCenter.swift` | 权限清单 `AppPermission`、线程安全开关 `PermissionGate`、系统授权状态 `PermissionCenter` |
+| `Utils/CurrentLocation.swift` | 问候卡天气的单次定位 fix（`CLLocationManager`，千米精度）：仅在「当前位置」开关打开后请求，关闭即丢弃坐标 |
+| `Utils/WeatherFetcher.swift` | wttr.in 取天气（无 key）；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
 | `Utils/OttyBridge.swift` | `otty-cli` socket IPC（`pane list`，勿用 `panes` 简写）：按 `agent_session_id` 聚焦已有窗格；活会话 `reveal` 只聚焦不新建；已结束会话才新开标签 resume |
