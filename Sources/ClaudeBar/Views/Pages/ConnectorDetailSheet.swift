@@ -34,8 +34,7 @@ struct ConnectorDetailSheet: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: Theme.Space.s12)
-                Button("完成") { dismiss() }
-                    .adaptiveGlassButton()
+                ActionButton("完成") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             .padding(Theme.Space.s24)
@@ -59,30 +58,26 @@ struct ConnectorDetailSheet: View {
             }
             HairlineDivider()
             HStack(spacing: Theme.Space.s8) {
-                Button("复制路径") {
+                ActionButton("复制路径") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(contentFile.path, forType: .string)
                 }
-                .adaptiveGlassButton()
-                Button("在 Finder 中显示") {
+                ActionButton("在 Finder 中显示") {
                     NSWorkspace.shared.activateFileViewerSelecting([finderURL])
                 }
-                .adaptiveGlassButton()
                 if record.kind == .plugin && record.platforms == [.cursor] {
-                    Button("打开 Cursor") {
+                    ActionButton("打开 Cursor") {
                         if let app = NSWorkspace.shared.urlForApplication(
                             withBundleIdentifier: "com.todesktop.230313mzl4w4u92") {
                             NSWorkspace.shared.open(app)
                         }
                     }
-                    .adaptiveGlassButton()
                 }
                 Spacer()
                 if FileManager.default.fileExists(atPath: contentFile.path) {
-                    Button(record.kind == .plugin ? "打开安装位置" : "打开原文件") {
+                    ActionButton(record.kind == .plugin ? "打开安装位置" : "打开原文件") {
                         NSWorkspace.shared.open(contentFile)
                     }
-                        .adaptiveGlassButton()
                 }
             }
             .padding(.horizontal, Theme.Space.s24)
@@ -113,8 +108,7 @@ struct ConnectorDetailSheet: View {
                 // as `toolsError`, and gating on `mcpConnection != nil` hid the
                 // only button that could retry it.
                 if !toolsLoading && (record.mcpConnection != nil || toolsError != nil) {
-                    Button("重新读取") { Task { await loadTools() } }
-                        .adaptiveGlassButton()
+                    ActionButton("重新读取") { Task { await loadTools() } }
                 }
             }
             Text("从 MCP 服务读取名称和描述，不会调用任何工具。")

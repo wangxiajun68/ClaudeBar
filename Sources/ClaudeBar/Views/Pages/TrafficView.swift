@@ -426,8 +426,7 @@ struct TrafficView: View {
                                  onSelect: { filter = $0 })
                 Spacer(minLength: 8)
                 if !catalog.records.isEmpty {
-                    Button("清空") { confirmClear = true }
-                        .adaptiveGlassButton(tint: Theme.statusError, ink: .white, filled: true)
+                    ActionButton("清空", tone: .destructive) { confirmClear = true }
                 }
             }
             .padding(.horizontal, Theme.Space.s12)
@@ -1116,11 +1115,23 @@ private struct TrafficRow: View {
             case .other: return Theme.cursor
             }
         }()
-        return Text(rec.source.shortLabel)
-            .font(Theme.Font.badgeMono)
-            .foregroundColor(color)
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(Capsule().fill(color.opacity(0.18)))
+        // The client's own mark when it has one; the word alone for an
+        // unrecognised client. The capsule is unchanged either way, so a row
+        // whose source has a glyph and one whose source does not still line up.
+        let mark = rec.source.mark.map {
+            UsageSourceMark(source: $0, size: 11, font: Theme.Font.badgeMono, tint: color)
+        }
+        return Group {
+            if let mark {
+                mark
+            } else {
+                Text(rec.source.shortLabel)
+                    .font(Theme.Font.badgeMono)
+                    .foregroundColor(color)
+            }
+        }
+        .padding(.horizontal, 5).padding(.vertical, 1)
+        .background(Capsule().fill(color.opacity(0.18)))
     }
 
     private var dot: Color {

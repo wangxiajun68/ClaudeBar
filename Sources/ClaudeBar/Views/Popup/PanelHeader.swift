@@ -44,7 +44,7 @@ struct PanelHeader: View {
                     quotaWindows: codexStore.quotaWindows,
                     tint: Theme.codex, ink: Theme.Ink.codex,
                     quotaLoading: codexStore.quotaLoading,
-                    refreshQuota: { codexStore.refreshQuota() }
+                    refreshQuota: { codexStore.refreshQuota(manual: true) }
                 ) { _ in
                     ModelSwitchList(kind: .codex, panel: panel)
                 }

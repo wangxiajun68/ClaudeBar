@@ -32,24 +32,13 @@ jobs:
           CLAUDEBAR_SKIP_INSTALL: "1"
         run: bash Sources/build.sh
 
+      # The list lives in the Makefile and is invoked, not restated. It had
+      # already drifted: six suites in `make test` (product-mark, greeting-name,
+      # weather-astronomy, card-shadow, machine-mark, fan-rotor) were never run
+      # here, so a red suite was green in CI. A second copy of the list is a
+      # second chance to forget a file.
       - name: Regression tests
-        run: |
-          python3 Tests/ui-regressions.py
-          python3 Tests/core-regressions.py
-          python3 Tests/performance-regressions.py
-          python3 Tests/rendering-regressions.py
-          python3 Tests/local-endpoint-regressions.py
-          python3 Tests/provider-icon-regressions.py
-          python3 Tests/session-title-regressions.py
-          python3 Tests/quota-reset-regressions.py
-          python3 Tests/greeting-data-regressions.py
-          python3 Tests/menubar-strip-regressions.py
-          python3 Tests/connection-panel-regressions.py
-          python3 Tests/charge-limit-regressions.py
-          python3 Tests/model-cost-regressions.py
-          python3 Tests/proxy-usage-regressions.py
-          python3 Tests/codex-session-regressions.py
-          python3 Tests/inflight-animation-regressions.py
+        run: make test
 
       - name: Smoke-check bundle
         run: |

@@ -43,15 +43,9 @@ struct DashboardView: View {
                 VerticalHairline().frame(height: 26)
                 figure("会话", totalSessionCount, Theme.claude, Theme.Ink.claude)
             }
-            Button(action: { providerStore.refresh() }) {
-                HStack(spacing: 5) {
-                    InstrumentGlyph(kind: .refresh, tint: .white)
-                        .frame(width: 17, height: 17)
-                    Text("刷新")
-                }
-                .font(Theme.Font.bodySmall)
+            ActionButton("刷新", symbol: "arrow.clockwise", tone: .accent) {
+                providerStore.refresh()
             }
-            .adaptiveGlassButton(prominent: true, tint: Theme.claude)
         }
     }
 
@@ -170,7 +164,11 @@ struct DashboardView: View {
     /// Unified view-model for one overview tile across all three platforms.
     struct OverviewRow: Identifiable {
         let id: String
+        /// `CC` / `Codex` / `Cursor`. Instead of reading this string, a tile can
+        /// lead with the client's own mark — `mark` says which, and is `nil` for
+        /// a name that has no artwork (a future tool kind).
         let platform: String
+        var mark: PillMark? = nil
         /// Row hue — a *shape* color (status dot, gauge).
         let tint: Color
         /// `tint` as readable text, for the running/idle capsule.
@@ -192,6 +190,7 @@ struct DashboardView: View {
                 OverviewRow(
                     id: "c-\(s.pid)",
                     platform: "CC",
+                    mark: .claude,
                     tint: Theme.claude,
                     pillInk: Theme.Ink.claude,
                     busy: s.status == .busy,
@@ -208,6 +207,7 @@ struct DashboardView: View {
                 OverviewRow(
                     id: "u-\(s.composerId)",
                     platform: "Cursor",
+                    mark: .cursor,
                     tint: Theme.cursor,
                     pillInk: Theme.Ink.cursor,
                     busy: s.status == .active,
@@ -226,6 +226,7 @@ struct DashboardView: View {
                 OverviewRow(
                     id: "e-\(s.kind.rawValue)-\(s.sessionId)",
                     platform: s.kind.displayName,
+                    mark: s.kind == .codex ? .codex : nil,
                     tint: Theme.external,
                     pillInk: Theme.Ink.success,
                     busy: s.isActive,
@@ -286,7 +287,12 @@ private struct OverviewTile: View {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 HStack(spacing: 8) {
                     OverviewStatusDot(tint: row.tint, isBusy: row.busy)
-                    StatusPill(label: row.platform, tint: row.tint, ink: row.pillInk)
+                    // Mark + word: the mark is what makes the family readable
+                    // before the two-character label is, and it is the same
+                    // artwork the session tiles, the island and the popup header
+                    // draw. `mark` is nil for a kind with no mark, and the pill
+                    // is then exactly the text pill it was.
+                    StatusPill(label: row.platform, tint: row.tint, ink: row.pillInk, mark: row.mark)
                         .fixedSize()
                     Spacer()
                     StatusPill(

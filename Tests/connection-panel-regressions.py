@@ -77,12 +77,24 @@ def declares(source: str, name: str) -> bool:
     return re.search(rf'^\s*(?:fileprivate |private )?struct {name}\b', source, re.M) is not None
 
 
-for name, call in [('ConnectionStatus', 'ConnectionStatus(host:'),
-                   ('ConnectionSignalScale', 'ConnectionSignalScale(rssi:')]:
-    assert declares(card, name), f"{name} is gone from the tile — it must not move"
-    assert not declares(panel, name), \
-        f"the panel declares its own {name}; the tile and its popover must share one"
-    assert call in body, f"the panel no longer reads {name}"
+# The two *shared* pieces are the vocabulary and the ruler. `ConnectionStatus`
+# is declared once, in the card's file, and read by both. The ruler
+# (`ConnectionSignalScale`) now lives only in the panel: the tile draws its
+# reading as a mark in the mark slot every sibling reserves (`ConnectInterfaceMark`
+# — a filled cell row over the interface's own glyph), so a tile that no longer
+# has a full-width row must not still declare the wide view.
+assert declares(card, 'ConnectionStatus'), \
+    "ConnectionStatus is gone from the tile — it must not move"
+assert not declares(panel, 'ConnectionStatus'), \
+    "the panel declares its own ConnectionStatus; the tile and its popover must share one"
+assert 'ConnectionStatus(host:' in body, "the panel no longer reads ConnectionStatus"
+assert not declares(card, 'ConnectionSignalScale'), \
+    "the tile should no longer declare the wide signal ruler; it moved to the panel"
+assert 'ConnectionSignalScale(rssi:' in body, "the panel no longer draws the signal ruler"
+# The tile's own mark must read the same ruler: one definition of "how full" for
+# both surfaces, or a tile and its popover disagree about one dBm.
+assert 'Double(rssi + 100) / 60' in card, \
+    "the tile's mark stopped using the −100…−40 dBm ruler the panel's scale draws"
 
 # --- 5. Neither surface claims reachability ---
 # The rule the whole inspector exists to keep: the local proxy is a process this
@@ -101,6 +113,14 @@ for claim in ['已连接互联网', '联网正常', '可以上网', '网络正�
 # one tile whose obvious target did nothing.
 assert 'InstrumentBadge(kind: .link, tint: Theme.chartBlue)\n                .frame(width: 26, height: 26)' in card, \
     "the connection tile's header badge lost its explicit 26pt frame"
+# The title is text, not a button: the whole card is the target, so a `Button`
+# here (the old form) would nest a second hit region inside the card's own.
+assert 'Text("连接")' in card, \
+    "the connection tile's title must be a plain label, not its own button"
+# And the card's mark is drawn in the shared mark slot, like the five meters it
+# sits among — the layout that made it a sibling rather than a stranger.
+assert 'ResourceStrip.markSlot' in card, \
+    "the connection tile stopped drawing its mark in the shared mark slot"
 assert '.onTapGesture { showConnections = true }' in card and \
     '.popover(isPresented: $showConnections) { ConnectionDetailPanel() }' in card, \
     "the connection tile no longer opens the inspector from the whole card"

@@ -70,14 +70,23 @@ struct ResourceStrip: View {
                      accessory: audioMonitor.accessories.first,
                      accessoryCount: audioMonitor.accessories.count,
                      unavailableReason: audioMonitor.unavailableReason,
-                     dense: false)
+                     dense: false,
+                     // Which interface the card's own mark draws: a wired link
+                     // wins when both are up, because that is what the machine
+                     // is routed through.
+                     interface: linkInterface)
             meter("风扇",
                   icon: "fanblades",
                   hero: fanHero,
-                  heroTint: Theme.textPrimary,
+                  // The figure is *text* here, so it takes the `Theme.Ink` variant
+                  // of the tile's hue rather than plain ink — the same rule the
+                  // other five tiles follow. It used to be `textPrimary`, i.e.
+                  // black, which left the one card whose whole subject is the
+                  // rotors as the only card with a colourless figure.
+                  heroTint: fanInk,
                   load: 0,
                   kind: .fans,
-                  tint: Theme.claude,
+                  tint: fanTint,
                   caption: fanCaption,
                   pill: fanPill,
                   help: help)
@@ -115,6 +124,43 @@ struct ResourceStrip: View {
     private var fansAtMax: Bool {
         guard !fanMonitor.fans.isEmpty else { return false }
         return fanMonitor.fans.allSatisfy { !$0.mode.isAutomatic }
+    }
+
+    /// The fan card's hue.
+    ///
+    /// It used to be `Theme.claude` flat — the app's accent blue, the same blue
+    /// as the 连接 card next to it and the GPU tile at the top of the grid. That
+    /// made the fan the one tile whose colour said nothing: every other hue on
+    /// this strip is a signal (green = load, amber = memory, violet = disk), and
+    /// the fan's is now the card's *mode*, which is the one state this tile can
+    /// be asked to change — blue at rest, `Theme.chartAmber` the moment a fan is
+    /// held above what the system asked for.
+    ///
+    /// It is the same amber the rotors already take under an override
+    /// (`CompactFanPair.bladeTint`), so the header glyph, the card wash and the
+    /// blades flip together instead of the badge disagreeing with the rotor
+    /// underneath it.
+    private var fanTint: Color {
+        fanMonitor.fans.contains { !$0.mode.isAutomatic } ? Theme.chartAmber : Theme.Ink.claude
+    }
+
+    /// The hero figure is *text*, so it takes the `Theme.Ink` variant of the
+    /// same hue the mark takes as *shape* — the rule every other tile on the
+    /// strip follows. Two variants of one state, never two colours.
+    private var fanInk: Color {
+        fanMonitor.fans.contains { !$0.mode.isAutomatic } ? Theme.Ink.warning : Theme.Ink.claude
+    }
+
+    /// The interface the 连接 tile draws, from the same facts the card's own
+    /// `ConnectionStatus` reads. Stated here rather than inside the card so the
+    /// strip keeps ownership of "what this row of tiles is showing", which is how
+    /// every other tile in this file is driven.
+    private var linkInterface: ConnectInterface {
+        if sampler.host.wiredOn { return .ethernet }
+        guard sampler.host.wifiOn else { return .offline }
+        let name = sampler.host.wifiName
+        let rssi = sampler.host.wifiRSSI
+        return (name.isEmpty && rssi >= 0) ? .wifiDown : .wifi
     }
 
     private var memPercent: Double {
@@ -282,7 +328,13 @@ struct ResourceStrip: View {
                         HardwareSiliconMark(load: load, tint: tint, cells: sampler.host.coreLoad,
                                             markHeight: Self.hardwareMarkHeight)
                     case .fans:
-                        CompactFanPair(fans: fanMonitor.fans, onToggle: toggleFan)
+                        // The rotors take the tile's hue as well, so the card's
+                        // badge, wash and blades are one colour — see
+                        // `CompactFanPair.restingTint`. Nothing else about the
+                        // pair changes: same size, same spacing, same captions.
+                        CompactFanPair(fans: fanMonitor.fans,
+                                       restingTint: tint,
+                                       onToggle: toggleFan)
                     case .disk:
                         CapacityHardwareMark(disk: true, load: load,
                                              bytes: sampler.host.diskTotal, tint: tint,

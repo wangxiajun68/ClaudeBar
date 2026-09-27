@@ -98,7 +98,9 @@ struct ProviderActionStyle: ButtonStyle {
     var tint: Color = Theme.claude
 
     func makeBody(configuration: Configuration) -> some View {
-        InstrumentButtonStyle(prominent: prominent, tint: tint, filled: prominent)
+        ActionPlateButtonStyle(tone: prominent ? .accent : .neutral, tint: tint,
+                               ink: nil, metrics: .regular,
+                               emphasis: prominent ? .primary : .standard)
             .makeBody(configuration: configuration)
     }
 }

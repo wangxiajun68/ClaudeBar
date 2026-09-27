@@ -71,6 +71,19 @@ enum CaptureSource: String {
         }
     }
 
+    /// `nil` = no bundled artwork. Same convention as `UsageSource`, so the
+    /// traffic page's source chip and the usage page's triad name CC / Codex the
+    /// way the rest of the app does instead of with two more strings. `other`
+    /// stays a label: an unrecognised client has no mark to draw, which is the
+    /// whole meaning of the case.
+    var mark: UsageSource? {
+        switch self {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .other: return nil
+        }
+    }
+
     /// Classify by User-Agent only. Unrecognized clients are third-party — never
     /// inferred from the proxy route (OpenAI vs Anthropic path).
     static func infer(headers: [String: String], route: CaptureSource = .other) -> CaptureSource {

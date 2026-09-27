@@ -393,3 +393,76 @@ struct CapacityHardwareMark: View {
         .accessibilityLabel("\(disk ? "硬盘" : "内存")容量 \(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)")
     }
 }
+
+/// A calibrated RSSI ruler. Its ticks are signal levels, not time buckets.
+///
+/// It moved here from `ConnectionCard.swift` when the tile stopped drawing the
+/// wide ruler: the tile's reading is a *mark* in the mark slot every sibling
+/// reserves (`ConnectInterfaceMark`), and the only reader of the full-width row
+/// is this panel's 网络 section. The two surfaces must still measure one reading
+/// one way — the tile's mark uses the same −100…−40 dBm fraction — but only one
+/// of them draws the ruler, so only one of them declares it.
+/// 
+/// Only new measurements animate; no polling or decorative frame loop.
+struct ConnectionSignalScale: View {
+    let rssi: Int?
+    var compact: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var position: Double? { rssi.map { min(1, max(0, Double($0 + 100) / 60)) } }
+
+    /// Thirty cells, matching the reference: each step is one grade of RSSI
+    /// across the −100…−40 dBm ruler, so 27 filled reads as "one notch under
+    /// full" rather than as a percentage.
+    static let cellCount = 30
+
+    /// An empty cell. A solid muted fill rather than the hairline — see the
+    /// note in `body`: at hairline weight the tail of a nearly-full row
+    /// disappeared.
+    static var emptyCell: Color { Theme.cardFill(0.18) }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // Thirty **equal** rounded squares — not a ramp. The cells used to
+            // grow by 0.7pt per index, which drew a staircase and made the
+            // signal read as a bar chart whose right-hand cells were "taller"
+            // than its left. The reference is a row of squares: the count of
+            // filled cells *is* the reading, so the squares must not also encode
+            // one. Empty cells take a solid muted fill (`Theme.cardFill`), not
+            // the hairline: at a hairline weight the remaining three cells of a
+            // 27/30 reading vanished and the row looked like it simply stopped.
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    HStack(spacing: 0) {
+                        ForEach(0..<Self.cellCount, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: compact ? 3 : 2.5, style: .continuous)
+                                .fill(geometry.size.width > 0
+                                      && position.map { Double(index) / Double(Self.cellCount - 1) <= $0 } == true
+                                      ? Theme.chartBlue : Self.emptyCell)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: compact ? 9 : 20)
+                                .padding(.horizontal, compact ? 1.5 : 3)
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    if !compact, let position {
+                        Circle().fill(Theme.chartBlue).frame(width: 6, height: 6)
+                            .offset(x: max(0, min(geometry.size.width - 6, (geometry.size.width - 6) * position)), y: -24)
+                    }
+                }
+            }
+            .frame(height: compact ? 9 : 40)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: rssi)
+            if !compact {
+                HStack {
+                    Text("−100 · 弱")
+                    Spacer()
+                    Text("−70")
+                    Spacer()
+                    Text("−40 · 强")
+                }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rssi.map { "Wi-Fi 信号 \($0) dBm，刻度负 100 至负 40 dBm" } ?? "Wi-Fi 信号暂无读数")
+    }
+}

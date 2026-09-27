@@ -111,43 +111,55 @@ if 'LayerShadow(' in panel:
 
 # --- The most-repeated component must be layer-backed too ---------------------
 #
-# `InstrumentButton` is the app's most-repeated component: the provider
-# directory alone carries 8 per card. Its plate shadow was a
-# `.compositingGroup()` + two `.shadow(...)` pair, and it is worth more than the
-# card shadow on a button-dense page — measured on the provider directory under
-# a deep scroll, alternating arms: `.shadow` 1260 frames / 66.6 fps (p50
-# 16.5 ms, >20 ms 73) vs layer 2019 / 108.6 fps (p50 8.4 ms, >20 ms 0).
+# The push button is the app's most-repeated component: the provider directory
+# alone carries 8 per card. Its plate shadow was a `.compositingGroup()` + two
+# `.shadow(...)` pair, and it is worth more than the card shadow on a
+# button-dense page — measured on the provider directory under a deep scroll,
+# alternating arms: `.shadow` 1260 frames / 66.6 fps (p50 16.5 ms, >20 ms 73) vs
+# layer 2019 / 108.6 fps (p50 8.4 ms, >20 ms 0).
 #
 # This is the *page-dependent* half of the rule above: the identical swap
 # measured 738 → 736 on the idle dashboard, because the dashboard barely uses
 # this button. An assertion here is what keeps "it didn't matter there" from
 # being read as "it doesn't matter anywhere".
+#
+# The two types this now covers are `ActionButton` (a call site with a title) and
+# `ActionPlateButtonStyle` (a call site that builds its own label). They are the
+# two halves of one control — both draw `ControlPlate` — so both must keep the
+# shadow on a layer.
 controls = (root / 'Sources/ClaudeBar/Views/Shared/InstrumentControls.swift').read_text()
-button = without_comments(body_of(controls, 'private struct InstrumentButtonBody: View'))
-# Scoped to the *plate* pair, not to every `.shadow` in the body: the label
-# keeps a `radius: 0` 1pt drop, which is a text-edge trick rather than a blurred
-# shadow and was present in both arms of the measurement. `.compositingGroup()`
-# sitting under a `.shadow(...)` is the exact shape that was removed — the
-# group made the whole button one compositing unit so the two shadows could
-# stack without fringing the gloss.
-if re.search(r'\.compositingGroup\(\)\s*\n\s*\.shadow\(', button):
-    failures.append(
-        'InstrumentControls.swift: InstrumentButtonBody is back to '
-        '`.compositingGroup()` + `.shadow(...)` for its plate. On the provider '
-        'directory (deep scroll, 19 s) that costs 759 frames — 66.6 fps vs '
-        '108.6 fps — because the button is the most-repeated component in the '
-        'app. Keep it on `LayerShadow`; the tinted second shadow goes in as '
-        '`underColor`/`underOpacity`.')
-if 'LayerShadow(' not in button:
-    failures.append(
-        'InstrumentControls.swift: InstrumentButtonBody no longer applies '
-        '`LayerShadow`. The plate keeps its two shadows (black over the tinted '
-        'one) — deleting them is not the fix.')
-if 'underColor' not in button:
-    failures.append(
-        'InstrumentControls.swift: InstrumentButtonBody lost the tinted second '
-        'shadow. `filled` buttons pair a black shadow with `tint.opacity(0.18)`; '
-        'that pair is what reads as a plate lit from above.')
+for signature in ['struct ActionButton<Label: View>: View {',
+                  'struct ActionPlateButtonStyle: ButtonStyle {']:
+    body = without_comments(body_of(controls, signature))
+    # Scoped to the *plate* pair, not to every `.shadow` in the body: a label may
+    # keep a `radius: 0` 1pt drop, which is a text-edge trick rather than a
+    # blurred shadow. `.compositingGroup()` sitting under a `.shadow(...)` is the
+    # exact shape that was removed — the group made the whole button one
+    # compositing unit so the two shadows could stack without fringing the gloss.
+    if re.search(r'\.compositingGroup\(\)\s*\n\s*\.shadow\(', body):
+        failures.append(
+            f'InstrumentControls.swift: {signature} is back to '
+            '`.compositingGroup()` + `.shadow(...)` for its plate. On the provider '
+            'directory (deep scroll, 19 s) that costs 759 frames — 66.6 fps vs '
+            '108.6 fps — because the button is the most-repeated component in the '
+            'app. Keep it on `LayerShadow`.')
+    if 'LayerShadow(' not in body:
+        failures.append(
+            f'InstrumentControls.swift: {signature} no longer applies '
+            '`LayerShadow`. The filled plate keeps its drop shadow — deleting it '
+            'is not the fix.')
+    # The plate used to pair a black shadow with a tinted one underneath
+    # (`tint.opacity(0.18)`) — the Uiverse `:before`/`:after` pair. The unified
+    # control is deliberately *flat* and drops the tinted half: a 12 % wash
+    # capsule with a hue-tinted glow under it is the glossy look this redesign
+    # removed. The assertion is therefore that no *gradient* has crept back into
+    # the plate, which is the material that pair belonged to.
+    if 'LinearGradient' in body:
+        failures.append(
+            f'InstrumentControls.swift: {signature} draws a `LinearGradient`. The '
+            'control plate is one flat fill and one 1pt stroke; the old plate had '
+            'a light-top/dark-bottom gradient plus a second one on its top edge, '
+            'which at 30pt is a glossy blob rather than a control.')
 
 if failures:
     for failure in failures:

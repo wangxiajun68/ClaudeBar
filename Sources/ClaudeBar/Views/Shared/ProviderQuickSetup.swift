@@ -15,8 +15,15 @@ struct ProviderQuickSetup: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("接入 " + draft.entry.name).font(.system(size: 24, weight: .semibold, design: .rounded))
                     Text(draft.entry.detail).font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary)
-                    Label(draft.client.title, systemImage: "terminal")
-                        .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
+                    // Same as the connection editor: the client's own mark,
+                    // not a terminal that fits both.
+                    Label {
+                        Text(draft.client.title)
+                    } icon: {
+                        ProductBrandMark(codex: draft.client == .codex, well: false)
+                            .frame(width: 12, height: 12)
+                    }
+                    .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
                 }
                 Spacer()
                 Button { dismiss() } label: { Image(systemName: "xmark") }

@@ -243,6 +243,86 @@ struct AuroraSparkline: View {
     }
 }
 
+// MARK: - Usage source mark
+
+/// A usage *source* as its own mark: Anthropic's "A\" for CC, OpenAI's knot for
+/// Codex, Cursor's cube, and — for 第三方 — ClaudeBar's own rings.
+///
+/// These are the labels the usage surfaces print most often — the popup's totals
+/// bar, the island's usage card, the heatmap legend — and they used to be
+/// printed as words while the marks sat unused one layer away in
+/// `ProductBrandMark`. The island already names its agent families with that
+/// artwork, so a source tally that spells "CC" in type next to a session badge
+/// that draws the "A\" is the same app saying the same thing two ways.
+///
+/// **Every source takes a mark, 第三方 included.** It is not a client, which is
+/// why it drew nothing here at first — but a legend where three entries carry a
+/// glyph and the fourth is bare text reads as a row that failed to finish, not
+/// as a deliberate distinction, and the user reported it as such. ClaudeBar has
+/// a mark of its own (the app icon); see `ProductBrandMark.Brand.claudebar`.
+///
+/// **The page decides both the ink and the tile.** On a light card the artwork
+/// must sit on its own tile — a bare black mark on the ice reads as a hole — and
+/// on a *black* card that same tile is a *near-white square*, which is exactly
+/// what shipped, twice, as "the bottom two icons are still white squares". Only
+/// the caller knows which surface it is building, so `onBlackPage` answers both
+/// questions at once: no tile and light ink on black, the tile and the theme's
+/// ink everywhere else.
+///
+/// `onBlackPage` has no caller today. Its one black-page user was the island's
+/// 本月 legend, and that legend was removed on 2026-09-27 (it did not fit the
+/// line and the split bar beside it already said the same thing — see
+/// `IslandUsageCard.monthLine`). The parameter stays because the *hazard* is
+/// still live: any caller that puts this mark on a non-theme ground re-opens the
+/// white-square bug, and the two-line spelling above is the answer that fixed
+/// it. `Tests/product-mark-regressions.py` still guards the shape.
+struct UsageSourceMark: View {
+    let source: UsageSource
+    var size: CGFloat = 14
+    var font: Font = Theme.Font.micro
+    var tint: Color = Theme.textSecondary
+    /// `false` (the default) = a themed surface — the popup, a page, a card:
+    /// the branded tile plus the theme's ink. `true` = the island's black usage
+    /// card, which is black whatever the app theme is: **no tile** (a
+    /// `bgSecondary` square is a hole there) and the light ink.
+    var onBlackPage: Bool = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Both properties come from the caller's own ground: the ink
+            // (`page:`) and whether the mark may paint its tile (`well:`).
+            // See the note on the type — passing only the ink is the bug that
+            // put a white square on the island's black card.
+            ProductBrandMark(brand: Self.brand(of: source),
+                             well: !onBlackPage,
+                             page: onBlackPage ? true : nil)
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+            Text(source.shortLabel)
+                .font(font)
+                .foregroundStyle(tint)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(source.label)
+    }
+
+    /// Every source has artwork now, so this is total rather than optional.
+    ///
+    /// 第三方 used to return `nil` — it is not a client — and the legend drew it
+    /// as bare text beside three marks, which reads as a row that failed to
+    /// finish. It is not a *client* but it is still a subject the app is naming,
+    /// and the app already has a mark for itself; see
+    /// `ProductBrandMark.Brand.claudebar`.
+    private static func brand(of source: UsageSource) -> ProductBrandMark.Brand {
+        switch source {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .thirdParty: return .claudebar
+        }
+    }
+}
+
 // MARK: - Source stack (Damn good card overlapping circles)
 
 struct SourceStack: View {
@@ -284,6 +364,10 @@ struct SourceStack: View {
         .frame(height: 36)
     }
 
+    /// The overlapping-circles stack's own letters. Kept as letters rather than
+    /// marks: the three discs are 20–34pt and carry a white ring, so a scaled
+    /// brand glyph inside one would be a 7–11pt smudge — and `UsageSourceMark`
+    /// is the surface that names a source at a readable size.
     private func glyph(_ label: String) -> String {
         if label.contains("Claude") { return "C" }
         if label.lowercased().contains("codex") { return "X" }

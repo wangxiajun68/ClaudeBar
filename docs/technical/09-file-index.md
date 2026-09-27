@@ -14,6 +14,8 @@
 | `Views/Island/*.swift` | 灵动岛形状、根视图与 `IslandStyle`、会话行、用量卡（`Canvas` 直方图）、完成提醒 |
 | `Utils/PermissionCenter.swift` | 权限清单 `AppPermission`、线程安全开关 `PermissionGate`、系统授权状态 `PermissionCenter` |
 | `Utils/CurrentLocation.swift` | 问候卡天气的单次定位 fix（`CLLocationManager`，千米精度）：仅在「当前位置」开关打开后请求，关闭即丢弃坐标 |
+| `Utils/MachineIdentity.swift` | 这台机器的名字：`SCDynamicStoreCopyComputerName`（= `scutil --get ComputerName`，用户在系统设置 → 共享里打的名字），**不再读 `kern.hostname`**（那个名字在同一网络里会被改写，按地址发租约的路由器会让问候语叫出 `192.168.10.102`）。纯规则 `person(in:)` 从机器名里取人：「的」/ `'s` / `’s` 之前是名字，无所有格的机型标记（`deMacBook` / `sMacBook` / `iMac` …）之后再剥掉连接用的 `s`；不足两个字符的前缀是残留标记，整串保留。回退是 `Mac` 而不是主机名 |
+| `Utils/GreetingPhrase.swift` | 问候语里那声「招呼」的决定：`forDate(_:)` 先查节日表（固定节日 + 2026/2027 农历：春节 / 元宵 / 端午 / 中秋，加母亲节 / 父亲节 / 夏至），再落到**六个时段**（深夜 / 拂晓 / 上午 / 正午 / 下午 / 傍晚 / 夜里；22:00 那条线划分「傍晚」与「深夜」，23:28 不是傍晚）。**不随机**——每次重绘都变的问候语是老虎机，而卡片每次指针移动都会重绘。`Phrase { script, aside }`，`aside` 只在节日或该被点名的时刻出现 |
 | `Utils/WeatherFetcher.swift` | 天气读数的共享源 `WeatherStore`：优先 Open-Meteo，失败退回 wttr.in；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数 |
 | `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
@@ -48,8 +50,12 @@
 | `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：网络 / 本机代理 / 附近与设备三段，顶部是链路本身的状态而非「连接」这个标题，RSSI 刻度与 `ConnectionStatus` 词汇表和卡片共用；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
 | `Resources/macbook-internals-illustration.png` | 独立生成的详细结构插画（PNG，非 SVG）；来源与提示词见 `ASSET-LICENSES.md`，随应用离线分发 |
 | `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
+| `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
+| `Tools/make-claudebar-mark.py` | 从 `Sources/AppIcon-1024.png` 推出 ClaudeBar 自己的 mark（两个明暗变体），给用量图例里的「第三方」用；`Tests/provider-icon-regressions.py` 因此要能读 RGBA 真彩色 PNG |
+| `Tools/render-control-preview.py` + `Tools/control-preview-sheet.swift` / `control-preview-support.swift` | 控件预览图：900pt 的明暗两版控件表（`ActionButton` / `ChipButton` / `InstrumentToggleStyle` / `SegmentedCapsule`），`ImageRenderer` 出 `.build/control-preview/sheet-{light,dark}.png`。**声明是从生产源码里抽出来的**（`InstrumentControls.swift` / `Interaction.swift` / `UiverseSurfaces.swift`），所以预览图不会和真控件漂移；`AppPreferences` / `surfaceIsVisible` 用替身 |
 | `Views/Shared/UiverseSurfaces.swift` | 表面语言单点：`TileSurface` 的四个部件（底 + 强调水洗 / `InnerFrameRing` / `DepthLens` / 悬停描边 + 抬升，`lift:` 可关）、`SegmentedCapsule`（唯一的筛选胶囊）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep`、`.depthTilt()` 与 `PageHeaderCard`；`LoadRing` 与 `InstrumentRing` 均已删除（弧与环在图标尺寸上读作「转圈等待」且复述下方数字）；见 [DESIGN.md](../../DESIGN.md) 的 Surfaces 与 Machine marks |
-| `Views/Shared/InstrumentControls.swift` | 控件语言单点（表面文件说卡片*是什么*，这个文件说控件被碰到时*做什么*）：`InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle`（唯一的字段凹槽）、`InstrumentToggleStyle`（唯一的开关）、`PerimeterSweep` + `GroundShadow`、`headerControl()`（页头带自己的控件）、`InstrumentButtonStyle`（`adaptiveGlassButton()` 的实现，唯一的下压按钮）、`InstrumentMenuLabel`、`ProviderActionStyle` |
+| `Views/Shared/InstrumentControls.swift` | 控件语言单点（表面文件说卡片*是什么*，这个文件说控件被碰到时*做什么*）：`InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle`（唯一的字段凹槽）、`InstrumentToggleStyle`（唯一的开关）、`PerimeterSweep` + `GroundShadow`、`headerControl()`（页头带自己的控件）、`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`（唯一的下压按钮；`ControlTone` = 这个控件**是什么**：`.sparkle` 深色板（默认）/ `.neutral` / `.accent` / `.destructive`，`ControlEmphasis` = 是不是本页默认动作）、`InstrumentButtonStyle` 与 `ProviderActionStyle` 是同一块板的两个历史名（调用点按位置传参，转发到 `ActionPlateButtonStyle`，因此不会漂移）、`InstrumentMenuLabel`。`adaptiveGlassButton()` 已删除，口径见 [DESIGN.md](../../DESIGN.md) 的 Controls 表 |
+| `Views/Shared/ProductBrandMark.swift` | 三家客户端 + ClaudeBar 自己的真实品牌图形（LobeHub `@lobehub/icons-static-png@1.97.1`，素材随包内置在 `Sources/BrandAssets/`）单点：`Brand { claude, codex, cursor, claudebar }`，唯一 init `(brand:well:page:inkWell:)`。**`page:` 不是 `Theme.isDark`**——`nil` 主题面、`true` 黑底（灵动岛在两种主题下都是黑的）、`false` 亮底；**`-light` 文件是黑墨、`-dark` 是白墨**（LobeHub 按背景命名，不是按字形），搞反就会画出黑底黑字。图形由 `Tools/gen-brand-marks.py` 剪到墨迹并按画布 90% 写回，**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%）；`Tests/product-mark-regressions.py` 渲染真实视图量这条比例 |
 | `Views/Shared/Tile.swift` | `TileGrid` + `.tile()` / `.hoverTile()`（宫格表面，即 `TileSurface` 的修饰符形态） |
 | `Models/CodexProviderStore.swift` | Codex 状态中枢 + 本机代理生命周期 |
 | `Models/AppPreferences.swift` | 空闲通知、代理端口、第三方上游、VPN mixed-port / 系统代理 / TUN 等 |
@@ -82,7 +88,8 @@
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：CC/Codex 只读 + 第三方选择（设置页宫格里的 4 张 tile） |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
-| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网 |
+| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本 |
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
+| `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |
 | `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo |

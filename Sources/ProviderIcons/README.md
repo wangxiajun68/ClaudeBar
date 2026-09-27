@@ -15,7 +15,11 @@ OpenRouter (acid yellow, 1.13:1 light), 硅基流动 (2.52:1 dark), 火山方舟
 
 | Local asset | Source |
 | --- | --- |
+| claudebar-dark.png | derived from Sources/AppIcon-1024.png by Tools/make-claudebar-mark.py (2026-09-27) |
+| claudebar-light.png | derived from Sources/AppIcon-1024.png by Tools/make-claudebar-mark.py (2026-09-27) |
 | anthropic-dark.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/dark/anthropic.png |
+| cursor-dark.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/dark/cursor.png |
+| cursor-light.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/light/cursor.png |
 | anthropic-light.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/light/anthropic.png |
 | deepseek-dark.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/dark/deepseek-color.png |
 | deepseek-light.png | https://unpkg.com/@lobehub/icons-static-png@1.97.1/light/deepseek-color.png |

@@ -97,8 +97,7 @@ struct SettingsView: View {
                     if launchAtLogin.needsApproval {
                         SettingTile(icon: "hand.raised", title: "等待系统允许",
                                     caption: "在「登录项」里允许 ClaudeBar。", compact: true) {
-                            Button("打开") { LaunchAtLogin.openLoginItemsSettings() }
-                                .adaptiveGlassButton()
+                            ActionButton("打开") { LaunchAtLogin.openLoginItemsSettings() }
                         }
                     }
                 }
@@ -154,10 +153,9 @@ struct SettingsView: View {
                                     ? "辅助工具已安装；实际运行状态见电池管理面板。"
                                     : "一次管理员授权，之后自动复用。"),
                                 compact: true) {
-                        Button(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "授权")) {
+                        ActionButton(batteryController.authorizingHelper ? "授权中…" : (batteryController.helperInstalled ? "已授权" : "授权")) {
                             batteryController.authorizeHelper()
                         }
-                        .adaptiveGlassButton()
                         .disabled(batteryController.authorizingHelper || batteryController.pending || batteryController.processIsRunning || batteryController.helperInstalled)
                     }
                     SettingTile(icon: "cylinder", title: "SQLite",
@@ -171,8 +169,7 @@ struct SettingsView: View {
                     SettingTile(icon: "folder", title: "日志目录",
                                 caption: "~/Library/Application Support/ClaudeBar/logs",
                                 compact: true) {
-                        Button("打开") { NSWorkspace.shared.open(FilePaths.logsDir) }
-                            .adaptiveGlassButton()
+                        ActionButton("打开") { NSWorkspace.shared.open(FilePaths.logsDir) }
                     }
                 }
 
@@ -246,11 +243,10 @@ struct SettingsView: View {
                         SettingTile(icon: "link", title: "Base URL",
                                     caption: LocalProxyAddress.openaiRoot,
                                     tint: Theme.codex, compact: true) {
-                            Button("复制") {
+                            ActionButton("复制") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(LocalProxyAddress.openaiRoot, forType: .string)
                             }
-                            .adaptiveGlassButton()
                         }
                         SettingTile(icon: "key.horizontal", title: "鉴权",
                                     caption: "由代理注入密钥。",
@@ -292,10 +288,9 @@ struct SettingsView: View {
                     }
                     SettingTile(icon: "antenna.radiowaves.left.and.right", title: vpnStatusText,
                                 caption: "订阅、节点、系统代理与 TUN。", compact: true) {
-                        Button("打开") {
+                        ActionButton("打开") {
                             NotificationCenter.default.post(.showMainWindow(page: .vpn))
                         }
-                        .adaptiveGlassButton(tint: Theme.claude)
                     }
                 }
 
@@ -326,6 +321,21 @@ struct SettingsView: View {
                         }
                         .disabled(codexStore.activeProvider == nil)
                     }
+                    // Cursor completes the row of client marks: these tiles are
+                    // the three clients the app watches, and `SettingTile.brand`
+                    // (a `Bool` for the two provider clients) cannot name a
+                    // third, so the tile constructs `GlyphWell` with the brand
+                    // itself. Nothing to *test* here — Cursor is read from its
+                    // own state DB, not routed through a provider — so the tile
+                    // states the one fact that decides whether it is watched.
+                    SettingTile(icon: "cursorarrow.rays", title: "Cursor",
+                                caption: "读取本机 Cursor 会话状态（设置 → 权限与隐私）。",
+                                tint: Theme.cursor, compact: true, mark: .cursor) {
+                        Text(PermissionCenter.shared.isEnabled(.cursorData) ? "已开启" : "未开启")
+                            .font(Theme.Font.pill)
+                            .foregroundColor(PermissionCenter.shared.isEnabled(.cursorData)
+                                             ? Theme.Ink.success : Theme.textSecondary)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: Theme.Space.s10) {
@@ -352,12 +362,9 @@ struct SettingsView: View {
                         .font(Theme.Font.caption)
                         .foregroundStyle(Theme.textTertiary())
                     Spacer(minLength: 8)
-                    Button(role: .destructive) {
+                    ActionButton("退出", tone: .destructive) {
                         NSApplication.shared.terminate(nil)
-                    } label: {
-                        Text("退出")
                     }
-                    .adaptiveGlassButton(prominent: true, tint: Theme.statusError, filled: true)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -459,8 +466,7 @@ struct SettingsView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
-            Button("打开") { NSWorkspace.shared.open(url) }
-                .adaptiveGlassButton()
+            ActionButton("打开") { NSWorkspace.shared.open(url) }
                 .disabled(!present)
         }
         .padding(.horizontal, 12)
@@ -577,15 +583,19 @@ struct SettingTile<Control: View>: View {
     var compact: Bool = false
     /// `nil` = the SF Symbol `icon`; otherwise that client's own brand mark, so
     /// the tile titled 连接 Claude Code / Codex carries the product's own glyph
-    /// rather than a generic `terminal` both clients would share.
+    /// rather than a generic `terminal` both clients would share. `false`/`true`
+    /// is CC/Codex; Cursor passes `mark:` because a `Bool` cannot name it.
     var brand: Bool? = nil
+    /// The same thing for a tile named after any of the three clients.
+    var mark: ProductBrandMark.Brand? = nil
     @ViewBuilder var control: () -> Control
     @State private var hovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 8) {
             HStack(alignment: .center, spacing: compact ? 8 : 10) {
-                GlyphWell(name: icon, tint: tint, size: compact ? 26 : 36, engaged: hovered, brand: brand)
+                GlyphWell(name: icon, tint: tint, size: compact ? 26 : 36, engaged: hovered,
+                          brand: brand, mark: mark)
                 Text(title)
                     .font(.system(size: compact ? 13 : 15, weight: .semibold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)

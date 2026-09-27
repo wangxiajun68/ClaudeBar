@@ -80,6 +80,18 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
         return source
     }
     var canToggle: Bool { enabled != nil && !isNative }
+
+    /// The client's own mark for a card's well, when the connector belongs to
+    /// exactly one of the three clients — all of which ship bundled artwork, so
+    /// this is the whole answer and there is no symbol half to it.
+    var brandWellMark: ProductBrandMark.Brand? {
+        guard platforms.count == 1 else { return nil }
+        switch platforms[0] {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .cursor: return .cursor
+        }
+    }
     /// Removal is only offered where the write target is a skill directory,
     /// one Codex table, a Claude plugin CLI, or an MCP config file.
     var canRemove: Bool {
@@ -156,6 +168,23 @@ struct LocalCLIRecord: Identifiable, Sendable {
     let summary: String
     let source: URL
     var id: String { name }
+
+    /// The first two letters of the command, which is what a CLI entry can
+    /// honestly show about its owner: the inventory lists *commands*, most of
+    /// which bundle no mark at all, and twenty identical `terminal` glyphs read
+    /// as an icon that failed to load rather than as an icon. Two letters is the
+    /// cargo/npm convention for exactly this and needs no lookup table.
+    var monogram: String {
+        String(name.prefix(2)).uppercased()
+    }
+
+    /// A stable hue from the command name — `Theme.djb2`, the same hash the
+    /// usage bars use, so a CLI keeps one colour across launches and between the
+    /// app and its widget.
+    var hue: UInt {
+        let palette: [UInt] = [0x5B9CFF, 0xBF5AF2, 0x34C759, 0xFF9F0A, 0xFF6B61, 0x30D158]
+        return palette[Theme.djb2(name) % palette.count]
+    }
 }
 
 /// Reads local connector metadata only. No network call, server launch, or

@@ -7,6 +7,14 @@ struct CodexQuotaWindow: Equatable, Identifiable {
     var label: String
     var usedPercent: Double
     var resetsAt: Date?
+    /// The window's own length in minutes, straight from the API
+    /// (`windowDurationMins`); 0 when the response did not say.
+    ///
+    /// It rides on the window because the display label is a *presentation* of
+    /// it (`300 → "5 小时"`) and a view that wants to know "is this the short
+    /// window?" must not re-parse that string to find out. `resetCompact` is the
+    /// one reader: a short window shows a clock, a long one a day count.
+    var durationMinutes: Int = 0
 
     var usedText: String {
         let rounded = usedPercent.rounded()
@@ -43,6 +51,49 @@ struct CodexQuotaWindow: Equatable, Identifiable {
         }
         return "\(hours / 24) 天后重置"
     }
+
+    /// The reset moment in the fewest characters that still say it — for the
+    /// popup header, where two windows share a 133pt cell.
+    ///
+    /// The popup's Codex chip is three columns wide with a model name and a
+    /// vendor line above the gauges, so a *full* clock does not fit: `09-27
+    /// 21:00` beside both windows pushes the second one off the cell ("7d 剩…"),
+    /// which is a worse readout than no clock at all. What fits is the shortest
+    /// honest form of each window's own answer, and the choice follows the
+    /// window's **length**, not the calendar day:
+    ///
+    /// * a **short** window (hours — the 5 小时 one) always prints `HH:mm`. Its
+    ///   reset is within hours, so the clock is the reading a person is waiting
+    ///   on, and it says *when* rather than *how long*. That holds **even when
+    ///   the reset falls just after midnight**: `01:00` is still the exact
+    ///   answer, and it is shorter than any date-qualified form.
+    /// * a **long** window (days — the 7 天 one) prints `2天`. A wall clock there
+    ///   is days away and only looks precise; the day count is the useful
+    ///   reading, and it is short.
+    ///
+    /// The threshold is 24 hours: below it the window resets at most once a day,
+    /// so an unqualified `HH:mm` cannot be misread as a far-off instant; at or
+    /// above it the answer is genuinely a number of days.
+    ///
+    /// Minutes are dropped from the clock on purpose — the tooltip and the
+    /// dashboard's own clock line carry the exact time, and this is the one place
+    /// the reading is abbreviated, so it is abbreviated in one place.
+    var resetCompact: String {
+        guard let resetsAt else { return "" }
+        if durationMinutes > 0, durationMinutes <= 1_440 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.dateFormat = "HH:mm"
+            return formatter.string(from: resetsAt)
+        }
+        // Midnight-to-midnight day difference, not a 24h span: "明天" has to mean
+        // the next calendar day, because that is what a person reads it as.
+        let days = Calendar.current.dateComponents([.day],
+                                                   from: Calendar.current.startOfDay(for: Date()),
+                                                   to: Calendar.current.startOfDay(for: resetsAt)).day ?? 0
+        if days <= 1 { return "明天" }
+        return "\(days)天"
+    }
 }
 
 enum CodexQuotaFetcher {
@@ -57,9 +108,66 @@ enum CodexQuotaFetcher {
         var creditBalance: String? = nil
     }
 
+    /// How long a snapshot is considered fresh enough to serve without asking
+    /// the network again.
+    ///
+    /// Measured on this machine: a full round trip is **2.6–6.5 s**, and
+    /// `--version` (i.e. process start) is 0.02 s — the cost is the account
+    /// call itself, not the CLI. Two callers want the same reading within
+    /// seconds of each other (the popup opening, the dashboard, a hover that
+    /// woke the store), and a window that resets in hours cannot move
+    /// meaningfully in a minute. Serving the last reading inside this window is
+    /// what makes the *second* look at the panel instant.
+    ///
+    /// The poll interval is 900 s, so this never masks a scheduled refresh.
+    static let freshWindow: TimeInterval = 60
+
+    /// The most recent successful snapshot, if it is still fresh.
+    ///
+    /// Only trustworthy snapshots are cached — see `remember`. A failure is
+    /// never served from here, so a transient blip cannot be pinned for a
+    /// minute.
+    private static let cache = Cache()
+
+    private final class Cache {
+        private let lock = NSLock()
+        private var snapshot: Snapshot?
+        private var at: Date?
+
+        func fresh() -> Snapshot? {
+            lock.lock(); defer { lock.unlock() }
+            guard let snapshot, let at, Date().timeIntervalSince(at) < freshWindow else { return nil }
+            return snapshot
+        }
+
+        func store(_ snapshot: Snapshot) {
+            lock.lock(); defer { lock.unlock() }
+            self.snapshot = snapshot
+            self.at = Date()
+        }
+
+        func clear() {
+            lock.lock(); defer { lock.unlock() }
+            snapshot = nil
+            at = nil
+        }
+    }
+
+    /// Drop the cached reading so the next caller goes to the network. Called
+    /// by a *manual* refresh, where the user is explicitly asking for a new
+    /// reading and a one-minute-old one would look like the button did nothing.
+    static func invalidateCache() { cache.clear() }
+
     static func fetch() async -> Snapshot {
+        if let fresh = cache.fresh() { return fresh }
+
+        // Two rounds, not three. A failed attempt already cost a full network
+        // round trip (2.6–6.5 s measured), so the old third try could leave the
+        // spinner up for ~20 s before showing the same failure. The backoff
+        // also starts shorter: the first retry is worth ~1 s, not 1 s plus a
+        // second attempt's failure just to reach the same note.
         var last = Snapshot(note: "Codex 额度查询失败")
-        for attempt in 1...3 {
+        for attempt in 1...2 {
             guard !Task.isCancelled else { return last }
             let snapshot = await Task.detached(priority: .utility) {
                 fetchFromAppServer()
@@ -67,11 +175,15 @@ enum CodexQuotaFetcher {
             guard !Task.isCancelled else { return last }
             last = snapshot
             guard snapshot.windows.isEmpty, shouldRetry(snapshot) else {
+                // Only a real answer is worth remembering.
+                if snapshot.note == nil || !snapshot.windows.isEmpty {
+                    cache.store(snapshot)
+                }
                 return snapshot
             }
-            guard attempt < 3 else { break }
-            logger.warning("Transient failure; retrying quota fetch (attempt \(attempt + 1, privacy: .public)/3)")
-            try? await Task<Never, Never>.sleep(for: .seconds(attempt))
+            guard attempt < 2 else { break }
+            logger.warning("Transient failure; retrying quota fetch (attempt \(attempt + 1, privacy: .public)/2)")
+            try? await Task<Never, Never>.sleep(for: .milliseconds(600))
         }
         return last
     }
@@ -108,11 +220,17 @@ enum CodexQuotaFetcher {
             return Snapshot(note: "无法启动 Codex 额度服务")
         }
 
-        let deadline = Date().addingTimeInterval(20)
+        // Was 20 s. The measured round trip is 2.6–6.5 s, so 20 s only ever
+        // applied to a *hung* app server — and it kept the panel spinning for
+        // twenty seconds to report a timeout. 12 s is three times the slowest
+        // healthy call seen, which still absorbs a slow network without letting
+        // a stuck process hold the reading hostage.
+        let seconds: TimeInterval = 12
+        let deadline = Date().addingTimeInterval(seconds)
         let timeout = DispatchWorkItem {
             if process.isRunning { process.terminate() }
         }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20,
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds,
                                                        execute: timeout)
 
         let requests = [
@@ -232,7 +350,8 @@ enum CodexQuotaFetcher {
         return CodexQuotaWindow(
             label: label(forMinutes: minutes),
             usedPercent: min(100, max(0, used)),
-            resetsAt: epoch(window["resetsAt"] ?? window["resets_at"])
+            resetsAt: epoch(window["resetsAt"] ?? window["resets_at"]),
+            durationMinutes: minutes
         )
     }
 

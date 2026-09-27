@@ -164,8 +164,17 @@ struct CodexModelMark: View {
 
     // MARK: - Brand mark
 
+    /// A **themed** surface (`Theme.cardSurface` / `Theme.bgSecondary` — the
+    /// popup's header chip, the dashboard's greeting band), so the ink is the
+    /// theme's and `page:` stays `nil`. It used to pass
+    /// `AppPreferences.shared.isDark ? nil : false`, which resolved to the black
+    /// `-light` file in light mode: legible on the white chip, but the opposite
+    /// pair from every icon well beside it, and it is the same inversion that
+    /// made the island's marks invisible. Only a caller whose ground does *not*
+    /// follow the theme (the island, the greeting card's own sky) passes `page:`.
+    /// The tile is dropped (`well: false`) — see `ProductBrandMark`.
     private func mark(side: CGFloat) -> some View {
-        ProductBrandMark(codex: codex)
+        ProductBrandMark(codex: codex, well: false)
             .frame(width: side, height: side)
             .shadow(color: .black.opacity(codex ? 0.16 : 0.22), radius: 5, y: 2)
             .accessibilityHidden(true)

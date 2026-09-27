@@ -43,10 +43,8 @@ struct ModelImportSheet: View {
                 .focused($filterFocused)
 
             HStack(spacing: Theme.Space.s8) {
-                Button("全选可导入") { selectAllImportable() }
-                    .adaptiveGlassButton()
-                Button("清空") { selection.removeAll() }
-                    .adaptiveGlassButton()
+                ActionButton("全选可导入") { selectAllImportable() }
+                ActionButton("清空") { selection.removeAll() }
                 Spacer()
             }
 
@@ -87,20 +85,16 @@ struct ModelImportSheet: View {
             .listStyle(.plain)
 
             HStack {
-                Button("取消", action: onCancel)
-                    .adaptiveGlassButton()
+                ActionButton("取消", action: onCancel)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 // The count is inside a button *title*, and `Button("…")` gives no
                 // way to reach the `Text` it builds. Spelling the label out is
                 // what lets the number roll like every other figure in the app
                 // (this one changes on every checkbox).
-                Button {
-                    onImport(selection)
-                } label: {
+                ActionButton(tone: .accent, perform: { onImport(selection) }) {
                     Text("导入选中 (\(selection.count))").rollingNumber()
                 }
-                .adaptiveGlassButton(prominent: true, tint: Theme.claude)
                 .disabled(selection.isEmpty)
                 .keyboardShortcut(.defaultAction)
             }

@@ -1,5 +1,799 @@
 import SwiftUI
 
+// =============================================================================
+// The control language.
+//
+// One press feel, three shapes, three tones. Every button, chip, icon action
+// and switch in the app is one of these; a call site that hand-rolls a capsule
+// and a stroke is a call site that will disagree with the next page.
+//
+// **The press feel** (shared by all four shapes through `ControlPressModifier`):
+//
+//   rest ──pointer──▶ tinted fill, hairline brightens, ~0.10 s
+//        ──press───▶ the *same* tint, one step deeper, ~0.10 s
+//        ──release─▶ a 0.97 → 1 spring, Theme.Animation.snappy
+//
+// Three rules that keep it quiet, and each of them is a thing the app used to
+// do and no longer does:
+//
+// 1. **Nothing grows under the pointer.** The old plate scaled to 1.02 on
+//    hover, so a row of buttons reflowed as the pointer crossed it. A control
+//    answers the pointer with light, not with size.
+// 2. **Nothing loops.** The old primary button ran a Core Animation rim sweep
+//    for as long as the pointer stayed on it, and the VPN CTA ran a rotating
+//    conic border per frame. Per-frame chrome on the most-repeated component in
+//    the app is the one cost this file will not pay; the vocabulary for "the
+//    pointer arrived" is the tint, which is free.
+// 3. **One shadow, carried by a layer.** `LayerShadow`, not `.shadow(...)`,
+//    because the plate is the app's most repeated control (the provider
+//    directory alone draws eight per card) and a display-list filter re-runs
+//    every display cycle its subtree is visited.
+//
+// The only motion left is the press spring and the existing one-shot
+// `ShineSweep` on a large accent plate, which is a pointer-arrival accent and
+// never the affordance itself.
+// =============================================================================
+
+// MARK: - Tones
+
+/// What a control *is*, not what it looks like: the shape draws itself from
+/// this. Three tones, because a control is either the page's own quiet
+/// furniture, the one action the page is about, or the one that destroys
+/// something — and a fourth would be a decoration.
+///
+/// Each tone is a **role**, and the shape decides its own drawing from it:
+/// `neutral` is a light fill with a hairline, `accent` is the *same* control
+/// tinted, and `destructive` is the only one that fills solid — the one place
+/// Apple's own language raises its voice, and the one place this app should.
+enum ControlTone {
+    /// A light fill, a hairline, and the primary ink — the control that is
+    /// visible without being loud.
+    ///
+    /// No longer `ActionButton`'s default (that is `.sparkle`), but still the
+    /// default for `ActionIcon` and `ActionPlateButtonStyle`, and the right
+    /// answer for a call site that wants a quiet plate on the ice canvas — a
+    /// dense row of icon actions, or a button drawn inside a card where a dark
+    /// pill would punch a hole in the surface.
+    case neutral
+    /// The page's one primary action. Not a slab of the hue — a *tinted* fill at
+    /// 14 % with the hue's ink as the label, the way macOS tints a secondary
+    /// action. Only a keyboard-default action fills solid.
+    case accent
+    /// The hue and a filled body. Reserved for "this destroys something".
+    case destructive
+    /// The **dark sparkle plate** — the app's one dark button, ported from a
+    /// reference CSS pill (see `SparklePlate`). Unlike the three tones above it
+    /// does not tint from the caller's hue: its identity *is* its own dark
+    /// surface, so `tint` is ignored except for the label's hover ink.
+    case sparkle
+}
+
+/// Whether a tone is the page's **default** action — what the platform fills,
+/// and therefore the only thing this file fills.
+enum ControlEmphasis {
+    case standard
+    case primary
+
+    var isPrimary: Bool { self == .primary }
+}
+
+/// The geometry a control is drawn at. Two sizes, not five: a page band and a
+/// dense card row disagree about height, and they are the only two that exist.
+///
+/// Not named `ControlSize`: SwiftUI already owns that name (`.controlSize(…)`,
+/// `.mini` / `.small` / `.regular` / `.large`), and a local type of the same name
+/// silently shadows it at every call site in the file.
+enum ControlMetrics {
+    /// 30pt — page bands, toolbars, forms, card rows.
+    case regular
+    /// 40pt — a hero action (the VPN 启动 / 停止 plate), alone on its row.
+    case large
+
+    var height: CGFloat { self == .large ? 40 : 30 }
+    var labelSize: CGFloat { self == .large ? 13.5 : 12.5 }
+    var iconSize: CGFloat { self == .large ? 15 : 13 }
+    var hPadding: CGFloat { self == .large ? 20 : 13 }
+}
+
+// MARK: - The press vocabulary
+
+/// The one press/hover feel. Composed rather than inherited so `ChipButton`,
+/// `ActionIcon` and any future shape answer the pointer the same way without
+/// each re-deriving a scale and a duration.
+private struct ControlPressModifier: ViewModifier {
+    @Binding var hovered: Bool
+    @Binding var pressed: Bool
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(reduceMotion || !pressed ? 1 : 0.97)
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(reduceMotion ? nil : Theme.Animation.snappy, value: pressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovered)
+            .opacity(enabled ? 1 : 0.34)
+            .saturation(enabled ? 1 : 0)
+    }
+}
+
+/// The plate: Apple's control material, drawn from one tone and one emphasis.
+///
+/// The reference is macOS 26's own buttons, and the two things that make them
+/// read as *designed* rather than as rectangles of paint:
+///
+/// 1. **The fill is a tint, not the hue.** A standard control is the surface
+///    lifted a few percent — grey on grey — with the accent living in the label
+///    and the stroke. Only a `primary` control fills solid, which is why a page
+///    with one primary action and six ordinary ones has a hierarchy instead of
+///    seven blue pills.
+/// 2. **The stroke is a hairline that follows the fill**, brightening with the
+///    pointer. It is not a second colour; it is the edge of the same material.
+///
+/// Continuous corners (`RoundedRectangle(style: .continuous)` / `Capsule`)
+/// throughout, because a squircle is what the rest of this UI is built from and
+/// a circular arc beside it reads as a different, older control.
+///
+/// **No gradients.** One flat fill, one 1pt stroke. The plate this replaces had
+/// a light-top/dark-bottom gradient plus a second gradient on its top edge,
+/// which at 30pt is a glossy blob rather than a control.
+private struct ControlPlate<S: InsettableShape>: View {
+    let tone: ControlTone
+    let tint: Color
+    let emphasis: ControlEmphasis
+    let shape: S
+    let hovered: Bool
+    let pressed: Bool
+    /// Only `.sparkle` reads this — it scales the glow. The tinted tones draw
+    /// from `shape`'s own geometry and have no use for a metric.
+    var metrics: ControlMetrics = .regular
+    var enabled = true
+
+    private var solid: Bool { emphasis.isPrimary || tone == .destructive }
+
+    /// How far the pointer and the press take the fill. One step each, in the
+    /// same direction, so the control deepens rather than flattens — the old
+    /// plate multiplied its whole fill by 0.92, which *washed the accent out*
+    /// at the exact moment the pointer asked it to respond.
+    private func step(_ rest: Double, _ hover: Double, _ down: Double) -> Double {
+        pressed ? down : (hovered ? hover : rest)
+    }
+
+    private var fill: Color {
+        if solid {
+            return tint.opacity(step(1.0, 1.0, 0.82))
+        }
+        switch tone {
+        case .neutral:
+            return Theme.isDark
+                ? Color.white.opacity(step(0.06, 0.10, 0.14))
+                : Color.black.opacity(step(0.035, 0.06, 0.10))
+        case .accent:
+            return tint.opacity(step(0.13, 0.20, 0.26))
+        case .destructive:
+            return tint.opacity(step(0.13, 0.20, 0.26))
+        case .sparkle:
+            // Unreachable: `body` delegates before either is read. Stated so the
+            // switch stays exhaustive and a future tone cannot silently fall
+            // through to this one's fill.
+            return SparklePlate.restFill
+        }
+    }
+
+    /// The edge is the fill's own ink: almost nothing at rest, the tone under
+    /// the pointer, and the tone on press.
+    private var edge: Color {
+        if solid { return .white.opacity(step(0.14, 0.26, 0.40)) }
+        switch tone {
+        case .neutral:
+            return pressed ? (Theme.isDark ? .white.opacity(0.26) : .black.opacity(0.20))
+                : (hovered ? Theme.textSecondary.opacity(0.55) : Theme.hairline)
+        case .accent, .destructive:
+            return tint.opacity(step(0.34, 0.62, 0.85))
+        case .sparkle:
+            return Color.white.opacity(step(0.10, 0.40, 0.40))
+        }
+    }
+
+    var body: some View {
+        // `.sparkle` is not a tint of the caller's hue — it is its own material,
+        // so it does not go through `fill`/`edge` at all and delegates to the
+        // ported recipe. Branching here (rather than teaching `fill` a dark case)
+        // keeps that recipe in one readable place instead of spread across two
+        // computed properties that also have to serve the three tinted tones.
+        if tone == .sparkle {
+            SparklePlate(height: metrics.height, hovered: hovered,
+                         pressed: pressed, enabled: enabled)
+        } else {
+            shape
+                .fill(fill)
+                .overlay {
+                    shape.strokeBorder(edge, lineWidth: 1).allowsHitTesting(false)
+                }
+        }
+    }
+}
+
+// MARK: - Sparkle plate (the reference's `.btn`)
+
+/// The app's **dark sparkle plate**, ported from a reference CSS button.
+///
+/// This is the one button in the app that is a *dark* pill on the ice canvas.
+/// The design brief asked for every ordinary (non-switch) button to take it, so
+/// it is modelled as a `ControlTone` — `.sparkle` — rather than as a parallel
+/// style: a tone is what `ControlPlate`, `ActionButton` and the four style shims
+/// already branch on, so one new case switches every labelled action in the app
+/// without touching a call site.
+///
+/// The CSS, and what each declaration became:
+///
+/// | CSS | here |
+/// | --- | --- |
+/// | `background: #1C1A1C` | `restFill` |
+/// | `border-radius: 3em` on `height: 5em` | `Capsule()` |
+/// | `hover background: linear-gradient(0deg,#A47CF3,#683FEA)` | `hoverGradient` |
+/// | `inset 0 1px 0 rgba(255,255,255,.4)` | the inset top highlight |
+/// | `inset 0 -4px 0 rgba(0,0,0,.2)` | the inset bottom shade |
+/// | `0 0 0 4px rgba(255,255,255,.2)` | the 4pt white ring |
+/// | `0 0 180px 0 #9917FF` | the outer glow (`LayerShadow`, tinted) |
+/// | `transform: translateY(-2px)` | the 2pt hover lift |
+/// | `transition: all 450ms ease-in-out` | `Theme.Animation.sparkle` |
+/// | `.text { color: #AAAAAA }` → `white` | `labelColor` |
+/// | `.sparkle { fill: #AAAAAA }` → `white`, `scale(1.2)` | `SparkleGlyph` |
+///
+/// **Two things the CSS does that this app will not, and why:**
+///
+/// 1. **No `translateY` on the plate itself.** The brief asks for the reference's
+///    motion, and the lift is kept — but applied as a `.offset(y:)` on the label
+///    rather than by moving the hit shape. Moving a control's own frame on hover
+///    is the exact oscillation documented on `ControlPressModifier`: the pointer
+///    parked on the bottom edge is carried out of the button and back, once per
+///    frame. Offsetting the drawn content keeps the silhouette the pointer is
+///    actually over.
+/// 2. **The glow is a layer, not `.shadow`.** A 180pt blur is the single most
+///    expensive thing in the CSS; on the app's most-repeated control a
+///    display-list filter would re-run every display cycle. `LayerShadow` is the
+///    same rasterisation path the rest of the file already uses, and the glow is
+///    scaled to the control's height so a 30pt button does not carry a 180pt
+///    bloom.
+///
+/// The glow and gradient are **hover-only**, exactly as in the CSS: at rest this
+/// is a flat dark pill, which is what keeps a page of them from reading as a
+/// row of lights.
+struct SparklePlate: View {
+    /// The control's height, used to scale every shadow so the same recipe works
+    /// at 30pt and at 40pt.
+    let height: CGFloat
+    let hovered: Bool
+    let pressed: Bool
+    let enabled: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// `#1C1A1C` — the reference's rest fill.
+    static let restFill = Color(hex: 0x1C1A1C)
+    /// `#A47CF3` → `#683FEA`, bottom to top (the CSS is `0deg`).
+    static let hoverTop = Color(hex: 0x683FEA)
+    static let hoverBottom = Color(hex: 0xA47CF3)
+    /// `#9917FF` — the glow.
+    static let glowBase = Color(hex: 0x9917FF)
+
+    /// How far the label rides up on hover. The CSS's 2px, scaled with the
+    /// control.
+    static func lift(for height: CGFloat) -> CGFloat { height >= 40 ? 2 : 1.5 }
+
+    private var active: Bool { hovered && enabled }
+
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(active
+                  ? AnyShapeStyle(LinearGradient(colors: [Self.hoverBottom, Self.hoverTop],
+                                                 startPoint: .bottom, endPoint: .top))
+                  : AnyShapeStyle(Self.restFill))
+            // inset 0 1px 0 rgba(255,255,255,.4)
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(active ? 0.4 : 0.10), lineWidth: 1)
+                    .mask(LinearGradient(colors: [.white, .white.opacity(0)],
+                                         startPoint: .top, endPoint: .center))
+                    .allowsHitTesting(false)
+            }
+            // inset 0 -4px 0 rgba(0,0,0,.2)
+            .overlay {
+                Capsule(style: .continuous)
+                    .fill(LinearGradient(colors: [.clear, Color.black.opacity(active ? 0.20 : 0.16)],
+                                         startPoint: .center, endPoint: .bottom))
+                    .allowsHitTesting(false)
+            }
+            // 0 0 0 4px rgba(255,255,255,.2) — a white ring *outside* the pill,
+            // drawn as an overlay stroke on an expanded shape so it reads as a
+            // halo rather than as a second border.
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(active ? 0.20 : 0), lineWidth: 4)
+                    .padding(-4)
+                    .allowsHitTesting(false)
+            }
+            // 0 0 180px 0 #9917FF, scaled to the control.
+            .background {
+                LayerShadow(radius: height * (active ? 2.6 : 0.6),
+                            y: active ? 0 : 1,
+                            opacity: active ? 0.55 : 0.22,
+                            cornerRadius: height / 2,
+                            surface: .clear,
+                            color: active ? Self.glowBase : .black)
+            }
+            .scaleEffect(pressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : Theme.Animation.sparkle, value: active)
+            .animation(reduceMotion ? nil : Theme.Animation.snappy, value: pressed)
+    }
+}
+
+/// The reference's three-point sparkle: one large star and two small ones,
+/// `#AAAAAA` at rest and `white` scaled 1.2 under the pointer.
+///
+/// Drawn as a `Path` rather than borrowed from `DecorativeMotion`, because that
+/// type's `.sparkles` mark is a *pulsing* Core Animation layer — correct for the
+/// VPN CTA, which is reporting that something is running, and wrong here where
+/// the mark only has to answer the pointer. One static path, one scale.
+struct SparkleGlyph: View {
+    var size: CGFloat = 14
+    var active: Bool
+
+    private static let rest = Color(hex: 0xAAAAAA)
+
+    var body: some View {
+        ZStack {
+            // Large four-point star, lower-left of the cluster.
+            star(points: 4, innerRatio: 0.30)
+                .frame(width: size * 0.72, height: size * 0.72)
+                .offset(x: -size * 0.13, y: size * 0.08)
+            // Two small ones: upper-right and lower-right.
+            star(points: 4, innerRatio: 0.28)
+                .frame(width: size * 0.30, height: size * 0.30)
+                .offset(x: size * 0.30, y: -size * 0.26)
+            star(points: 4, innerRatio: 0.28)
+                .frame(width: size * 0.24, height: size * 0.24)
+                .offset(x: size * 0.28, y: size * 0.30)
+        }
+        .foregroundStyle(active ? Color.white : Self.rest)
+        .frame(width: size, height: size)
+        .scaleEffect(active ? 1.2 : 1)
+        .animation(.easeInOut(duration: 0.8), value: active)
+        .accessibilityHidden(true)
+    }
+
+    /// A star with `points` spikes, alternating outer and inner radius.
+    private func star(points: Int, innerRatio: CGFloat) -> some View {
+        GeometryReader { geo in
+            let r = min(geo.size.width, geo.size.height) / 2
+            let c = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            Path { p in
+                let steps = points * 2
+                for i in 0...steps {
+                    let angle = Double(i) * .pi / Double(points) - .pi / 2
+                    let radius = i.isMultiple(of: 2) ? r : r * innerRatio
+                    let pt = CGPoint(x: c.x + CGFloat(cos(angle)) * radius,
+                                     y: c.y + CGFloat(sin(angle)) * radius)
+                    if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+                }
+                p.closeSubpath()
+            }
+            .fill()
+        }
+    }
+}
+
+// MARK: - ActionButton
+
+/// The app's push button: 刷新 / 清空 / 启用 / 移除 / 打开 — every labelled
+/// action in the app, whatever page it is on.
+///
+/// The two controls this replaces are the ones the design review opened with:
+/// 刷新 (`.adaptiveGlassButton(prominent: true, tint: Theme.claude)`) and 清空
+/// (`.adaptiveGlassButton(tint: Theme.statusError, ink: .white, filled: true)`).
+/// They were already the same style at two settings, which is why unifying the
+/// *style* alone would not have fixed anything — what was missing was the rule
+/// that says which setting a given button should be, and that rule is `tone`.
+///
+/// As of the sparkle brief that default is `.sparkle`: a call site that says
+/// nothing about its tone gets the dark pill. `.destructive` and a page's single
+/// `.accent` primary still override it, so the two meanings that the plate cannot
+/// express are the only ones that have to be asked for.
+struct ActionButton<Label: View>: View {
+    /// The default is `.sparkle` — the reference `.btn` plate — by explicit
+    /// brief: *every* ordinary (non-switch) button in the app takes that style.
+    /// Only `.destructive` and the one `.accent` primary per page override it,
+    /// because those two carry meaning the sparkle plate cannot: "this destroys
+    /// something" and "this is the action the page is about".
+    ///
+    /// `.neutral` has not gone away — it is still what `ActionPlateButtonStyle`
+    /// and `ActionIcon` default to, and it is the fallback for any call site that
+    /// asks for it by name. What changed is only which tone a call site gets
+    /// when it says nothing.
+    var tone: ControlTone = .sparkle
+    var tint: Color = Theme.claude
+    var metrics: ControlMetrics = .regular
+    /// The page's default action. A primary control fills solid; every other one
+    /// is the tinted standard plate. One per page, at most — that is what makes
+    /// it read as *the* action rather than as the loudest of several.
+    var emphasis: ControlEmphasis = .standard
+    /// Named `perform` rather than `action`: a stored `action` shadows
+    /// `Button(action:)` inside this very body, and Swift resolves the inner
+    /// `Button` against the property instead of the initialiser.
+    var perform: () -> Void
+    @ViewBuilder var label: () -> Label
+
+    @State private var hovered = false
+    @State private var pressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // `label:` is spelled out: this type stores a `label` closure of its own,
+        // and the trailing-closure form makes Swift resolve the inner `Button`
+        // against that property rather than against `Button.init(label:)`.
+        Button(action: perform, label: {
+            HStack(spacing: 6) { label() }
+                .font(.system(size: metrics.labelSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(labelColor)
+                .padding(.horizontal, metrics.hPadding)
+                .frame(height: metrics.height)
+                // The reference lifts its label on hover (`translateY(-2px)`).
+                // It is applied here, to the drawn content, and *not* to the
+                // Button's own frame: moving the frame is the oscillation the
+                // press modifier documents — a pointer parked on the bottom edge
+                // is carried out of the control and back, once per frame.
+                .offset(y: tone == .sparkle && hovered ? -SparklePlate.lift(for: metrics.height) : 0)
+                .background {
+                    ControlPlate(tone: tone, tint: tint, emphasis: emphasis,
+                                 shape: Capsule(), hovered: hovered, pressed: pressed,
+                                 metrics: metrics)
+                }
+                .background {
+                    // A standard control is drawn *in* the surface, so it carries
+                    // no lift — the hairline is what says it is a control. Only
+                    // the filled plate sits above the page, and only barely.
+                    // `.sparkle` carries its own glow inside `SparklePlate`, so
+                    // this layer stays off for it.
+                    LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                                y: pressed ? 0 : (hovered ? 3 : 1.5),
+                                opacity: tone == .sparkle ? 0
+                                    : (emphasis.isPrimary && tone != .destructive
+                                       ? 0 : (tone == .destructive ? (hovered ? 0.20 : 0.13) : 0)),
+                                cornerRadius: metrics.height / 2,
+                                surface: .clear,
+                                color: .black)
+                }
+                .contentShape(Capsule())
+                .modifier(ControlPressModifier(hovered: $hovered, pressed: $pressed))
+        })
+        .buttonStyle(PressReportingStyle(pressed: $pressed))
+        // The sparkle plate's four hover changes ride one slower clock; every
+        // other tone keeps the 140 ms it has always had.
+        .animation(reduceMotion ? nil : (tone == .sparkle ? Theme.Animation.sparkle
+                                                          : .easeOut(duration: 0.14)),
+                   value: hovered)
+    }
+
+    /// The label carries the tone's **ink**, the way macOS tints an action —
+    /// never white on a tinted fill, which is unreadable on the ice canvas. Only
+    /// the solid plates (a primary accent, a destructive) take a white label,
+    /// because only those have a dark enough body to carry it.
+    private var labelColor: Color {
+        if tone == .destructive || (emphasis.isPrimary && tone == .accent) { return .white }
+        switch tone {
+        case .neutral: return Theme.textPrimary
+        case .accent: return Theme.isDark ? Theme.claudeHi : Theme.Ink.claude
+        case .destructive: return .white
+        // The reference's `#AAAAAA` at rest, `white` under the pointer. The
+        // label is read against a *dark* plate, so both ends are lighter than
+        // any other tone's ink — `Theme.textSecondary` here would be the
+        // canvas's grey on a near-black fill.
+        case .sparkle: return hovered ? .white : Color(hex: 0xAAAAAA)
+        }
+    }
+}
+
+extension ActionButton where Label == Text {
+    init(_ title: String, tone: ControlTone = .neutral, tint: Color = Theme.claude,
+         size: ControlMetrics = .regular, emphasis: ControlEmphasis = .standard,
+         action: @escaping () -> Void) {
+        self.init(tone: tone, tint: tint, metrics: size, emphasis: emphasis, perform: action) {
+            Text(title)
+        }
+    }
+}
+
+extension ActionButton where Label == AnyView {
+    /// A button with an instrument mark before its label. `symbol` is a
+    /// `SignatureGlyph` name, so an action's mark is the app's own drawing
+    /// rather than a second icon language.
+    init(_ title: String, symbol: String, tone: ControlTone = .neutral,
+         tint: Color = Theme.claude, size: ControlMetrics = .regular,
+         emphasis: ControlEmphasis = .standard,
+         action: @escaping () -> Void) {
+        self.init(tone: tone, tint: tint, metrics: size, emphasis: emphasis, perform: action) {
+            AnyView(
+                HStack(spacing: 6) {
+                    SignatureGlyph(name: symbol,
+                                   tint: tone == .destructive ? .white
+                                        : (tone == .accent ? Theme.Ink.claude : Theme.textSecondary),
+                                   size: size.iconSize)
+                        .frame(width: size.iconSize, height: size.iconSize)
+                    Text(title)
+                }
+            )
+        }
+    }
+}
+
+/// Reads `isPressed` out of the button's own configuration into a binding, so
+/// the plate and the shape can be drawn by the label while the press state
+/// still comes from AppKit's real tracking (a `DragGesture` would lose the
+/// keyboard's space/Return and the system's press-then-drag-out cancel).
+struct PressReportingStyle: ButtonStyle {
+    @Binding var pressed: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .onChange(of: configuration.isPressed) { _, down in
+                if pressed != down { pressed = down }
+            }
+    }
+}
+
+// MARK: - ChipButton
+
+/// A compact selectable chip: the VPN flag row, the connector scope filters,
+/// the 已配置 filter — anything that is a *state you can flip* rather than an
+/// action you fire.
+///
+/// Radius 8, not a capsule: a chip is a small square-ish control that sits in a
+/// row of its own kind, where a capsule reads as a button and a button in a
+/// filter row reads as "this will do something".
+struct ChipButton<Label: View>: View {
+    var on: Bool
+    var tint: Color = Theme.claude
+    var action: () -> Void
+    @ViewBuilder var label: () -> Label
+
+    @State private var hovered = false
+    @State private var pressed = false
+
+    private let radius: CGFloat = 8
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) { label() }
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(on ? tint : Theme.textSecondary)
+                .padding(.horizontal, 9)
+                .frame(height: 24)
+                .background {
+                    shape
+                        .fill(on ? tint.opacity(hovered || pressed ? 0.20 : 0.14)
+                                 : Theme.cardFill(hovered || pressed ? 0.10 : 0.05))
+                }
+                .overlay {
+                    shape.strokeBorder(on ? tint.opacity(hovered ? 0.52 : 0.38)
+                                          : (hovered ? Theme.hairline.opacity(1.6) : Theme.hairline),
+                                      lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(shape)
+                .modifier(ControlPressModifier(hovered: $hovered, pressed: $pressed))
+        }
+        .buttonStyle(PressReportingStyle(pressed: $pressed))
+        .accessibilityAddTraits(on ? [.isSelected] : [])
+    }
+}
+
+extension ChipButton where Label == AnyView {
+    init(_ title: String, symbol: String? = nil, on: Bool,
+         tint: Color = Theme.claude, action: @escaping () -> Void) {
+        self.init(on: on, tint: tint, action: action) {
+            AnyView(
+                HStack(spacing: 5) {
+                    if let symbol {
+                        SignatureGlyph(name: symbol,
+                                       tint: on ? tint : Theme.textSecondary, size: 11)
+                            .frame(width: 11, height: 11)
+                    }
+                    Text(title)
+                }
+            )
+        }
+    }
+}
+
+// MARK: - ActionIcon
+
+/// A square icon-only action: a settings gear, an eye that reveals a key, a
+/// trash. Radius 8 — the same corner as `ChipButton`, because both are small
+/// targets that sit in rows and neither is a pill.
+struct ActionIcon: View {
+    let symbol: String
+    var tone: ControlTone = .neutral
+    var tint: Color = Theme.textSecondary
+    var size: CGFloat = 26
+    var action: () -> Void
+
+    @State private var hovered = false
+    @State private var pressed = false
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+
+    private var destructive: Bool { tone == .destructive }
+
+    var body: some View {
+        Button(action: action) {
+            SignatureGlyph(name: symbol,
+                           tint: destructive ? .white
+                               : (hovered ? tint : tint.opacity(0.85)),
+                           size: size * 0.5, engaged: hovered)
+                .frame(width: size, height: size)
+                .background {
+                    if destructive {
+                        ControlPlate(tone: .destructive, tint: Theme.statusError,
+                                     emphasis: .standard, shape: shape,
+                                     hovered: hovered, pressed: pressed)
+                    } else {
+                        // An icon-only control has no label to say it is a
+                        // control, so its tint is *the* affordance rather than a
+                        // hint: the wash appears on hover, and it is the same 6 %
+                        // → 10 % step an `ActionButton` takes, so a row of
+                        // gear / eye / trash reads as one family.
+                        shape.fill(tint.opacity(pressed ? 0.14 : (hovered ? 0.10 : 0)))
+                    }
+                }
+                .overlay {
+                    if !destructive {
+                        shape.strokeBorder(tint.opacity(hovered ? 0.28 : 0), lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(shape)
+                .modifier(ControlPressModifier(hovered: $hovered, pressed: $pressed))
+        }
+        .buttonStyle(PressReportingStyle(pressed: $pressed))
+    }
+}
+
+/// The app's push button. The machined pill that used to live here is now
+/// `ActionButton` — one plate, drawn once, instead of this style plus the
+/// `adaptiveGlassButton` alias plus `ProviderActionStyle` plus a connector
+/// recipe all reaching for the same material.
+///
+/// The name survives as a **shim** because four call sites still construct it
+/// directly (`ProviderActionStyle`, `ConnectorUtilityButtonStyle`,
+/// `ConnectorDetailSheet`) and because `Interaction.swift`'s
+/// `adaptiveGlassButton` reaches it. It forwards to `ActionButton`'s plate, so
+/// those call sites and a native `ActionButton` are the same object, and this
+/// type can be deleted with the last of them.
+///
+/// What it deliberately does **not** keep: `tall`. The old style's hero
+/// proportions are `ActionButton(tone:…, size: .large)`, and a shim that also
+/// re-derives them would be a second geometry to keep in sync — the exact drift
+/// this file exists to end.
+struct InstrumentButtonStyle: ButtonStyle {
+    var prominent = false
+    /// Rim and, with `filled`, the body. A shape hue, not ink.
+    var tint: Color = Theme.claude
+    /// Overrides the label where the label itself is the signal — a destructive
+    /// action wants white ink on the filled plate.
+    var ink: Color? = nil
+    /// Fills the body with `tint` instead of the well tone. `prominent` is the
+    /// page's primary action; a destructive button is normally this too, because
+    /// "filled with the danger hue" is the loudest thing it can be without
+    /// inventing a second shape.
+    var filled: Bool? = nil
+
+    private var isFilled: Bool { filled ?? prominent }
+
+    func makeBody(configuration: Configuration) -> some View {
+        // The tone comes from the *intent*, the tint from the caller; a
+        // destructive hue is the one tint that also changes which tone the plate
+        // is drawn in, because `ActionButton` reserves the solid fill for that
+        // case.
+        let tone: ControlTone = isFilled
+            ? (tint == Theme.statusError ? .destructive : .accent)
+            : .neutral
+        return ActionPlateButtonStyle(tone: tone, tint: tint, ink: ink,
+                                      metrics: .regular,
+                                      emphasis: isFilled ? .primary : .standard)
+            .makeBody(configuration: configuration)
+    }
+}
+
+/// The alias's drawing: `ActionButton`'s plate, sized and toned from the
+/// historical arguments.
+///
+/// Kept as a `ButtonStyle` (rather than folded into `ActionButton`) because a
+/// call site whose label it does not own — a `ProgressView`, a rolling figure —
+/// still needs the plate applied to a `Button` it built itself. It is a
+/// `ButtonStyle` and not a `ViewModifier` because the press state lives in the
+/// configuration, and the plate has to answer it.
+struct ActionPlateButtonStyle: ButtonStyle {
+    var tone: ControlTone
+    var tint: Color
+    var ink: Color?
+    var metrics: ControlMetrics
+    var emphasis: ControlEmphasis = .standard
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        let down = pressed && !reduceMotion
+        return configuration.label
+            .font(.system(size: metrics.labelSize, weight: .semibold, design: .rounded))
+            .foregroundStyle(ink ?? sparkleLabelColor)
+            .offset(y: tone == .sparkle && hovered ? -SparklePlate.lift(for: metrics.height) : 0)
+            .padding(.horizontal, metrics.hPadding)
+            .frame(height: metrics.height)
+            .background {
+                ControlPlate(tone: tone, tint: tint, emphasis: emphasis, shape: Capsule(),
+                             hovered: hovered, pressed: pressed, metrics: metrics)
+            }
+            .background {
+                LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                            y: pressed ? 0 : (hovered ? 3 : 1.5),
+                            opacity: tone == .destructive ? (hovered ? 0.20 : 0.13)
+                                : (tone == .sparkle && hovered ? 0 : 0),
+                            cornerRadius: metrics.height / 2,
+                            surface: .clear, color: .black)
+            }
+            .contentShape(Capsule())
+            .scaleEffect(down ? 0.97 : 1)
+            .onHover { if hovered != $0 { hovered = $0 } }
+            .animation(reduceMotion ? nil : Theme.Animation.snappy, value: pressed)
+            .animation(reduceMotion ? nil : (tone == .sparkle ? Theme.Animation.sparkle
+                                                              : .easeOut(duration: 0.14)),
+                       value: hovered)
+            .opacity(enabled ? 1 : 0.34)
+            .saturation(enabled ? 1 : 0)
+    }
+
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Same rule as `ActionButton.labelColor`, kept here because a style's body
+    /// cannot call into the other type. `.sparkle` is the one tone whose resting
+    /// ink is a *light* grey rather than the canvas's text colour, because the
+    /// plate under it is near-black.
+    private var sparkleLabelColor: Color {
+        switch tone {
+        case .neutral: return Theme.textPrimary
+        case .accent: return (emphasis.isPrimary ? .white
+                             : (Theme.isDark ? Theme.claudeHi : Theme.Ink.claude))
+        case .destructive: return .white
+        case .sparkle: return hovered ? .white : Color(hex: 0xAAAAAA)
+        }
+    }
+}
+
+extension View {
+    /// `ActionButton`'s plate for a call site that builds its own `Button` and
+    /// label — a `ProgressView` swapped in while a test runs, a figure that rolls
+    /// as it updates.
+    ///
+    /// A call site that simply wants a title should use `ActionButton("…")`.
+    /// This exists so "the label is a view" does not mean "the button is a
+    /// different control", which is how the app ended up with three shapes.
+    func actionButton(tone: ControlTone = .neutral,
+                      tint: Color = Theme.claude,
+                      metrics: ControlMetrics = .regular,
+                      emphasis: ControlEmphasis = .standard) -> some View {
+        buttonStyle(ActionPlateButtonStyle(tone: tone, tint: tint, ink: nil,
+                                           metrics: metrics, emphasis: emphasis))
+    }
+}
+
+import SwiftUI
+
 // Native translations of the *control* language in the Uiverse.io pieces this
 // product borrows from — the half the surface file (`UiverseSurfaces.swift`)
 // does not cover.
@@ -98,173 +892,313 @@ extension View {
     }
 }
 
-// MARK: - Instrument toggle (metanef switch)
 
-/// The app's **one** switch: an inset, engraved track with a plated handle, and
-/// a hover where the handle stretches toward the side it would travel to.
+// MARK: - The switch
+
+/// The app's **one** switch, ported 1:1 from a reference toggle.
 ///
-/// Why this exists at all: the app had **20 raw `Toggle`s** — sixteen
-/// `.toggleStyle(.switch).labelsHidden().tint(...)` chains written out by hand,
-/// one lone `.checkbox`, and three with no style at all — so "a switch" was a
-/// different object in five different files, and none of them belonged to the
-/// surface family the tiles are drawn from.
+/// The reference is a soft "hardware" pill: a vertical surface gradient, a
+/// hairline rim, an outer lift, an inset top highlight and an inset bottom
+/// shade; a large knob with its own rim, inset highlight, inset shade and lift;
+/// and — the part that makes it recognisable — a **ring indicator** on the far
+/// side of the knob, red when off and green when on.
 ///
-/// The reference (`metanef`) is a neumorphic switch whose *track is inset*
-/// (`inset 3px 3px 6px` + `inset -3px -3px 6px`) and whose handle changes shape
-/// on hover (a bar stretching into a D). Both survive the translation:
+/// Geometry is measured from the reference's two state images (216 × 92 track,
+/// 82 knob, 48 ring on the same artwork), not from the CSS numbers in the brief:
+/// the two disagree, and the images are the design. The CSS's own
+/// `115 × 55 / knob 42 / padding 6` gives a longer, flatter pill with a smaller
+/// knob than either image shows.
 ///
-/// - the track is a recessed fill with an engraved top rule and a lit bottom
-///   edge, which is what an inset control looks like on an ice canvas;
-/// - the handle is a plated capsule with a lit top edge, and on hover it widens
-///   ~30 % toward the direction it will move — a *destination hint*, which is
-///   the part worth keeping. The original's stretch is a pure decoration; here
-///   it says "this will go right".
+/// | measured | value |
+/// | --- | --- |
+/// | track h/w | 0.378 |
+/// | knob / track height | 0.976 |
+/// | knob centre, off → on | 24 % → 76 % of width |
+/// | ring / track height | 0.571 |
+/// | ring centre, off → on | 76 % → 23 % |
 ///
-/// Motion: the handle's travel is a state change on `isOn`; the hover stretch
-/// is the same kind. Reduce Motion drops the stretch and keeps the travel
-/// (travel is the state itself, not decoration).
+/// **The ring does not travel.** That is the one structural thing the first
+/// attempt here got wrong. It reads as if the indicator slides across, but in
+/// both images the ring is on the side the knob is *not*: off → knob left, ring
+/// right; on → knob right, ring left. Two ways to draw that with one moving
+/// part are (a) move the ring and keep the knob still, or (b) move the knob and
+/// put the ring at the opposite end. The reference animates the *ring's* colour
+/// and the knob's position, and the ring's 74 % / 16 % are simply "the far side"
+/// of wherever the knob is — so this draws the ring at the opposite end from the
+/// knob and lets it stay put, which is one moving part instead of two.
+///
+/// The colour is the reference's own: `#EC6766` off, `#65C466` on. It is the one
+/// place in this app a control's state is carried by red/green rather than by
+/// the caller's hue, and it is deliberate — the reference's whole idea is that
+/// the ring *is* the readout, and the 16 CTAs that use this style would lose it
+/// if each repainted the ring in its own colour.
 struct InstrumentToggleStyle: ToggleStyle {
+    /// Ink for the label and the hover rim.
     var tint: Color = Theme.Ink.claude
-    /// The track's own hue when on — the raw shape hue, since it is a fill.
-    var faceTint: Color? = nil
-    /// Whether the label beside the track is drawn. The tile call sites name the
-    /// control in the tile itself and pass `false`; a call site that prints its
-    /// own words beside the switch passes `true` (the default).
-    var showsLabel: Bool = true
+    /// Kept for call-site compatibility. The reference paints its track from its
+    /// own surface ramp rather than a hue wash, so this tint is no longer used
+    /// for the track — see the type note above.
+    var faceTint: Color = Theme.claude
+    var showsLabel = true
+    /// Overall width. The reference artwork is 216 wide; this default is about a
+    /// third of that, because most call sites here sit in a caption row.
+    var width: CGFloat = 62
+    /// `false` drops the label column, for a bare switch in a tile cell.
+    var label: ((Configuration.Label) -> AnyView)? = nil
 
-    /// The switch stands alone. Call sites in this app already print the
-    /// control's own name in the tile they sit in (`SettingTile`), so a label
-    /// beside the track would be the second copy of the same words — which is
-    /// exactly what the twenty hand-written `.labelsHidden()` chains were
-    /// suppressing one by one. The label is still honoured (and still
-    /// clickable) when a call site genuinely passes one, as `Toggle("启用", …)`
-    /// does outside a tile.
-    func makeBody(configuration: Configuration) -> some View {
-        let face = faceTint ?? tint
-        return InstrumentToggleTrack(isOn: configuration.isOn, face: face, tint: tint,
-                                     hasLabel: showsLabel,
-                                     label: { configuration.label }) {
-            configuration.isOn.toggle()
+    /// The reference's proportions, as ratios of `width`.
+    ///
+    /// Measured from the **on** state image, whose left end is unobstructed and
+    /// therefore gives a clean pill width; the off image agrees on every ratio
+    /// (track 222 × 84, knob 82, ring 48) once the knob's own shadow is excluded
+    /// from the track's bounding box — reading that box naively adds ~13pt of
+    /// shadow to the left edge and makes the knob look oversize.
+    ///
+    /// | | px | ratio |
+    /// | --- | --- | --- |
+    /// | track | 222 × 84 | h/w **0.378** |
+    /// | knob | 82 | **0.976** of height |
+    /// | ring | 48 | **0.571** of height |
+    /// | knob centre, off / on | 53 / 169 | **0.24 / 0.76** of width |
+    /// | ring centre, off / on | 169 / 53 | **0.76 / 0.23** |
+    /// | end gap, off-left / on-right | 11 / 12 | — |
+    ///
+    /// One struct so track, knob, ring and travel cannot drift apart: the travel
+    /// is "knob centre off to knob centre on", and deriving it from independent
+    /// ratios is how a knob ends up 1pt off centre on the state that ships.
+    ///
+    /// The knob is very nearly the full track height (0.976), which is what makes
+    /// the control read as a *milled* pill with a plunger in it rather than as a
+    /// rail with a bead — the 2pt of play is a hairline, not a channel.
+    struct Metrics {
+        /// 84 / 222.
+        var heightRatio: CGFloat = 84.0 / 222.0
+        /// 82 / 84 — the knob fills the track's height bar a hairline.
+        ///
+        /// The measured 82 is the knob *including its rim and its shadow's
+        /// footprint*. The drawn disc is pulled in by a couple of points so the
+        /// track's own edge stays visible to the knob's left in the off state,
+        /// which is how the reference reads: a milled channel with a plunger in
+        /// it, not a disc flush to the wall.
+        var knobRatio: CGFloat = 80.0 / 84.0
+        /// 48 / 84 — the ring's outer diameter.
+        var ringRatio: CGFloat = 48.0 / 84.0
+        /// Ring stroke, as a share of the ring's *outer* diameter.
+        ///
+        /// **6 / 48 = 0.125.** The CSS says `border: 3px solid`, but the images
+        /// measure 6px — the stroke is 12.5 % of the ring, which is what makes
+        /// the indicator read as a drawn ring rather than a hairline circle.
+        /// (The CSS's 3px on its own 24px ring is 12.5 % too, so the two agree
+        /// on the *ratio* and the brief's `24px` was the stale number: the real
+        /// ring is 48 with a 6 stroke.)
+        var ringStrokeRatio: CGFloat = 6.0 / 48.0
+        /// Knob centre when off, and when on (mirrored).
+        var knobOffCentre: CGFloat = 0.265
+        var knobOnCentre: CGFloat = 0.735
+
+        /// The ring's own two stops, measured rather than mirrored: 75.5 % and
+        /// 22.7 % of the width. They are *near* the knob's mirror (73.5 / 26.5)
+        /// but not equal to it — the reference's ring sits a touch further out
+        /// than the knob does, which is what keeps the two from reading as a
+        /// symmetric pair and makes the indicator feel like a separate gauge
+        /// beside a plunger rather than the plunger's reflection.
+        var ringOffCentre: CGFloat = 0.755
+        var ringOnCentre: CGFloat = 0.227
+
+        func height(for width: CGFloat) -> CGFloat { (width * heightRatio).rounded() }
+        func knob(for width: CGFloat) -> CGFloat { (height(for: width) * knobRatio).rounded() }
+        func ring(for width: CGFloat) -> CGFloat { (height(for: width) * ringRatio).rounded() }
+        func ringStroke(for width: CGFloat) -> CGFloat { max(1.5, (ring(for: width) * ringStrokeRatio).rounded()) }
+
+        /// Knob origin from the track's leading edge. The stop is a *centre*, so
+        /// the drawn origin is centre − radius.
+        func knobOffset(for width: CGFloat, isOn: Bool) -> CGFloat {
+            width * (isOn ? knobOnCentre : knobOffCentre) - knob(for: width) / 2
         }
+
+        /// Ring origin — the mirrored stop. It is the far side from the knob in
+        /// both states, so the two never overlap.
+        func ringOffset(for width: CGFloat, isOn: Bool) -> CGFloat {
+            width * (isOn ? ringOnCentre : ringOffCentre) - ring(for: width) / 2
+        }
+    }
+
+    var metrics = Metrics()
+
+    @MainActor
+    func makeBody(configuration: Configuration) -> some View {
+        InstrumentToggleBody(configuration: configuration, style: self)
     }
 }
 
-/// The track itself, split out so the `@State` hover flag lives on a small view
-/// (the style's `makeBody` cannot hold one).
-private struct InstrumentToggleTrack<Label: View>: View {
-    var isOn: Bool
-    var face: Color
-    var tint: Color
-    var hasLabel: Bool
-    @ViewBuilder var label: () -> Label
-    var action: () -> Void
+extension ToggleStyle where Self == InstrumentToggleStyle {
+    /// The app's switch, in two spellings for two kinds of call site: `.instrument`
+    /// where the style is chosen inline, `instrumentToggle()` where a labelled
+    /// switch is being chained at the end of a longer expression.
+    static var instrument: InstrumentToggleStyle { InstrumentToggleStyle() }
+}
+
+extension Toggle {
+    func instrumentToggle(tint: Color = Theme.Ink.claude,
+                          faceTint: Color = Theme.claude,
+                          showsLabel: Bool = true) -> some View {
+        toggleStyle(InstrumentToggleStyle(tint: tint, faceTint: faceTint,
+                                          showsLabel: showsLabel))
+    }
+}
+
+/// The switch's own colours, in one place so the light and dark recipes cannot
+/// drift.
+private enum SwitchPalette {
+    /// The reference's track: white at the top easing to a very light grey at
+    /// the bottom. Both images sit on a `#E8E8E8` page, so these are the
+    /// measured values, not a guess at a gradient.
+    static var trackTop: Color { Theme.isDark ? Color(hex: 0x3C444E) : Color(hex: 0xFFFFFF) }
+    static var trackBottom: Color { Theme.isDark ? Color(hex: 0x272E36) : Color(hex: 0xEAEBED) }
+
+    /// The hairline rim — `rgba(0,0,0,.1)` in the reference, lit in dark mode so
+    /// the edge still reads.
+    static var rim: Color { Theme.isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.10) }
+
+    /// The knob's disc: white, lit from the upper left.
+    static var knobCenter: Color { Color.white }
+    static var knobMid: Color { Theme.isDark ? Color(hex: 0xEFF1F4) : Color(hex: 0xFBFBFC) }
+    static var knobEdge: Color { Theme.isDark ? Color(hex: 0xD4D9E0) : Color(hex: 0xEFEFF1) }
+    static var knobRim: Color { Theme.isDark ? Color.white.opacity(0.22) : Color.black.opacity(0.06) }
+
+    /// The ring indicator — the reference's own two colours.
+    static var ringOff: Color { Color(hex: 0xEC6766) }
+    static var ringOn: Color { Color(hex: 0x65C466) }
+}
+
+private struct InstrumentToggleBody: View {
+    let configuration: ToggleStyle.Configuration
+    let style: InstrumentToggleStyle
 
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let width: CGFloat = 38
-    private let height: CGFloat = 22
-    private let inset: CGFloat = 3
-    private var travel: CGFloat { width - height }
+    private var isOn: Bool { configuration.isOn }
+    private var metrics: InstrumentToggleStyle.Metrics { style.metrics }
+    private var height: CGFloat { metrics.height(for: style.width) }
+    private var knob: CGFloat { metrics.knob(for: style.width) }
+    private var ring: CGFloat { metrics.ring(for: style.width) }
+    private var ringStroke: CGFloat { metrics.ringStroke(for: style.width) }
 
-    /// Label then track, **hugging** — deliberately no spacer between them.
-    ///
-    /// The stock SwiftUI toggle behaves this way, and the call sites depend on
-    /// it: several are already inside an `HStack` that puts its own `Spacer()`
-    /// before the toggle so the control lands on the row's trailing edge. A
-    /// spacer inside the style as well would pin the *switch* to the far right
-    /// while leaving its label behind at the left, splitting the two halves of
-    /// one control. So the pair stays together and the row decides where the
-    /// pair goes.
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
-            // A bare switch takes no label column *and* no stack spacing, so it
-            // sits centred in a tile cell rather than 8pt off it.
-            if hasLabel {
-                label()
+            if style.showsLabel {
+                configuration.label
                     .font(Theme.Font.chrome)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                    .onTapGesture(perform: action)
+                    .onTapGesture { configuration.isOn.toggle() }
             }
-            Button(action: action) {
+            Button { configuration.isOn.toggle() } label: {
                 ZStack(alignment: .leading) {
                     track
-                    handle
+                    ringView
+                    knobView
                 }
-                .frame(width: width, height: height)
+                .frame(width: style.width, height: height)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
         }
         .onHover { if hovered != $0 { hovered = $0 } }
-        .animation(Theme.Animation.snappy, value: isOn)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isOn)
         .animation(Theme.Motion.state, value: hovered)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(isOn ? "已开启" : "已关闭")
         .accessibilityAddTraits(isOn ? [.isSelected] : [])
     }
 
-    /// The recessed channel: a milled well whose top edge is engraved (dark) and
-    /// whose bottom edge is lit — the inverse of the raised tiles' rim, which is
-    /// exactly what makes it read as a hole rather than a chip.
+    /// The pill: surface gradient, hairline rim, outer lift, inset highlight
+    /// along the top edge and inset shade along the bottom.
     private var track: some View {
-        Capsule()
-            .fill(isOn ? face.opacity(Theme.isDark ? 0.34 : 0.24) : Theme.fieldWell)
+        Capsule(style: .continuous)
+            .fill(LinearGradient(
+                colors: [SwitchPalette.trackTop, SwitchPalette.trackBottom],
+                startPoint: .top, endPoint: .bottom))
             .overlay {
-                Capsule()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Theme.isDark ? Color.black.opacity(0.30) : Color.black.opacity(0.10),
-                                Color.white.opacity(Theme.isDark ? 0.06 : 0.55)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1
-                    )
+                Capsule(style: .continuous)
+                    .strokeBorder(SwitchPalette.rim, lineWidth: 1)
                     .allowsHitTesting(false)
             }
+            // Inset top highlight: the reference's `inset 0 2px 2px #fff`.
             .overlay {
-                // The accent, once on: a lit perimeter on the filled track.
-                if isOn {
-                    Capsule().strokeBorder(tint.opacity(0.30), lineWidth: 1)
-                }
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.white.opacity(Theme.isDark ? 0.20 : 0.95), lineWidth: 1.5)
+                    .mask(LinearGradient(colors: [.white, .white.opacity(0)],
+                                         startPoint: .top, endPoint: .center))
+                    .allowsHitTesting(false)
+            }
+            // Inset bottom shade: `inset 0 -5px 10px rgba(0,0,0,.06)`.
+            .overlay {
+                Capsule(style: .continuous)
+                    .fill(LinearGradient(colors: [.clear, Color.black.opacity(Theme.isDark ? 0.22 : 0.06)],
+                                         startPoint: .center, endPoint: .bottom))
+                    .allowsHitTesting(false)
+            }
+            // Outer lift: `0 10px 22px` + `0 2px 6px`, scaled with the control
+            // so a 27pt pill does not wear a 55pt pill's detached shadow.
+            .shadow(color: .black.opacity(0.10), radius: height * 0.34, y: height * 0.16)
+            .shadow(color: .black.opacity(0.08), radius: height * 0.09, y: height * 0.03)
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(hovered ? style.tint.opacity(0.55) : Color.clear, lineWidth: 1)
+                    .allowsHitTesting(false)
             }
     }
 
-    /// The plated handle. On hover it widens toward its destination and squares
-    /// off on that leading edge (the reference's D-shape), which is the
-    /// direction hint.
-    private var handle: some View {
-        let stretched = hovered && !reduceMotion
-        let handleWidth = height - inset * 2 + (stretched ? 7 : 0)
-        return Capsule()
-            .fill(Theme.cardSurface)
+    /// The ring indicator: a stroked circle on the side the knob is not, red when
+    /// off and green when on.
+    ///
+    /// It does **not** animate its position — see the note on
+    /// `InstrumentToggleStyle`. Only the colour changes, and the knob is what
+    /// moves; giving the ring a travel of its own would be a second moving part
+    /// saying what the knob already says.
+    private var ringView: some View {
+        Circle()
+            .strokeBorder(isOn ? SwitchPalette.ringOn : SwitchPalette.ringOff,
+                          lineWidth: ringStroke)
+            .frame(width: ring, height: ring)
+            .offset(x: metrics.ringOffset(for: style.width, isOn: isOn))
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: isOn)
+    }
+
+    /// The knob: a large disc lit from the upper left, with its own rim, inset
+    /// highlight, inset shade and lift.
+    private var knobView: some View {
+        Circle()
+            .fill(RadialGradient(
+                colors: [SwitchPalette.knobCenter, SwitchPalette.knobMid, SwitchPalette.knobEdge],
+                center: UnitPoint(x: 0.34, y: 0.28),
+                startRadius: 0,
+                endRadius: knob * 0.80))
             .overlay {
-                Capsule().strokeBorder(Theme.isDark
-                                       ? Color.white.opacity(0.10)
-                                       : Color.black.opacity(0.06),
-                                       lineWidth: 1)
-            }
-            .overlay {
-                // The reference's lit top edge on the plate (`inset 0 2px 2px`).
-                Capsule()
-                    .fill(
-                        LinearGradient(colors: [.white.opacity(Theme.isDark ? 0.14 : 0.9), .clear],
-                                       startPoint: .top, endPoint: .center)
-                    )
+                Circle().strokeBorder(SwitchPalette.knobRim, lineWidth: 1)
                     .allowsHitTesting(false)
             }
-            .frame(width: handleWidth, height: height - inset * 2)
-            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
-            .offset(x: isOn ? travel - (handleWidth - (height - inset * 2)) : inset)
+            .overlay {
+                Circle()
+                    .strokeBorder(Color.white.opacity(Theme.isDark ? 0.26 : 0.95), lineWidth: 1.5)
+                    .mask(LinearGradient(colors: [.white, .white.opacity(0)],
+                                         startPoint: .top, endPoint: .center))
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                Circle()
+                    .fill(LinearGradient(colors: [.clear, Color.black.opacity(0.06)],
+                                         startPoint: .center, endPoint: .bottom))
+                    .allowsHitTesting(false)
+            }
+            .frame(width: knob, height: knob)
+            // Lift: `0 10px 18px rgba(0,0,0,.16)` + `0 2px 5px rgba(0,0,0,.12)`.
+            .shadow(color: .black.opacity(0.16), radius: knob * 0.20, y: knob * 0.10)
+            .shadow(color: .black.opacity(0.10), radius: knob * 0.06, y: knob * 0.03)
+            .offset(x: metrics.knobOffset(for: style.width, isOn: isOn))
     }
-}
-
-extension ToggleStyle where Self == InstrumentToggleStyle {
-    /// `Toggle(…).instrumentToggle()` — the app's switch.
-    static var instrument: InstrumentToggleStyle { InstrumentToggleStyle() }
 }
 
 // MARK: - Perimeter sweep (ultimate-3d-btn::before)
@@ -368,278 +1302,55 @@ struct GroundShadow: View {
     }
 }
 
-/// **The page band's own control** — a capsule *milled into* the band rather
-/// than a second white chip laid on it, plus the 3D button reference's
-/// **perimeter sweep** — a lit arc that travels the control's own edge once
-/// when the pointer arrives and then stops.
+
+
+// MARK: - The page band's own control
+/// The control a page band (连接器 / 模型) puts in its header: the same push
+/// button as everywhere else, at the band's own proportions, in the quiet tone.
 ///
-/// It used to be a flat grey capsule with a grey border and **no hover response
-/// at all** (`bgSecondary` fill, `Theme.hairline` stroke) — the single most
-/// generic object on a page whose complaint was that it read as plain. Two
-/// things fix it, both cheap:
-///
-/// 1. the well is the *recessed* fill (`Theme.fieldWell`) so the button reads as
-///    a control sitting in the band, not another card;
-/// 2. the accent rim and the one-shot sweep say "this is a target" before the
-///    click. The sweep is one trimmed shape and runs only on hover, never on a
-///    loop — a permanent rotating border is chrome that never stops meaning
-///    anything, and it is what the reference does that this deliberately does
-///    not.
-struct HeaderControlModifier: ViewModifier {
-    @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// It used to be its own recipe — a milled capsule with a bottom rule and a
+/// `GroundShadow` — which is exactly the kind of "one more button" this
+/// unification removes. A band's control is not a different object from the
+/// dashboard's 刷新; it is the same object on a different surface.
+extension View {
+    func headerControl() -> some View {
+        modifier(HeaderControlModifier())
+    }
+}
+
+private struct HeaderControlModifier: ViewModifier {
     @Environment(\.isEnabled) private var enabled
 
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
-            // The well and the rim are the control's **whole** surface, so the
-            // button must be `.plain`: the default macOS bezel would draw its
-            // own grey rounded rect *inside* this capsule, which is the muddy
-            // double-grey that made these read as washed-out and disabled.
-            // `.plain` also means `isEnabled` no longer dims the label for us,
-            // so the disabled state is stated below instead of inherited.
-            .background(Theme.fieldWell, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(hovered ? Theme.claude.opacity(0.45) : Theme.hairline,
-                                  lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
-                if !reduceMotion {
-                    PerimeterSweep(active: hovered, tint: Theme.claude.opacity(0.9), lineWidth: 1.4)
-                        .padding(0.5)
-                }
-            }
-            .overlay { GroundShadow(active: hovered).offset(y: 18).opacity(0.5) }
-            .contentShape(Capsule())
-            .opacity(enabled ? 1 : 0.45)
-            .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(Theme.Motion.state, value: hovered)
-    }
-}
-
-// MARK: - Instrument button (the 3D press)
-
-/// The app's **one** push button.
-///
-/// Quiet and prominent are the **same plate at two intentions**. Prominent fills
-/// with the shape hue; quiet is the same machined plate in the well tone. A flat
-/// blue capsule next to a flat grey one was two languages in one band, and both
-/// read as a system pill with a tint poured on.
-///
-/// The plate is the Uiverse push-button material, scaled to a 32pt control:
-/// a lit lip, a shade that falls to the bottom edge, a contact shadow, and a
-/// gloss that arrives with the pointer. Hover lifts it (`scale 1.02`) and runs
-/// a rim highlight; press compresses it. The rim is `DecorativeMotion`'s sweep
-/// — a Core Animation rotation, paused unless the pointer is on the control and
-/// the surface is visible. It is not `PerimeterSweep`: that one-shot is a
-/// SwiftUI transaction, and a highlight that should last exactly as long as the
-/// hover wants a layer that starts and stops with `active`.
-///
-/// What the references do that this does not: per-letter flicker, a glitch, an
-/// infinite idle spin, and a skewed hero plate. A glitch on a native control
-/// reads as a fault, and splitting a label into a view per glyph is a layout
-/// per character on every toolbar button in the window.
-struct InstrumentButtonStyle: ButtonStyle {
-    var prominent = false
-    /// Rim and, with `filled`, the body. A shape hue, not ink.
-    var tint: Color = Theme.claude
-    /// Quiet buttons stay white by default: the reference's label is white on the
-    /// plate, and the plate is dark enough in both themes to carry it. Pass a
-    /// hue only where the label itself is the signal (a destructive action) —
-    /// see `InstrumentButtonBody.tall` for the one case that keeps 4.5:1 on a
-    /// light body.
-    var ink: Color? = nil
-    /// Fills the body with `tint` instead of the well tone. `prominent` is the
-    /// page's primary action; a destructive button is normally this too, because
-    /// "filled with the danger hue" is the loudest thing it can be without
-    /// inventing a second shape.
-    var filled: Bool? = nil
-    /// The reference's own proportions: a taller pill with a rung-up label, for a
-    /// hero action. Left off, the button keeps the app's control height so a
-    /// toolbar of 刷新 / 选择项目 / 自定义 stays level with its fields.
-    var tall: Bool = false
-
-    private var isFilled: Bool { filled ?? prominent }
-
-    func makeBody(configuration: Configuration) -> some View {
-        InstrumentButtonBody(configuration: configuration, prominent: prominent,
-                             tint: tint, ink: ink, filled: isFilled, tall: tall)
-    }
-}
-
-private struct InstrumentButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    var prominent: Bool
-    var tint: Color
-    var ink: Color?
-    var filled: Bool
-    var tall: Bool
-    @State private var hovered = false
-    @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.surfaceIsVisible) private var surfaceVisible
-
-    /// The plate's geometry, derived off one height so the capsule is a true pill
-    /// and the cap radius never exceeds half the shorter side.
-    private var height: CGFloat { tall ? 44 : 32 }
-
-    var body: some View {
-        let down = configuration.isPressed && enabled
-        let lit = hovered && enabled && !down
-
-        configuration.label
-            .font(.system(size: tall ? 14 : 12.5, weight: .semibold, design: .rounded))
-            // A near-black label was the previous light-mode default on the accent;
-            // these read as an action, and the reference prints the label in white.
-            .foregroundStyle(labelColor)
-            // A 1pt drop, not the reference's 2px grey smear: at 12.5pt the smear
-            // just dirties the counters.
-            .shadow(color: filled ? .black.opacity(0.28) : .clear, radius: 0, y: 1)
-            .padding(.horizontal, tall ? 22 : 15)
-            .frame(height: height)
-            .background { plateFill }
-            .overlay { gloss(lit: lit, down: down) }
-            .overlay { rim(lit: lit, down: down) }
-            .overlay { topLight(lit: lit) }
-            .clipShape(Capsule())
-            // After the clip: the sweep is a stroke centred on the rim, and
-            // clipping it would shave the outer half of the highlight.
-            .overlay { edgeSweep(lit: hovered && enabled) }
-            .contentShape(Capsule())
-            // The plate's two drop shadows, **owned by a layer rather than the
-            // view graph** — see `LayerShadow` in `Tile.swift` for the method
-            // and the numbers. `.shadow(...)` is a display-list filter: it
-            // re-runs every display cycle the button's subtree is visited, and
-            // `.compositingGroup()` above it makes the whole button one more
-            // compositing unit. This button is the app's most-repeated
-            // component — the provider directory alone carries 8 of them per
-            // card — and the cost is per *button*, not per button class.
-            //
-            // Measured (provider directory, deep scroll, SCStream paints over
-            // 19 s, alternating arms): `.shadow` **1272** (p50 16.5 ms, >20 ms
-            // 73) vs layer **2072** (p50 8.4 ms, >20 ms 0) — 66.6 → 108.6 fps.
-            //
-            // The two build the same picture: the tinted one is the reference's
-            // `:before`, fuller and lower, the black one its `:after`. A layer
-            // carries a single shadow, so `LayerShadow` takes the second as a
-            // sibling layer instead. `filled` gates the tinted one exactly as
-            // `.clear` did.
+            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 13)
+            .frame(height: 30)
             .background {
-                LayerShadow(radius: down ? 1 : (lit ? 8 : 3),
-                            y: down ? 0 : (lit ? 5 : 2),
-                            opacity: lit ? 0.22 : 0.14,
-                            cornerRadius: height / 2,
-                            surface: .clear,
-                            color: .black,
-                            underRadius: down ? 0 : (lit ? 8 : 4),
-                            underY: down ? 0 : 2,
-                            underOpacity: filled ? (down ? 0.08 : (lit ? 0.40 : 0.18)) : 0,
-                            underColor: tint)
+                ControlPlate(tone: .neutral, tint: Theme.claude, emphasis: .standard,
+                             shape: Capsule(), hovered: false, pressed: false)
             }
-            .opacity(enabled ? 1 : 0.38)
-            // Hover grows the drawing, not the layout slot, so a toolbar of
-            // mixed buttons does not reflow. Press compresses; Reduce Motion
-            // keeps the colour change and drops the transform.
-            .scaleEffect(reduceMotion ? 1 : (down ? 0.96 : (lit ? 1.02 : 1)))
-            .onHover { if hovered != $0 { hovered = $0 } }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: hovered)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
-    }
-
-    /// White on a filled plate; on the well tone the label keeps the app's
-    /// primary text, which is the only pairing that clears the body-text contrast
-    /// floor in both themes.
-    private var labelColor: Color {
-        if let ink { return ink }
-        if filled { return .white }
-        return Theme.textPrimary
-    }
-
-    /// Body plus the milling. The hover used to multiply the whole fill by
-    /// 0.92, which washed the accent out — the plate looked flatter the moment
-    /// it was asked to respond. Depth stays in the gradient; hover adds the
-    /// gloss on top of an unchanged body.
-    private var plateFill: some View {
-        let body = filled ? tint : Theme.fieldWell
-        return Capsule()
-            .fill(body)
-            .overlay {
-                Capsule().fill(
-                    LinearGradient(stops: [
-                        .init(color: .white.opacity(filled ? 0.38 : (Theme.isDark ? 0.14 : 0.34)), location: 0.00),
-                        .init(color: .white.opacity(filled ? 0.08 : 0.08), location: 0.22),
-                        .init(color: .clear, location: 0.48),
-                        .init(color: .black.opacity(filled ? 0.20 : (Theme.isDark ? 0.28 : 0.06)), location: 1.00),
-                    ], startPoint: .top, endPoint: .bottom)
-                )
-                .allowsHitTesting(false)
+            .background {
+                LayerShadow(radius: 3, y: 1.5, opacity: 0.09,
+                            cornerRadius: 15, surface: .clear, color: .black)
             }
-    }
-
-    /// The reference's `::after`: a highlight gathered at the top edge that
-    /// fades in with the pointer and peaks on press. Opacity only — the
-    /// gradient itself does not move.
-    private func gloss(lit: Bool, down: Bool) -> some View {
-        Capsule()
-            .fill(
-                LinearGradient(stops: [
-                    .init(color: .white, location: 0.00),
-                    .init(color: Color.white.opacity(0.55), location: 0.14),
-                    .init(color: tint.opacity(filled ? 0.15 : 0.28), location: 0.32),
-                    .init(color: .clear, location: 0.58),
-                ], startPoint: .top, endPoint: .bottom)
-            )
-            .opacity(down ? 0.62 : (lit ? 0.36 : 0))
-            .allowsHitTesting(false)
-    }
-
-    /// Resting edge is the body one step darker. Hover picks up the highlight
-    /// hue; press goes brighter still — the reference's active border, without
-    /// a second shape.
-    private func rim(lit: Bool, down: Bool) -> some View {
-        let resting = Color.black.opacity(filled ? 0.22 : (Theme.isDark ? 0.55 : 0.14))
-        let hot = (filled ? Color.white : tint).opacity(down ? 0.85 : 0.55)
-        return Capsule()
-            .strokeBorder(lit || down ? hot : resting, lineWidth: 1)
-            .allowsHitTesting(false)
-    }
-
-    /// The lit top edge. Present at rest — it is what tells a person the
-    /// surface is raised — and brighter under the pointer.
-    private func topLight(lit: Bool) -> some View {
-        Capsule()
-            .strokeBorder(
-                LinearGradient(colors: [
-                    .white.opacity(lit ? 0.70 : (filled ? 0.46 : (Theme.isDark ? 0.22 : 0.80))),
-                    .clear
-                ], startPoint: .top, endPoint: .center),
-                lineWidth: 1
-            )
-            .padding(0.5)
-            .allowsHitTesting(false)
-    }
-
-    /// Rim highlight for as long as the pointer stays. The layer is resident
-    /// so the first hover does not allocate a view mid-gesture; `active` is
-    /// what starts the rotation, and occlusion stops it if the window is covered.
-    private func edgeSweep(lit: Bool) -> some View {
-        DecorativeMotion(kind: .sweep,
-                         tint: filled ? .white : tint,
-                         active: lit && !reduceMotion && surfaceVisible)
-            .opacity(lit && !reduceMotion ? 0.9 : 0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            .contentShape(Capsule())
+            .opacity(enabled ? 1 : 0.34)
+            .saturation(enabled ? 1 : 0)
     }
 }
 
-/// A menu shown as the same recessed capsule as a field, with a chevron.
-/// Native `.pickerStyle(.menu)` is Aqua chrome inside a machined tile.
+// MARK: - The menu label
+
+/// A `Menu` shown as the same recessed capsule as a field, with a chevron.
+/// Native `.pickerStyle(.menu)` is Aqua chrome inside a machined tile, which is
+/// why every menu in the app draws its own label through this.
+///
+/// It is a *label*, not a control: the `Menu` around it owns the button, the
+/// click and the focus ring. So this draws the well, the hover rim and the
+/// chevron, and nothing else — a second press state here would fight the one
+/// AppKit is already tracking on the `Menu` itself.
 struct InstrumentMenuLabel: View {
     var title: String
     var tint: Color = Theme.claude
@@ -661,6 +1372,8 @@ struct InstrumentMenuLabel: View {
         .padding(.trailing, 8)
         .frame(height: 28)
         .frame(maxWidth: 168)
+        // On a card, not on the page canvas: a recessed well would vanish
+        // against a raised tile, so the well steps up instead.
         .instrumentWell(radius: 14, focused: hovered, accent: tint, onCard: true)
         .overlay {
             if !reduceMotion {
@@ -673,13 +1386,4 @@ struct InstrumentMenuLabel: View {
         .onHover { if hovered != $0 { hovered = $0 } }
         .animation(Theme.Motion.state, value: hovered)
     }
-}
-
-extension View {
-    /// The one control shape a page band's buttons take.
-    ///
-    /// Shared by 连接器's 刷新 / 选择项目 and 模型's 自定义: a page band's
-    /// controls are the band's own affordances, so two bands that are meant to
-    /// read as the same object must not dress their buttons differently.
-    func headerControl() -> some View { modifier(HeaderControlModifier()) }
 }

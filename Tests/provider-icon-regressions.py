@@ -42,8 +42,8 @@ def _read_png(path):
             idat += chunk
         elif kind == b'IEND':
             break
-    if palette is None:
-        raise ValueError(f'{path.name}: only palette PNGs are supported')
+    if palette is None and color_type != 6:
+        raise ValueError(f'{path.name}: only palette or RGBA PNGs are supported')
     raw = zlib.decompress(idat)
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color_type]
     stride = width * channels
@@ -69,9 +69,23 @@ def _read_png(path):
                 line[x] = (line[x] + pr) & 255
         out += line
         prev = line
-    entries = [(palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2],
-                trns[i] if trns and i < len(trns) else 255)
-               for i in range(len(palette) // 3)]
+    if color_type == 6:
+        # True-colour with alpha: the pixel bytes are the samples, so there is no
+        # palette to expand. It carries an entry per pixel, which is what the
+        # palette arm below produces by indexing — same shape, no lookup.
+        #
+        # This arm exists for the ClaudeBar mark. Every LobeHub file is a palette
+        # PNG, so the reader only ever had to handle those; the app's own mark is
+        # authored as flat RGBA by `Tools/make-claudebar-mark.py` (one ink plus
+        # antialiased alpha cannot be expressed in a palette without going back
+        # to the banding the script exists to avoid), and the mark is drawn in
+        # the same wells as the others, so it has to clear the same floor.
+        entries = [(out[i], out[i + 1], out[i + 2], out[i + 3])
+                   for i in range(0, len(out), 4)]
+    else:
+        entries = [(palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2],
+                    trns[i] if trns and i < len(trns) else 255)
+                   for i in range(len(palette) // 3)]
     return width, height, entries, bytes(out)
 
 
@@ -92,13 +106,23 @@ def _ink_mean(path):
     width, height, entries, indices = _read_png(path)
     tally = [0.0, 0.0, 0.0]
     opaque = 0
-    for index in indices:
-        r, g, b, a = entries[index]
-        if a > 128:
-            tally[0] += r
-            tally[1] += g
-            tally[2] += b
-            opaque += 1
+    if len(indices) == len(entries) * 4:
+        # RGBA samples, one entry per pixel — see `_read_png`.
+        for offset in range(0, len(indices), 4):
+            r, g, b, a = entries[offset // 4]
+            if a > 128:
+                tally[0] += r
+                tally[1] += g
+                tally[2] += b
+                opaque += 1
+    else:
+        for index in indices:
+            r, g, b, a = entries[index]
+            if a > 128:
+                tally[0] += r
+                tally[1] += g
+                tally[2] += b
+                opaque += 1
     if opaque == 0:
         raise AssertionError(f'{path.name} has no opaque pixels')
     return tuple(v / opaque for v in tally), opaque / (width * height)

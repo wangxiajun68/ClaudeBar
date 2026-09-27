@@ -2,8 +2,18 @@ import SwiftUI
 
 // MARK: - Agent mark
 
-/// An agent family's mark in a tinted well. While busy, a short arc orbits
-/// it.
+/// An agent family's mark in a tinted **circle**. While busy, a short arc
+/// orbits it.
+///
+/// The well used to be the `ProductBrandMark` tile: a rounded *square* of
+/// `Theme.bgSecondary` behind the bundled artwork. On the island that tile is
+/// the only square shape on a surface built entirely from circles — the orbit
+/// ring, the pace ring, the status dots — so the badge read as a scrap of the
+/// light-theme dashboard pasted onto the notch, and its corner radius had to
+/// be re-derived for every size (18 / 20 / 26pt) the island draws. The well is
+/// a circle now, and the artwork rides at the same fraction of it, so the mark
+/// reads at the same weight at every size and the badge belongs to the
+/// island's own geometry.
 ///
 /// The orbit is `DecorativeMotion(kind: .arc)` — a Core Animation layer the
 /// render server interpolates, gated on the window's occlusion state, the same
@@ -55,21 +65,47 @@ struct IslandAgentBadge: View {
     }
 }
 
+/// One agent family's mark, in the well's own frame — **no tile of its own**.
+///
+/// The mark is the family's real artwork, so the island names CC and Codex the
+/// same way the provider page, the dashboard strip and the menu bar do, rather
+/// than with an SF Symbol that is a stand-in for a product. The square the old
+/// `ProductBrandMark` tile drew around it is dropped here (`well: false`) and
+/// the circle is the caller's: `IslandAgentBadge` and `IslandMarkWell` each
+/// fill one at 0.16 of the family hue, and the mark sits at 0.56 of it — the
+/// ratio the badge has always used, so nothing moved.
+///
+/// `page: true` — the island is **black in both themes**, so the ink has to be
+/// the light one. This is not a preference: without it the mark took the app
+/// theme's asset, and in light mode the island drew a near-black "A\" and knot
+/// on its own black badge, i.e. three invisible marks beside a violet Cursor
+/// glyph. `ProductBrandMark` carries the table; the parameter is here because
+/// *this* surface, not `Theme.isDark`, is what decides it.
+///
+/// Every family now draws its **own artwork** — the mark is round on the island
+/// because the *artwork* is, and because `well: false` leaves no square corner
+/// for the well's circle to disagree with. `ProductBrandMark`'s own tile is the
+/// rounded square this surface used to inherit, and it was the only square on a
+/// panel built from circles; the badge has drawn a circle since, and the mark
+/// rides inside it. Cursor used to be an SF Symbol here, which is why it was the
+/// one mark that stayed legible when the other two went black — and why it was
+/// the wrong shape.
+///
+/// The three marks are normalised on **width** (`Tools/gen-brand-marks.py`), so
+/// a wide "A\", a square knot and a portrait cube stand the same size in a row
+/// of badges; sizing each to its own box would put a visibly smaller Cursor cube
+/// beside the other two.
 struct IslandAgentMark: View {
     let agent: IslandAgent
 
     var body: some View {
         switch agent {
         case .claude:
-            ProductBrandMark(codex: false)
+            ProductBrandMark(brand: .claude, well: false, page: true)
         case .codex:
-            ProductBrandMark(codex: true)
+            ProductBrandMark(brand: .codex, well: false, page: true)
         case .cursor:
-            Image(systemName: "cursorarrow.rays")
-                .resizable()
-                .scaledToFit()
-                .fontWeight(.semibold)
-                .foregroundStyle(IslandStyle.color(.cursor))
+            ProductBrandMark(brand: .cursor, well: false, page: true)
         }
     }
 }
@@ -396,6 +432,32 @@ struct IslandUsageCard: View {
         return "昨日的 \(Int((pace * 100).rounded()))% · " + calls
     }
 
+    /// 本月 total, its pace, and the split bar that says which clients made it.
+    ///
+    /// The line used to carry a **legend** in front of the bar — the four source
+    /// marks, each captioned with its own name. It was removed on 2026-09-27,
+    /// for two reasons:
+    ///
+    /// - **It did not fit, and the thing that gave way was the pace.** The row
+    ///   is one `lineLimit(1)` at the card's 640pt, and the legend is the
+    ///   widest thing in it: four marks *plus* four captions ("CC", "Codex",
+    ///   第三方, and the app's own rings) — measured on the shipped build, they
+    ///   pushed the pace label to `上月同期…` with its figure cut off. A label
+    ///   that is always truncated is worse than absent, and the pace is a real
+    ///   reading while the legend was a restatement.
+    /// - **The legend said nothing the bar does not already say.** The bar is
+    ///   already `UsageSource.allCases` in order, in each source's own colour,
+    ///   and it carries a `.help` tooltip spelling out every source with its
+    ///   figure and share. Captioning it with the same four names one line
+    ///   above was a second copy of the tooltip.
+    ///
+    /// The bar keeps its proportional segments, so "which client" is still
+    /// answered — by position and colour, with the exact figures on hover.
+    ///
+    /// The pace is now the widest thing on the line, so it gets `.fixedSize()`
+    /// and cannot be the part that yields: the `Spacer` absorbs the slack
+    /// instead, and `minimumScaleFactor` is the last resort rather than the
+    /// mechanism.
     private var monthLine: some View {
         HStack(spacing: 10) {
             Text("本月")
@@ -406,13 +468,15 @@ struct IslandUsageCard: View {
                 Text("上月同期 \(Int((pace * 100).rounded()))%")
                     .rollingNumber()
                     .foregroundStyle(pace >= 1 ? IslandStyle.amber : IslandStyle.textSecondary)
+                    .fixedSize()
             }
             Spacer(minLength: 8)
             IslandSourceSplit(values: usage.monthBySource)
-                .frame(width: 100, height: 6)
+                .frame(width: 84, height: 6)
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
         .lineLimit(1)
+        .minimumScaleFactor(0.85)
     }
 }
 

@@ -95,6 +95,13 @@ enum ExternalAgentKind: String, CaseIterable {
 
     var icon: String { "chevron.left.forwardslash.chevron.right" }
 
+    /// Draw the client's bundled mark instead of `icon` — `true` is
+    /// `ProductBrandMark`'s Codex half. A call site that positions a factor
+    /// glyph says "a tool"; the page headers and section titles that *name* the
+    /// client read this, so Codex is spelled the same way here as it is in the
+    /// widget, the island and the popup.
+    var brand: Bool { true }
+
     var rootDir: String {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"]
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path

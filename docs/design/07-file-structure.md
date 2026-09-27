@@ -9,7 +9,7 @@ ClaudeBar/
 │   ├── build.sh                          ← 开发者 / CI 构建脚本（非终端用户安装器）
 │   ├── AppIcon.icns / AppIcon.svg        ← 应用图标
 │   ├── ProviderIcons/                    ← 厂商品牌图标（LobeHub Icons，随包内置；见其 README）
-│   ├── BrandAssets/                      ← CC / Codex 客户端的图标底片（由 Tools/gen-brand-marks.py 生成）
+│   ├── BrandAssets/                      ← 三家客户端 + ClaudeBar 自己的图标底片（由 Tools/gen-brand-marks.py 生成）
 │   ├── batteryctl/                       ← 电池控制 C 辅助进程（`batteryctl.c` + `policy.h`）
 │   ├── ClaudeBar/                        ← 主 app 源码
 │   │   ├── ClaudeBarApp.swift            ← AppDelegate（.regular 激活策略；@main App 壳）

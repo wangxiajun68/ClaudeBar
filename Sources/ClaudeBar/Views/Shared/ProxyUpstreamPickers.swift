@@ -64,10 +64,9 @@ struct ProxyUpstreamPickers: View {
                     caption: "跟随「模型」页的当前供应商。",
                     tint: tint, compact: true) {
             if empty {
-                Button("去添加") {
+                ActionButton("去添加") {
                     NotificationCenter.default.post(.showMainWindow(page: .providers, editor: true))
                 }
-                .adaptiveGlassButton(tint: tint)
             } else {
                 // The value is a read-out, not a control: keep it in the tile's
                 // own type scale so it does not read as an editable field.

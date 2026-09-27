@@ -12,8 +12,7 @@ struct ProxyCurlExample: View {
         SettingTile(icon: "terminal", title: "curl 示例",
                     caption: "带本机令牌的请求示例。",
                     tint: Theme.codex, compact: true) {
-            Button("查看") { showingExample = true }
-                .adaptiveGlassButton()
+            ActionButton("查看") { showingExample = true }
         }
         .popover(isPresented: $showingExample, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {

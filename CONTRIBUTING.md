@@ -86,7 +86,7 @@ VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该�
 ### UI
 
 - **设计 token** — 颜色、字体、间距、圆角、动画统一使用 `Theme/Theme.swift`。
-- **按钮样式** — 动作按钮用 `adaptiveGlassButton()`（名字是历史遗留，实现是 `InstrumentButtonStyle`，不是系统玻璃按钮）；页头带里的控件用 `.buttonStyle(.plain)` + `.headerControl()`。不要写 `.buttonStyle(.glass)` / `.bordered`。
+- **按钮样式** — 动作按钮一律 `ActionButton`，按**用途**传参：`tone:` 说这是什么控件（默认 `.sparkle` 深色板；`.neutral` 用在不能让卡片破洞的地方；`.accent` 是本页主操作；`.destructive` 只给销毁性动作），`emphasis: .primary` 表示它是本页的默认动作。不要再用已删除的 `adaptiveGlassButton()`，也不要写 `.buttonStyle(.glass)` / `.bordered`。页头带里的控件用 `.buttonStyle(.plain)` + `.headerControl()`。
 - **文案** — 用户可见字符串使用中文；代码标识符使用英文。
 
 ### 构建验证

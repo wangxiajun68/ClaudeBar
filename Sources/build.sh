@@ -68,6 +68,13 @@ require_file "$SOURCES_DIR/Models/ProviderStore.swift"
 require_file "$SOURCES_DIR/Theme/Theme.swift"
 require_file "$WIDGET_DIR/WidgetViews.swift"
 require_file "$WIDGET_DIR/WidgetProvider.swift"
+# The widget names CC / Codex with the bundled marks; a missing BrandAssets
+# directory is a blank tile in the appex rather than a build error.
+require_file "$PROJECT_DIR/Sources/BrandAssets/openai-dark.png"
+# The app's own mark, for the 第三方 tally in the usage legend. Derived from the
+# app icon by Tools/make-claudebar-mark.py; a missing pair draws the fallback
+# glyph rather than failing the build, which is why it is guarded here.
+require_file "$PROJECT_DIR/Sources/BrandAssets/claudebar-light.png"
 # The detailed internal illustration is bundled for offline use.
 require_file "$SOURCES_DIR/Resources/macbook-internals-illustration.png"
 if [ ! -e "$WIDGET_DIR/WidgetSnapshot.swift" ]; then
@@ -286,6 +293,15 @@ echo "=== Building Widget ==="
 APPEX_DIR="$CONTENTS/PlugIns/ClaudeBarWidget.appex"
 APPEX_CONTENTS="$APPEX_DIR/Contents"
 mkdir -p "$APPEX_CONTENTS/MacOS"
+
+# The appex draws the CC / Codex marks too (`WidgetViews`' `sectionHeader`), and
+# `ProductBrandMark` decodes them from *its own* bundle — an extension has a
+# different `Bundle.main` from the host app, so the app's copy is not visible
+# here. Without this the widget would silently draw the missing-asset fallback
+# glyph and look, to every reader, exactly like a deliberate change.
+APPEX_RESOURCES="$APPEX_CONTENTS/Resources"
+mkdir -p "$APPEX_RESOURCES"
+cp -R "$PROJECT_DIR/Sources/BrandAssets" "$APPEX_RESOURCES/BrandAssets"
 
 # Compile the widget directly into the appex (no intermediate binary in MacOS/,
 # which previously left a stray ClaudeBarWidget binary alongside the main app

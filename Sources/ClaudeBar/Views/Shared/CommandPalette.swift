@@ -214,6 +214,12 @@ struct CommandPalette: View {
         items += providerStore.cursorSessions.map { s in
             CommandItem(id: "cursor:\(s.composerId)", kind: .cursorSession, title: s.displayTitle,
                         subtitle: s.name.isEmpty ? "Cursor" : s.name,
+                        // The palette is a list of *sessions*, so a row's icon
+                        // is the row's kind, not a brand — the sessions page
+                        // beside it names the client with the bundled mark, and
+                        // a palette that repeated the cube on all three rows
+                        // would lose the "which client" reading instead of
+                        // gaining it (the subtitle already says Cursor).
                         icon: "cursorarrow",
                         tint: Theme.cursorAccent,
                         result: .page(.sessions))

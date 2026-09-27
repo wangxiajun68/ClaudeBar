@@ -557,9 +557,7 @@ private struct ConnectorInventoryHeader: View {
         }
     }
 
-    /// The two clients whose artwork is bundled draw it; Cursor keeps its
-    /// symbol, because `cursorarrow.rays` *is* its icon rather than a stand-in
-    /// for one.
+    /// All three clients' artwork is bundled, so all three draw it.
     private func platformBrand(_ item: ConnectorPlatform?) -> Bool? {
         switch item {
         case .claude: false
@@ -572,7 +570,7 @@ private struct ConnectorInventoryHeader: View {
         switch item {
         case .claude: "terminal"
         case .codex: "chevron.left.forwardslash.chevron.right"
-        case .cursor: "cursorarrow.rays"
+        case .cursor: ""
         }
     }
 }
@@ -645,7 +643,15 @@ private struct ConnectorCard: View {
             Button(action: onDetails) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 10) {
-                        GlyphWell(name: record.kind.symbol, tint: tint, size: 40, engaged: hovered)
+                        // A connector that belongs to one client shows that
+                        // client's mark; the kind (plugin / skill / MCP) is
+                        // already printed under the name, and the chip row
+                        // below prints the platform's own hue. Three copies of
+                        // the same fact was the reason the well read as
+                        // decoration.
+                        GlyphWell(name: record.kind.symbol,
+                                  tint: tint, size: 40, engaged: hovered,
+                                  mark: record.brandWellMark)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(record.name)
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -822,6 +828,38 @@ private struct ConnectorKindFilter: View {
     }
 }
 
+/// A local CLI's avatar: the command's own two-letter monogram on a wash of the
+/// hue its name hashes to.
+///
+/// Not a `GlyphWell`: that well draws an *icon* — a symbol or a client's bundled
+/// artwork — and a command-line tool has neither. What it does have is a name,
+/// which is the only honest thing to draw at 40pt. The hue comes from `djb2` of
+/// the name, so the grid reads as a roster of distinct entries instead of 20
+/// copies of one terminal glyph. See `LocalCLIRecord.monogram`.
+private struct CLIAvatar: View {
+    let record: LocalCLIRecord
+    var size: CGFloat = 40
+    var engaged = false
+
+    private var tint: Color { Color(hex: record.hue) }
+
+    var body: some View {
+        Text(record.monogram)
+            .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+            .foregroundColor(tint)
+            .frame(width: size, height: size)
+            .background {
+                RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+                    .fill(tint.opacity(engaged ? 0.16 : 0.09))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+                    .strokeBorder(tint.opacity(engaged ? 0.32 : 0.16), lineWidth: 0.75)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 private struct LocalCLICard: View {
     let cli: LocalCLIRecord
     let relatedCount: Int
@@ -830,7 +868,11 @@ private struct LocalCLICard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                GlyphWell(name: "terminal", tint: Theme.Ink.claude, size: 40, engaged: hovered)
+                // The command's own monogram, in the command's own hue. See
+                // `LocalCLIRecord.monogram` for why this is not a logo: the
+                // inventory is a list of *commands*, most of which have no mark
+                // to bundle, and 20 identical terminals read as a failed render.
+                CLIAvatar(record: cli, size: 40, engaged: hovered)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cli.name)
                         .font(Theme.Font.chromeEmph)
@@ -898,8 +940,8 @@ private struct ConnectorUtilityButtonStyle: ButtonStyle {
     @Binding var hovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        InstrumentButtonStyle(prominent: accented, tint: Theme.claude,
-                              filled: accented || hovered)
+        ActionPlateButtonStyle(tone: accented || hovered ? .accent : .neutral,
+                               tint: Theme.claude, ink: nil, metrics: .regular)
             .makeBody(configuration: configuration)
             .environment(\.isEnabled, true)
     }

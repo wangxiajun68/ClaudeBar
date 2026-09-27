@@ -56,7 +56,7 @@ struct GreetingCard: View {
             weatherLoading: weather.loading,
             weatherNote: weather.note,
             refreshWeather: { weather.refresh() },
-            refreshQuota: { codexStore.refreshQuota() },
+            refreshQuota: { codexStore.refreshQuota(manual: true) },
             showModels: { onNavigate(.providers) },
             showUsage: { onNavigate(.usage) }
         )
@@ -240,13 +240,22 @@ struct GreetingStatusSheet: View {
 
     private var greeting: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // One timeline drives both the date line and the salutation, so the
+            // greeting cannot go stale against the date above it — midnight,
+            // when the phrase and the day both turn over, is exactly the moment
+            // two independent timers would disagree. 60 s is well inside the
+            // shortest band, so no boundary is ever missed by more than a
+            // minute.
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text(context.date.formatted(.dateTime.month(.wide).day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .tracking(1)
-                    .foregroundStyle(palette.inkSoft)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(context.date.formatted(.dateTime.month(.wide).day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .tracking(1)
+                        .foregroundStyle(palette.inkSoft)
+                    SkyGreeting(name: name, palette: palette,
+                                phrase: GreetingPhrase.forDate(context.date))
+                }
             }
-            SkyGreeting(name: name, palette: palette)
             GreetingClock(ink: palette.ink, secondary: palette.inkSoft)
         }
     }
@@ -260,7 +269,7 @@ struct GreetingStatusSheet: View {
             VStack(alignment: .leading, spacing: 12) {
                 modelIdentity(codex: true, model: codexModel, provider: "余额 \(balance)")
                 Button(action: refreshQuota) {
-                    VStack(alignment: .leading, spacing: 7) {
+                    VStack(alignment: .leading, spacing: 5) {
                         if windows.isEmpty {
                             Label(quotaPlacard, systemImage: "arrow.clockwise")
                                 .font(.system(size: 10)).foregroundStyle(palette.inkSoft)
@@ -268,6 +277,12 @@ struct GreetingStatusSheet: View {
                         } else {
                             ForEach(windows) { window in
                                 quotaRow(window)
+                                // The instant this window comes back, on its own
+                                // line: the percentages can only say *how much* is
+                                // left, and the clock is the half of the reading
+                                // that says *until when* — the two used to sit in
+                                // two different cards under two different words.
+                                resetLine(window)
                             }
                         }
                     }
@@ -285,7 +300,35 @@ struct GreetingStatusSheet: View {
     private func modelIdentity(codex: Bool, model: String, provider: String) -> some View {
         Button(action: showModels) {
             HStack(alignment: .top, spacing: 11) {
-                ProductBrandMark(codex: codex).frame(width: 32, height: 32)
+                // **No tile, and the ink is the card's own.** This is the one
+                // surface whose ground is neither the theme's nor black: the
+                // greeting card paints its own `palette`, and when there is no
+                // weather reading that palette is the ice canvas — `#E7EEF6` at
+                // the top, `#D5DEEA` at the bottom. `Theme.bgSecondary` is
+                // `#F7FAFC`, so the branded tile is *lighter than the card it
+                // sits on*: measured against the shipped screenshot, the tile
+                // reads at 1.24:1 to its own background, i.e. a white square on
+                // a white card.
+                //
+                // The tile was tolerable while the ink was dark — `well: true,
+                // page: false` drew a black "A\" on that white chip. Passing
+                // `page: palette.isLightGround` then asked for the *white* ink on
+                // the *white* tile, and the mark measured **1.13:1** against the
+                // tile it was standing on: not "low contrast", gone. The two
+                // parameters were answering different questions and one answer
+                // was wrong.
+                //
+                // The card carries its own ink (`palette.ink`, `palette.inkSoft`)
+                // on every other element in this row, so the mark joins them: no
+                // tile of its own, and the ink named for the card's tone rather
+                // than for `Theme.isDark` — which is a question this surface does
+                // not answer, since the card is redrawn from the sky behind it.
+                // `isLightGround` is the card's own word for "dark ink here",
+                // which is exactly what `page: false` means.
+                ProductBrandMark(codex: codex,
+                                 well: false,
+                                 page: !palette.isLightGround)
+                    .frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 5) {
                         Text(codex ? "Codex" : "Claude Code").font(.system(size: 10, weight: .semibold))
@@ -304,9 +347,14 @@ struct GreetingStatusSheet: View {
         .accessibilityLabel("\(codex ? "Codex" : "Claude Code")，\(model)，\(provider)，打开模型管理")
     }
 
+    /// One line per window: the rail and the share of the allowance still
+    /// standing. The window's own reset clock rides on the line beneath (see
+    /// `resetLine`) rather than here — a row that carries the label, the rail,
+    /// the percentage and the clock at once truncates the clock to `9月28日
+    /// 00:44…`, and a half-clocked row is worse than no clock on it.
     private func quotaRow(_ window: CodexQuotaWindow) -> some View {
         let remaining = max(0, min(100, 100 - window.usedPercent))
-        return HStack(spacing: 8) {
+        return HStack(spacing: 6) {
             Text(window.label).frame(width: 32, alignment: .leading)
             GeometryReader { geo in
                 Capsule().fill(palette.ink.opacity(0.15))
@@ -323,6 +371,24 @@ struct GreetingStatusSheet: View {
         .help("\(window.label)剩余 \(Int(remaining))%，\(window.resetClock) 重置")
     }
 
+    /// What the row above cannot say: how long it is until the window rolls
+    /// over again. The rail's percentage is a share, and a share of nothing
+    /// still reads as 0% — the wait is what says whether the allowance is
+    /// nearly back or hours away.
+    private func resetLine(_ window: CodexQuotaWindow) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "clock")
+                .font(.system(size: 7.5, weight: .semibold))
+            Text("\(window.resetClock) · \(window.resetWait)")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .rollingNumber(valueKey: window.resetClock)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .foregroundStyle(palette.ink.opacity(0.62))
+        .padding(.leading, 38)
+        .accessibilityHidden(true)
+    }
+
     /// What the Codex mark's lane says when there are no windows to draw: the
     /// reason, in the card's own two words — a live "正在读取额度…" while the call
     /// is out, the failure note from the store otherwise. This is the *empty*
@@ -336,8 +402,11 @@ struct GreetingStatusSheet: View {
 
     private var quotaHelp: String {
         guard !windows.isEmpty else { return quotaNote ?? "暂无额度数据" }
-        return windows.map { "\($0.label)剩余 \(Int((100 - $0.usedPercent).rounded()))%，\($0.resetClock)" }
-            .joined(separator: " · ")
+        return windows.map {
+            let wait = $0.resetWait.isEmpty ? "" : "（\($0.resetWait)）"
+            return "\($0.label)剩余 \(Int((100 - $0.usedPercent).rounded()))%，\($0.resetClock)\(wait)"
+        }
+        .joined(separator: " · ")
     }
 
     /// Today's volume and today's money in one cell.

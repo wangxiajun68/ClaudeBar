@@ -133,8 +133,11 @@ Deleted, 547 lines and everything that existed only for it:
   glance` section.
 - `Tests/island-reel-regressions.py` — it locked the reel's fixed sizes and had
   nothing left to measure. Removed from `make test` **and** from
-  `.github/workflows/ci.yml` (the two lists are duplicated, and the workflow was
-  already one script behind — `machine-mark-regressions.py` runs locally only).
+  `.github/workflows/ci.yml`. That second edit is where the duplication bit:
+  the workflow kept its own copy of the list, so the two drifted and six
+  suites in `make test` (`product-mark`, `greeting-name`, `weather-astronomy`,
+  `card-shadow`, `machine-mark`, `fan-rotor`) were never run in CI at all. The
+  workflow now just runs `make test` — see `docs/CHANGELOG.md` §内部.
 - `IslandStyle`'s `glance*` / `cardTitle*` / `cardBody*` / `markCell*` /
   `markValue*` / `markCaption*` / `pager*` / `reel*` constants. The one survivor
   is `markWellSize`, which `IslandMarkWell` uses — and `IslandMarkWell` itself

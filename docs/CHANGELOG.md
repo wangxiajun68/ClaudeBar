@@ -55,8 +55,30 @@
 - **卡片带上自己的色相**：会话瓦片按来源（CC 蓝 / Cursor 紫 / Codex 绿）、用量与设置瓦片按自己的信号色、供应商卡片按状态（未配置灰 / 待完善琥珀 / 已配置未激活蓝 / 已激活绿）上水洗。状态此前在供应商页说了三处（水洗、描边、徽章）而只有徽章带色，现在三处一起走同一个状态色。
 - **连接器页非卡片态也有形状**：扫描中多一条走带（`DecorativeMotion.kind == .conveyor`，Core Animation，扫描结束即停），扫描/空态与卡片共用同一套表面；「连接器」这一页的卡片另外带一层悬停 3D 倾斜（`.depthTilt()`，只在被悬停的那一张上生效，见 [DESIGN.md](../DESIGN.md) 的 Motion / performance）。
 - **额度表盘改为沿弧走的圆点**（`OrbitGauge`）：`CodexQuotaGauges` 由「圆环 + trim」换成 300° 弧轨 + 一个站在当前读数上的圆点。
+- **品牌方块补齐到四家：Cursor 与 ClaudeBar 自己**：上一轮统一了 CC / Codex，这一轮把剩下两家也补上，两个都是「画了，但画错了」的同一类问题。
+  - **Cursor 不是 `cursorarrow.rays`**。那个字形在会徽章、会话分区头、popup 与设置页上画了很久，它**确实**是一支指针，所以看着合理——但 Cursor 的 mark 是一个**立方体**，而任何 tint 或尺寸都不能把一枚 SF Symbol 变成一家公司的标识。现在它走 LobeHub 的 `cursor.png`，和另外两家同一套归一化、同一个方块。
+  - **「第三方」也该有 mark**。用量图例里三项有图形、第四项只有文字，读起来是**一行没画完**，而不是一次刻意的区分（用户就是这么反馈的）。ClaudeBar 自己有一枚 mark（从 `Sources/AppIcon-1024.png` 由 `Tools/make-claudebar-mark.py` 推出），所以四项都带 mark 了。`UsageSourceMark` 现在对**每一个**来源都返回一枚图形，包括第三方——它不是一个客户端，但它是这个应用正在命名的东西，而这个应用有自己的 mark。
+  - **修掉一组真的会画出「看不见」的 bug**：`-light` 文件里是**黑墨**、`-dark` 文件里是**白墨**（LobeHub 是按背景命名的，不是按字形），而旧代码在显式传 `page:` 的两条路径上把它读反了——灵动岛在浅色主题下于是画出黑底黑字。判断依据现在是**页面**而不是主题：`page: true` 是黑底（灵动岛在两种主题下都是黑的），`false` 是亮底。同一批还修掉一个小组件的静默降级：扩展有它自己的 `Bundle.main`，构建脚本现在把 `Sources/BrandAssets/` 也复制进 appex，否则小组件的分区头会画成兜底字形，看起来就像一次有意的改动。
+  - **归一化从「共享边长」改成「按宽度」**：图形剪到墨迹后按画布 90% 写回，但定标用的边长——Anthropic 比宽高、OpenAI 是方的，这两家都落在 0.90 宽；Cursor 的立方体是 0.88（比宽**高**），于是被画小了 12%，一行里并排明显比邻居小一圈。现在按宽度定标，一张竖高的图形也被允许比 90% 更占竖向空间。
+- **所有会变的数字都走灵动岛 token 的逐位滚动（续）**：补齐上一轮漏网的「导入选中 (N)」按钮标题（自绘 `Text`，否则够不到那个 `Text`）等叶子，写法上仍不配隐式 `.animation(value:)`。
+- **「继续会话」的终端菜单换成凹槽**：设置 → 界面 → 继续会话原先是系统菜单（Aqua 外观，和同一张卡上的凹槽并排就是两种语言），现在走 `InstrumentMenuLabel`；代理上游的选择器同样。
+- **额度读数补上重置时刻并按窗口给格式**：`CodexQuotaWindow.resetCompact` 对 ≤24 小时的窗口写 `HH:mm`、更长的写「明天」/「N天」；紧凑表盘（133pt 格）现在**同时**印百分比和重置时刻，而不是把后者丢掉。
+- **额度查询加了 60 秒快照缓存**：第二次打开 popup / 概览重读是瞬时的（走缓存），而**手动**刷新（popup 的 chip、模型页、面板头）会先失效缓存再取，所以「点了刷新」永远是真的重读。只有可信的快照（无 note 或有窗口）才进缓存；重试从 3 次降到 2 次、退避缩短。
+- **「连接」卡片重写：读数搬进 mark 位**。这张卡此前把它唯一的读数摊在一条贯穿全宽的 30 格尺上，右半边空着——它是整条资源条上唯一一张「同伴都画 mark 而它什么都没画」的卡。现在读数住进同一块 **176×130 的 mark 位**（`ResourceStrip.markSlot`）：一个填充的信号表压在接口自己的 Lucide 轮廓上（以太网是插座、Wi-Fi 是弧），30 格等宽地铺在 −100…−40 dBm 上。接口本身成了参数（`ConnectInterface`，`ResourceStrip` 传实际在用的那条链路，两边都在线时以太网优先），所以这个 mark 是**对这条连接的读数**，而不是页头那枚 Wi-Fi 字形的第二份拷贝。它同时也从「整条上唯一的素色瓦片」改成和别人一样的表面（自己的水洗 + 悬停边，色相取那枚图标的蓝）。
+- **RSSI 尺修掉两处画错**：`ConnectionSignalScale` 移到 `HardwareDetailPanel`（它现在只有这一个读者），30 格**等宽**——旧版按 0.7pt/格递增画成了一道楼梯；空格改为实心灰（发丝线版本基本看不见）；加了 `−100·弱 / −70 / −40·强` 三处刻度标签与一个会动的当前位置点。
+- **风扇瓦片的色相改为跟模式走**：静息是蓝，手动覆盖（拉满）时是琥珀，与它的 hero 数字同色——此前风扇格用的是和全条其它格一样的平铺色，而它其实是全条上唯一有「模式」的格子。
+- **`Hello <名字>` 的招呼语按时辰与节日选**（见下「问候」）：`GreetingPhrase` 先查节日再落到六个时段（深夜 / 拂晓 / 上午 / 正午 / 下午 / 傍晚 / 夜里）。23:28 说「晚上好」正是这轮要修的语感问题。
+- **不止一次「今天」的问候**：卡片的日期行与招呼语由**同一条时间线**驱动（此前是两个各跑各的计时器），`SkyGreeting` 移到日期行下面；Codex 窗口的重置时刻单独占一行（`resetLine`）。
 - **内嵌白环**：`Theme.innerFrame` / `innerFrameMuted` 是新 token；`Theme.Ink.*`（文字版信号色）与原信号色（形状版）现在分工写明——字、胶囊、计数用 `Ink`，条、点、弧、环、水洗用原色。供应商卡新增 `.faceColor` 承担后者。
+- **下压按钮改按用途说话（`ActionButton`）**：`adaptiveGlassButton()` 退场。旧名字描述的是**长相**（它先后是 Liquid Glass、系统边框按钮、铣削胶囊），对「这个按钮**是干什么的**」没有意见，于是用途只能由调用点用 `prominent:` / `filled:` / `ink:` 加一个恰好等于 `Theme.statusError` 的 tint 拼出来——同一页因此可能有两种按钮语言。现在 `ActionButton` 问页面真正要回答的那个问题：`tone:`（这是什么——默认的 `.sparkle` 深色板、`.neutral`、`.accent`、`.destructive`）+ `emphasis:`（是不是本页的默认动作）。约 40 处调用点迁到 `ActionButton("刷新")` / `ActionButton("清空", tone: .destructive)` / `ActionButton("导入选中 (N)", tone: .accent, emphasis: .primary)` 这样的写法；`InstrumentButtonStyle` 与 `ProviderActionStyle` 保留为**同一块板的转发**（那几个调用点按位置传参），所以两种写法不可能漂移。
 
+### 修复
+
+- **问候叫出的是 IP，还是那台笔记本**：问候卡的名字此前读 `kern.hostname` 再切掉 `MacBook` 后缀。两处都错：
+  - `kern.hostname` 是**网络**主机名，同一局域网里的任何东西都能改写它——按地址发租约的路由器会把它设成地址，于是卡片会跟用户打招呼说「你好，192.168.10.102」。用户在系统设置 → 共享 里打的名字不在那个字符串里，也拿不到。现在读 `SCDynamicStoreCopyComputerName`（= `scutil --get ComputerName`），卡片和系统说的是同一个名字；拿不到时回退 `Mac` 而**不是**主机名——一句泛泛的招呼是比一个数字更小的错。
+  - 问候是一句**话**（「你好，…」），而人对自己机器的称呼是 `王夏军的MacBook Pro`，不是这个应用从 OS 生成的字符串里切削出来的登录名。现在 `MachineIdentity.person(in:)` 从机器名里取人：`的` / `'s` / `’s` 之前是名字（`王夏军的MacBook Pro` → `王夏军`），无所有格时再按机型标记（`deMacBook` / `sMacBook` / `iMac` …）剥掉连接用的 `s`；不足两个字符的前缀是残留标记不是名字，整串保留。`Tests/greeting-name-regressions.py` 用一张机器名表钉这条规则。
+- **问候的昼夜判断用的是 UTC 而不是当地时间**（同上一轮 wttr.in 那条）：招呼语必须跟**设备时区**走，它讲的是这个人的一天；天空的星位才走 UTC。
+- **`CodexModelMark` 在浅色主题下画不出 mark**：`AppPreferences.shared.isDark ? nil : false` 在浅色下解析到黑墨文件，等于把图形画没了。现在改为 `well: false` 并让卡片自己的底板决定 `page:`（那张带底板的方块实测 1.24:1，反过来 1.13:1，两边都是「看不见」）。
 ### 修复
 
 - **天气的昼夜判断用的是 UTC 而不是当地时间**：wttr.in 的 `observation_time` 是 **UTC**，而日出日落是当地时间，旧代码直接拿 UTC 小时去比，于是日落后的天空可能还画着太阳、日出也可能整整差一个时区。现在改读 `localObsDateTime`，并给 `minutes(_:)` 补上范围校验（小时 0–23、分钟 0–59，12 小时制的 `12 AM/PM` 换算也修了：原来 `hour % 12` 把 12 点算成了 0 点）。
@@ -92,7 +114,10 @@
 - 构建脚本打包机内插画与素材来源说明，不再依赖扇叶 TSV。
 - 风扇回归测试实际编译原生图层，验证符号像素、转速调整的相位连续性、暂停 / 恢复与动画不堆叠。
 - `MetricTile` 仍然**没有调用点**（最后一个 caller 早先随重构删除），本轮只把它 headline 上那行隐式 `.animation(value:)` 去掉并同步文档，没有删除视图本身；删除记录与它复活的原因见 [UI 审计待办 §10](technical/17-ui-audit-backlog.md)。
-- 控件语言从 `Interaction.swift` 与各页各写一份收敛到 `Sources/ClaudeBar/Views/Shared/InstrumentControls.swift`（字段 / 开关 / `headerControl()` / `InstrumentButtonStyle` / `InstrumentMenuLabel` / `ProviderActionStyle`），`adaptiveGlassButton()` 保留原名作为它的入口；文档口径见 [DESIGN.md](../DESIGN.md) 的 Controls 表、[技术 §5](technical/05-view-layer.md) 与 [技术 §9](technical/09-file-index.md)。
+- 控件语言从 `Interaction.swift` 与各页各写一份收敛到 `Sources/ClaudeBar/Views/Shared/InstrumentControls.swift`（字段 / 开关 / `headerControl()` / `ActionButton` + `ActionPlateButtonStyle` + `ControlPlate` / `InstrumentMenuLabel` / `InstrumentButtonStyle` / `ProviderActionStyle`）；`adaptiveGlassButton()` 已从 `Interaction.swift` 删除，只在注释里留了它去哪了。文档口径见 [DESIGN.md](../DESIGN.md) 的 Controls 表、[技术 §5](technical/05-view-layer.md) 与 [技术 §9](technical/09-file-index.md)。
+- **`make test` 是回归清单的唯一出处，CI 现在调用它**（`run: make test`），不再各抄一份。这件事不是洁癖：两份清单**已经**漂移过，`product-mark` / `greeting-name` / `weather-astronomy` / `card-shadow` / `machine-mark` / `fan-rotor` 六个脚本在 `make test` 里而从没在 CI 里跑过，也就是说那段时间里这几项红了 CI 也是绿的。清单每抄一份就多一次漏掉文件的机会。
+- 新增控件预览工具 `Tools/render-control-preview.py` + `Tools/control-preview-sheet.swift` / `control-preview-support.swift`：`ImageRenderer` 出 900pt 的明暗两版控件表（`ActionButton` / `ChipButton` / `InstrumentToggleStyle` / `SegmentedCapsule`），**声明是从生产源码里抽的**，所以这张图不会和真控件漂移。
+- `Sources/build.sh` 新增两个 `require_file` 守卫（`BrandAssets/openai-dark.png`、`claudebar-light.png`）与一步**把 `Sources/BrandAssets/` 复制进 appex**：扩展有自己的 `Bundle.main`，不复制的话小组件的分区头会静默画成兜底字形，而它看起来和一次有意的改动没有区别。
 - `Tests/inflight-animation-regressions.py` 的守卫表加了两个 1 Hz 读数叶子（灵动岛 `NotchIslandView.wings` 与 `IslandComponents.hero`），并对 `.tile(...)` 的 `lift:` 参数做括号平衡扫描（`[^)]*` 会在嵌套的 `DepthLensSpec(...)` 里停下，看不到后面的 flag），新增页头带不得抬升的两条源码性质。
 - `Tests/menubar-strip-regressions.py` 加了三组电池格算术断言：高度必须是 21pt、宽高比必须是 1.618∶1 且低于 2.2∶1、液面跑道必须为正——正极头被重新加回来、或胶囊加宽而没重推整格宽度，都会在这里失败而不是在菜单栏上。
 - `Tests/charge-limit-regressions.py` 从「读源码算门槛」改写为**直接跑生产控制器**：把安装、进程启动、管道 transport 和传感器换成内存桩（`UserDefaults` 用独立 suite），真实执行 `apply` / `setLimit` / `receive` / `heartbeat` / `shutdown`，覆盖目标回拖、模式竞争、系统还原优先、授权期间改值、响应超时、失联、旧 revision 回报、休眠、终态回报与偏好保存；C 侧新增 `evaluate()` 的判据测试（能力 / 合盖 / 虚拟失电 / 通知文案），并首次纳入 `make test`。`Tests/battery-control.c` 里 `BAT_LIMIT` 与 `BAT_HOLD` 的断言随策略一起改了——旧断言恰好把「充电 = 停充」这个 bug 钉成了期望值，这也是它此前一直绿的原因。

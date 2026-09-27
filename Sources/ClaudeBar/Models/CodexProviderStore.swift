@@ -336,18 +336,30 @@ final class CodexProviderStore: ObservableObject {
 
     /// ChatGPT subscription windows (5 小时 / 7 天), read through the
     /// authenticated Codex App Server account API.
-    func refreshQuota() {
+    /// Re-read the ChatGPT allowance windows.
+    ///
+    /// `manual` is the difference between "the user pressed refresh" and "a
+    /// timer or a view woke us". A manual press drops the fetcher's cache first
+    /// — the whole point of the button is a *new* reading — while an automatic
+    /// one is happy to be served the last reading inside its freshness window,
+    /// which is what makes opening the popup a second time instant instead of
+    /// another 3-second spinner.
+    func refreshQuota(manual: Bool = false) {
         refreshConfiguredModel()
         // `load()` is immediately followed by `ProviderStore.refresh()` at
         // launch, and refresh can also be tapped repeatedly. Never spawn two
         // app-server instances for the same account query: their completion
         // order previously let a transient failure overwrite valid windows.
         guard quotaTask == nil else { return }
+        if manual {
+            CodexQuotaFetcher.invalidateCache()
+            // A manual refresh re-arms the poll, so the next automatic one is a
+            // full interval away: tapping refresh in the popup must not be
+            // followed seconds later by a background poll re-entering the
+            // spinner.
+            if quotaTimer != nil { startQuotaPolling() }
+        }
         quotaLoading = true
-        // A manual refresh re-arms the poll, so the next automatic one is a
-        // full interval away: tapping refresh in the popup must not be
-        // followed seconds later by a background poll re-entering the spinner.
-        if quotaTimer != nil { startQuotaPolling() }
         quotaTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.quotaTask = nil }

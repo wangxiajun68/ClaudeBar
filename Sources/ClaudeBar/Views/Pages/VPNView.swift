@@ -271,8 +271,7 @@ struct VPNView: View {
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .lineLimit(2)
-            Button("打开目录") { NSWorkspace.shared.open(FilePaths.vpnDir) }
-                .adaptiveGlassButton()
+            ActionButton("打开目录") { NSWorkspace.shared.open(FilePaths.vpnDir) }
         }
     }
 
@@ -318,9 +317,9 @@ struct VPNView: View {
                                     .controlSize(.mini)
                             }
                         }
-                        .frame(width: 52, height: 22)
+                        .frame(minWidth: 52, alignment: .center)
                     }
-                    .adaptiveGlassButton()
+                    .actionButton()
                     .disabled(testingAll || !manager.testingNodes.isEmpty)
                     .help("和 Clash Verge 一样，用 http://cp.cloudflare.com/generate_204，超时 10 秒。超时表示这条节点连不上测试地址。")
                 }
@@ -800,9 +799,9 @@ private struct VPNProbeRow: View {
                         ProgressView().controlSize(.mini)
                     }
                 }
-                .frame(width: 52, height: 22)
+                .frame(minWidth: 52, alignment: .center)
             }
-            .adaptiveGlassButton()
+            .actionButton()
             .disabled(!manager.isRunning || probe.testingAll)
             .help("测试站点连通性")
 
@@ -1072,13 +1071,12 @@ private struct VpnLogConsole: View {
                     .foregroundColor(Theme.Ink.claude)
                 }
                 Spacer()
-                Button(copied ? "已复制" : "复制全部") {
+                ActionButton(copied ? "已复制" : "复制全部") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 }
-                .adaptiveGlassButton()
                 .disabled(lines.isEmpty)
             }
             ScrollViewReader { proxy in

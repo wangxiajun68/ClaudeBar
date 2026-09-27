@@ -45,8 +45,7 @@ struct StandbyEmptyState: View {
                         .frame(maxWidth: 360)
                 }
                 if let action {
-                    Button(action.label, action: action.run)
-                        .adaptiveGlassButton()
+                    ActionButton(action.label, action: action.run)
                         .padding(.top, Theme.Space.s2)
                 }
             }

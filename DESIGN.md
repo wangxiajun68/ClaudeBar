@@ -117,11 +117,13 @@ ornament is one shape rather than a stack of views.
 | Control | Reference | What it is |
 | --- | --- | --- |
 | `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
-| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that widens toward the side it would travel to on hover. Backs all 16 toggles in the app. |
+| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that travels on the state change. Backs all 16 toggles in the app. The handle **does not stretch** toward its destination on hover — that is geometry moving because the pointer arrived, and the control already states its state; the hover is a lit rim instead. |
+| `ActionButton` | reference CSS pill + `ultimate-3d-btn` | **the one push button**, named by *intent* rather than appearance: `tone:` (`.sparkle` the default, `.neutral` / `.accent` / `.destructive`), `emphasis:` (`.primary` fills solid — one per page at most), `metrics:` (`.regular` / `.large`). Every labelled action in the app is this. `.sparkle` is the **dark plate** (`SparklePlate`): a near-black pill whose identity *is* its own surface, so it does not tint from the caller's hue — it was ported from a reference CSS button (`#1C1A1C`, hover gradient `#A47CF3 → #683FEA`, glow `#9917FF`, 450 ms ease-in-out, hence `Theme.Animation.sparkle`). `.neutral` draws the quiet machined plate instead, for a button that must not punch a dark hole in a card. |
+| `InstrumentButtonStyle` / `ProviderActionStyle` | `ultimate-3d-btn` | the two **historical spellings** of the same button, kept because those call sites pass them positionally. Each forwards to `ActionPlateButtonStyle`, so a connector button, a provider card's button and a native `ActionButton` are the same plate and cannot drift. `adaptiveGlassButton()` is gone — see the note below the table. |
+| `ChipButton` | `mymiamo` glass menu | a compact *selectable* chip — a state you flip, not an action you fire. Radius 8 rather than a capsule, so a filter row does not read as a row of buttons. |
 | `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
-| `headerControl()` | `metanef` switch track | **the page band's own control** — a capsule milled into the band (`Theme.fieldWell`) with a lit rim and the one-shot `PerimeterSweep` on hover. Shared by 连接器 and 模型 so two bands read as the same object. Needs `.buttonStyle(.plain)`: the default bezel draws a second grey rect inside the well. |
-| `adaptiveGlassButton()` / `InstrumentButtonStyle` | `ultimate-3d-btn` | **the one push button.** Quiet is the recessed well; prominent fills with the shape hue, a lit top edge, and a 2pt press down. Both run `PerimeterSweep` once on hover. The name is historical — it is no longer Liquid Glass or a bordered system button. `InstrumentMenuLabel` is the same well for a menu (settings 打开方式, proxy upstream). |
-| `ProviderActionStyle` | `ultimate-3d-btn` | the provider editor's button: same press-down and one-shot perimeter, radius 10 so it sits in a form. |
+| `headerControl()` | `metanef` switch track | **the page band's own control** — now literally `ActionPlateButtonStyle` at the band's proportions, in the quiet tone. Shared by 连接器 and 模型 so two bands read as the same object. |
+| `InstrumentMenuLabel` | `mymiamo` glass menu | the same well for a `Menu`'s own label (settings 打开方式, proxy upstream). It is a *label*: the native menu inside a machined tile is Aqua chrome, so this draws the well, the hover rim and the chevron and leaves the press state to the `Menu` that owns the button. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
 | `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the usage page's three cards, one shape family. `UsageDaySpark` is the **rhythm** chart: one column per bucket at the grain of the selected range (日 → that week by day, 月 → each calendar day, 年 → twelve months, 全部 → months, or years past a two-year span), keeping the reference's two-stop gradient, its top cap dot on the peak and its dashed average guide. `SourceTriad` is the **share** track — one full-width segmented bar where a segment's width *is* its share of the period, with the absolute count on a row beneath (free-floating meters let a 99/1 split and a 50/50 split draw the same picture). `TokenMixStrip` is the stacked input/hit/write/output track. All three spring once when the range changes and stay put when a total ticks inside it. |
@@ -141,6 +143,19 @@ scale rather than taste:
 `HairlineDivider` is the only rule; a native `Divider()` is a different grey in
 light and dark and belongs to no family. `SectionHeader` is the only section
 heading and `StatusPill` the only capsule readout.
+
+**`adaptiveGlassButton()` is gone**, and so is the habit behind it. It was the
+name of the one push button for two generations of this design — Liquid Glass,
+then a bordered system button, then a machined pill — and every one of those was
+a *description of an appearance* rather than an intent, which is why the same
+page could end up with two button languages: the alias had no opinion about what
+a given button was **for**, so callers supplied one through
+`prominent:` / `filled:` / `ink:` and a tint that happened to equal
+`Theme.statusError`. `ActionButton` asks the question the page actually has
+(`tone:` = what is this, `emphasis:` = is it the default), so "which button
+style" is decided once, next to the plate. The ~40 migrated call sites read
+`ActionButton("刷新")`, `ActionButton("清空", tone: .destructive)`,
+`ActionButton("导入选中 (N)", tone: .accent, emphasis: .primary)`.
 
 ## Machine marks
 
@@ -318,3 +333,78 @@ dividers. Keep these rows open; do not put cards inside the band.
 
 Implementation, verification commands and visual references:
 [Weather observatory](docs/design/weather-observatory.md).
+
+## Client marks
+
+The app watches **three client families** — Claude Code, Codex and Cursor — and
+names them in a dozen places: the popup's source tallies, the island's agent
+badges, the dashboard tiles' pills, the session section headers, the settings
+connectivity row, the connector platform filter, and the widget's header. Each
+of those used to answer "which client?" with whatever was nearest: an SF Symbol
+(`command`, `terminal`, `cursorarrow.rays`), a two-letter string, or the real
+artwork — so one product had three faces and `cursorarrow.rays` said "a pointer",
+which is not Cursor's mark (its mark is a cube).
+
+All of it is now `ProductBrandMark`, from **LobeHub
+`@lobehub/icons-static-png@1.97.1`** — nothing in this repo redraws a brand by
+eye, and `Sources/ProviderIcons/README.md` pins every asset to its URL. Three
+things are worth stating because each was a bug:
+
+1. **The mark sits on a tile, and the tile is why it is readable.** A pure-black
+   mark on a dark card, or a pure-white one on a light card, is *invisible*;
+   `ProductBrandMark` puts the artwork on `Theme.bgSecondary` in a rounded
+   square. `well: false` is for a caller that already has its own well.
+2. **The page decides the ink, not the theme.** `page: nil` = a themed surface,
+   `true` = a **black** one, `false` = a **light** one. It is deliberately not
+   `Theme.isDark`: the island is black in both themes, so answering the theme
+   question drew black-on-transparent artwork on the app's blackest surface.
+3. **The artwork is normalised, not used raw.** LobeHub's PNGs each carry their
+   own margin to a square canvas; at a 13pt header tile that left Anthropic at
+   65% and read as a smudge. `Tools/gen-brand-marks.py` trims each mark to its
+   own ink and writes it back at 90% of the canvas, **sized on the width** so a
+   wide mark and a square one stand the same width in one row — which is what
+   lets a CC chip and a Codex chip sit side by side. The build copies
+   `Sources/BrandAssets/` into the appex too: an extension has its own
+   `Bundle.main`, so without that the widget silently drew the fallback glyph.
+
+**第三方 has a mark as well.** It is not a client, which is why it drew bare text
+beside three marks — and a legend whose fourth entry has no glyph reads as a row
+that failed to finish. ClaudeBar has a mark of its own (derived from
+`Sources/AppIcon-1024.png` by `Tools/make-claudebar-mark.py`), so every entry in
+those legends now carries one.
+
+`PillMark` (`Theme`) is the pill's own three-case enum rather than a reuse of
+`ProductBrandMark.Brand`, because a pill is also used for subjects that are not
+clients; the conversion lives in one place so the two cannot drift.
+
+## Greeting
+
+The greeting is a **sentence**, and two of its words are decided rather than
+printed.
+
+**The salutation is chosen, not stamped.** `GreetingPhrase` picks from a festival
+table, then one of six parts of a day (late / dawn / morning / noon / afternoon /
+evening / night, with the 22:00 line between 晚 and 深夜 the one that had to
+move — 23:28 is not an evening). It is **not randomised**: a greeting that
+changes on every re-render is a slot machine, and the card re-renders on every
+pointer move. A stable phrase per (time, date) is what lets the entrance
+animation be *the* event.
+
+**The name is the person, taken from the machine's name.** `MachineIdentity`
+reads `SCDynamicStoreCopyComputerName` — the `ComputerName` the user typed in
+系统设置 → 共享, the same string `scutil --get ComputerName` prints — and
+`person(in:)` strips the possessive and the model: `王夏军的MacBook Pro` →
+`王夏军` (CJK 的, Latin `'s` / `’s`, then the host-name joiners `de` / `s`).
+Two things this replaced, both of which shipped:
+
+- Reading `kern.hostname`, which **the LAN can rewrite** — a router that leases
+  by address hands the card `192.168.10.102`, and it greeted the user with their
+  own IP. The system name is not reachable through that string.
+- Greeting `王夏军的MacBook Pro` in full, i.e. saying hello to a laptop. A person
+  does not call themselves "王大锤的MacBook Pro".
+
+A prefix shorter than two characters is a stray marker, not a name, so the whole
+string is kept; and the fallback is `Mac` rather than the host name, because a
+generic greeting is a smaller wrong than a numeric one.
+`Tests/greeting-name-regressions.py` drives the rule over a table of machine
+names.

@@ -31,8 +31,8 @@ struct SessionsPanelView: View {
                         }
                     }
                     if !cursor.isEmpty {
-                        section(title: "Cursor", icon: "cursorarrow.rays",
-                                tint: Theme.cursor, ink: Theme.Ink.cursor) {
+                        section(title: "Cursor", icon: "cursorarrow.motionlines",
+                                tint: Theme.cursor, ink: Theme.Ink.cursor, mark: .cursor) {
                             ForEach(cursor) { session in
                                 CursorSessionCardView(session: session) { openInCursor(session) }
                             }
@@ -51,12 +51,15 @@ struct SessionsPanelView: View {
 
     private func section<Content: View>(title: String, icon: String, tint: Color,
                                         ink: Color,
+                                        brand: Bool? = nil,
+                                        mark: ProductBrandMark.Brand? = nil,
                                         @ViewBuilder content: () -> Content) -> some View {
         Section {
             content()
                 .padding(.horizontal, 10)
         } header: {
-            SectionHeader(icon: icon, title: title, tint: tint, ink: ink)
+            SectionHeader(icon: icon, title: title, brand: brand, mark: mark,
+                          tint: tint, ink: ink)
                 .padding(.horizontal, 10)
         }
     }
@@ -64,7 +67,7 @@ struct SessionsPanelView: View {
     private func externalBlock(kind: ExternalAgentKind) -> some View {
         let tree = providerStore.externalSessionTree(kind: kind)
         return section(title: kind.displayName, icon: kind.icon,
-                       tint: Theme.external, ink: Theme.Ink.success) {
+                       tint: Theme.external, ink: Theme.Ink.success, brand: kind.brand) {
             ForEach(tree) { node in
                 ExternalSessionCardView(session: node.session,
                                         descendantCount: node.descendantCount,

@@ -359,6 +359,19 @@ enum Theme {
         static let pulse = SwiftUI.Animation.easeInOut(duration: 1.1)
         static let snappy = SwiftUI.Animation.bouncy(duration: 0.18, extraBounce: 0.10)
 
+        /// The sparkle plate's own transition, from the reference CSS's
+        /// `transition: all 450ms ease-in-out`.
+        ///
+        /// Slower than `snappy` on purpose. `snappy` is the app's *press* feel —
+        /// one property, answering a finger. This one carries four at once (the
+        /// plate's fill, its white halo, the purple glow, and the label's lift);
+        /// at 150 ms that many simultaneous changes read as a flicker rather
+        /// than as a light coming on.
+        ///
+        /// Eased rather than sprung: the CSS is `ease-in-out`, and a bounce on a
+        /// glow looks like the glow overshot.
+        static let sparkle = SwiftUI.Animation.easeInOut(duration: 0.45)
+
         /// The digit roll, and only the digit roll.
         ///
         /// `.snappy`'s 0.10 extra bounce is pleasant for a surface that moves a
@@ -529,17 +542,23 @@ struct GlyphWell: View {
     var tint: Color = Theme.textSecondary
     var size: CGFloat = 22
     var engaged = false
-    /// `nil` = an SF Symbol (the default). `false` / `true` = that client's own
-    /// brand mark, which is what a well holding **Claude Code / Codex** should
-    /// carry: a `terminal` glyph says "a command line", and the two clients are
-    /// not two command lines any more than `cursorarrow.rays` is Cursor.
-    /// `false`/`true` is `ProductBrandMark`'s own convention, so the caller's
-    /// type does not have to map itself onto the mark's.
+    /// `nil` = an SF Symbol (the default). `false` / `true` = **CC / Codex**,
+    /// `ProductBrandMark.Brand.init(codex:)`'s convention, kept because the
+    /// surfaces that carry it (`SettingTile`, `SegmentedCapsule`, the editor
+    /// header) only ever choose between the two *provider* clients — the ones
+    /// with an API to configure. A well that must show Cursor passes `mark:`.
     var brand: Bool? = nil
+    /// Any of the three clients' own artwork in the well. Separate from `brand:`
+    /// because a `Bool` cannot name a third family, and because the call sites
+    /// that carry a client *mark* are not the same set as the ones that carry a
+    /// provider *flag*.
+    var mark: ProductBrandMark.Brand? = nil
 
     var body: some View {
         Group {
-            if let brand {
+            if let mark {
+                ProductBrandMark(brand: mark)
+            } else if let brand {
                 ProductBrandMark(codex: brand)
             } else {
                 SignatureGlyph(name: name, tint: tint, size: size * 0.64, engaged: engaged)
@@ -558,6 +577,32 @@ struct GlyphWell: View {
     }
 }
 
+/// The client mark a `StatusPill` can lead with, so the pills that *name a
+/// client* (the dashboard tiles' CC / Codex / Cursor) draw the product's own
+/// glyph instead of a third set of words.
+///
+/// Declared as its own enum rather than reusing `ProductBrandMark.Brand` because
+/// the pill is also used for subjects that are not clients at all (第三方), and
+/// because `Theme` cannot see `ProductBrandMark`'s file order — the conversion
+/// lives here, in one place, so the two types cannot drift.
+enum PillMark {
+    case claude, codex, cursor
+
+    var brand: ProductBrandMark.Brand {
+        switch self {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .cursor: return .cursor
+        }
+    }
+
+    /// The client's own bundled artwork, at `size`, in the pill's ink.
+    func view(size: CGFloat, ink: Color) -> some View {
+        ProductBrandMark(brand: brand, well: false)
+            .frame(width: size, height: size)
+    }
+}
+
 /// Status capsule used on metric cards (18核 / 正常 / RPM).
 ///
 /// The fill is a 12 % wash of `tint` while the text is `tint` itself, so every
@@ -570,14 +615,24 @@ struct StatusPill: View {
     var tint: Color = Theme.textSecondary
     var ink: Color? = nil
 
+    /// Lead with a client's own mark. See `PillMark`.
+    var mark: PillMark? = nil
+
     var body: some View {
-        Text(label)
-            .rollingNumber()
-            .font(Theme.Font.pill)
-            .foregroundColor(ink ?? tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(tint.opacity(0.12)))
+        HStack(spacing: 4) {
+            if let mark {
+                mark.view(size: 11, ink: ink ?? tint)
+                    .accessibilityHidden(true)
+            }
+            Text(label)
+                .rollingNumber()
+                .font(Theme.Font.pill)
+                .foregroundColor(ink ?? tint)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(tint.opacity(0.12)))
     }
 }
 

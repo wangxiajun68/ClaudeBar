@@ -29,6 +29,7 @@ test:
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
 	python3 Tests/greeting-data-regressions.py
+	python3 Tests/greeting-name-regressions.py
 	python3 Tests/weather-astronomy-regressions.py
 	python3 Tests/menubar-strip-regressions.py
 	python3 Tests/connection-panel-regressions.py

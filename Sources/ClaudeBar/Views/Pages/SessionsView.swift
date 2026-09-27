@@ -135,11 +135,16 @@ struct SessionsView: View {
     private var cursorSection: some View {
         let alive = providerStore.cursorSessions
         let active = providerStore.activeCursorCount
+        // The section *is* Cursor, so its well draws Cursor's own mark — the
+        // cube, from the bundle, the same artwork the session badges use. It
+        // was the `cursorarrow.motionlines` glyph, which is a pointer rather
+        // than the product's mark. Same for Codex below.
         return sectionContainer(
             title: "Cursor",
-            icon: "cursorarrow.rays",
+            icon: "cursorarrow.motionlines",
             count: alive.count,
-            active: active
+            active: active,
+            mark: .cursor
         ) {
             if alive.isEmpty {
                 emptyHint("暂无 Cursor 会话")
@@ -192,7 +197,9 @@ struct SessionsView: View {
             count: tree.count,
             active: busy,
             agentCount: agents,
-            activeAgentCount: activeAgents
+            activeAgentCount: activeAgents,
+            // Codex's own knot in the well: the section *is* the client.
+            brand: kind.brand
         ) {
             if tree.isEmpty {
                 emptyHint("暂无 \(kind.displayName) 会话")
@@ -217,9 +224,11 @@ struct SessionsView: View {
 
     private func sectionContainer<C: View>(title: String, icon: String, count: Int, active: Int,
                                             agentCount: Int = 0, activeAgentCount: Int = 0,
+                                            brand: Bool? = nil,
+                                            mark: ProductBrandMark.Brand? = nil,
                                             @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            SectionHeader(icon: icon, title: title, tint: Theme.claude,
+            SectionHeader(icon: icon, title: title, brand: brand, mark: mark, tint: Theme.claude,
                           ink: Theme.Ink.claude,
                           count: count, activeCount: active,
                           // Sessions and the agents they spawned are different
@@ -495,7 +504,8 @@ private struct CursorTileFull: View {
                         .help("Cursor 为这个会话派生的子 agent")
                 }
                 SessionActionChips(isHovered: isHovered) {
-                    ActionChip(systemImage: "cursorarrow", tint: Theme.cursorAccent, help: "在 Cursor 打开") {
+                    ActionChip(systemImage: "cursorarrow",
+                               tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
                     }
                     ActionChip(systemImage: "folder", tint: Theme.accent, help: "在 Finder 显示") {

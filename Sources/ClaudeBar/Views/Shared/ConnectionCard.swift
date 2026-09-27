@@ -12,20 +12,73 @@ struct LinkCard: View {
     /// the popup's machine readout is `MachineKpiStrip`, not this card — so the
     /// compact spacing this describes is currently unreachable.
     var dense: Bool
+    /// Which interface the card's mark draws. Defaults to 以太网 so an existing
+    /// call site is unchanged; `ResourceStrip` passes the interface actually in
+    /// use, which is what made this mark a *reading of the connection* rather
+    /// than a second copy of the Wi-Fi glyph already in the header badge.
+    var interface: ConnectInterface = .ethernet
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             header
-            Spacer(minLength: dense ? 8 : 12)
-            summary
-            Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    // The hero, in the same slot and the same type as the five
+                    // meters beside it: the card's *figure* is the connected
+                    // network's name, because that is the one thing this card is
+                    // about that a number cannot say. See `Color.heroFont` note in
+                    // `ResourceStrip.meter` — a name is not a metric, so it takes
+                    // the same rounded weight at the same size rather than the
+                    // metric font's digits.
+                    RollingNumberText(status.title, rolls: false)
+                        .font(Theme.Font.displayMetric)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .truncationMode(.middle)
+                    // Two lines, left to wrap, exactly like the meters' caption
+                    // band — the grade and the dBm are this card's reading, and
+                    // splitting them (grade on the hero's line, dBm below) is how
+                    // the old layout spent its height to say one thing.
+                    Text(caption)
+                        .rollingNumber()
+                        .font(Theme.Font.tileLabel)
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(2)
+                        .allowsTightening(true)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                }
+                Spacer(minLength: 4)
+                // The mark slot — the same 176×130 the meters reserve, holding
+                // the one drawing this card had been missing. The card used to
+                // put its reading in a 30-tick ruler that stretched the full
+                // width, leaving the right half of the tile empty and making it
+                // the only card in the grid with nothing where every sibling
+                // draws its mark.
+                ConnectInterfaceMark(interface: interface,
+                                     accessory: accessory,
+                                     accessoryCount: accessoryCount,
+                                     strength: signalFraction,
+                                     state: markState)
+                    .frame(width: ResourceStrip.markSlot.width, height: ResourceStrip.markSlot.height)
+                    .clipped()
+            }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: dense ? 112 : 124, maxHeight: .infinity, alignment: .topLeading)
-        // The connection card has no single hue — its four marks are green /
-        // blue / violet — so it takes the plain tile (engraved inner frame, no
-        // wash) and answers the pointer with the hover edge alone.
-        .hoverTile(dense: dense)
+        .frame(maxWidth: .infinity, minHeight: 168, maxHeight: .infinity, alignment: .topLeading)
+        // The card speaks the same surface language as the five meters it sits
+        // among: the tile's own wash, the white inner frame ring it implies, and
+        // a hover edge in the same hue the header badge already carries. It used
+        // to be the one *plain* tile on the strip (`hoverTile()` with no tint),
+        // which read as a card from a different grid dropped into this one — the
+        // wash is how a row of tiles scans, and this card was opting out of it.
+        //
+        // The hue is the badge's own blue (`Theme.chartBlue`, the Wi-Fi mark),
+        // not a new colour: the card has no single reading to tint by, so it
+        // tints by the instrument it is named for, exactly as every other tile
+        // does. Its own marks keep their signal hues.
+        .hoverTile(tint: Theme.chartBlue, dense: dense)
         .help(helpText())
         // The whole card opens the map, like every other tile on the strip —
         // only the title was clickable before, which made this the one card whose
@@ -39,29 +92,29 @@ struct LinkCard: View {
 
     private var status: ConnectionStatus { ConnectionStatus(host: host) }
 
-    private var summary: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(status.title)
-                    .font(.system(size: dense ? 15 : 18, weight: .semibold, design: .rounded))
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 6)
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Theme.textSecondary)
-            }
-            ConnectionSignalScale(rssi: status.rssi, compact: true)
-            HStack(spacing: 6) {
-                Text(status.rssi.map { "\(WiFiBars.label(for: $0) ?? "") · \($0) dBm" } ?? status.subtitle)
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-                if let accessory, accessory.connection == .inUse {
-                    Image(systemName: "headphones").foregroundColor(Theme.chartPurple)
-                    if let level = accessory.headline, !accessory.isStale { Text("\(level)%") }
-                }
-            }
-            .font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
+    /// The grade-and-dBm line, or the reason there is none — the tile's version
+    /// of the meters' caption band.
+    private var caption: String {
+        if let rssi = status.rssi {
+            let grade = WiFiBars.label(for: rssi).map { $0 + " · " } ?? ""
+            return "\(grade)\(rssi) dBm"
         }
-        .accessibilityElement(children: .combine)
+        return status.subtitle
+    }
+
+    /// 0…1 across the same −100…−40 dBm ruler the ruler and the popover draw, so
+    /// the mark's lit cells and the popover's scale cannot disagree about one
+    /// reading. `nil` (no reading) is 0 — an unattached radio lights nothing.
+    private var signalFraction: Double {
+        guard let rssi = status.rssi else { return 0 }
+        return min(1, max(0, Double(rssi + 100) / 60))
+    }
+
+    /// Whole-card state, as one value, so the mark is tinted from the same
+    /// decision the header pill is: attached / on-but-not-attached / off.
+    private var markState: ConnectMarkState {
+        if status.attached { return .attached }
+        return host.wifiOn ? .idle : .off
     }
 
     private var header: some View {
@@ -73,12 +126,19 @@ struct LinkCard: View {
             // glyphs on one strip came out two different sizes.
             InstrumentBadge(kind: .link, tint: Theme.chartBlue)
                 .frame(width: 26, height: 26)
-            Button { showConnections = true } label: { Text("连接") }
-                .buttonStyle(.plain)
+            Text("连接")
                 .font(Theme.Font.chrome)
                 .foregroundColor(Theme.textSecondary)
             Spacer(minLength: 4)
             StatusPill(label: linkState.0, tint: linkState.1)
+            // The chevron the header used to carry is gone: at the family's own
+            // density the meters state this with their trailing arrow, and the
+            // card's whole body is the target, so a second "this opens" mark on
+            // the title line was saying what the header already says.
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.textSecondary)
+                .accessibilityHidden(true)
         }
     }
 
@@ -106,314 +166,130 @@ struct LinkCard: View {
     }
 }
 
-/// Shared glyph and text bands keep connection marks aligned across densities.
-fileprivate struct ConnectMetrics {
-    var dial: CGFloat
-    var caption: CGFloat
-    /// Every lane uses this width, so icon centres stay a fixed distance apart.
-    var column: CGFloat
-    var gap: CGFloat
-    /// Height of the band under the glyph row that every mark's percentage (or
-    /// caption) sits in. Reserved on every mark, headset or not — a
-    /// conditional band was how the row lost its baseline.
-    var labelBand: CGFloat
+/// Which interface the connection card's own mark draws.
+///
+/// Chosen once per card from the state, not by the reader: the mark's job is to
+/// say *how this Mac is attached* — the one fact the header badge (always the
+/// Wi-Fi glyph) and the title (a network name) between them cannot state, and the
+/// reason this tile is "连接" and not "Wi-Fi". Ethernet wins when both are up,
+/// because a wired link is what the machine is actually routed through.
+enum ConnectInterface {
+    case wifi
+    case ethernet
+    /// Wi-Fi is on but nothing is attached — the mark is an open arc, not a
+    /// filled one, so "connected" is never drawn by a powered radio.
+    case wifiDown
+    case offline
+}
 
-    /// Size each headset symbol by its visible bounds while preserving a common baseline.
-    func partSymbolSize(for symbol: String) -> CGFloat {
-        // Ink height / em for each mark, measured from `NSImage` at a fixed
-        // point size. Rounded to two places; they are ratios, not absolutes.
-        let inkHeightRatio: CGFloat = symbol.contains("case") ? 0.875 : 0.80
-        return (dial * 0.42) / inkHeightRatio * 0.80
-    }
+/// The whole-card connection state, read by the mark's *tint* — one value so the
+/// mark and the header pill cannot disagree.
+enum ConnectMarkState {
+    case attached
+    case idle
+    case off
 
-    /// The buds are drawn from their ink width too, so the *pair* stays
-    /// symmetric: `earbud.left` and `earbud.right` are mirror images and must be
-    /// scaled identically or the pair reads lopsided.
-    var budSymbolSize: CGFloat { partSymbolSize(for: "earbud.left") }
-    var caseSymbolSize: CGFloat { partSymbolSize(for: "airpods.chargingcase") }
-
-    /// Every mark is `glyphRow + labelBand + statusBand` tall, and each one draws
-    /// into exactly those bands, so a headset ring and an Ethernet arc share one
-    /// centre line whatever `dial` is.
-    var statusBand: CGFloat { 14 }
-
-    /// `dial` is the *entire* mark, ring and arc included, so it is also the
-    /// mark's optical weight in the row — and at 48 the Wi-Fi ring was the
-    /// biggest object on the dashboard's 资源条, larger than the 26pt badge that
-    /// labels its own tile and larger than anything a connection status has to
-    /// say. 38 is the size at which the four marks read as one group of small
-    /// instruments; the column narrows with the glyph and `labelBand` keeps the
-    /// caption's baseline exact, so the tile's own height, its two-line captions
-    /// and the 已连接 pill above them are all untouched.
-    ///
-    /// The headset parts derive from `dial` (0.42 of it), so the buds, the case
-    /// and the rings shrink together and the pair stays symmetric.
-    static func resolve(_ density: ConnectDensity) -> ConnectMetrics {
-        switch density {
-        case .page:
-            return ConnectMetrics(dial: 38, caption: 10.5, column: 72, gap: 14, labelBand: 16)
-        case .popup:
-            return ConnectMetrics(dial: 24, caption: 10, column: 54, gap: 8, labelBand: 15)
+    var tint: Color {
+        switch self {
+        case .attached: return Theme.chartBlue
+        case .idle: return Theme.textSecondary
+        case .off: return Theme.statusIdle
         }
     }
 }
 
-fileprivate enum ConnectDensity { case page, popup }
-
-/// Wi-Fi and power are always present; Ethernet and headsets appear when connected.
-fileprivate struct ConnectLaneRow: View {
-    var host: ProcessSampler.HostStats
+/// The connection tile's mark: the machine's own attachment, drawn as a filled
+/// signal meter over the interface's Lucide outline.
+///
+/// This is the tile's *reading*, in the place every other card on the strip
+/// draws one. It is deliberately the same drawing as `ConnectionSignalScale`'s
+/// `compact` ruler — same 30 cells, one per dBm step across −100…−40 — turned
+/// into a mark rather than a full-width row: a mark that measures the signal
+/// belongs in the mark slot, and the row it replaced stretched across the tile
+/// with nothing on its right.
+///
+/// It is also honest about which interface it is. Ethernet is a socket, Wi-Fi an
+/// arc — the two are not the same object and a strip that drew only the Wi-Fi
+/// glyph for both would be naming the radio where the question is the link.
+struct ConnectInterfaceMark: View {
+    var interface: ConnectInterface
     var accessory: AudioAccessoryMonitor.Accessory?
-    var count: Int
-    var density: ConnectDensity
-
-    /// Show attached headsets even before their first battery report arrives.
-    /// Nearby BLE advertisements alone do not establish a connection to this Mac.
-    private var headset: AudioAccessoryMonitor.Accessory? {
-        guard let accessory,
-              accessory.connection == .inUse else { return nil }
-        return accessory
-    }
-
-    private var metrics: ConnectMetrics {
-        ConnectMetrics.resolve(density)
-    }
+    var accessoryCount: Int
+    /// 0…1, the signal reading. `nil`-free: no reading is 0.
+    var strength: Double
+    var state: ConnectMarkState
 
     var body: some View {
-        let m = metrics
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: m.gap) {
-                wifi
-                AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand, column: m.column, statusHeight: m.statusBand)
-                accessoryMarks
-            }
-            VStack(spacing: m.gap) {
-                HStack(alignment: .top, spacing: m.gap) {
-                    wifi
-                    AirDropConnectionMark(dial: m.dial, labelHeight: m.labelBand, column: m.column, statusHeight: m.statusBand)
-                }
-                if host.wiredOn || headset != nil {
-                    HStack(alignment: .top, spacing: m.gap) { accessoryMarks }
-                }
-            }
+        VStack(spacing: 8) {
+            Image(systemName: glyph)
+                .font(.system(size: 46, weight: .medium))
+                .foregroundColor(state.tint)
+                .frame(width: 64, height: 52)
+            SignalCellRow(strength: strength)
+                .frame(height: 16)
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityHidden(true)
     }
 
-    @ViewBuilder private var accessoryMarks: some View {
-        if host.wiredOn { EthernetMark(metrics: metrics) }
-        if let headset { HeadsetMarks(accessory: headset, count: count, metrics: metrics) }
+    /// The interface's own glyph — never the header badge's, which is always the
+    /// Wi-Fi mark.
+    private var glyph: String {
+        switch interface {
+        case .ethernet: return "cable.connector"
+        case .wifi: return "wifi"
+        case .wifiDown: return "wifi.slash"
+        case .offline: return "wifi.slash"
+        }
     }
 
-    private var wifi: some View {
-        WiFiConnectionMark(host: host, dial: metrics.dial, labelHeight: metrics.labelBand,
-                           column: metrics.column, statusHeight: metrics.statusBand)
-    }
-
-
-}
-
-/// Live Ethernet. Absent when there is no carrier — a dim USB-plug glyph is
-/// how this used to be read as "charging", which it is not.
-fileprivate struct EthernetMark: View {
-    var metrics: ConnectMetrics
-
-    var body: some View {
-        LinkMark(symbol: "network",
-                 tint: Theme.external,
-                 on: true,
-                 metrics: metrics,
-                 caption: "以太网",
-                 help: "以太网已接入")
+    /// The mark's caption band, the same job the meters' captions do: the
+    /// interface (when there is more than one thing to name) and the headset,
+    /// which is the one other device this card is responsible for.
+    private var label: String {
+        var parts: [String] = []
+        switch interface {
+        case .ethernet: parts.append("以太网")
+        case .wifi, .wifiDown: parts.append("Wi-Fi")
+        case .offline: parts.append("未接入")
+        }
+        if let accessory, accessory.connection == .inUse {
+            parts.append("\u{1F3A7}")  // headphones
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
-/// Battery rings for the headset components, followed by one shared connection label.
-fileprivate struct HeadsetMarks: View {
-    var accessory: AudioAccessoryMonitor.Accessory
-    var count: Int
-    var metrics: ConnectMetrics
+/// Thirty equal cells across the −100…−40 dBm ruler, filled from the left.
+///
+/// The same ruler as `ConnectionSignalScale`, in mark form: a filled cell is one
+/// grade of signal, so the *count* is the reading. Drawing it here (rather than
+/// reusing the wide view) is what keeps the mark inside the 176×130 slot every
+/// sibling reserves; the shared thing is the ruler's definition, which lives in
+/// `WiFiBars` / the −100…−40 endpoints both views read.
+private struct SignalCellRow: View {
+    var strength: Double
 
-    /// The case is optional hardware: a headset that never reports one gets two
-    /// marks, not a dashed third.
-    private var showsCase: Bool { accessory.caseLevel != nil }
-
-    var body: some View {
-        // `Group` flattens into the parent row, so each part is its own column
-        // with the same width, glyph box and caption bands as Wi-Fi.
-        Group {
-            HeadsetPart(percent: accessory.left?.percent,
-                        symbol: "earbud.left",
-                        charging: accessory.left?.charging == true,
-                        status: stateWord,
-                        accessory: accessory,
-                        metrics: metrics)
-            HeadsetPart(percent: accessory.right?.percent,
-                        symbol: "earbud.right",
-                        charging: accessory.right?.charging == true,
-                        status: stateWord,
-                        accessory: accessory,
-                        metrics: metrics)
-            if showsCase {
-                HeadsetPart(percent: accessory.caseLevel?.percent,
-                            symbol: "airpods.chargingcase",
-                            charging: accessory.caseLevel?.charging == true,
-                            status: stateWord,
-                            accessory: accessory,
-                            metrics: metrics)
-            }
-        }
-        .help("\(accessory.name) \(accessoryValue(accessory, count: count)) · \(accessory.connection.label)")
-    }
-
-    private var inUse: Bool { accessory.connection == .inUse }
-
-    /// Connection decides the word, charge only refines it — the same order the
-    /// card's help text uses, so the two cannot disagree about one headset.
-    /// `充电中` is never read as `已连接` because only a connected headset gets
-    /// the green word.
-    private var stateWord: String {
-        if inUse, accessory.isCharging == true { return "充电中" }
-        return inUse ? "已连接" : "未连接"
-    }
-}
-
-/// One headset component: charge ring, product glyph and percentage.
-fileprivate struct HeadsetPart: View {
-    var percent: Int?
-    var symbol: String
-    var charging: Bool
-    var status: String
-    var accessory: AudioAccessoryMonitor.Accessory
-    var metrics: ConnectMetrics
-
-    private var inUse: Bool { accessory.connection == .inUse }
-
-    private var symbolSize: CGFloat {
-        symbol.contains("case") ? metrics.caseSymbolSize : metrics.budSymbolSize
-    }
-
-    /// Charging state is per component and takes precedence over connection tint.
-    private var tint: Color {
-        if charging { return Theme.Ink.success }
-        return inUse ? Theme.chartPurple : Theme.Ink.idle
-    }
-
-    /// Low-battery colours are connection-independent on purpose: 15 % is 15 %
-    /// whether or not the headset is on your head. A part that is charging is
-    /// exempt — the level it is sitting at is being topped up, so warning about
-    /// it would be warning about the one case that is already handled.
-    private var ringTint: Color {
-        guard let percent, !charging else { return tint }
-        if percent <= 15 { return Theme.Ink.error }
-        if percent <= 35 { return Theme.Ink.warning }
-        return tint
-    }
+    private static let count = 12
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Circle()
-                    .stroke(Theme.cardFill(0.16), lineWidth: metrics.dial * 0.085)
-                if let percent {
-                    Circle()
-                        .trim(from: 0, to: CGFloat(percent) / 100)
-                        .stroke(ringTint, style: StrokeStyle(lineWidth: metrics.dial * 0.085, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                // `.minimumScaleFactor` is not available on `Image`, so the
-                // glyph is given a hard frame the ring cannot clip: the mark's
-                // own box is wider than its ink, and a frame smaller than the
-                // box is what cut the buds' stems off in the first render.
-                Image(systemName: symbol)
-                    .font(.system(size: symbolSize, weight: .semibold))
-                    .foregroundColor(percent == nil ? Theme.textTertiary() : Theme.textPrimary)
-                    .frame(width: metrics.dial * 0.92, height: metrics.dial * 0.92)
+        // No reading lights nothing: `strength` is 0 for an unattached radio, and
+        // the `index / (count - 1)` formula would still light cell 0 at 0.0 (0/11
+        // <= 0), i.e. draw one filled cell for "no signal". The floor is what
+        // stops an offline card from claiming a bar's worth of signal.
+        let lit = strength > 0.001 ? max(1, Int((strength * Double(Self.count - 1)).rounded()) + 1) : 0
+        return HStack(spacing: 2) {
+            ForEach(0..<Self.count, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(index < lit ? Theme.chartBlue : Theme.cardFill(0.18))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 14)
             }
-            .frame(width: metrics.dial, height: metrics.dial)
-            .overlay(alignment: .topTrailing) {
-                // Filled while in use, hollow while merely nearby: the ring
-                // carries the level, this dot carries "with you or not".
-                Group {
-                    if inUse {
-                        Circle().fill(Theme.Ink.success)
-                    } else {
-                        Circle().stroke(Theme.Ink.idle, lineWidth: 1.5)
-                    }
-                }
-                .frame(width: 6, height: 6)
-                .offset(x: 2, y: -2)
-            }
-
-            RollingNumberText(percent.map { "\($0)%" } ?? "—")
-                .font(.system(size: metrics.caption, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundColor(percent == nil ? Theme.textTertiary() : Theme.textPrimary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .frame(height: metrics.labelBand)
-            Text(status)
-                .font(.system(size: metrics.caption * 0.9, weight: .medium, design: .rounded))
-                .foregroundColor(inUse ? Theme.Ink.success : Theme.textTertiary())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .frame(height: metrics.statusBand)
         }
-        .frame(width: metrics.column)
-        .accessibilityLabel("\(partName) \(percent.map { "\($0)%" } ?? "无读数")")
-    }
-
-    private var partName: String {
-        if symbol.contains(".right") { return "右耳" }
-        if symbol.contains("case") { return "充电盒" }
-        if symbol.contains("earbud") { return "左耳" }
-        return "部件"
-    }
-}
-
-/// Bespoke radio / Ethernet marks share a fixed glyph band and caption baseline.
-/// The original state labels and accessibility descriptions remain authoritative.
-fileprivate struct LinkMark: View {
-    var symbol: String
-    var tint: Color
-    var on: Bool
-    var metrics: ConnectMetrics
-    /// Always non-empty: Wi-Fi carries its grade when up, and its own name
-    /// when down, so an off lane is not dressed as one that is on.
-    var caption: String
-    /// Forces the neutral caption ink for a caption that is a *name* rather
-    /// than a reading (an off Wi-Fi reads `弱`/`好`/… when up, `Wi-Fi` when
-    /// down), so a lane that is off is not dressed as one that is on.
-    var captionDim: Bool = false
-    var help: String
-
-    private var effectiveTint: Color { on ? tint : Theme.textTertiary(0.32) }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // The glyph band is the *ring's* diameter on every mark, so a 28pt
-            // arc and a 32pt ring are centred on the same horizontal line.
-            InstrumentGlyph(kind: symbol == "network" ? .ethernet : .link, tint: effectiveTint, active: on)
-                .frame(width: metrics.dial, height: metrics.dial)
-            Text(caption)
-                .rollingNumber()
-                .font(.system(size: metrics.caption, weight: .medium, design: .rounded))
-                .foregroundColor(on && !captionDim ? Theme.textSecondary : Theme.textTertiary())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .frame(height: metrics.labelBand)
-            Text("已接入")
-                .font(.system(size: metrics.caption * 0.9, weight: .medium, design: .rounded))
-                .foregroundColor(on ? Theme.Ink.success : Theme.textTertiary())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .frame(height: metrics.statusBand)
-        }
-        .frame(width: metrics.column)
-        .help(help)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(help)
     }
 }
 
@@ -455,146 +331,6 @@ func accessoryValue(_ accessory: AudioAccessoryMonitor.Accessory, count: Int) ->
     }
 }
 
-/// SSID belongs beneath its radio glyph; only the signal strength occupies the secondary line.
-struct WiFiConnectionMark: View {
-    let host: ProcessSampler.HostStats
-    var dial: CGFloat = 32
-    var labelHeight: CGFloat = 16
-    var column: CGFloat = 68
-    var statusHeight: CGFloat = 14
-    @ObservedObject private var permission = WiFiNameAuthorization.shared
-    @ObservedObject private var permissions = PermissionCenter.shared
-
-    private var switchedOn: Bool { permissions.isEnabled(.location) }
-
-    /// Only a missing name has something to click through to. Everything
-    /// else is a readout: it must not be a *disabled* button, which SwiftUI
-    /// dims to grey even when the lane is connected.
-    private var actionable: Bool {
-        host.wifiOn && host.wifiName.isEmpty && !permission.requesting
-    }
-
-    private var signal: String {
-        guard host.wifiOn, host.wifiRSSI < 0 else { return "Wi-Fi" }
-        let grade = WiFiBars.label(for: host.wifiRSSI).map { $0 + " · " } ?? ""
-        return grade + "\(host.wifiRSSI) dBm"
-    }
-
-    private var name: String {
-        if !host.wifiOn { return "Wi-Fi 已关闭" }
-        if !host.wifiName.isEmpty { return host.wifiName }
-        if !switchedOn { return "在设置中开启" }
-        if permission.requesting { return "等待授权…" }
-        return permission.authorized ? "检查定位权限" : "授权显示名称"
-    }
-
-    var body: some View {
-        Button {
-            guard actionable else { return }
-            if switchedOn {
-                permission.request()
-            } else {
-                NotificationCenter.default.post(.showMainWindow(page: .settings))
-            }
-        } label: {
-            VStack(spacing: 0) {
-                Image(systemName: host.wifiOn ? WiFiBars.symbol(for: host.wifiRSSI) : "wifi.slash")
-                    .font(.system(size: dial * 0.62, weight: .medium))
-                    .foregroundColor(host.wifiOn ? Theme.chartBlue : Theme.textTertiary())
-                    .frame(width: dial, height: dial)
-                Text(name)
-                    .font(.system(size: dial * 0.32, weight: .medium, design: .rounded))
-                    .foregroundColor(host.wifiName.isEmpty ? (actionable ? Theme.Ink.claude : Theme.textSecondary) : Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: labelHeight)
-                RollingNumberText(signal)
-                    .font(.system(size: dial * 0.28, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: statusHeight)
-            }
-            .frame(width: column)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(host.wifiName.isEmpty ? "macOS 读取 Wi-Fi 名称需要定位授权；不会采集地理位置。" : host.wifiName)
-        .alert("尚未获得 Wi-Fi 名称读取权限", isPresented: $permission.showSettingsHelp) {
-            Button("打开定位设置") { permission.openSettings() }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("请在“隐私与安全性 → 定位服务”中开启定位服务，并允许 ClaudeBar。若系统授权窗口已出现，可先在其中完成授权。")
-        }
-    }
-}
-
-struct AirDropConnectionMark: View {
-    var dial: CGFloat = 32
-    var labelHeight: CGFloat = 16
-    var column: CGFloat = 68
-    var statusHeight: CGFloat = 14
-    @State private var openFailed = false
-
-    var body: some View {
-        Button {
-            let app = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app/Contents/Applications/AirDrop.app")
-            openFailed = !NSWorkspace.shared.open(app)
-        } label: {
-            VStack(spacing: 0) {
-                AirDropGlyph(tint: Theme.chartBlue)
-                    .frame(width: dial, height: dial)
-                Text("隔空投送")
-                    .font(.system(size: dial * 0.32, weight: .medium, design: .rounded))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: labelHeight)
-                Text("打开")
-                    .font(.system(size: dial * 0.28, weight: .medium, design: .rounded))
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: statusHeight)
-            }
-            .frame(width: column).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).foregroundColor(Theme.textPrimary)
-        .help("打开隔空投送，查看接收范围与附近设备")
-        .alert("无法打开隔空投送", isPresented: $openFailed) {
-            Button("好", role: .cancel) { }
-        } message: { Text("请从 Finder 的“前往”菜单打开“隔空投送”。") }
-    }
-}
-
-
-/// Concentric broadcast arcs and a receiving pointer, independent of SF Symbols availability.
-private struct AirDropGlyph: View {
-    let tint: Color
-
-    var body: some View {
-        Canvas { context, size in
-            let scale = min(size.width, size.height) / 24
-            context.translateBy(x: (size.width - 24 * scale) / 2, y: (size.height - 24 * scale) / 2)
-            context.scaleBy(x: scale, y: scale)
-            for radius in [CGFloat(4), 7, 10] {
-                var arc = Path()
-                arc.addArc(center: CGPoint(x: 12, y: 11), radius: radius,
-                           startAngle: .degrees(135), endAngle: .degrees(405), clockwise: false)
-                context.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
-            }
-            var receiver = Path()
-            receiver.move(to: CGPoint(x: 12, y: 12))
-            receiver.addLine(to: CGPoint(x: 7.5, y: 22))
-            receiver.addQuadCurve(to: CGPoint(x: 16.5, y: 22), control: CGPoint(x: 12, y: 24))
-            receiver.closeSubpath()
-            context.fill(receiver, with: .color(tint))
-        }
-        .accessibilityHidden(true)
-    }
-}
-
 /// Shared state vocabulary for the overview and its inspector. A powered radio
 /// alone is not an association; Ethernet does not establish the default route.
 struct ConnectionStatus {
@@ -612,48 +348,5 @@ struct ConnectionStatus {
         if host.wiredOn { return wifiAttached ? "两个网络接口已接入" : "有线网络已接入" }
         if wifiAttached { return "无线网络已接入" }
         return host.wifiOn ? "无线已开启，尚无接入信息" : "Wi-Fi 已关闭"
-    }
-}
-
-/// A calibrated RSSI ruler. Its ticks are signal levels, not time buckets.
-/// Only new measurements animate; no polling or decorative frame loop.
-struct ConnectionSignalScale: View {
-    let rssi: Int?
-    var compact: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var position: Double? { rssi.map { min(1, max(0, Double($0 + 100) / 60)) } }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    HStack(alignment: .bottom, spacing: compact ? 3 : 4) {
-                        ForEach(0..<30, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 1.5)
-                                .fill(position.map { Double(index) / 29 <= $0 ? Theme.chartBlue : Theme.hairline } ?? Theme.hairline)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: compact ? 10 : 12 + CGFloat(index) * 0.7)
-                        }
-                    }.frame(maxHeight: .infinity, alignment: .bottom)
-                    if !compact, let position {
-                        Circle().fill(Theme.chartBlue).frame(width: 6, height: 6)
-                            .offset(x: max(0, min(geometry.size.width - 6, (geometry.size.width - 6) * position)), y: -20)
-                    }
-                }
-            }
-            .frame(height: compact ? 10 : 44)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: rssi)
-            if !compact {
-                HStack {
-                    Text("−100 · 弱")
-                    Spacer()
-                    Text("−70")
-                    Spacer()
-                    Text("−40 · 强")
-                }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(rssi.map { "Wi-Fi 信号 \($0) dBm，刻度负 100 至负 40 dBm" } ?? "Wi-Fi 信号暂无读数")
     }
 }

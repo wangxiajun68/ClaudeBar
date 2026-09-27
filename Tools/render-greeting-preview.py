@@ -96,6 +96,7 @@ source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
 source += (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
 source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherExplorer.swift').read_text() + '\n'
+source += (root / 'Sources/ClaudeBar/Utils/GreetingPhrase.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 source += declaration('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
 source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift').read_text() + '\n'
@@ -154,7 +155,7 @@ source += '''
                         resetsAt: Date().addingTimeInterval(8360)),
                         CodexQuotaWindow(label: "7 天", usedPercent: 42,
                         resetsAt: Date().addingTimeInterval(272160))]
-                    let card = GreetingStatusSheet(name: "wangxiajun", ccModel: empty ? "未配置" : "claude-sonnet-4-6",
+                    let card = GreetingStatusSheet(name: "王夏军", ccModel: empty ? "未配置" : "claude-sonnet-4-6",
                         ccProvider: "Anthropic", codexModel: empty ? "默认模型" : "gpt-5.4",
                         codexProvider: "OpenAI", balance: empty ? "未提供余额" : "128.50 Credits",
                         tokens: empty ? 0 : 12840000, yesterdayTokens: empty ? 0 : 9640000,

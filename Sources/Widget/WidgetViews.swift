@@ -282,11 +282,13 @@ struct WidgetEntryView: View {
     @ViewBuilder
     private func cursorSection(_ s: WidgetSnapshot, _ p: WidgetPalette) -> some View {
         if !s.cursorSessions.isEmpty {
+            // Cursor's own cube, the same artwork the app's headers draw.
             sectionHeader(title: "Cursor",
                           detail: "\(s.cursorSessions.count) · \(s.cursorSessions.filter { $0.status == "active" }.count) 活跃",
-                          icon: "cursorarrow.rays",
+                          icon: nil,
                           p: p,
-                          topPadding: s.sessions.isEmpty ? 10 : 6)
+                          topPadding: s.sessions.isEmpty ? 10 : 6,
+                          mark: .cursor)
 
             ForEach(s.cursorSessions.prefix(3), id: \.composerId) { session in
                 cursorSessionRow(session, p)
@@ -297,11 +299,16 @@ struct WidgetEntryView: View {
     @ViewBuilder
     private func externalSection(_ s: WidgetSnapshot, _ p: WidgetPalette) -> some View {
         if !s.externalSessions.isEmpty {
+            // The appex cannot import `Theme`, so the widget carries its own
+            // copy of the app's identity marks (`WidgetBrandMark`). That is the
+            // same arrangement as `WidgetPalette` below: the surface is a
+            // separate target and the tokens are mirrored, not shared.
             sectionHeader(title: "Codex",
                           detail: "\(s.externalSessions.count) · \(s.externalSessions.filter { $0.status == "busy" }.count) 运行中",
-                          icon: "chevron.left.forwardslash.chevron.right",
+                          icon: nil,
                           p: p,
-                          topPadding: (s.sessions.isEmpty && s.cursorSessions.isEmpty) ? 10 : 6)
+                          topPadding: (s.sessions.isEmpty && s.cursorSessions.isEmpty) ? 10 : 6,
+                          brand: true)
 
             ForEach(s.externalSessions.prefix(3), id: \.id) { session in
                 externalSessionRow(session, p)
@@ -309,13 +316,125 @@ struct WidgetEntryView: View {
         }
     }
 
+    /// The client families' marks, for the widget target.
+    ///
+    /// **Why a copy.** The appex compiles `Sources/Widget/*.swift` and nothing
+    /// else (`Sources/build.sh`), and it cannot import `Theme`: the app's
+    /// `ProductBrandMark` lives in `Views/Shared` and reads `Theme.isDark` /
+    /// `Theme.bgSecondary`, so it is not in this target's scope at all. That is
+    /// the same situation, and the same answer, as `WidgetPalette` above — the
+    /// surface is a separate process with its own bundle, so the *values* are
+    /// mirrored rather than shared. Keeping the asset names and the well's inset
+    /// identical to the app's is what makes the two surfaces draw one mark.
+    ///
+    /// It reads the same normalised PNGs: `Sources/build.sh` copies
+    /// `Sources/BrandAssets` into the appex's `Contents/Resources/BrandAssets`,
+    /// because an extension resolves `Bundle.main` to itself — without that copy
+    /// the widget would silently draw the fallback with no build error.
+    private struct WidgetBrandMark: View {
+        /// The four families, mirroring `ProductBrandMark.Brand` in the app.
+        /// Cursor is artwork here too: the appex cannot import the app's type,
+        /// and the widget's Cursor section header had the same wrong glyph.
+        /// `claudebar` mirrors the app's own mark (its icon's rings) for the one
+        /// tally that names no other product.
+        enum Brand {
+            case claude, codex, cursor, claudebar
+
+            /// `false` = CC, `true` = Codex — the app's own convention, kept so
+            /// a call site reads the same in both targets.
+            init(codex: Bool) { self = codex ? .codex : .claude }
+
+            var asset: String {
+                switch self {
+                case .claude: return "anthropic"
+                case .codex: return "openai"
+                case .cursor: return "cursor"
+                case .claudebar: return "claudebar"
+                }
+            }
+
+            var label: String {
+                switch self {
+                case .claude: return "Claude Code"
+                case .codex: return "Codex"
+                case .cursor: return "Cursor"
+                case .claudebar: return "第三方"
+                }
+            }
+        }
+
+        let brand: Brand
+
+        /// The one initialiser: declaring the two convenience inits below
+        /// suppresses the memberwise one, so `dark:` has no other way in and
+        /// every spelling has to list it. See the same shape in the app's
+        /// `ProductBrandMark`.
+        init(brand: Brand, dark: Bool) {
+            self.brand = brand
+            self.dark = dark
+        }
+        init(codex: Bool, dark: Bool) {
+            self.init(brand: Brand(codex: codex), dark: dark)
+        }
+        /// The snapshot's *authored* appearance, not the system one — see the
+        /// note on `WidgetPalette`. `true` = the widget is drawn dark, so it
+        /// needs **white** ink.
+        var dark: Bool
+
+        private var asset: String { brand.asset }
+
+        var body: some View {
+            // `artworkIsDark` selects the *file*, and LobeHub's `-dark` file is
+            // the **white** mark (measured; see `ProductBrandMark.page:` in the
+            // app). A dark widget therefore needs `artworkIsDark: true`, which is
+            // what `dark` already means — this used to pass `!dark` and drew
+            // black ink on a black ground, the same inversion the app had.
+            if let image = Self.image(asset, artworkIsDark: dark) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 11, height: 11)
+                    .accessibilityLabel(brand.label)
+            } else {
+                // A missing resource must not read as "no client": fall back to
+                // the family's own initial rather than a blank.
+                Text(String(brand.label.prefix(1)))
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundColor(WidgetPalette(isDark: dark).textPrimary)
+            }
+        }
+
+        /// Decoded once per variant: a section header is rebuilt for every
+        /// timeline entry, and `NSImage(contentsOf:)` decodes the PNG each call.
+        private static let cache = NSCache<NSString, NSImage>()
+
+        /// `artworkIsDark` is the *file* variant: `true` = LobeHub's `-dark`
+        /// asset, which is the **white** ink. The cache key is built from the
+        /// same parameter, so the ink and the key cannot disagree.
+        private static func image(_ asset: String, artworkIsDark: Bool) -> NSImage? {
+            let key = "\(asset)-\(artworkIsDark ? "dark" : "light")"
+            if let hit = cache.object(forKey: key as NSString) { return hit }
+            guard let root = Bundle.main.resourceURL?.appendingPathComponent("BrandAssets", isDirectory: true),
+                  let image = NSImage(contentsOf: root.appendingPathComponent("\(key).png")) else { return nil }
+            cache.setObject(image, forKey: key as NSString)
+            return image
+        }
+    }
+
     private func sectionHeader(title: String,
                                detail: String,
                                icon: String?,
                                p: WidgetPalette,
-                               topPadding: CGFloat) -> some View {
+                               topPadding: CGFloat,
+                               brand: Bool? = nil,
+                               mark: WidgetBrandMark.Brand? = nil) -> some View {
         HStack(spacing: 4) {
-            if let icon {
+            if let mark {
+                WidgetBrandMark(brand: mark, dark: p.isDark)
+            } else if let brand {
+                WidgetBrandMark(codex: brand, dark: p.isDark)
+            } else if let icon {
                 Image(systemName: icon)
                     .font(.system(size: 9))
                     .foregroundColor(p.textTertiary)

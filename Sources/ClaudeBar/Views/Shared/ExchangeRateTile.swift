@@ -25,8 +25,8 @@ struct ExchangeRateTile: View {
                     caption: caption, tint: Theme.chartGreen, compact: compact) {
             HStack(spacing: 6) {
                 rateField
-                Button(fx.isFetching ? "查询中…" : "更新") { fx.refresh() }
-                    .adaptiveGlassButton()
+                ActionButton(fx.isFetching ? "查询中…" : "更新") { fx.refresh() }
+                    .disabled(fx.isFetching)
                     .disabled(fx.isFetching)
             }
         }
@@ -50,13 +50,10 @@ struct ExchangeRateTile: View {
                 // finish editing on a settings tile.
                 .onChange(of: editing) { _, isEditing in if !isEditing { commit() } }
         } else {
-            Button {
+            ActionButton(perform: {
                 draft = fx.effectiveRate.map { String(format: "%.4f", $0) } ?? ""
                 editing = true
-            } label: {
-                Text(buttonLabel).rollingNumber()
-            }
-            .adaptiveGlassButton()
+            }) { Text(buttonLabel).rollingNumber() }
             .help(fx.isManual ? "改为使用实时汇率；点击可编辑手动值" : "手动指定汇率；设定后不再联网查询")
         }
     }

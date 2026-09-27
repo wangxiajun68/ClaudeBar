@@ -72,26 +72,11 @@ extension View {
 
 // MARK: - Action buttons
 
-extension View {
-    /// The app's push button — the machined pill described on
-    /// `InstrumentButtonStyle`. The name is historical: it was Liquid Glass on
-    /// macOS 26 and a bordered button before that, which is why a page of
-    /// machined tiles used to have Aqua chrome in every action slot.
-    ///
-    /// `tint` is the shape hue: the body when `prominent`, and the glow under the
-    /// plate always. `filled` overrides whether the body takes the hue — a
-    /// destructive action wants a filled body without claiming to be the page's
-    /// primary button. `ink` overrides the label where the label is itself the
-    /// signal. `tall` takes the hero proportions.
-    func adaptiveGlassButton(prominent: Bool = false,
-                             tint: Color = Theme.claude,
-                             ink: Color? = nil,
-                             filled: Bool? = nil,
-                             tall: Bool = false) -> some View {
-        buttonStyle(InstrumentButtonStyle(prominent: prominent, tint: tint, ink: ink,
-                                          filled: filled, tall: tall))
-    }
-}
+// The push button used to be declared here, as `adaptiveGlassButton`. It is now
+// `ActionButton` in `InstrumentControls.swift`, together with every other control
+// shape in the app, so that the button, the chip, the icon action and the switch
+// are one file with one press vocabulary and one plate. Nothing that reaches for
+// the old name survives: the last call site was migrated with it.
 
 // MARK: - HoverState
 

@@ -8,6 +8,18 @@ import SwiftUI
 struct SectionHeader: View {
     let icon: String
     let title: String
+    /// Draw the client's bundled mark in the well instead of the SF Symbol
+    /// `icon` — `false` = CC (Anthropic), `true` = Codex (OpenAI), i.e.
+    /// `ProductBrandMark.Brand.init(codex:)`'s convention. `nil` (the default)
+    /// keeps the symbol, so a section that is *about a topic* (`活跃会话`,
+    /// `按平台`) is unchanged and only a section that *is named after a client*
+    /// passes it.
+    var brand: Bool? = nil
+    /// The same thing for a section named after **Cursor** — artwork, not a
+    /// symbol, because no symbol is Cursor's mark. `brand:` is a `Bool` only
+    /// because the provider surfaces offer two clients; a section header is not
+    /// one of those, so it asks the question the mark actually answers.
+    var mark: ProductBrandMark.Brand? = nil
     /// Accent used for the icon well.
     var tint: Color = Theme.textSecondary
     /// Readable counterpart of `tint` for the count pill. Defaults to `tint`
@@ -43,7 +55,7 @@ struct SectionHeader: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s8) {
-            GlyphWell(name: icon, tint: tint, size: 18)
+            GlyphWell(name: icon, tint: tint, size: 18, brand: brand, mark: mark)
             Text(title)
                 .font(Theme.Font.section)
                 .foregroundColor(Theme.textPrimary)

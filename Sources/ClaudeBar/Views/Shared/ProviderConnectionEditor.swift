@@ -127,8 +127,16 @@ struct ProviderConnectionEditor: View {
                 Text(title).font(.system(size: 24, weight: .semibold, design: .rounded))
                 Text(draft.entry?.detail ?? "名称、Key 和模型会同步到另一端。接口地址按各自协议保留。")
                     .font(Theme.Font.bodySmall).foregroundStyle(Theme.textSecondary)
-                Label(client.title, systemImage: "terminal")
-                    .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
+                // The row is being edited *for one client*, and both clients
+                // have their own mark — a `terminal` label said "a command
+                // line" for two products that are not interchangeable.
+                Label {
+                    Text(client.title)
+                } icon: {
+                    ProductBrandMark(codex: client == .codex, well: false)
+                        .frame(width: 12, height: 12)
+                }
+                .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
             }
             Spacer()
             Button { dismiss() } label: { Image(systemName: "xmark") }

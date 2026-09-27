@@ -116,17 +116,14 @@ struct ProxyLogView: View {
             // empty string, silently wiping the user's pasteboard while
             // reporting 已复制. 清空 follows the buffer, because that is what it
             // clears.
+            // Two actions that used to be *text* — a font and a colour, with no
+            // control drawn at all. They are the same push button every other
+            // page's 复制 / 清空 is, in the tone each one's intent asks for.
             if !filtered.isEmpty {
-                Button(copied ? "已复制" : "复制") { copyVisible() }
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textSecondary)
-                    .buttonStyle(.plain)
+                ActionButton(copied ? "已复制" : "复制") { copyVisible() }
             }
             if !log.entries.isEmpty {
-                Button("清空") { log.clear() }
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.Ink.error)
-                    .buttonStyle(.plain)
+                ActionButton("清空", tone: .destructive) { log.clear() }
             }
         }
         .padding(.horizontal, Theme.Space.s16)
