@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
-"""The quota-rollover alert must fire once, on real rollovers only.
+"""The quota-rollover alert must fire once, on real rollovers only — and the
+poll must look exactly when the window says it will roll.
 
-The glance reel polls Codex every 4.2 s, so the alert sits on a very hot path:
-a detector that fires on "usedPercent < 5" would re-announce a depleted window
-dozens of times an hour, and one that fires on any increase in remaining quota
-would fire on provider rounding. Both failure modes are invisible in review
-because the code reads plausibly — so drive the production detector through
-simulated poll sequences and assert the edges.
+Two things live here, both driven through the production source:
 
-Extracts `QuotaResetDetector` from the production source, no app launch.
+  * `QuotaResetDetector` decides *whether* a rollover happened. The glance reel
+    polls Codex every 4.2 s, so the alert sits on a very hot path: a detector
+    that fires on "usedPercent < 5" would re-announce a depleted window dozens
+    of times an hour, and one that fires on any increase in remaining quota
+    would fire on provider rounding. Both failure modes are invisible in review
+    because the code reads plausibly — so drive it through simulated poll
+    sequences and assert the edges.
+
+  * `QuotaPollScheduler` decides *when* to poll, which is what the alert's
+    latency is made of. The failure it guards against is the old fixed 15-minute
+    timer's: a reset landing one second after a poll waited the whole interval,
+    and the whole feature's point — "you can start again" — arrived up to a
+    quarter hour late. The properties asserted are the ones that make chasing an
+    instant safe: it never polls harder than the ladder allows, it always falls
+    back when the instant goes stale, and it can never manufacture an alert.
+
+Extracts both types from the production source, no app launch.
 """
 from pathlib import Path
 import subprocess
@@ -113,8 +125,107 @@ DETECTOR
         precondition(d.record([window(1, resets: nil)]).count == 1,
                      "a drop with no reset time still counts as a rollover")
 
+        // ---- QuotaPollScheduler ------------------------------------------
+        //
+        // The settings mirror `AppConfig`; the numbers the assertions use are
+        // read back off this instance so a retune of the constants does not
+        // require a retune of the test.
+        let s = QuotaPollScheduler(fallback: 900, grace: 5, horizon: 900, dueWindow: 300)
+        let prev = { (instant: Date?) -> [String: Date?] in ["5 小时": instant] }
+        var plan: TimeInterval = 0
+
+        // 9. The heartbeat is never traded away. A window whose reset is hours
+        //    out still gets a reading every `fallback` — the allowance moves on
+        //    screen (it is spent), and that is watched independently of any
+        //    reset.
+        plan = s.nextInterval(now: t0, windows: [window(50, resets: t0.addingTimeInterval(86_400))],
+                              previous: [:])
+        precondition(plan == s.fallback, "the heartbeat must hold when nothing resets; got \(plan)")
+
+        // 10. A window about to reset is looked at *when* it resets, not at the
+        //     next heartbeat: a reset 12 s out must be observed 12 s out, not
+        //     15 minutes out. This is the latency the feature is about.
+        let soon = t0.addingTimeInterval(12)
+        plan = s.nextInterval(now: t0, windows: [window(92, resets: soon)], previous: [:])
+        precondition(plan == 17, "an imminent reset must be polled at the instant; got \(plan)")
+
+        // 11. Just outside the aim window is still the heartbeat — but the
+        //     heartbeat is *when* the aim window is next evaluated, so a reset
+        //     at `horizon` + the fetch interval is never skimmed over: some
+        //     heartbeat lands inside the window. (With the shipped constants
+        //     horizon == fallback, so this is the tight case.)
+        plan = s.nextInterval(now: t0, windows: [window(60, resets: t0.addingTimeInterval(s.horizon + 1))],
+                              previous: [:])
+        precondition(plan == s.fallback, "past the aim window means the heartbeat; got \(plan)")
+        precondition(s.horizon >= s.fallback,
+                     "the horizon must be at least the heartbeat, or a reset could fall between two polls")
+
+        // 12. The aim has a floor and a ceiling: a just-passed instant is looked
+        //     at now (not clamped up to the heartbeat), and never sooner than
+        //     `grace`.
+        let justPast = t0.addingTimeInterval(-3)
+        plan = s.nextInterval(now: t0, windows: [window(70, resets: justPast)], previous: prev(justPast))
+        precondition(plan == s.grace, "a just-passed instant must be looked at; got \(plan)")
+
+        // 13. The bound on chasing. Past `dueWindow` the instant is abandoned —
+        //     without this a reset that failed to fetch would be aimed at on
+        //     every reading and the app would poll every `grace` indefinitely.
+        let longPast = t0.addingTimeInterval(-(s.dueWindow + 10))
+        plan = s.nextInterval(now: t0, windows: [window(40, resets: longPast)], previous: [:])
+        precondition(plan == s.fallback, "a stale instant must not be chased")
+        // Inside the bound it is still worth a look...
+        plan = s.nextInterval(now: t0, windows: [window(40, resets: t0.addingTimeInterval(-60))],
+                              previous: prev(t0.addingTimeInterval(-60)))
+        precondition(plan == s.grace, "an instant inside the due window is still looked at")
+        // ...but *only* when the previous reading named it. Otherwise a reading
+        // that merely appears (launch, account switch) would probe for a reset
+        // that already happened.
+        plan = s.nextInterval(now: t0, windows: [window(40, resets: t0.addingTimeInterval(-60))],
+                              previous: [:])
+        precondition(plan == s.fallback, "a first sighting must not probe a passed instant")
+        // And a reading whose schedule has advanced must not either.
+        plan = s.nextInterval(now: t0, windows: [window(40, resets: t0.addingTimeInterval(-60))],
+                              previous: prev(t0.addingTimeInterval(-3_600)))
+        precondition(plan == s.fallback, "a moved schedule must not probe a passed instant")
+
+        // 14. The reset the whole feature is for. A window that rolls at its
+        //     instant is observed *at* that instant: the schedule aims there,
+        //     the poll runs, and the detector reports it. Assert the pair, not
+        //     just one half — a scheduler that aims at the right moment and a
+        //     detector that ignores it is the silent regression.
+        let rollAt = t0.addingTimeInterval(40)
+        plan = s.nextInterval(now: t0, windows: [window(97, resets: rollAt)], previous: [:])
+        precondition(plan == 45 || plan == 40,
+                     "the confirming poll lands at the instant plus grace; got \(plan)")
+        var rd = QuotaResetDetector()
+        _ = rd.record([window(97, resets: rollAt)])
+        let observed = rd.record([window(0, resets: rollAt.addingTimeInterval(5 * 3600))])
+        precondition(observed.count == 1,
+                     "the reading taken at the aimed instant must report the rollover")
+
+        // 15. The nearest instant wins, and a shared one is a single look:
+        //     asking about either is asking about the same moment.
+        plan = s.nextInterval(now: t0,
+                              windows: [window(30, resets: soon, label: "5 小时"),
+                                        window(30, resets: soon, label: "7 天")],
+                              previous: [:])
+        precondition(plan == 17, "a shared instant must be aimed at once; got \(plan)")
+        plan = s.nextInterval(now: t0,
+                              windows: [window(30, resets: t0.addingTimeInterval(60), label: "7 天"),
+                                        window(30, resets: soon, label: "5 小时")],
+                              previous: [:])
+        precondition(plan == 17, "the nearest instant wins; got \(plan)")
+
+        // 16. An instant never aimed below the heartbeat — a long-ago reset must
+        //     not put the poll on a fast cycle.
+        plan = s.nextInterval(now: t0, windows: [window(40, resets: t0.addingTimeInterval(-1_000))],
+                              previous: prev(t0.addingTimeInterval(-1_000)))
+        precondition(plan == s.fallback && plan >= s.grace, "the poll never spins")
+
         print("PASS: quota rollover fires exactly once — seed-safe, dip-safe, floor-safe, "
-              + "per-window, forward-instant aware, no state leak across disappearances")
+              + "per-window, forward-instant aware, no state leak across disappearances; "
+              + "and the poll keeps its heartbeat, aims at the upcoming instant, is never "
+              + "steered by a first sighting or an advanced schedule, and never spins")
     }
 }
 '''.replace('DETECTOR', body)

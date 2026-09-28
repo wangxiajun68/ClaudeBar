@@ -63,12 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(resumeSession(_:)),
             name: .resumeSession, object: nil)
 
+        // `refresh()` calls `peer?.refreshQuota()`, and every reading — that
+        // first one included — schedules the next poll from the reset instant
+        // it carries (`QuotaPollScheduler`), so there is no poll to arm here.
         store.refresh()
-
-        // The first quota fetch already ran inside `store.refresh()` (it calls
-        // `peer?.refreshQuota()`); arm the background poll after it so the two
-        // never start in the same tick.
-        codexStore.startQuotaPolling()
 
         // Cursor's allowance reads the account directly (no login, no CLI), so
         // it has no reader in `store.refresh()` to piggyback on — arm its poll

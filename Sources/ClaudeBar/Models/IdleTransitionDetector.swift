@@ -138,3 +138,84 @@ struct QuotaResetDetector {
         return reset
     }
 }
+
+/// Decides when the next Codex allowance poll is worth making — the heartbeat,
+/// plus one extra look on top when a reset instant is near.
+///
+/// The heartbeat is kept: the reading is what the panel shows, the allowance
+/// moves as it is spent, and the user watches that move. But a heartbeat alone
+/// answers the wrong question about the *alert*. It exists for the moment a
+/// depleted window refills, and at a fixed tick that moment is reported 0–15
+/// minutes late — a reset that lands one second after a poll waits the whole
+/// quarter hour. So on top of the heartbeat the scheduler aims one extra poll
+/// at the instant the reading announces:
+///
+///   * the reading is fetched at least every `fallback`, unchanged;
+///   * if a window resets inside `horizon`, that instant is aimed at with a
+///     one-shot poll `grace` after it — a window resets where it says it does,
+///     so this is the earliest a new reading can differ;
+///   * if the reading has not moved at that instant (Codex sometimes announces
+///     the new schedule before the percentage follows) the heartbeat — which
+///     was running underneath the whole time — carries on, so a rollover is
+///     never missed, only reported late in that one case;
+///   * everything else is the heartbeat.
+///
+/// The detection rule itself is untouched: this only decides *when* to look. An
+/// aimed poll still has to survive `QuotaResetDetector`, so nothing here can
+/// manufacture an alert.
+///
+/// An instant is re-aimed only inside `dueWindow` of itself. Without that bound
+/// a reset that fails to fetch would leave a stale instant aimed at on every
+/// reading, and the schedule would poll every `grace` until the window happened
+/// to move; past the bound the heartbeat carries on. The test is
+/// `resetsAt <= dueWindow old`, i.e. waiting for the reset is never more urgent
+/// than the heartbeat, so an instant the app slept past is looked at rather
+/// than skimmed over.
+struct QuotaPollScheduler {
+    /// The steady heartbeat: the longest the poll may go without a reading.
+    let fallback: TimeInterval
+    /// Slack after a reset instant before the confirming poll.
+    let grace: TimeInterval
+    /// How far ahead a reset instant is worth an extra poll.
+    let horizon: TimeInterval
+    /// How long past a reset instant it is still worth aiming at.
+    let dueWindow: TimeInterval
+
+    /// The next poll after a reading fetched at `now`.
+    ///
+    /// `previous` is the instant the reading that is being replaced named — a
+    /// look at it must not be armed on the strength of the reading that already
+    /// took place at that instant. At launch it is empty for exactly that
+    /// reason: an app starting up after an instant has passed must wait out the
+    /// heartbeat, not probe for a reset that has already been delivered.
+    func nextInterval(now: Date,
+                      windows: [CodexQuotaWindow],
+                      previous: [String: Date?]) -> TimeInterval {
+        let instants = windows.compactMap(\.resetsAt)
+        let horizon = now.addingTimeInterval(self.horizon)
+
+        // A reset about to happen: look at it as it happens, and no later than
+        // the heartbeat would have looked anyway (`min`).
+        if let soon = instants.filter({ $0 > now && $0 <= horizon }).min() {
+            return min(fallback, max(grace, soon.timeIntervalSince(now) + grace))
+        }
+
+        // A reset that has just passed — the poll slept through it, or the clock
+        // stepped — and the reading is at most `dueWindow` old. Still the one
+        // the previous reading named, which is what tells a reading that was
+        // *due* here and did not move from one whose schedule merely advanced.
+        // Look once; the heartbeat covers a reading that turns out not to move.
+        let stale = instants.filter { $0 <= now && now.timeIntervalSince($0) <= dueWindow }
+        if stale.contains(where: { isUnchanged($0, previous) }) { return grace }
+
+        return fallback
+    }
+
+    /// Whether a window still names `instant` — the "this reading expected a
+    /// reset here and did not move" test. `nil` (a window that does not say
+    /// when it resets) does not match, so a degraded reading never holds the
+    /// schedule on an instant it cannot confirm.
+    private func isUnchanged(_ instant: Date, _ resetsByLabel: [String: Date?]) -> Bool {
+        resetsByLabel.values.contains { $0 == instant }
+    }
+}

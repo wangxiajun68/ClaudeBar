@@ -31,14 +31,46 @@ enum AppConfig {
     /// sparkline. At the default 2.5s poll this covers the last minute.
     static let heartbeatLength = 24
 
-    /// Background ChatGPT quota poll.
+    /// Background ChatGPT quota poll: the steady heartbeat.
     ///
-    /// Minutes, not seconds: quota windows move on a 5-hour / 7-day schedule,
-    /// and every poll spawns a short-lived `codex app-server` (up to ~20 s of
-    /// process lifetime). The only thing that needs this to be timely is the
-    /// island's rollover alert, and 15 minutes of lag on a window that just
-    /// reset is not something a user perceives.
+    /// Minutes, not seconds: every poll spawns a short-lived `codex app-server`
+    /// (up to ~20 s of process lifetime). This cadence is kept *as well as* the
+    /// poll aimed at a known reset instant — the reading is what the panel
+    /// shows, so the allowance has to keep moving on screen even when nothing
+    /// resets, and this is the rhythm it moves at. `QuotaPollScheduler` adds the
+    /// extra look on top; it never shortens this one.
     static let quotaPollInterval: TimeInterval = 900
+
+    /// Slack after the announced reset instant before the confirming poll.
+    ///
+    /// The window rolls *at* its instant, but the two clocks are not the same
+    /// clock: the server's `resetsAt` is rounded to the minute and the device
+    /// clock can sit a second or two off it. Asking exactly on the instant
+    /// would read the old percentage and spend the re-check on a clock skew.
+    /// Seconds, not minutes — the user is watching for this one.
+    static let quotaResetGrace: TimeInterval = 5
+
+    /// How far ahead a reset instant is worth aiming an extra poll at.
+    ///
+    /// A window that resets inside this is looked at when it resets instead of
+    /// whenever the heartbeat next comes around, so a reset is reported within
+    /// seconds rather than up to a quarter hour late. Anything further out is
+    /// left to the heartbeat, which re-evaluates every `quotaPollInterval` — so
+    /// by the time an instant does come inside this window, some heartbeat has
+    /// already aimed at it. That no-reset-is-skimmed argument needs
+    /// `quotaResetHorizon >= quotaPollInterval`; at the shipped values they are
+    /// equal, the tight case, and `Tests/quota-reset-regressions.py` fails if
+    /// that stops holding.
+    static let quotaResetHorizon: TimeInterval = 900
+
+    /// How long after a *predicted* reset instant the reading is still worth
+    /// chasing.
+    ///
+    /// A fetch that fails in that moment would otherwise leave a "due" instant
+    /// pinned in the past, and the aim re-armed against it on every reading.
+    /// Past this the instant is abandoned and the heartbeat carries on.
+    static let quotaResetDueWindow: TimeInterval = 300
+
 
     /// Cursor allowance poll.
     ///

@@ -77,7 +77,7 @@
 | `Views/MainWindowView.swift` | 9 页 `AppPage`；顶栏 tabs（帮助走右上角问号）；每页只在选中时挂载（`TrafficPageState` 让流量页重进无代价） |
 | `Views/MenuBarView.swift` | popup 壳（460pt，与 `MenuBarController.sizeAndPosition` 同一数字）：Header + MachineKpiStrip + 能源流向 + 两面板 + 操作栏；只订阅外壳状态 |
 | `Views/Pages/VPNView.swift` | VPN 主界面 |
-| `Models/IdleTransitionDetector.swift` | `ConfirmedCompletionDetector` / `QuotaResetDetector` —— 完成、额度重置两种边沿检测（文件名是历史遗留） |
+| `Models/IdleTransitionDetector.swift` | `ConfirmedCompletionDetector` / `QuotaResetDetector` / `QuotaPollScheduler` —— 完成、额度重置两种边沿检测 + 下次额度轮询的排程（按已知重置点对齐，不再是固定 15 分钟）（文件名是历史遗留） |
 | `Utils/SessionTitle.swift` | 会话卡片标题的唯一推导：Codex `threads.title` / Cursor `composerHeaders.name` / CC 首条人类 prompt，回退目录名 |
 | `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
 | `Utils/ModelPriceTable.swift` | 内置官方刊例价表（每行标注来源，见 [§15](15-model-cost.md)）；更新只需改这一个文件 |

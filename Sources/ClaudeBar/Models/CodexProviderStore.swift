@@ -61,9 +61,15 @@ final class CodexProviderStore: ObservableObject {
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
     private var quotaTask: Task<Void, Never>?
-    /// Background quota poll. Re-armed on every manual refresh so the two
-    /// paths never stack, and invalidated on deinit.
+    /// Background quota poll. A one-shot timer, re-armed after every reading by
+    /// `QuotaPollScheduler`: the 15-minute heartbeat, plus an extra look when a
+    /// window's reset instant is near — see that type for why. Invalidated on
+    /// deinit.
     private var quotaTimer: Timer?
+    /// The instant each window named at the *previous* reading, keyed by label.
+    /// What tells a reading that "the window was due to reset here and did not
+    /// move" from one whose schedule merely advanced.
+    private var quotaPreviousResets: [String: Date?] = [:]
     /// Weak back-ref so proxy lifecycle can see Claude capture flags.
     weak var claudePeer: ProviderStore?
 
@@ -351,14 +357,9 @@ final class CodexProviderStore: ObservableObject {
         // app-server instances for the same account query: their completion
         // order previously let a transient failure overwrite valid windows.
         guard quotaTask == nil else { return }
-        if manual {
-            CodexQuotaFetcher.invalidateCache()
-            // A manual refresh re-arms the poll, so the next automatic one is a
-            // full interval away: tapping refresh in the popup must not be
-            // followed seconds later by a background poll re-entering the
-            // spinner.
-            if quotaTimer != nil { startQuotaPolling() }
-        }
+        // A manual press drops the fetcher's cache; the poll below is re-armed
+        // from whatever reading comes back, so there is no timer to reset here.
+        if manual { CodexQuotaFetcher.invalidateCache() }
         quotaLoading = true
         quotaTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -368,24 +369,43 @@ final class CodexProviderStore: ObservableObject {
             self.quotaNote = snapshot.note
             self.creditBalance = snapshot.creditBalance
             self.quotaLoading = false
+            self.applyQuotaSchedule()
         }
     }
 
     // MARK: - Background quota poll
 
-    /// Start (or restart) the periodic quota poll.
+    /// The heartbeat and the extra look at a known reset instant. See
+    /// `QuotaPollScheduler` for why the poll is not a plain fixed timer.
+    private static let quotaScheduler = QuotaPollScheduler(
+        fallback: AppConfig.quotaPollInterval,
+        grace: AppConfig.quotaResetGrace,
+        horizon: AppConfig.quotaResetHorizon,
+        dueWindow: AppConfig.quotaResetDueWindow)
+
+    /// Re-arm the poll from the reading that just came in.
     ///
-    /// Called once at launch, right after `ProviderStore.refresh()` has kicked
-    /// off the first fetch. Every manual refresh re-arms the timer, so tapping
-    /// the refresh button always leaves a full interval before the next
-    /// automatic one rather than racing it.
-    func startQuotaPolling() {
+    /// Called after **every** reading, manual or automatic. That is what
+    /// replaces the old "a manual refresh re-arms the timer" patch: the
+    /// schedule is simply rebuilt from the newest reading, so a poll can never
+    /// land seconds behind a manual press.
+    private func applyQuotaSchedule() {
+        let interval = Self.quotaScheduler.nextInterval(
+            now: Date(), windows: quotaWindows, previous: quotaPreviousResets)
+        quotaPreviousResets = Dictionary(
+            quotaWindows.map { ($0.label, $0.resetsAt) }, uniquingKeysWith: { _, last in last })
+
         quotaTimer?.invalidate()
-        quotaTimer = Timer.scheduledTimer(
-            withTimeInterval: AppConfig.quotaPollInterval, repeats: true
-        ) { [weak self] _ in
+        // One-shot, re-armed by the next reading — a repeating timer could not
+        // follow an interval that changes with what the readings say.
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshQuota() }
         }
+        // The default `.default` mode would not fire while a popup or a window
+        // resize held the run loop in a tracking loop — i.e. exactly while the
+        // user is looking at the panel this alert is for.
+        RunLoop.main.add(timer, forMode: .common)
+        quotaTimer = timer
     }
 
     // MARK: - Activate
