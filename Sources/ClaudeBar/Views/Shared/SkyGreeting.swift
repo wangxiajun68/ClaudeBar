@@ -3,6 +3,18 @@ import CoreText
 
 /// The greeting is the signature on the window, the name is its small colophon.
 /// A cached CoreText outline writes in once; pointer movement never replays it.
+///
+/// **The colophon is bold, not a hairline.** It used to be `Songti SC` — a
+/// serif that at 23–30pt with 8pt of tracking reads as a *faint* line, and next
+/// to the heavy script above it the only thing that light was the name. It is
+/// now a rounded bold face, which is the weight the rest of the card already
+/// speaks in (`Theme.Font.displayMetric` and every figure on the dock are
+/// rounded). The name arrives from `MachineIdentity` already Latinised
+/// (`Xiajun Wang`), so the face is a Latin one; `Songti` had no Latin bold to
+/// fall back to at this size and would have set the transliteration in the same
+/// thin serif. SF Rounded has no `tracking`-heavy tradition, so the tracking
+/// comes down from 8 to 4: the name is short and reads as one word rather than
+/// as spread-out letters.
 struct SkyGreeting: View {
     let name: String
     let palette: SkyPalette
@@ -39,8 +51,8 @@ struct SkyGreeting: View {
                         Text(aside).font(.system(size: 10, weight: .medium)).foregroundStyle(palette.ink.opacity(0.65))
                     }
                     Spacer(minLength: 0)
-                    Text(name).font(.custom("Songti SC", size: geo.size.width < 650 ? 23 : 30))
-                        .tracking(8).lineLimit(1).minimumScaleFactor(0.6)
+                    Text(name).font(.system(size: geo.size.width < 650 ? 24 : 31, weight: .bold, design: .rounded))
+                        .tracking(4).lineLimit(1).minimumScaleFactor(0.6)
                     SignatureRibbon().trim(from: 0, to: presented || reduceMotion ? 1 : 0)
                         .stroke(palette.ink.opacity(0.68), style: StrokeStyle(lineWidth: 1, lineCap: .round))
                         .frame(width: geo.size.width < 650 ? 58 : 105, height: 25)
@@ -76,6 +88,21 @@ private struct SignatureRibbon: Shape {
 private struct ScriptOutline: Shape {
     let text: String
     func path(in rect: CGRect) -> Path {
+        let path = ScriptGlyphCache.path(for: text)
+        let bounds = path.boundingBoxOfPath
+        guard bounds.width > 0, bounds.height > 0 else { return Path() }
+        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
+        let transform = CGAffineTransform(a: scale, b: 0, c: 0, d: -scale,
+                                          tx: (rect.width - bounds.width * scale) / 2 - bounds.minX * scale,
+                                          ty: (rect.height - bounds.height * scale) / 2 + bounds.maxY * scale)
+        return Path(path).applying(transform)
+    }
+}
+
+private enum ScriptGlyphCache {
+    static let cache = NSCache<NSString, CGPath>()
+    static func path(for text: String) -> CGPath {
+        if let cached = cache.object(forKey: text as NSString) { return cached }
         let font = CTFontCreateWithName("SnellRoundhand-Bold" as CFString, 120, nil)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
         let path = CGMutablePath()
@@ -91,12 +118,7 @@ private struct ScriptOutline: Shape {
                 }
             }
         }
-        let bounds = path.boundingBoxOfPath
-        guard bounds.width > 0, bounds.height > 0 else { return Path() }
-        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
-        let transform = CGAffineTransform(a: scale, b: 0, c: 0, d: -scale,
-                                          tx: (rect.width - bounds.width * scale) / 2 - bounds.minX * scale,
-                                          ty: (rect.height - bounds.height * scale) / 2 + bounds.maxY * scale)
-        return Path(path).applying(transform)
+        cache.setObject(path, forKey: text as NSString)
+        return path
     }
 }

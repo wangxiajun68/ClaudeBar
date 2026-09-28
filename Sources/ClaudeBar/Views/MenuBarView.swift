@@ -78,7 +78,15 @@ struct MenuBarView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 10)
-        .frame(width: 424)
+        // 460, not 424. The extra 36pt goes to the switcher row: three columns
+        // at 143pt each let a long model name ("deepseek-v4.1-flash") sit whole
+        // in the CC / Codex chip, where 127pt columns truncated it to the
+        // unhelpful "deepsee...flash", and leave the Codex allowance's two
+        // windows enough room that neither the percentage nor the reset has to
+        // be abbreviated. Everything below (the KPI strip, the panels) simply
+        // breathes a little wider with it. `MenuBarController.sizeAndPosition`
+        // sizes the panel, so the two numbers must stay equal.
+        .frame(width: 460)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.bgPrimary)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

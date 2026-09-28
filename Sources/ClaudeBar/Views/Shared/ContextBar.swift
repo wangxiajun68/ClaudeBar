@@ -6,6 +6,11 @@ struct ContextBar: View {
     let ratio: Double
     var height: CGFloat = 4
     var trackOpacity: Double = 0.08
+    /// Override the customary ratio-derived hue. `nil` (the default) keeps the
+    /// context tinting; a caller that is reading something other than context
+    /// fill — an allowance that is *consumed* rather than *remaining* — passes
+    /// its own so the bar does not borrow the wrong meaning.
+    var tint: Color? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -13,7 +18,7 @@ struct ContextBar: View {
                 RoundedRectangle(cornerRadius: height / 2, style: .continuous)
                     .fill(Theme.cardFill(trackOpacity))
                 RoundedRectangle(cornerRadius: height / 2, style: .continuous)
-                    .fill(Theme.contextColor(ratio))
+                    .fill(tint ?? Theme.contextColor(ratio))
                     .frame(width: max(height, geo.size.width * min(max(ratio, 0), 1.0)))
             }
         }

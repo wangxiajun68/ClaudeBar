@@ -356,7 +356,10 @@ final class MenuBarController: NSObject {
         // Follow the actual status-item screen, including secondary displays.
         guard let screen = statusItem.button?.window?.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         guard hostingView != nil else { return }
-        let width: CGFloat = 424
+        // Kept in step with the popup shell's own `frame(width:)` in
+        // `MenuBarView` — the panel is sized here and the content measures
+        // itself there, so the two must agree or the shell clips.
+        let width: CGFloat = 460
         // A scroll view has no useful intrinsic height. Measuring fittingSize
         // here compressed the sessions to a sliver and clipped the other cards.
         let height = min(CGFloat(820), max(1, screen.visibleFrame.height - 8))

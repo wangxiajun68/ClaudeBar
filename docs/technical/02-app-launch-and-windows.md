@@ -61,7 +61,7 @@ struct ClaudeBarApp: App {
 - `hidesOnDeactivate = false`、`isFloatingPanel = true` —— 悬浮且不因失焦隐藏（自行用事件监听收起）。
 
 **定位逻辑（`sizeAndPosition`）：**
-- 宽度固定 `424`（`MenuBarView` 自己的 frame），高度取 `min(820, 屏幕可见区高度 - 8)`。
+- 宽度固定 `460`（`MenuBarView` 自己的 frame；`MenuBarController.sizeAndPosition` 里那份必须与它相等），高度取 `min(820, 屏幕可见区高度 - 8)`。
   > 早期版本用 `max(400, fittingSize.width)` + `fittingSize.height`：滚动视图没有有用的固有高度，量出来会把会话区压成一条并被裁掉，所以宽度与高度现在都是显式数字。
 - 水平：以状态项图标的**全局 x 中心**对齐面板中心（`globalIconX = windowOriginX + btnInWindow.midX`），再 clamp 到屏幕内。
 - 垂直：`y = screen.visibleFrame.maxY - height - 4`，即紧贴菜单栏下方。

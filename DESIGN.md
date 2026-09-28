@@ -309,29 +309,62 @@ delay, a selection tally — rolls per digit with the island's own effect:
 - The main navigation uses one static elevated surface; only tab hover and
   selection animate. No full-width material blur or scrolling tab strip.
 
-## Greeting weather observatory
+## Greeting sky window
 
-This is a scoped extension for `GreetingCard`, not a replacement for the app's
-ice / graphite surfaces. The greeting, weather, compact forecast rail, model
-readings and usage share one continuous sky, a 24pt outer corner and hairline
-dividers. Keep these rows open; do not put cards inside the band.
+This component-level extension belongs to `GreetingCard`, `SkyGreeting` and
+`WeatherBackdrop`. The app's ice / graphite visual language remains the global
+system. This surface frames a handwritten greeting in an atmospheric sky, with
+corner instruments and one glass dock along the bottom.
 
-- Weather owns this surface's palette. `SkyPalette` supplies pale ink over
-  condition-specific blue, slate or night gradients; no reading uses the
-  theme-aware neutral palette. A scrim protects text over the atmosphere.
-- The six-date rail means today plus five future dates. Its small SF Symbols
-  open a native 620pt detail popover; temperature ranges, precipitation, wind
-  and the solar horizon belong there. The detail view keeps the same open
-  composition, with a sliding date underline and gentle pointer magnification.
-- Celestial placement uses the reading's coordinates and actual time. A future
-  selection previews local noon and is labelled as a daytime forecast. Closing
-  details or choosing “回到现在” restores current conditions.
-- Weather motion lives in a `Canvas`; its timeline pauses for Reduce Motion
-  and hidden surfaces. Cloud, precipitation and wind movement are illustrative.
-  Sun, moon and bright-star positions use low-precision astronomy, not a
-  navigation-grade sky chart.
+- **Typography:** the greeting uses the macOS script face `SnellRoundhand-Bold`
+  (width-responsive, capped at 180pt), followed by the name in rounded system
+  bold (24 / 31pt, tracking 4) and a drawn signature ribbon. These are installed
+  system faces; no font is bundled. The name is already Latinised pinyin by
+  `MachineIdentity` (`Xiajun Wang`), so the colophon takes a Latin face — the
+  `Songti SC` serif it replaced had no Latin bold at this size and set the
+  transliteration as a hairline. The cached CoreText outline and text reveal
+  enter once. The clock, weather, models and usage keep system type and
+  monospaced figures.
+- **Composition:** a 272 / 300pt sky band leaves room around the greeting. The
+  clock sits at the upper left; the weather HUD sits at the upper right and
+  carries the forecast strip inline. The outer window has continuous 36pt
+  corners. The single 24pt-corner dock contains two zones — model / quota
+  readings and today's usage — and `ViewThatFits` keeps them in a row when its
+  640pt minimum fits. Thin rules separate zones inside the shared surface.
+- **Color and material:** `SkyPalette` supplies pale ink over condition-specific
+  blue, slate and night skies. Clear and partly cloudy skies interpolate color
+  from solar altitude; a bottom scrim protects the dock. Missing weather uses
+  the theme-aware neutral palette. `DaybreakGlass` uses native tinted glass on
+  macOS 26 and an `ultraThinMaterial` layer, tint and hairline on macOS 15.
+  Reduce Transparency replaces both dock and weather HUD material with an
+  opaque light or dark fill.
+- **Readings and actions:** model rows open model management; the Cursor row
+  reads its monthly plan — used percentage, spend and days to reset — and
+  clicking it re-reads. Codex's quota rings encode **used** percentage for up to
+  two windows and display their labels beside them; the first window includes
+  its reset countdown, and clicking the quota refreshes it. Today's usage opens
+  usage details and compares actual today / yesterday token totals with two
+  proportional bars; no hourly shape is inferred from daily totals. Cost is
+  labelled as an estimate in help and accessibility text. Loading, unavailable
+  quota and stale weather remain explicit states.
+- **Sky interaction:** horizontal dragging previews up to 12 hours before or
+  after now. Left / right arrows move one hour, and Escape returns to now;
+  matching accessibility actions are available. Drag release eases back over
+  0.75 seconds. The preview uses the reading's coordinates and local astronomy
+  and does not change the current weather measurement in the HUD.
+- **Rendering and motion:** `Canvas` composites a cached 384 × 168 cloud density
+  texture with sampled lighting; noise is generated once rather than per frame.
+  Foreground wisps, static grain, gentle pointer parallax, precipitation and
+  celestial light give the sky depth. Weather timelines pause when hidden or
+  Reduce Motion is enabled. Reduce Motion also removes parallax, entrance
+  reveals and animated return to now. Low Power Mode caps backdrop updates at
+  15 Hz and pauses foreground wisps. The visible clock retains its one-second
+  time update with its digit transition disabled under Reduce Motion.
 
-Implementation, verification commands and visual references:
+The implementation reuses Open-Meteo weather and its wttr.in fallback, plus
+local low-precision astronomy for sun, moon and bright-star placement. Weather
+motion is illustrative. This scope adds no WeatherKit service or Metal shader.
+The earlier observatory's implementation and verification background remains in
 [Weather observatory](docs/design/weather-observatory.md).
 
 ## Client marks
@@ -390,11 +423,21 @@ changes on every re-render is a slot machine, and the card re-renders on every
 pointer move. A stable phrase per (time, date) is what lets the entrance
 animation be *the* event.
 
-**The name is the person, taken from the machine's name.** `MachineIdentity`
-reads `SCDynamicStoreCopyComputerName` — the `ComputerName` the user typed in
-系统设置 → 共享, the same string `scutil --get ComputerName` prints — and
-`person(in:)` strips the possessive and the model: `王夏军的MacBook Pro` →
-`王夏军` (CJK 的, Latin `'s` / `’s`, then the host-name joiners `de` / `s`).
+The name is the **person**, taken from the machine's name and then written the
+way the rest of the card is written. `MachineIdentity` reads
+`SCDynamicStoreCopyComputerName` — the `ComputerName` the user typed in
+系统设置 → 共享, the same string `scutil --get ComputerName` prints — and two
+rules run over it. `person(in:)` strips the possessive and the model:
+`王夏军的MacBook Pro` → `王夏军` (CJK 的, Latin `'s` / `’s`, then the host-name
+joiners `de` / `s`). `displayName(for:)` then transliterates a Han name to
+pinyin, **given name first**: `王夏军` → `Xiajun Wang`, because every other word
+on this surface is English (`Good afternoon`). Delivery order is given-then-
+family, so it is `Xiajun Wang` and not `Wang Xiajun`; a name already in Latin
+script is returned untouched (`Sam` stays `Sam`). The surname is the first
+character rather than a table lookup, which reads a compound surname
+(`欧阳修`) as `Yangxiu Ou` — the one shape this cannot spell. A table of the
+~80 two-character surnames is a larger wrong surface than the single name it
+would fix, so the simple rule stands and is documented rather than half-built.
 Two things this replaced, both of which shipped:
 
 - Reading `kern.hostname`, which **the LAN can rewrite** — a router that leases
@@ -406,5 +449,5 @@ Two things this replaced, both of which shipped:
 A prefix shorter than two characters is a stray marker, not a name, so the whole
 string is kept; and the fallback is `Mac` rather than the host name, because a
 generic greeting is a smaller wrong than a numeric one.
-`Tests/greeting-name-regressions.py` drives the rule over a table of machine
-names.
+`Tests/greeting-name-regressions.py` drives both rules over a table of machine
+names, and asserts the drawn name carries no surviving ideograph.

@@ -99,6 +99,19 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherExplorer.swift').read_t
 source += (root / 'Sources/ClaudeBar/Utils/GreetingPhrase.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 source += declaration('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
+# The Cursor allowance's value types, for the model zone's new Cursor row. The
+# whole file, because `PlanUsage` is nested in `CursorUsageFetcher` and its
+# `spendText` calls the enum's own `money` helper.
+_cursor_fetcher = (root / 'Sources/ClaudeBar/Utils/CursorUsageFetcher.swift').read_text()
+# The static renderer only needs the value types and their formatting. Replace
+# the two calls that reach the app's credential/network layers with inert
+# stand-ins so the file compiles without CursorDB or URLSession machinery.
+_cursor_fetcher = _cursor_fetcher.replace(
+    'CursorDB.readCredentials()', 'nil as CursorCredentials?')
+source += _cursor_fetcher + '\n'
+# The credential value type the fetcher's guard reads; the standalone struct has
+# no SQLite in it, so the fixture can carry it without the database layer.
+source += declaration('Sources/ClaudeBar/Utils/CursorDB.swift', 'struct CursorCredentials: Equatable {')
 source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift').read_text() + '\n'
 # `presented` is pinned so the fixture captures the arrived state — the same
 # frame a user sees at rest and the one a hover replays into.
@@ -122,8 +135,10 @@ source += declaration('Sources/ClaudeBar/Views/Shared/ProductBrandMark.swift', '
 source += (root / 'Sources/ClaudeBar/Views/Shared/CodexModelMark.swift').read_text() + '\n'
 # The lane draws `InstrumentGlyph`'s `.tokens` mark through `Theme.hairline`;
 # both come in above. `detailed` is what makes the gauge a reading here.
+# ImageRenderer cannot capture AppKit-backed Liquid Glass. The static matrix
+# exercises the production macOS 15 material fallback, with identical content.
 sheet = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
-source += sheet[sheet.index('struct GreetingStatusSheet: View {'):].replace('@State private var arrived = false', '@State private var arrived = true').replace('skyDate = Date()', 'skyDate = fixtureSkyDate')
+source += sheet[sheet.index('struct GreetingStatusSheet: View {'):].replace('@State private var arrived = false', '@State private var arrived = true').replace('skyDate = Date()', 'skyDate = fixtureSkyDate').replace('context.date', 'fixtureSkyDate').replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {')
 source += '''
 @main struct Probe {
     @MainActor static func main() throws {
@@ -136,7 +151,7 @@ source += '''
             AppPreferences.shared.isDark = dark
             for width in [1100.0, 620.0] {
                 for scene in ["sun", "rain", "night", "cloud", "snow", "empty"] {
-                    fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-27T13:00:00Z" : "2026-09-27T04:00:00Z")!
+                    fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-28T13:00:00Z" : "2026-09-28T02:17:01Z")!
                     let empty = scene == "empty"
                     var weather = WeatherReading(place: "广州", temperatureC: 29, feelsLikeC: 32,
                         conditionCode: scene == "rain" ? 296 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
@@ -144,34 +159,42 @@ source += '''
                         rainChance: 20, observedAt: Date(), latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
                     var calendar = Calendar(identifier: .gregorian)
                     calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
-                    let start = calendar.startOfDay(for: Date())
+                    let start = calendar.startOfDay(for: fixtureSkyDate)
                     weather.forecast = (0..<6).map { i in
                         let date = calendar.date(byAdding: .day, value: i, to: start)!
                         return WeatherDay(date: date, code: [2, 61, 95, 3, 0, 2][i], high: Double(32-i), low: Double(25-i),
                             rainChance: [20, 80, 95, 10, 0, 15][i], wind: Double(8+i*3),
                             sunrise: date.addingTimeInterval(6*3600+18*60), sunset: date.addingTimeInterval(18*3600+22*60))
                     }
-                    let windows = [CodexQuotaWindow(label: "5 小时", usedPercent: 16,
+                    let windows = [CodexQuotaWindow(label: "5 小时", usedPercent: 82,
                         resetsAt: Date().addingTimeInterval(8360)),
-                        CodexQuotaWindow(label: "7 天", usedPercent: 42,
+                        CodexQuotaWindow(label: "7 天", usedPercent: 50,
                         resetsAt: Date().addingTimeInterval(272160))]
-                    let card = GreetingStatusSheet(name: "王夏军", ccModel: empty ? "未配置" : "claude-sonnet-4-6",
-                        ccProvider: "Anthropic", codexModel: empty ? "默认模型" : "gpt-5.4",
-                        codexProvider: "OpenAI", balance: empty ? "未提供余额" : "128.50 Credits",
+                    let card = GreetingStatusSheet(name: "Xiajun Wang", ccModel: empty ? "未配置" : "deepseek-v4.1-flash",
+                        ccProvider: "Aibox", codexModel: empty ? "默认模型" : "gpt-6-astra",
+                        codexProvider: "OpenAI", balance: empty ? "未提供余额" : "0 Credits",
                         tokens: empty ? 0 : 12840000, yesterdayTokens: empty ? 0 : 9640000,
                         calls: empty ? 0 : 286, spend: empty ? "暂无报价" : "¥404.70",
                         windows: empty ? [] : windows, quotaLoading: false,
                         quotaNote: empty ? "Codex 额度查询失败" : nil,
+                        cursorPlan: empty ? nil : CursorUsageFetcher.PlanUsage(usedPercent: 46, apiPercentUsed: 40,
+                            autoPercentUsed: 52, totalSpendCents: 920, limitCents: 2000, includedSpendCents: 920,
+                            bonusSpendCents: nil, billingCycleEnd: Date().addingTimeInterval(9 * 86400)),
+                        cursorLoading: false, cursorNote: empty ? "未读取到 Cursor 额度" : nil,
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
-                        weatherNote: nil, refreshWeather: {}, refreshQuota: {},
+                        weatherNote: nil, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})
                         .environment(\\.colorScheme, dark ? .dark : .light)
                         .frame(width: width).padding(24).background(Theme.bgPrimary)
                     if width == 620 && scene == "sun" {
                         for future in [false, true] {
-                            let detail = WeatherDetails(reading: weather, selectedDate: .constant(future ? weather.forecast[5].date : nil),
-                                palette: SkyPalette(sky: .clear, night: dark), skyDate: fixtureSkyDate,
-                                weatherLoading: false, weatherNote: future ? nil : "天气更新失败，显示上次读数", close: {})
+                            // The weather HUD's forecast strip, captured on its own
+                            // so the six slim day columns can be inspected without
+                            // the rest of the card at the two real HUD widths.
+                            let detail = ForecastStrip(reading: weather,
+                                palette: SkyPalette(sky: .clear, night: dark), now: fixtureSkyDate)
+                                .padding(20).frame(width: future ? 236 : 292)
+                                .background(SkyPalette(sky: .clear, night: dark).gradient)
                             let render = ImageRenderer(content: detail)
                             render.scale = 2
                             if let image = render.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {

@@ -109,6 +109,9 @@ private struct CursorTranscriptScan {
     let activity: String
     let toolPending: Bool
     let completionID: String?
+    /// The transcript file's mtime, as epoch ms (`0` when it could not be read).
+    /// See `turnLiveWindowMs` for what it is for.
+    let modifiedAt: Double
 }
 
 // MARK: - Monitor
@@ -121,7 +124,43 @@ struct CursorSessionMonitor {
     /// Only surface composers touched within this window. Cursor accumulates
     /// hundreds of non-archived composers; without a recency cut the list is
     /// useless. 3 days matches "recently active" without flooding the panel.
+    ///
+    /// This is a *listing* window, not a liveness test, and the difference
+    /// matters: Cursor has no PID to check, so unlike Claude — where `isAlive`
+    /// is `kill(pid, 0) == 0` and a dead session simply drops out — a three-day
+    /// window is all that stands between the panel and yesterday's chats. See
+    /// `turnLiveWindowMs` for the much shorter window that answers "is a turn
+    /// actually in flight".
     private static let recencyWindowMs: Double = 3 * 86_400 * 1000
+
+    /// How long a transcript may go unwritten before the turn it belongs to is
+    /// no longer "in flight".
+    ///
+    /// `scanTail` decides a turn is in flight from line order alone: an
+    /// assistant message after the last `turn_ended`. **An interrupted or
+    /// crashed turn never writes that closing `turn_ended`**, so the predicate
+    /// stays true for the rest of the composer's life — and because it is
+    /// recomputed from a file that stopped changing 16 hours ago, every poll
+    /// re-derives the same `true`. One such composer pinned the notch island's
+    /// busy badge (and the 2.5 s poll tier, and `ProcessSampler.setLive`) on
+    /// until this bound existed; the island drew a spinning **Cursor badge for
+    /// a session that had been dead since the previous afternoon**.
+    ///
+    /// The bound is on the transcript's own **write** clock, not on the head's
+    /// `lastUpdatedAt`. That distinction is load-bearing and was measured: the
+    /// head is stamped when the *user submits* and is not rewritten during the
+    /// turn (`ckpt − lastUpdatedAt` ran 373 s / 587 s / 1096 s on real long
+    /// turns here), so a bound on it would mean "only show turns shorter than
+    /// the window" — which on this machine's own history would have hidden **7
+    /// of the 25 most recent composers**, two of them mid-edit. Cursor appends
+    /// one line per assistant block and per `tool_use`, so a genuine turn keeps
+    /// the file's mtime moving; a dead one does not.
+    ///
+    /// 10 minutes rather than the 120 s used elsewhere in this file, and the
+    /// same intent and order as Codex's `orphanedTurnWindow`: turns here run
+    /// long (measured p50 240 s, p90 1000 s), and the risk that matters is
+    /// hiding live work, not showing a stale badge for another few minutes.
+    private static let turnLiveWindowMs: Double = 10 * 60 * 1000
 
     /// How many recent heads to pull from SQLite (ordered by recency). The
     /// `composerHeaders` table is indexed on `(recency, composerId)`, so this
@@ -200,19 +239,27 @@ struct CursorSessionMonitor {
             let scan = scanTranscript(cwd: shown[i].cwd, composerId: shown[i].composerId)
             shown[i].messageCount = scan.count
             shown[i].currentActivity = scan.activity
-            shown[i].toolPending = scan.toolPending
+            // The raw predicate only says "an assistant line came after the last
+            // `turn_ended`", which a turn that was aborted or crashed satisfies
+            // forever — it never writes the closing marker. Pair it with the
+            // transcript's write clock so a frozen file stops meaning "in
+            // flight". Both the published field and the status branch read this
+            // one value: `IslandLiveModel.flatten` and `ProviderStore`'s busy
+            // roll-up OR `toolPending` in independently of `status`, so bounding
+            // only the enum would leave the badge spinning.
+            let turnInFlight = scan.toolPending
+                && scan.modifiedAt > 0
+                && (nowMs - scan.modifiedAt) < Self.turnLiveWindowMs
+            shown[i].toolPending = turnInFlight
             shown[i].completionID = scan.completionID
             let recentlyTouched = (nowMs - shown[i].lastUpdatedAt) < 120_000
-            // Sticky `agentLocation.status == active` on old chats is a Cursor
-            // quirk. Trust a live transcript turn, a recent unfinished run, or
-            // location+recency together — never a stale "active" from yesterday.
-            if scan.toolPending {
+            if turnInFlight {
                 shown[i].status = .active
             } else if scan.completionID != nil {
                 // The successful final answer is stronger than Cursor's
                 // sometimes-sticky active flag in the composer header.
                 shown[i].status = .idle
-            } else if shown[i].status == .active && !recentlyTouched && !scan.toolPending {
+            } else if shown[i].status == .active && !recentlyTouched {
                 shown[i].status = .idle
             }
         }
@@ -293,13 +340,22 @@ struct CursorSessionMonitor {
     private static func scanTranscript(cwd: String, composerId: String) -> CursorTranscriptScan {
         let scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 96_000)
         return CursorTranscriptScan(count: scan.count, activity: scan.activity,
-                                    toolPending: scan.pending, completionID: scan.completionID)
+                                    toolPending: scan.pending, completionID: scan.completionID,
+                                    modifiedAt: scan.modifiedAt)
     }
 
     /// Tail scan for a subagent — activity + pending only (count unused).
     private static func scanAgentActivity(cwd: String, composerId: String) -> (activity: String, pending: Bool) {
         let scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 32_000)
-        return (scan.activity, scan.pending)
+        // A sub-composer carries the same "an abandoned turn never writes its
+        // `turn_ended`" exposure as a parent, and here it has *no* recency gate
+        // at all — the parent's `recentlyTouched` does not apply. The write
+        // clock is what keeps an interrupted fan-out from leaving a green pill
+        // on the card forever.
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let inFlight = scan.pending && scan.modifiedAt > 0
+            && (nowMs - scan.modifiedAt) < Self.turnLiveWindowMs
+        return (scan.activity, inFlight)
     }
 
     /// Shared tail reader. Cursor transcripts are JSONL where each line is
@@ -308,16 +364,20 @@ struct CursorSessionMonitor {
     /// last assistant message has no following `turn_ended`.
     ///
     /// Single open/seek/read per call; the file's existence is implied by a
-    /// successful open, so no separate stat is needed.
-    private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool, completionID: String?) {
+    /// successful open, so no separate stat is needed. The file's mtime comes
+    /// back with the result because the caller needs it to tell a live pending
+    /// turn from a frozen one — see `turnLiveWindowMs`.
+    private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool, completionID: String?, modifiedAt: Double) {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return (0, "", false, nil)
+            return (0, "", false, nil, 0)
         }
         defer { try? handle.close() }
+        let modifiedAt = ((try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate) ?? nil)?.timeIntervalSince1970 ?? 0
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(readSize, size))
         guard let tailData = try? handle.readToEnd() else {
-            return (0, "", false, nil)
+            return (0, "", false, nil, modifiedAt * 1000)
         }
         // Lossy decode — a strict one fails for the whole window whenever the
         // seek landed mid-character (see `SessionMonitor.readContext`).
@@ -362,7 +422,7 @@ struct CursorSessionMonitor {
         // A turn is in flight if an assistant message appears after the last
         // turn_ended marker (i.e. the turn never completed).
         let pending = lastAssistantLine > lastTurnEndedLine
-        return (msgCount, lastActivity, pending, completionID)
+        return (msgCount, lastActivity, pending, completionID, modifiedAt * 1000)
     }
 
     /// Human-readable summary of the latest tool_use in a message:

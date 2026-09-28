@@ -60,7 +60,7 @@ VPN 页把 **mihomo**（Clash Meta）作为本机 sidecar：生成 runtime YAML 
 | 表面 | 内容 |
 |------|------|
 | 主窗口 **VPN** 页 | `VPNView`：开关、节点宫格、测速、订阅（`VPNSubscriptionSection`）、日志 |
-| 菜单栏 popup | `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`：选节点、测速）；status item 上常驻图标 + 双行 ↓/↑ + 电池格（`VpnMenuBarRateView`，宽度由布局常量推导；电池格是 34×21 的无正极头胶囊，φ²∶1 ≈ 1.618∶1，比例见 `batteryGlyphWidth` 的注释） |
+| 菜单栏 popup | `PanelHeader` **状态行**的 VPN 药丸 `VpnStatusPill`（节点 + 延迟，点击打开 `VpnNodePickerPanel`：选节点、测速）——它是一条连接状态而不是一种模型，所以不占切换行的格子；status item 上常驻图标 + 双行 ↓/↑ + 电池格（`VpnMenuBarRateView`，宽度由布局常量推导；电池格是 34×21 的无正极头胶囊，φ²∶1 ≈ 1.618∶1，比例见 `batteryGlyphWidth` 的注释） |
 
 status item 上三种读数都**不依赖隧道**：电池是这台机器的电量，↓/↑ 是这台机器的吞吐（`SystemThroughput`，读各网卡 `if_data`），两者隧道关闭时照常显示。隧道改变的是**速率来自谁、画成什么颜色**：运行时用 mihomo `/traffic` 自己的计数并画成绿色（绿=「走隧道」），停止时用系统总吞吐画成静息的白色（白色数字配绿顶会声称有流量在走代理）。工具提示写明「隧道速率 / 系统速率」。见 `tickVpnRate` 的注释。
 | 主窗口 | **不**重复 popup 的 VPN chrome |

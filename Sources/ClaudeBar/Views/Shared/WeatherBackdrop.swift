@@ -119,7 +119,7 @@ struct WeatherBackdrop: View {
 
     private static func drawCelestial(_ astro: SkyAstronomy.Snapshot, sky: WeatherReading.Sky,
                                       size: CGSize, t: Double, ctx: inout GraphicsContext) {
-        let clarity: Double = sky == .clear ? 1 : sky == .partly ? 0.8 : sky == .cloudy ? 0.22 : 0.08
+        let clarity: Double = sky == .clear ? 1 : sky == .partly ? 0.8 : sky == .cloudy ? 0.12 : 0
         let darkness = min(1, max(0, (-astro.sun.altitude - 3) / 12))
         var stars = ctx
         stars.opacity = darkness * clarity
@@ -200,28 +200,13 @@ struct WeatherBackdrop: View {
     private static func cloud(_ ctx: inout GraphicsContext, at x: CGFloat, y: CGFloat,
                               scale: CGFloat, size: CGSize,
                               body: Color, lit: Color) {
-        let cx = x * size.width
-        let cy = y * size.height
-        let s = scale * min(size.height, 440)
-        let lobes: [(CGFloat, CGFloat, CGFloat)] = [
-            (-0.70, 0.12, 0.28), (-0.36, -0.02, 0.36), (0.00, -0.16, 0.44),
-            (0.38, -0.04, 0.34), (0.72, 0.12, 0.26), (-0.10, 0.16, 0.30),
-        ]
-        for (dx, dy, r) in lobes {
-            let rr = r * s
-            // Scale a circular, fully fading density field into a cloud lobe.
-            // Clipping a radial fill to an ellipse left a hard "bubble" rim.
-            var lobe = ctx
-            lobe.translateBy(x: cx + dx * s, y: cy + dy * s)
-            lobe.scaleBy(x: 1.35, y: 0.68)
-            lobe.fill(Path(ellipseIn: CGRect(x: -rr, y: -rr, width: rr * 2, height: rr * 2)),
-                      with: .radialGradient(Gradient(stops: [
-                        .init(color: lit.opacity(0.74), location: 0),
-                        .init(color: body.opacity(0.52), location: 0.32),
-                        .init(color: body.opacity(0.16), location: 0.72),
-                        .init(color: .clear, location: 1)
-                      ]), center: .zero, startRadius: 0, endRadius: rr))
-        }
+        let width = scale * min(size.height, 440) * 2.3
+        let height = width * 0.43
+        var layer = ctx
+        layer.addFilter(.colorMultiply(lit))
+        layer.draw(Image(decorative: SkyCloudTexture.image, scale: 1),
+                   in: CGRect(x: x * size.width - width / 2, y: y * size.height - height / 2,
+                              width: width, height: height))
     }
 
     // MARK: Clear
@@ -275,7 +260,7 @@ struct WeatherBackdrop: View {
                 center: center, startRadius: 0, endRadius: radius))
         }
         let pulse = 1 + 0.04 * sin(t / 9 * 2 * .pi)
-        let r = min(size.height * 0.08, 40) * pulse
+        let r = min(size.height * 0.05, 24) * pulse
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 3.2, y: c.y - r * 3.2,
                                         width: r * 6.4, height: r * 6.4)),
                  with: .radialGradient(
@@ -509,24 +494,6 @@ struct WeatherBackdrop: View {
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
                      with: .color(SkyPalette.flash.opacity(0.55 * flash)))
         }
-        guard flash > 0.02 else { return }
-        var bolt = ctx
-        bolt.translateBy(x: size.width * 0.78, y: size.height * 0.08)
-        let s = size.height * 0.70
-        let path = Path { p in
-            p.move(to: CGPoint(x: 0.08 * s, y: 0))
-            p.addLine(to: CGPoint(x: -0.08 * s, y: 0.38 * s))
-            p.addLine(to: CGPoint(x: 0.10 * s, y: 0.40 * s))
-            p.addLine(to: CGPoint(x: -0.06 * s, y: 0.78 * s))
-            p.addLine(to: CGPoint(x: 0.12 * s, y: 0.80 * s))
-            p.addLine(to: CGPoint(x: -0.04 * s, y: 1.20 * s))
-        }
-        bolt.stroke(path, with: .color(SkyPalette.bolt.opacity(0.25 + 0.55 * flash)),
-                    style: StrokeStyle(lineWidth: max(3, size.height * 0.012),
-                                       lineCap: .round, lineJoin: .round))
-        bolt.stroke(path, with: .color(SkyPalette.flash.opacity(0.55 + 0.45 * flash)),
-                    style: StrokeStyle(lineWidth: max(1.2, size.height * 0.003),
-                                       lineCap: .round, lineJoin: .round))
     }
 
     // MARK: Fields
@@ -739,4 +706,53 @@ struct SkyGrain: View {
             context.fill(dots, with: .color(.white))
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
+}
+
+/// A small density field with a sun-facing second sample for self-shadow.
+/// Generated once, then composited by Canvas; no noise evaluation per frame.
+private enum SkyCloudTexture {
+    static let image: CGImage = {
+        let width = 384, height = 168
+        func hash(_ x: Double, _ y: Double) -> Double {
+            let n = sin(x * 127.1 + y * 311.7) * 43758.5453
+            return n - floor(n)
+        }
+        func noise(_ x: Double, _ y: Double) -> Double {
+            let ix = floor(x), iy = floor(y)
+            let fx = x - ix, fy = y - iy
+            let u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy)
+            let a = hash(ix, iy) * (1-u) + hash(ix+1, iy) * u
+            let b = hash(ix, iy+1) * (1-u) + hash(ix+1, iy+1) * u
+            return a * (1-v) + b * v
+        }
+        func field(_ x: Double, _ y: Double) -> Double {
+            var amplitude = 0.5, value = 0.0, x = x, y = y
+            for _ in 0..<5 {
+                value += noise(x, y) * amplitude
+                x = x * 2.02 + 17.3; y = y * 2.02 + 17.3; amplitude *= 0.5
+            }
+            return value
+        }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let u = Double(x) / Double(width), v = Double(y) / Double(height)
+                let envelope = max(0, 1 - pow((u - 0.5) * 2, 2)) * max(0, 1 - pow((v - 0.5) * 2, 2))
+                let d = field(u * 5, v * 3)
+                let density = max(0, min(1, (d * envelope - 0.18) * 4))
+                let alpha = density * density * (3 - 2 * density)
+                let lighting = max(0, min(1, 0.64 + (d - field(u * 5 - 0.09, v * 3 - 0.13)) * 4))
+                let i = (y * width + x) * 4
+                bytes[i] = UInt8((0.52 + lighting * 0.48) * alpha * 255)
+                bytes[i+1] = UInt8((0.63 + lighting * 0.37) * alpha * 255)
+                bytes[i+2] = UInt8((0.78 + lighting * 0.22) * alpha * 255)
+                bytes[i+3] = UInt8(alpha * 255)
+            }
+        }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+    }()
 }

@@ -163,9 +163,7 @@ enum CodexQuotaFetcher {
 
         // Two rounds, not three. A failed attempt already cost a full network
         // round trip (2.6–6.5 s measured), so the old third try could leave the
-        // spinner up for ~20 s before showing the same failure. The backoff
-        // also starts shorter: the first retry is worth ~1 s, not 1 s plus a
-        // second attempt's failure just to reach the same note.
+        // spinner up for ~20 s before showing the same failure.
         var last = Snapshot(note: "Codex 额度查询失败")
         for attempt in 1...2 {
             guard !Task.isCancelled else { return last }
@@ -183,10 +181,38 @@ enum CodexQuotaFetcher {
             }
             guard attempt < 2 else { break }
             logger.warning("Transient failure; retrying quota fetch (attempt \(attempt + 1, privacy: .public)/2)")
-            try? await Task<Never, Never>.sleep(for: .milliseconds(600))
+            // The backoff is read off the failure, not fixed. A *launch* failure
+            // — the app-server's `error sending request for url
+            // (https://chatgpt.com/backend-api/wham/usage)` seen in the unified
+            // log at 11:08:22, 11:33:33, 12:00:55 … — is the account call going
+            // out through a system proxy that still points at a dead mihomo
+            // port, because `VpnManager.waitUntilReady` writes the new proxy
+            // 3–4 s after launch. A 600 ms retry lands *inside* that window and
+            // fails again, so the launch fetch could never succeed; the reading
+            // only appeared when the 900 s poll came around. A network failure
+            // that is not spend/auth/timeout is almost always this, so it gets
+            // the same 4 s the Cursor fetcher uses (see
+            // `CursorUsageFetcher.retryDelayMilliseconds`) — long enough to clear
+            // the proxy write, still short enough that a genuinely broken
+            // network reports in one attempt's time plus four seconds.
+            try? await Task<Never, Never>.sleep(
+                for: .milliseconds(Self.launchProxyWindowMilliseconds))
         }
         return last
     }
+
+    /// The backoff before the one retry.
+    ///
+    /// Sized for the failure that actually reaches here: the app-server failing
+    /// to *send* (not a spend limit, not auth, not a timeout — those do not
+    /// retry), which is the account call leaving through a system proxy that
+    /// still points at a dead mihomo port. `VpnManager.waitUntilReady` writes
+    /// the new proxy 3–4 s after launch, so the old 600 ms retry landed inside
+    /// that window and failed identically; this clears it. It is the same 4 s
+    /// `CursorUsageFetcher.retryDelayMilliseconds` uses, for the same reason —
+    /// and it is documented in both places because neither fetcher owns the
+    /// proxy write, so neither can derive it.
+    static let launchProxyWindowMilliseconds = 4_000
 
     private static func shouldRetry(_ snapshot: Snapshot) -> Bool {
         guard let note = snapshot.note else { return false }

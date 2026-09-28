@@ -1,47 +1,33 @@
 import SwiftUI
 
-/// The client family's mark for the popup's header chip: the real brand artwork
-/// beside the family's name.
+/// The client family's mark for the popup's header chip: the real brand
+/// artwork, **on its own**.
 ///
-/// It exists as its own view because the chip's eyebrow row is the one place on
-/// that surface where a family can be stated by its drawing instead of by a
-/// word, and because the same artwork stands wherever the app names the two
-/// clients — so "which family is this" is answered by one mark everywhere
-/// rather than by a symbol here and a sentence there.
+/// It used to draw the family word beside the artwork ("[A\] CC"), and the chip
+/// separately drew the same word again from `Text(eyebrow)` — so every chip
+/// printed its family twice ("CC CC", "Codex Codex", "Cursor Cursor") and spent
+/// ~20pt of a 133pt cell saying one thing two ways. The word is gone from both:
+/// the chip now stacks the artwork over the model name, the artwork *is* the
+/// family, and the name still reaches the tooltip and VoiceOver.
+///
+/// It is a view rather than a bare `Image` because it owns the mark's size and
+/// shadow — the two things every caller had to remember and one of them always
+/// got wrong.
 struct CodexModelMark: View {
     /// `false` = CC / Claude, `true` = Codex — `ProductBrandMark`'s convention.
     var codex: Bool
-    /// The family's name, drawn beside the mark.
+    /// The family's name, kept for the mark's accessibility label. The chip's
+    /// tooltip spells the family out anyway, so this only has to be right for
+    /// VoiceOver reading the mark in isolation.
     var value: String?
-    /// A second line under it. The chip passes nothing.
+    /// Kept so the type stays settled for callers that pass a second line; the
+    /// chip draws its own.
     var note: String?
     var tint: Color = Theme.Ink.claude
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 5) {
-                mark(side: 13)
-                Text(codex ? "Codex" : "CC")
-                    .font(Theme.Font.eyebrow)
-                    .foregroundStyle(tint)
-            }
-            if let value {
-                Text(value)
-                    .font(Theme.Font.section)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            if let note {
-                Text(note)
-                    .rollingNumber()
-                    .font(Theme.Font.meta)
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        mark(side: 13)
+            .accessibilityLabel(value ?? (codex ? "Codex" : "Claude Code"))
     }
 
     // MARK: - Brand mark
@@ -56,6 +42,21 @@ struct CodexModelMark: View {
         ProductBrandMark(codex: codex, well: false)
             .frame(width: side, height: side)
             .shadow(color: .black.opacity(codex ? 0.16 : 0.22), radius: 5, y: 2)
-            .accessibilityHidden(true)
+    }
+}
+
+/// The header chip's mark for **Cursor** — the brand cube alone, matching
+/// `CodexModelMark`'s new single-glyph anatomy.
+///
+/// It is a separate type rather than a third case on `CodexModelMark` because
+/// that view's whole shape is a `codex: Bool` — a Cursor chip that had to pass
+/// "not Codex" would render the Claude artwork, which is the same trap
+/// `ProductBrandMark.Brand.init(codex:)` documents.
+struct CursorMark: View {
+    var body: some View {
+        ProductBrandMark(brand: .cursor, well: false)
+            .frame(width: 13, height: 13)
+            .shadow(color: .black.opacity(0.2), radius: 5, y: 2)
+            .accessibilityLabel("Cursor")
     }
 }

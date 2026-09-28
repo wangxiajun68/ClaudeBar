@@ -181,9 +181,11 @@ call sites, in either direction:
 - `VpnPowerCard` had two arms, and neither was reachable: the dashboard arm was
   dropped when `DashboardView` was restructured to 资源条 → 能源流向 → 会话总览
   (the tile row it sat in is gone), and the popup arm was superseded by
-  `PanelHeader`'s VPN switch chip, which already carries the node picker
+  `PanelHeader`'s VPN control, which already carries the node picker
   (`VpnNodePickerPanel`) and the live rate. It was also the *only* remaining
-  caller of `VpnNodeMenu`, so that type went with it.
+  caller of `VpnNodeMenu`, so that type went with it. That control is now the
+  status row's `VpnStatusPill` — the same panel, moved out of the switcher row
+  so a third client (Cursor) could take its cell.
 
 Both were "mount or delete; neither is a defect", so the tie is broken by what
 they would have cost: mounting either means reintroducing a tile row on the

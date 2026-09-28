@@ -334,40 +334,112 @@ private struct WeatherIconStyle: ButtonStyle {
     }
 }
 
-/// Native popover content, also rendered directly by the visual fixtures.
-struct WeatherDetails: View {
-    var reading: WeatherReading
-    @Binding var selectedDate: Date?
+/// A compact per-day forecast strip: one slim column per day, meant to live
+/// **inside the weather HUD**, not in the dock.
+///
+/// This replaced a full-width "天气展望" timeline in the dock. That timeline was
+/// the old popover's content flattened into the card, and it made the greeting
+/// band very tall — a six-column instrument under a 400pt sky and above two more
+/// dock zones. The reading it carried (a six-day trend) is genuinely wanted, but
+/// it does not need a third of the card to say it: the same glyphs beside the
+/// current temperature answer "what is the week doing" at a glance, and the card
+/// loses the whole dock row.
+///
+/// Columns are *slim*: a weekday (or 今天), the day's glyph, and the low/high.
+/// The place name, the condition caption and the big single-day number all stay
+/// with the HUD above — this strip is the trend, the HUD is now.
+///
+/// Motion is one-shot and Core Animation backed: each glyph runs
+/// `symbolEffect(.variableColor…)` gated on `!reduceMotion && visible`, so an
+/// idle, always-open card costs an idle card's worth of CPU. There is no timer,
+/// no `TimelineView`, and no hover-driven rasterization here.
+struct ForecastStrip: View {
+    var reading: WeatherReading?
     var palette: SkyPalette
-    var skyDate: Date
-    var weatherLoading: Bool
-    var weatherNote: String?
-    var close: () -> Void
-    private var selectedDay: WeatherDay? { reading.forecast.first { $0.date == selectedDate } }
+    var now: Date
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.surfaceIsVisible) private var visible
+    private var motionOn: Bool { !reduceMotion && visible }
+
+    private var ink: Color { palette.ink }
+    private var soft: Color { palette.inkSoft }
+    private var accent: Color { palette.accent }
+    private var zone: TimeZone { TimeZone(identifier: reading?.timezone ?? "") ?? .current }
+    private var days: [WeatherDay] { Array((reading?.forecast ?? []).prefix(6)) }
+    /// With nothing to draw the strip is not rendered at all — the HUD's own
+    /// "no weather" line already says why, and a second empty box under it would
+    /// be the dock row creeping back in.
+    private var isEmpty: Bool { days.isEmpty }
+
+    private func isToday(_ day: WeatherDay) -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        return calendar.isDate(day.date, inSameDayAs: now)
+    }
+    /// The weekday, short: `周二`. One character shorter than `星期二`, which is
+    /// what keeps six columns readable inside the HUD's width.
+    private func weekday(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = zone
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
+    }
+    /// The day's sky in the same alphabet the HUD draws: the live sky for today,
+    /// the forecast code for the others.
+    private func sky(_ day: WeatherDay) -> WeatherReading.Sky {
+        isToday(day) ? (reading?.sky ?? day.sky) : day.sky
+    }
+
     var body: some View {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text(selectedDay == nil ? "天气详情" : "预报详情").font(.system(size: 17, weight: .semibold))
-                        Spacer()
-                        Button("回到现在") { selectedDate = nil }.buttonStyle(.plain).font(.system(size: 11))
-                            .disabled(selectedDate == nil)
-                        Button { close() } label: { Image(systemName: "xmark").frame(width: 28, height: 28) }
-                            .buttonStyle(.plain).accessibilityLabel("关闭天气详情")
-                    }.foregroundStyle(palette.ink).padding(.horizontal, 32).padding(.top, 18)
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(selectedDay.map { "\(Int($0.low.rounded()))° – \(Int($0.high.rounded()))°" } ?? reading.temperatureText)
-                            .font(.system(size: 32, weight: .light, design: .rounded)).monospacedDigit()
-                        Text(selectedDay?.sky.caption ?? reading.skyLabel).font(.system(size: 12))
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 4) {
-                            if weatherLoading { Text("正在更新…") }
-                            else if let weatherNote { Text(weatherNote) }
-                            Text("实况更新于 " + reading.observedAt.formatted(.dateTime.hour().minute()))
-                            Text(reading.timezone).font(.system(size: 9))
-                        }.font(.system(size: 10))
-                    }.foregroundStyle(palette.ink).padding(.horizontal, 32).padding(.top, 12)
-                    WeatherExplorer(reading: reading, selection: $selectedDate, palette: palette, now: skyDate, compact: false)
+        if !isEmpty {
+            GeometryReader { geo in
+                // Six columns in the HUD's 236–292pt is tight, so the type and
+                // the gutters step down with the space rather than wrapping: a
+                // wrapped "32°" reads as a bug, and the HUD cannot grow.
+                let compact = geo.size.width < 268
+                HStack(alignment: .top, spacing: 0) {
+                    ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
+                        if index > 0 {
+                            Rectangle().fill(ink.opacity(0.12))
+                                .frame(width: 0.5, height: compact ? 36 : 40)
+                        }
+                        column(day, compact: compact)
+                    }
                 }
-                .frame(width: 620).background(palette.gradient)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+            }
+            .frame(height: 62)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func column(_ day: WeatherDay, compact: Bool) -> some View {
+        let today = isToday(day)
+        return VStack(spacing: compact ? 2 : 3) {
+            Text(today ? "今天" : weekday(day.date))
+                .font(.system(size: compact ? 9 : 10, weight: today ? .bold : .semibold))
+                .foregroundStyle(ink.opacity(today ? 0.95 : 0.8))
+                .lineLimit(1).minimumScaleFactor(0.75)
+            Image(systemName: sky(day).symbol(night: today && reading?.isDay == false))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(accent, ink)
+                .font(.system(size: compact ? 15 : 16, weight: .medium))
+                .frame(height: compact ? 17 : 19)
+                // A slow colour wash reads as "alive sky" without moving pixels
+                // off their centres, so the columns never jitter.
+                .symbolEffect(.variableColor.iterative.reversing, options: .repeating, isActive: motionOn)
+            HStack(spacing: compact ? 2 : 3) {
+                Text("\(Int(day.high.rounded()))°").font(.system(size: compact ? 10 : 11, weight: .bold, design: .rounded)).monospacedDigit()
+                Text("\(Int(day.low.rounded()))°").font(.system(size: compact ? 9 : 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(soft.opacity(0.82)).monospacedDigit()
+            }
+            .lineLimit(1).minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(today ? "今天" : weekday(day.date))，\(sky(day).caption)，最高 \(Int(day.high.rounded())) 度，最低 \(Int(day.low.rounded())) 度")
     }
 }
+

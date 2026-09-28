@@ -5,7 +5,7 @@
 
 | 点 | 策略 |
 |----|------|
-| 会话轮询 | `Timer.scheduledTimer` 只触发，`refreshSessions` 的扫描在 `Task.detached(priority: .utility)` 中离主线程执行，回主线程仅发布结果。间隔随可见性三档：忙 2.5s / 全空闲 5s / 无可见窗口 8s（`AppConfig.sessionPollInterval` 等，`UIWakePolicy` 驱动）；无可见窗口那档必须留在完成规则的 60 s 新鲜窗口内——轮询被上一轮扫描挤掉时用一次性定时器补跑，不丢拍 |
+| 会话轮询 | `Timer.scheduledTimer` 只触发，`refreshSessions` 的扫描在 `Task.detached(priority: .utility)` 中离主线程执行，回主线程仅发布结果。间隔随可见性三档：忙 2.5s / 全空闲 5s / 无可见窗口 8s（`AppConfig.sessionPollInterval` 等，`UIWakePolicy` 驱动）；无可见窗口那档必须留在完成规则的 60 s 新鲜窗口内——轮询被上一轮扫描挤掉时用一次性定时器补跑，不丢拍。**「忙」的口径里 Cursor 那一条带写时钟界**：被中断的轮次不写 `turn_ended`，所以只按行序判定会让一条冻结的 transcript 永远算忙（实测钉住了灵动岛的忙碌徽章、这一档轮询与 1 Hz 采样）；现在还要 transcript 的 mtime 在 10 分钟内（`CursorSessionMonitor.turnLiveWindowMs`），子 Agent 同界。**额度探针不在这一档**：Codex 15 分钟、Cursor 20 分钟（`AppConfig.cursorQuotaPollInterval`），各自观察自己的 store |
 | 可见性闸门 | `UIWakePolicy`（主窗口遮挡 / 最小化 / 关闭 + popup 开关）统一驱动：会话间隔、FSEvents 用量重扫、进程采样器、VPN `/connections` 轮询间隔、**以及动画**。挂在界面上的视图读 `surfaceIsVisible` 环境值（`MainWindowView` 注入）；不在界面树里的观察者用 `hasVisibleWindow` |
 | 心跳采样 | 每轮 busy/idle 采样追加进 `heartbeats[pid]`，上限 `AppConfig.heartbeatLength`（24，≈ 最近一分钟） |
 | 空闲通知 | `ConfirmedCompletionDetector` 只做边沿检测（每轮交付一次），无额外轮询 |

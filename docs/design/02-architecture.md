@@ -25,7 +25,7 @@
 │        │     ├── NSStatusItem（闲：矢量标；VPN 开：双行速率）   │
 │        │     └── NSPanel                                        │
 │        │           └── MenuBarView                            │
-│        │                 ├── PanelHeader（模型 / VPN chip）    │
+│        │                 ├── PanelHeader（CC / Codex / Cursor chip）  │
 │        │                 ├── MachineKpiStrip（CPU/GPU/内存/风扇）│
 │        │                 └── Popup/ Providers · Sessions · Usage │
 │        │                                                      │

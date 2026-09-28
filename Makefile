@@ -28,6 +28,7 @@ test:
 	python3 Tests/product-mark-regressions.py
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
+	python3 Tests/cursor-usage-regressions.py
 	python3 Tests/completion-notify-regressions.py
 	python3 Tests/greeting-data-regressions.py
 	python3 Tests/greeting-name-regressions.py
@@ -39,6 +40,7 @@ test:
 	python3 Tests/proxy-usage-regressions.py
 	python3 Tests/codex-session-regressions.py
 	python3 Tests/inflight-animation-regressions.py
+	python3 Tests/cursor-turn-regressions.py
 	python3 Tests/card-shadow-regressions.py
 	python3 Tests/machine-mark-regressions.py
 	python3 Tests/fan-rotor-regressions.py

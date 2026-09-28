@@ -3,11 +3,13 @@
 > ClaudeBar 设计文档 · §4
 > 相关：[主窗口与设计系统](05-main-window-and-theme.md) · 技术文档 [视图层](../technical/05-view-layer.md)
 
-面板宽 424pt（`MenuBarView` 固定宽度），垂直自适应（最高占满屏幕可见区 -8，上限 820pt）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `Views/Shared/MachineKpiStrip.swift`。从上到下：
+面板宽 460pt（`MenuBarView` 与 `MenuBarController.sizeAndPosition` 各自的 `frame(width:)`，两处必须相等），垂直自适应（最高占满屏幕可见区 -8，上限 820pt）。实现为组合壳 `MenuBarView`，内容在 `Views/Popup/` 与 `Views/Shared/MachineKpiStrip.swift`。从上到下：
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ ClaudeBar   [VPN 启停 · 节点]              [刷新]  ← PanelHeader
+│ ClaudeBar  · 会话 · 本地 17890 · [VPN 节点 · 延迟]  [刷新] │ ← PanelHeader 状态行
+├─────────────────────────────────────────────────────┤
+│ [CC] [Codex 额度] [Cursor 额度]  ← 三个切换 chip       │ ← PanelHeader 切换行
 ├─────────────────────────────────────────────────────┤
 │ MachineKpiStrip：进程资源（+ 在用耳机）+ 风扇转速        │
 ├─────────────────────────────────────────────────────┤
@@ -19,7 +21,9 @@
 └─────────────────────────────────────────────────────┘
 ```
 
-**status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是 `PanelHeader` 的 VPN chip（`VpnNodePickerPanel`）。
+**460pt 而不是 424**：多出的 36pt 全给切换行——三列各 143pt，`deepseek-v4.1-flash` 这类长模型名能整名放下（424 时 127pt 的列把它截成 `deepsee...flash`），两个 Codex 额度窗口也不必缩写。
+
+**status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是**状态行的 VPN 药丸**（`VpnStatusPill`，打开 `VpnNodePickerPanel`）——它是一条连接状态，不是一种模型，所以住状态行而不占切换行的第三格；那一格现在给 Cursor 额度。
 
 > settings.json 缺失且 Codex 列表为空时，供应商/会话/用量替换为「未找到 settings.json」警告卡；资源条与 VPN 页头仍在。
 
@@ -49,7 +53,9 @@
 
 ## 模型切换
 
-popup 内不铺供应商宫格：`PanelHeader` 的 Claude Code / Codex chip 打开 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
+popup 内不铺供应商宫格：`PanelHeader` 的三个 chip 打开各自的 popover——CC / Codex 是 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark；Cursor 是 `CursorUsagePanel`（月度套餐与 Grok 周窗口两条独立额度）。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
+
+三个 chip 是**同一张四区表**（mark 15 / 模型名 16 / 额度行 26 / 页脚 11pt）：它们载的东西不同（CC 有供应商无额度、Codex 有额度、Cursor 两者都有），按各自内容堆叠会让三列呈阶梯状。额度在 `QuotaSwayGauge` 里读**剩余**（`100 − used`），重置时刻在弧的下方——与百分比同行时它是那行最宽的东西，两个窗口在 143pt 的列里放不下。
 
 主窗口的供应商宫格（`ProviderDirectoryHost` + `ProviderConnectionEditor`）是另一条路径，见 [design/05](05-main-window-and-theme.md)：
 

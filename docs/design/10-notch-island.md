@@ -86,7 +86,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | 来源 | 取自 | 忙碌判定 | 点击 |
 |---|---|---|---|
 | Claude Code | `ProviderStore.sessions`（存活） | `status == .busy` 或工具待批 | `claude --resume` 于原目录 |
-| Cursor | `ProviderStore.cursorSessions`（存活；受"读取 Cursor 会话"开关控制） | `status == .active` 或工具待批 | 在 Cursor 打开该目录 |
+| Cursor | `ProviderStore.cursorSessions`（存活；受"读取 Cursor 会话"开关控制） | `status == .active` 或工具待批；**且该 transcript 的写时钟在 10 分钟内**（中断的轮次不写收尾标记，只按行序判定会让冻结的文件永远算忙） | 在 Cursor 打开该目录 |
 | Codex | `ProviderStore.externalSessions`（存活、非子代理） | `isActive` | `codex resume` 于原目录 |
 
 - 排序：运行中在前，其余按最近更新。

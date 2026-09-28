@@ -3,7 +3,7 @@
 > ClaudeBar 技术文档 · §5
 > 相关：设计文档 [主窗口与设计系统](../design/05-main-window-and-theme.md) · [Popup 布局](../design/04-popup-layout.md) · 技术文档 [启动与窗口](02-app-launch-and-windows.md)
 
-ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，424pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 9 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
+ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，460pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 9 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
 
 ## `Theme` — 设计 token 单点
 
@@ -48,9 +48,9 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 ## `MenuBarView` + `Views/Popup/` — 菜单栏 popup
 
-`MenuBarView` 是组合壳（宽 424pt 的 `VStack`）：
+`MenuBarView` 是组合壳（宽 460pt 的 `VStack`，与 `MenuBarController.sizeAndPosition` 里那份数字必须相等）：
 
-- **PanelHeader**：Brand + 模型/VPN 切换 chip（`HeaderSwitchChip` + `VpnNodePickerPanel`）+ 刷新。
+- **PanelHeader**：状态行（会话 · 本地代理 · VPN 药丸 `VpnStatusPill` + 刷新）+ 三个切换 chip（`HeaderSwitchChip`：CC / Codex / Cursor，各自带 popover）+ 刷新；额度读 `QuotaSwayGauge`（剩余、弧与百分比同向），Cursor 的 chip 走 `CursorUsagePanel`。状态行的固定事实 `fixedSize()`，节点名有 228pt 上限、超出自己截尾。
 - **MachineKpiStrip**：本机资源（CPU / GPU / 内存 / 风扇，耳机在用时时多一格）。
 - **PowerFlowCard(compact)**：有内置电池时的能源流向紧凑卡。
 - **SessionsPanel / UsagePanel**：各自观察自己的字段；Provider 宫格只存在于主窗口（popup 的模型切换在 `PanelHeader` 的 chip 里）。

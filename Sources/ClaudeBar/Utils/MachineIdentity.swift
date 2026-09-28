@@ -24,18 +24,23 @@ import SystemConfiguration
 /// `SCDynamicStoreCopyComputerName` is the API behind `scutil --get
 /// ComputerName`, so the card and the system print the same name.
 enum MachineIdentity {
-    /// The **person**, for `HELLO 王夏军`.
+    /// The **person**, for the greeting's colophon — `Xiajun Wang`.
     ///
     /// The machine name is `王夏军的MacBook Pro`, and the greeting wants the
     /// name out of it: everything from the possessive「的」onward is the machine,
-    /// not the person. So the rule is — take what precedes the first
-    /// possessive marker, and keep the whole string when there is none.
+    /// not the person. So the person is taken in two steps —
     ///
-    /// It reads as a small thing and it is the difference between a card that
-    /// says hello to *you* and one that says hello to your laptop. A person does
-    /// not call themselves "王大锤的MacBook Pro".
+    /// 1. **The raw name** (`person(in:)`): everything before the first
+    ///    possessive marker, or the whole string when there is none.
+    /// 2. **The name it is drawn as** (`displayName(for:)`): a CJK name is
+    ///    written in pinyin, given name first — `王夏军` → `Xiajun Wang`. A name
+    ///    already in Latin script is left alone (`Sam` stays `Sam`).
     ///
-    /// The markers, in the order they are tried:
+    /// It reads as two small things and they are the difference between a card
+    /// that says hello to *you* and one that says hello to your laptop. A person
+    /// does not call themselves "王大锤的MacBook Pro".
+    ///
+    /// The possessive markers, in the order they are tried:
     ///
     /// - **`的`** — the CJK possessive. `王夏军的MacBook Pro` → `王夏军`.
     /// - **`'s` / `’s`** — the Latin one, for a machine named `Sam's MacBook`.
@@ -47,10 +52,10 @@ enum MachineIdentity {
     ///
     /// A prefix shorter than two characters is not a name — it is a stray marker
     /// (`的MacBook Pro`) — so the whole string is kept instead.
-    static var greetingName: String { person(in: displayName) }
+    static var greetingName: String { displayName(for: person(in: computerName)) }
 
-    /// The rule itself, split out so it can be driven over a table of machine
-    /// names rather than only over this Mac's own — see
+    /// The raw rule itself, split out so it can be driven over a table of
+    /// machine names rather than only over this Mac's own — see
     /// `Tests/greeting-name-regressions.py`, which fails on a shape this rule
     /// gets wrong.
     static func person(in raw: String) -> String {
@@ -67,7 +72,7 @@ enum MachineIdentity {
         for marker in possessive + hostMarkers {
             guard let range = name.range(of: marker, options: .caseInsensitive) else { continue }
             var prefix = String(name[..<range.lowerBound])
-                .trimmingCharacters(in: CharacterSet(charactersIn: "-_ ’'"))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-_ \u{2019}'"))
             // Only a host-name marker leaves a joining character behind:
             // `wangxiajuns-MacBook-Pro` keeps the `s` that joined it. A
             // possessive never does, which is what keeps `Chris’s iMac` → `Chris`.
@@ -79,6 +84,66 @@ enum MachineIdentity {
         return name
     }
 
+    /// How the person's name is **drawn** — the last step before it reaches the
+    /// card.
+    ///
+    /// A Chinese name written in Latin letters is written in **pinyin, given
+    /// name first**: `王夏军` → `Xiajun Wang`, and `王大锤` → `Dachui Wang`. The
+    /// card used to print `王夏军` itself, which is the person's name in the
+    /// language the rest of this surface is not written in — every other word on
+    /// the card is English (`Good afternoon`), so the colophon is the one line
+    /// that has to transliterate to match. Latin order is given-name-then-family
+    /// (`Xiajun Wang`), not `Wang Xiajun`.
+    ///
+    /// The surname is the **first** character, not a table lookup, and the given
+    /// name the rest. A two-character name (`王刚`) is `Gang Wang`; a compound
+    /// surname (`欧阳修`) would be read as `Yangxiu Ou`, which is the one shape
+    /// this cannot spell correctly — a table of the ~80 two-character surnames
+    /// is a larger wrong surface than the single wrong name it would fix, so the
+    /// simple rule stands and is documented rather than half-built.
+    ///
+    /// Anything already in Latin script is returned untouched (`Sam` → `Sam`),
+    /// and a mixed or non-Han string falls back to the raw text rather than
+    /// dropping characters. Both are deliberate: the transliteration is an
+    /// addition for a Han-script name, never a rewrite of one that is already
+    /// readable on the card.
+    static func displayName(for raw: String) -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let han = name.filter { isHan($0) }
+        // Not a Han name, or has Latin letters already: the card can read it as
+        // it stands, so it is not the transliterator's to rewrite.
+        guard !han.isEmpty, han.count == name.count else { return name }
+        let characters = Array(han)
+        guard characters.count >= 2 else { return name }
+        let family = String(characters[0])
+        let given = String(characters.dropFirst())
+        guard let familyLatin = pinyin(family), let givenLatin = pinyin(given) else { return name }
+        return "\(givenLatin) \(familyLatin)"
+    }
+
+    /// Whether a scalar is a CJK ideograph — the range a pinyin reading exists
+    /// for. Deliberately only the BMP block `4E00–9FFF` plus the compatibility
+    /// block, which is what `CFStringTransform`'s transliteration handles; a
+    /// character outside them means the string is not a plain Han name.
+    private static func isHan(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { (0x4E00...0x9FFF).contains($0.value) || (0xF900...0xFAFF).contains($0.value) }
+    }
+
+    /// A Han string's pinyin reading, `nil` when the transform cannot read it.
+    /// The result is words separated by spaces and capitalised on the way in,
+    /// which is exactly the shape `displayName` joins.
+    private static func pinyin(_ han: String) -> String? {
+        let mutable = NSMutableString(string: han)
+        let ok = CFStringTransform(mutable, nil, kCFStringTransformToLatin, false)
+        guard ok else { return nil }
+        CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
+        let reading = (mutable as String)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+        guard !reading.isEmpty, reading.allSatisfy({ $0.isLetter && $0.isASCII }) else { return nil }
+        return reading.capitalized
+    }
+
     /// This Mac's `ComputerName` — what the user typed in System Settings →
     /// 共享, and what `scutil --get ComputerName` prints (`王夏军的MacBook Pro`).
     /// The greeting takes the person out of it; see `greetingName`.
@@ -88,7 +153,7 @@ enum MachineIdentity {
     /// network, so on a router that names clients by address the fallback would
     /// greet the user with `192.168.10.102` — the exact failure this replaced.
     /// A generic greeting is a smaller wrong than a numeric one.
-    static let displayName: String = {
+    static let computerName: String = {
         let store = SCDynamicStoreCreate(nil, "ClaudeBar.identity" as CFString, nil, nil)
         let raw = store.flatMap { SCDynamicStoreCopyComputerName($0, nil) } as String? ?? ""
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -70,6 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // never start in the same tick.
         codexStore.startQuotaPolling()
 
+        // Cursor's allowance reads the account directly (no login, no CLI), so
+        // it has no reader in `store.refresh()` to piggyback on — arm its poll
+        // and take the first reading here. `fetch()` refuses to probe more than
+        // once per few seconds, so a popup `onAppear` racing this is harmless.
+        CursorUsageStore.shared.start()
+        CursorUsageStore.shared.refresh()
+
         ScreenshotHotKey.shared.startIfEnabled()
 
         // Fetches only when the saved preference already asks for a converted

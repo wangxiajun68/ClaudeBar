@@ -40,6 +40,14 @@ enum AppConfig {
     /// reset is not something a user perceives.
     static let quotaPollInterval: TimeInterval = 900
 
+    /// Cursor allowance poll.
+    ///
+    /// Slower than the ChatGPT quota poll because both of Cursor's windows are
+    /// long-lived (a monthly plan and a weekly Grok window) and the probe is a
+    /// pair of HTTP calls rather than a spawned process — 20 minutes still
+    /// catches a reset within the same glance and keeps the account API quiet.
+    static let cursorQuotaPollInterval: TimeInterval = 1_200
+
     // MARK: - Widget snapshot
 
     /// UserDefaults key (in the shared App Group suite) under which the

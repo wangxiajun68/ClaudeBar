@@ -1,43 +1,34 @@
 # Weather observatory
 
-Scope: the native SwiftUI greeting band and its weather popover in
+Scope: the native SwiftUI greeting band and its inline forecast zone in
 `Sources/ClaudeBar`. This extends the existing visual language locally. It
 introduces no web view, JavaScript runtime or custom font dependency.
 
 ## Layout and interaction
 
-`GreetingCard` presents the greeting and clock, current weather, a compact
-forecast rail, model readings and today's usage on one continuous surface.
-Hairlines divide the rows. A 24pt continuous corner encloses the whole band;
-internal readings have no separate card backgrounds. Wide layouts place the
-greeting beside weather and model readings beside usage; `ViewThatFits` stacks
-those groups when their 860pt minimum width no longer fits.
+`GreetingCard` presents the greeting and clock, current weather, model readings
+and today's usage on one continuous surface. Hairlines divide the rows. A 36pt
+continuous corner encloses the whole band; internal readings have no separate
+card backgrounds. The dock holds two zones side by side — model / quota
+readings and today's usage — and `ViewThatFits` keeps them in a row while its
+640pt minimum fits, stacking them below that.
 
-The rail contains the available dates from a six-date request: today and day
-+1 through day +5. Each weather symbol is a native button with a tooltip and
-an accessible date/condition label. Clicking opens `WeatherDetails`, a 620pt
-native popover. Today selects current conditions; future dates select that
-day's forecast. The popover provides:
-
-- A six-column date selector, shared-scale temperature ranges and a sliding
-  selection underline. Nearby symbols magnify by up to 22% and rise up to 4pt
-  in response to pointer distance.
-- Current precipitation probability, wind, humidity and apparent temperature;
-  future precipitation probability, maximum wind and daylight duration.
-- A solar-altitude curve, sunrise/sunset times, data attribution, update state,
-  “回到现在” and a labelled close control.
-
-Closing the popover resets the selection. Changing the place or removing a
-selected date from refreshed data also resets it. Future selection changes the
-band's condition and previews astronomy at noon in the weather location's
-timezone. It is explicitly labelled as a daytime forecast.
+The forecast is **inline in the weather HUD**, not in the dock: `ForecastStrip`
+draws the available dates from a six-date request (today and day +1 through day
++5) as slim columns — weekday, glyph, low/high — under the current temperature.
+It replaced the dock's full-width rail and the 620pt `WeatherDetails` popover it
+opened; the reading (a six-day trend) is unchanged, but it no longer needs a
+third of the card to say it. Each glyph runs a one-shot `symbolEffect`
+(`.variableColor`) gated on visibility and Reduce Motion — there is no timer and
+no `TimelineView` here, so an idle card animates nothing. A day with no forecast
+draws no strip at all; the HUD's own "no weather" line already says why.
 
 ## Architecture and data
 
 | Source | Responsibility |
 | --- | --- |
-| `Views/Shared/GreetingCard.swift` | Store bindings, responsive band, selected date, popover and visible-time updates |
-| `Views/Shared/WeatherExplorer.swift` | Compact rail, detailed selector, metrics and `SolarHorizon` |
+| `Views/Shared/GreetingCard.swift` | Store bindings, responsive band, dock zones and visible-time updates |
+| `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` glyph/caption mapping, the HUD's inline `ForecastStrip`, and `SolarHorizon`. `WeatherExplorer` / `SolarHorizon` no longer have a call site — the popover they were built for is gone |
 | `Views/Shared/WeatherBackdrop.swift` | `SkyPalette`, atmospheric Canvas and celestial projection |
 | `Utils/SkyAstronomy.swift` | Sun, moon, phase and bright-star horizon coordinates |
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo geocoding, current/daily request and parsing |
@@ -118,14 +109,14 @@ Visual fixtures in `.build/greeting-preview/`:
 
 - `light-1100-cloud.png`: wide band with compact rail.
 - `dark-620-rain.png`: narrow stacked band.
-- `detail-light-current.png`: current-condition detail.
-- `detail-dark-day5.png`: final forecast date and daylight metrics.
+- `detail-light-current.png` / `detail-dark-day5.png`: the inline forecast zone
+  captured on its own, in light and night palettes.
 
 ## Design references
 
 - [Componentry Magnetic Dock](https://componentry.dev/docs/components/magnetic-dock):
-  reference for spring-based pointer magnification and active indicators;
-  translated into native SwiftUI date controls.
+  reference for pointer-revealed controls and active indicators, translated into
+  native SwiftUI readings and buttons.
 - [Componentry Scroll Choreography](https://componentry.dev/docs/components/scroll-choreography):
   reference for coordinated motion. The implemented band uses brief grouped
   arrivals; it does not implement the reference's scroll-driven image stack.

@@ -78,6 +78,10 @@
 
 **transcript 扫描**：与 Claude 类似但更简单——Cursor 的 JSONL 有 `{"type":"turn_ended"}` 标记，pending 判定为「最后一条 assistant 行号 > 最后 `turn_ended` 行号」。
 
+**这份 pending 不是忙碌的全部判据**：被中断或崩溃的轮次**不写**收尾的 `turn_ended`，所以上面的条件对一条冻结的 transcript 永远成立（实测有一次昨天下午的 composer 把灵动岛的忙碌徽章、2.5 s 轮询档和 1 Hz 采样档钉到今天）。忙碌因此还要**同时**满足 transcript 的**写时钟**在 `turnLiveWindowMs`（10 分钟）内。界必须钉在文件的写入时间而不是 head 的 `lastUpdatedAt`——后者在用户提交时打一次、轮次进行中不再改（实测 `ckpt − lastUpdatedAt` 有 373 / 587 / 1096 s），钉在它上面就成了「只显示短于窗口的轮次」，按本机历史会藏掉最近 25 个 composer 里的 7 个。`fetchActive` 与 `scanAgentActivity`（子 Agent，没有 `recentlyTouched` 这道门）都读这**同一个**值，因为 `IslandLiveModel.flatten` 与 `ProviderStore` 的忙碌汇总各自独立地 OR 这个字段。
+
+**账号凭据**：同一张 `ItemTable` 里还有 `cursorAuth/*` 行（accessToken / cachedEmail / stripeMembershipType / stripeSubscriptionStatus），供 `CursorUsageFetcher` 调用额度接口。**每次探测都重读**——Cursor 会在运行中原地轮换 access token，缓存一小时的 token 会开始 401；读的是只读 WAL 句柄上一条按主键的 SELECT，成本可忽略。token 是 424 字节的 JWT，必须走 `textColumn` 而不是 `cString`（后者在第一个 NUL 截断，交出去的是坏 token）。
+
 **子 Agent**：`fetchSubagents` 查 `isSubagent=1`，按 `subagentInfo.parentComposerId`（或 `rootParentConversationId`）归组到可见的父会话下。
 
 ## `UsageStats` — token 用量扫描
