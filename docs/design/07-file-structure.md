@@ -37,7 +37,7 @@ ClaudeBar/
 │   │   │   ├── VpnSystemProxyController.swift / VpnNetProbe.swift
 │   │   │   ├── FanMonitor.swift         ← SMC 风扇 / 温度
 │   │   │   ├── SessionMonitor.swift / CursorSessionMonitor.swift / ExternalSessionMonitor.swift
-│   │   │   ├── CursorUsageFetcher.swift ← Cursor 额度（读它的账号 token，两条独立窗口）
+│   │   │   ├── CursorUsageFetcher.swift ← Cursor 额度（读它的账号 token；两个命名池 + Grok 周窗口）
 │   │   │   ├── PermissionCenter.swift   ← 权限清单与系统授权状态（见 §10）
 │   │   │   ├── CurrentLocation.swift    ← 问候卡天气的单次定位 fix（「当前位置」开关）
 │   │   │   ├── WeatherFetcher.swift     ← wttr.in 取天气；有定位用坐标，否则用天气城市
@@ -52,8 +52,9 @@ ClaudeBar/
 │   │       ├── MenuBarView.swift         ← popup 组合壳
 │   │       ├── Island/                   ← 灵动岛形状、根视图、会话行、用量卡（见 §10）
 │   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Connectors / Usage / Traffic / VPN / Settings / Help
-│   │       ├── Shared/                  ← Tile / ConnectionCard / CodexModelMark / ProviderDirectory / PermissionsSection / …
+│   │       ├── Shared/                  ← Tile / ConnectionCard / CodexModelMark / ProviderDirectory / PermissionsSection / SettingsControls / 问候卡的 Atmosphere 系列 / …
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
+│   ├── Fonts/                             ← 问候的 20 款手写体（SIL OFL / Apache 2.0）+ 各自的许可证；build.sh 复制进 Resources/Fonts
 │   └── Widget/
 ├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载
 ├── docs/

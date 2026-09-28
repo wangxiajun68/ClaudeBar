@@ -218,6 +218,11 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(greetingShowsChip, forKey: "greetingShowsChip") }
     }
 
+    /// 概览问候语的手写字体。存 `GreetingTypeface.rawValue`；认不出的值回到默认。
+    @Published var greetingTypeface: GreetingTypeface {
+        didSet { UserDefaults.standard.set(greetingTypeface.rawValue, forKey: "greetingTypeface") }
+    }
+
     private var didSetReady = false
 
     private init() {
@@ -227,6 +232,7 @@ final class AppPreferences: ObservableObject {
         costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
         weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
         greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
+        greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard
         // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:
         // the stored value is a number, and a 0 rate is not a rate.
         let manual = UserDefaults.standard.double(forKey: "manualUSDToCNY")

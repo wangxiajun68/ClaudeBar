@@ -19,7 +19,11 @@
 | `Utils/WeatherFetcher.swift` | 天气读数的共享源 `WeatherStore`：优先 Open-Meteo，失败退回 wttr.in；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数 |
 | `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
-| `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` 的符号/文案映射、HUD 内联 `ForecastStrip`（今天 + 5 天，细列：周几 / 符号 / 低高；符号的动效是一次性 `symbolEffect`，无定时器）与太阳高度曲线 `SolarHorizon`。`WeatherExplorer` / `SolarHorizon` 是那版 620pt popover 的成稿，popover 随预报内联下线，两者**已无调用点**，保留待改 |
+| `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` 的符号/文案映射，以及那版 620pt popover 的成稿 `WeatherExplorer` / `SolarHorizon` / `ForecastStrip`——**三个都已无调用点**（popover 随预报内联下线，预报本身现在是 `GreetingInstruments.swift` 的 `ForecastRibbon`），保留待改 |
+| `Views/Shared/GreetingCard.swift` | 仪表盘问候卡：`GreetingCard`（读 store）+ 纯展示 `GreetingStatusSheet`。天空为 Metal 大气；左上时钟 + **自动 / 手动**天空模式，右上实时天气（地点、温度、图标化体感 / 湿度 / 风向 / 降水），右下六日预报带，左下日轨（手动时换成天气 × 时段 × 24h 时间轴控制台），底部窗台读数。无悬浮层：预报聚焦某天时右上原位改读那天，窗台胶囊悬停原位展开。手动模式的天气 / 时刻存 `@AppStorage("greeting.*")`，时刻拖动中只放 `@State`，落定才写回。时间动画由 `FrameTicker`（`CADisplayLink`）驱动；窗台、预报带、右上此刻包在 `Unchanged(key:)` 里，拖动时不重建（性能见 `docs/design/greeting-atmosphere.md` §5.7） |
+| `Views/Shared/GreetingTypefaceGallery.swift` | 设置 → 通用 → 天气与问候 → 问候字体：默认折起，只显示当前字体的字样；展开后是 `GreetingTypeface` 字样卡片网格，每张用该字体的真实轮廓写出当前问候语，点击即选（写入 `AppPreferences.greetingTypeface`）。**注意**：设置页那一行现在是一个原生 `Picker` 菜单（24 个选项与已选值都在），画廊视图本身**当前没有调用点**——它不在那次重做的清理范围内，按 [设置页](../../design/surfaces/settings.md) 的口径保留 |
+| `Views/Shared/GreetingInstruments.swift` | 问候卡的仪表：`WeatherGlyph`、`HumidityDrop`、`WindDial`、`InstrumentMetric`、`ForecastRibbon`（高低温带 + 降水柱，悬停聚焦 / 点击固定 / ←→）、`SunPath`（含日出日落时刻解析）、`MarkRing` / `DualRing`、`SkyModeToggle`、`SkyConsole` + `SkyTimeline`（手动天空） |
+| `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView` 与帧率策略）、`GreetingScript`（`GreetingTypeface` 字体目录：24 款可选、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
 | `Views/Shared/CodexModelMark.swift` | popup 头部 chip 的客户端 mark：只有 `ProductBrandMark` 的品牌图形（13pt），家族名不再并排重复（chip 自己已写）；`CursorMark` 是同一个形状的 Cursor 版（不复用 `codex:` 三态，那个 `Bool` 会把它画成 Claude） |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
@@ -49,6 +53,8 @@
 | `Views/Shared/FanInternalsPanel.swift` | 风扇卡的 popover：Lucide `laptop-minimal` 机身 + 左右两个风扇位（各自按自己的 rpm 转、各自一圈按自己最大值填充的转速弧）+ 每个风扇一行读数与「拉满 / 恢复自动」。机身轮廓是 `ChassisOutline`（`Shape`），因为把 24pt 的图标 `aspectRatio(.fit)` 进这么宽的框只会缩成一张缩略图 |
 | `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：网络 / 本机代理 / 附近与设备三段，顶部是链路本身的状态而非「连接」这个标题，RSSI 刻度与 `ConnectionStatus` 词汇表和卡片共用；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
 | `Resources/macbook-internals-illustration.png` | 独立生成的详细结构插画（PNG，非 SVG）；来源与提示词见 `ASSET-LICENSES.md`，随应用离线分发 |
+| `Sources/Fonts/*.ttf` + `*-OFL.txt` / `*-LICENSE.txt` | 问候的可选 20 款手写体与**各自的许可证**（每款一个文件，版权与保留字体名在其中）。`Sources/build.sh` 复制进 `Resources/Fonts`，`GreetingScript` 按文件名加载；字体不装进系统、不单独分发，出处逐条记在 `Resources/ASSET-LICENSES.md` |
+| `Tools/bench-atmosphere.py` | 问候卡天空的性能基准：用生产着色器按卡片实际尺寸离屏绘制各天气，报 GPU / CPU 每帧中位数，以及排版、栅格化、首次取字形的主线程耗时。SwiftUI 侧的每步更新耗时见 `Tools/render-greeting-preview.py --bench`（`BENCH_PACE=0` 定频对比，`--bench-baseline` 为对照） |
 | `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
 | `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
 | `Tools/make-claudebar-mark.py` | 从 `Sources/AppIcon-1024.png` 推出 ClaudeBar 自己的 mark（两个明暗变体），给用量图例里的「第三方」用；`Tests/provider-icon-regressions.py` 因此要能读 RGBA 真彩色 PNG |
@@ -61,7 +67,7 @@
 | `Views/Shared/Tile.swift` | `TileGrid` + `.tile()` / `.hoverTile()`（宫格表面，即 `TileSurface` 的修饰符形态） |
 | `Models/CodexProviderStore.swift` | Codex 状态中枢 + 本机代理生命周期 |
 | `Models/CursorUsageStore.swift` | Cursor 额度的可观察持有者与轮询（`AppConfig.cursorQuotaPollInterval` 20 分钟）：启动先用 `lastKnown()` 的落盘读数渲染，探针回来原地替换；`loading` 只门住按钮，只有**从来没有读数**时才画转圈 |
-| `Utils/CursorUsageFetcher.swift` | Cursor 额度探针：读 `state.vscdb` 里 Cursor 自己的 token（无登录、无 cookie），**两套鉴权面**——Connect RPC 收裸 JWT、`cursor.com/api/*` 收 `<sub>::<jwt>` 编码后的 cookie + `Origin`；两条独立额度（月度 `GetCurrentPeriodUsage`、Grok 周窗口 `get-sand-usage-status`）。已用比例取 `includedSpend / limit`，**不是** `totalSpend / limit`（后者含不在上限里的 `bonusSpend`）；失败重试退避 4 s，跨过系统代理写入窗口 |
+| `Utils/CursorUsageFetcher.swift` | Cursor 额度探针：读 `state.vscdb` 里 Cursor 自己的 token（无登录、无 cookie），**两套鉴权面**——Connect RPC 收裸 JWT、`cursor.com/api/*` 收 `<sub>::<jwt>` 编码后的 cookie + `Origin`；月度 `GetCurrentPeriodUsage`（含两个命名池 `autoPercentUsed`=Cursor Models / `apiPercentUsed`=Other Models，以 `cursorModelsFraction` / `otherModelsFraction` 暴露）与 Grok 周窗口 `GetSandUsageStatus`。已用比例取 `includedSpend / limit`，**不是** `totalSpend / limit`（后者含不在上限里的 `bonusSpend`）；两个池不各持 money limit，共享同一个 `limit` + `includedSpend`；失败重试退避 4 s，跨过系统代理写入窗口 |
 | `Models/AppPreferences.swift` | 空闲通知、代理端口、第三方上游、VPN mixed-port / 系统代理 / TUN 等 |
 | `Utils/FilePaths.swift` | Claude / Codex / Cursor / App Group / `vpnDir`（Cursor 的落盘读数 `cursor-allowance.json` 在 Application Support 根下） |
 | `Utils/VpnManager.swift` | mihomo 进程、测速、流量流、超时 failover |
@@ -87,14 +93,14 @@
 | `Views/Pages/ConnectorsView.swift` | 连接器页：客户端筛选 + 「本机共享」+ 类型筛选 + 搜索 + 等高卡片网格 |
 | `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
 | `Views/Shared/SkillMarkdownPreview.swift` | SKILL.md 的原生 SwiftUI 渲染（标题 / 列表 / 引用 / 代码块 / 表格） |
-| `Views/Shared/ExchangeRateTile.swift` | 设置 → 模型花费 → 汇率：显示当前汇率与日期、手动钉值 |
+| `Views/Shared/ExchangeRateTile.swift` | 设置 → 通用 → 用量与花费 → 美元兑人民币：显示当前汇率与日期、手动钉值（清空恢复自动查询） |
 | `Views/Shared/VpnTopChrome.swift` | `VpnStatusPill`（popup 状态行的节点 / 延迟药丸）+ `VpnNodePickerPanel`（它打开的面板）+ `CursorUsagePanel`（Cursor chip 的面板）+ `VpnDelayStyle` |
 | `Views/Shared/UsageRiver.swift` | `CacheAnatomyBar`（周期 token 构成） |
-| `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：CC/Codex 只读 + 第三方选择（设置页宫格里的 4 张 tile） |
+| `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：只保留第三方 OpenAI / Anthropic 两个选择（默认跟随 Codex / Claude Code 当前供应商，不写 `config.toml` / `settings.json`）；CC / Codex 的只读卡已删——它们的选择在「模型」页 |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
 | `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本。Cursor 两条：`cursor-usage-regressions.py`（解码器与 cookie 拼写）与 `cursor-turn-regressions.py`（忙碌的写时钟界） |
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |
-| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo（打成 `.xz` 并复用仓库内那份）/ 把 `Sources/BrandAssets/` 复制进 appex |
+| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo（打成 `.xz` 并复用仓库内那份）/ 把 `Sources/BrandAssets/` 复制进 appex / 把 `Sources/Fonts/`（问候的 20 款手写体 + 各自的许可证）复制进 `Resources/Fonts`，由 `GreetingScript` 按文件名加载 |

@@ -1,5 +1,15 @@
 # Weather observatory
 
+> **Superseded.** This is the record of the Canvas-era greeting band. The card
+> has since been rebuilt around a Metal atmosphere, and `SkyVeil` / `SkyGrain`
+> and the `WeatherBackdrop` sky itself are gone — `WeatherBackdrop.swift` now
+> holds only `SkyPalette`, the palette the Metal view falls back to when no GPU
+> is available. The current specification is
+> [Greeting atmosphere](greeting-atmosphere.md); the parts below that still hold
+> (Open-Meteo and wttr.in, `SkyAstronomy`, the inline forecast strip) are
+> described there too. Kept because it carries the earlier rounds' verification
+> background.
+
 Scope: the native SwiftUI greeting band and its inline forecast zone in
 `Sources/ClaudeBar`. This extends the existing visual language locally. It
 introduces no web view, JavaScript runtime or custom font dependency.

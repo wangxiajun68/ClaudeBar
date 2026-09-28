@@ -10,15 +10,15 @@ import SQLite3
 /// Unlike Claude Code, Cursor has no per-process PID file — sessions live in
 /// SQLite. Liveness is therefore recency-based (a composer touched within
 /// `recencyWindowMs` is considered "alive"), and "busy" means an agent turn
-/// is in flight (either `agentLocation.status == "active"` in the head, or the
-/// transcript's last assistant turn has no following `turn_ended` marker).
+/// is in flight, using unfinished-run checkpoints and transcript turn markers.
+/// Cursor may keep writing SQLite while its JSONL export stops updating.
 struct CursorSessionInfo: Identifiable, Equatable {
     var id: String { composerId }
     let composerId: String
     let name: String
     let cwd: String
     let createdAt: Double          // epoch ms
-    let lastUpdatedAt: Double      // epoch ms
+    let lastUpdatedAt: Double      // latest activity, epoch ms
     var contextPercent: Double     // 0...100 from head.contextUsagePercent (-1 if absent)
     var status: CursorStatus       // agent running?
     var isAlive: Bool              // recent enough to surface
@@ -30,7 +30,7 @@ struct CursorSessionInfo: Identifiable, Equatable {
     var title: String = ""
     /// `composerHeaders.value.subtitle` — e.g. "Edited app.py, frontend.html".
     var subtitle: String = ""
-    var toolPending: Bool = false   // last turn not yet ended → working
+    var toolPending: Bool = false   // bounded transcript/checkpoint evidence → working
     var completionID: String? = nil // byte offset of the latest successful final answer
     var subagents: [CursorSubagentInfo] = []
 
@@ -96,7 +96,7 @@ struct CursorSubagentInfo: Identifiable, Equatable {
     var status: CursorSubagentStatus = .done
 }
 
-/// Status of a Cursor subagent, derived from whether its last assistant turn
+/// Status of a Cursor subagent, derived from whether its last turn
 /// has completed (`turn_ended`). Kept distinct from Claude's `SubagentStatus`
 /// so this file is self-contained.
 enum CursorSubagentStatus: String, Equatable {
@@ -109,9 +109,19 @@ private struct CursorTranscriptScan {
     let activity: String
     let toolPending: Bool
     let completionID: String?
+    let ended: Bool
     /// The transcript file's mtime, as epoch ms (`0` when it could not be read).
     /// See `turnLiveWindowMs` for what it is for.
     let modifiedAt: Double
+
+    func inFlight(nowMs: Double, unfinishedAt: Double, checkpointAt: Double, starting: Bool = false) -> Bool {
+        if ended && modifiedAt >= unfinishedAt { return false }
+        let checkpointLive = unfinishedAt > 0
+            && (nowMs - max(unfinishedAt, checkpointAt)) < CursorSessionMonitor.turnLiveWindowMs
+        let transcriptLive = toolPending && modifiedAt > 0
+            && (nowMs - modifiedAt) < CursorSessionMonitor.turnLiveWindowMs
+        return checkpointLive || transcriptLive || starting
+    }
 }
 
 // MARK: - Monitor
@@ -133,47 +143,15 @@ struct CursorSessionMonitor {
     /// actually in flight".
     private static let recencyWindowMs: Double = 3 * 86_400 * 1000
 
-    /// How long a transcript may go unwritten before the turn it belongs to is
-    /// no longer "in flight".
-    ///
-    /// `scanTail` decides a turn is in flight from line order alone: an
-    /// assistant message after the last `turn_ended`. **An interrupted or
-    /// crashed turn never writes that closing `turn_ended`**, so the predicate
-    /// stays true for the rest of the composer's life — and because it is
-    /// recomputed from a file that stopped changing 16 hours ago, every poll
-    /// re-derives the same `true`. One such composer pinned the notch island's
-    /// busy badge (and the 2.5 s poll tier, and `ProcessSampler.setLive`) on
-    /// until this bound existed; the island drew a spinning **Cursor badge for
-    /// a session that had been dead since the previous afternoon**.
-    ///
-    /// The bound is on the transcript's own **write** clock, not on the head's
-    /// `lastUpdatedAt`. That distinction is load-bearing and was measured: the
-    /// head is stamped when the *user submits* and is not rewritten during the
-    /// turn (`ckpt − lastUpdatedAt` ran 373 s / 587 s / 1096 s on real long
-    /// turns here), so a bound on it would mean "only show turns shorter than
-    /// the window" — which on this machine's own history would have hidden **7
-    /// of the 25 most recent composers**, two of them mid-edit. Cursor appends
-    /// one line per assistant block and per `tool_use`, so a genuine turn keeps
-    /// the file's mtime moving; a dead one does not.
-    ///
-    /// 10 minutes rather than the 120 s used elsewhere in this file, and the
-    /// same intent and order as Codex's `orphanedTurnWindow`: turns here run
-    /// long (measured p50 240 s, p90 1000 s), and the risk that matters is
-    /// hiding live work, not showing a stale badge for another few minutes.
-    private static let turnLiveWindowMs: Double = 10 * 60 * 1000
+    /// A pending turn needs a write within ten minutes. Either the transcript
+    /// or an unfinished run's SQLite checkpoint can supply that clock: Cursor
+    /// can keep checkpointing for an entire turn without exporting JSONL.
+    /// Submission time and agentLocation alone cannot prove ongoing work.
+    /// Frozen, interrupted turns still expire when both write clocks stop.
+    fileprivate static let turnLiveWindowMs: Double = 10 * 60 * 1000
 
-    /// How many recent heads to pull from SQLite (ordered by recency). The
-    /// `composerHeaders` table is indexed on `(recency, composerId)`, so this
-    /// is cheap even though the DB is ~6.5 GB.
-    private static let queryLimit: Int32 = 80
-
-    /// Cap on sessions returned, to keep the panel scannable.
+    /// Budget for the recent list. Running sessions are never dropped to fit it.
     private static let maxDisplay = 14
-
-    /// Row cap for the sub-composer scan (see `fetchSubagents`). Sub-composers
-    /// only ever attach to one of the ≤14 displayed parents, so a few hundred
-    /// recent rows is far more than enough.
-    private static let subagentQueryLimit: Int32 = 200
 
     /// All live Cursor sessions: parses composer heads, drops stale ones,
     /// enriches with transcript activity, sorts busy-first then by recency.
@@ -184,19 +162,22 @@ struct CursorSessionMonitor {
         let nowMs = Date().timeIntervalSince1970 * 1000
         let cutoff = nowMs - recencyWindowMs
 
-        // --- Main composers (non-archived, non-subagent), most recent first ---
+        // Read the recent header set before imposing a display budget. A long
+        // run can have an old submission/recency but a fresh checkpoint, and
+        // must not disappear behind newer idle conversations or a row limit.
         var sessions: [CursorSessionInfo] = []
         let sql = """
-            SELECT composerId, recency, value
+            SELECT composerId, recency, value, checkpointAt
             FROM composerHeaders
             WHERE isArchived = 0 AND isSubagent = 0
+              AND (recency >= ? OR checkpointAt >= ?)
             ORDER BY recency DESC
-            LIMIT ?
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, queryLimit)
+        sqlite3_bind_double(stmt, 1, cutoff)
+        sqlite3_bind_double(stmt, 2, cutoff)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let composerId = CursorDB.cString(stmt, 0)
@@ -206,63 +187,51 @@ struct CursorSessionMonitor {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
             let name = (obj["name"] as? String) ?? ""
-            // Cursor stores the conversation title and an "Edited a.py, b.py"
-            // summary in the same head this loop already parses — no extra
-            // query, and no deriving a title from the transcript.
             let subtitle = (obj["subtitle"] as? String) ?? ""
             let createdAt = (obj["createdAt"] as? Double) ?? recency
-            let lastUpdatedAt = (obj["lastUpdatedAt"] as? Double) ?? recency
+            let submittedAt = (obj["lastUpdatedAt"] as? Double) ?? recency
+            let checkpointAt = max(Double(sqlite3_column_int64(stmt, 3)),
+                                   (obj["conversationCheckpointLastUpdatedAt"] as? Double) ?? 0)
             let cwd = extractFsPath(obj)
             let ctxPct = (obj["contextUsagePercent"] as? Double) ?? -1
-            let locActive = isAgentActive(obj)
             let unfinishedAt = (obj["unfinishedRunAt"] as? Double) ?? 0
-            let unfinishedRecent = unfinishedAt > 0 && (nowMs - unfinishedAt) < 120_000
+            let scan = scanTranscript(cwd: cwd, composerId: composerId)
+
+            // A terminal marker closes its own run, including errors. An old
+            // answer must not close a newer run that has not reached JSONL yet.
+            let terminalCurrent = scan.ended && scan.modifiedAt >= unfinishedAt
+            let starting = isAgentActive(obj) && (nowMs - submittedAt) < 120_000
+            let turnInFlight = scan.inFlight(nowMs: nowMs, unfinishedAt: unfinishedAt,
+                                            checkpointAt: checkpointAt, starting: starting)
+            // Finished transcripts carry the completion clock; later metadata
+            // writes must not make an old answer look newly delivered.
+            let updatedAt = max(submittedAt, terminalCurrent ? 0 : checkpointAt, scan.modifiedAt)
 
             sessions.append(CursorSessionInfo(
                 composerId: composerId,
                 name: name,
                 cwd: cwd,
                 createdAt: createdAt,
-                lastUpdatedAt: lastUpdatedAt,
+                lastUpdatedAt: updatedAt,
                 contextPercent: ctxPct,
-                status: (unfinishedRecent || locActive) ? .active : .idle,
-                isAlive: lastUpdatedAt > cutoff,
+                status: turnInFlight ? .active : .idle,
+                isAlive: updatedAt > cutoff,
+                messageCount: scan.count,
+                currentActivity: scan.activity,
                 title: name,
-                subtitle: subtitle
+                subtitle: subtitle,
+                toolPending: turnInFlight,
+                completionID: terminalCurrent ? scan.completionID : nil
             ))
         }
 
-        // Keep only recent, cap, then enrich.
-        var shown = Array(sessions.filter(\.isAlive).prefix(maxDisplay))
-
-        for i in shown.indices {
-            let scan = scanTranscript(cwd: shown[i].cwd, composerId: shown[i].composerId)
-            shown[i].messageCount = scan.count
-            shown[i].currentActivity = scan.activity
-            // The raw predicate only says "an assistant line came after the last
-            // `turn_ended`", which a turn that was aborted or crashed satisfies
-            // forever — it never writes the closing marker. Pair it with the
-            // transcript's write clock so a frozen file stops meaning "in
-            // flight". Both the published field and the status branch read this
-            // one value: `IslandLiveModel.flatten` and `ProviderStore`'s busy
-            // roll-up OR `toolPending` in independently of `status`, so bounding
-            // only the enum would leave the badge spinning.
-            let turnInFlight = scan.toolPending
-                && scan.modifiedAt > 0
-                && (nowMs - scan.modifiedAt) < Self.turnLiveWindowMs
-            shown[i].toolPending = turnInFlight
-            shown[i].completionID = scan.completionID
-            let recentlyTouched = (nowMs - shown[i].lastUpdatedAt) < 120_000
-            if turnInFlight {
-                shown[i].status = .active
-            } else if scan.completionID != nil {
-                // The successful final answer is stronger than Cursor's
-                // sometimes-sticky active flag in the composer header.
-                shown[i].status = .idle
-            } else if shown[i].status == .active && !recentlyTouched {
-                shown[i].status = .idle
-            }
+        let sorted = sessions.filter(\.isAlive).sorted { a, b in
+            if (a.status == .active) != (b.status == .active) { return a.status == .active }
+            if a.lastUpdatedAt != b.lastUpdatedAt { return a.lastUpdatedAt > b.lastUpdatedAt }
+            return a.composerId < b.composerId
         }
+        let busyCount = sorted.filter { $0.status == .active }.count
+        var shown = Array(sorted.prefix(max(maxDisplay, busyCount)))
 
         // --- Subagents: group non-archived sub-composers by their parent ---
         let parentIDs = Set(shown.map { $0.composerId })
@@ -271,11 +240,7 @@ struct CursorSessionMonitor {
             shown[i].subagents = subMap[shown[i].composerId] ?? []
         }
 
-        // Busy first, then most-recent.
-        return shown.sorted { a, b in
-            if (a.status == .active) != (b.status == .active) { return a.status == .active }
-            return a.lastUpdatedAt > b.lastUpdatedAt
-        }
+        return shown
     }
 
     // MARK: - Subagents
@@ -285,23 +250,24 @@ struct CursorSessionMonitor {
     /// visible session to attach to).
     ///
     /// The parent id lives inside the `value` JSON blob, so the grouping
-    /// filter can only run after parsing — but an unbounded scan parsed every
-    /// non-archived sub-composer in the DB on every 2.5s poll. Bound it by
-    /// recency (a sub-composer of a session in the 3-day window is itself
-    /// recent) and cap the row count.
+    /// filter runs after parsing the recent header set. Checkpoint recency
+    /// keeps long-running helpers in scope just as it does their parents.
     private static func fetchSubagents(db: OpaquePointer, parentIDs: Set<String>) -> [String: [CursorSubagentInfo]] {
         var map: [String: [CursorSubagentInfo]] = [:]
-        let cutoff = Date().timeIntervalSince1970 * 1000 - recencyWindowMs
+        guard !parentIDs.isEmpty else { return map }
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let cutoff = nowMs - recencyWindowMs
         let sql = """
-            SELECT value FROM composerHeaders
-            WHERE isArchived = 0 AND isSubagent = 1 AND recency >= ?
+            SELECT value, checkpointAt FROM composerHeaders
+            WHERE isArchived = 0 AND isSubagent = 1
+              AND (recency >= ? OR checkpointAt >= ?)
             ORDER BY recency DESC
-            LIMIT \(subagentQueryLimit)
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, cutoff)
+        sqlite3_bind_double(stmt, 2, cutoff)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let value = CursorDB.textColumn(stmt, 0),
@@ -310,15 +276,28 @@ struct CursorSessionMonitor {
             let composerId = (obj["composerId"] as? String) ?? ""
             let name = (obj["name"] as? String) ?? ""
             guard let sub = obj["subagentInfo"] as? [String: Any],
-                  let parent = (sub["parentComposerId"] as? String) ?? (sub["rootParentConversationId"] as? String),
-                  parentIDs.contains(parent) else { continue }
+                  let parent = [sub["parentComposerId"] as? String, sub["rootParentConversationId"] as? String]
+                    .compactMap({ $0 }).first(where: { parentIDs.contains($0) }) else { continue }
             let typeName = (sub["subagentTypeName"] as? String) ?? "agent"
 
             var info = CursorSubagentInfo(composerId: composerId, agentType: typeName, description: name)
             let cwd = extractFsPath(obj)
-            let (activity, pending) = scanAgentActivity(cwd: cwd, composerId: composerId)
-            info.activity = activity
-            info.status = pending ? .running : .done
+            // Current Cursor stores helpers beneath the root transcript,
+            // not in their own composer directory. Retain the old path as a
+            // fallback for exports from versions that used separate folders.
+            let root = (sub["rootParentConversationId"] as? String) ?? parent
+            let url = FilePaths.cursorTranscriptURL(cwd: cwd, composerId: root)
+                .deletingLastPathComponent().appendingPathComponent("subagents/\(composerId).jsonl")
+            var scan = scanTail(url: url, readSize: 32_000)
+            if scan.modifiedAt == 0 {
+                scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 32_000)
+            }
+            let unfinishedAt = (obj["unfinishedRunAt"] as? Double) ?? 0
+            let checkpointAt = max(Double(sqlite3_column_int64(stmt, 1)),
+                                   (obj["conversationCheckpointLastUpdatedAt"] as? Double) ?? 0)
+            info.activity = scan.activity
+            info.status = scan.inFlight(nowMs: nowMs, unfinishedAt: unfinishedAt,
+                                        checkpointAt: checkpointAt) ? .running : .done
             map[parent, default: []].append(info)
         }
 
@@ -336,40 +315,23 @@ struct CursorSessionMonitor {
 
     /// Scan the tail of a composer transcript for message count, the latest
     /// tool activity, and whether a turn is still in flight (no `turn_ended`
-    /// after the last assistant message). Mirrors `SessionMonitor.fetchContext`.
+    /// after the last user or assistant message). Mirrors `SessionMonitor.fetchContext`.
     private static func scanTranscript(cwd: String, composerId: String) -> CursorTranscriptScan {
-        let scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 96_000)
-        return CursorTranscriptScan(count: scan.count, activity: scan.activity,
-                                    toolPending: scan.pending, completionID: scan.completionID,
-                                    modifiedAt: scan.modifiedAt)
-    }
-
-    /// Tail scan for a subagent — activity + pending only (count unused).
-    private static func scanAgentActivity(cwd: String, composerId: String) -> (activity: String, pending: Bool) {
-        let scan = scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 32_000)
-        // A sub-composer carries the same "an abandoned turn never writes its
-        // `turn_ended`" exposure as a parent, and here it has *no* recency gate
-        // at all — the parent's `recentlyTouched` does not apply. The write
-        // clock is what keeps an interrupted fan-out from leaving a green pill
-        // on the card forever.
-        let nowMs = Date().timeIntervalSince1970 * 1000
-        let inFlight = scan.pending && scan.modifiedAt > 0
-            && (nowMs - scan.modifiedAt) < Self.turnLiveWindowMs
-        return (scan.activity, inFlight)
+        scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 96_000)
     }
 
     /// Shared tail reader. Cursor transcripts are JSONL where each line is
     /// either `{"role":"user"|"assistant","message":{"content":[...]}}` or a
     /// turn marker `{"type":"turn_ended",...}`. A turn is "pending" when the
-    /// last assistant message has no following `turn_ended`.
+    /// last user or assistant message has no following `turn_ended`.
     ///
     /// Single open/seek/read per call; the file's existence is implied by a
     /// successful open, so no separate stat is needed. The file's mtime comes
     /// back with the result because the caller needs it to tell a live pending
     /// turn from a frozen one — see `turnLiveWindowMs`.
-    private static func scanTail(url: URL, readSize: UInt64) -> (count: Int, activity: String, pending: Bool, completionID: String?, modifiedAt: Double) {
+    private static func scanTail(url: URL, readSize: UInt64) -> CursorTranscriptScan {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return (0, "", false, nil, 0)
+            return CursorTranscriptScan(count: 0, activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: 0)
         }
         defer { try? handle.close() }
         let modifiedAt = ((try? url.resourceValues(forKeys: [.contentModificationDateKey])
@@ -377,13 +339,13 @@ struct CursorSessionMonitor {
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(readSize, size))
         guard let tailData = try? handle.readToEnd() else {
-            return (0, "", false, nil, modifiedAt * 1000)
+            return CursorTranscriptScan(count: 0, activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: modifiedAt * 1000)
         }
         // Lossy decode — a strict one fails for the whole window whenever the
         // seek landed mid-character (see `SessionMonitor.readContext`).
         var msgCount = 0
         var lastActivity = ""
-        var lastAssistantLine = -1
+        var lastMessageLine = -1
         var lastTurnEndedLine = -1
         var lastAssistantWasFinalText = false
         var completionID: String?
@@ -402,6 +364,8 @@ struct CursorSessionMonitor {
                 continue
             }
             if (obj["role"] as? String) == "user" {
+                lastMessageLine = lineIndex
+                lastActivity = ""
                 completionID = nil
                 lastAssistantWasFinalText = false
                 continue
@@ -409,7 +373,7 @@ struct CursorSessionMonitor {
             guard (obj["role"] as? String) == "assistant",
                   let message = obj["message"] as? [String: Any] else { continue }
             msgCount += 1
-            lastAssistantLine = lineIndex
+            lastMessageLine = lineIndex
             completionID = nil
             let blocks = message["content"] as? [[String: Any]] ?? []
             lastAssistantWasFinalText = blocks.contains { ($0["type"] as? String) == "text"
@@ -419,10 +383,12 @@ struct CursorSessionMonitor {
                 lastActivity = act
             }
         }
-        // A turn is in flight if an assistant message appears after the last
-        // turn_ended marker (i.e. the turn never completed).
-        let pending = lastAssistantLine > lastTurnEndedLine
-        return (msgCount, lastActivity, pending, completionID, modifiedAt * 1000)
+        // Submission starts the turn; waiting for the first assistant block
+        // otherwise hides slow first-token generation and queued work.
+        let pending = lastMessageLine > lastTurnEndedLine
+        let ended = lastTurnEndedLine >= 0 && lastTurnEndedLine > lastMessageLine
+        return CursorTranscriptScan(count: msgCount, activity: lastActivity, toolPending: pending,
+                                    completionID: completionID, ended: ended, modifiedAt: modifiedAt * 1000)
     }
 
     /// Human-readable summary of the latest tool_use in a message:
@@ -468,8 +434,8 @@ struct CursorSessionMonitor {
     // MARK: - Head field helpers
 
     /// `true` if the head declares an active agent location.
-    /// Cursor only sets `agentLocation` while a composer is bound to a running
-    /// agent; its `status` is "active" in that case.
+    /// This location binding can remain "active" after a turn completes; only
+    /// use it for the brief startup grace period, never as a live heartbeat.
     private static func isAgentActive(_ obj: [String: Any]) -> Bool {
         guard let loc = obj["agentLocation"] as? [String: Any] else { return false }
         return (loc["status"] as? String) == "active"

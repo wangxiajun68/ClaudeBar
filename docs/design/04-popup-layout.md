@@ -53,9 +53,11 @@
 
 ## 模型切换
 
-popup 内不铺供应商宫格：`PanelHeader` 的三个 chip 打开各自的 popover——CC / Codex 是 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark；Cursor 是 `CursorUsagePanel`（月度套餐与 Grok 周窗口两条独立额度）。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
+popup 内不铺供应商宫格：`PanelHeader` 的三个 chip 打开各自的 popover——CC / Codex 是 `ModelSwitchList`（`Views/Popup/PanelHeader.swift`），一行一个「供应商 / 模型」，当前项带 checkmark；Cursor 是 `CursorUsagePanel`（月度套餐 + 其中的两个命名池 **Cursor Models** / **Other Models** + Grok Bot 周窗口）。切换后 `FeedbackToast` 反馈（如 "CC · DeepSeek / deepseek-v4-pro"，2 秒淡出）。
 
 三个 chip 是**同一张四区表**（mark 15 / 模型名 16 / 额度行 26 / 页脚 11pt）：它们载的东西不同（CC 有供应商无额度、Codex 有额度、Cursor 两者都有），按各自内容堆叠会让三列呈阶梯状。额度在 `QuotaSwayGauge` 里读**剩余**（`100 − used`），重置时刻在弧的下方——与百分比同行时它是那行最宽的东西，两个窗口在 143pt 的列里放不下。
+
+Cursor chip 的两个 gauge 是 Cursor 自己命名的两个池：**Cursor**（`autoPercentUsed`，Cursor Models，Grok / Composer）与 **Other**（`apiPercentUsed`，Other Models，按 API 价计费的三方模型）。这两个名字来自 Cursor 的 `auto-spillover-ui.ts`；池名在 chip 里缩写为一个词，因为「Cursor Models」+ 「Other Models」实测合计 166pt，超过额度行的 ~119pt 会双双截断成「Cursor Mo…」；完整名字在 chip 打开的 `CursorUsagePanel` 里。月度总额（`includedSpend / limit`）是这两个池共享的**唯一** money limit，服务端只发一个 `limit`，所以 chip 的页脚只写一行金额、不按池拆；Grok Bot 的周窗口是独立额度，只住在 popover 里（有它自己的周重置）。
 
 主窗口的供应商宫格（`ProviderDirectoryHost` + `ProviderConnectionEditor`）是另一条路径，见 [design/05](05-main-window-and-theme.md)：
 

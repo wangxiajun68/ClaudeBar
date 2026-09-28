@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The exchange-rate control behind 设置 → 模型花费 → 显示货币.
+/// The exchange-rate control behind 设置 → 通用 → 用量与花费.
 ///
 /// Only shown once the display is set to a converted mode. Two things live
 /// here that the user needs in order to trust a converted total: the rate and
@@ -11,24 +11,21 @@ import SwiftUI
 /// It is also the honest answer to "your rate is wrong" — the user's own bank
 /// rate beats the ECB's mid-market rate for what they actually paid.
 struct ExchangeRateTile: View {
-    var compact: Bool = false
     @ObservedObject private var prefs = AppPreferences.shared
     @ObservedObject private var fx = ExchangeRate.shared
     @State private var draft = ""
     @State private var editing = false
-    /// Drives the field's focus rim, so the box is lit while it is being typed
-    /// into — the same affordance `InstrumentSearchField` has.
     @FocusState private var rateFocused: Bool
 
     var body: some View {
-        SettingTile(icon: "arrow.left.arrow.right", title: "汇率",
-                    caption: caption, tint: Theme.chartGreen, compact: compact) {
+        SettingsRow(title: "美元兑人民币", caption: caption) {
             HStack(spacing: 6) {
                 rateField
-                ActionButton(fx.isFetching ? "查询中…" : "更新") { fx.refresh() }
+                ActionButton(fx.isFetching ? "查询中…" : "更新", tone: .neutral) { fx.refresh() }
                     .disabled(fx.isFetching)
             }
         }
+        .onDisappear { if editing { commit() } }
     }
 
     /// While editing, a plain `TextField` — the same choice the API-key field
@@ -37,8 +34,9 @@ struct ExchangeRateTile: View {
     @ViewBuilder
     private var rateField: some View {
         if editing {
-            TextField("7.2", text: $draft)
-                .textFieldStyle(InstrumentFieldStyle(focused: rateFocused))
+            TextField("留空自动", text: $draft)
+                .accessibilityLabel("美元兑人民币手动汇率")
+                .textFieldStyle(.roundedBorder)
                 .focused($rateFocused)
                 .frame(width: 72)
                 .multilineTextAlignment(.trailing)
@@ -46,12 +44,13 @@ struct ExchangeRateTile: View {
                 // Losing focus is a commit, not a cancel: a half-typed number
                 // left in the box while the user clicks elsewhere is almost
                 // always meant to be applied, and there is no other way to
-                // finish editing on a settings tile.
-                .onChange(of: editing) { _, isEditing in if !isEditing { commit() } }
+                // finish editing the preference.
+                .onChange(of: rateFocused) { _, focused in if !focused { commit() } }
         } else {
-            ActionButton(perform: {
+            ActionButton(tone: .neutral, perform: {
                 draft = fx.effectiveRate.map { String(format: "%.4f", $0) } ?? ""
                 editing = true
+                Task { @MainActor in rateFocused = true }
             }) { Text(buttonLabel).rollingNumber() }
             .help(fx.isManual ? "改为使用实时汇率；点击可编辑手动值" : "手动指定汇率；设定后不再联网查询")
         }
@@ -65,12 +64,12 @@ struct ExchangeRateTile: View {
     private var caption: String {
         if let error = fx.lastError { return error }
         if fx.isManual {
-            return "手动汇率，不会联网查询。点数字可改回实时汇率。"
+            return "手动汇率。点数字编辑，清空后恢复自动查询。"
         }
         guard let note = fx.note else {
             return fx.isFetching ? "正在查询汇率…" : "点击「更新」获取实时汇率。"
         }
-        return "\(note)。点数字可改用手动汇率。"
+        return "\(note)。点数字可设置手动汇率。"
     }
 
     /// Accept a plausible rate, clear the override on anything else.

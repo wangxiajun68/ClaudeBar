@@ -171,7 +171,11 @@ final class MainWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.standardWindowButton(.closeButton)?.superview?.isHidden = false
-        window.isMovableByWindowBackground = true
+        // Content must not move the window. With this on, a three-finger drag
+        // (系统「三指拖移」, which is how a lot of people drag at all) starts a
+        // window drag from any empty pixel — including text, lists, and the
+        // greeting sky. The top bar opts in itself; see `WindowDragRegion`.
+        window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("ClaudeBarMainWindow")
         window.appearance = Theme.nsAppearance

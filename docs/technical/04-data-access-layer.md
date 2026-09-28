@@ -72,17 +72,24 @@
 
 **打开方式**：经共享的 `CursorDB.open()`（`Utils/CursorDB.swift`）——`sqlite3_open_v2` + `SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX`，`busy_timeout 2000`。WAL 允许并发读，不阻塞 Cursor 的写入。`CursorDB` 同时提供 `textColumn` 文本读取与 `cString` helper，供 `CursorSessionMonitor` 与 `CursorUsageStats` 复用（D2 去重；并消除 B3 的 `map[key]!` force-unwrap）。
 
-**查询**：取 `isArchived=0 AND isSubagent=0` 按 `recency DESC` 最多 80 条，过滤 3 天内活跃（`lastUpdatedAt > cutoff`），取前 14 个展示。
+**查询**：读取 `isArchived=0 AND isSubagent=0` 且 `recency` 或 `checkpointAt` 在最近 3 天的 header。先解析运行状态再按忙碌优先排序，列表通常保留 14 个，但全部运行会话必须保留。取消查询前 80 条的硬截断，避免较早提交的长任务被新会话挤掉。查询只扫描小型 `composerHeaders` 索引表，不读取大型 `cursorDiskKV` 消息正文。
 
-**head 字段解析**：`name`、`createdAt`、`lastUpdatedAt`、`contextUsagePercent`、`agentLocation.status == "active"`（判 busy）、`workspaceIdentifier.uri.fsPath`（或 `draftTarget.environment.uri.fsPath`）取 cwd。
+**head 字段解析**：`name`、`createdAt`、`lastUpdatedAt`、`contextUsagePercent`、`unfinishedRunAt`、`conversationCheckpointLastUpdatedAt`；`workspaceIdentifier.uri.fsPath`（或 `draftTarget.environment.uri.fsPath`）取 cwd。`agentLocation.status == "active"` 是可能残留的绑定标记，只用于提交后 120 秒的启动宽限，不能代表整轮运行状态。
 
-**transcript 扫描**：与 Claude 类似但更简单——Cursor 的 JSONL 有 `{"type":"turn_ended"}` 标记，pending 判定为「最后一条 assistant 行号 > 最后 `turn_ended` 行号」。
+**运行判断**：主会话和子 Agent 共用 `CursorTranscriptScan.inFlight`。
 
-**这份 pending 不是忙碌的全部判据**：被中断或崩溃的轮次**不写**收尾的 `turn_ended`，所以上面的条件对一条冻结的 transcript 永远成立（实测有一次昨天下午的 composer 把灵动岛的忙碌徽章、2.5 s 轮询档和 1 Hz 采样档钉到今天）。忙碌因此还要**同时**满足 transcript 的**写时钟**在 `turnLiveWindowMs`（10 分钟）内。界必须钉在文件的写入时间而不是 head 的 `lastUpdatedAt`——后者在用户提交时打一次、轮次进行中不再改（实测 `ckpt − lastUpdatedAt` 有 373 / 587 / 1096 s），钉在它上面就成了「只显示短于窗口的轮次」，按本机历史会藏掉最近 25 个 composer 里的 7 个。`fetchActive` 与 `scanAgentActivity`（子 Agent，没有 `recentlyTouched` 这道门）都读这**同一个**值，因为 `IslandLiveModel.flatten` 与 `ProviderStore` 的忙碌汇总各自独立地 OR 这个字段。
+- JSONL 的最后一条 user 或 assistant 消息出现在最后一个 `turn_ended` 之后，且文件 mtime 在 10 分钟内，说明轮次尚未结束。用户提交即进入 pending，覆盖等待首个回复的阶段。
+- `unfinishedRunAt > 0` 且 `max(unfinishedRunAt, checkpointAt)` 在 10 分钟内，也说明轮次可能仍在运行。Cursor 实测会持续写 SQLite checkpoint，但 JSONL 长时间停在用户消息；仅检查 JSONL 会漏掉这些长任务。
+- 当前轮次的 `turn_ended`（成功或错误）优先结束运行状态。文件早于 `unfinishedRunAt` 的旧结束标记不能结束新轮次，也不能发布旧答案的 completion ID。
+- 两种写入都停止超过 10 分钟时，残留 pending/unfinished 不再算忙。这个窗口是启发式边界：真实任务如果两种数据源都静默超过 10 分钟，仍可能漏报。
+
+**时间语义**：返回的 `lastUpdatedAt` 是最新活动时间，运行期间结合 checkpoint 与 transcript mtime；有当前结束标记时使用 transcript 的时间，不让后续 metadata 写入刷新旧答案的完成时间。原始 head 的 `lastUpdatedAt` 是提交时间，用它给长任务的完成通知判新鲜度会漏通知。
 
 **账号凭据**：同一张 `ItemTable` 里还有 `cursorAuth/*` 行（accessToken / cachedEmail / stripeMembershipType / stripeSubscriptionStatus），供 `CursorUsageFetcher` 调用额度接口。**每次探测都重读**——Cursor 会在运行中原地轮换 access token，缓存一小时的 token 会开始 401；读的是只读 WAL 句柄上一条按主键的 SELECT，成本可忽略。token 是 424 字节的 JWT，必须走 `textColumn` 而不是 `cString`（后者在第一个 NUL 截断，交出去的是坏 token）。
 
-**子 Agent**：`fetchSubagents` 查 `isSubagent=1`，按 `subagentInfo.parentComposerId`（或 `rootParentConversationId`）归组到可见的父会话下。
+**子 Agent**：`fetchSubagents` 查最近的 `isSubagent=1` header，按 `subagentInfo.parentComposerId` 归组；直属父级是另一个 helper 时，回退到可见的 `rootParentConversationId`。transcript 优先读 `agent-transcripts/<rootId>/subagents/<childId>.jsonl`，再兼容旧的独立 composer 路径。运行状态使用与主会话相同的 checkpoint / transcript 判据。
+
+本次实机漏报证据与验证范围见 [Cursor 会话监控排查](cursor-session-monitor-investigation.md)。
 
 ## `UsageStats` — token 用量扫描
 

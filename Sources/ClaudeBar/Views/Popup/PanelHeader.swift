@@ -229,8 +229,8 @@ struct PanelHeader: View {
     // MARK: Cursor allowance
 
     /// The chip's headline. Prefers the account's plan tier (Pro / Ultra / Free)
-    /// because that is the stable answer — the percentage lives on the gauges
-    /// below, and repeating it here would be the same number twice.
+    /// because that is the stable answer — the percentages live on the gauges
+    /// below, and repeating one here would be the same number twice.
     private var cursorTitle: String {
         if let plan = cursorStore.grok?.planName, !plan.isEmpty { return plan }
         return "Cursor"
@@ -239,36 +239,65 @@ struct PanelHeader: View {
     /// What the chip says when the gauges have nothing to draw. Once a reading
     /// exists the gauges replace this line, so it only has to carry the loading
     /// and failure states.
+    ///
+    /// A plan with **no named pool** is the one loaded state that has no gauge:
+    /// legacy / team payloads send only `totalPercentUsed`, so `额度` there is a
+    /// truthful reading rather than a spinner the row does not need.
     private var cursorSubtitle: String {
         if cursorStore.plan != nil || cursorStore.grok != nil { return "额度" }
         if cursorStore.loading { return "额度…" }
         return cursorStore.note ?? "未登录"
     }
 
-    /// The two independent Cursor allowances as chip gauges: the monthly plan
-    /// and the Grok Bot weekly window. Both carry **used** percentages, the
-    /// units Cursor reports (`totalPercentUsed` / `usagePercent`); the gauge
-    /// cell subtracts to the remaining reading the popup shows, and the money
-    /// rides underneath as `quotaDetail`.
+    /// The two named pools inside the monthly plan, as the chip's two gauges:
+    /// **Cursor Models** (`autoPercentUsed`) and **Other Models**
+    /// (`apiPercentUsed`).
+    ///
+    /// These are Cursor's own names for the pools — taken from its
+    /// `auto-spillover-ui.ts` — and they replace the old 「月度」/「Grok」pair,
+    /// which mixed the month with the Grok *Bot* weekly window and never named
+    /// the second pool at all. The Grok Bot window still exists and still has
+    /// its own weekly reset; it now lives where a non-monthly reading belongs,
+    /// in the chip's popover (`CursorUsagePanel`), which spells both names in
+    /// full.
+    ///
+    /// Both carry **used** percentages, the units Cursor reports; the gauge cell
+    /// subtracts to the remaining reading the popup shows, and the money rides
+    /// underneath as `quotaDetail` — it is the *shared* monthly figure these two
+    /// pools sit under, which is why it is not repeated per gauge.
+    ///
+    /// **Abbreviated to one word here on purpose.** The full names are the
+    /// reading, but the chip's allowance row is ~119pt and two `GaugeCell`s
+    /// carrying "Cursor Models" / "Other Models" measure **166pt** together —
+    /// measured, that clipped both to "Cursor Mo…" / "Other Mod…", which is
+    /// worse than a clean short name. One word each ("Cursor" / "Other") is
+    /// 103pt, fits the 119pt budget with room to spare, and cannot be misread:
+    /// the pair sits inside the **Cursor** chip, under `Cursor`'s own plan name,
+    /// and the popover this chip opens names both pools in full. The order is
+    /// Cursor's own — Cursor Models first, Other Models second.
+    ///
+    /// Either pool can be missing (`nil` on legacy / team shapes): a lone pool
+    /// still draws, and only a plan with neither leaves the row empty.
     private var cursorGaugeWindows: [CodexQuotaWindow] {
         var windows: [CodexQuotaWindow] = []
-        if let plan = cursorStore.plan, plan.usedFraction.isFinite {
-            windows.append(CodexQuotaWindow(
-                label: "月度",
-                usedPercent: plan.usedFraction * 100,
-                resetsAt: plan.resetsAt,
-                durationMinutes: 0
-            ))
-        }
-        if let grok = cursorStore.grok {
-            windows.append(CodexQuotaWindow(
-                label: "Grok",
-                usedPercent: grok.usedPercent,
-                resetsAt: grok.nextReset,
-                // A week, so `resetCompact` prints a day count rather than a
-                // clock — the reset is days away.
-                durationMinutes: 10_080
-            ))
+        if let plan = cursorStore.plan {
+            let reset = plan.resetsAt
+            if let cursorModels = plan.cursorModelsFraction {
+                windows.append(CodexQuotaWindow(
+                    label: "Cursor",
+                    usedPercent: cursorModels * 100,
+                    resetsAt: reset,
+                    durationMinutes: 0
+                ))
+            }
+            if let otherModels = plan.otherModelsFraction {
+                windows.append(CodexQuotaWindow(
+                    label: "Other",
+                    usedPercent: otherModels * 100,
+                    resetsAt: reset,
+                    durationMinutes: 0
+                ))
+            }
         }
         return windows
     }

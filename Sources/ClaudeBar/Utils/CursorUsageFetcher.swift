@@ -4,14 +4,22 @@ import os
 /// Cursor's plan allowance, read from the account itself (no login, no browser
 /// cookies captured by us — the token is the one Cursor already stored locally).
 ///
-/// **There are two independent quotas**, and they are not the same reading:
+/// **Two things are counted here, and they are not the same reading:**
 ///
 /// * the **monthly plan** — dollars of included usage, reset on the billing
-///   cycle boundary (`GetCurrentPeriodUsage`);
-/// * the **Grok Bot weekly window** — a separate allowance with its own weekly
-///   reset (`get-sand-usage-status`). It can sit near 0% while the monthly plan
-///   is exhausted, which is exactly why it earns its own line instead of being
-///   folded into one number.
+///   cycle boundary (`GetCurrentPeriodUsage`). Under it Cursor reports **two
+///   named pools**, and they are Cursor's own names, taken from its
+///   `auto-spillover-ui.ts`: **"Cursor Models"** (`autoPercentUsed` — the
+///   first-party Grok / Composer models) and **"Other Models"**
+///   (`apiPercentUsed` — third-party models billed at API rates). They are not
+///   two money limits: the account carries a **single** `limit` +
+///   `includedSpend`, and the two pools are the percentages beneath it. That is
+///   why the popup's chip shows them as two named gauges rather than as a
+///   second money bar;
+/// * the **Grok Bot weekly window** — an independent allowance with its own
+///   weekly reset (`GetSandUsageStatus`). It can sit near 0% while the monthly
+///   plan is exhausted, which is exactly why it earns its own line instead of
+///   being folded into one number.
 ///
 /// **Two authentication surfaces, never interchangeable** (getting this wrong is
 /// the difference between 200 and 401):
@@ -41,19 +49,27 @@ enum CursorUsageFetcher {
         var isEmpty: Bool { plan == nil && grok == nil }
     }
 
-    /// The monthly plan allowance.
+    /// The monthly plan allowance, and the two visibly named pools inside it.
     ///
     /// Cursor reports **percentages already on a 0–100 scale** (`autoPercentUsed`,
     /// `apiPercentUsed`, `totalPercentUsed`) and **money in cents** (`totalSpend`,
     /// `limit`, …). This type keeps both in the API's own units and leaves the
     /// ×100 / ÷100 presentation to the view, so a formatting change never has to
     /// touch the decoding.
+    ///
+    /// `autoPercentUsed` / `apiPercentUsed` are **Cursor's own pool names**, so
+    /// they are read as "Cursor Models" / "Other Models" inside the popup —
+    /// see `cursorModelsFraction` / `otherModelsFraction` below.
     struct PlanUsage: Equatable, Codable {
         /// Overall used percentage, 0–100, as reported.
         var usedPercent: Double
-        /// Included-use percentage (the "API" bucket), 0–100, when reported.
+        /// The **Other Models** pool — Cursor's `apiPercentUsed`, 0–100, when
+        /// reported. "Consumed by named models": the third-party models that are
+        /// billed at API rates on top of the first-party allowance.
         var apiPercentUsed: Double?
-        /// Auto-model percentage, 0–100, when reported.
+        /// The **Cursor Models** pool — Cursor's `autoPercentUsed`, 0–100, when
+        /// reported. "Includes Cursor Grok and Composer", the first-party models
+        /// that are the reason the plan is bought.
         var autoPercentUsed: Double?
         /// `totalSpend` in cents.
         var totalSpendCents: Double?
@@ -92,6 +108,27 @@ enum CursorUsageFetcher {
             }
             return min(1, max(0, usedPercent / 100))
         }
+
+        /// The **Cursor Models** pool as a used fraction, 0–1 — the first of the
+        /// two named gauges on the popup chip.
+        ///
+        /// `nil` when Cursor did not report `autoPercentUsed`. That is a real
+        /// state (older / team shapes omit it), and a missing pool must render
+        /// as *absent*, not as a 0% bar that reads "all of it is left".
+        var cursorModelsFraction: Double? {
+            autoPercentUsed.map { min(1, max(0, $0 / 100)) }
+        }
+
+        /// The **Other Models** pool as a used fraction, 0–1 — the second named
+        /// gauge. `nil` when `apiPercentUsed` is absent, for the same reason as
+        /// above.
+        var otherModelsFraction: Double? {
+            apiPercentUsed.map { min(1, max(0, $0 / 100)) }
+        }
+
+        /// Whether Cursor reported neither pool — the chip has nothing to graph
+        /// and must say so instead of drawing an empty pair.
+        var hasNamedPools: Bool { cursorModelsFraction != nil || otherModelsFraction != nil }
 
         /// "used / limit" in dollars, e.g. "$492.45 / $20". `nil` when the API
         /// did not send the money fields (free / enterprise shapes).
@@ -374,11 +411,16 @@ enum CursorUsageFetcher {
         return min(100, max(0, spent / limit * 100))
     }
 
-    // MARK: - Grok Bot weekly window (cursor.com web)
+    // MARK: - Grok Bot weekly window (Connect RPC)
 
-    /// `POST https://cursor.com/api/dashboard/get-sand-usage-status`. This is a
-    /// **web** endpoint, so it wants the cookie form *and* an `Origin` header —
-    /// the bare JWT that satisfies the RPC above would 401 here.
+    /// `POST https://cursor.com/api/dashboard/get-sand-usage-status` — the web
+    /// spelling, kept as the fallback. It wants the cookie form *and* an
+    /// `Origin` header; the bare JWT used by the RPC above would 401 here.
+    ///
+    /// The primary path is the Connect RPC (`GetSandUsageStatus`) on
+    /// `api2.cursor.sh`, which takes the **same bare JWT** as the plan call and
+    /// returns the same fields — measured 200 against a bare JWT, so the cookie
+    /// spelling below is only for a host that refuses the RPC.
     private static func fetchGrok(subject: String?, token: String) async -> GrokUsage? {
         guard let subject, !subject.isEmpty else { return nil }
         guard let url = URL(string: "https://cursor.com/api/dashboard/get-sand-usage-status") else { return nil }

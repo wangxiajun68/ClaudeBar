@@ -1,189 +1,185 @@
 #!/usr/bin/env python3
-"""A Cursor turn that was abandoned must stop reading as "running".
+"""Exercise the production Cursor monitor against a temporary SQLite DB + JSONL.
 
-Cursor writes no closing `turn_ended` when a turn is aborted or crashes, so
-`scanTail`'s predicate — "an assistant message came after the last
-`turn_ended`" — is satisfied by such a turn **forever**. The transcript stops
-changing, the poll re-derives the same `true` from the same frozen bytes, and
-the session reads busy for the rest of its life.
-
-That is not hypothetical: on 2026-09-28 one composer did exactly this and pinned
-the notch island's busy badge — a spinning Cursor orbit for a session whose last
-write was 16 hours earlier — along with the 2.5 s poll tier and the 1 Hz sampler
-tier. `Tests/` had no Cursor coverage, so nothing caught it.
-
-This pins the two halves of the bound and, just as importantly, the reason it is
-a bound on the **transcript's write clock** and not on the head's
-`lastUpdatedAt`: that field is stamped when the user submits and is not
-rewritten during the turn, so gating on it would mean "only show turns shorter
-than the window" — measured on this machine's own history it would have hidden
-7 of the 25 most recent composers, two of them mid-edit.
-
-Compiles the production `scanTail` and the two gates around it. The tail bytes
-below reproduce the real artifact line for line.
+Only FilePaths' home directory is redirected. No copied state predicates, Cursor
+account data, app build, installation, or live database writes are involved.
 """
 from pathlib import Path
 import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-monitor = (root / 'Sources/ClaudeBar/Utils/CursorSessionMonitor.swift').read_text()
-
-# `scanTail` is private; take it, and the constant it is bounded by, verbatim.
-start = monitor.index('    private static func scanTail(')
-end = monitor.index('\n    }\n', start) + len('\n    }\n')
-scan_tail = monitor[start:end].replace('private static func scanTail(',
-                                       'static func scanTail(', 1)
-window_start = monitor.index('    private static let turnLiveWindowMs')
-window = monitor[window_start:monitor.index('\n\n', window_start)].replace(
-    'private static let turnLiveWindowMs', 'static let turnLiveWindowMs', 1)
-
+utils = root / 'Sources/ClaudeBar/Utils'
 swift = r'''
 import Foundation
+import SQLite3
+let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])
 
-/// Stands in for the monitor's own activity describer, which the extracted
-/// `scanTail` calls. Its output is not what this test asserts — the `pending`
-/// flag is computed from line order alone — so a no-op keeps the slice
-/// self-contained without changing any decision under test.
-func describeActivity(in message: [String: Any]) -> String? { nil }
-
-enum Gate {
-WINDOW
-
-    /// The bound as `fetchActive` applies it — one expression, read by both the
-    /// published `toolPending` and the `.active` branch.
-    static func inFlight(_ scan: (count: Int, activity: String, pending: Bool,
-                                  completionID: String?, modifiedAt: Double)) -> Bool {
-        let nowMs = Date().timeIntervalSince1970 * 1000
-        return scan.pending && scan.modifiedAt > 0
-            && (nowMs - scan.modifiedAt) < Self.turnLiveWindowMs
+func runTests() throws {
+    let fm = FileManager.default
+    try fm.createDirectory(at: FilePaths.cursorStateDB.deletingLastPathComponent(), withIntermediateDirectories: true)
+    var db: OpaquePointer?
+    precondition(sqlite3_open(FilePaths.cursorStateDB.path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    precondition(sqlite3_exec(db, "CREATE TABLE composerHeaders (composerId TEXT PRIMARY KEY, recency INTEGER, checkpointAt INTEGER, isArchived INTEGER, isSubagent INTEGER, value TEXT)", nil, nil, nil) == SQLITE_OK)
+    let now = Date().timeIntervalSince1970 * 1000
+    let cwd = "/fixture/project"
+    let user = #"{"role":"user","message":{"content":[{"type":"text","text":"Continue"}]}}"# + "\n"
+    let assistant = #"{"role":"assistant","message":{"content":[{"type":"text","text":"Working"}]}}"# + "\n"
+    let success = #"{"type":"turn_ended","status":"success"}"# + "\n"
+    let error = #"{"type":"turn_ended","status":"error"}"# + "\n"
+    var failures: [String] = []
+    var checks = 0
+    func check(_ value: Bool, _ message: String) {
+        checks += 1
+        if !value { failures.append(message); print("FAIL: \(message)") }
     }
-}
-
-enum Probe {
-SCAN_TAIL
-}
-
-@main struct Regression {
-    static func main() throws {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("cursor-turn-regression")
-        try? FileManager.default.removeItem(at: dir)
-        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        /// The real artifact: an aborted run, then a re-prompt that was itself
-        /// cut off mid-stream — `input: {}` is Cursor writing the assistant
-        /// header before it had the tool arguments.
-        let abandoned = """
-        {"role":"assistant","message":{"content":[{"type":"text","text":"步骤"}]}}
-        {"type":"turn_ended","status":"success"}
-        {"type":"turn_ended","status":"error","error":"User aborted request"}
-        {"role":"user","message":{"content":[{"type":"text","text":"整理文件"}]}}
-        {"role":"assistant","message":{"content":[{"type":"text","text":"正在整理"},{"type":"tool_use","name":"Write","input":{}}]}}
-
-        """
-
-        func write(_ name: String, _ body: String, ageSeconds: Double) throws -> URL {
-            let url = dir.appendingPathComponent(name)
-            try body.write(to: url, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes(
-                [.modificationDate: Date().addingTimeInterval(-ageSeconds)],
-                ofItemAtPath: url.path)
-            return url
-        }
-
-        func inFlight(_ url: URL) -> (Bool, Bool) {
-            let scan = Probe.scanTail(url: url, readSize: 96_000)
-            return (scan.pending, Gate.inFlight(scan))
-        }
-
-        // 1. THE BUG. Same bytes, written 16 hours ago: the raw predicate is
-        //    still true — that is what made this permanent — but the bounded
-        //    value is not, so nothing downstream reads it as busy.
-        let stale = try write("stale.jsonl", abandoned, ageSeconds: 16 * 3600)
-        let (staleRaw, staleBounded) = inFlight(stale)
-        precondition(staleRaw, "the raw predicate must still be true here — that is the bug being bounded, not removed")
-        precondition(!staleBounded, "an abandoned turn from 16 h ago must not read as in flight")
-
-        // 2. POSITIVE CONTROL. The identical line order with a fresh write is a
-        //    turn that IS running, and must still say so. If this fails the
-        //    bound is hiding real work, which is worse than the bug.
-        let live = try write("live.jsonl", abandoned, ageSeconds: 5)
-        precondition(inFlight(live) == (true, true), "a turn writing 5 s ago is in flight")
-
-        // 3. The window is minutes, not seconds: turns on this machine measure
-        //    p50 240 s and p90 1000 s, and a long tool call streams nothing.
-        let long = try write("long.jsonl", abandoned, ageSeconds: 8 * 60)
-        precondition(inFlight(long).1, "a turn quiet for 8 minutes is still inside the window")
-
-        // 4. Just past the window it stops — the bound is real, not decorative.
-        let over = try write("over.jsonl", abandoned, ageSeconds: 10 * 60 + 30)
-        precondition(!inFlight(over).1, "past the window an unwritten transcript is not in flight")
-
-        // 5. A turn that DID close is not in flight at any age, and needs no
-        //    bound to say so.
-        let ended = try write("ended.jsonl",
-                              abandoned + "{\"type\":\"turn_ended\",\"status\":\"success\"}\n",
-                              ageSeconds: 5)
-        precondition(inFlight(ended) == (false, false), "a closed turn is idle even when freshly written")
-
-        // 6. A missing transcript cannot read as busy: no file, no write clock.
-        let missing = dir.appendingPathComponent("not-there.jsonl")
-        precondition(inFlight(missing) == (false, false), "a composer with no transcript is idle")
-
-        // One line: Swift has no adjacent-literal concatenation, so a wrapped
-        // `print("…" "…")` is a syntax error rather than a joined message.
-        print("PASS: an abandoned Cursor turn stops reading as running once its transcript goes quiet (\(Int(Gate.turnLiveWindowMs / 60_000)) min), while a turn still writing stays busy — including one quiet for 8 minutes")
+    func reset() {
+        precondition(sqlite3_exec(db, "DELETE FROM composerHeaders", nil, nil, nil) == SQLITE_OK)
+        try? fm.removeItem(at: FilePaths.cursorProjectsDir)
     }
-}
-'''.replace('WINDOW', window).replace('SCAN_TAIL', scan_tail)
+    func add(_ id: String, headAge: Double = 1, checkpointAge: Double? = nil,
+             unfinishedAge: Double? = nil, transcript: String? = nil,
+             transcriptAge: Double = 1, locationActive: Bool = true,
+             archived: Bool = false, parent: String? = nil, rootParent: String? = nil) throws {
+        var obj: [String: Any] = ["composerId": id, "name": id,
+            "createdAt": now - headAge * 1000, "lastUpdatedAt": now - headAge * 1000,
+            "workspaceIdentifier": ["uri": ["fsPath": cwd]],
+            "agentLocation": ["status": locationActive ? "active" : "idle"]]
+        if let parent {
+            obj["subagentInfo"] = ["parentComposerId": parent, "rootParentConversationId": rootParent ?? parent,
+                                   "subagentTypeName": "explore"]
+        }
+        if let unfinishedAge { obj["unfinishedRunAt"] = now - unfinishedAge * 1000 }
+        if let checkpointAge { obj["conversationCheckpointLastUpdatedAt"] = now - checkpointAge * 1000 }
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: obj), as: UTF8.self)
+        var stmt: OpaquePointer?
+        precondition(sqlite3_prepare_v2(db, "INSERT INTO composerHeaders VALUES (?, ?, ?, ?, ?, ?)", -1, &stmt, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, now - headAge * 1000)
+        if let checkpointAge { sqlite3_bind_double(stmt, 3, now - checkpointAge * 1000) }
+        sqlite3_bind_int(stmt, 4, archived ? 1 : 0)
+        sqlite3_bind_int(stmt, 5, parent == nil ? 0 : 1)
+        sqlite3_bind_text(stmt, 6, json, -1, SQLITE_TRANSIENT)
+        precondition(sqlite3_step(stmt) == SQLITE_DONE)
+        if let transcript {
+            let url: URL
+            if let parent {
+                url = FilePaths.cursorTranscriptURL(cwd: cwd, composerId: rootParent ?? parent)
+                    .deletingLastPathComponent().appendingPathComponent("subagents/\(id).jsonl")
+            } else {
+                url = FilePaths.cursorTranscriptURL(cwd: cwd, composerId: id)
+            }
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try transcript.write(to: url, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: now / 1000 - transcriptAge)], ofItemAtPath: url.path)
+        }
+    }
+    func session(_ id: String) -> CursorSessionInfo? {
+        CursorSessionMonitor.fetchActive().first { $0.composerId == id }
+    }
+    func busy(_ id: String) -> Bool {
+        guard let s = session(id) else { return false }
+        return s.isAlive && (s.status == .active || s.toolPending)
+    }
 
-with tempfile.TemporaryDirectory(prefix='claudebar-cursor-turn-') as folder:
+    // Observed failure: SQLite checkpoints keep moving for a 16-minute run,
+    // while JSONL is still at its user message. Header submission time is old.
+    try add("checkpoint-live", headAge: 1000, checkpointAge: 5, unfinishedAge: 1000,
+            transcript: assistant + success + user, transcriptAge: 980)
+    check(busy("checkpoint-live"), "a fresh checkpoint must keep a long run visible while JSONL lags")
+    try add("missing-transcript", headAge: 1000, checkpointAge: 5, unfinishedAge: 1000)
+    check(busy("missing-transcript"), "checkpoint evidence must work without a transcript")
+    try add("waiting-first-token", headAge: 180, transcript: user, transcriptAge: 180, locationActive: false)
+    check(busy("waiting-first-token"), "a recent user message starts a turn before the first assistant block")
+    try add("fresh-stream", headAge: 3600, transcript: user + assistant, transcriptAge: 5)
+    check(busy("fresh-stream"), "a recent assistant write must keep an old header live")
+    try add("quiet-tool", headAge: 3600, transcript: user + assistant, transcriptAge: 480)
+    check(busy("quiet-tool"), "a tool quiet for eight minutes stays live")
+    try add("frozen", headAge: 16 * 3600, checkpointAge: 16 * 3600,
+            unfinishedAge: 16 * 3600, transcript: user + assistant, transcriptAge: 16 * 3600)
+    check(!busy("frozen"), "an abandoned run must expire despite sticky active and unfinished flags")
+    try add("expired", headAge: 3600, transcript: user + assistant, transcriptAge: 630)
+    check(!busy("expired"), "a frozen transcript past the ten-minute window must expire")
+    try add("completed", headAge: 1200, checkpointAge: 1, transcript: user + assistant + success)
+    check(!busy("completed"), "a completed turn with a fresh checkpoint and sticky location is idle")
+    check(session("completed")?.completionID != nil, "successful final text keeps its completion key")
+    check(now - (session("completed")?.lastUpdatedAt ?? 0) < 5000,
+          "completion freshness uses the write clock, not submission time")
+    try add("ended-sticky", headAge: 100, checkpointAge: 1, unfinishedAge: 100,
+            transcript: user + assistant + success)
+    check(!busy("ended-sticky"), "a current terminal marker beats a stale unfinished flag")
+    try add("error", headAge: 100, checkpointAge: 1, unfinishedAge: 100,
+            transcript: user + assistant + error)
+    check(!busy("error"), "a current error marker ends the run too")
+    check(session("error")?.completionID == nil, "an error cannot announce successful completion")
+    try add("new-run-old-answer", headAge: 180, checkpointAge: 5, unfinishedAge: 180,
+            transcript: user + assistant + success, transcriptAge: 600)
+    check(busy("new-run-old-answer"), "an old answer cannot cancel a newer unfinished run")
+    check(session("new-run-old-answer")?.completionID == nil,
+          "a resumed run must not publish the previous answer's completion key")
+    try add("archived", headAge: 1, checkpointAge: 1, unfinishedAge: 1, archived: true)
+    check(session("archived") == nil, "archived sessions stay hidden")
+
+    reset()
+    for n in 0..<90 { try add("idle-\(n)", headAge: Double(n + 1), transcript: assistant + success) }
+    try add("below-80", headAge: 3600, checkpointAge: 2, unfinishedAge: 3600,
+            transcript: user, transcriptAge: 3600)
+    check(busy("below-80"), "a running session below the old 80-row query limit must be discovered")
+    check(CursorSessionMonitor.fetchActive().first?.composerId == "below-80",
+          "busy ordering must happen before the display cap")
+
+    reset()
+    for n in 0..<20 { try add("live-\(n)", transcript: user + assistant) }
+    check(CursorSessionMonitor.fetchActive().filter { $0.status == .active }.count == 20,
+          "the 14-session display budget must not discard running sessions")
+
+    reset()
+    try add("old-submission", headAge: 4 * 86400, checkpointAge: 5, unfinishedAge: 4 * 86400)
+    check(busy("old-submission"), "recent checkpoints must rescue headers outside the three-day submission window")
+
+    reset()
+    try add("parent", headAge: 1000, checkpointAge: 5, unfinishedAge: 1000)
+    try add("child", headAge: 1000, transcript: user + assistant, parent: "parent")
+    try add("nested-child", headAge: 1000, transcript: user + assistant,
+            parent: "child", rootParent: "parent")
+    try add("child-checkpoint", headAge: 1000, checkpointAge: 5, unfinishedAge: 1000,
+            parent: "parent")
+    try add("child-frozen", headAge: 3600, transcript: user + assistant,
+            transcriptAge: 3600, parent: "parent")
+    try add("child-done", headAge: 100, checkpointAge: 1, unfinishedAge: 100,
+            transcript: user + assistant + success, parent: "parent")
+    let children = session("parent")?.subagents ?? []
+    check(children.first { $0.id == "child" }?.status == .running,
+          "subagent transcripts are under the parent's subagents directory")
+    check(children.first { $0.id == "nested-child" }?.status == .running,
+          "nested subagents attach to the visible root when their direct parent is a helper")
+    check(children.first { $0.id == "child-checkpoint" }?.status == .running,
+          "subagents use unfinished checkpoints when JSONL is missing too")
+    check(children.first { $0.id == "child-frozen" }?.status == .done,
+          "abandoned child transcripts still expire")
+    check(children.first { $0.id == "child-done" }?.status == .done,
+          "a current child terminal marker beats sticky unfinished metadata")
+
+    print("\(checks - failures.count)/\(checks) Cursor monitor checks passed")
+    if !failures.isEmpty { exit(1) }
+}
+try runTests()
+'''
+
+with tempfile.TemporaryDirectory(prefix='claudebar-cursor-monitor-') as folder:
     folder = Path(folder)
+    file_paths = (utils / 'FilePaths.swift').read_text().replace(
+        'FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
     source = folder / 'Regression.swift'
-    source.write_text(swift)
-    binary = folder / 'regression'
-    subprocess.run(['swiftc', '-O', '-parse-as-library', str(source), '-o', str(binary)],
-                   check=True, capture_output=True, text=True)
-    subprocess.run([str(binary)], check=True)
-
-# --- The production gate is the thing under test ----------------------------
-#
-# Everything above validates the *shape* of the bound against real tail bytes,
-# but it does so with its own copy of the expression. That is a hole: strip the
-# bound out of `fetchActive` and every assertion above still passes, because the
-# fixture never read it. Confirmed by negative control — deleting these three
-# lines from the monitor left this file green.
-#
-# So assert the production expression directly: the bounded value must be what
-# both the published field and the status branch read.
-fetch_active = monitor[monitor.index('    static func fetchActive()'):
-                      monitor.index('    // MARK: - Subagents')]
-required = [
-    ('let turnInFlight = scan.toolPending', 'the bound must start from the raw predicate'),
-    ('scan.modifiedAt > 0', 'a composer whose transcript could not be read must not read as busy'),
-    ('(nowMs - scan.modifiedAt) < Self.turnLiveWindowMs',
-     'the bound must be on the transcript write clock'),
-    ('shown[i].toolPending = turnInFlight',
-     'the *published* field must be the bounded value — `isBusy` ORs it in independently of `status`'),
-    ('if turnInFlight {', 'the status branch must read the bounded value too'),
-]
-for needle, why in required:
-    assert needle in fetch_active, (
-        f'{needle!r} is missing from `fetchActive` — {why}. '
-        'Without it the notch island keeps a spinning badge on an abandoned turn, '
-        'and this test would not notice: its own assertions use a local copy of the '
-        'expression, not this one.')
-
-# The last branch must NOT re-test the raw predicate. Doing so is the exact
-# shape that pinned the reported session: a stale-pending composer with Cursor's
-# sticky `agentLocation` flag could then never reach `.idle`.
-assert '!scan.toolPending' not in fetch_active, (
-    'the fall-through branch still consults the raw `scan.toolPending` — a '
-    'stale-pending session with a sticky active flag can then never resolve to '
-    'idle, which is the bug this file exists to pin')
-
-print('PASS: `fetchActive` bounds `toolPending` on the transcript write clock and '
-      'publishes that same value to both consumers')
-
+    source.write_text('\n'.join([
+        file_paths,
+        (utils / 'SessionTitle.swift').read_text(),
+        (utils / 'CursorDB.swift').read_text(),
+        (utils / 'CursorSessionMonitor.swift').read_text(),
+        swift,
+    ]))
+    # Run a standalone fixture with Swift's interpreter; never build the app.
+    subprocess.run(['swift', str(source), str(folder / 'home')], check=True)

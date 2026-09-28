@@ -39,7 +39,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | **UsageView** | 周期条（日 / 月 / 年 / **全部** / 自定）+ 热力图 + 三张图：来源（占这一时段全部 token 的分段条）、节奏（`UsageDaySpark`，刻度随范围换）、构成（`CacheAnatomyBar` 带缓存命中率）+ 用量模型瓦片（每块带自己的估算金额）。「全部」不显示上一周期 / 下一周期 |
 | **TrafficView** | 只在选中时挂载；昂贵状态由 `MainWindowController` 持有的 `TrafficPageState` 承载，重进无需重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 宫格：`SectionHeader` + `TileGrid(.pageSetting)`（自适应 300pt），卡片矮、内容多的分区改用 `.pageSettingDense`（240pt）。分区按用途分：界面（主题 / 单位 / 开机自启 / 继续会话）、灵动岛、**权限与隐私**、花费、本机（电池 / SQLite / 日志）、本地代理、代理上游、第三方接入、VPN、连通性；配置文件是一张列表，关于与退出并成一条 |
+| **SettingsView** | 固定顶部分类「通用 / 灵动岛 / 权限与隐私 / 本地代理」；内容最大宽 800pt，设置组采用中性列表，标签在左、控件在右。删除重复工具与开发实现开关，第三方代理接入按需展开。见 [设置页](surfaces/settings.md) |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -61,8 +61,8 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`InstrumentButtonStyle` / `ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ProxyCurlExample`（与其他设置等大的瓦片，弹出层内查看并复制完整 curl 命令）；检测结果是 `ConnectivityTileButton`（同一文件，设置页与供应商卡共用）。
-- 设置页的排版只有一种语法：`SectionHeader` 起小节，格内内容用 `TileGrid(.pageSetting)`（自适应 300pt）铺 `SettingTile`，内容短的分区传 `dense: true` 换成 `.pageSettingDense`（240pt，一屏更多卡）；代理上游的四个选择、第三方接入的 Base URL / 鉴权 / curl 示例，以及 `PermissionsSection` 的权限卡都走这套（权限卡内容更密，但表面与列宽与页面其余部分一致）。
+- `ProxyCurlExample`：第三方接入中的一行，按需查看并复制 curl 示例；连通性检测保留在供应商相关界面。
+- 设置页采用 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`，统一行内对齐与细分隔线，使用原生 macOS 开关和选择器；不再使用每项一张卡片的宫格。布局与精简明细见 [设置页](surfaces/settings.md)。
 - `CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；帮助页的代码块也复用它。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。
 - `APIKeyField.swift` / `ProviderDirectory.swift` / `ProviderQuickSetup.swift` / `ProviderControls.swift` / `ProviderModelFetchButton.swift`：供应商目录与快速配置控件（见 [surfaces/providers.md](surfaces/providers.md)）。

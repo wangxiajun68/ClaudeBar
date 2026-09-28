@@ -168,6 +168,7 @@ struct MainWindowView: View {
                         .fill(Theme.cardSurface)
                         .overlay(Capsule().fill(Theme.chartBlue.opacity(Theme.isDark ? 0.10 : 0.07)))
                         .shadow(color: .black.opacity(Theme.isDark ? 0.20 : 0.08), radius: 16, y: 7)
+                        .allowsHitTesting(false)
                 }
                 .overlay {
                     Capsule()
@@ -192,7 +193,11 @@ struct MainWindowView: View {
         .padding(.top, Theme.Space.s12)
         .padding(.bottom, Theme.Space.s16)
         .frame(maxWidth: .infinity)
-        .background(Theme.bgPrimary)
+        .background { Theme.bgPrimary.allowsHitTesting(false) }
+        // A background, not a ZStack sibling. An `NSView` offered the window's
+        // leftover height will take it, and the bar was centering itself in
+        // that gap. Here it is given the bar's own bounds and nothing more.
+        .background { WindowDragRegion() }
     }
 
     private var pageTabs: some View {
@@ -218,11 +223,15 @@ struct MainWindowView: View {
                 .font(Theme.Font.brand)
                 .foregroundColor(Theme.textPrimary)
         }
+        // The wordmark is not a control. Leaving it out of hit testing lets a
+        // drag on the title move the window, same as a system title bar.
+        .allowsHitTesting(false)
     }
 
     private var liveStatus: some View {
         HStack(spacing: Theme.Space.s8) {
             MainWindowSessionStatus()
+                .allowsHitTesting(false)
             helpButton
         }
     }
@@ -379,4 +388,49 @@ private struct MainWindowSessionStatus: View {
         return "\(busy + cursor + external) 运行中"
     }
 
+}
+
+/// Empty parts of the top bar. A drag here moves the window; tabs and the
+/// help button sit in front of it and keep their own clicks.
+///
+/// `mouseDownCanMoveWindow` alone misses a three-finger drag: that gesture is
+/// already a drag when the view sees it, so the window server will not start
+/// one unless the view hands it the original event. `performWindowDragWithEvent:`
+/// is that hand-off. This SDK's Swift overlay does not import the method, so
+/// it goes out as the ObjC selector.
+private struct WindowDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { WindowDragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    /// Never ask for space. The bar already has a height; this view only fills it.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+}
+
+/// Names `-[NSWindow performWindowDragWithEvent:]` so the call site can use
+/// `#selector`. The method is real on `NSWindow`; this SDK just does not
+/// import it into Swift.
+@objc private protocol WindowDragHandling {
+    @objc(performWindowDragWithEvent:)
+    func performWindowDrag(with event: NSEvent)
+}
+
+private final class WindowDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window, !event.modifierFlags.contains(.control) else { return }
+        if event.clickCount >= 2 {
+            // Same preference as a system title bar: zoom, or minimize.
+            if UserDefaults.standard.bool(forKey: "AppleMiniaturizeOnDoubleClick") {
+                window.miniaturize(nil)
+            } else {
+                window.performZoom(nil)
+            }
+            return
+        }
+        window.perform(#selector(WindowDragHandling.performWindowDrag(with:)), with: event)
+    }
 }

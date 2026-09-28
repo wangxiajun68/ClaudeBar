@@ -16,7 +16,13 @@ visible by reading the Swift:
    *string* (`"1790582107000"`), the web endpoints as ISO-8601; a parser that
    accepts only one blanks the reset line on the other surface.
 
-3. **The cookie spelling.** The web endpoints want `<sub>::<jwt>` percent-encoded
+3. **The two named pools.** `autoPercentUsed` is Cursor's "Cursor Models"
+   pool and `apiPercentUsed` its "Other Models" pool. They are percentages of
+   the plan's single allowance, not money limits of their own — so the chip
+   graphs them as fractions and a payload without them must report no pool at
+   all (a `nil`), never a 0% bar that reads as "all of it is left".
+
+4. **The cookie spelling.** The web endpoints want `<sub>::<jwt>` percent-encoded
    as the value of `WorkosCursorSessionToken`, while the RPC wants the bare JWT.
    A cookie value with an unencoded `|` or `:` mis-splits — the same 401 the
    field notes record for using one spelling on the other host.
@@ -37,6 +43,26 @@ def slice_between(start_marker, end_marker):
     b = source.index(end_marker)
     return source[a:b]
 
+# The popup chip's gauge labels, straight from the header source. Cursor's two
+# pools are named "Cursor Models" / "Other Models", but the chip's ~119pt
+# allowance row cannot hold two full names (they measure 166pt together and
+# clipped to "Cursor Mo…"), so the chip abbreviates each to one word. Asserted
+# here rather than left to review: a rename back to "Cursor Models" turns both
+# gauges into a truncated mess, and a rename to 「月度」/「Grok」 would restore the
+# mislabelling this change removed (「月度」 was the whole month, not a pool).
+header = (root / 'Sources/ClaudeBar/Views/Popup/PanelHeader.swift').read_text()
+gauge_block = header[header.index('private var cursorGaugeWindows'):
+                     header.index('/// The money line under the gauges')]
+assert 'label: "Cursor",' in gauge_block,     'the first pool gauge must be labelled "Cursor" (Cursor Models), fitted to the chip'
+assert 'label: "Other",' in gauge_block,     'the second pool gauge must be labelled "Other" (Other Models), fitted to the chip'
+assert 'cursorModelsFraction' in gauge_block and 'otherModelsFraction' in gauge_block,     'the gauges must read the two named-pool fractions, not the shared monthly bar'
+assert '月度' not in gauge_block and '"Grok"' not in gauge_block, \
+    'the old 「月度」/「Grok」pair must be gone from the chip (Grok Bot moved to the popover)'
+# The popover keeps the full names — it is where the ~4x wider row lives.
+panel = (root / 'Sources/ClaudeBar/Views/Shared/VpnTopChrome.swift').read_text()
+assert 'subMetric("Cursor Models"' in panel and 'subMetric("Other Models"' in panel, \
+    'the popover must still spell both pool names in full'
+
 # Only the types and the pure parsing/cookie helpers — never the async network
 # probes (they need a URLSession and would hit the account API for real).
 types_and_helpers = slice_between('    struct PlanUsage: Equatable, Codable {',
@@ -44,7 +70,7 @@ types_and_helpers = slice_between('    struct PlanUsage: Equatable, Codable {',
 cookie = slice_between('    static func cookieValue(subject: String, token: String) -> String {',
                        '    static func parseGrok(_ data: Data) -> GrokUsage? {')
 parse_plan = slice_between('    static func parsePlan(_ data: Data) -> PlanUsage? {',
-                           '    // MARK: - Grok Bot weekly window (cursor.com web)')
+                           '    // MARK: - Grok Bot weekly window')
 # Only the *type*: `lastKnown()`/`remember()` reach for `FilePaths` and the
 # network `Snapshot`, neither of which belongs in a parse-only harness. The
 # round-trip case is about the shape surviving JSON, and the type is the shape.
@@ -94,6 +120,16 @@ MONEY
                      "spend text was \(plan.spendText ?? "nil")")
         precondition(plan.apiPercentUsed == 100 && plan.autoPercentUsed != nil,
                      "both sub-percentages must survive")
+        // The two *named pools* the popup chip now graphs: autoPercentUsed is
+        // "Cursor Models", apiPercentUsed is "Other Models", and each is the
+        // reported percentage as a 0-1 fraction — NOT a share of the money
+        // fields. The plan carries one `limit`, so a pool is never `nil` here
+        // and never derived from `includedSpend`.
+        precondition(abs((plan.cursorModelsFraction ?? -1) - 0.9942666666666666) < 0.0001,
+                     "Cursor Models must be autoPercentUsed/100, was \(String(describing: plan.cursorModelsFraction))")
+        precondition(plan.otherModelsFraction == 1.0,
+                     "Other Models must be apiPercentUsed/100 = 1.0, was \(String(describing: plan.otherModelsFraction))")
+        precondition(plan.hasNamedPools, "a plan with both percentages must report named pools")
         // epoch-ms *string* reset.
         precondition(plan.resetsAt != nil, "the epoch-ms billing cycle must parse")
         let expectedEnd = Date(timeIntervalSince1970: 1_790_582_107)
@@ -122,6 +158,23 @@ MONEY
             Data("{\"planUsage\":{\"totalSpend\":1000,\"limit\":2000}}".utf8))
         precondition(moneyOnly != nil && abs(moneyOnly!.usedFraction - 0.5) < 0.0001,
                      "money-only payload must derive 50%")
+        // A payload with only `totalPercentUsed` names no pool: the chip must
+        // show that the pools are absent (no gauge) rather than draw a 0% bar
+        // that reads "all of it is left". `hasNamedPools` is that decision.
+        let noPools = CursorUsageFetcher.parsePlan(
+            Data("{\"planUsage\":{\"totalPercentUsed\":25}}".utf8))
+        precondition(noPools != nil, "a total-only payload must still decode")
+        precondition(noPools?.cursorModelsFraction == nil && noPools?.otherModelsFraction == nil,
+                     "a total-only payload must report no named pools")
+        precondition(noPools?.hasNamedPools == false, "hasNamedPools must be false")
+        // ...and a payload with just one pool still reports it (legacy/team
+        // shapes omit `autoPercentUsed`), so a lone pool is not silently lost.
+        let onePool = CursorUsageFetcher.parsePlan(
+            Data("{\"planUsage\":{\"apiPercentUsed\":40,\"totalPercentUsed\":40}}".utf8))
+        precondition(abs((onePool?.otherModelsFraction ?? -1) - 0.4) < 0.0001,
+                     "the reported pool must survive alone")
+        precondition(onePool?.cursorModelsFraction == nil && onePool?.hasNamedPools == true,
+                     "one pool is still a named pool")
 
         // --- 4. The Grok window, with an ISO-8601 reset ----------------------
         let grokJSON = """
@@ -179,7 +232,9 @@ MONEY
 
         print("PASS: Cursor allowance decodes the live plan + Grok payloads; totalSpend's "
               + "bonus spend never leaks into the used fraction; both reset formats parse; "
-              + "the cookie spelling percent-encodes the sub and the :: separator; the "
+              + "the cookie spelling percent-encodes the sub and the :: separator; the two "
+              + "named pools (Cursor Models = autoPercentUsed, Other Models = apiPercentUsed) "
+              + "fraction cleanly and a missing pool stays absent rather than reading 0%; the "
               + "last-known reading round-trips through disk with its money, reset and "
               + "hit-limit intact")
     }

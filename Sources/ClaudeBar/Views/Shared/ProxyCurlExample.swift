@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Compact settings tile with the full, copyable command in a popover.
+/// A request example stays behind one explicit action in advanced proxy settings.
 struct ProxyCurlExample: View {
     var model: String
     @State private var showingExample = false
@@ -9,10 +9,8 @@ struct ProxyCurlExample: View {
     private var snippet: String { LocalProxyAddress.chatCompletionsCurl(model: model) }
 
     var body: some View {
-        SettingTile(icon: "terminal", title: "curl 示例",
-                    caption: "带本机令牌的请求示例。",
-                    tint: Theme.codex, compact: true) {
-            ActionButton("查看") { showingExample = true }
+        SettingsRow(title: "接入示例", caption: "包含本机鉴权令牌，可复制到其他客户端。") {
+            ActionButton("查看示例", tone: .neutral) { showingExample = true }
         }
         .popover(isPresented: $showingExample, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {

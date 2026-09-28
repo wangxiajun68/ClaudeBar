@@ -241,7 +241,7 @@ enum HelpCatalog {
                 .para("Cursor、各种 SDK、curl 都可以走同一个代理。把 Base URL 指过来即可："),
                 .code(LocalProxyAddress.openaiRoot),
                 .para("模型名**不会被替换**——请求里的 `model` 原样转发。所以要么把第三方的上游切到真的提供这个模型的渠道，要么把客户端的模型名改成那个渠道认识的名字。"),
-                .para("第三方走哪家上游在「设置 → 本地代理 → 第三方 OpenAI / Anthropic」里单独选，默认跟随 Codex / Claude Code 当前供应商。这个选择**不会**改 `~/.codex` 或 `settings.json`。"),
+                .para("第三方走哪家上游在「设置 → 本地代理 → 第三方接入 → 第三方供应商」里单独选，默认跟随 Codex / Claude Code 当前供应商。这个选择**不会**改 `~/.codex` 或 `settings.json`。"),
             ],
             keywords: "第三方 third party base url cursor sdk model_not_found 无可用渠道"
         ),
@@ -253,7 +253,7 @@ enum HelpCatalog {
             body: [
                 .para("默认只记路由元数据（谁、哪条路径、多大、多久、什么状态码）。要在「流量」页看到完整对话、工具调用、图片与原始 SSE，需要打开抓包："),
                 .bullets([
-                    "「设置 → 本地代理 → 记录第三方流量」管的是非 CC / Codex 客户端的请求",
+                    "「设置 → 本地代理 → 第三方接入 → 记录第三方流量」管的是非 CC / Codex 客户端的请求",
                     "「流量」页顶部有抓包开关与存储方式（SQLite 或 JSONL）",
                     "抓包数据落在 `~/Library/Application Support/ClaudeBar/logs/`",
                 ]),

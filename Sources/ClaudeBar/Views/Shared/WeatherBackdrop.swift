@@ -666,48 +666,6 @@ struct SkyPalette {
     static let bolt = Color(hex: 0xFFF2B0)
 }
 
-/// A separate foreground depth plane. These thin wisps cross the lettering;
-/// the denser cloud banks remain behind it in WeatherBackdrop.
-struct SkyVeil: View {
-    var sky: WeatherReading.Sky
-    var night: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.surfaceIsVisible) private var visible
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: reduceMotion || !visible || ProcessInfo.processInfo.isLowPowerModeEnabled)) { timeline in
-            Canvas { context, size in
-                let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-                let strength = sky == .clear ? 0.08 : sky == .partly ? 0.16 : 0.22
-                for i in 0..<4 {
-                    let phase = (t / (160 + Double(i) * 30) + Double(i) * 0.31).truncatingRemainder(dividingBy: 1)
-                    var layer = context
-                    layer.translateBy(x: (phase * 1.6 - 0.3) * size.width, y: size.height * (0.54 + Double(i) * 0.065))
-                    layer.scaleBy(x: 3.8, y: 0.28)
-                    let r = size.width * 0.18
-                    layer.fill(Path(ellipseIn: CGRect(x: -r, y: -r, width: r * 2, height: r * 2)),
-                               with: .radialGradient(Gradient(colors: [.white.opacity(strength * (night ? 0.4 : 1)), .clear]),
-                                                     center: .zero, startRadius: 0, endRadius: r))
-                }
-            }
-        }.allowsHitTesting(false).accessibilityHidden(true)
-    }
-}
-
-/// Deterministic, static grain. No per-frame random generation or full-size texture.
-struct SkyGrain: View {
-    var body: some View {
-        Canvas { context, size in
-            var dots = Path()
-            for i in 0..<3200 {
-                let x = Double((i * 7919) % 10007) / 10007 * size.width
-                let y = Double((i * 104729) % 10009) / 10009 * size.height
-                dots.addRect(CGRect(x: x, y: y, width: 0.8, height: 0.8))
-            }
-            context.fill(dots, with: .color(.white))
-        }.allowsHitTesting(false).accessibilityHidden(true)
-    }
-}
-
 /// A small density field with a sun-facing second sample for self-shadow.
 /// Generated once, then composited by Canvas; no noise evaluation per frame.
 private enum SkyCloudTexture {

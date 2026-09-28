@@ -74,6 +74,8 @@ ClaudeBar.app/
     ├── Resources/
     │   ├── AppIcon.icns
     │   ├── MenuBarIcon.png          （构建仍拷贝；status item 用矢量 `MenuBarMark`）
+    │   ├── BrandAssets/           （BrandAssets 的归一化品牌图形，主 app 与 appex 各一份）
+    │   ├── Fonts/                 （问候的 20 款手写体 + 各自的许可证，由 `GreetingScript` 按文件名加载）
     │   └── mihomo-core.xz         （VPN 内核压缩档，build.sh 注入或复用仓库内那份）
     └── PlugIns/
         └── ClaudeBarWidget.appex/

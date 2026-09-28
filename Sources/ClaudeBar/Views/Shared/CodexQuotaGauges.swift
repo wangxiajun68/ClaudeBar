@@ -232,10 +232,22 @@ private struct GaugeCell: View {
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
+                // The window's *name*. It scales before it truncates, for the
+                // same reason the model name in the chip above does: a family
+                // can name its pools with more than one word ("Cursor Models",
+                // "Other Models" — Cursor's own pool names), and at the popup's
+                // ~119pt the two of them together are ~58pt against the ~51pt
+                // the name column gets. Dropping the size a point or two reads
+                // the whole name; `lineLimit(1)` alone read "Cursor…" / "Other…",
+                // which is a different, worse statement than the label it
+                // abbreviates. It still truncates as the last resort, so a
+                // genuinely overlong label cannot push its neighbour out.
                 Text(metric.label)
                     .font(.system(size: 8, weight: .medium))
                     .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .truncationMode(.tail)
                 RollingNumberText("\(Int(remaining.rounded()))%")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .monospacedDigit()

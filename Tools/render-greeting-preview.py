@@ -5,6 +5,7 @@ files, live services or persistent preferences are read or changed.
 """
 from pathlib import Path
 import subprocess
+import sys
 
 root = Path(__file__).resolve().parents[1]
 out = root / '.build/greeting-preview'
@@ -67,8 +68,9 @@ for mark in ('anthropic', 'openai'):
 
 # A plain concatenation, not an f-string: the Swift below is full of braces and
 # an f-string would try to read them as fields.
-source = ("import AppKit\n@MainActor var fixtureSkyDate = Date()\n"
+source = ("import AppKit\n@MainActor var fixtureSkyDate = Date()\n@MainActor var fixtureCardWidth: CGFloat = 1100\n"
           + 'let brandMarks = "' + str(brand_marks) + '"\n'
+          + 'let scriptFonts = "' + str(root / 'Sources/Fonts') + '"\n'
           + '''import SwiftUI
 final class AppPreferences {
     static let shared = AppPreferences()
@@ -109,13 +111,16 @@ _cursor_fetcher = (root / 'Sources/ClaudeBar/Utils/CursorUsageFetcher.swift').re
 _cursor_fetcher = _cursor_fetcher.replace(
     'CursorDB.readCredentials()', 'nil as CursorCredentials?')
 source += _cursor_fetcher + '\n'
+# The fetcher persists its last reading under the app-support directory.
+source += (root / 'Sources/ClaudeBar/Utils/FilePaths.swift').read_text() + '\n'
 # The credential value type the fetcher's guard reads; the standalone struct has
 # no SQLite in it, so the fixture can carry it without the database layer.
 source += declaration('Sources/ClaudeBar/Utils/CursorDB.swift', 'struct CursorCredentials: Equatable {')
 source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift').read_text() + '\n'
-# `presented` is pinned so the fixture captures the arrived state — the same
-# frame a user sees at rest and the one a hover replays into.
-source += (root / 'Sources/ClaudeBar/Views/Shared/SkyGreeting.swift').read_text().replace('@State private var presented = false', '@State private var presented = true') + '\n'
+# `ImageRenderer` cannot capture an MTKView, so the sky goes through the
+# production still path: the same shader, drawn once into an image.
+for atmosphere in ['SkyScene', 'AtmosphereShader', 'AtmosphereRenderer', 'AtmosphereView', 'GreetingScript']:
+    source += (root / f'Sources/ClaudeBar/Views/Shared/Atmosphere/{atmosphere}.swift').read_text() + '\n'
 # The two clients' separator rule between them.
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'struct VerticalHairline: View {')
 # The fused client mark. `ProductBrandMark` is its artwork, so the preview
@@ -137,23 +142,47 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/CodexModelMark.swift').read_te
 # both come in above. `detailed` is what makes the gauge a reading here.
 # ImageRenderer cannot capture AppKit-backed Liquid Glass. The static matrix
 # exercises the production macOS 15 material fallback, with identical content.
+# `cardWidth` is pinned because a one-shot render never sees the geometry
+# callback that sizes the greeting in the app.
+# The card's instruments (weather glyphs, forecast ribbon, sun path, sill
+# gauges) are self-contained views; the whole file comes in as is.
+source += (root / 'Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift').read_text() + '\n'
 sheet = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
-source += sheet[sheet.index('struct GreetingStatusSheet: View {'):].replace('@State private var arrived = false', '@State private var arrived = true').replace('skyDate = Date()', 'skyDate = fixtureSkyDate').replace('context.date', 'fixtureSkyDate').replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {')
+if '--bench-baseline' in sys.argv:
+    # Every part rebuilt on every change, as before `Unchanged` existed.
+    sheet = sheet.replace('static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }',
+                          'static func == (lhs: Self, rhs: Self) -> Bool { false }')
+source += sheet[sheet.index('struct GreetingStatusSheet: View {'):].replace('@State private var arrived = false', '@State private var arrived = true').replace('@State private var cardWidth: CGFloat = 1100', '@State private var cardWidth: CGFloat = fixtureCardWidth').replace('skyDate = Date()', 'skyDate = fixtureSkyDate').replace('context.date', 'fixtureSkyDate').replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {').replace('private var sceneDate: Date { manual ? manualDate : skyDate.addingTimeInterval(timeOffset) }', 'private var sceneDate: Date { manual ? manualDate : skyDate.addingTimeInterval(timeOffset + Double(benchClock.tick) * 90) }')
 source += '''
 @main struct Probe {
     @MainActor static func main() throws {
         _ = NSApplication.shared
+        guard AtmosphereGPU.loadNow() != nil else { fatalError("Metal atmosphere unavailable") }
+        AtmosphereSurface.stills = true
         // No app bundle here: read the brand PNGs from the repo's own copy, or
         // the mark silently renders its missing-asset fallback.
         ProductBrandMark.resourceRoot = URL(fileURLWithPath: brandMarks)
+        GreetingScript.resourceRoot = URL(fileURLWithPath: scriptFonts)
         let out = URL(fileURLWithPath: CommandLine.arguments[1])
+        if CommandLine.arguments.contains("--bench") { benchUpdates(); return }
+        for mode in ["auto", "manual"] {
+        // The sheet reads its sky mode through @AppStorage; the argument
+        // domain is volatile, so the fixture never writes a preference.
+        UserDefaults.standard.setVolatileDomain(["greeting.skyMode": mode, "greeting.manualWeather": "snow",
+                                                 "greeting.manualMinutes": 17.0 * 60 + 55],
+                                                forName: UserDefaults.argumentDomain)
         for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for width in [1100.0, 620.0] {
-                for scene in ["sun", "rain", "night", "cloud", "snow", "empty"] {
+                fixtureCardWidth = width
+                // Light auto also writes the sunny card once per selectable
+                // face, so a face whose proportions break the layout shows up.
+                let faces = mode == "auto" && !dark ? GreetingTypeface.allCases.map { "face-" + $0.rawValue } : []
+                for scene in (mode == "manual" ? ["sun"] : ["sun", "rain", "night", "cloud", "snow", "empty"]) + faces {
+                    let typeface = scene.hasPrefix("face-") ? GreetingTypeface(rawValue: String(scene.dropFirst(5)))! : .standard
                     fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-28T13:00:00Z" : "2026-09-28T02:17:01Z")!
                     let empty = scene == "empty"
-                    var weather = WeatherReading(place: "广州", temperatureC: 29, feelsLikeC: 32,
+                    var weather = WeatherReading(place: "广州 · 天河区", temperatureC: 29, feelsLikeC: 32,
                         conditionCode: scene == "rain" ? 296 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
                         windKph: 8, windDirection: "东南", isDay: scene != "night", sunrise: "06:18", sunset: "18:22",
                         rainChance: 20, observedAt: Date(), latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
@@ -182,24 +211,23 @@ source += '''
                             bonusSpendCents: nil, billingCycleEnd: Date().addingTimeInterval(9 * 86400)),
                         cursorLoading: false, cursorNote: empty ? "未读取到 Cursor 额度" : nil,
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
-                        weatherNote: nil, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
+                        weatherNote: nil, typeface: typeface, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})
                         .environment(\\.colorScheme, dark ? .dark : .light)
                         .frame(width: width).padding(24).background(Theme.bgPrimary)
-                    if width == 620 && scene == "sun" {
-                        for future in [false, true] {
-                            // The weather HUD's forecast strip, captured on its own
-                            // so the six slim day columns can be inspected without
-                            // the rest of the card at the two real HUD widths.
-                            let detail = ForecastStrip(reading: weather,
-                                palette: SkyPalette(sky: .clear, night: dark), now: fixtureSkyDate)
-                                .padding(20).frame(width: future ? 236 : 292)
-                                .background(SkyPalette(sky: .clear, night: dark).gradient)
-                            let render = ImageRenderer(content: detail)
-                            render.scale = 2
-                            if let image = render.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
-                                try png.write(to: out.appendingPathComponent("detail-\\(dark ? "dark" : "light")-\\(future ? "day5" : "current").png"))
-                            }
+                    if scene == "sun" && mode == "auto" {
+                        // The forecast ribbon with a day focused, as hover or a
+                        // pin leaves it — the one state a static card render
+                        // cannot reach, since focus is the sheet's own @State.
+                        let ribbon = ForecastRibbon(days: weather.forecast, zone: TimeZone(identifier: "Asia/Shanghai")!,
+                            ink: .white, vivid: true, focus: weather.forecast[2].date, pinned: weather.forecast[2].date,
+                            arrived: true, hover: { _ in }, toggle: { _ in }, move: { _ in }, clear: {})
+                            .frame(width: width == 620 ? 236 : 300, height: 80)
+                            .padding(20).background(Color(hex: 0x21406E))
+                        let render = ImageRenderer(content: ribbon)
+                        render.scale = 2
+                        if let image = render.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                            try png.write(to: out.appendingPathComponent("ribbon-\\(dark ? "dark" : "light")-\\(Int(width)).png"))
                         }
                     }
                     let renderer = ImageRenderer(content: card)
@@ -207,17 +235,89 @@ source += '''
                     guard let image = renderer.cgImage,
                           let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
                     else { fatalError("Render failed") }
-                    let name = "\\(dark ? "dark" : "light")-\\(Int(width))-\\(scene).png"
+                    let name = "\\(mode == "manual" ? "manual-" : "")\\(dark ? "dark" : "light")-\\(Int(width))-\\(scene).png"
                     try png.write(to: out.appendingPathComponent(name))
                 }
             }
         }
-        print("Rendered 24 synthetic fixture views to \\(out.path)")
+        }
+        print("Rendered \\(28 + GreetingTypeface.allCases.count * 2) synthetic fixture views to \\(out.path)")
     }
+}
+'''
+# `--bench`: time one SwiftUI update of the live card (body, diff, layout and
+# display) the way a drag or a glide drives it — every frame changes an input
+# of the sheet, so its whole body is evaluated again.
+source += '''
+@MainActor @Observable final class BenchModel { var tick = 0 }
+@MainActor let benchClock = BenchModel()
+struct BenchHost: View {
+    let model: BenchModel
+    let weather: WeatherReading
+    var body: some View {
+        GreetingStatusSheet(name: "Xiajun Wang", ccModel: "deepseek-v4.1-flash", ccProvider: "Aibox",
+            codexModel: "gpt-6-astra", codexProvider: "OpenAI", balance: "0 Credits",
+            tokens: 12840000 + model.tick, yesterdayTokens: 9640000, calls: 286, spend: "¥404.70",
+            windows: [CodexQuotaWindow(label: "5 小时", usedPercent: 82, resetsAt: Date().addingTimeInterval(8360))],
+            quotaLoading: false, quotaNote: nil, cursorPlan: nil, cursorLoading: false, cursorNote: nil,
+            reading: weather, city: "广州", weatherLoading: false, weatherNote: nil,
+            refreshWeather: {}, refreshQuota: {}, refreshCursor: {}, showModels: {}, showUsage: {})
+            .frame(width: 1100)
+            // The sky's own cost is measured by bench-atmosphere.py; paused,
+            // it cannot interleave its draws with the commits timed here.
+            .environment(\\.surfaceIsVisible, false)
+    }
+}
+@MainActor func benchUpdates() {
+    AtmosphereSurface.stills = false
+    fixtureSkyDate = Date()
+    var weather = WeatherReading(place: "广州 · 天河区", temperatureC: 29, feelsLikeC: 32, conditionCode: 113,
+        conditionText: "晴", highC: 32, lowC: 25, humidity: 68, windKph: 8, windDirection: "东南", isDay: true,
+        sunrise: "06:18", sunset: "18:22", rainChance: 20, observedAt: Date(), latitude: 23.13, longitude: 113.26,
+        timezone: "Asia/Shanghai", source: "Open-Meteo")
+    let start = Calendar.current.startOfDay(for: Date())
+    weather.forecast = (0..<6).map { i in
+        let date = start.addingTimeInterval(Double(i) * 86400)
+        return WeatherDay(date: date, code: [2, 61, 95, 3, 0, 2][i], high: Double(32 - i), low: Double(25 - i),
+            rainChance: [20, 80, 95, 10, 0, 15][i], wind: Double(8 + i * 3),
+            sunrise: date.addingTimeInterval(6 * 3600), sunset: date.addingTimeInterval(18 * 3600))
+    }
+    let model = BenchModel()
+    let host = NSHostingView(rootView: BenchHost(model: model, weather: weather))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 520), styleMask: [.borderless],
+                          backing: .buffered, defer: false)
+    window.contentView = host
+    window.orderFrontRegardless()
+    var update: [Double] = [], commit: [Double] = []
+    let total = Int(ProcessInfo.processInfo.environment["BENCH_N"] ?? "") ?? 240
+    let unpaced = ProcessInfo.processInfo.environment["BENCH_PACE"] == "0"
+    for i in 0..<total {
+        // Paced like a 60 Hz display, so the commit measures work rather than
+        // waiting on surfaces the window server has not released yet.
+        // BENCH_PACE=0 runs back to back without committing: the CPU stays at
+        // one clock, so builds can be compared on update cost alone.
+        if !unpaced { RunLoop.current.run(until: Date().addingTimeInterval(1.0 / 60)) }
+        let a = CACurrentMediaTime()
+        // A drag: only the sky's time moves (90 s a frame), as `timeOffset` does.
+        benchClock.tick += 1
+        host.layoutSubtreeIfNeeded()
+        let b = CACurrentMediaTime()
+        if !unpaced { host.displayIfNeeded(); CATransaction.flush() }
+        let c = CACurrentMediaTime()
+        if i >= min(40, total / 4) { update.append((b - a) * 1000); commit.append((c - b) * 1000) }
+    }
+    func stats(_ label: String, _ v: [Double]) {
+        let v = v.sorted()
+        print(String(format: "%@ p25 %.2f ms, median %.2f ms, p90 %.2f ms", label, v[v.count / 4], v[v.count / 2], v[v.count * 9 / 10]))
+    }
+    stats("card update (body + layout):", update)
+    stats("card commit (display list):  ", commit)
 }
 '''
 path = out / 'Probe.swift'
 path.write_text(source)
 binary = out / 'probe'
-subprocess.run(['swiftc', '-parse-as-library', '-target', 'arm64-apple-macos15.0', str(path), '-o', str(binary)], check=True)
-subprocess.run([str(binary), str(out)], check=True)
+bench = '--bench' in sys.argv or '--bench-baseline' in sys.argv
+subprocess.run(['swiftc'] + (['-O'] if bench else []) + ['-parse-as-library', '-target', 'arm64-apple-macos15.0',
+                str(path), '-o', str(binary)], check=True)
+subprocess.run([str(binary), str(out)] + (['--bench'] if bench else []), check=True)

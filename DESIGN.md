@@ -311,36 +311,52 @@ delay, a selection tally — rolls per digit with the island's own effect:
 
 ## Greeting sky window
 
-This component-level extension belongs to `GreetingCard`, `SkyGreeting` and
-`WeatherBackdrop`. The app's ice / graphite visual language remains the global
-system. This surface frames a handwritten greeting in an atmospheric sky, with
-corner instruments and one glass dock along the bottom.
+This component-level extension belongs to `GreetingCard` and its Metal
+atmosphere (`Views/Shared/Atmosphere/`). The app's ice / graphite visual
+language remains the global system. This surface frames a handwritten greeting
+in an atmospheric sky, with corner instruments and one glass dock along the
+bottom.
 
-- **Typography:** the greeting uses the macOS script face `SnellRoundhand-Bold`
-  (width-responsive, capped at 180pt), followed by the name in rounded system
-  bold (24 / 31pt, tracking 4) and a drawn signature ribbon. These are installed
-  system faces; no font is bundled. The name is already Latinised pinyin by
-  `MachineIdentity` (`Xiajun Wang`), so the colophon takes a Latin face — the
-  `Songti SC` serif it replaced had no Latin bold at this size and set the
-  transliteration as a hairline. The cached CoreText outline and text reveal
-  enter once. The clock, weather, models and usage keep system type and
+- **Typography:** the greeting is drawn from CoreText glyph outlines by
+  `GreetingScript`, in one of **24 selectable script faces** (设置 → 通用 →
+  天气与问候 → 问候字体). Twenty are bundled in `Resources/Fonts` (SIL OFL 1.1 /
+  Apache 2.0, each licence beside its file — see `ASSET-LICENSES.md`); four
+  are the Mac's own (SignPainter, Snell Roundhand, Savoye LET, Zapfino) and
+  are looked up by PostScript name, greyed out when absent. The default,
+  **Borel**, is the only monoline, round-capped face among them, which is what
+  a handwritten greeting is supposed to read as. Monoline faces get an even
+  round-joined stroke outside the fill — a uniform weight increase that does
+  not close the counters of a / e / o; high-contrast faces are not stroked,
+  since a hairline plus a stroke is a smudge. Falls back to
+  `SnellRoundhand-Bold` if the resources are missing. The name beside it is
+  rounded system bold, already Latinised pinyin by `MachineIdentity`
+  (`Xiajun Wang`). The clock, weather, models and usage keep system type and
   monospaced figures.
 - **Composition:** a 272 / 300pt sky band leaves room around the greeting. The
-  clock sits at the upper left; the weather HUD sits at the upper right and
-  carries the forecast strip inline. The outer window has continuous 36pt
-  corners. The single 24pt-corner dock contains two zones — model / quota
-  readings and today's usage — and `ViewThatFits` keeps them in a row when its
-  640pt minimum fits. Thin rules separate zones inside the shared surface.
-- **Color and material:** `SkyPalette` supplies pale ink over condition-specific
-  blue, slate and night skies. Clear and partly cloudy skies interpolate color
-  from solar altitude; a bottom scrim protects the dock. Missing weather uses
-  the theme-aware neutral palette. `DaybreakGlass` uses native tinted glass on
-  macOS 26 and an `ultraThinMaterial` layer, tint and hairline on macOS 15.
-  Reduce Transparency replaces both dock and weather HUD material with an
-  opaque light or dark fill.
-- **Readings and actions:** model rows open model management; the Cursor row
-  reads its monthly plan — used percentage, spend and days to reset — and
-  clicking it re-reads. Codex's quota rings encode **used** percentage for up to
+  clock sits at the upper left with the auto / manual sky toggle under it; the
+  weather HUD sits at the upper right. The sun path or, in manual mode, the sky
+  console sits at the lower left. The outer window has continuous 36pt corners
+  and the sky is its own `MTKView`, full-bleed inside them. The single
+  24pt-corner dock contains two zones — model / quota readings and today's
+  usage — and `ViewThatFits` keeps them in a row when its 640pt minimum fits.
+  Thin rules separate zones inside the shared surface.
+- **Color and material:** `SkyScene` derives the palette and shader parameters
+  from **solar altitude (not clock time) × weather**, so the same eight periods
+  hold at any latitude and season, and `SkyScene.mix` cross-fades the
+  continuous quantities (palette, cloud cover, precipitation, fog, starlight)
+  over 1.2 s when the weather changes. Ink over the sky does not follow the app
+  theme: legibility comes from the shader's own masks and the glyph's drop
+  shadow. `DaybreakGlass` uses native tinted glass on macOS 26 and an
+  `ultraThinMaterial` layer, tint and hairline on macOS 15. Reduce Transparency
+  replaces both dock and weather HUD material with an opaque light or dark
+  fill.
+- **Readings and actions:** model rows open model management; the Cursor chip's
+  gauges are Cursor's **own two pool names** — Cursor Models
+  (`autoPercentUsed`) and Other Models (`apiPercentUsed`) — which share the
+  month's single money limit, so the money rides underneath as one shared
+  figure rather than once per pool; the popover behind the chip names both in
+  full and adds the Grok Bot weekly window, which is an independent allowance
+  with its own reset. Codex's quota rings encode **used** percentage for up to
   two windows and display their labels beside them; the first window includes
   its reset countdown, and clicking the quota refreshes it. Today's usage opens
   usage details and compares actual today / yesterday token totals with two
@@ -350,22 +366,39 @@ corner instruments and one glass dock along the bottom.
 - **Sky interaction:** horizontal dragging previews up to 12 hours before or
   after now. Left / right arrows move one hour, and Escape returns to now;
   matching accessibility actions are available. Drag release eases back over
-  0.75 seconds. The preview uses the reading's coordinates and local astronomy
-  and does not change the current weather measurement in the HUD.
-- **Rendering and motion:** `Canvas` composites a cached 384 × 168 cloud density
-  texture with sampled lighting; noise is generated once rather than per frame.
-  Foreground wisps, static grain, gentle pointer parallax, precipitation and
-  celestial light give the sky depth. Weather timelines pause when hidden or
-  Reduce Motion is enabled. Reduce Motion also removes parallax, entrance
-  reveals and animated return to now. Low Power Mode caps backdrop updates at
-  15 Hz and pauses foreground wisps. The visible clock retains its one-second
-  time update with its digit transition disabled under Reduce Motion.
+  0.75 seconds, driven by a `CADisplayLink` (`FrameTicker`) rather than a
+  sleeping task, which would beat against the refresh rate. The preview uses
+  the reading's coordinates and local astronomy and does not change the current
+  weather measurement in the HUD. The **auto / manual** toggle under the clock
+  switches to a fixed sky: the sun path's corner becomes a console — eight
+  weathers, eight periods derived from the day's real sunrise and sunset, and a
+  24-hour timeline whose track is painted with that weather's hourly colors —
+  and the chosen weather and hour persist in defaults, so a chosen sky survives
+  a relaunch.
+- **Rendering and motion:** one runtime-compiled Metal fragment shader
+  (`AtmosphereShader`) composites the layers far to near: sky gradient and
+  horizon scattering → stars / moon / sun → cirrus → a volumetric cloud deck
+  (fBm density, five light-march steps toward the sun, Beer-Lambert
+  transmission with a powder term, silver lining when the disc is behind
+  cover) → fog → far precipitation → rainbow / meteor / lightning → **the
+  greeting** → near precipitation → refraction through drops on the card's own
+  glass. The greeting sits *between* the cloud deck and the near precipitation
+  on purpose: cloud shadow crosses the lettering, near streaks pass in front of
+  it, and the lit rim turns with the sun. The shader is compiled at runtime
+  because the build uses bare `swiftc`, which has no offline Metal compiler,
+  while the runtime compiler ships with the OS. The `MTKView` keeps its own
+  pointer tracking area, so parallax and wiping drops never invalidate the
+  SwiftUI graph. Frame rate follows what is on screen (display rate while
+  writing, fading or dragging; 60 for rain and snow; 30 for drifting cloud; 15
+  under Low Power Mode or thermal pressure) and the view draws nothing when
+  hidden, occluded or under Reduce Motion.
 
 The implementation reuses Open-Meteo weather and its wttr.in fallback, plus
 local low-precision astronomy for sun, moon and bright-star placement. Weather
-motion is illustrative. This scope adds no WeatherKit service or Metal shader.
-The earlier observatory's implementation and verification background remains in
-[Weather observatory](docs/design/weather-observatory.md).
+motion is illustrative. The earlier Canvas implementation and its verification
+background remain in [Weather observatory](docs/design/weather-observatory.md);
+the current specification, including the manual-sky console and the performance
+budget, is [Greeting atmosphere](docs/design/greeting-atmosphere.md).
 
 ## Client marks
 
@@ -451,3 +484,16 @@ string is kept; and the fallback is `Mac` rather than the host name, because a
 generic greeting is a smaller wrong than a numeric one.
 `Tests/greeting-name-regressions.py` drives both rules over a table of machine
 names, and asserts the drawn name carries no surviving ideograph.
+
+
+## Settings
+
+Settings is an Operate surface with a quieter, native control language. Its
+four categories (通用 / 灵动岛 / 权限与隐私 / 本地代理) stay above a scrolling
+800pt-wide column. `SettingsGroup` owns the single neutral surface;
+`SettingsRow` aligns explanatory text left and native controls right. No
+per-option cards, colored glyph wells, depth lenses or hover lifts. Switches,
+segmented pickers and menus use macOS controls; secondary actions use the
+neutral button tone. This surface deliberately opts out of the dashboard's
+tile grammar. See [the settings brief](docs/design/surfaces/settings.md) for
+the retained preferences, removed clutter and build-dependent verification.

@@ -248,13 +248,16 @@ struct VpnStatusPill: View {
 
 // MARK: - Cursor allowance picker
 
-/// The panel behind the popup's Cursor chip: plan allowance on top, the Grok
-/// Bot weekly window (a **separate** quota) underneath, and the account's plan
-/// name as the subtitle.
+/// The panel behind the popup's Cursor chip: the monthly plan, the two pools
+/// inside it (**Cursor Models** / **Other Models**), and the Grok Bot weekly
+/// window (a **separate** quota) underneath — with the account's plan name as
+/// the subtitle.
 ///
-/// Two readings, two resets, deliberately not merged into one bar — they are
-/// independent allowances, and averaging them would hide the interesting case
-/// (plan maxed, Grok window nearly untouched) that the chip exists to surface.
+/// The monthly row is the plan's own bar (`includedSpend / limit`, Cursor's
+/// shared allowance) and the two pool rows are the percentages beneath it, so
+/// the panel answers both "how much of the month is gone" and "which pool is
+/// eating it". The Grok Bot window stays its own bar: it resets weekly and its
+/// percentage is independent, so folding it into either pool would be wrong.
 struct CursorUsagePanel: View {
     @ObservedObject private var store = CursorUsageStore.shared
 
@@ -319,8 +322,15 @@ struct CursorUsagePanel: View {
         }
     }
 
-    /// The monthly plan: a wide bar, the money, and the two sub-percentages
-    /// Cursor reports (`api` = included models, `auto` = auto-selected models).
+    /// The monthly plan: a wide bar over the shared allowance, the money, and
+    /// the two named pools beneath it.
+    ///
+    /// The bar is `includedSpend / limit` — Cursor's **single** monthly money
+    /// limit; the two pools are percentages of it, not money limits of their
+    /// own (the server sends one `limit` + `includedSpend`, never two). Naming
+    /// them "Cursor Models" / "Other Models" is the point of the row: it is
+    /// which pool is being consumed, which the old "API / Auto" abbreviations
+    /// did not say.
     private func planRow(_ plan: CursorUsageFetcher.PlanUsage) -> some View {
         let used = plan.usedFraction
         let tint = used >= 0.9 ? Theme.Ink.error : (used >= 0.75 ? Theme.Ink.warning : Theme.Ink.success)
@@ -338,11 +348,11 @@ struct CursorUsagePanel: View {
                 Text(spend).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
             }
             HStack(spacing: 10) {
-                if let api = plan.apiPercentUsed {
-                    subMetric("API", api)
+                if let cursorModels = plan.autoPercentUsed {
+                    subMetric("Cursor Models", cursorModels)
                 }
-                if let auto = plan.autoPercentUsed {
-                    subMetric("Auto", auto)
+                if let otherModels = plan.apiPercentUsed {
+                    subMetric("Other Models", otherModels)
                 }
                 if let reset = plan.resetsAt {
                     Text("\(Self.shortDate(reset)) 重置")

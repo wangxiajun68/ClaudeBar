@@ -133,7 +133,7 @@ Claude Code 的 busy 来自 `~/.claude/sessions/<pid>.json` 与 transcript 尾�
 
 ### 如何切换 Token 单位？
 
-设置 → 显示 → Token 单位：「万 / 亿」或「K / M / B」。主应用与桌面 Widget 同步生效。
+设置 → 通用 → 用量与花费 → Token 单位：「万 / 亿」或「K / M / B」。主应用与桌面 Widget 同步生效。
 
 ### 模型花费和账单对不上？
 
@@ -141,7 +141,7 @@ Claude Code 的 busy 来自 `~/.claude/sessions/<pid>.json` 与 transcript 尾�
 
 - **订阅制**（Kimi Code 会员、火山 Coding Plan）压根不按 token 计费，卡片写明「订阅制」，token 不计入合计。
 - **未公开价**（如百炼未公布缓存命中价的 qwen3.8 系列、OpenAI `-pro` 档没给 cached-input 价）会单独列出，也**不**按 0 静默计入。
-- 人民币与美元**分列不换算**——主数字是金额大的那个，副行写「另有 $43.20」。想折算成单一币种可在设置 → 模型花费里开转换并设汇率（要联网取或手动钉一个值）。
+- 人民币与美元**分列不换算**——主数字是金额大的那个，副行写「另有 $43.20」。想折算成单一币种可在设置 → 通用 → 用量与花费里开转换并设汇率（要联网取或手动钉一个值）。
 
 ---
 
@@ -184,7 +184,7 @@ Cursor 的启停状态没有公开、稳定的磁盘格式可读，所以卡片�
 
 ### 第三方客户端和 Codex 不是同一家供应商？
 
-设置 → 本地代理：Claude Code / Codex 只读显示「模型」页当前选择；**第三方 OpenAI / Anthropic** 可另选供应商，不会改写 `~/.codex` 或 `settings.json`。默认「与 Codex / Claude Code 相同」。
+设置 → 本地代理 → 第三方接入：**第三方 OpenAI / Anthropic** 可另选供应商，不会改写 `~/.codex` 或 `settings.json`。默认「与 Codex / Claude Code 相同」；Claude Code 与 Codex 自己的上游在「模型」页选。
 
 ### 第三方报 model_not_found / 无可用渠道？
 

@@ -133,7 +133,7 @@ cat VERSION
 defaults read /Applications/ClaudeBar.app/Contents/Info CFBundleShortVersionString
 
 # 应用内
-设置 → 关于 → 版本
+设置 → 页脚左下角的版本号
 ```
 
 三处不一致时：先看是否用了旧的 `/Applications` 安装，再看 tag 是否对应当前 `VERSION`。
