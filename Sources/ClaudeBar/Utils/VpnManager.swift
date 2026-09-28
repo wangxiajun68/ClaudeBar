@@ -39,7 +39,7 @@ struct VpnTrafficSnapshot: Equatable {
 /// reflow the menu bar or the VPN page. Units are always two letters (KB/MB/GB/TB);
 /// sub-KB values render as `  0.0 KB` rather than `12 B`.
 enum VpnFormat {
-    /// `"   0.0 KB/s"` — always 12 characters.
+    /// `"   0.0 KB/s"` — always 11 characters (`bytes`'s 9 + `"/s"`).
     static func rate(_ bytesPerSec: Int64) -> String { bytes(bytesPerSec) + "/s" }
 
     /// `"   0.0 KB"` — always 9 characters (`%6.1f` + space + 2-letter unit).
@@ -70,11 +70,8 @@ enum VpnFormat {
     }
 }
 
-// MARK: - Core manager
-
-/// Manages the mihomo (Clash.Meta) kernel process and its REST API, following
-/// clash-verge-rev's CoreManager model: generate runtime config → spawn
-/// The log console observes this ring without invalidating the VPN page.
+/// The core's log ring. The VPN page's console observes it without
+/// invalidating anything else on the page.
 @MainActor
 final class VpnLogStore: ObservableObject {
     static let shared = VpnLogStore()
@@ -86,9 +83,13 @@ final class VpnLogStore: ObservableObject {
     }
 }
 
+// MARK: - Core manager
+
+/// Manages the mihomo (Clash.Meta) kernel process and its REST API, following
+/// clash-verge-rev's CoreManager model: generate the runtime config → spawn
 /// `mihomo -d <dir> -f <config>` → poll `/version` until ready → talk to the
-/// external controller for proxies / delays / traffic. The system proxy and
-/// TUN lifecycles live in VpnManager; this file is the core only.
+/// external controller for proxies, delays and traffic. The system-proxy and
+/// TUN lifecycles are this class's too; the log ring above is not.
 @MainActor
 final class VpnManager: ObservableObject {
     static let shared = VpnManager()
@@ -190,9 +191,16 @@ final class VpnManager: ObservableObject {
     }
 
     /// Log a structured error and reflect it in state.
+    ///
+    /// A missing binary is the one case that is not a `.failed`: it is a state
+    /// the user can leave by hand, and `VPNView` answers `.missingCore` with the
+    /// path to drop the binary at and an 打开目录 button. Routing it through
+    /// `.failed` — which this did until it was found — made every one of those
+    /// affordances unreachable, so the page could only say 未找到 mihomo 内核
+    /// in the generic error line and never offered the way out.
     private func fail(_ err: VpnError) {
         log("ERROR: \(err.logMessage)")
-        state = .failed(err.logMessage)
+        state = err == .coreMissing ? .missingCore : .failed(err.logMessage)
     }
 
     private static let timestampFormatter: DateFormatter = {
@@ -275,22 +283,65 @@ final class VpnManager: ObservableObject {
 
     // MARK: Lifecycle
 
-    /// Copy the mihomo binary bundled in Resources (if any) to the vpn dir.
-    /// Done once per app version so users never hand-place the binary —
-    /// same as clash-verge-rev shipping the core as a Tauri sidecar.
+    /// Unpack the core bundled in Resources (if any) into the vpn dir. Runs
+    /// once per app version, so users never hand-place the binary — the same
+    /// thing clash-verge-rev does by shipping the core as a Tauri sidecar.
+    ///
+    /// The bundled file is `mihomo-core.xz`, not the binary: raw it is 54 MB
+    /// that deflate cannot compress — Go's own tables are already dense, and a
+    /// release `.zip` would carry 20 MB of it — while as `.xz` it is 13 MB. It
+    /// is the single largest thing the app ships, and `XZArchive` unpacks it on
+    /// the user's machine in 0.6 s. A build with no `xz` on PATH falls back to
+    /// bundling the binary raw; both are read here, which is why the copy path
+    /// is still below.
+    ///
+    /// The stamp is the **packed** size, because the unpacked one is what
+    /// `.coreMissing` is diagnosed against: an unchanged core is not re-decoded
+    /// on every launch, and a core that did change cannot collide with the old
+    /// stamp. Everything here is best-effort — the caller re-checks for an
+    /// executable `dest` and reports `.coreMissing` if this produced none.
     nonisolated private static func extractBundledCoreIfNeeded(bundled: URL?, dest: URL) {
         guard let bundled else { return }
         let fm = FileManager.default
-        var bundledSize: UInt64 = 0
-        if let attr = try? fm.attributesOfItem(atPath: bundled.path),
-           let s = attr[.size] as? UInt64 { bundledSize = s }
-        var destSize: UInt64 = 0
-        if let attr = try? fm.attributesOfItem(atPath: dest.path),
-           let s = attr[.size] as? UInt64 { destSize = s }
-        guard !fm.fileExists(atPath: dest.path) || destSize != bundledSize else { return }
+        guard let packedSize = (try? fm.attributesOfItem(atPath: bundled.path))?[.size] as? UInt64,
+              packedSize > 0 else { return }
+        let stamp = dest.deletingLastPathComponent().appendingPathComponent("core.stamp")
+        let installed = (try? String(contentsOf: stamp, encoding: .utf8))
+            .flatMap { UInt64($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if installed == packedSize, fm.isExecutableFile(atPath: dest.path) { return }
+
+        // Stage beside the destination, then move into place: a decode that
+        // fails half-way must not leave a truncated file at a path the launcher
+        // will happily `exec`.
+        let staged = dest.deletingLastPathComponent().appendingPathComponent("mihomo.new")
+        try? fm.removeItem(at: staged)
+        do {
+            if bundled.pathExtension == "xz" {
+                try XZArchive.extract(bundled, to: staged)
+            } else {
+                try fm.copyItem(at: bundled, to: staged)
+            }
+        } catch {
+            try? fm.removeItem(at: staged)
+            Self.appendCoreLog("内核解压失败：\(error)")
+            return
+        }
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: staged.path)
         try? fm.removeItem(at: dest)
-        try? fm.copyItem(at: bundled, to: dest)
-        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+        guard (try? fm.moveItem(at: staged, to: dest)) != nil else {
+            try? fm.removeItem(at: staged)
+            return
+        }
+        try? "\(packedSize)".write(to: stamp, atomically: true, encoding: .utf8)
+    }
+
+    /// `log(_:)` for the detached unpack task, which is off the main actor.
+    /// The log ring is the one place a failed unpack can say so: the caller's
+    /// only other signal is `.coreMissing`, which reads as "no core shipped".
+    nonisolated private static func appendCoreLog(_ line: String) {
+        Task { @MainActor in
+            VpnLogStore.shared.append("[\(timestamp(Date()))] \(line)")
+        }
     }
 
     /// Called at app start and whenever settings change. Idempotent.
@@ -428,7 +479,7 @@ final class VpnManager: ObservableObject {
         state = .starting
         let profileURL = subscriptions.activeID.map { subscriptions.profileURL($0) }
         let dest = FilePaths.vpnCoreBin
-        let bundled = Bundle.main.url(forResource: "mihomo-core", withExtension: nil)
+        let bundled = Bundle.main.url(forResource: "mihomo-core", withExtension: "xz")
         let configURL = FilePaths.vpnConfigFile
         let vpnDir = FilePaths.vpnDir.path
         let tun = prefs.vpnTunEnabled

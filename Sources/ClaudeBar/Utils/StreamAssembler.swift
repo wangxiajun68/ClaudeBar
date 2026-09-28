@@ -244,8 +244,6 @@ struct CaptureAssembler {
         var arguments: String
     }
 
-    var snapshot: [Tool] { tools }
-
     mutating func applyChat(_ parsed: [String: Any]) {
         if let m = parsed["model"] as? String, !m.isEmpty { model = m }
         if let i = parsed["id"] as? String, !i.isEmpty { id = i }

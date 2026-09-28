@@ -49,7 +49,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageBar.swift` 的 `UsageModelTile` / `UsageStackBar` 已并入）。
 - `UsageRiver.swift`：`CacheAnatomyBar`（周期 token 构成横条）。
 - `ProviderRow.swift` 的 `ProviderTile` 目前**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），刻意保留：它是目录宫格那颗瓦片的唯一成稿，且不引用任何孤立的类型，见 [technical/17](../technical/17-ui-audit-backlog.md) §9。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 没有挂载点，已删除（§3）。
-- `CodexModelMark.swift`：**概况页状态单上那两颗客户端 mark 的合体**。上面是 `ProductBrandMark` 的真实品牌图形（Claude 放射星 / Codex 扇贝终端），下面一條 lane 载着 Codex 额度 —— 与 `HardwareIllustration` 同一条纪律：**一个窗口一根条，条的高度就是它自己的剩余额度**，左标窗口名、右标重置时刻，刻度是量程的十分之一（所以长度是读数，不是用来目测的比例）。`flow:` 是**可选**的按读数调速扫光，默认关：它属于 176×130 那种尺寸的大 mark，在 chip 尺寸上同一条扫光是没人要的 40pt 闪烁。两个调用点 —— 概览的是 `.tile`（38pt mark），popup 的是 `.inline`（13pt mark，`HeaderSwitchChip` 的 eyebrow 行）—— 于是「哪一家」在两个面上由同一张图说话，而不是一处画图、一处写字。
+- `CodexModelMark.swift`：popup 头部 chip 的客户端 mark —— `ProductBrandMark` 的真实品牌图形（Claude 放射星 / Codex 扇贝终端）加家族名，13pt。**那一版「增长图形 + Codex 额度 lane」的合并 mark 已删**：它唯一的 `.tile` 调用点随概览状态单重做而消失，额度改由 chip 自己的行承载（`CodexQuotaGauges`），lane 那份绘制、`flow:` 扫光与两个 `TimelineView` 站点一并退场。
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`ProductBrandMark` 画的是**四家客户端的真实品牌图形** —— Anthropic 的 `A\`、OpenAI 的花结、**Cursor 的立方体**（LobeHub 1.97.1，Cursor 原先画的是 `cursorarrow.rays`，那是一支指针而不是这家的 mark），以及 **ClaudeBar 自己的 mark**（从 `Sources/AppIcon-1024.png` 由 `Tools/make-claudebar-mark.py` 推出，给用量图例里的「第三方」用 —— 一个四项图例里三项有图形、第四项只有文字，读起来是一行没画完）。外面套一层 `Theme.bgSecondary` 圆角方块——白标在浅色面上、黑标在深色面上都会消失，所以底色是图形的**可读性**前提，不是装饰。哪一层由 `page:` 决定而不是 `Theme.isDark`：灵动岛在两种主题下都是黑的。图形由 `Tools/gen-brand-marks.py` 归一化到画布 90%（`Sources/BrandAssets/`）：原始 PNG 各自带着到画布边缘的留白，实测在 13pt 的 header 块里 Anthropic 只剩 65%、OpenAI 更小，读起来是一团糊；归一化**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%），于是一行里并排的三家看起来是同一个尺寸。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
 - `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（**网络 / 本机代理 / 附近与设备三段**：网络段是链路本身的状态与一根标定过的 RSSI 尺，代理段是这台机器上唯一由本应用拥有的一条连接，设备段是挂在上面的耳机与隔空投送入口；MAC / IP / DNS 归档进底部的「复制诊断」。卡片与面板共用同一个 `ConnectionStatus` 词汇表和同一根 `ConnectionSignalScale`，两处不会对同一条链路说两个词；且两处都写明「接入」与「可用」是两件事，结构由 `Tests/connection-panel-regressions.py` 锁定），风扇弹出 `FanInternalsPanel`（Lucide `laptop-minimal` 机身 + 两个各自按自己 rpm 转的风扇位）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
@@ -75,17 +75,17 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 | 类别 | Token | 用途 |
 |------|-------|------|
-| 基底 | `base0` … `base4` | 中性近黑背景阶（旧名 `bgPrimary` … `bgOverlay` 保留别名） |
+| 基底 | `bgPrimary` / `bgSecondary` / `bgOverlay` / `cardSurface` | 浅色冰面 / 深色石墨两套表面阶（`base1`/`base2` 为旧别名） |
 | Claude | `claude` / `claudeHi` | 软蓝，Claude Code |
-| Cursor | `cursor` / `cursorHi` | 软紫，Cursor |
+| Cursor | `cursor` | 软紫，Cursor（文字用 `Theme.Ink.cursor`） |
 | Codex | `codex` | 暖瓷白，Codex 会话与供应商 |
-| 语义 | `statusBusy` / `statusActive` / `statusIdle` / `statusWarning` / `statusError` / `statusSuccess` | 状态与反馈 |
+| 语义 | `statusBusy` / `statusIdle` / `statusWarning` / `statusError` / `statusSuccess` | 状态与反馈 |
 | 文本 | `textPrimary` / `textSecondary` / `textTertiary()` | 三级字色 |
 
 ### 表面与排版
 
-- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 强调水洗 + 内嵌白环 + 发丝线描边；`.tile()` = 更密的瓦片变体，两者共用 `UiverseSurfaces.swift` 的四个部件（底 / 水洗 / 角上深度环 / 内白环 + 悬停描边）；`shadowCard()`、`cardFill()`、`sidebarFill`、`divider` / `hairline`；`HairlineDivider` 提供去卡片化的发丝线分区。
+- **表面**：`panelCard()` = 半透明白色填充（默认 `opacity 0.07`）+ 强调水洗 + 内嵌白环 + 发丝线描边；`.tile()` = 更密的瓦片变体，两者共用 `UiverseSurfaces.swift` 的四个部件（底 / 水洗 / 角上深度环 / 内白环 + 悬停描边）；`shadowCard()`、`cardFill()`、`divider` / `hairline`；`HairlineDivider` 提供去卡片化的发丝线分区。
 - **字体**：SF Pro 单族；`displayMetric*` + `.monospacedDigit()`；瓦片字阶 `tileValue` / `tileLabel` / `tileDetail`；popup 密度别名 `rowTitle` / `micro*` / `badgeMono`。
 - **宫格**：`GridLayout.Preset`（`pageMetric` 4 等分、`pageSession` / `pageUsage` / `pageProvider` 自适应、popup 2 列预设）+ `Space.gridGap` / `gridGapPage`。
-- **动效**：`bouncy` / `smooth` / `pulse` / `snappy` + `Motion.page` / `Motion.state`——全部状态驱动。
+- **动效**：`bouncy` / `smooth` / `snappy` / `sparkle` / `roll` + `Motion.page` / `Motion.state`——全部状态驱动，无常驻时间线。
 - **Helper**：`contextColor(ratio)`、`barColor(for:)` + `djb2`、`ActiveTileEdge`（accent 左缘 2px + tint 填充）。

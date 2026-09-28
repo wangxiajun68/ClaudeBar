@@ -166,7 +166,7 @@ def main() -> int:
                            np.array(expected, dtype=int)).max() > 2:
                 stale.append(f'{target.name}: does not match AppIcon-1024.png')
             continue
-        expected.save(target)
+        expected.save(target, optimize=True, compress_level=9)
         print(f'{target.relative_to(ROOT)}  ink {ink_share:.0%} of the canvas '
               f'({int((alpha > 0.5).sum())}px of {alpha.size})')
 

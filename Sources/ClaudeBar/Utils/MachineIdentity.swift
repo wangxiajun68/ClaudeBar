@@ -2,11 +2,10 @@ import Foundation
 import Darwin
 import SystemConfiguration
 
-/// Who this Mac is: the name the user gave it, and the chip Apple ships it with.
+/// Who this Mac is: the name the user gave it, read once.
 ///
-/// Read once — a machine name and a `machdep.cpu.brand_string` are immutable for
-/// the lifetime of the process, and both are `sysctl` / `SCDynamicStore` reads
-/// with no business running inside a `body`.
+/// A machine name is immutable for the lifetime of the process, and
+/// `SCDynamicStore` is a read with no business running inside a `body`.
 ///
 /// **The name is the `ComputerName`, not the host name.** This used to read
 /// `kern.hostname` and strip a `MacBook` suffix off it, which produced
@@ -95,37 +94,4 @@ enum MachineIdentity {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Mac" : name
     }()
-
-    /// The chip — `Apple M3 Pro`. After this app's own display rule: the same
-    /// string `HardwareIdentity.name` already shows in the 硬件 popover.
-    static let chip: String = sysctlString("machdep.cpu.brand_string") ?? ""
-
-    /// `hw.model` (`Mac15,7`). Only ever seen in a tooltip.
-    static let model: String = sysctlString("hw.model") ?? ""
-
-    /// macOS product name + version, e.g. `macOS 26.0`.
-    static let system: String = {
-        let v = ProcessInfo.processInfo.operatingSystemVersion
-        return "macOS \(v.majorVersion).\(v.minorVersion)"
-    }()
-
-    /// The one-line "which machine" tooltip: chip, model, system.
-    static var summary: String {
-        var parts = [String]()
-        if !chip.isEmpty { parts.append(chip) }
-        if !model.isEmpty { parts.append(model) }
-        parts.append(system)
-        return parts.joined(separator: " · ")
-    }
-
-    /// `sysctlbyname` returning a C string. (`HardwareSensors` reads numbers
-    /// through the same call; this is the string form these three identities
-    /// need.)
-    private static func sysctlString(_ name: String) -> String? {
-        var size = 0
-        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
-        var buffer = [CChar](repeating: 0, count: size)
-        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
-        return String(cString: buffer)
-    }
 }

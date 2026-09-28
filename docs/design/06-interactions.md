@@ -21,7 +21,7 @@
 3. 对每个活跃会话 `fetchContext()`：读其 transcript `*.jsonl` 的**尾部 ~96KB**，取最后一条 assistant 消息的 `input + cache_read + cache_creation` 作为当前上下文 token，并从最近的 `tool_use` 推断当前活动；若 `tool_use` 后无 `tool_result` 则标记 `toolPending = true`（busy）。
 4. `fetchSubagents()`：扫描会话目录的 `subagents/*.meta.json` 与 `subagents/workflows/<id>/`，聚合子 Agent 与 Workflow。
 5. 每轮把 busy/idle 采样追加进 `heartbeats[pid]`（长度 `AppConfig.heartbeatLength`，默认 2.5s×24 ≈ 最近一分钟），驱动瓦片上的 `HeartbeatSparkline`。
-6. `IdleTransitionDetector` 做 busy→idle 边沿检测：Claude 会话由忙转闲且 `AppPreferences.idleNotifyEnabled` 开启时，经 `NotificationService` 发系统通知（"Claude 等你输入"，附 Resume 动作）；点按通知经 `.resumeSession` 通知回 AppDelegate 用 `TerminalLauncher` 恢复会话。Cursor 会话同理由闲检测（violet 文案）。
+6. `ConfirmedCompletionDetector` 判定「这一轮真的交付了答案」：该会话的轮次键变了 + 它自己的文件刚写过（60 s 内）+ 当前不忙（三条同见 [§03-provider-store](../technical/03-provider-store.md)）。命中且 `AppPreferences.idleNotifyEnabled` 开启时，经 `NotificationService` 发系统通知（"最终答复已就绪"，附 Resume 动作）；点按通知经 `.resumeSession` 通知回 AppDelegate 用 `TerminalLauncher` 恢复会话。Cursor / Codex 同一条规则，只是轮次键取各自的本机字段（violet / 各自文案）。
 7. `CursorSessionMonitor.fetchActive()` 在后台线程读 Cursor 的 `state.vscdb`（SQLite，只读，WAL 安全），按 `recency` 取最近 80 个非归档 composer，过滤 3 天内活跃的，取前 14 个展示，再扫描其 transcript 尾部补充活动状态。
 8. 全部结果回主线程后 `writeWidgetSnapshot()` 同步给 Widget。
 

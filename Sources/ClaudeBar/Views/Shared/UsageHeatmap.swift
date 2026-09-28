@@ -64,7 +64,7 @@ struct UsageHeatmap: View {
                         if let date = item.date { onSelectDay?(date) }
                     } label: {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(fill(item.intensity, empty: item.empty))
+                            .fill(fill(item.intensity))
                             .overlay(alignment: .bottom) {
                                 Text(item.label)
                                     .font(.system(size: compact ? 8 : 9, weight: .medium, design: .rounded))
@@ -103,7 +103,7 @@ struct UsageHeatmap: View {
                         if i >= 0, i < layout.dayCount,
                            let date = cal.date(byAdding: .day, value: i, to: layout.start) {
                             let tokens = by[Self.dayKey(date)]
-                            ctx.fill(path, with: .color(fill(tokens.map { Double($0) / peak }, empty: tokens == nil)))
+                            ctx.fill(path, with: .color(fill(tokens.map { Double($0) / peak })))
                         } else {
                             ctx.fill(path, with: .color(Theme.cardFill(0.04)))
                         }
@@ -150,8 +150,7 @@ struct UsageHeatmap: View {
 
     // MARK: Color
 
-    private func fill(_ intensity: Double?, empty: Bool) -> Color {
-        if empty { return Theme.cardFill(0.06) }
+    private func fill(_ intensity: Double?) -> Color {
         guard let v = intensity else { return Theme.cardFill(0.06) }
         return Theme.chartPurple.opacity(0.16 + 0.84 * v)
     }

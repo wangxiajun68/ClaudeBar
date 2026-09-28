@@ -21,6 +21,15 @@ struct SessionInfo: Identifiable, Equatable {
     var firstPrompt: String = ""        // first human prompt → card title
     var toolPending: Bool = false       // a tool_use has no following tool_result
     var completionID: String? = nil     // UUID of the latest final assistant answer
+    /// Turns + assistant steps seen in the transcript's tail window.
+    ///
+    /// The point of a counter rather than a flag is that it can tell "a new
+    /// turn answered" from "the same answer is still the newest one" — see
+    /// `ConfirmedCompletionDetector`. It is read from a sliding window, so it
+    /// is *near*-monotone: a window that scrolled past its last turn boundary
+    /// reports one less, and `ProviderStore.enrich` clamps the published value
+    /// so that shift can only repeat a key, never regress one.
+    var turnCount: Int = 0
     var subagents: [SubagentInfo] = []  // live subagents spawned by this session
     var workflows: [WorkflowInfo] = []  // workflows spawned by this session
     /// Transcript byte size at last context scan — skip the tail read when unchanged.
@@ -107,6 +116,9 @@ struct ContextScan {
     let activity: String
     let toolPending: Bool
     let completionID: String?
+    /// Turns + assistant steps in the window. Near-monotone; see
+    /// `SessionInfo.turnCount`.
+    let turnCount: Int
     /// The first human prompt, used as the card title (see `SessionTitle`).
     var title: String = ""
 }
@@ -219,7 +231,8 @@ struct SessionMonitor {
 
     static func fetchContext(for session: SessionInfo) -> ContextScan {
         guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else {
-            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false, completionID: nil)
+            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false,
+                               completionID: nil, turnCount: 0)
         }
         defer { try? handle.close() }
 
@@ -227,7 +240,8 @@ struct SessionMonitor {
         let readSize = min(96_000, fileSize)
         try? handle.seek(toOffset: fileSize - readSize)
         guard let tailData = try? handle.readToEnd() else {
-            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false, completionID: nil)
+            return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false,
+                               completionID: nil, turnCount: 0)
         }
         // Lossy decode: the tail read starts at a byte offset that usually
         // lands inside a multi-byte character, and a strict decode then fails
@@ -241,6 +255,15 @@ struct SessionMonitor {
         var msgCount = 0
         var lastActivity = ""
         var completionID: String?
+        // Turns + assistant steps seen in the window: a counter that only ever
+        // grows while the transcript grows, and that a window shift can lower
+        // by one boundary at most. The pair is what tells the completion
+        // detector "a new turn answered" rather than "here is the same old
+        // answer again" — and `ProviderStore.enrich` clamps the *published*
+        // value so a window that scrolled past its last boundary can only
+        // repeat a key, never regress one.
+        var turnCount = 0
+        var stepCount = 0
         // Track positions (line index within the tail) of the most recent
         // tool_use and tool_result to decide whether a tool is still pending.
         var lastToolUseLine = -1
@@ -259,13 +282,18 @@ struct SessionMonitor {
                 let onlyToolResults = blocks.map { items in !items.isEmpty && items.allSatisfy {
                     ($0["type"] as? String) == "tool_result"
                 } } ?? false
-                if !onlyToolResults { completionID = nil }
+                if !onlyToolResults { completionID = nil; turnCount += 1 }
             }
             if line.contains("\"type\":\"assistant\""),
                let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let message = obj["message"] as? [String: Any] {
                 completionID = nil
+                stepCount += 1
                 if (obj["isSidechain"] as? Bool) != true,
+                   // `end_turn` means exactly "the turn stopped and the floor is
+                   // the user's": every `tool_use` step carries that stop reason
+                   // too, so the "has a text block" test below is what separates
+                   // a final answer from a step that only called a tool.
                    (message["stop_reason"] as? String) == "end_turn",
                    let blocks = message["content"] as? [[String: Any]],
                    blocks.contains(where: { ($0["type"] as? String) == "text"
@@ -306,6 +334,7 @@ struct SessionMonitor {
         let pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
         return ContextScan(tokens: lastContext, model: lastModel, count: msgCount,
                            activity: lastActivity, toolPending: pending, completionID: completionID,
+                           turnCount: turnCount + stepCount,
                            title: firstHumanPrompt(for: session))
     }
 

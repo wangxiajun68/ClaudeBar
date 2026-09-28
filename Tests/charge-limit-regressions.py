@@ -209,8 +209,17 @@ enum HardwareSensors {
 
         let timeout = fixture()
         timeout.setLimit(70)
-        try! await Task.sleep(for: .milliseconds(8200))
-        precondition(timeout.recoveryUnconfirmed && !timeout.pending && timeout.input == nil)
+        // The watchdog is an 8 s `Task.sleep`; wait for its *effect* against a
+        // generous deadline rather than sleeping a fixed 8.2 s. The fixed
+        // sleep left a 200 ms margin, and under load the watchdog's own timer
+        // resumes late — measured 1 failure in 6 runs on an idle machine.
+        var waited = 0
+        while !(timeout.recoveryUnconfirmed && !timeout.pending && timeout.input == nil), waited < 30_000 {
+            try! await Task.sleep(for: .milliseconds(50))
+            waited += 50
+        }
+        precondition(timeout.recoveryUnconfirmed && !timeout.pending && timeout.input == nil,
+                     "the response watchdog must disconnect after 8 s of silence; waited \(waited) ms")
         precondition(timeout.lastError?.contains("响应超时") == true)
         print("PASS: latest intent, mode/restore ordering, authorization changes, response watchdog, stale replies, sleep, recovery and persistence")
     }

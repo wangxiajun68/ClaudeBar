@@ -196,7 +196,7 @@ ClaudeBar 对 **Wi-Fi / 以太网** 写 `127.0.0.1` + mixed-port（默认 7890�
 
 ### VPN 页提示没有内核？
 
-从源码构建时需要能访问 GitHub 下载 mihomo，或本地已有 `vendor/mihomo/mihomo`。用户 DMG 应已打进 `mihomo-core`。
+从源码构建时需要能访问 GitHub 下载 mihomo，或本地已有 `vendor/mihomo/mihomo`。用户拿到的 DMG 里带的是 `mihomo-core.xz`，首次启动会自己解开——所以正常安装的机器不该看到这条。
 
 ### 订阅流量 / 到期显示不出来？
 

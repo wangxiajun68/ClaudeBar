@@ -31,11 +31,6 @@ enum CodexProxyTransform {
             customNames.insert(name)
         }
 
-        mutating func merge(_ other: ToolRegistry) {
-            for (k, v) in other.map where map[k] == nil { map[k] = v }
-            customNames.formUnion(other.customNames)
-        }
-
         /// nil = not a known flat MCP name → passthrough.
         func split(_ flat: String) -> (ns: String, name: String)? {
             map[flat]
@@ -64,9 +59,6 @@ enum CodexProxyTransform {
             }
             return prefix + suffix
         }
-
-        /// Kept as a synonym so existing call sites read as "qualify".
-        static func qualify(ns: String, child: String) -> String { flatten(ns: ns, child: child) }
     }
 
     private static let chatToolNameMaxLen = 64

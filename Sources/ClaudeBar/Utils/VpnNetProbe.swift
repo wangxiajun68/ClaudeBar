@@ -126,9 +126,16 @@ final class VpnNetProbe: ObservableObject {
         }
     }
 
-    /// Clash Verge `IP_CHECK_SERVICES`, then two plain echo servers.
-    /// Tried one at a time. Firing all of them together through the current
-    /// node filled its connection slots and every request timed out.
+    /// Clash Verge `IP_CHECK_SERVICES`, then three more. Tried one at a time.
+    /// Firing all of them together through the current node filled its
+    /// connection slots and every request timed out.
+    ///
+    /// The last three exist because the first four are all on the same hosting
+    /// side of the world and fail together — when they rate-limit, the exit-IP
+    /// read simply had no answer left to try. The two plain-text echoes are
+    /// last on purpose: they carry an address and nothing else, so the JSON
+    /// services are asked first and `parsePlainIP` is the backstop rather than
+    /// the main path.
     private static let ipEndpoints: [IPEndpoint] = [
         IPEndpoint(url: "https://api.ip.sb/geoip", json: true),
         IPEndpoint(url: "https://ipapi.co/json", json: true),
@@ -149,7 +156,19 @@ final class VpnNetProbe: ObservableObject {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
     static func fetchIP(proxyPort: Int?) async -> VpnIPInfo? {
-        for endpoint in ipEndpoints.prefix(4) {
+        // Bounded by a **budget**, not by a count. The count was `prefix(4)`,
+        // which silently stranded the last three endpoints — including the
+        // only plain-text one, and with it `parsePlainIP`. They are all that is
+        // left to try when the first four (same hosting side of the world)
+        // rate-limit together, so the read failed having never used them.
+        //
+        // Each attempt already carries a 6 s timeout, so a full sweep of seven
+        // could hold the caller for 42 s on a total failure. 12 s is enough to
+        // reach a working endpoint — the last one answers in well under a
+        // second when it answers at all — and it stops the tail.
+        let deadline = Date().addingTimeInterval(12)
+        for endpoint in ipEndpoints {
+            if Date() >= deadline { return nil }
             if let info = await fetchOne(endpoint, proxyPort: proxyPort), !info.ip.isEmpty {
                 return info
             }

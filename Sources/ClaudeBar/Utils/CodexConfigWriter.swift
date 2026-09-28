@@ -166,6 +166,15 @@ enum CodexConfigWriter {
     /// first switch of this run.
     private static var didBackUp = false
 
+    /// Write `config.toml` through the app's private-file path: it carries the
+    /// live `experimental_bearer_token`, so it belongs with the other credential
+    /// writers (`SettingsManager`, the two provider stores). `String.write(to:
+    /// atomically:)` created the file at whatever the process umask allowed —
+    /// 0644 on a default install.
+    private static func writePrivate(_ text: String, to url: URL) throws {
+        try PrivateFileWriter.write(Data(text.utf8), to: url)
+    }
+
     static func backUpOnce() {
         guard !didBackUp else { return }
         didBackUp = true
@@ -174,6 +183,7 @@ enum CodexConfigWriter {
         let dst = src.appendingPathExtension("bak")
         guard fm.fileExists(atPath: src.path), !fm.fileExists(atPath: dst.path) else { return }
         try? fm.copyItem(at: src, to: dst)
+        PrivateFileWriter.harden(dst)
     }
 
     /// Writing happens off the main actor (`CodexProviderStore.activate`), so
@@ -274,7 +284,7 @@ enum CodexConfigWriter {
                               dropKeys: bearer == nil ? ["experimental_bearer_token"] : [])
 
         try FileManager.default.createDirectory(at: FilePaths.codexDir, withIntermediateDirectories: true)
-        try render(doc).write(to: url, atomically: true, encoding: .utf8)
+        try writePrivate(render(doc), to: url)
     }
 
     /// Merge owned keys into `[model_providers.<key>]`. Lines whose key we
@@ -437,7 +447,7 @@ enum CodexConfigWriter {
 
         guard !healed.isEmpty else { return [] }
         try? FileManager.default.createDirectory(at: FilePaths.codexDir, withIntermediateDirectories: true)
-        try? render(doc).write(to: url, atomically: true, encoding: .utf8)
+        try? writePrivate(render(doc), to: url)
         return healed
     }
 
@@ -534,7 +544,7 @@ enum CodexConfigWriter {
         ))
 
         try FileManager.default.createDirectory(at: FilePaths.codexDir, withIntermediateDirectories: true)
-        try render(doc).write(to: url, atomically: true, encoding: .utf8)
+        try writePrivate(render(doc), to: url)
     }
 
     /// cc-switch's unbound official card does not write `auth.json` at all:

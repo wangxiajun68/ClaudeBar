@@ -29,5 +29,5 @@
 
 ## 新增一类空闲通知
 1. `NotificationService` 加 `notifyIdle(...)` 变体与 category（如需独立动作）。
-2. `ProviderStore` 为该来源加一个 `IdleTransitionDetector<ID>` 实例并在刷新回调里 `detect`。
+2. `ProviderStore` 为该来源加一个 `ConfirmedCompletionDetector<ID>` 实例，在刷新回调里喂入 `(id, isBusy, turnKey, fresh)` 四元组——`turnKey` 必须是「这一轮交付了什么」的本地权威键（见 `ProviderStore.detectIdleTransitions` 里三家各自取什么）。
 3. `AppDelegate` 的 `.resumeSession` 处理器补对应恢复逻辑。

@@ -67,28 +67,47 @@ struct WeatherExplorer: View {
     }
 
     private var compactRail: some View {
-        HStack(spacing: 0) {
-            Label("未来五天", systemImage: "calendar")
-                .font(.system(size: 10, weight: .medium)).foregroundStyle(soft)
-                .padding(.trailing, 16)
-            ForEach(Array(reading.forecast.enumerated()), id: \.element.id) { index, day in
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "calendar").font(.system(size: 16))
+                Text(reading.forecast.count == 6 ? "六日预报" : "天气预报")
+                    .font(.system(size: 11, weight: .semibold))
+            }.foregroundStyle(soft).frame(width: 64, alignment: .leading)
+            ForEach(reading.forecast) { day in
                 Button {
                     selection = isToday(day) ? nil : day.date
                     showDetails()
                 } label: {
-                    HStack(spacing: 6) {
+                    VStack(spacing: 7) {
                         Text(isToday(day) ? "今天" : label(day.date, format: "EEE"))
-                            .font(.system(size: 10, weight: .medium))
-                        Image(systemName: day.sky.symbol())
-                            .symbolRenderingMode(.hierarchical)
-                            .font(.system(size: 17)).foregroundStyle(accent)
-                    }
-                    .padding(.vertical, 9)
-                    .frame(maxWidth: .infinity).contentShape(Rectangle())
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(ink.opacity(isToday(day) ? 0.18 : 0), in: Capsule())
+                        HStack(spacing: 5) {
+                            Image(systemName: day.sky.symbol())
+                                .symbolRenderingMode(.multicolor).font(.system(size: 22))
+                            if let chance = day.rainChance, chance > 20 {
+                                Text("\(chance)%").font(.system(size: 9)).foregroundStyle(Color(hex: 0xA8DDFF))
+                            }
+                        }.frame(height: 24)
+                        HStack(spacing: 4) {
+                            Text("\(Int(day.low.rounded()))°").foregroundStyle(soft.opacity(0.75)).fixedSize()
+                            GeometryReader { geo in
+                                let low = reading.forecast.map(\.low).min() ?? day.low
+                                let high = reading.forecast.map(\.high).max() ?? day.high
+                                let span = max(1, high - low)
+                                Capsule().fill(ink.opacity(0.12))
+                                Capsule().fill(LinearGradient(colors: [Color(hex: 0x7FC8FF), Color(hex: 0xFFD98A)], startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: max(2, geo.size.width * (day.high - day.low) / span))
+                                    .offset(x: geo.size.width * (day.low - low) / span)
+                            }.frame(height: 4)
+                            Text("\(Int(day.high.rounded()))°").fontWeight(.semibold).fixedSize()
+                        }.font(.system(size: 12)).monospacedDigit()
+                    }.frame(maxWidth: .infinity).contentShape(Rectangle())
                 }
                 .buttonStyle(WeatherIconStyle())
-                .help("\(label(day.date, format: "M月d日")) · \(day.sky.caption) · \(Int(day.low))–\(Int(day.high))° · 点击详情")
-                .accessibilityLabel("\(label(day.date, format: "M月d日"))，\(day.sky.caption)，查看预报详情")
+                .help("\(label(day.date, format: "M月d日")) · \(day.sky.caption) · 点击详情")
+                .accessibilityLabel("\(label(day.date, format: "M月d日"))，\(day.sky.caption)，最低 \(Int(day.low)) 度，最高 \(Int(day.high)) 度，查看预报详情")
             }
             if reading.forecast.isEmpty {
                 Button("预报暂不可用 · 查看详情", action: showDetails)
@@ -97,7 +116,7 @@ struct WeatherExplorer: View {
             }
         }
         .foregroundStyle(ink)
-        .padding(.horizontal, 32).padding(.vertical, 6)
+        .padding(.horizontal, 20).padding(.vertical, 14)
     }
 
     private var detailedBody: some View {

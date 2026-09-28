@@ -168,10 +168,6 @@ struct ResourceStrip: View {
         return Double(sampler.host.memoryUsed) / Double(sampler.host.memoryTotal) * 100
     }
 
-    private func temperatureColor(_ celsius: Double?) -> Color? {
-        sampler.host.temperatureColor(celsius: celsius)
-    }
-
     /// The temperature-to-color rule returns raw signal hues, which is right
     /// for the mark and wrong for the two places this file applies it: the hero
     /// figure and the caption under it are *text*. `Theme.swift` documents those

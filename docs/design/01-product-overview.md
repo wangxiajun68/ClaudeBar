@@ -37,7 +37,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | Cursor | Composer 会话（SQLite）、上下文与活动状态 |
 | Codex | 进程与工作目录、busy / idle 心跳 |
 
-主窗口「会话」页与菜单栏 popup 均以宫格瓦片呈现；会话由忙转闲、且 transcript 证明已交付新的最终答复时可触发 macOS 系统通知（默认关闭，见设置 → 权限与隐私）。
+主窗口「会话」页与菜单栏 popup 均以宫格瓦片呈现；会话**这一轮真的交付了答案**时可触发 macOS 系统通知（默认关闭，见设置 → 权限与隐私）。判定不是「忙转闲」——轮次键、文件新鲜度与忙态三条同见 [技术 §03](../technical/03-provider-store.md)。
 
 ### 3. 用量统计
 

@@ -70,10 +70,11 @@ GUARDED = [
     # and the island usage card's hero. They are not the obvious hot leaves —
     # that is exactly why they are pinned here.
     #
-    # `MetricTile` in `Tile.swift` had the same modifier and lost it in the
-    # same pass, but it is *not* listed: its view also animates hover/press
-    # state, which this guard cannot tell apart from a per-poll value, and the
-    # view has no caller left (docs/technical/17-ui-audit-backlog.md §10).
+    # `MetricTile` in `Tile.swift` carried the same modifier and lost it in the
+    # same pass, and the view itself was deleted on 2026-09-28. It is *not*
+    # listed here: it was never the guard's job to police it — its body also
+    # animated hover/press state, which this rule cannot tell apart from a
+    # per-poll value, so listing it would have failed on a correct line.
     ('Sources/ClaudeBar/Views/Island/NotchIslandView.swift', 'private var wings: some View'),
     ('Sources/ClaudeBar/Views/Island/IslandComponents.swift', 'private var hero: some View'),
     # Three more found in the 2026-09-26 pass, each keyed on a value a *poller*
@@ -98,6 +99,18 @@ GUARDED = [
     # a 1.5 % quantisation of the same reading — so a `value:` is correct here
     # and only a `value: rpm` would be the bug. Asserted separately below
     # rather than with the blanket rule.
+    #
+    # `TokenComparison` is the same shape as `IslandPaceRing`, found in the
+    # 2026-09-28 pass and missed by the sweep before it because it landed in
+    # `GreetingCard.swift` in `f1e2b0f`, i.e. after the sweep's list was drawn
+    # up. `today` is `providerStore.todayUsage.tokens`, gated only on
+    # `todayUsage != fresh`, and the usage FSEvents watcher debounces at 0.4 s —
+    # so a transcript burst republishes several times a second. Unlike the pace
+    # ring it is on the *dashboard*, the surface the whole audit is about, and
+    # it is a plain `GeometryReader` + two `Capsule().frame(width:)`s, which is
+    # the most literal form of the pattern: `frame(width:)` interpolates, so the
+    # modifier both opened the transaction and eased the bars.
+    ('Sources/ClaudeBar/Views/Shared/GreetingCard.swift', 'private struct TokenComparison: View'),
 ]
 
 # `value:` is allowed here, but only on the quantised key. Keeping the rule in
@@ -313,5 +326,5 @@ if failures:
 
 print('PASS: no implicit value-keyed animation on the per-poll digit '
       'components (RollingNumberText, RollingNumberModifier, '
-      'SectionHeader.trailingView, Island wings / usage hero), and the shared '
-      'roll opens its own transaction')
+      'SectionHeader.trailingView, Island wings / usage hero, '
+      'TokenComparison), and the shared roll opens its own transaction')

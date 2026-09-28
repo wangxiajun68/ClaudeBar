@@ -9,7 +9,7 @@ VPN 页把 **mihomo**（Clash Meta）作为本机 sidecar：生成 runtime YAML 
 
 | 项 | 值 |
 |----|----|
-| 内核 | 构建时拷入 `Resources/mihomo-core`，运行时复制到工作目录 `mihomo` |
+| 内核 | 构建时拷入 `Resources/mihomo-core.xz`（13 MB，原始二进制 54 MB），`VpnManager.extractBundledCoreIfNeeded` 首次启动时用 `XZArchive` 解压到工作目录 `mihomo`；完成标记存压缩档大小，内核没变则不重解 |
 | 工作目录 | `~/Library/Application Support/ClaudeBar/vpn/` |
 | mixed-port | 默认 `7890`（`AppPreferences.vpnMixedPort`） |
 | 控制器 | `127.0.0.1:9097`，`secret` 来自偏好 |
@@ -69,7 +69,9 @@ status item 上三种读数都**不依赖隧道**：电池是这台机器的电�
 
 ## 构建
 
-见 `Sources/build.sh`：`vendor/mihomo/` 拉取 darwin-arm64，拷为 `Resources/mihomo-core`。
+见 `Sources/build.sh`：`vendor/mihomo/` 拉取 darwin-arm64，打成 `.xz` 拷进包内。压缩档同时**提交在仓库里**
+（`Sources/ClaudeBar/Resources/mihomo-core.xz` 与同目录的 `.version`），发布构建直接复用、不再跑一遍 LZMA；
+版本对不上时自动重打（打出来的一定是当前 vendored 的内核），打完会提示提交。没有 `xz` 且没有归档时退化为内置原始二进制。
 
 | 变量 | 行为 |
 |------|------|

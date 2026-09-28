@@ -148,7 +148,7 @@ def main() -> int:
                                np.array(expected, dtype=int)).max() > 2:
                     stale.append(f'{target.name}: does not match {source.name}')
                 continue
-            expected.save(target)
+            expected.save(target, optimize=True, compress_level=9)
             print(f'{target.relative_to(ROOT)}  '
                   f'(ink {expected.getbbox()[2] - expected.getbbox()[0]}x'
                   f'{expected.getbbox()[3] - expected.getbbox()[1]} of {SIZE})')

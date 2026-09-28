@@ -40,7 +40,6 @@ final class AudioAccessoryMonitor {
         var id: String
         var name: String
         var category: String = ""
-        var productID: UInt16?
         var combined: Reading?
         var left: Reading?
         var right: Reading?
@@ -142,12 +141,6 @@ final class AudioAccessoryMonitor {
         guard subscribers == 0 else { return }
         wakeObservation = nil
         engine.stop()
-    }
-
-    /// Force a refresh, e.g. when a panel opens after being idle.
-    @MainActor
-    func refreshNow() {
-        engine.refreshNow(publish: publish)
     }
 
     /// Called on the main actor by the engine when a poll has produced a
@@ -278,12 +271,6 @@ private final class Engine: @unchecked Sendable {
             } else {
                 timer.suspend()
             }
-        }
-    }
-
-    func refreshNow(publish: (@MainActor ([AudioAccessoryMonitor.Accessory], String?) -> Void)?) {
-        queue.async { [weak self] in
-            self?.poll(forceProfiler: true, publish: publish)
         }
     }
 
@@ -456,7 +443,6 @@ private final class Engine: @unchecked Sendable {
                 next.nameIsCaseName = device.nameIsCaseName
             }
             if next.category.isEmpty { next.category = device.category }
-            if next.productID == nil { next.productID = device.productID }
             if better(device.combined, over: next.combined, from: source, existing: next.source) {
                 next.combined = device.combined
             }
@@ -816,10 +802,6 @@ private enum PowerSourceLogParser {
             || (components["Case"] != nil && components["Left"] == nil && components["Right"] == nil)
         accessory.id = isCaseOnly ? "\(identifier)#case" : identifier
         accessory.nameIsCaseName = isCaseOnly
-        if let raw = LogText.token(after: "PID", in: message, upTo: " ("),
-           raw.hasPrefix("0x") {
-            accessory.productID = UInt16(raw.dropFirst(2), radix: 16)
-        }
         accessory.left = components["Left"]
         accessory.right = components["Right"]
         accessory.caseLevel = components["Case"]
@@ -1057,9 +1039,6 @@ private enum ProfilerSource {
         // one field all three sources agree on, so it is the join key.
         var accessory = AudioAccessoryMonitor.Accessory(id: name, name: name)
         accessory.category = fields["device_minorType"] as? String ?? ""
-        if let raw = fields["device_productID"] as? String, raw.hasPrefix("0x") {
-            accessory.productID = UInt16(raw.dropFirst(2), radix: 16)
-        }
         accessory.left = reading(fields["device_batteryLevelLeft"],
                                  charging: fields["device_batteryLevelLeftCharging"])
         accessory.right = reading(fields["device_batteryLevelRight"],

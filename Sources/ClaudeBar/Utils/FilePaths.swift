@@ -31,10 +31,6 @@ enum FilePaths {
         codexDir.appendingPathComponent("auth.json")
     }
 
-    static var codexModelCatalogFile: URL {
-        CodexModelCatalog.fileURL
-    }
-
     /// Codex provider list managed by ClaudeBar (separate from the Claude
     /// providers file so the two lists stay independent).
     static var codexProvidersFile: URL {

@@ -21,7 +21,6 @@ final class ConnectivityTestCenter: ObservableObject {
     static let shared = ConnectivityTestCenter()
 
     static let proxyKey = "proxy"
-    static let editorKey = "editor"
 
     @Published private(set) var outcomes: [String: ConnectivityOutcome] = [:]
 
@@ -56,14 +55,6 @@ final class ConnectivityTestCenter: ObservableObject {
         let key = model.map { Self.vendorModelKey(id, $0.id) } ?? Self.vendorKey(id)
         run(key) {
             await Self.probeVendor(claude: claude, modelName: model?.name, codex: codex)
-        }
-    }
-
-    func testEditor(baseURL: String, apiKey: String, modelName: String) {
-        run(Self.editorKey) {
-            let claude = Provider(name: "editor", authToken: apiKey, baseURL: baseURL,
-                                  models: [ModelConfig(name: modelName)])
-            return await Self.probeVendor(claude: claude, modelName: modelName, codex: nil)
         }
     }
 

@@ -339,92 +339,11 @@ extension View {
     }
 }
 
-// MARK: - Metric tile
-
-/// Label / value / detail metric tile — the one primitive behind Dashboard
-/// stats and other headline numbers. The detail line is always rendered
-/// (space-reserved when empty) so tiles in a row stay equal height.
-struct MetricTile: View {
-    let label: String
-    let value: String
-    var detail: String = ""
-    var tint: Color? = nil
-    var icon: String? = nil
-    var instrumentIcon: InstrumentGlyph.Kind? = nil
-    var pill: String? = nil
-    /// Readable counterpart of `tint` for the pill text; see `StatusPill`.
-    var pillInk: Color? = nil
-    var valueFont: SwiftUI.Font = Theme.Font.displayMetricSmall
-    var dense: Bool = false
-    var quotaWindows: [CodexQuotaWindow] = []
-    var action: (() -> Void)? = nil
-
-    @State private var isHovered = false
-
-    var body: some View {
-        let content = VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            HStack(spacing: 8) {
-                if let instrumentIcon {
-                    InstrumentBadge(kind: instrumentIcon, size: dense ? 22 : 26,
-                                    tint: tint ?? Theme.Ink.claude, engaged: isHovered)
-                } else if let icon {
-                    GlyphWell(name: icon, tint: tint ?? Theme.Ink.claude, size: dense ? 20 : 22, engaged: isHovered)
-                }
-                Text(label)
-                    .font(Theme.Font.tileLabel)
-                    .tracking(Theme.Tracking.caption)
-                    .foregroundColor(Theme.textSecondary)
-                Spacer(minLength: 4)
-                if let pill {
-                    StatusPill(label: pill,
-                               tint: tint ?? Theme.statusSuccess,
-                               ink: pillInk ?? (tint == nil ? Theme.Ink.success : tint))
-                }
-            }
-            if quotaWindows.isEmpty {
-                RollingNumberText(value)
-                    .font(Theme.Font.displayMetricSmall)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .minimumScaleFactor(0.5)
-                    // No implicit `.animation(value: value)`: `value` is a live
-                    // readout, and a value-keyed transaction would stay in
-                    // flight on every poll. `.numericText` carries the roll.
-            } else {
-                CodexQuotaGauges(windows: quotaWindows, compact: false)
-            }
-            Text(detail.isEmpty ? " " : detail)
-                .font(Theme.Font.tileDetail)
-                .foregroundColor(Theme.textTertiary())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(dense ? Theme.Space.s12 : Theme.Space.s16)
-        .frame(maxWidth: .infinity, minHeight: dense ? 96 : 112, maxHeight: .infinity, alignment: .topLeading)
-        .tile(hovered: isHovered, dense: dense)
-        .contentShape(RoundedRectangle(cornerRadius: dense ? Theme.Radius.md : Theme.Radius.lg, style: .continuous))
-        .hoverState($isHovered)
-        .animation(.spring(response: 0.24, dampingFraction: 0.8), value: isHovered)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label)，\(value)\(detail.isEmpty ? "" : "，\(detail)")")
-
-        if let action {
-            Button(action: action) { content }
-                .buttonStyle(.pressable)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        } else {
-            content
-        }
-    }
-}
-
 // MARK: - Tile grid
 
-/// A grid of tiles with a themed gap — the 宫格 wrapper. Initialize from a
-/// `Theme.GridLayout.Preset` or with explicit columns. Row cells share the
-/// tallest sibling's height so modules don't sit 一大一小.
+/// A grid of tiles with a themed gap — the 宫格 wrapper. Initialized from a
+/// `Theme.GridLayout.Preset`. Row cells share the tallest sibling's height so
+/// modules don't sit 一大一小.
 struct TileGrid<Content: View>: View {
     private let fixedColumns: Int?
     private let minColumnWidth: CGFloat
@@ -448,14 +367,6 @@ struct TileGrid<Content: View>: View {
         case .popupSession, .popupProvider, .popupUsage:
             self.spacing = spacing ?? Theme.Space.gridGap
         }
-        self.content = content
-    }
-
-    init(columns: [GridItem], spacing: CGFloat,
-         @ViewBuilder content: @escaping () -> Content) {
-        self.fixedColumns = max(columns.count, 1)
-        self.minColumnWidth = 0
-        self.spacing = spacing
         self.content = content
     }
 

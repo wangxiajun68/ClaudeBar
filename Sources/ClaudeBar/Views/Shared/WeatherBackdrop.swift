@@ -6,7 +6,7 @@ import SwiftUI
 ///
 /// 1. A vertical sky (the palette), lighter at the top.
 /// 2. A slow pool of light, so a clear sky is not a frozen poster.
-/// 3. Clouds as volume — a shadow, a body, a lit crown — never a stroked blob.
+/// 3. Clouds as volume — a body and a lit crown, never a stroked blob.
 /// 4. Precipitation in **depth layers**. Far streaks are thin, cool, and slow;
 ///    near ones are short, bright, and fast. Each layer is one `Path` stroked
 ///    once. The previous curtain filled two rounded rects per drop (up to ~150
@@ -48,7 +48,7 @@ struct WeatherBackdrop: View {
 
     var body: some View {
         let palette = SkyPalette(sky: sky, night: night)
-        return TimelineView(.animation(minimumInterval: frameInterval,
+        return TimelineView(.animation(minimumInterval: ProcessInfo.processInfo.isLowPowerModeEnabled ? max(frameInterval, 1.0 / 15) : frameInterval,
                                        paused: reduceMotion || !surfaceVisible)) { timeline in
             Canvas { ctx, size in
                 let t = timeline.date.timeIntervalSince(start)
@@ -194,12 +194,12 @@ struct WeatherBackdrop: View {
     /// A union of ellipses with a hard edge is a sticker. Real cloud in a
     /// weather scene (Apple Weather, and every serious 2D sky) is density:
     /// each lobe is a radial falloff to nothing, so the bank has no outline
-    /// to catch the eye. `shadow` is unused — a dark under-shape is what made
-    /// the last banks read as black potatoes on the rain sky.
+    /// to catch the eye. A dark under-shape — the obvious first cut — is what
+    /// made the early banks read as black potatoes on the rain sky, so the
+    /// lobes carry no fill of their own and there is nothing to shadow.
     private static func cloud(_ ctx: inout GraphicsContext, at x: CGFloat, y: CGFloat,
                               scale: CGFloat, size: CGSize,
-                              body: Color, shadow: Color, lit: Color) {
-        _ = shadow
+                              body: Color, lit: Color) {
         let cx = x * size.width
         let cy = y * size.height
         let s = scale * min(size.height, 440)
@@ -264,6 +264,7 @@ struct WeatherBackdrop: View {
     /// the clear sky's motion; the disc breathing is too small to notice alone.
     private static func drawSun(at c: CGPoint, size: CGSize, t: TimeInterval,
                                 ctx: inout GraphicsContext) {
+        ctx.blendMode = .plusLighter
         // Diffuse light drifts across the card. No hard triangular rays.
         for i in 0..<3 {
             let x = c.x + CGFloat(sin(t * 0.08 + Double(i) * 2.1)) * size.width * 0.12
@@ -283,7 +284,7 @@ struct WeatherBackdrop: View {
                                       SkyPalette.sun.opacity(0)]),
                     center: c, startRadius: r * 0.2, endRadius: r * 3.2))
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                 with: .radialGradient(Gradient(colors: [SkyPalette.sunCore, SkyPalette.sun]),
+                 with: .radialGradient(Gradient(colors: [.white, SkyPalette.sunCore]),
                                            center: c, startRadius: 0, endRadius: r))
 
     }
@@ -294,25 +295,23 @@ struct WeatherBackdrop: View {
                                    ctx: inout GraphicsContext) {
         if celestial { drawClear(night: night, size: size, t: t, ctx: &ctx) }
         let body = Color.white.opacity(night ? 0.22 : 0.82)
-        let shadow = Color.black.opacity(night ? 0.30 : 0.16)
         let lit = Color.white.opacity(night ? 0.40 : 0.98)
         cloud(&ctx, at: drift(0.02, 0.28, t / 70), y: 0.42, scale: 0.50, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.40, 0.78, t / 52), y: 0.62, scale: 0.64, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
     }
 
     private static func drawCloudy(night: Bool, size: CGSize, t: TimeInterval,
                                    ctx: inout GraphicsContext) {
         let body = Color.white.opacity(night ? 0.16 : 0.55)
-        let shadow = Color.black.opacity(night ? 0.28 : 0.14)
         let lit = Color.white.opacity(night ? 0.32 : 0.88)
         cloud(&ctx, at: drift(0.02, 0.30, t / 86), y: 0.30, scale: 0.56, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.34, 0.70, t / 64), y: 0.48, scale: 0.72, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.62, 1.02, t / 50), y: 0.66, scale: 0.80, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
     }
 
     private static func drawFog(size: CGSize, t: TimeInterval, ctx: inout GraphicsContext) {
@@ -341,13 +340,12 @@ struct WeatherBackdrop: View {
                                  t: TimeInterval, ctx: inout GraphicsContext) {
         let body = Color.white.opacity(night ? 0.16 : 0.28)
         let lit = Color.white.opacity(night ? 0.34 : 0.55)
-        let shadow = Color.clear
         cloud(&ctx, at: drift(-0.08, 0.22, t / 70), y: 0.02, scale: 0.70, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.28, 0.62, t / 54), y: 0.08, scale: 0.86, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.64, 1.04, t / 46), y: 0.00, scale: 0.64, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         rainStreaks(size: size, intensity: intensity, t: t, ctx: &ctx, splashes: true)
         ctx.fill(Path(CGRect(x: 0, y: size.height * 0.86,
                              width: size.width, height: size.height * 0.14)),
@@ -463,11 +461,10 @@ struct WeatherBackdrop: View {
                                  ctx: inout GraphicsContext) {
         let body = Color.white.opacity(night ? 0.18 : 0.62)
         let lit = Color.white.opacity(night ? 0.40 : 0.95)
-        let shadow = Color.black.opacity(night ? 0.25 : 0.10)
         cloud(&ctx, at: drift(0.04, 0.36, t / 74), y: 0.24, scale: 0.58, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.50, 0.92, t / 58), y: 0.34, scale: 0.68, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         // Three depths. Near flakes are larger and slower to sway, which reads
         // as depth of field without a blur pass.
         let depths: [(fall: Double, radius: CGFloat, alpha: Double, sway: Double)] = [
@@ -495,13 +492,12 @@ struct WeatherBackdrop: View {
                                     ctx: inout GraphicsContext) {
         let body = SkyPalette.stormCloud.opacity(0.55)
         let lit = Color.white.opacity(0.16)
-        let shadow = Color.black.opacity(0.35)
         cloud(&ctx, at: drift(0.00, 0.32, t / 60), y: 0.18, scale: 0.68, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.40, 0.82, t / 48), y: 0.28, scale: 0.80, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         cloud(&ctx, at: drift(0.74, 1.14, t / 42), y: 0.14, scale: 0.56, size: size,
-              body: body, shadow: shadow, lit: lit)
+              body: body, lit: lit)
         rainStreaks(size: size, intensity: max(intensity, 50), t: t, ctx: &ctx, splashes: true)
 
         // One strike per ~4.5 s. The spike is the first tenth of the cycle;
@@ -591,7 +587,7 @@ struct SkyPalette {
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xC9D6FF),
                           isLightGround: false, highlight: Color(hex: 0xD5E2FF))
             } else {
-                self.init(top: Color(hex: 0x1860B0), bottom: Color(hex: 0x0C3C86),
+                self.init(top: Color(hex: 0x2869BA), bottom: Color(hex: 0x83B9E8),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFE3A3),
                           isLightGround: false, highlight: Color(hex: 0xFFF6D8))
             }
@@ -601,7 +597,7 @@ struct SkyPalette {
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xC9D6FF),
                           isLightGround: false, highlight: Color(hex: 0xC5D4F8))
             } else {
-                self.init(top: Color(hex: 0x1E5EA8), bottom: Color(hex: 0x123E78),
+                self.init(top: Color(hex: 0x326CA9), bottom: Color(hex: 0x8AB3D4),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFE3A3),
                           isLightGround: false, highlight: Color(hex: 0xFFF4D4))
             }
@@ -652,6 +648,31 @@ struct SkyPalette {
         }
     }
 
+    /// Interpolate atmospheric color anchors using the locally calculated solar altitude.
+    /// Overcast and precipitation keep their own weather-specific palettes.
+    func daybreak(elevation: Double?) -> SkyPalette {
+        guard let elevation else { return self }
+        let anchors: [(Double, UInt, UInt)] = [
+            (-18, 0x050B1F, 0x0B1A3A), (-9, 0x0E1E4D, 0x3A2A6B),
+            (-3, 0x1F3A7A, 0xE9788A), (5, 0x3B6FB8, 0xFFD8A0),
+            (30, 0x2F6FD6, 0x9CCBF5), (65, 0x1E5FCC, 0x7FB8F0)
+        ]
+        let upper = anchors.firstIndex { $0.0 >= elevation } ?? anchors.count - 1
+        let lower = max(0, upper - 1)
+        let fraction = min(1, max(0, (elevation - anchors[lower].0) / max(1, anchors[upper].0 - anchors[lower].0)))
+        func mix(_ a: UInt, _ b: UInt) -> Color {
+            func channel(_ shift: UInt) -> Double {
+                let x = Double((a >> shift) & 255), y = Double((b >> shift) & 255)
+                return (x + (y - x) * fraction) / 255
+            }
+            return Color(red: channel(16), green: channel(8), blue: channel(0))
+        }
+        var result = self
+        result.top = mix(anchors[lower].1, anchors[upper].1)
+        result.bottom = mix(anchors[lower].2, anchors[upper].2)
+        return result
+    }
+
     /// No reading: the page's own ice, dark type. It must not announce a sky.
     static var neutral: SkyPalette {
         if Theme.isDark {
@@ -670,12 +691,52 @@ struct SkyPalette {
         LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
     }
 
-    var shadowTint: Color { top }
-
     static let sun = Color(hex: 0xFFC24D)
     static let sunCore = Color(hex: 0xFFE9A8)
     static let moon = Color(hex: 0xF4F7FF)
     static let stormCloud = Color(hex: 0x2A3344)
     static let flash = Color(hex: 0xF7FBFF)
     static let bolt = Color(hex: 0xFFF2B0)
+}
+
+/// A separate foreground depth plane. These thin wisps cross the lettering;
+/// the denser cloud banks remain behind it in WeatherBackdrop.
+struct SkyVeil: View {
+    var sky: WeatherReading.Sky
+    var night: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.surfaceIsVisible) private var visible
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: reduceMotion || !visible || ProcessInfo.processInfo.isLowPowerModeEnabled)) { timeline in
+            Canvas { context, size in
+                let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+                let strength = sky == .clear ? 0.08 : sky == .partly ? 0.16 : 0.22
+                for i in 0..<4 {
+                    let phase = (t / (160 + Double(i) * 30) + Double(i) * 0.31).truncatingRemainder(dividingBy: 1)
+                    var layer = context
+                    layer.translateBy(x: (phase * 1.6 - 0.3) * size.width, y: size.height * (0.54 + Double(i) * 0.065))
+                    layer.scaleBy(x: 3.8, y: 0.28)
+                    let r = size.width * 0.18
+                    layer.fill(Path(ellipseIn: CGRect(x: -r, y: -r, width: r * 2, height: r * 2)),
+                               with: .radialGradient(Gradient(colors: [.white.opacity(strength * (night ? 0.4 : 1)), .clear]),
+                                                     center: .zero, startRadius: 0, endRadius: r))
+                }
+            }
+        }.allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
+/// Deterministic, static grain. No per-frame random generation or full-size texture.
+struct SkyGrain: View {
+    var body: some View {
+        Canvas { context, size in
+            var dots = Path()
+            for i in 0..<3200 {
+                let x = Double((i * 7919) % 10007) / 10007 * size.width
+                let y = Double((i * 104729) % 10009) / 10009 * size.height
+                dots.addRect(CGRect(x: x, y: y, width: 0.8, height: 0.8))
+            }
+            context.fill(dots, with: .color(.white))
+        }.allowsHitTesting(false).accessibilityHidden(true)
+    }
 }

@@ -17,7 +17,7 @@
 - **点 Codex 额度即可刷新**：额度段落到 mark 的 lane 之后，卡上就没有再读一次额度的入口了（旧版底部那段自带「刷新额度」按钮）。现在**那条 lane 本身就是刷新控件**——按钮就是你按它去重读的那个东西，所以触点落在读数上而不是旁边的图标上。悬停时 lane 的重置时刻从安静灰**亮成 mark 自己的色**，这就是全部的可点击提示（lane 是一条**读数**，给它套一圈按钮边框它就不再像读数了）；点击中按钮禁用，避免连点叠请求；空 lane 仍写明原因（「正在读取额度…」/「Codex 额度查询失败」）并保留一条空轨道，所以读不到额度时不会既没字也没高度。VoiceOver 得到一个 `isButton` 的「刷新 Codex 额度，5 小时剩余 N%，7 天剩余 M%」，整格的 tooltip 也改写成「点 Codex 额度可刷新，点其余处打开模型管理」。
 - **`Hello <名字>` 的入场动效改成可重放的悬停手势**：此前它是一次性的 `opened` 闩锁——`onAppear` 打开，之后再不回来，所以那段「手写体 Hello 抬进来 + 签名收紧字距」的入场只看得到一次。现在它是**一个可以被打回原位的状态**：鼠标移到 `Hello wangxiajun` 上，动效**重新跑一遍**（Hello 从下方 12pt 抬入，签名从 -4 收紧到 -1.8），移开时缓缓还原，再放上去再触发，可以无限重复。悬停热区是**问候语本身**（`.contentShape` 按绘制尺寸外扩 10pt），不是整张卡——否则指针划过旁边的时钟或天气也会触发。开启「减弱动效」时保留全部终态、只去掉位移（问候语仍会出现、只是不走过场），与全应用同一条纪律。
 - **概览状态单从四格收到两格：客户端 mark 与「今日」各自合体**。上一版把读数拆成四格，四格里有两组其实是同一件事说了两遍——两家客户端的**当前模型**只差一枚小 SF Symbol（`command` 对 `terminal`），而 **Codex 额度**在下面又单独占了一整段，等于把「这是 Codex 的读数、它还剩多少」说了两遍。现在：
-  - **两家客户端合成一颗 mark**（`CodexModelMark`）：上面是 `ProductBrandMark` 的真实品牌图形 —— Claude 的放射星与 Codex 的扇贝终端，也就是模型页、灵动岛、分段控件用的同一张图，不再是两枚只差一个单词的 SF Symbol；下面一条 lane 载着 Codex 额度，**一个窗口一根条、条高就是自己的剩余额度**，左标窗口名（5 小时 / 7 天）、右标重置时刻（`10月4日 09:07`），刻度是量程的十分之一，所以条的长度是读数。额度的**刷新按钮随那段走掉了**：额度现在是一条**读数**，读数不挂按钮——popup 的 Codex chip 与模型页都还留着刷新。
+  - **两家客户端各占一格**（`GreetingStatusSheet.modelIdentity`）：上面是 `ProductBrandMark` 的真实品牌图形 —— Claude 的放射星与 Codex 的扇贝终端，也就是模型页、灵动岛、分段控件用的同一张图，不再是两枚只差一个单词的 SF Symbol；Codex 那一格下面按窗口逐条列出剩余额度（`quotaRow` + `resetLine`），带一把刷新的按钮。中间那版把两家合成一颗 mark、把额度折成一条 lane 的写法已经删掉（见下条），因为 lane 是**读数**而同一个读数在 chip 自己的行里更清楚，也不必再维护第三种额度画法。
   - **今日 Token 与今日花费合成一格「今日用量」**：token 是主读数（28pt 圆体等宽），花费缩成它旁边一颗**打了斜杠的 ¥ 胶囊**（斜杠就是「这是按刊例价估的」，不必再写一句），下面一条今天的对比条 + 今日 / 昨日两枚 chip（今日那枚拿对比条的强调色，所以条和它比的数看得出是同一个读数）+ 调用次数。
   - 于是那一行从四格变两格，每格都宽了一倍：模型名不再被中段截断，今日 token 也不再和金额抢一列。四格那版里「三块内容随 `reading` 淡入、各自可点、悬停跟随位移」的交互全部保留。
 - **概览问候带加上六日预报与天气详情 popover，天空按实际时刻和坐标摆放日月星**：这一轮取代了同周期内前两版的读数布局（三块并排 → 四格 → 两格，见上），把问候带做成一台**打开的天气仪器**。设计口径见 [design/weather-observatory.md](design/weather-observatory.md)。
@@ -67,6 +67,9 @@
 - **「连接」卡片重写：读数搬进 mark 位**。这张卡此前把它唯一的读数摊在一条贯穿全宽的 30 格尺上，右半边空着——它是整条资源条上唯一一张「同伴都画 mark 而它什么都没画」的卡。现在读数住进同一块 **176×130 的 mark 位**（`ResourceStrip.markSlot`）：一个填充的信号表压在接口自己的 Lucide 轮廓上（以太网是插座、Wi-Fi 是弧），30 格等宽地铺在 −100…−40 dBm 上。接口本身成了参数（`ConnectInterface`，`ResourceStrip` 传实际在用的那条链路，两边都在线时以太网优先），所以这个 mark 是**对这条连接的读数**，而不是页头那枚 Wi-Fi 字形的第二份拷贝。它同时也从「整条上唯一的素色瓦片」改成和别人一样的表面（自己的水洗 + 悬停边，色相取那枚图标的蓝）。
 - **RSSI 尺修掉两处画错**：`ConnectionSignalScale` 移到 `HardwareDetailPanel`（它现在只有这一个读者），30 格**等宽**——旧版按 0.7pt/格递增画成了一道楼梯；空格改为实心灰（发丝线版本基本看不见）；加了 `−100·弱 / −70 / −40·强` 三处刻度标签与一个会动的当前位置点。
 - **风扇瓦片的色相改为跟模式走**：静息是蓝，手动覆盖（拉满）时是琥珀，与它的 hero 数字同色——此前风扇格用的是和全条其它格一样的平铺色，而它其实是全条上唯一有「模式」的格子。
+- **完成通知的判据换成「这一轮交付了什么」，不再是「忙转闲」**。旧规则是「上一帧忙、这一帧闲，然后 10 秒内看到一个新的最终答复标记」，三处都会误报或漏报：被中断 / 杀掉的一轮同样会由忙转闲（于是靠 10 秒窗口去赌），而 10 秒窗口本身在每次轮询间隔上都会漏掉更短的一轮；更糟的是它的记忆会在两次轮询间隔超过候选窗口时被整个清掉，于是**同一条已经读过的答复会被再播一次**。现在 `ConfirmedCompletionDetector` 问的是三件同时成立的事：该会话的**轮次键变了**、它**自己的文件刚刚写过**（60 s 内）、当前**不是忙**。轮次键三家各取本机的权威字段——Claude 是「轮次+步数计数 + 最终答复 uuid」（计数读自 transcript 尾窗，`ProviderStore.enrich` 里做**单调夹紧**，因为窗口滑动会让计数倒退，倒退就等于把旧键当成新键）、Codex 是 `task_complete.turn_id`、Cursor 是 `turn-<字节偏移>`；同一把键只播一次。于是：启动时不会播报卡里已经躺着的答复（首次见到只做基线）、被中断的一轮静默、短于轮询间隔的一轮**能**报出来（忙的边沿落在两次轮询之间，键和写盘没有）、忙转闲之后才落盘的答复也报得出来。通知文案随之改为「最终答复已就绪」。`Tests/completion-notify-regressions.py` 把四条规则（新键才响 / 同键永不重复 / 不新鲜不响 / 首帧只做基线）逐条钉住。
+  - **Codex 的那把键顺带修掉两个真实的漏报**：`task_complete` 还带来 `last_agent_message`，而它比「窗口里看到过助手文本」精确——210 条实测完成记录里，凡真的交付了答案的轮次它都是非空字符串，凡被中断的都带 `error`、都是 null，自动压缩与子代理通知那两类轮次也一律 null（这两类在窗口里只留下一条裸 user 消息、没有助手回复，旧写法只能靠猜，猜出来就是一次假完成）。老格式（没有该字段的 JSONL 与 2026-06 之前的 rollout）仍然退回落文本的判断。另外 rollout 的尾部读取窗口从 48 KB 提到 **512 KB**（并且先多读 48 KB 去对齐记录边界）：本机有一条 rollout 单个 `function_call_output` 就有 11 MB，而 120 KB 的窗口整段落进这条记录里时会**看不到任何生命周期事件**——那会被读成「这个线程还没开始」（`hasOpenTask == nil`），完成收不到、连忙态也要等 90 秒的陈旧回退才解除；实测 85 条根轮次里有 69 条写得比旧的 48 KB 还多，所以窗口是按「一条记录的上限」而不是「常见轮次的大小」来定的。
+  - **轮询在看不见的时候从 15 s 收到 8 s**（忙 2.5s / 全空闲 5s 不变）：60 s 的新鲜窗口要在这一档里活下来，而轮询被上一轮扫描挤掉是常事（冷缓存下每个会话一次 96 KB 尾部读），所以挤掉时用**一次性定时器** 1.5 s 后补跑一拍，而不是等下一个 8 s——丢的那些拍恰好就是完成检测要读的那些。窗口不可见时这一档的读者是小组件与菜单栏图标。
 - **`Hello <名字>` 的招呼语按时辰与节日选**（见下「问候」）：`GreetingPhrase` 先查节日再落到六个时段（深夜 / 拂晓 / 上午 / 正午 / 下午 / 傍晚 / 夜里）。23:28 说「晚上好」正是这轮要修的语感问题。
 - **不止一次「今天」的问候**：卡片的日期行与招呼语由**同一条时间线**驱动（此前是两个各跑各的计时器），`SkyGreeting` 移到日期行下面；Codex 窗口的重置时刻单独占一行（`resetLine`）。
 - **内嵌白环**：`Theme.innerFrame` / `innerFrameMuted` 是新 token；`Theme.Ink.*`（文字版信号色）与原信号色（形状版）现在分工写明——字、胶囊、计数用 `Ink`，条、点、弧、环、水洗用原色。供应商卡新增 `.faceColor` 承担后者。
@@ -79,7 +82,6 @@
   - 问候是一句**话**（「你好，…」），而人对自己机器的称呼是 `王夏军的MacBook Pro`，不是这个应用从 OS 生成的字符串里切削出来的登录名。现在 `MachineIdentity.person(in:)` 从机器名里取人：`的` / `'s` / `’s` 之前是名字（`王夏军的MacBook Pro` → `王夏军`），无所有格时再按机型标记（`deMacBook` / `sMacBook` / `iMac` …）剥掉连接用的 `s`；不足两个字符的前缀是残留标记不是名字，整串保留。`Tests/greeting-name-regressions.py` 用一张机器名表钉这条规则。
 - **问候的昼夜判断用的是 UTC 而不是当地时间**（同上一轮 wttr.in 那条）：招呼语必须跟**设备时区**走，它讲的是这个人的一天；天空的星位才走 UTC。
 - **`CodexModelMark` 在浅色主题下画不出 mark**：`AppPreferences.shared.isDark ? nil : false` 在浅色下解析到黑墨文件，等于把图形画没了。现在改为 `well: false` 并让卡片自己的底板决定 `page:`（那张带底板的方块实测 1.24:1，反过来 1.13:1，两边都是「看不见」）。
-### 修复
 
 - **天气的昼夜判断用的是 UTC 而不是当地时间**：wttr.in 的 `observation_time` 是 **UTC**，而日出日落是当地时间，旧代码直接拿 UTC 小时去比，于是日落后的天空可能还画着太阳、日出也可能整整差一个时区。现在改读 `localObsDateTime`，并给 `minutes(_:)` 补上范围校验（小时 0–23、分钟 0–59，12 小时制的 `12 AM/PM` 换算也修了：原来 `hour % 12` 把 12 点算成了 0 点）。
 - **问候卡升级为状态单后，`CodexQuotaFetcher` 读得出账户 Credits**：额度快照新增 `creditBalance`——`unlimited` 显示「不限量」，数值保留 API 单位（不假装是某种货币），**缺失的余额就是未知**（`hasCredits: false` 不带 balance 时不显示 0），`nan` / `inf` / 负数 / 带货币符号的字符串一律拒绝。官方账号把 Credits 当余额显示。
@@ -100,6 +102,15 @@
 - **成功回报不清除旧错误**：未接电点「放电」收到 `adapter_required` 后自动回到 limit，之后持续收到的无错误状态不会清掉 `lastError`，设置页与控制面板一直显示旧失败；过期 revision 的错误还会在版本过滤前写进 `lastError`。现在成功回执清除已解除的普通错误，旧回执不污染新操作，需要保留的恢复失败告警单独区分。
 - **能源图把主动控制解释成错误原因**：holding 固定写成「已充满或优化充电暂停」、onBattery 固定写成「未接电源」、assisting 固定归因「电源只能提供…」——本工具主动限充、主动断开适配器输入都会被读成故障。这三句现在只描述观测到的能量流向。
 - **退出清理会把用户的管理偏好写成「还原系统」**：终态回报 `mode=system` 是“辅助进程已退出”的清理状态，`receive` 对无错误状态无条件保存 mode，退出阶段若处理到该回报就会把偏好覆盖成 system。现在终态回报与用户偏好分离（`savedMode`），下次启动仍恢复用户最后选择的模式。
+- **钉住的截图画笔终于按对的按钮**：钉住的截图右上角那条小工具条是 关闭 / 复制 / 放大 / 缩小，而 `PinChromeBar.tap` 按 `sender.frame.minX` 去对手写的区间（`..<30` / `30..<55` / `55..<80`）。按钮从 `x = 4` 开始、宽 22pt 排下来，minX 实际是 **4 / 26 / 48 / 70**——那三组区间是给 `midX` 写的。于是用户拿到的映射是关闭→关闭、**复制→关闭**、**放大→复制**、**缩小→放大**：按「复制」把图钉关掉，「缩小」根本够不着。现在按 `tag` 路由（`Action` 改成 `Int` 以支撑 `NSButton.tag`），布局算术从此与这个问题无关。
+- **`State.missingCore` 从来没有被赋过值**：内核缺失这条路径最后都走 `fail(.coreMissing)`，而 `fail` 对每个错误都设 `.failed(err.logMessage)`——于是五个读 `.missingCore` 的地方全是死代码，其中还有这个失败唯一可操作的出口 `VPNView.coreMissingHint`（写明该把二进制放到哪个路径，并给一个「打开目录」按钮）。用户能看到的只是一行通用错误。现在 `fail` 把 `.coreMissing` 映射到 `.missingCore`，也就是 [设计 §08](design/08-error-handling.md) 一开始就写下的行为。
+- **GPU 温度不再每次采样都扫 SMC**：`HardwareSensors.gpuReading()` 一直带着一个「加速器没报温度就从 SMC 取」的回退，而 Apple Silicon 的 `IOAccelerator` 的 `PerformanceStatistics` 里**没有** `Temperature(C)`（本机 `ioreg -r -c IOAccelerator` 实测），所以这个回退**每一拍都在触发**——六个 SMC 键穿过同一把 `ioLock`，就挨着包温读取（包温自己是被 5 秒闸门挡住的，注释里还写着「这一拍最贵的一次读」）。实测每拍 1.41 ms；现在加速器**自己报的**温度仍每拍读（报得出的 GPU 上它才是更热的那个读数，而且只是一次属性取值），SMC 那六键的那条路改走同一个 5 秒闸门，摊下来 3.07 ms/s，是原来的 1/5。这不是主线程开销（采样器在自己的队列上），是与风扇读取抢锁的浪费。
+- **出口 IP 探测补上被裁掉的那三个服务**：`VpnNetProbe.fetchIP` 只遍历 `ipEndpoints.prefix(4)`，于是七家里最后三家永远轮不到——其中就有 `icanhazip.com`（唯一返回纯文本的那家），连带着 `parsePlainIP` 成了没有调用者的死代码。而那三家恰恰是前四家（同属一个机房）一起限流时剩下的选择，等于最需要它们的时候它们不在。现在改成按 **12 秒预算**循环（每次尝试本来就有 6 秒超时，按条数截断在全部失败时会把调用方按住 42 秒）。
+- **`ConnectorUtilityButtonStyle` 里那句 `.environment(\.isEnabled, true)`**：读起来像保底，实际是把调用方要的禁用态盖掉。这条链上的两个样式各自都会画禁用态（`ActionPlateButtonStyle` 降到 0.34 透明度，`.uiversePress` 经 `ControlPressModifier` 变暗），所以那句代码只会**抑制**别人要的灰。今天没有调用点依赖它（连接器页唯一的 `.disabled(loading)` 挂在刷新按钮上，那个走 `headerControl()`），而这正是把它删掉的理由：下一个想禁用某个按钮的人会撞上一句静默失效。
+- **`cp -R Sources/ProviderIcons` 把维护者说明发给了每个用户**：那份 README 记的是 LobeHub 素材的出处、3:1 墨迹下限、哪五个品牌为何换成单色标——它属于仓库，不属于发布包。现在只拷 `*.png` / `*.ico` 与许可文件。
+- **删掉一批没人读的字段与死代码**：`AudioAccessoryMonitor.Accessory.productID`、`ProcessSampler.HostStats.memoryCached` / `memoryFree`（连同 `temperatureColor`）、`MachineIdentity.chip` / `model` / `system` / `summary`、`ProviderCatalogEntry.monogram` / `color`（二十二条目录数据里写着、谁也不画）、`SkyPalette.shadowTint`、`CodexProxyTransform.ToolRegistry.merge` 与 `qualify`、`VpnManager` 的 `refreshNow` 之类；`MachineIdentity` 现在只做一件事，就是读那个机器名。
+- **配置写盘与备份都走私有通道**：`CodexConfigWriter` 此前用 `String.write(to:atomically:)` 写 `config.toml`，落盘模式由进程 umask 决定（默认安装下是 0644）——而这个文件里装着活的 `experimental_bearer_token`。现在改走 `PrivateFileWriter.write`（同 `settings.json` / 供应商表 / `proxy-token` 一路），并且加 `PrivateFileWriter.harden(_:)`：`FileManager.copyItem` 会把**源文件**的模式一起复制，所以备份一份旧版留下的 0644 配置，得到的就是一份 0644 的、装着密钥的备份；`CodexConfigWriter.backUpOnce()` 现在拷完立刻收窄到 0600。
+- **旧版留下的宽权限白拿一拍自愈**：`ProviderStore.hardenLegacySecretFiles()` 对 `settings.json` 与 `codex-providers.json` 各做一次 stat，模式里有 group / other 位就收窄到 0600（每进程一次）。写入本身也会自己治好——私有写入是「先建 0600 的临时文件再 rename」，rename 带上的是临时文件 inode 的模式，所以一个 0644 的目标在下次写入之后**就是** 0600，不需要额外的修模式步骤（`Tests/core-regressions.py` 现在把这条路径也测了）。
 
 **「模型」页标题错乱、按钮压边**：这条页头带的右半是「副标题 + 自定义按钮」竖着一列，于是它成了全应用最高的一条带（74pt，别的页 68pt），按钮底边还压进内嵌白环里。副标题现在回到标题下面（`PageTitle` + caption 一列），控件单独在右侧、两边 `alignment: .top`——和概览 / 连接器同一种解剖。按钮同时换成共享的 `headerControl()`，不再用页面自己的圆角样式。
 - **「连接器」页标题和别页不一样**：这条带自己画了 `GlyphWell(size: 38)` + 22pt **semibold** 标题，而每个别的页面都是 `PageTitle` 的 34pt 井 + 22pt **bold**——两个页面并排就是两个字重、两个井。现在统一走 `PageTitle`，字形与色相由 `PageIdentity` 决定。
@@ -113,7 +124,10 @@
 - `LucideRotor.swift` 使用共享插画的圆形涡轮裁切和 Core Animation 图层，静态图标使用同一系统符号。
 - 构建脚本打包机内插画与素材来源说明，不再依赖扇叶 TSV。
 - 风扇回归测试实际编译原生图层，验证符号像素、转速调整的相位连续性、暂停 / 恢复与动画不堆叠。
-- `MetricTile` 仍然**没有调用点**（最后一个 caller 早先随重构删除），本轮只把它 headline 上那行隐式 `.animation(value:)` 去掉并同步文档，没有删除视图本身；删除记录与它复活的原因见 [UI 审计待办 §10](technical/17-ui-audit-backlog.md)。
+- `MetricTile` **删掉了**。它从 `2fd24f7` 起就没有调用点（概览的指标行被用量页自己的卡片取代），复活过一次、又一直没人挂；同一个 `.animation(value: value)` 写法保守了一轮。判据与它当年保留的理由见 [UI 审计待办](technical/17-ui-audit-backlog.md) §10。
+- **`CodexModelMark` 只剩一颗 13pt 的 chip mark**：这个视图原本一套写法服侍两个面——概览状态单上 38pt 的大 mark（真实品牌图形 + 一条载着 Codex 额度的 lane + 按读数调速的扫光）与 popup 头部的 13pt chip。概览那一版在问候卡重做时丢掉了调用点（`GreetingStatusSheet.modelCell` 改画 `modelIdentity(...)`，额度由 chip 自己的 `quotaRow` / `resetLine` 承载），此后 `Sources/` 与 `Tests/` 里再没有任何地方传过 `.tile`。现在把整条死臂删掉：`tileBody`、lane 的常量和绘制、`flow:` 扫光（连同它的 `TimelineView(.animation(minimumInterval: 1.0/12))`）、刷新胶囊与它的 `@State`。文件 441 → 61 行，而**活着的 chip 一个像素都没变**（它从来就没有那条 lane）。
+- **`SkyGreeting` 去掉 `animated:` 开关**：那个参数存在的唯一目的是给预览图关掉入场动效，而状态单重做之后它已经不再被任何调用点传值，只剩内部三个 `|| !animated` 分支在那里假装有第二个读者。
+- 新增 `Tests/completion-notify-regressions.py`（完成提醒的四条规则，直接切生产源码里的 `ConfirmedCompletionDetector` 编译执行）；`charge-limit-regressions.py` 的 8 秒看门狗断言不再固定睡 8.2 秒，改成等**效果**（固定余量在负载下会让看门狗的定时器迟到，实测空闲机器上 6 次里也能错 1 次）；`core-regressions.py` 加了三块：`readCodexContext` 在超大记录之后的轮次、`last_agent_message` 为 null / 空白的压缩轮次不得当作交付、提交在仓库里的 `.xz` 内核解出来必须比压缩档大 20 倍以上（把打包器和读取器互相钉住）。
 - 控件语言从 `Interaction.swift` 与各页各写一份收敛到 `Sources/ClaudeBar/Views/Shared/InstrumentControls.swift`（字段 / 开关 / `headerControl()` / `ActionButton` + `ActionPlateButtonStyle` + `ControlPlate` / `InstrumentMenuLabel` / `InstrumentButtonStyle` / `ProviderActionStyle`）；`adaptiveGlassButton()` 已从 `Interaction.swift` 删除，只在注释里留了它去哪了。文档口径见 [DESIGN.md](../DESIGN.md) 的 Controls 表、[技术 §5](technical/05-view-layer.md) 与 [技术 §9](technical/09-file-index.md)。
 - **`make test` 是回归清单的唯一出处，CI 现在调用它**（`run: make test`），不再各抄一份。这件事不是洁癖：两份清单**已经**漂移过，`product-mark` / `greeting-name` / `weather-astronomy` / `card-shadow` / `machine-mark` / `fan-rotor` 六个脚本在 `make test` 里而从没在 CI 里跑过，也就是说那段时间里这几项红了 CI 也是绿的。清单每抄一份就多一次漏掉文件的机会。改完的第一次 CI 就把这层遮掩掀掉了：`product-mark-regressions.py` 在 runner 上死于 `ModuleNotFoundError: No module named 'PIL'`——Pillow / numpy 是解码品牌 PNG 用的（`machine-mark` 与两个生成脚本同样需要），CI 里新增一步 `python3 -m pip install --user Pillow numpy`。
 - 新增控件预览工具 `Tools/render-control-preview.py` + `Tools/control-preview-sheet.swift` / `control-preview-support.swift`：`ImageRenderer` 出 900pt 的明暗两版控件表（`ActionButton` / `ChipButton` / `InstrumentToggleStyle` / `SegmentedCapsule`），**声明是从生产源码里抽的**，所以这张图不会和真控件漂移。
@@ -123,6 +137,16 @@
 - `Tests/charge-limit-regressions.py` 从「读源码算门槛」改写为**直接跑生产控制器**：把安装、进程启动、管道 transport 和传感器换成内存桩（`UserDefaults` 用独立 suite），真实执行 `apply` / `setLimit` / `receive` / `heartbeat` / `shutdown`，覆盖目标回拖、模式竞争、系统还原优先、授权期间改值、响应超时、失联、旧 revision 回报、休眠、终态回报与偏好保存；C 侧新增 `evaluate()` 的判据测试（能力 / 合盖 / 虚拟失电 / 通知文案），并首次纳入 `make test`。`Tests/battery-control.c` 里 `BAT_LIMIT` 与 `BAT_HOLD` 的断言随策略一起改了——旧断言恰好把「充电 = 停充」这个 bug 钉成了期望值，这也是它此前一直绿的原因。
 
 - `Tests/rendering-regressions.py` 的动效矩阵由 5 种增到 6 种（补 `conveyor`，按条带取景）。`loadRing` 这一格已随视图一并删除——它的四条判据（弧必须是弧 · 空闲必须**恰好为 0** · 转速随读数上升 · 改速率必须就地重定时）现在由 `Tests/fan-rotor-regressions.py` 用同一套方法验在唯一还在按读数调速的装饰上，也就是风扇的转子。
+
+### 体积
+
+- **mihomo 内核改为随包内置 `.xz` 压缩档，首次启动在应用内解压**。原始二进制 54 MB，而 deflate **压不动它**（Go 自己的符号表已经很密，GitHub 的 release `.zip` 里仍占 20 MB），所以「下载体积」这一栏一直是它一个人说了算——67 MB 的 app 里，`.zip` 有 20.5 MB 是它。换成 `.xz` 后同一个二进制是 13.1 MB，app `.zip` 从 **29.2 MB 降到 22.1 MB**（−24%），DMG 同理。
+  - 解压走 `Utils/XZArchive.swift`：`libcompression` 的 `COMPRESSION_LZMA`，**无第三方依赖**，流式写盘（峰值内存是 16 MB 的 LZMA 字典 + 两个 1 MB 缓冲，不是那 54 MB），实测整档 **0.6 s**。注意它收的是 **`.xz` 容器**而不是裸 LZMA 流——裸流 / `FORMAT_LZMA1` 在第一个 block header 就被拒。
+  - 压缩档**提交进仓库**（`Sources/ClaudeBar/Resources/mihomo-core.xz` + `.version`），发布构建直接复用：`package` 里省掉 117 s 的 LZMA，只剩一次 `cp`。版本不匹配时自动重打，打出来的一定是当前 vendored 的内核。没有 `xz` 的机器退化为内置原始二进制（54 MB），功能不受影响。
+  - 解压是**解到旁边的临时文件再原子换入**，失败不会在可执行路径上留下半截文件；完成标记存的是**压缩档**的大小，所以内核没变就不会每次启动重解一遍。首次启动实测：启动 → 解压 → `内核就绪：version=v1.19.31`，解出来的文件与 vendored 二进制**逐字节相同**。
+- **`AppIcon.icns` 无损重压：2,071,438 → 1,705,955 B**（−365 KB）。这是个 `.icns` 容器，里面每个尺寸各是一张独立 PNG，而写它的编码器把三分之一的字节留在了桌上——单是 1024 那张就是 1,177,354 B，而同样的像素只要 956,743。新增 `Tools/recompress-icon.py` 重编每一个成员，并且**逐像素比对**后才落盘，所以不存在「用一个字节换一个像素」的可能；同一处理也应用到 `Sources/AppIcon-1024.png`（1,177,354 → 956,743）。
+- **品牌方块改按最优参数写回**：两个生成脚本此前用的是 Pillow 的默认 `compress_level`；加上 `optimize=True, compress_level=9` 后八张 `Sources/BrandAssets/*.png` 从 615 KB 降到 560 KB，像素不变，`--check` 仍绿。
+- **量过但**没有采纳**的两条，记在这里免得再算一遍：**缩到 128px**（内核 640² 原图 90 KB→31 KB；但图标在 38pt 的方块里渲染，实测有 78.2% 的面积存在可见误差，最坏像素差 255，换约 60 KB 不值得）；**插画降到 1280 宽**（只在 5K 屏上才有 1.4% 的像素差，省 40% 字节，但那 40% 是 550 KB，而且这块图已经是页面上唯一一处按原分辨率解码的位图）。
 
 ## [1.13.0] — 2026-09-25
 

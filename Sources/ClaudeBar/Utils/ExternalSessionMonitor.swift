@@ -615,6 +615,15 @@ struct ExternalSessionMonitor {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// Bytes of a rollout this monitor parses per poll when the file changed.
+    /// Sized to clear a whole turn even when one record is a multi-megabyte
+    /// tool output; the first record in the window costs one extra parse and is
+    /// dropped, so the window is the part that matters.
+    private static let codexTailWindow = 512_000
+    /// How far past the window to start reading, so trimming to `codexTailWindow`
+    /// leaves the window starting at a record boundary rather than mid-line.
+    private static let codexTailLineSlack = 48_000
+
     private static func headModel(in head: String) -> String {
         for line in head.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -628,13 +637,37 @@ struct ExternalSessionMonitor {
 
     /// Bounded tail parsing tracks lifecycle and current-turn usage. Partial
     /// first lines are ignored; cumulative billing is only a fallback.
+    ///
+    /// The window has to be able to span a whole turn, because a single record
+    /// can swallow it: one local rollout carries an 11 MB `function_call_output`
+    /// and a 120 KB read landed entirely inside it, so the loop sees no
+    /// lifecycle event at all and reports `hasOpenTask == nil` — the same "run
+    /// started mid-file / corrupt" state the adapter synthesizes for a rollout
+    /// the tool had already compacted. The visible cost is a completion that
+    /// never confirms plus a turn that keeps reading as busy until the 90 s
+    /// recency fallback expires. Turns themselves are large (69 of 85 measured
+    /// root turns wrote more than the old 48 KB), so the window is sized well
+    /// above the per-record norm rather than around it, and the read backs up
+    /// `codexTailLineSlack` bytes first so the window can be trimmed to start
+    /// on a record boundary instead of mid-line.
     private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String, completionID: String?) {
         guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "", nil) }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: size - min(48_000, size))
-        guard let data = try? handle.readToEnd() else { return (0, 0, nil, "", nil) }
-        let text = String(decoding: data, as: UTF8.self)
+        // Scan for the window's record boundary in a small probe first: the
+        // window has to start *after* the newline, so the probe classifies what
+        // byte the cut lands on, and the read below copies the window only.
+        var start = size > UInt64(Self.codexTailWindow) ? size - UInt64(Self.codexTailWindow) : 0
+        let probeStart = start > UInt64(Self.codexTailLineSlack) ? start - UInt64(Self.codexTailLineSlack) : 0
+        try? handle.seek(toOffset: probeStart)
+        if probeStart != start, let probe = try? handle.read(upToCount: Self.codexTailLineSlack),
+           let newline = probe.firstIndex(of: 0x0A) {
+            start = probeStart + UInt64(probe.distance(from: probe.startIndex, to: newline) + 1)
+        }
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return (0, 0, nil, "", nil) }
+        let window = Data(data.prefix(Self.codexTailWindow + Int(size - start)))
+        let text = String(decoding: window, as: UTF8.self)
         var used = 0, limit = 0
         var model = ""
         var hasOpenTask: Bool?
@@ -672,7 +705,22 @@ struct ExternalSessionMonitor {
             }
             if eventType == "task_complete" {
                 hasOpenTask = false
-                if finalMessageReady, payload["error"] == nil,
+                // `last_agent_message` is Codex's own record of what this turn
+                // delivered, and it is exact: across 210 recorded completions it
+                // is a non-empty string on every turn that produced a final
+                // answer, null on every aborted one (`error` set), and null on
+                // both the auto-compaction turn and the sub-agent-notification
+                // turns — the two cases where the transcript walk below sees a
+                // bare user message and no assistant reply, and would otherwise
+                // have to guess. Formats that predate the field (the JSONL
+                // fixtures, pre-2026-06 rollouts) fall back to the walk.
+                let delivered: Bool
+                if let message = payload["last_agent_message"] as? String {
+                    delivered = !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } else {
+                    delivered = finalMessageReady
+                }
+                if delivered, payload["error"] == nil,
                    let turnID = payload["turn_id"] as? String, !turnID.isEmpty {
                     completionID = turnID
                 }

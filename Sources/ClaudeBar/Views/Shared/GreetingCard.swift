@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// One living sky across the entire card. The handwritten greeting leads;
-/// model, wallet and usage readings sit in the same atmosphere below it.
+/// A sky window: handwritten greeting, quiet instruments, one glass sill.
 /// Weather motion is visibility-gated; the clock owns its one-second ticker.
 struct GreetingCard: View {
     @ProviderState([.usage, .configuration]) private var providerStore
@@ -114,11 +113,13 @@ struct GreetingStatusSheet: View {
     @State private var selectedDate: Date?
     @State private var weatherDetails = false
     @State private var skyDate = Date()
+    @State private var timeOffset: Double = 0
+    @State private var pointer = CGSize.zero
     @Environment(\.surfaceIsVisible) private var visible
 
     private var selectedDay: WeatherDay? { reading?.forecast.first { $0.date == selectedDate } }
     private var sceneDate: Date {
-        guard let selectedDay else { return skyDate }
+        guard let selectedDay else { return skyDate.addingTimeInterval(timeOffset) }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: reading?.timezone ?? "") ?? .current
         return calendar.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDay.date) ?? selectedDay.date
@@ -129,87 +130,117 @@ struct GreetingStatusSheet: View {
 
 
     private var palette: SkyPalette {
-        if reading != nil { return SkyPalette(sky: sceneSky, night: sceneNight) }
+        if reading != nil { return SkyPalette(sky: sceneSky, night: sceneNight).daybreak(elevation: sceneSky == .clear || sceneSky == .partly ? astronomy?.sun.altitude : nil) }
         return .neutral
     }
-    private var accent: Color { palette.accent }
     private var border: Color { palette.ink.opacity(0.16) }
 
+    // THESIS: a signature suspended in a real sky, with instruments on a glass sill.
+    // WORLD: deep atmospheric blue, ivory calligraphy, serif signature, restrained gold.
+    // STORY: read the greeting, glance at the weather, act on quota or usage.
+    // COMPOSITION: corner HUDs, open central sky, one three-part dock; stacked on narrow windows.
     var body: some View {
         VStack(spacing: 0) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 24) {
-                    greeting.frame(maxWidth: .infinity, alignment: .leading)
-                    weatherBlock.frame(width: 230)
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    Color.clear.contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 12)
+                            .onChanged { value in
+                                guard reading?.latitude != nil, reading?.longitude != nil else { return }
+                                timeOffset = max(-43200, min(43200, value.translation.width / max(1, geo.size.width) * 86400))
+                            }
+                            .onEnded { _ in
+                                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.8)) { timeOffset = 0 }
+                            })
+                        .help("横向拖动天空预览一天，松手回到现在")
+                    HStack(alignment: .top) {
+                        GreetingClock(ink: palette.ink, secondary: palette.inkSoft, timezone: reading?.timezone)
+                        Spacer(minLength: 24)
+                        weatherBlock.frame(width: geo.size.width < 650 ? 190 : 218)
+                    }
+                    .padding(geo.size.width < 650 ? 24 : 32)
+                    SkyGreeting(name: name, palette: palette, phrase: GreetingPhrase.forDate(skyDate),
+                                lightX: astronomy.map { $0.sun.azimuth / 360 } ?? 0.5)
+                        .frame(width: geo.size.width - 64, height: geo.size.width < 650 ? 190 : 232)
+                        .offset(x: 32 + pointer.width * 0.4, y: geo.size.width < 650 ? 160 : 136)
+                        .allowsHitTesting(false)
+                    if reading != nil {
+                        SkyVeil(sky: sceneSky, night: sceneNight)
+                            .offset(x: pointer.width * 0.8, y: pointer.height * 0.5)
+                            .allowsHitTesting(false)
+                    }
+                    HStack(spacing: 6) {
+                        Image(systemName: timeOffset == 0 ? "sun.horizon" : "clock.arrow.circlepath")
+                        if timeOffset != 0 {
+                            Text("天空预览 · \(sceneDate.formatted(.dateTime.hour().minute())) · 松手回到现在")
+                        } else if let reading, !reading.sunset.isEmpty {
+                            Text("日落 \(reading.sunset)")
+                            Text("·").opacity(0.5)
+                            Text("拖动天空，漫游一天").opacity(0.8)
+                        }
+                    }
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(palette.ink.opacity(0.72))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(.horizontal, 36).padding(.bottom, 16)
+                    .allowsHitTesting(false)
                 }
-                .frame(minWidth: 860)
-                VStack(alignment: .leading, spacing: 14) {
-                    greeting
-                    compactWeather
+                .onContinuousHover { phase in
+                    guard !reduceMotion, visible else { pointer = .zero; return }
+                    switch phase {
+                    case .active(let point):
+                        pointer = CGSize(width: (point.x / max(1, geo.size.width) - 0.5) * 20,
+                                         height: (point.y / max(1, geo.size.height) - 0.5) * 12)
+                    case .ended: pointer = .zero
+                    }
                 }
-            }
-            .padding(.horizontal, 32)
-            .padding(.top, 24)
-            .padding(.bottom, 28)
-            .modifier(StatusArrival(arrived: arrived, delay: 0, reduceMotion: reduceMotion))
-
-            Rectangle().fill(border).frame(height: 1)
-            if let reading {
-                WeatherExplorer(reading: reading, selection: $selectedDate, palette: palette, now: skyDate, showDetails: { weatherDetails = true })
-                Rectangle().fill(border).frame(height: 1)
-            }
-            // Two readings, not four. The two clients used to be two identical
-            // cells differing only by a small SF Symbol, and the allowance sat a
-            // section further down repeating the Codex half of the same fact.
-            // They are now one mark (`CodexModelMark`: both brand glyphs over
-            // one allowance lane) and one 今日 cell (token figure, cost figure,
-            // and the day-over-day bar between them).
+            }.frame(height: 400)
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 0) {
+                HStack(spacing: 0) {
+                    forecastDock.frame(maxWidth: .infinity)
+                    dockDivider
                     modelCell.frame(maxWidth: .infinity)
-                    Rectangle().fill(border).frame(width: 1, height: 106).padding(.vertical, 20)
-                    todayCell.frame(maxWidth: .infinity)
-                }.frame(minWidth: 860)
-                VStack(spacing: 0) {
-                    modelCell
-                    Rectangle().fill(border).frame(height: 1).padding(.horizontal, 20)
-                    todayCell
+                    dockDivider
+                    todayCell.frame(width: 240)
+                }.frame(minWidth: 920)
+                VStack(spacing: 16) {
+                    forecastDock
+                    Rectangle().fill(border).frame(height: 0.5)
+                    HStack(spacing: 20) {
+                        modelCell.frame(maxWidth: .infinity)
+                        dockDivider
+                        todayCell.frame(maxWidth: .infinity)
+                    }
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 4)
-            .modifier(StatusArrival(arrived: arrived, delay: 0.14, reduceMotion: reduceMotion))
+            .padding(20)
+            .modifier(DaybreakGlass(dark: !palette.isLightGround))
+            .padding(.horizontal, 24).padding(.bottom, 24)
+            .modifier(StatusArrival(arrived: arrived, delay: 0.25, reduceMotion: reduceMotion))
         }
         .background {
             ZStack {
                 palette.gradient
                 if let reading {
-                    WeatherBackdrop(sky: sceneSky, isDay: !sceneNight, intensity: selectedDay?.rainChance ?? reading.rainChance, astronomy: astronomy, windKph: selectedDay?.wind ?? reading.windKph)
-                        .frame(height: 280)
-                        .mask(LinearGradient(stops: [.init(color: .white, location: 0), .init(color: .white, location: 0.7), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
-                        .frame(maxHeight: .infinity, alignment: .top)
-                        .mask(LinearGradient(colors: [.white.opacity(0.32), .white],
-                                             startPoint: .leading, endPoint: .trailing))
-                    // A continuous scrim keeps the typography legible while
-                    // the same animated atmosphere flows behind every row.
+                    WeatherBackdrop(sky: sceneSky, isDay: !sceneNight,
+                                    intensity: selectedDay?.rainChance ?? reading.rainChance,
+                                    astronomy: astronomy, windKph: selectedDay?.wind ?? reading.windKph)
+                        .offset(x: pointer.width * 0.2, y: pointer.height * 0.2)
                     LinearGradient(stops: [
-                        .init(color: .black.opacity(0.23), location: 0),
-                        .init(color: .black.opacity(0.04), location: 0.65),
-                        .init(color: .clear, location: 1)
-                    ], startPoint: .leading, endPoint: .trailing)
-                    LinearGradient(stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .black.opacity(0.16), location: 0.45),
-                        .init(color: .black.opacity(0.42), location: 1)
+                        .init(color: Color(hex: 0x0A1530).opacity(0.08), location: 0),
+                        .init(color: Color(hex: 0x0A1530).opacity(0.12), location: 0.40),
+                        .init(color: Color(hex: 0x0A1530).opacity(0.78), location: 1)
                     ], startPoint: .top, endPoint: .bottom)
+                    SkyGrain().opacity(0.035)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.8), value: sceneSky)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 1.2), value: sceneNight)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 2.4), value: sceneSky)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.8), value: sceneNight)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [palette.ink.opacity(0.32), palette.ink.opacity(0.06)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
         }
         .popover(isPresented: $weatherDetails, attachmentAnchor: .point(.topTrailing), arrowEdge: .trailing) {
             if let reading {
@@ -238,162 +269,105 @@ struct GreetingStatusSheet: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var greeting: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // One timeline drives both the date line and the salutation, so the
-            // greeting cannot go stale against the date above it — midnight,
-            // when the phrase and the day both turn over, is exactly the moment
-            // two independent timers would disagree. 60 s is well inside the
-            // shortest band, so no boundary is ever missed by more than a
-            // minute.
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(context.date.formatted(.dateTime.month(.wide).day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .tracking(1)
-                        .foregroundStyle(palette.inkSoft)
-                    SkyGreeting(name: name, palette: palette,
-                                phrase: GreetingPhrase.forDate(context.date))
-                }
-            }
-            GreetingClock(ink: palette.ink, secondary: palette.inkSoft)
-        }
+    private var dockDivider: some View {
+        Rectangle().fill(border).frame(width: 0.5, height: 96).padding(.horizontal, 20)
     }
 
-    /// Flat instrument row. Model navigation and allowance refresh are siblings,
-    /// so keyboard activation and pointer clicks never trigger a parent button.
+    private var forecastDock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("天气展望").font(.system(size: 11, weight: .medium))
+                Spacer()
+                Button { weatherDetails = true } label: {
+                    Image(systemName: "arrow.up.right").frame(width: 22, height: 22)
+                }.buttonStyle(.plain).help("查看完整预报").accessibilityLabel("查看完整预报")
+            }.foregroundStyle(palette.ink.opacity(0.72))
+            if let reading, !reading.forecast.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(Array(reading.forecast.prefix(5).enumerated()), id: \.element.id) { index, day in
+                        Button { selectedDate = day.date; weatherDetails = true } label: {
+                            VStack(spacing: 10) {
+                                Text(index == 0 ? "今天" : day.date.formatted(.dateTime.weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
+                                    .font(.system(size: 10, weight: .medium)).foregroundStyle(palette.ink.opacity(0.72))
+                                Image(systemName: (index == 0 ? reading.sky : day.sky).symbol(night: index == 0 && sceneNight))
+                                    .symbolRenderingMode(.palette).foregroundStyle(palette.accent, palette.ink)
+                                    .font(.system(size: 21)).frame(height: 23)
+                                HStack(spacing: 3) {
+                                    Text("\(Int(day.high.rounded()))°")
+                                    Text("\(Int(day.low.rounded()))°").foregroundStyle(palette.ink.opacity(0.6))
+                                }.font(.system(size: 10, weight: .medium, design: .monospaced))
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 9)
+                            .background(palette.ink.opacity(index == 0 ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 12))
+                            .contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        .help("\(day.date.formatted(date: .abbreviated, time: .omitted)) · \(day.sky.caption) · 点击查看详情")
+                    }
+                }
+            } else {
+                Button(action: refreshWeather) {
+                    Label(weatherLoading ? "正在获取预报…" : reading?.forecastNote ?? "预报暂不可用 · 重试", systemImage: "cloud.slash")
+                        .font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+                }.buttonStyle(.plain).disabled(weatherLoading)
+            }
+        }.foregroundStyle(palette.ink)
+    }
+
     private var modelCell: some View {
-        HStack(alignment: .top, spacing: 24) {
+        VStack(alignment: .leading, spacing: 14) {
             modelIdentity(codex: false, model: ccModel, provider: ccProvider)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .leading, spacing: 12) {
-                modelIdentity(codex: true, model: codexModel, provider: "余额 \(balance)")
+            modelIdentity(codex: true, model: codexModel, provider: codexProvider)
+            HStack(spacing: 10) {
                 Button(action: refreshQuota) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        if windows.isEmpty {
-                            Label(quotaPlacard, systemImage: "arrow.clockwise")
-                                .font(.system(size: 10)).foregroundStyle(palette.inkSoft)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            ForEach(windows) { window in
-                                quotaRow(window)
-                                // The instant this window comes back, on its own
-                                // line: the percentages can only say *how much* is
-                                // left, and the clock is the half of the reading
-                                // that says *until when* — the two used to sit in
-                                // two different cards under two different words.
-                                resetLine(window)
+                    HStack(spacing: 8) {
+                        QuotaOrbit(windows: windows, ink: palette.ink).frame(width: 32, height: 32)
+                        VStack(alignment: .leading, spacing: 3) {
+                            if let window = windows.first {
+                                Text("已用 \(Int(min(100, max(0, window.usedPercent)).rounded()))%")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                Text(window.resetWait.isEmpty ? window.resetClock : window.resetWait)
+                                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(palette.ink.opacity(0.68))
+                                    .lineLimit(1)
+                            } else {
+                                Text(quotaPlacard).font(.system(size: 10)).lineLimit(2)
                             }
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).disabled(quotaLoading)
-                .help("点击刷新额度 · " + quotaHelp)
-                .accessibilityLabel("刷新 Codex 额度，" + quotaHelp)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(20)
-        .foregroundStyle(palette.ink)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(quotaLoading).opacity(quotaLoading ? 0.5 : 1)
+                    .help("点击刷新 · " + quotaHelp).accessibilityLabel("刷新 Codex 额度，" + quotaHelp)
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    if balanceWarning { Circle().fill(Color(hex: 0xFFB84D)).frame(width: 4, height: 4) }
+                    Text(balance).lineLimit(1).minimumScaleFactor(0.8)
+                }.font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(balanceWarning ? Color(hex: 0xFFCC80) : palette.ink.opacity(0.7))
+                    .padding(.horizontal, 6).padding(.vertical, 5)
+                    .background(palette.ink.opacity(0.07), in: Capsule()).help("账户余额：" + balance)
+            }
+        }.foregroundStyle(palette.ink)
     }
 
     private func modelIdentity(codex: Bool, model: String, provider: String) -> some View {
         Button(action: showModels) {
-            HStack(alignment: .top, spacing: 11) {
-                // **No tile, and the ink is the card's own.** This is the one
-                // surface whose ground is neither the theme's nor black: the
-                // greeting card paints its own `palette`, and when there is no
-                // weather reading that palette is the ice canvas — `#E7EEF6` at
-                // the top, `#D5DEEA` at the bottom. `Theme.bgSecondary` is
-                // `#F7FAFC`, so the branded tile is *lighter than the card it
-                // sits on*: measured against the shipped screenshot, the tile
-                // reads at 1.24:1 to its own background, i.e. a white square on
-                // a white card.
-                //
-                // The tile was tolerable while the ink was dark — `well: true,
-                // page: false` drew a black "A\" on that white chip. Passing
-                // `page: palette.isLightGround` then asked for the *white* ink on
-                // the *white* tile, and the mark measured **1.13:1** against the
-                // tile it was standing on: not "low contrast", gone. The two
-                // parameters were answering different questions and one answer
-                // was wrong.
-                //
-                // The card carries its own ink (`palette.ink`, `palette.inkSoft`)
-                // on every other element in this row, so the mark joins them: no
-                // tile of its own, and the ink named for the card's tone rather
-                // than for `Theme.isDark` — which is a question this surface does
-                // not answer, since the card is redrawn from the sky behind it.
-                // `isLightGround` is the card's own word for "dark ink here",
-                // which is exactly what `page: false` means.
-                ProductBrandMark(codex: codex,
-                                 well: false,
-                                 page: !palette.isLightGround)
-                    .frame(width: 32, height: 32)
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
-                        Text(codex ? "Codex" : "Claude Code").font(.system(size: 10, weight: .semibold))
-                        Image(systemName: "arrow.up.right").font(.system(size: 7, weight: .medium))
-                    }.foregroundStyle(palette.inkSoft)
-                    Text(model).font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .lineLimit(1).truncationMode(.middle).minimumScaleFactor(0.8)
-                    Text(provider).font(.system(size: 10)).foregroundStyle(palette.inkSoft)
-                        .lineLimit(1).truncationMode(.middle)
-                }
+            HStack(spacing: 9) {
+                ProductBrandMark(codex: codex, well: false, page: !palette.isLightGround).frame(width: 20, height: 20)
+                Text(model).font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
+                Text(provider).font(.system(size: 9)).lineLimit(1)
+                    .foregroundStyle(palette.ink.opacity(0.76))
+                    .padding(.horizontal, 6).padding(.vertical, 4)
+                    .background(palette.ink.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
             }.contentShape(Rectangle())
-        }
-        .buttonStyle(StatusMagneticStyle(tint: palette.ink))
-        .help("打开模型管理 · \(model)")
-        .accessibilityLabel("\(codex ? "Codex" : "Claude Code")，\(model)，\(provider)，打开模型管理")
+        }.buttonStyle(.plain).help("\(codex ? "Codex" : "Claude Code") · \(model) · 打开模型管理")
+            .accessibilityLabel("\(codex ? "Codex" : "Claude Code")，\(model)，\(provider)，打开模型管理")
     }
 
-    /// One line per window: the rail and the share of the allowance still
-    /// standing. The window's own reset clock rides on the line beneath (see
-    /// `resetLine`) rather than here — a row that carries the label, the rail,
-    /// the percentage and the clock at once truncates the clock to `9月28日
-    /// 00:44…`, and a half-clocked row is worse than no clock on it.
-    private func quotaRow(_ window: CodexQuotaWindow) -> some View {
-        let remaining = max(0, min(100, 100 - window.usedPercent))
-        return HStack(spacing: 6) {
-            Text(window.label).frame(width: 32, alignment: .leading)
-            GeometryReader { geo in
-                Capsule().fill(palette.ink.opacity(0.15))
-                Capsule().fill(remaining < 15 ? Color(hex: 0xFFBC9C) : palette.accent)
-                    .frame(width: geo.size.width * remaining / 100)
-                    .opacity(quotaLoading ? 0.5 : 1)
-            }.frame(minWidth: 32, maxWidth: 90).frame(height: 4)
-            Text("\(Int(remaining.rounded()))%").monospacedDigit().frame(width: 28, alignment: .trailing)
-            Spacer(minLength: 0)
-            Image(systemName: "arrow.clockwise").font(.system(size: 8))
-        }
-        .font(.system(size: 9, weight: .medium))
-        .foregroundStyle(palette.inkSoft)
-        .help("\(window.label)剩余 \(Int(remaining))%，\(window.resetClock) 重置")
+    private var balanceWarning: Bool {
+        let number = balance.split(separator: " ").first.map(String.init) ?? ""
+        return Double(number).map { $0 <= 0 } ?? false
     }
 
-    /// What the row above cannot say: how long it is until the window rolls
-    /// over again. The rail's percentage is a share, and a share of nothing
-    /// still reads as 0% — the wait is what says whether the allowance is
-    /// nearly back or hours away.
-    private func resetLine(_ window: CodexQuotaWindow) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: "clock")
-                .font(.system(size: 7.5, weight: .semibold))
-            Text("\(window.resetClock) · \(window.resetWait)")
-                .font(.system(size: 9, weight: .medium, design: .rounded))
-                .rollingNumber(valueKey: window.resetClock)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .foregroundStyle(palette.ink.opacity(0.62))
-        .padding(.leading, 38)
-        .accessibilityHidden(true)
-    }
-
-    /// What the Codex mark's lane says when there are no windows to draw: the
-    /// reason, in the card's own two words — a live "正在读取额度…" while the call
-    /// is out, the failure note from the store otherwise. This is the *empty*
-    /// lane's copy; a lane that has rows keeps them and marks the refresh by
-    /// lighting up instead, which is why `quotaLoading` goes to the mark too.
     private var quotaPlacard: String {
         if quotaLoading { return "正在读取额度…" }
         if let quotaNote, !quotaNote.isEmpty { return quotaNote }
@@ -404,64 +378,46 @@ struct GreetingStatusSheet: View {
         guard !windows.isEmpty else { return quotaNote ?? "暂无额度数据" }
         return windows.map {
             let wait = $0.resetWait.isEmpty ? "" : "（\($0.resetWait)）"
-            return "\($0.label)剩余 \(Int((100 - $0.usedPercent).rounded()))%，\($0.resetClock)\(wait)"
+            return "\($0.label)已用 \(Int($0.usedPercent.rounded()))%，\($0.resetClock)\(wait)"
         }
         .joined(separator: " · ")
     }
 
-    /// Today's volume and today's money in one cell.
-    ///
-    /// They were two cells whose captions differed and whose figures did not:
-    /// both are "how much of my work today", and splitting them cost a whole
-    /// column of the row. The token figure leads (it is the primary reading),
-    /// the cost rides in a pill beside it (it is an estimate, and the pill says
-    /// so), and the day-over-day pair sits underneath as two chips — the today
-    /// chip carries the accent the comparison bar is drawn in, so the bar and
-    /// the figure it compares are visibly the same reading.
     private var todayCell: some View {
         Button(action: showUsage) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 7) {
-                    InstrumentGlyph(kind: .tokens, tint: palette.ink, detailed: true)
-                        .frame(width: 15, height: 15)
-                    Text("今日用量")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(palette.inkSoft)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("今日用量").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.ink.opacity(0.72))
+                    Spacer()
+                    Image(systemName: "arrow.up.right").font(.system(size: 10))
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 20) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(UsageStats.formatTokens(tokens))
-                        .font(.system(size: 30, weight: .medium, design: .rounded))
+                        .font(.system(size: 34, weight: .semibold, design: .rounded))
                         .monospacedDigit().rollingNumber(valueKey: String(tokens))
                         .lineLimit(1).minimumScaleFactor(0.6)
                     Spacer(minLength: 0)
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text(spend).font(.system(size: 18, weight: .medium, design: .rounded)).monospacedDigit()
-                        Text("预估费用").font(.system(size: 9)).foregroundStyle(palette.inkSoft)
+                    if yesterdayTokens > 0 {
+                        let change = (Double(tokens) / Double(yesterdayTokens) - 1) * 100
+                        Text(String(format: "%@%.0f%%", change >= 0 ? "↑" : "↓", abs(change)))
+                            .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(palette.isLightGround ? palette.accent : Color(hex: 0x7CE7B8))
                     }
                 }
-                HStack(spacing: 8) {
-                    TokenComparison(today: tokens, yesterday: yesterdayTokens,
-                                    tint: palette.accent, secondary: palette.inkSoft)
-                        .frame(width: 54, height: 15)
-                    DayChip(label: "今日", value: tokens, tint: palette.accent)
-                    DayChip(label: "昨日", value: yesterdayTokens, tint: palette.inkSoft, muted: true)
-                    Spacer(minLength: 0)
-                    Text("\(calls) 次调用")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(palette.inkSoft)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(palette.ink)
-            .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
-            .padding(20).contentShape(Rectangle())
-        }
-        .buttonStyle(StatusMagneticStyle(tint: palette.accent))
-        .help("今天 \(tokens.formatted()) Token（\(spend)，按模型价格估算），昨天 \(yesterdayTokens.formatted()) Token，共 \(calls) 次调用。点击查看用量。")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("今日 \(tokens) Token，花费 \(spend)，昨日 \(yesterdayTokens) Token，\(calls) 次调用")
+                TokenComparison(today: tokens, yesterday: yesterdayTokens, tint: palette.accent, secondary: palette.inkSoft)
+                    .frame(height: 12)
+                HStack {
+                    Text("昨日 \(UsageStats.formatTokens(yesterdayTokens))")
+                    Spacer()
+                    Text("Token")
+                }.font(.system(size: 9)).foregroundStyle(palette.ink.opacity(0.68))
+                Text("\(spend) · \(calls.formatted()) 次")
+                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(palette.ink.opacity(0.76))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }.foregroundStyle(palette.ink).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .help("今日与昨日总量对比 · 费用按模型价格估算 · 点击查看用量")
+            .accessibilityLabel("今日 \(tokens) Token，预估费用 \(spend)，昨日 \(yesterdayTokens) Token，\(calls) 次调用，查看用量")
     }
 
     private var weatherAccessibility: String {
@@ -470,108 +426,129 @@ struct GreetingStatusSheet: View {
         return "\(reading?.place ?? city)，\(value)，\(weatherLoading ? "正在更新" : weatherNote ?? "")"
     }
 
-    private var compactWeather: some View {
-        HStack(spacing: 12) {
-            Button { selectedDate = nil; weatherDetails = true } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: sceneSky.symbol(night: sceneNight))
-                        .symbolRenderingMode(.hierarchical).font(.system(size: 28)).foregroundStyle(palette.accent)
-                    Text(selectedDay.map { "\(Int($0.high.rounded()))°" } ?? reading?.temperatureText ?? "—°")
-                        .font(.system(size: 34, weight: .light, design: .rounded)).monospacedDigit()
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(reading?.place ?? city).font(.system(size: 11, weight: .semibold))
-                        Text(weatherLoading ? "正在更新…" : weatherNote ?? "查看天气详情 ›")
-                            .font(.system(size: 10)).foregroundStyle(palette.inkSoft).lineLimit(2)
-                    }
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(weatherAccessibility).accessibilityHint("打开天气详情")
-            Spacer()
-            Button(action: refreshWeather) {
-                Image(systemName: "arrow.clockwise").frame(width: 32, height: 32).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(weatherLoading).accessibilityLabel("刷新天气")
-        }.foregroundStyle(palette.ink)
-    }
-
     private var weatherBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "location.fill").font(.system(size: 9))
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "location.fill").font(.system(size: 8))
                 Text(reading?.place.isEmpty == false ? reading!.place : (city.isEmpty ? "请设置城市" : city))
-                    .lineLimit(1)
+                    .font(.system(size: 10, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 0)
                 Button(action: refreshWeather) {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
                         .symbolEffect(.rotate, options: .repeating, isActive: weatherLoading && !reduceMotion && visible)
-                        .frame(width: 28, height: 28).contentShape(Rectangle())
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(weatherLoading)
-                    .help("刷新天气").accessibilityLabel("刷新天气")
-            }.font(.system(size: 11, weight: .medium)).foregroundStyle(palette.inkSoft)
+                    .help(weatherNote ?? reading.map { "刷新天气 · 更新于 \($0.observedAt.formatted(date: .omitted, time: .shortened))" } ?? "刷新天气")
+                    .accessibilityLabel("刷新天气")
+            }.foregroundStyle(palette.ink.opacity(0.75))
             Button { weatherDetails = true } label: {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: sceneSky.symbol(night: sceneNight))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(palette.accent, palette.ink, palette.inkSoft)
-                    .font(.system(size: 36, weight: .light))
-                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(selectedDay.map { "\(Int($0.high.rounded()))°" } ?? reading?.temperatureText ?? "—°")
-                        .font(.system(size: 58, weight: .light, design: .rounded))
-                        .monospacedDigit().contentTransition(.numericText())
-                    Text(selectedDay.map { "\($0.sky.caption) · 当日最高" } ?? (sceneNight && reading?.sky == .clear ? "晴夜" : reading?.skyLabel) ?? (weatherLoading ? "正在获取实况" : "暂无天气"))
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(palette.inkSoft)
-                }
-            }
-            }.buttonStyle(.plain).help("点击查看天气详情与未来五天预报")
-                .accessibilityLabel(weatherAccessibility).accessibilityHint("打开天气详情与未来五天预报")
-            if let reading {
-                HStack(spacing: 12) {
-                    Label("\(Int((selectedDay?.high ?? reading.highC).rounded()))°", systemImage: "arrow.up")
-                    Label("\(Int((selectedDay?.low ?? reading.lowC).rounded()))°", systemImage: "arrow.down")
-                    Spacer()
-                    if selectedDay != nil {
-                        Button("回到现在") {
-                            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { selectedDate = nil }
-                        }.buttonStyle(.plain).foregroundStyle(palette.accent)
-                    } else { Text("详情 ›").foregroundStyle(palette.inkSoft) }
-                }.font(.system(size: 11, weight: .medium))
-                if selectedDay == nil {
-                    Text("更新于 " + reading.observedAt.formatted(.dateTime.hour().minute()))
-                        .font(.system(size: 9)).foregroundStyle(palette.inkSoft)
-                }
-            }
-            if let weatherNote {
-                Text(weatherNote).font(.system(size: 10)).foregroundStyle(palette.inkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Image(systemName: (reading?.sky ?? .cloudy).symbol(night: reading?.isDay == false))
+                            .symbolRenderingMode(.palette).foregroundStyle(palette.accent, palette.ink)
+                            .font(.system(size: 27, weight: .light))
+                        Text(reading?.temperatureText ?? "—°")
+                            .font(.system(size: 43, weight: .thin)).monospacedDigit().contentTransition(.numericText())
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(reading?.skyLabel ?? (weatherLoading ? "获取中" : "暂无天气"))
+                            Image(systemName: "chevron.down").font(.system(size: 8))
+                        }.font(.system(size: 10)).foregroundStyle(palette.ink.opacity(0.75))
+                        Spacer(minLength: 0)
+                    }
+                    if let reading {
+                        HStack(spacing: 8) {
+                            Text("\(Int(reading.lowC.rounded()))°")
+                            DaybreakTemperatureRange(low: reading.lowC, high: reading.highC, current: reading.temperatureC).frame(height: 8)
+                            Text("\(Int(reading.highC.rounded()))°")
+                        }.font(.system(size: 10, design: .monospaced)).foregroundStyle(palette.ink.opacity(0.8))
+                    }
+                    if weatherNote != nil {
+                        Label("更新失败 · 显示上次读数", systemImage: "exclamationmark.circle")
+                            .font(.system(size: 9)).foregroundStyle(palette.ink.opacity(0.8))
+                    }
+                }.padding(.bottom, 4).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel(weatherAccessibility).accessibilityHint("打开天气详情")
         }
-        .foregroundStyle(palette.ink)
-        .accessibilityElement(children: .contain)
+        .foregroundStyle(palette.ink).padding(.horizontal, 16).padding(.vertical, 10)
+        .modifier(DaybreakGlass(dark: false))
     }
 
+}
+
+private struct DaybreakGlass: ViewModifier {
+    var dark: Bool
+    func body(content: Content) -> some View {
+        content
+            .background((dark ? Color(hex: 0x07182F).opacity(0.70) : Color.white.opacity(0.04)), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .background(.ultraThinMaterial.opacity(dark ? 0.2 : 0.35), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+    }
+}
+
+struct DaybreakTemperatureRange: View {
+    var low: Double
+    var high: Double
+    var current: Double?
+    var body: some View {
+        GeometryReader { geo in
+            Capsule().fill(LinearGradient(colors: [Color(hex: 0x7FC8FF), Color(hex: 0xFFB05C)], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 4).frame(maxHeight: .infinity)
+            if let current {
+                Circle().fill(.white).frame(width: 8, height: 8)
+                    .offset(x: max(0, geo.size.width - 8) * min(1, max(0, (current - low) / max(1, high - low))))
+            }
+        }.accessibilityHidden(true)
+    }
 }
 
 private struct GreetingClock: View {
     var ink: Color
     var secondary: Color
+    var timezone: String?
     @Environment(\.surfaceIsVisible) private var visible
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        TimelineView(.periodic(from: .now, by: visible ? 1 : 3600)) { context in
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
+        TimelineView(.animation(minimumInterval: 1, paused: !visible)) { context in
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(context.date, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "en_GB")))
-                        .font(.system(size: 30, weight: .medium, design: .rounded))
-                    Text(context.date, format: .dateTime.second(.twoDigits))
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(secondary)
-                        .frame(width: 22, alignment: .leading)
-                }.monospacedDigit()
-                Text(TimeZone.current.identifier.replacingOccurrences(of: "_", with: " "))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(secondary)
+                        .font(.system(size: 44, weight: .ultraLight)).monospacedDigit()
+                    VStack(spacing: 5) {
+                        Text(String(format: "%02d", Calendar.current.component(.second, from: context.date)))
+                            .font(.system(size: 12, design: .monospaced)).contentTransition(reduceMotion ? .identity : .numericText())
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(ink.opacity(0.2))
+                            Rectangle().fill(ink.opacity(0.7)).frame(width: 20 * Double(Calendar.current.component(.second, from: context.date)) / 60)
+                        }.frame(width: 20, height: 1)
+                    }.foregroundStyle(ink.opacity(0.65))
+                }
+                Text(context.date.formatted(.dateTime.month().day().weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
+                    .font(.system(size: 11, weight: .medium)).tracking(0.4).foregroundStyle(ink.opacity(0.76))
+                if let timezone, let zone = TimeZone(identifier: timezone), zone.secondsFromGMT(for: context.date) != TimeZone.current.secondsFromGMT(for: context.date) {
+                    Text("天气当地 \(context.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone)))")
+                        .font(.system(size: 10)).foregroundStyle(secondary)
+                }
             }.foregroundStyle(ink)
-        }
-        .accessibilityElement(children: .combine)
+        }.accessibilityElement(children: .combine)
+    }
+}
+
+private struct QuotaOrbit: View {
+    var windows: [CodexQuotaWindow]
+    var ink: Color
+    var body: some View {
+        ZStack {
+            ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { index, window in
+                let used = min(100, max(0, window.usedPercent))
+                let tint = Color(hex: used > 85 ? 0xFF8A75 : used >= 60 ? 0xFFD37A : 0x7FD6FF)
+                Circle().stroke(ink.opacity(0.12), lineWidth: 3).padding(CGFloat(index) * 6)
+                Circle().trim(from: 0, to: used / 100)
+                    .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90)).padding(CGFloat(index) * 6)
+            }
+            if windows.isEmpty { Image(systemName: "arrow.clockwise").font(.system(size: 16)) }
+        }.accessibilityHidden(true)
     }
 }
 
@@ -587,9 +564,9 @@ private struct DayChip: View {
     var muted = false
     var body: some View {
         HStack(spacing: 4) {
-            Capsule()
+            Circle()
                 .fill(tint)
-                .frame(width: 12, height: 3.5)
+                .frame(width: 5, height: 5)
                 .opacity(muted ? 0.45 : 1)
             Text(label)
             Text(UsageStats.formatTokens(value))
@@ -603,69 +580,21 @@ private struct DayChip: View {
     }
 }
 
-/// The cost figure as a pill on the token cell's caption row: it is money, it
-/// is an estimate, and a pill is the app's word for "an aside about the number
-/// beside me". A slash through its ¥ says the estimate part without a sentence.
-private struct CostCapsule: View {
-    var text: String
-    var tint: Color
-    var body: some View {
-        HStack(spacing: 5) {
-            // `yensign.circle`, not a slashed `yensign`.
-            //
-            // The slash was meant to say "estimate", and it said "crossed out":
-            // a thin diagonal over an 11pt currency mark reads as a disabled or
-            // struck-through item long before it reads as an approximation — it
-            // is the glyph convention for *broken*. It also left the pill with
-            // **two** ¥-like marks side by side (the slashed one and the plain
-            // one the formatted amount carries), which is worse than either
-            // alone. The circled mark labels the currency cleanly, and the
-            // estimate is a word now, in `label`, where a reader gets it the
-            // first time.
-            Image(systemName: "yensign.circle")
-                .font(.system(size: 11, weight: .medium))
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.75)
-            Text(label)
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(tint.opacity(0.72))
-                .lineLimit(1)
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(Capsule().fill(tint.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 1))
-        .help("按模型刊例价估算，不代表实际账单")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label) \(text)，按模型价格估算，不代表实际账单")
-    }
-
-    /// "估" is the one character that says the figure is an estimate, and it is
-    /// a character this pill can afford — the slash it replaces was trying to
-    /// say the same thing with a mark that means "broken".
-    private var label: String { "估" }
-}
-
 private struct TokenComparison: View {
     var today: Int
     var yesterday: Int
     var tint: Color
     var secondary: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         GeometryReader { geo in
             let maximum = Double(max(1, max(today, yesterday)))
             VStack(alignment: .leading, spacing: 3) {
                 Capsule().fill(tint)
-                    .frame(width: geo.size.width * Double(max(0, today)) / maximum, height: 5)
+                    .frame(width: geo.size.width * Double(max(0, today)) / maximum, height: 4)
                 Capsule().fill(secondary.opacity(0.4))
-                    .frame(width: geo.size.width * Double(max(0, yesterday)) / maximum, height: 5)
+                    .frame(width: geo.size.width * Double(max(0, yesterday)) / maximum, height: 3)
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: today)
         .accessibilityHidden(true)
     }
 }

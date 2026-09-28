@@ -67,7 +67,10 @@ struct IslandSession: Identifiable, Equatable {
     let updatedAt: Date
     let cwd: String
     let sessionId: String
-    /// Unique proof that the most recent turn delivered a final answer.
+    /// Unique proof that the most recent turn delivered a final answer; also
+    /// the turn *key* the completion detector de-duplicates on. Claude sessions
+    /// hand in `turnCount|uuid` (see `ProviderStore.detectIdleTransitions`),
+    /// Codex its `task_complete` turn id, Cursor its `turn-<offset>`.
     var completionID: String? = nil
     /// The live process to reveal on click (Claude pid / Codex holder).
     var pid: Int? = nil
@@ -116,13 +119,21 @@ final class IslandLiveModel: ObservableObject {
     @Published private(set) var claudeRoute = ""
     @Published private(set) var codexRoute = ""
     @Published private(set) var vpnRunning = false
-    /// A session that just went busy → idle. Fires once per transition.
+    /// A session whose turn just delivered an answer. Fires once per turn —
+    /// see `ConfirmedCompletionDetector`. The publisher name is historical: it
+    /// is "delivered", not "went idle", and the distinction is the whole point
+    /// of the rule.
     let finished = PassthroughSubject<IslandSession, Never>()
 
     /// A Codex quota window that just rolled over. Fires once per rollover —
     /// see `QuotaResetDetector`, which is what keeps a 4.2 s glance from
     /// re-announcing the same reset.
     let quotaReset = PassthroughSubject<CodexQuotaWindow, Never>()
+
+    /// How recent a session's own last write must be for the alert strip to
+    /// show its completed turn — the same intent as `ProviderStore`'s banner
+    /// rule, kept beside the strip that reads it.
+    private static let alertFreshness: TimeInterval = 60
 
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
 
@@ -208,8 +219,16 @@ final class IslandLiveModel: ObservableObject {
 
     private func apply(_ fresh: [IslandSession]) {
         let oldIDs = sessions.map(\.id)
+        // The turn key is the snapshot's own identity for "a new answer landed"
+        // (`turnCount|uuid` / `turnId` / `turn-<offset>`), so an answer that was
+        // already announced never re-fires, and one that lands while the island
+        // is watching still does. The island's alert still needs freshness (an
+        // answer delivered while the island was off screen must not pop out of
+        // the notch when it comes back); the window matches the banner's.
+        let now = Date()
         let completed = completionDetector.record(fresh.map {
-            (id: $0.id, isBusy: $0.isBusy, completionID: $0.completionID)
+            (id: $0.id, isBusy: $0.isBusy, turnKey: $0.completionID,
+             fresh: now.timeIntervalSince($0.updatedAt) <= Self.alertFreshness)
         })
         for session in fresh where completed.contains(session.id) {
             finished.send(session)

@@ -72,6 +72,8 @@ class ProviderStore: ObservableObject {
     @Published var heartbeats: [Int: [Bool]] = [:]
     static let heartbeatLength = AppConfig.heartbeatLength
     private var sessionTimer: Timer?
+    /// One-shot re-arm for a deferred scan (see `scheduleDeferredSessionPoll`).
+    private var deferredPollTimer: Timer?
     // Main-thread gates keep each scanner single-flight and preserve result order.
     private var sessionScanPending = false
     private var cursorScanPending = false
@@ -80,6 +82,18 @@ class ProviderStore: ObservableObject {
     /// file writes + widget reload when the data is unchanged (see
     /// `WidgetSnapshotWriter.write`).
     private var lastSnapshotData: Data?
+
+    /// Poll cadence to fall back to when a scan has to be deferred because the
+    /// previous one is still running. Only reached when a scan outlives its
+    /// own interval, which is exactly when the app is busiest.
+    private static let deferredPollRetry: TimeInterval = 1.5
+
+    /// How recent an agent session's own last write must be for its completed
+    /// turn to be announced. Several hidden-tier poll intervals, so a normal
+    /// end-of-turn is always inside it, while a turn that ended while nobody
+    /// was polling (asleep, relaunched, hidden for a long stretch) is not
+    /// announced late. See `ConfirmedCompletionDetector`.
+    private static let completionFreshness: TimeInterval = 60
 
     // Only a new transcript-confirmed final answer may produce an idle banner.
     @Published var anySessionBusy = false   // drives the menu-bar icon
@@ -159,7 +173,10 @@ class ProviderStore: ObservableObject {
     /// delegate calls `refresh()` again anyway (which would duplicate that).
     init() {}
 
-    deinit { sessionTimer?.invalidate() }
+    deinit {
+        sessionTimer?.invalidate()
+        deferredPollTimer?.invalidate()
+    }
 
     // MARK: - Refresh
 
@@ -188,7 +205,11 @@ class ProviderStore: ObservableObject {
     // MARK: - Sessions
 
     func refreshSessions() {
-        guard !sessionScanPending else { return }
+        // A scan that outlives its interval (a 96 KB tail per session on a cold
+        // cache) would otherwise drop every poll that lands while it runs — and
+        // the dropped polls are the ones the completion detectors read. Re-arm
+        // a short timer instead of waiting out the next interval.
+        guard !sessionScanPending else { scheduleDeferredSessionPoll(); return }
         sessionScanPending = true
         // The scan reads session JSONs + transcript tails + subagent dirs —
         // pure file I/O. Run it off the main thread and only hop back to
@@ -245,12 +266,21 @@ class ProviderStore: ObservableObject {
         if next != heartbeats { heartbeats = next }
     }
 
-    /// A busy → idle edge is only a candidate: wait for a new final-answer
-    /// marker from the transcript before notifying.
+    /// "A turn just delivered its answer": a new turn key on a session whose
+    /// transcript was just written — see `ConfirmedCompletionDetector`. The key
+    /// mixes the turn counter with the answer id so a turn that produces no
+    /// transcript change cannot re-announce the previous answer.
     private func detectIdleTransitions(_ fresh: [SessionInfo]) {
         let alive = fresh.filter(\.isAlive)
-        let completed = claudeCompletionDetector.record(alive.map {
-            (id: $0.pid, isBusy: $0.status == .busy || $0.toolPending, completionID: $0.completionID)
+        let now = Date().timeIntervalSince1970 * 1000
+        // `updatedAt` is the session file's own clock (the CLI writes it on
+        // every status change), which is the timestamp that moves when a turn
+        // ends — the transcript's mtime can be a minute older.
+        let completed = claudeCompletionDetector.record(alive.map { session in
+            (id: session.pid,
+             isBusy: session.status == .busy || session.toolPending,
+             turnKey: session.completionID.map { "\(session.turnCount)|\($0)" },
+             fresh: now - session.updatedAt <= Self.completionFreshness * 1000)
         })
         for pid in completed {
             if let session = alive.first(where: { $0.pid == pid }) {
@@ -262,9 +292,15 @@ class ProviderStore: ObservableObject {
 
     /// Cursor flavor of the same edge detection (see `detectIdleTransitions`).
     private func detectIdleTransitionsCursor(_ fresh: [CursorSessionInfo]) {
+        // Cursor's `turn-<byte offset>` id is already unique per delivered
+        // answer, so it is its own turn key. Cursor's transcript was just read
+        // (its `lastUpdatedAt` is only refreshed on a write), so freshness is
+        // the runtime's own clock against that field.
+        let now = Date().timeIntervalSince1970 * 1000
         let completed = cursorCompletionDetector.record(fresh.map {
             (id: $0.composerId, isBusy: $0.status == .active || $0.toolPending,
-             completionID: $0.completionID)
+             turnKey: $0.completionID,
+             fresh: now - $0.lastUpdatedAt <= Self.completionFreshness * 1000)
         })
         for id in completed {
             if let session = fresh.first(where: { $0.composerId == id }) {
@@ -312,6 +348,7 @@ class ProviderStore: ObservableObject {
                 result[i].currentActivity = old.currentActivity
                 result[i].toolPending = old.toolPending
                 result[i].completionID = old.completionID
+                result[i].turnCount = old.turnCount
                 result[i].firstPrompt = old.firstPrompt
                 result[i].contextLimit = old.contextLimit
                 result[i].subagents = old.subagents
@@ -327,6 +364,11 @@ class ProviderStore: ObservableObject {
             result[i].currentActivity = ctx.activity
             result[i].toolPending = ctx.toolPending
             result[i].completionID = ctx.completionID
+            // The counter is read from a sliding transcript window, so letting
+            // it fall would put the key back to a value that was already
+            // announced and re-fire a completion. Clamped, not replaced: a
+            // window shift can only repeat a key, never regress one.
+            result[i].turnCount = max(result[i].turnCount, ctx.turnCount)
             result[i].firstPrompt = ctx.title
             result[i].transcriptSize = size
             if ctx.toolPending { result[i].status = .busy }
@@ -365,7 +407,7 @@ class ProviderStore: ObservableObject {
             }
             return
         }
-        guard !cursorScanPending else { return }
+        guard !cursorScanPending else { scheduleDeferredSessionPoll(); return }
         cursorScanPending = true
         Task.detached(priority: .utility) {
             let result = CursorSessionMonitor.fetchActive()
@@ -399,7 +441,7 @@ class ProviderStore: ObservableObject {
     /// keeps `isSubagent`-aware consumers correct by construction rather than
     /// depending on the monitor having filtered them out upstream.
     private func refreshExternalSessions() {
-        guard !externalScanPending else { return }
+        guard !externalScanPending else { scheduleDeferredSessionPoll(); return }
         externalScanPending = true
         Task.detached(priority: .utility) {
             let scan = ExternalSessionMonitor.scan()
@@ -412,8 +454,13 @@ class ProviderStore: ObservableObject {
                     .filter { seen.insert($0.id).inserted }
                 if self.externalSessions == result { return }
                 self.externalSessions = result
+                // `updatedAt` is the rollout file's mtime, i.e. when Codex last
+                // wrote to the thread; a `task_complete` is always the last
+                // thing written before the writer goes quiet.
+                let now = Date().timeIntervalSince1970 * 1000
                 let completed = self.externalCompletionDetector.record(result.map {
-                    (id: $0.id, isBusy: $0.isActive, completionID: $0.completionID)
+                    (id: $0.id, isBusy: $0.isActive, turnKey: $0.completionID,
+                     fresh: now - $0.updatedAt <= Self.completionFreshness * 1000)
                 })
                 for id in completed {
                     // Only roots have anything to resume, and "a Codex run
@@ -428,8 +475,23 @@ class ProviderStore: ObservableObject {
         }
     }
 
+    /// Re-run the poll shortly when one had to be deferred. Deliberately cheap:
+    /// the timer is one-shot, and `refreshSessions` re-kicks Cursor and Codex
+    /// itself, so a single re-arm covers all three scans.
+    private func scheduleDeferredSessionPoll() {
+        guard deferredPollTimer == nil else { return }
+        deferredPollTimer = Timer.scheduledTimer(withTimeInterval: Self.deferredPollRetry,
+                                                 repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.deferredPollTimer = nil
+            self.refreshSessions()
+        }
+    }
+
     private func startSessionPolling() {
         sessionTimer?.invalidate()
+        deferredPollTimer?.invalidate()
+        deferredPollTimer = nil
         let interval: TimeInterval
         if !UIWakePolicy.hasVisibleWindow {
             interval = AppConfig.sessionPollHiddenInterval

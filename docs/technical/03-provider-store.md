@@ -46,13 +46,13 @@ refresh()
 ```
 
 - `usagePeriod` 与 `usageReferenceDate` 的 `didSet` 仅在值变化时触发 `refreshUsage()`（B8）。
-- `refreshSessions()` 的扫描在 `Task.detached(priority: .utility)` 中离主线程执行，回主线程发布结果、追加心跳采样、跑 `IdleTransitionDetector`；检测到 busy→idle 边沿且 `AppPreferences.idleNotifyEnabled` 开启时调 `NotificationService.notifyIdle`（Claude/Cursor 两种文案）。
+- `refreshSessions()` 的扫描在 `Task.detached(priority: .utility)` 中离主线程执行，回主线程发布结果、追加心跳采样、跑 `ConfirmedCompletionDetector`；**只有「新的一轮真的交付了答案」才通知**，规则是三条同时成立：该会话的**轮次键（turn key）变了**、该会话自己的文件**刚刚写过**（60 s 内）、当前不是忙状态。轮次键三家各取本地权威字段：Claude 用「轮次+步数计数 + 最终答复 uuid」（计数来自 transcript 尾窗，`ProviderStore.enrich` 里做单调夹紧，避免窗口滑动把键推回旧值）、Codex 用 `task_complete.turn_id`、Cursor 用 `turn-<字节偏移>`。这样被中断 / 杀掉的一轮（键没动）、起始前就存在的答案（首次见到只做基线）、以及没有任何人在看时结束的一轮（不新鲜）都不会播报；反过来，短于轮询间隔的一轮、以及忙→闲边沿之后才落盘的答案也能报出来。
 - `refreshCursorSessions()` / `refreshUsage()` 的 `Task.detached` 用 `MainActor.run { [weak self] in }` 捕获弱引用，避免强引用 self（B2）。
 
 ## 空闲通知
 
-- `AppPreferences`（`Models/AppPreferences.swift`）：`@Published var idleNotifyEnabled`（UserDefaults 持久化，默认开），开启时向系统请求通知授权。
-- `NotificationService`（`Utils/NotificationService.swift`）：封装 UNUserNotificationCenter——授权、注册 `IDLE_SESSION` category（含 "在终端恢复" 动作）、`notifyIdle(session:)` / `notifyIdle(cursor:)` 构建 "Claude 等你输入" / "Cursor 等你输入" 通知。
+- `AppPreferences`（`Models/AppPreferences.swift`）：`@Published var idleNotifyEnabled`（UserDefaults 持久化，**默认关**——与截图热键一起在「权限与隐私」里逐项 opt-in，见设计 §01），开启时向系统请求通知授权。
+- `NotificationService`（`Utils/NotificationService.swift`）：封装 UNUserNotificationCenter——授权、注册 `IDLE_SESSION` category（含 "在终端恢复" 动作）、`notifyIdle(session:)` / `notifyIdle(cursor:)` / `notifyIdle(external:)` 构建「Claude / Cursor / <客户端> 已完成」+「<项目> · 最终答复已就绪」的通知。
 - 点按通知或 Resume 动作 → post `.resumeSession`（userInfo 携带 pid）→ `AppDelegate` 用 `TerminalLauncher.resumeClaudeSession` 在 Warp/Terminal 恢复会话。
 
 ## `loadProviders()` 的当前态探测

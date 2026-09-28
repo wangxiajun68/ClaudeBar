@@ -9,7 +9,7 @@
 | `MenuBarController.swift` | NSStatusItem + NSPanel；`MenuBarMark` 矢量模板标；常驻速率 + 电池条 `VpnMenuBarRateView`（宽度由布局常量推导，`Tests/menubar-strip-regressions.py` 锁定宽度、隧道内外两色与无头 1.618∶1 胶囊） |
 | `Utils/SystemThroughput.swift` | 机器总吞吐：`getifaddrs(AF_LINK)` 读各网卡 `if_data` 字节数，按接口做 `UInt32` 回绕差分后求和；隧道关闭时菜单栏 ↓/↑ 的来源 |
 | `NotchIslandController.swift` | 刘海灵动岛：`NotchIslandState`（收起 / 提醒 / 展开）、固定尺寸面板、热区与离开判定、完成提醒计时 |
-| `Models/IslandLiveModel.swift` | 灵动岛数据：三家会话扁平化、忙→闲完成事件、当前路由、VPN、今日 / 本月 / 30 天用量 |
+| `Models/IslandLiveModel.swift` | 灵动岛数据：三家会话扁平化、按轮次键判定「交付了新答案」的完成事件、当前路由、VPN、今日 / 本月 / 30 天用量 |
 | `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时的伪刘海 |
 | `Views/Island/*.swift` | 灵动岛形状、根视图与 `IslandStyle`、会话行、用量卡（`Canvas` 直方图）、完成提醒 |
 | `Utils/PermissionCenter.swift` | 权限清单 `AppPermission`、线程安全开关 `PermissionGate`、系统授权状态 `PermissionCenter` |
@@ -20,7 +20,7 @@
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数 |
 | `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
 | `Views/Shared/WeatherExplorer.swift` | 天气详情 popover：六日选择轨、共享刻度温区、太阳高度曲线 `SolarHorizon` 与各项读数；无嵌套面板底 |
-| `Views/Shared/CodexModelMark.swift` | 概览状态单上的客户端 mark：品牌图形 + 一条 Codex 额度 lane（一窗口一条、条高即剩余；可选按读数调速扫光） |
+| `Views/Shared/CodexModelMark.swift` | popup 头部 chip 的客户端 mark：`ProductBrandMark` 的品牌图形 + 家族名（额度由 chip 自己的行承载） |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
 | `Utils/OttyBridge.swift` | `otty-cli` socket IPC（`pane list`，勿用 `panes` 简写）：按 `agent_session_id` 聚焦已有窗格；活会话 `reveal` 只聚焦不新建；已结束会话才新开标签 resume |
@@ -52,15 +52,18 @@
 | `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
 | `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
 | `Tools/make-claudebar-mark.py` | 从 `Sources/AppIcon-1024.png` 推出 ClaudeBar 自己的 mark（两个明暗变体），给用量图例里的「第三方」用；`Tests/provider-icon-regressions.py` 因此要能读 RGBA 真彩色 PNG |
+| `Tools/recompress-icon.py` | 无损重压 `Sources/AppIcon.icns`：容器里每个尺寸各是一张独立 PNG，逐成员重编并**逐像素比对**后才落盘（不通过就整档拒写）。重压后 2,071,438 → 1,705,955 B；`--check` 断言它已是最小 |
+| `Sources/ClaudeBar/Resources/mihomo-core.xz` | 随包内置的 VPN 内核压缩档（`.version` 记版本）。原始二进制 54 MB，deflate 压不动（release `.zip` 里仍占 20 MB），`.xz` 是 13.1 MB；提交在仓库里所以发布构建不必重跑 LZMA。`Tests/core-regressions.py` 解它一次做往返断言 |
 | `Tools/render-control-preview.py` + `Tools/control-preview-sheet.swift` / `control-preview-support.swift` | 控件预览图：900pt 的明暗两版控件表（`ActionButton` / `ChipButton` / `InstrumentToggleStyle` / `SegmentedCapsule`），`ImageRenderer` 出 `.build/control-preview/sheet-{light,dark}.png`。**声明是从生产源码里抽出来的**（`InstrumentControls.swift` / `Interaction.swift` / `UiverseSurfaces.swift`），所以预览图不会和真控件漂移；`AppPreferences` / `surfaceIsVisible` 用替身 |
 | `Views/Shared/UiverseSurfaces.swift` | 表面语言单点：`TileSurface` 的四个部件（底 + 强调水洗 / `InnerFrameRing` / `DepthLens` / 悬停描边 + 抬升，`lift:` 可关）、`SegmentedCapsule`（唯一的筛选胶囊）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep`、`.depthTilt()` 与 `PageHeaderCard`；`LoadRing` 与 `InstrumentRing` 均已删除（弧与环在图标尺寸上读作「转圈等待」且复述下方数字）；见 [DESIGN.md](../../DESIGN.md) 的 Surfaces 与 Machine marks |
 | `Views/Shared/InstrumentControls.swift` | 控件语言单点（表面文件说卡片*是什么*，这个文件说控件被碰到时*做什么*）：`InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle`（唯一的字段凹槽）、`InstrumentToggleStyle`（唯一的开关）、`PerimeterSweep` + `GroundShadow`、`headerControl()`（页头带自己的控件）、`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`（唯一的下压按钮；`ControlTone` = 这个控件**是什么**：`.sparkle` 深色板（默认）/ `.neutral` / `.accent` / `.destructive`，`ControlEmphasis` = 是不是本页默认动作）、`InstrumentButtonStyle` 与 `ProviderActionStyle` 是同一块板的两个历史名（调用点按位置传参，转发到 `ActionPlateButtonStyle`，因此不会漂移）、`InstrumentMenuLabel`。`adaptiveGlassButton()` 已删除，口径见 [DESIGN.md](../../DESIGN.md) 的 Controls 表 |
-| `Views/Shared/ProductBrandMark.swift` | 三家客户端 + ClaudeBar 自己的真实品牌图形（LobeHub `@lobehub/icons-static-png@1.97.1`，素材随包内置在 `Sources/BrandAssets/`）单点：`Brand { claude, codex, cursor, claudebar }`，唯一 init `(brand:well:page:inkWell:)`。**`page:` 不是 `Theme.isDark`**——`nil` 主题面、`true` 黑底（灵动岛在两种主题下都是黑的）、`false` 亮底；**`-light` 文件是黑墨、`-dark` 是白墨**（LobeHub 按背景命名，不是按字形），搞反就会画出黑底黑字。图形由 `Tools/gen-brand-marks.py` 剪到墨迹并按画布 90% 写回，**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%）；`Tests/product-mark-regressions.py` 渲染真实视图量这条比例 |
+| `Views/Shared/ProductBrandMark.swift` | 三家客户端 + ClaudeBar 自己的真实品牌图形（LobeHub `@lobehub/icons-static-png@1.97.1`，素材随包内置在 `Sources/BrandAssets/`）单点：`Brand { claude, codex, cursor, claudebar }`，两个 init：`(brand:well:page:)` 与 `(codex:well:page:)`。**`page:` 不是 `Theme.isDark`**——`nil` 主题面、`true` 黑底（灵动岛在两种主题下都是黑的）、`false` 亮底；**`-light` 文件是黑墨、`-dark` 是白墨**（LobeHub 按背景命名，不是按字形），搞反就会画出黑底黑字。图形由 `Tools/gen-brand-marks.py` 剪到墨迹并按画布 90% 写回，**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%）；`Tests/product-mark-regressions.py` 渲染真实视图量这条比例 |
 | `Views/Shared/Tile.swift` | `TileGrid` + `.tile()` / `.hoverTile()`（宫格表面，即 `TileSurface` 的修饰符形态） |
 | `Models/CodexProviderStore.swift` | Codex 状态中枢 + 本机代理生命周期 |
 | `Models/AppPreferences.swift` | 空闲通知、代理端口、第三方上游、VPN mixed-port / 系统代理 / TUN 等 |
 | `Utils/FilePaths.swift` | Claude / Codex / Cursor / App Group / `vpnDir` |
 | `Utils/VpnManager.swift` | mihomo 进程、测速、流量流、超时 failover |
+| `Utils/XZArchive.swift` | `.xz` → 文件的流式解压（`libcompression` 的 `COMPRESSION_LZMA`，无第三方依赖）。收的是 `.xz` 容器而非裸 LZMA 流；峰值内存是字典 + 两个 1 MB 缓冲，不整档入内存。唯一调用者是内核解包 |
 | `Utils/VpnHTTP.swift` | 控制器 HTTP，禁用系统代理 |
 | `Utils/VpnSubscriptionStore.swift` | 订阅、YAML 合成、`tuneForStability` |
 | `Utils/VpnSystemProxyController.swift` | `networksetup` + Guard + TUN DNS |
@@ -72,7 +75,7 @@
 | `Views/MainWindowView.swift` | 9 页 `AppPage`；顶栏 tabs（帮助走右上角问号）；每页只在选中时挂载（`TrafficPageState` 让流量页重进无代价） |
 | `Views/MenuBarView.swift` | popup 壳（424pt）：Header + MachineKpiStrip + 能源流向 + 两面板 + 操作栏；只订阅外壳状态 |
 | `Views/Pages/VPNView.swift` | VPN 主界面 |
-| `Models/IdleTransitionDetector.swift` | `IdleTransitionDetector` / `ConfirmedCompletionDetector` / `QuotaResetDetector` —— 忙碌、完成、额度重置三种边沿检测 |
+| `Models/IdleTransitionDetector.swift` | `ConfirmedCompletionDetector` / `QuotaResetDetector` —— 完成、额度重置两种边沿检测（文件名是历史遗留） |
 | `Utils/SessionTitle.swift` | 会话卡片标题的唯一推导：Codex `threads.title` / Cursor `composerHeaders.name` / CC 首条人类 prompt，回退目录名 |
 | `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
 | `Utils/ModelPriceTable.swift` | 内置官方刊例价表（每行标注来源，见 [§15](15-model-cost.md)）；更新只需改这一个文件 |
@@ -92,4 +95,4 @@
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |
-| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo |
+| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo（打成 `.xz` 并复用仓库内那份）/ 把 `Sources/BrandAssets/` 复制进 appex |

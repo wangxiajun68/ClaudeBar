@@ -1187,8 +1187,17 @@ extension NSRect {
 }
 
 /// Tiny hover toolbar on a pinned screenshot: close / copy / bigger / smaller.
+///
+/// Each button carries its action as its `tag`, which is what `tap(_:)` reads
+/// back. It used to carry `action.hashValue` — an unread value — and route on
+/// `frame.minX` against hand-written ranges laid out for `midX`. The buttons
+/// sit at minX 4 / 26 / 48 / 70, so those ranges sent **copy to close, bigger
+/// to copy, and smaller to bigger**, leaving the shrink action unreachable: on
+/// a pinned screenshot, Copy closed the pin. Routing on the tag is what makes
+/// the mapping independent of the layout arithmetic.
 private final class PinChromeBar: NSView {
-    enum Action { case close, copy, bigger, smaller }
+    /// `Int` because the case travels to `tap(_:)` through `NSButton.tag`.
+    enum Action: Int { case close, copy, bigger, smaller }
     var onSubmit: ((Action) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -1204,15 +1213,15 @@ private final class PinChromeBar: NSView {
         ]
         var x: CGFloat = 4
         for (symbol, action) in items {
-            let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!,
-                             target: self, action: #selector(tap(_:)))
-            b.tag = action.hashValue
-            b.isBordered = false
-            b.contentTintColor = .white.withAlphaComponent(0.8)
-            b.setFrameSize(NSSize(width: 22, height: 20))
-            b.frame = NSRect(x: x, y: 2, width: 22, height: 20)
-            addSubview(b)
-            x = b.frame.maxX
+            let button = NSButton(image: NSImage(systemSymbolName: symbol,
+                                                 accessibilityDescription: nil)!,
+                                  target: self, action: #selector(tap(_:)))
+            button.tag = action.rawValue
+            button.isBordered = false
+            button.contentTintColor = .white.withAlphaComponent(0.8)
+            button.frame = NSRect(x: x, y: 2, width: 22, height: 20)
+            addSubview(button)
+            x = button.frame.maxX
         }
         setFrameSize(NSSize(width: x + 4, height: 24))
     }
@@ -1220,13 +1229,8 @@ private final class PinChromeBar: NSView {
     required init?(coder: NSCoder) { nil }
 
     @objc private func tap(_ sender: NSButton) {
-        // Order matches items above.
-        switch sender.frame.minX {
-        case ..<30: onSubmit?(.close)
-        case 30..<55: onSubmit?(.copy)
-        case 55..<80: onSubmit?(.bigger)
-        default: onSubmit?(.smaller)
-        }
+        guard let action = Action(rawValue: sender.tag) else { return }
+        onSubmit?(action)
     }
 }
 

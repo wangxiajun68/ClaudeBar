@@ -24,12 +24,18 @@ env = read('Models/Preset.swift').split('\n}\n', 1)[0] + '\n}\n'
 monitor = read('Utils/ExternalSessionMonitor.swift')
 parsers = '\n'.join(method(monitor, name) for name in
                     ['codexSpawnInfo', 'readHead', 'readCodexContext'])
+# The tail reader sizes its own window from two constants; the slice has to
+# carry them or the extraction does not type-check (which is how this fixture
+# found out the method had grown a dependency).
+constants = '\n'.join(
+    line for line in monitor.split('\n') if 'static let codexTail' in line)
 swift = '\n'.join([
     env,
     read('Utils/JSONCoerce.swift'),
     read('Utils/PrivateFileWriter.swift'),
+    read('Utils/XZArchive.swift'),
     read('Models/SettingsManager.swift'),
-    'enum ParserFixture {\n' + parsers + '\n}',
+    'enum ParserFixture {\n' + constants + '\n' + parsers + '\n}',
     r'''
 enum FilePaths {
     static let claudeDir = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -69,6 +75,15 @@ enum FilePaths {
         precondition(SettingsManager.readSettings()?.ANTHROPIC_MODEL == "model-a")
         let permissions = try FileManager.default.attributesOfItem(atPath: FilePaths.settingsFile.path)
         precondition((permissions[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+
+        // A destination some earlier build left world-readable is healed by the
+        // next write: the staged file is created 0600 and `rename` carries the
+        // staged inode's mode, so the fix-up needs no separate pass.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                              ofItemAtPath: FilePaths.settingsFile.path)
+        try SettingsManager.writeSettings(env: EnvConfig(ANTHROPIC_MODEL: "model-b"))
+        let healed = try FileManager.default.attributesOfItem(atPath: FilePaths.settingsFile.path)
+        precondition((healed[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         let backup = try Data(contentsOf: FilePaths.settingsFile.appendingPathExtension("bak"))
         precondition(backup == originalData)
         try SettingsManager.restoreOfficial()
@@ -104,7 +119,63 @@ enum FilePaths {
         let tail = ParserFixture.readCodexContext(path: path.path)
         precondition(tail.model == "latest-model")
         precondition(tail.hasOpenTask == false)
-        print("PASS: numeric bounds, private atomic writes, configuration preservation and Codex metadata")
+
+        // A turn whose own records are larger than the window it is read with.
+        // One local rollout carries a single 11 MB `function_call_output`, and
+        // a window that lands inside it sees no lifecycle event at all — which
+        // reads as `hasOpenTask == nil`, i.e. "this thread was never started",
+        // and silently loses the completion. The window must clear a large
+        // record and still find the completion behind it.
+        let big = FilePaths.claudeDir.appendingPathComponent("big-rollout.jsonl")
+        var bigData = Data()
+        bigData.append(Data("{\"type\": \"turn_context\", \"payload\": {\"model\": \"m\"}}\n".utf8))
+        bigData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_started\"}}\n".utf8))
+        let filler = String(repeating: "x", count: 900_000)
+        bigData.append(Data("{\"type\": \"response_item\", \"payload\": {\"type\": \"function_call_output\", \"output\": \"\(filler)\"}}\n".utf8))
+        bigData.append(Data("{\"type\": \"response_item\", \"payload\": {\"type\": \"message\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"done\"}]}}\n".utf8))
+        bigData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"t1\", \"last_agent_message\": \"done\"}}\n".utf8))
+        try bigData.write(to: big)
+        let bigTail = ParserFixture.readCodexContext(path: big.path)
+        precondition(bigTail.hasOpenTask == false, "a turn behind a huge record must still be read")
+        precondition(bigTail.completionID == "t1", "…and its delivered answer must be visible")
+
+        // A compaction turn ends with `last_agent_message: null` and no
+        // assistant reply of its own: it must not read as a delivered answer.
+        let compact = FilePaths.claudeDir.appendingPathComponent("compact-rollout.jsonl")
+        var compactData = Data()
+        compactData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"c1\"}}\n".utf8))
+        compactData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"c2\", \"last_agent_message\": null}}\n".utf8))
+        compactData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"c3\", \"last_agent_message\": \"  \"}}\n".utf8))
+        try compactData.write(to: compact)
+        let nullTail = ParserFixture.readCodexContext(path: compact.path)
+        precondition(nullTail.completionID == nil, "a turn that delivered nothing must not confirm")
+
+        // The VPN core ships as `.xz` and is unpacked in-app (see
+        // `XZArchive`). The archive is committed, so this decodes the real
+        // bytes rather than a fixture: it pins the packer and the reader to each
+        // other, which is the only place that can catch "the build packed a
+        // different file" or "the decoder stopped matching the packer" before
+        // a user meets it as 未找到 mihomo 内核.
+        let archive = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/ClaudeBar/Resources/mihomo-core.xz")
+        if FileManager.default.fileExists(atPath: archive.path) {
+            let restored = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mihomo-core-restored")
+            try? FileManager.default.removeItem(at: restored)
+            try XZArchive.extract(archive, to: restored)
+            let packed = (try FileManager.default
+                .attributesOfItem(atPath: archive.path))[.size] as? UInt64 ?? 0
+            let unpacked = (try FileManager.default
+                .attributesOfItem(atPath: restored.path))[.size] as? UInt64 ?? 0
+            precondition(packed > 1_000_000, "the shipped core archive is suspiciously small")
+            precondition(unpacked > 20 * packed,
+                         "the core must expand far beyond its archive — packed \(packed), unpacked \(unpacked)")
+            try? FileManager.default.removeItem(at: restored)
+        }
+
+        // Swift has no adjacent-literal concatenation, so this stays one line.
+        print("PASS: numeric bounds, private atomic writes, configuration preservation, Codex metadata, the shipped xz core, and completion behind a huge record")
     }
 }
 '''])

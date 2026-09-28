@@ -1,67 +1,58 @@
 import Foundation
 
-/// Edge detector for "session just finished its turn" transitions.
+/// Edge detector for "a turn just delivered its answer".
 ///
-/// Callers feed each poll's busy ids in; the detector diffs against the
-/// previous poll and reports the ids that went busy → idle-and-alive. The
-/// first poll only seeds the map (no burst of notifications at launch), and
+/// The rule is a **new turn key on a session whose own files were just
+/// written**, and the parts are each load-bearing:
+///
+///   * **New key.** The key changes exactly when a turn has delivered
+///     something (Claude's `turnCount` + answer uuid, Codex's
+///     `task_complete.turn_id`, Cursor's `turn-<offset>`), and a key that has
+///     already been announced never fires again — at any poll cadence. A turn
+///     that was killed mid-flight, aborted, or is only pausing on a permission
+///     prompt leaves the key where it was, so it stays silent. (That is why
+///     Claude's key carries the turn counter: the same answer text delivered
+///     twice by two turns is two keys, and the *same* turn re-read by two polls
+///     is one.)
+///   * **Fresh.** The session's last write has to be recent — a poll interval
+///     or two — so a turn that ended while the app was not polling (asleep,
+///     relaunched, hidden for a long stretch) does not announce itself late.
+///     It also lets a turn shorter than the poll interval through: the busy
+///     edge may fall between two polls, but the key and the write do not.
+///   * **Not busy.** A key can only be set by a finished turn, but the flag is
+///     cheap and it keeps the alert off a session that is somehow mid-turn
+///     again.
+///
+/// The first sighting of an id only seeds it (no burst of notifications at
+/// launch — the user has already read whatever the session is sitting on), and
 /// ids that disappear between polls are pruned, never reported.
-///
-/// Instances are used only from the main actor (inside `ProviderStore`'s
-/// publish blocks), so no locking is needed despite the mutable state.
-struct IdleTransitionDetector<ID: Hashable> {
-    /// Ids that were busy at the previous poll.
-    private var wasBusy: Set<ID> = []
-
-    /// Diff this poll's busy ids against the last poll's. Returns the ids
-    /// that just went idle (busy last poll, not busy now) and whether any
-    /// session is currently busy (drives the menu-bar icon).
-    mutating func record(busyIDs: Set<ID>) -> (newlyIdle: Set<ID>, anyBusy: Bool) {
-        let newlyIdle = wasBusy.subtracting(busyIDs)
-        wasBusy = busyIDs
-        return (newlyIdle, !busyIDs.isEmpty)
-    }
-}
-
-/// A busy edge only opens a short candidate window. A notification is emitted
-/// once the transcript also proves that a new final answer was delivered.
-/// This excludes permission prompts, tool pauses, aborted turns and stale
-/// busy-state fallbacks. The first snapshot seeds existing answers silently.
 struct ConfirmedCompletionDetector<ID: Hashable> {
-    private var previousBusy: Set<ID>?
+    /// Ids seen at least once — the seed set.
     private var known: Set<ID> = []
-    private var notified: [ID: String] = [:]
-    private var pending: [ID: Date] = [:]
+    /// The last turn key announced per id.
+    private var announced: [ID: String] = [:]
 
-    mutating func record(_ snapshots: [(id: ID, isBusy: Bool, completionID: String?)],
-                         now: Date = Date()) -> Set<ID> {
-        let busy = Set(snapshots.filter { $0.isBusy }.map { $0.id })
+    /// `turnKey` is nil when the snapshot carries no answer for the current
+    /// turn, which is the common case inside a turn. `fresh` is the caller's
+    /// own clock against the session's last write — the caller knows which
+    /// timestamp is meaningful for its tool.
+    mutating func record(_ snapshots: [(id: ID, isBusy: Bool, turnKey: String?, fresh: Bool)]) -> Set<ID> {
         let live = Set(snapshots.map { $0.id })
         var completed: Set<ID> = []
-        for snapshot in snapshots where !known.contains(snapshot.id) {
-            notified[snapshot.id] = snapshot.completionID
-        }
-        if let previousBusy {
-            for snapshot in snapshots {
-                if snapshot.isBusy {
-                    pending[snapshot.id] = nil
-                    continue
-                }
-                if previousBusy.contains(snapshot.id) {
-                    pending[snapshot.id] = now.addingTimeInterval(10)
-                }
-                guard let deadline = pending[snapshot.id], now <= deadline,
-                      let completionID = snapshot.completionID,
-                      notified[snapshot.id] != completionID else { continue }
-                notified[snapshot.id] = completionID
-                pending[snapshot.id] = nil
-                completed.insert(snapshot.id)
+        for snapshot in snapshots {
+            guard known.contains(snapshot.id) else {
+                known.insert(snapshot.id)
+                announced[snapshot.id] = snapshot.turnKey
+                continue
             }
+            guard !snapshot.isBusy, snapshot.fresh,
+                  let key = snapshot.turnKey,
+                  announced[snapshot.id] != key else { continue }
+            announced[snapshot.id] = key
+            completed.insert(snapshot.id)
         }
-        known = live
-        notified = notified.filter { live.contains($0.key) }
-        pending = pending.filter { live.contains($0.key) && now <= $0.value }
-        self.previousBusy = busy
+        known = known.intersection(live)
+        announced = announced.filter { live.contains($0.key) }
         return completed
     }
 }

@@ -940,10 +940,18 @@ private struct ConnectorUtilityButtonStyle: ButtonStyle {
     @Binding var hovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
+        // No `.environment(\.isEnabled, true)` here, though it read like a
+        // safety net. Both styles in the chain draw their own disabled
+        // treatment — `ActionPlateButtonStyle` desaturates at 0.34 opacity, and
+        // the `.uiversePress` the call sites also apply dims through
+        // `ControlPressModifier` — so forcing the flag only ever *suppresses* a
+        // disabled look a caller asked for. Nothing depends on it today (the
+        // page's single `.disabled(loading)` is on the refresh button, which
+        // takes `.headerControl()` and never reaches this style), which is
+        // exactly why it is safe to drop rather than leave as a trap.
         ActionPlateButtonStyle(tone: accented || hovered ? .accent : .neutral,
                                tint: Theme.claude, ink: nil, metrics: .regular)
             .makeBody(configuration: configuration)
-            .environment(\.isEnabled, true)
     }
 }
 

@@ -87,9 +87,10 @@ struct CommandPalette: View {
                             .strokeBorder(Theme.hairline, lineWidth: 1)
                     }
                     .shadowCard(radius: 24, y: 12, opacity: 0.12)
-                    .scaleEffect(isPresented ? 1 : 0.92)
-                    .opacity(isPresented ? 1 : 0)
-                    .offset(y: isPresented ? 0 : 8)
+                    // The entrance is carried by the transition alone: this
+                    // subtree only exists inside `if isPresented`, so all three
+                    // of these read their "arrived" arm on every evaluation and
+                    // never contribute a value to interpolate.
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
                     .focusable()
                     .onKeyPress(.upArrow) { moveSelection(-1); return .handled }

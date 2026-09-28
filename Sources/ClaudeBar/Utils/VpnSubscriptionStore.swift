@@ -83,10 +83,6 @@ final class VpnSubscriptionStore: ObservableObject {
         FilePaths.vpnProfilesDir.appendingPathComponent(id.uuidString + ".yaml")
     }
 
-    func profileText(_ id: UUID) -> String? {
-        try? String(contentsOf: profileURL(id), encoding: .utf8)
-    }
-
     // MARK: Add / Remove
 
     /// Download `url`, validate it looks like a clash profile, persist.
@@ -446,11 +442,6 @@ final class VpnSubscriptionStore: ObservableObject {
             }
         }
         return n
-    }
-
-    func preview(for id: UUID) -> VpnProfilePreview {
-        guard let text = profileText(id) else { return VpnProfilePreview() }
-        return VpnProfilePreview.parse(text)
     }
 
     /// Parsed-preview cache, stamped with the profile's modification date so a

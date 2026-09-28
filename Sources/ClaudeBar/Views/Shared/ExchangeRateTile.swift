@@ -27,7 +27,6 @@ struct ExchangeRateTile: View {
                 rateField
                 ActionButton(fx.isFetching ? "查询中…" : "更新") { fx.refresh() }
                     .disabled(fx.isFetching)
-                    .disabled(fx.isFetching)
             }
         }
     }

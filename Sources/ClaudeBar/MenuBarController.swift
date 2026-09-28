@@ -2,15 +2,6 @@ import AppKit
 import SwiftUI
 import Combine
 
-extension NSColor {
-    convenience init(hex: UInt, opacity: CGFloat = 1.0) {
-        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255.0,
-                  green: CGFloat((hex >> 8) & 0xFF) / 255.0,
-                  blue: CGFloat(hex & 0xFF) / 255.0,
-                  alpha: opacity)
-    }
-}
-
 /// Owns the menu-bar status item and a manually-positioned panel that hosts
 /// the SwiftUI menu. The panel is centered horizontally on the screen (its
 /// vertical center axis) just below the menu bar, instead of being anchored

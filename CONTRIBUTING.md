@@ -80,7 +80,7 @@ VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该�
 
 ### 架构
 
-- **零 Swift 包依赖** — 不引入 SPM、CocoaPods、Carthage。VPN 内核 mihomo 为构建时下载的 sidecar，不进 Git（见 `vendor/mihomo/README.md`）。
+- **零 Swift 包依赖** — 不引入 SPM、CocoaPods、Carthage。VPN 内核 mihomo 在构建时下载，但**进仓库的是压缩后的 `.xz`**（13 MB，构建时复用；54 MB 的原始二进制才不进 Git，见 `vendor/mihomo/README.md`）。
 - **状态中枢** — 数据从 `ProviderStore` / `CodexProviderStore` 流出；VPN 状态在 `VpnManager`。视图不自行开 Timer 做文件 I/O。
 - **I/O 边界** — 文件扫描、SQLite、网络请求放在 `Utils/`，在后台队列执行。
 - **发布克制** — `@Published` 赋值前做 Equatable 比较，避免无效重渲染。

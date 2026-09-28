@@ -63,8 +63,9 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/SignatureGlyph.swift').read_te
 source += (root / 'Tools/control-preview-sheet.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/ProductBrandMark.swift').read_text().replace(
     '    init(brand: Brand) { self.brand = brand }',
-    '    init(brand: Brand, well: Bool = true, page: Bool? = nil, inkWell: Bool? = nil) {\n'
-    '        self.brand = brand; self.well = well; self.page = page; self.inkWell = inkWell\n'
+    '    init(brand: Brand) { self.brand = brand; self.well = true; self.page = nil }\n'
+    '    init(brand: Brand, well: Bool, page: Bool? = nil) {\n'
+    '        self.brand = brand; self.well = well; self.page = page\n'
     '    }') + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/UiverseSurfaces.swift').read_text().replace('private struct SegmentedItem', 'struct SegmentedItem') + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/DecorativeMotion.swift').read_text() + '\n'

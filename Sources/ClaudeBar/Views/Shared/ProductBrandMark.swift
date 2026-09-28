@@ -98,18 +98,16 @@ struct ProductBrandMark: View {
     ///   - page: which page the mark is drawn on, for the ink — `nil` = a themed
     ///     surface, `true` = a black one (the island), `false` = a light one
     ///     (the greeting card's pale sky). See `dark`.
-    ///   - inkWell: a neutral, page-toned well instead of the branded one.
-    init(brand: Brand, well: Bool = true, page: Bool? = nil, inkWell: Bool? = nil) {
+    init(brand: Brand, well: Bool = true, page: Bool? = nil) {
         self.brand = brand
         self.well = well
         self.page = page
-        self.inkWell = inkWell
     }
     /// `false` = CC / Claude Code (Anthropic), `true` = Codex (OpenAI) — see
     /// `Brand.init(codex:)`. Kept as its own spelling because the surfaces that
     /// only choose between the two *provider* clients have always passed it.
-    init(codex: Bool, well: Bool = true, page: Bool? = nil, inkWell: Bool? = nil) {
-        self.init(brand: Brand(codex: codex), well: well, page: page, inkWell: inkWell)
+    init(codex: Bool, well: Bool = true, page: Bool? = nil) {
+        self.init(brand: Brand(codex: codex), well: well, page: page)
     }
     /// Draw the icon well behind the artwork. Off for a caller that has already
     /// put the mark in a well of its own.
@@ -140,9 +138,6 @@ struct ProductBrandMark: View {
     /// both of the explicit cases, so the island asked for the black file on its
     /// black badge and the popup's light chip asked for the white one.
     var page: Bool? = nil
-    /// A neutral, page-toned well instead of the branded one. Only meaningful
-    /// for a caller that also lets the mark draw the tile.
-    var inkWell: Bool? = nil
 
     private var asset: String { brand.asset }
 
@@ -157,10 +152,7 @@ struct ProductBrandMark: View {
         if let page { return page }
         return Theme.isDark
     }
-    private var wellFill: Color {
-        guard let inkWell else { return Theme.bgSecondary }
-        return inkWell ? Color(hex: 0x1E2228) : Color(hex: 0xF7FAFC)
-    }
+    private var wellFill: Color { Theme.bgSecondary }
 
     var body: some View {
         GeometryReader { geo in
@@ -194,10 +186,11 @@ struct ProductBrandMark: View {
         .accessibilityLabel(brand.label)
     }
 
-    /// Where the bundled PNGs live. The app leaves this at `Bundle.main`; the
-    /// render fixture points it at `Sources/BrandAssets`, because a slice with
-    /// no app bundle would otherwise quietly draw the missing-asset fallback and
-    /// a blank brand mark would pass every render check.
+    /// Where the bundled PNGs live: `Contents/Resources/BrandAssets`, which the
+    /// build fills from `Sources/BrandAssets`. The app leaves this at `Bundle.main`;
+    /// the render fixture points it at that source directory, because a slice
+    /// with no app bundle would otherwise quietly draw the missing-asset
+    /// fallback and a blank brand mark would pass every render check.
     nonisolated(unsafe) static var resourceRoot: URL? = Bundle.main.resourceURL?
         .appendingPathComponent("BrandAssets", isDirectory: true)
 

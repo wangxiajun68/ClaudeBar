@@ -28,6 +28,7 @@ test:
 	python3 Tests/product-mark-regressions.py
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
+	python3 Tests/completion-notify-regressions.py
 	python3 Tests/greeting-data-regressions.py
 	python3 Tests/greeting-name-regressions.py
 	python3 Tests/weather-astronomy-regressions.py

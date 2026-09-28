@@ -94,10 +94,6 @@ final class ProcessSampler {
         var memoryActive: UInt64 = 0
         var memoryWired: UInt64 = 0
         var memoryCompressed: UInt64 = 0
-        var memoryCached: UInt64 = 0
-        /// `free_count + speculative_count` — what is genuinely available,
-        /// which is the number a person means by "空闲".
-        var memoryFree: UInt64 = 0
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
         /// Battery cell temperature, when the SMC reports one. Distinct from
@@ -142,14 +138,6 @@ final class ProcessSampler {
         func temperatureLabel(celsius: Double?) -> String? {
             guard let celsius, celsius > 0 else { return nil }
             return String(format: "%.0f°C", celsius.rounded())
-        }
-
-        /// 高温分级：<75 正常，75–84 偏高（amber），≥85 过热（red）。
-        func temperatureColor(celsius: Double?) -> Color? {
-            guard let celsius, celsius > 0 else { return nil }
-            if celsius >= 85 { return Theme.statusError }
-            if celsius >= 75 { return Theme.statusWarning }
-            return nil
         }
 
         /// The memory mark's own reading: the page categories the percentage is
@@ -208,6 +196,8 @@ final class ProcessSampler {
     private var linkSampleAt: TimeInterval = 0
     private var cpuTemperature: Double?
     private var batteryTemperature: Double?
+    /// The GPU's SMC fallback, held on the same 5 s gate as the two above.
+    private var gpuTemperature: Double?
     private var temperatureSampleAt: TimeInterval = -.infinity
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
     private var lastHostTicks: (user: UInt32, system: UInt32, idle: UInt32, nice: UInt32)?
@@ -393,6 +383,13 @@ final class ProcessSampler {
         }
 
         let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
+        // A GPU that reports its own temperature is read every tick — it is one
+        // property fetch on an already-matched service, and it is the
+        // warmer-hotspot reading. One that does not (Apple Silicon's
+        // `PerformanceStatistics` carries no `Temperature(C)`) leaves the SMC
+        // fallback to the 5 s gate below, rather than sweeping six SMC keys
+        // through the lock on every tick for a figure that moves in seconds.
+        if let reported = gpu.temperatureCelsius { gpuTemperature = reported }
         if diskSample == nil || now - diskSampleAt >= 10 {
             diskSample = HardwareSensors.bootDisk()
             diskSampleAt = now
@@ -406,7 +403,13 @@ final class ProcessSampler {
         }
         let links = linkSample ?? HardwareSensors.LinkStatus()
         // The SMC temperature sweep is the dearest read in the tick, and
-        // package temperature moves on a scale of seconds.
+        // package temperature moves on a scale of seconds — so the GPU's SMC
+        // fallback rides the same gate. The accelerator's *own* figure was
+        // already taken above, per tick, because on a GPU that reports one it
+        // is the warmer-hotspot read.
+        if gpu.temperatureCelsius == nil, foreground, now - temperatureSampleAt >= 5 {
+            gpuTemperature = HardwareSensors.gpuTemperatureCelsius()
+        }
         if foreground, now - temperatureSampleAt >= 5 {
             cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
             batteryTemperature = HardwareSensors.batteryTemperatureCelsius()
@@ -435,10 +438,8 @@ final class ProcessSampler {
             memoryActive: memory.active,
             memoryWired: memory.wired,
             memoryCompressed: memory.compressed,
-            memoryCached: memory.cached,
-            memoryFree: memory.free,
             cpuTemperatureCelsius: foreground ? cpuTemperature : nil,
-            gpuTemperatureCelsius: foreground ? gpu.temperatureCelsius : nil,
+            gpuTemperatureCelsius: foreground ? gpuTemperature : nil,
             batteryTemperatureCelsius: foreground ? batteryTemperature : nil,
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
@@ -468,7 +469,7 @@ final class ProcessSampler {
         )
 
         guard wantsAttribution else {
-            publish(claudeBar: Snapshot(), host: hostSnap, byKey: [:], shares: [], point: point, livePIDs: [getpid()])
+            publish(claudeBar: Snapshot(), host: hostSnap, byKey: [:], shares: [], point: point)
             return
         }
 
@@ -511,7 +512,7 @@ final class ProcessSampler {
 
         let cores = Double(hostSnap.coreCount)
         let shares = Self.makeShares(claudeBar: claudeBarSnap, byKey: byKey, host: hostSnap, cores: cores)
-        publish(claudeBar: claudeBarSnap, host: hostSnap, byKey: byKey, shares: shares, point: point, livePIDs: livePIDs)
+        publish(claudeBar: claudeBarSnap, host: hostSnap, byKey: byKey, shares: shares, point: point)
     }
 
     private func publish(
@@ -519,10 +520,8 @@ final class ProcessSampler {
         host: HostStats,
         byKey: [Key: Snapshot],
         shares: [Share],
-        point: Point,
-        livePIDs: Set<pid_t>
+        point: Point
     ) {
-        _ = livePIDs
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             var host = host
@@ -691,12 +690,7 @@ final class ProcessSampler {
         }
     }
 
-    private func hostMemoryUsed() -> UInt64 {
-        memoryBreakdown().used
-    }
-
-    /// The real page buckets behind `hostMemoryUsed`, in one `vm_statistics64`
-    /// call. Split out because the dashboard's memory mark draws the parts and
+    /// The memory page buckets, in one `vm_statistics64` call. Split out because the dashboard's memory mark draws the parts and
     /// the hero figure is their own pressure sum — two reads of the same counter
     /// set could disagree at the boundary, and a mark that contradicts the
     /// number above it is worse than no mark.

@@ -33,21 +33,16 @@ enum Theme {
 
     static var bgPrimary: Color { isDark ? Color(hex: 0x16181C) : Color(hex: 0xEEF3F8) }
     static var bgSecondary: Color { isDark ? Color(hex: 0x1E2228) : Color(hex: 0xF7FAFC) }
-    static var bgTertiary: Color { cardSurface }
     static var bgOverlay: Color { isDark ? Color(hex: 0x2A3038) : Color(hex: 0xE4EBF2) }
     static var cardSurface: Color { isDark ? Color(hex: 0x252A31) : Color.white }
 
-    static var base0: Color { bgPrimary }
     static var base1: Color { bgSecondary }
     static var base2: Color { cardSurface }
-    static var base3: Color { bgOverlay }
-    static var base4: Color { isDark ? Color(hex: 0x3A424C) : Color(hex: 0xC5D0DC) }
 
     // MARK: Signals (green = load · blue = GPU · amber = memory · violet = usage)
     static let claude = Color(hex: 0x3D7DFF)
     static let claudeHi = Color(hex: 0x5B9CFF)
     static let cursor = Color(hex: 0x8B7CFF)
-    static let cursorHi = Color(hex: 0xA99BFF)
     static let codex = Color(hex: 0x6B7280)
 
     static let chartGreen = Color(hex: 0x34C759)
@@ -59,7 +54,6 @@ enum Theme {
     static let externalHi = Color(hex: 0x64E07A)
 
     static let accent = claude
-    static let accentDim = Color(hex: 0x2B62D6)
     static let cursorAccent = cursor
 
     /// Session-kind hue — blue for Claude, violet for Cursor.
@@ -76,7 +70,6 @@ enum Theme {
 
     // MARK: Semantic
     static let statusBusy = claude
-    static let statusActive = cursor
     static let statusIdle = Color(hex: 0x8E8E93)
     static let statusWarning = Color(hex: 0xFF9F0A)
     static let statusError = Color(hex: 0xFF3B30)
@@ -124,7 +117,6 @@ enum Theme {
     static func cardFill(_ opacity: Double = 0.04) -> Color {
         isDark ? Color.white.opacity(min(1, opacity * 2.4)) : Color.black.opacity(opacity)
     }
-    static var sidebarFill: Color { bgSecondary }
 
     /// The recessed well a *field* or *switch track* sits in — `InstrumentField`
     /// and `InstrumentToggleStyle`.
@@ -160,7 +152,6 @@ enum Theme {
         static let s14: CGFloat = 14
         static let s16: CGFloat = 16
         static let s24: CGFloat = 24
-        static let s32: CGFloat = 32
         /// Grid gap — popup density (2-col tiles in the 400pt panel).
         static let gridGap: CGFloat = 8
         /// Grid gap — main-window pages (tile grids).
@@ -179,18 +170,11 @@ enum Theme {
     //
     // macOS system text styles only (SF Pro / SF Mono). No bundled custom fonts.
     enum Tracking {
-        static let titleLarge: CGFloat = -0.03
-        static let titleMedium: CGFloat = -0.02
         static let titleSmall: CGFloat = -0.01
-        static let bodyLarge: CGFloat = -0.005
-        static let body: CGFloat = 0
         static let caption: CGFloat = 0.03
-        static let captionMono: CGFloat = 0
     }
 
     enum Font {
-        static let titleLarge = SwiftUI.Font.largeTitle.weight(.bold)
-        static let titleMedium = SwiftUI.Font.title2.weight(.semibold)
         static let titleSmall = SwiftUI.Font.headline
         static let bodyLarge = SwiftUI.Font.body
         static let body = SwiftUI.Font.body
@@ -205,17 +189,12 @@ enum Theme {
 
         // Popup-density aliases — still system styles, one step smaller where needed.
         static let rowTitle = SwiftUI.Font.subheadline.weight(.medium)
-        static let rowLarge = SwiftUI.Font.body
         static let micro = SwiftUI.Font.caption2
         static let microMedium = SwiftUI.Font.caption2.weight(.medium)
         static let microSemibold = SwiftUI.Font.caption2.weight(.semibold)
         static let microMono = SwiftUI.Font.caption2.monospaced()
         static let badgeMono = SwiftUI.Font.caption2.monospaced()
         static let console = SwiftUI.Font.footnote.monospaced()
-
-        static func systemIcon(_ size: CGFloat) -> SwiftUI.Font {
-            SwiftUI.Font.system(size: size)
-        }
 
         static let tileValue = SwiftUI.Font.system(size: 28, weight: .semibold, design: .rounded)
         static let tileValueSmall = SwiftUI.Font.system(size: 22, weight: .semibold, design: .rounded)
@@ -249,26 +228,6 @@ enum Theme {
             case popupUsage      // 2-col popup
             case pageSetting     // settings control tiles
             case pageSettingDense // short settings tiles, more per row
-        }
-
-        static func columns(_ preset: Preset) -> [GridItem] {
-            switch preset {
-            case .pageMetric:
-                Array(repeating: GridItem(.flexible(minimum: 0), spacing: Space.gridGapPage, alignment: .top), count: 4)
-            case .pageSession:
-                [GridItem(.adaptive(minimum: 280), spacing: Space.gridGapPage, alignment: .top)]
-            case .pageUsage, .pageProvider:
-                [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
-            case .pageSetting:
-                [GridItem(.adaptive(minimum: 300), spacing: Space.gridGapPage, alignment: .top)]
-            case .pageSettingDense:
-                [GridItem(.adaptive(minimum: 240), spacing: Space.gridGapPage, alignment: .top)]
-            case .popupProvider, .popupUsage:
-                [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top),
-                 GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
-            case .popupSession:
-                [GridItem(.flexible(), spacing: Space.gridGap, alignment: .top)]
-            }
         }
 
         /// Equal-height grid: fixed column count, or adaptive from a minimum width.
@@ -356,7 +315,6 @@ enum Theme {
     enum Animation {
         static let bouncy = SwiftUI.Animation.bouncy(duration: 0.24, extraBounce: 0.16)
         static let smooth = SwiftUI.Animation.smooth(duration: 0.20, extraBounce: 0)
-        static let pulse = SwiftUI.Animation.easeInOut(duration: 1.1)
         static let snappy = SwiftUI.Animation.bouncy(duration: 0.18, extraBounce: 0.10)
 
         /// The sparkle plate's own transition, from the reference CSS's

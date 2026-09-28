@@ -74,7 +74,7 @@ ClaudeBar.app/
     ├── Resources/
     │   ├── AppIcon.icns
     │   ├── MenuBarIcon.png          （构建仍拷贝；status item 用矢量 `MenuBarMark`）
-    │   └── mihomo-core            （VPN sidecar，build.sh 注入）
+    │   └── mihomo-core.xz         （VPN 内核压缩档，build.sh 注入或复用仓库内那份）
     └── PlugIns/
         └── ClaudeBarWidget.appex/
             └── Contents/

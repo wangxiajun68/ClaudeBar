@@ -92,12 +92,6 @@ struct ProviderTile: View {
         .disabled(provider.models.isEmpty)
     }
 
-    private var captureHelp: String {
-        provider.captureEnabled
-            ? "关闭流量记录，请求直连上游"
-            : "启用流量记录，请求将显示在「流量」页"
-    }
-
     private var captureToggle: some View {
         Button {
             onToggleCapture?()
@@ -228,5 +222,3 @@ struct ProviderTile: View {
         .animation(Theme.Animation.bouncy, value: isSelected)
     }
 }
-
-// MARK: - Popup model tile

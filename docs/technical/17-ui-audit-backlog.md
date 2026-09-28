@@ -27,7 +27,14 @@ Status of the original nine findings, after the fix pass:
 | 8 | Two `EXC_BREAKPOINT` crash reports | **fixed** — a mount that never injected `\.providerSource` |
 | 9 | `ProviderTile` unmounted | kept, deliberately (see the entry) |
 | 10 | `MetricTile` unmounted (last caller gone with §5) | **fixed** — deleted |
-| 11 | 10 more unmounted view types + one dead store field | **fixed** — deleted (§11) |
+| 11 | 10 more unmounted view types + one dead store field | **fixed** — deleted |
+| 12 | The idle display cycle: two 30 Hz `.animation` timelines | **open** — measured, four fixes rejected (§11) |
+| 13 | `CodexModelMark`'s dashboard arm and its allowance lane | **fixed** — deleted; §12 records what went |
+| 14 | `SkyAstronomy.stars` recomputed per frame | **closed** — cached, measured, reverted (§13) |
+| 15 | `TokenComparison` animating on the per-poll token total | **fixed** — modifier dropped, guarded (§15) |
+| 16 | `PinChromeBar` routing buttons by `frame.minX` | **fixed** — routes on `tag` (§14) |
+| 17 | GPU's SMC temperature sweep on every tick | **fixed** — rides the 5 s gate; 1.41 → 0.29 ms/s (§14) |
+| 18 | `State.missingCore` never assigned | **fixed** — `fail(.coreMissing)` maps to it (§14) |
 
 ---
 
@@ -432,3 +439,208 @@ deliberately does **not** list it — that guard cannot tell a per-poll value fr
 hover state, so it would fail on this view's surviving
 `.animation(value: isHovered)`. Deleting it again is a one-view change with no
 call site to update.
+
+## 11. The idle display cycle — two 30 Hz timelines, not the panel box
+
+§7 withdrew the claim that the collapsed island's panel **size** is the
+per-frame multiplier, and §8's fix record showed a running transaction makes
+every display cycle re-run the whole hosting view's layout. What neither found
+was the *other* way to hold a display cycle open: a `TimelineView` with an
+``.animation(...)`` schedule. It does not open a transaction, so the
+`runAnimationGroup` signature §8 relies on does not move — but it re-validates
+its body every frame, and that is enough to re-lay-out the hosting view.
+
+Measured 2026-09-28 on commit `50e0fc5`, main window on screen and idle,
+`ps -p PID -o time=` deltas, arms interleaved over 5–9 rounds:
+
+| arm | idle CPU |
+|---|---|
+| dashboard, as shipped | 38–49 % of one core |
+| an empty `NSHostingView` root | 7–14 % |
+| `topBar` + one `Text` | **4.0 %** |
+| `ScrollView` skeleton, no cards | 9–10 % |
+| + `GreetingCard` | 27–32 % |
+| + `ResourceStrip` | 27–31 % |
+| + `PowerFlowCard` | 40–46 % |
+| `WeatherBackdrop`'s timeline live, canvas replaced by `Color.clear` | **37–38 %** |
+| `HardwareIllustration`'s timeline live, canvas replaced by `Color.clear` | — |
+| all three `.animation` timelines frozen (CodexModelMark's, since deleted — see §12) | **10–23 %** |
+
+The decisive pair is the last two rows of the §7-style test: a `VStack` with
+`topBar` and **one 30 Hz `TimelineView` drawing a plain rectangle** measures
+**14.7 %**, against **4.0 %** for the same shell with no timeline — ten points
+for one timeline whose content is a fill. Adding a second raises it to 17.2 %,
+so the cost is roughly additive per live timeline, not per pixel.
+
+Attribution from `sample` confirms where it goes: `CanvasDisplayList.updateValue`
+is **1.7 %** of main-thread samples and `ViewGraph.renderDisplayList` **5.7 %**,
+while `NSHostingView.layout()` is **39 %** and `-[NSView _layoutSubtreeWithOldSize:]`
+**79 %**. The drawing is not the cost; the per-frame layout it forces is.
+
+**What was tried and rejected:**
+
+- **Lowering the frame rate.** 30 → 15 → 8 Hz on both timed views moved nothing
+  (43.2 / 43.5 / 41.5 %). The cost is per *frame the timeline is live for*, not
+  per unit of content, so a slower clock does not help and would cost the rain
+  its smoothness.
+- **`TimelineView(.periodic(by: 1/30))` instead of `.animation(...)`** — 43.6 vs
+  42.6 %, inside the spread. Still a per-frame body validation.
+- **Hosting the timeline in its own nested `NSHostingView`** so it would not
+  re-lay-out the enclosing one: 44.5 % vs 43.6 %. The nested host's own layout
+  pass replaces the one it saves.
+- **Removing the hidden popover content** (`HardwareDetailPanel` etc., mounted
+  behind four `.popover(isPresented:)` on the hardware tiles): 44.2 vs 43.8 %.
+  Not mounted, not resident.
+
+**Not yet resolved.** Every fix that keeps the motion has failed; the only arm
+that removes the cost removes the animation. The records above are what a future
+pass needs in order not to re-run them. `docs/technical/08-performance.md` has since been corrected: the tree has
+five `TimelineView`s, two of them `.animation`-scheduled.
+
+## 12. `CodexModelMark`'s dashboard arm — deleted
+
+`CodexModelMark` was written as one mark for two surfaces: a 38pt dashboard tile
+(`style: .tile`, the default) and a 13pt popup chip (`.inline`). The tile lost
+its caller when the greeting card was rebuilt — `GreetingStatusSheet.modelCell`
+now draws `modelIdentity(codex:model:provider:)` and carries the allowance in its
+own `quotaRow`/`resetLine` pair, so `CodexQuotaGauges` owns that reading — and
+nothing in `Sources/` or `Tests/` has passed `.tile` since. What went with it,
+all reachable only from that arm:
+
+- `tileBody` (43 lines, the only reader of `Lane.head`),
+- `laneControl`, `laneReserve`, `refreshChip`, `laneSummary`, `laneHovered`, the
+  `@State` it held, and the `.animation(.easeOut(0.15), value: laneHovered)` on
+  the chip,
+- `flow` / `sweeping` / `sweep(_:_:into:)` — the travelling highlight, already
+  documented as belonging to the dashboard mark, and its
+  `TimelineView(.animation(minimumInterval: 1.0 / 12, paused: !sweeping))`,
+- the whole `Lane` constant table and the lane canvas beside it.
+
+`Tests/product-mark-regressions.py` and `Tests/machine-mark-regressions.py` render
+marks and never instantiated this view, so nothing had to be retargeted; the
+surviving chip needs only `ProductBrandMark`, `Theme.Font`, `Text` and
+`rollingNumber()`. The file is 441 → 61 lines.
+
+This is the §11 finding arriving at a concrete site: the deleted arm carried one
+of the app's three `.animation`-scheduled `TimelineView`s, so removing it removes
+one of the per-frame layout drivers §11 measured — while the chip, which never
+had a lane, renders identically.
+
+## 13. `SkyAstronomy.stars` per frame — cached, measured, reverted
+
+`WeatherBackdrop.drawCelestial` runs 30 `asin` / `atan2` pairs per frame to place
+the bright-star field, on a canvas already redrawn at 24–30 Hz. It is a real
+per-frame cost with an obvious fix — a star's altitude and azimuth depend only on
+the sidereal time and the latitude, and both move ~0.004°/s, so one cached array
+per 0.05° of sidereal time serves thousands of frames.
+
+Implemented and then **reverted on the evidence**. The project has a render
+fixture for exactly this view (`Tools/render-greeting-preview.py`, 24 synthetic
+sheets per run), so the cache was compared against HEAD over all 32 sheets:
+
+- star band (top third, where `point()` places the field) at 1100pt: **0
+  differing pixels**, max channel delta 2 — indistinguishable;
+- star band at 620pt: 10 differing pixels on a horizontal run at y≈486, values
+  jumping from `(18,24,49)` to `(94,99,118)`. That is a star the old path did not
+  draw, i.e. the 0.05° bucket flips a star across `altitude > 0` at the horizon.
+
+Ten pixels is small, but the whole point of the change was an invisible
+optimisation, and this one is not invisible. The bucket would have to be far
+finer to be exact, at which point most frames miss the cache and the win goes
+with it. The per-frame `asin`/`atan2` cost stays; it is smaller than the layout
+cost §11 measured and it is paid only when a sky is actually on screen.
+
+Recorded so the next pass does not re-derive it: **do not cache the star field
+by a coarse sidereal bucket** — compare against the fixture before believing a
+finer one.
+
+## 14. Three audit findings landed — the pin toolbar, the throttled GPU sweep, the core-missing state
+
+Three of the entries a whole-tree sweep confirmed were real bugs rather than
+style, so they were fixed rather than recorded. Each had a measurement or a
+reproduction behind it, and two of them are interaction-visible.
+
+**`PinChromeBar.tap(_:)` routed every button to the wrong action.** The pinned
+screenshot's toolbar carries close / copy / bigger / smaller, and `tap` switched
+on `sender.frame.minX` against hand-written ranges (`..<30`, `30..<55`,
+`55..<80`). The buttons are laid out from `x = 4` with 22pt widths, so their
+minX values are **4 / 26 / 48 / 70** — the ranges were written for `midX`. The
+mapping the user got was close→close, **copy→close**, **bigger→copy**, and
+**smaller→bigger**: Copy closed the pin and the shrink action could not be
+reached. The buttons already carried `tag`, but as `action.hashValue`, which
+nothing read. Fixed by making `Action: Int` and routing on `Action(rawValue:
+sender.tag)`, which removes the layout arithmetic from the question entirely.
+
+**The GPU's SMC temperature fallback ran on every foreground tick.** On Apple
+Silicon `IOAccelerator`'s `PerformanceStatistics` carries no `Temperature(C)`
+(verified here: `ioreg -r -c IOAccelerator` has no such key), so
+`HardwareSensors.gpuReading()`'s fallback always fired — six SMC keys
+(`G0eT`/`g0pT`/`G1pT` and their byte-swapped spellings) through the same
+`ioLock` on **every** tick, beside a package-temperature read the tick already
+gates at 5 s and whose own comment calls it "the dearest read in the tick".
+Measured with the production calls: **1.41 ms per iteration**, one iteration per
+foreground tick. The accelerator's *own* figure still rides the tick (on a GPU
+that reports one it is the warmer-hotspot reading, and it is one property fetch
+on an already-matched service); the six-key sweep now rides the 5 s gate, so the
+amortised cost is **3.07 ms/s** — 5.3× less.
+
+Correction to the finding as filed: it called this a **main-thread** cost. The
+sampler runs on its own `DispatchQueue(label: "com.claudebar.proc", qos:
+.utility)`, so this never blocked a display cycle — it is wasted work and lock
+contention against the fan reader, which is worth fixing but is not an
+interaction bug.
+
+**`VpnManager.State.missingCore` was never assigned.** The missing-binary path
+funnels through `fail(.coreMissing)`, which set `.failed(err.logMessage)` for
+every case — so all five readers of `.missingCore` were unreachable, and with
+them the one actionable affordance for that failure: `VPNView.coreMissingHint`,
+which prints the path to drop the binary at and offers an 打开目录 button. The
+user saw only the generic error line. `fail` now maps `.coreMissing` to
+`.missingCore`, which is what `docs/design/08-error-handling.md:16` specified in
+the first place.
+
+## 15. `TokenComparison` — the last implicit animation on a per-poll value
+
+`TokenComparison` (`GreetingCard.swift`) draws the two bars beside 今日 / 昨日
+under the greeting card's token total, and carried
+`.animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: today)` where
+`today` is `providerStore.todayUsage.tokens`. `ProviderStore.publishTodayUsage`
+is gated only on `todayUsage != fresh`, and `UsageFSWatcher` debounces FSEvents
+at 0.4 s, so a transcript burst republishes several times a second — the same
+shape as the island's pace ring (§ the `IslandPaceRing` entry under 2026-09-26),
+but on the **dashboard**, the surface this whole audit is about.
+
+The bars are `Capsule().frame(width: geo.size.width * …)`, and `frame(width:)`
+interpolates, so unlike the pace ring this modifier both opened the transaction
+*and* actually eased the bars — the modifier was doing what its author intended
+while costing a permanently in-flight transaction.
+
+Deleted, and pinned in `Tests/inflight-animation-regressions.py`'s `GUARDED`
+list so it cannot come back. It was missed by the 2026-09-26 sweep for a
+provenance reason worth recording: it landed in `f1e2b0f`, i.e. *after* the
+list of sites that sweep worked from was drawn up. A guard list built from a
+grep is only as current as the grep's moment.
+
+### Three more from the same sweep
+
+- **`VpnNetProbe.fetchIP` iterated `ipEndpoints.prefix(4)`.** The list holds
+  seven IP-echo services and the count stranded the last three — among them
+  `icanhazip.com`, the only plain-text one, and with it `parsePlainIP`, which
+  therefore had no reachable caller. Those three are precisely what is left to
+  try when the first four (all on one hosting side of the world) rate-limit
+  together, so the exit-IP read failed having never used them. Now the loop is
+  bounded by a **12 s budget** rather than a count: each attempt already carries
+  a 6 s timeout, so a count-bounded sweep could hold the caller 42 s on a total
+  failure, and a budget keeps the tail from mattering.
+- **`ConnectorUtilityButtonStyle` forced `.environment(\.isEnabled, true)`**,
+  which defeats any `.disabled()` a caller applies — both styles in that chain
+  draw their own disabled treatment (`ActionPlateButtonStyle` desaturates at
+  0.34, `ControlPressModifier` dims through `.uiversePress`). Nothing depends on
+  it today, which is the reason to delete it rather than the reason to keep it:
+  the first `.disabled()` on a connector button would have silently done
+  nothing.
+- **`cp -R Sources/ProviderIcons` shipped the maintainer README to every user.**
+  It is provenance notes for the LobeHub pin — which asset came from which URL,
+  the 3:1 ink floor, why five brands swapped `-color` for the monochrome mark —
+  and it belongs in the repo, not in a shipping bundle. The copy now takes
+  `*.png`, `*.ico` and the licence.

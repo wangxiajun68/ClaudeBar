@@ -144,13 +144,15 @@ enum HardwareSensors {
         return readings.max() // 取最热的一个（更接近 hotspot）
     }
 
-    static func gpuReading() -> HostAccelerator.Reading {
-        var reading = HostAccelerator.reading()
-        if reading.temperatureCelsius == nil {
-            reading.temperatureCelsius = gpuTemperatureCelsius()
-        }
-        return reading
-    }
+    /// The accelerator's own counters, **without** the SMC temperature
+    /// fallback. On Apple Silicon the `PerformanceStatistics` dictionary
+    /// carries no `Temperature(C)` key, so the fallback below always fires —
+    /// and it sweeps up to six SMC keys through the same `ioLock` the package
+    /// temperature read uses, for a figure that moves on a scale of seconds.
+    /// Callers therefore take the counters here on every tick and ask for the
+    /// temperature on the sampler's own throttled passes (`gpuTemperatureCelsius`
+    /// directly); see `ProcessSampler.tick`.
+    static func gpuReading() -> HostAccelerator.Reading { HostAccelerator.reading() }
 
     /// 0 = normal, 2 = warning, 4 = critical (`kern.memorystatus_vm_pressure_level`).
     static func memoryPressureLevel() -> Int {
