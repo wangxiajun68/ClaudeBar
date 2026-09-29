@@ -28,7 +28,7 @@ Status of the original nine findings, after the fix pass:
 | 9 | `ProviderTile` unmounted | kept, deliberately (see the entry) |
 | 10 | `MetricTile` unmounted (last caller gone with §5) | **fixed** — deleted |
 | 11 | 10 more unmounted view types + one dead store field | **fixed** — deleted |
-| 12 | The idle display cycle: two 30 Hz `.animation` timelines | **open** — measured, four fixes rejected (§11) |
+| 12 | The idle display cycle: two 30 Hz `.animation` timelines | **fixed** — sweep is a layer, clock is periodic (§11) |
 | 13 | `CodexModelMark`'s dashboard arm and its allowance lane | **fixed** — deleted; §12 records what went |
 | 14 | `SkyAstronomy.stars` recomputed per frame | **closed** — cached, measured, reverted (§13) |
 | 15 | `TokenComparison` animating on the per-poll token total | **fixed** — modifier dropped, guarded (§15) |
@@ -494,10 +494,19 @@ while `NSHostingView.layout()` is **39 %** and `-[NSView _layoutSubtreeWithOldSi
   behind four `.popover(isPresented:)` on the hardware tiles): 44.2 vs 43.8 %.
   Not mounted, not resident.
 
-**Not yet resolved.** Every fix that keeps the motion has failed; the only arm
-that removes the cost removes the animation. The records above are what a future
-pass needs in order not to re-run them. `docs/technical/08-performance.md` has since been corrected: the tree has
-five `TimelineView`s, two of them `.animation`-scheduled.
+**Resolved 2026-09-29, without re-running the four rejected arms.** Those arms
+all kept a `TimelineView`. The cost they measured is the schedule, not the
+pixels, so the pixels moved to a place that does not have a schedule:
+
+- `HardwareIllustration`'s sweep is `ReadingSweep`, a `CAGradientLayer` per busy
+  bar. The canvas redraws when the sampler does. Rate, clip and the diagonal
+  are the old drawing; `timeOffset` keeps the phase across a new reading.
+- `GreetingClock` uses `.periodic(by: 1)`. The seconds dot still flips once a
+  second. An `.animation` schedule is gone from the dashboard except
+  `WeatherBackdrop`, which is mounted only while Metal is unavailable.
+
+`docs/technical/08-performance.md` records the same change. Do not put either
+drawing back on `.animation`.
 
 ## 12. `CodexModelMark`'s dashboard arm — deleted
 
@@ -524,9 +533,11 @@ surviving chip needs only `ProductBrandMark`, `Theme.Font`, `Text` and
 `rollingNumber()`. The file is 441 → 61 lines.
 
 This is the §11 finding arriving at a concrete site: the deleted arm carried one
-of the app's three `.animation`-scheduled `TimelineView`s, so removing it removes
-one of the per-frame layout drivers §11 measured — while the chip, which never
-had a lane, renders identically.
+of the three `.animation`-scheduled `TimelineView`s the app had at the time, so
+removing it removed one of the per-frame layout drivers §11 measured — while the
+chip, which never had a lane, renders identically. (§11 was closed the next day
+by moving the remaining two off `.animation` altogether; see the note at the end
+of §11.)
 
 ## 13. `SkyAstronomy.stars` per frame — cached, measured, reverted
 

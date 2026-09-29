@@ -300,8 +300,11 @@ final class MotionLayerView: NSView {
             ring.type = .conic
             ring.startPoint = CGPoint(x: 0.5, y: 0.5)
             ring.endPoint = CGPoint(x: 0.5, y: 0)
-            ring.colors = [tint.withAlphaComponent(0).cgColor, tint.cgColor]
-            ring.locations = [0, NSNumber(value: Double(sweep))]
+            // The rounded tail cap crosses the conic's 0/1 seam. Keep the
+            // far side transparent too, or it picks up full tint as a dot.
+            let clear = tint.withAlphaComponent(0).cgColor
+            ring.colors = [clear, tint.cgColor, tint.cgColor, clear]
+            ring.locations = [0, NSNumber(value: Double(sweep)), 0.5, 0.95]
             let tail = CAShapeLayer()
             let path = CGMutablePath()
             path.addArc(center: CGPoint(x: w / 2, y: h / 2),

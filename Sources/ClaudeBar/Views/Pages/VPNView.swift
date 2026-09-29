@@ -19,16 +19,35 @@ struct VPNView: View {
     @FocusState private var portFocused: Bool
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
-                PageTitle(title: "VPN")
-                overview
-                VpnSubscriptionSection()
-                nodeGroup
-                logGroup
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
+                let contentWidth = max(1040, geometry.size.width - Theme.Space.s16 * 2)
+                let logWidth = (contentWidth - Theme.Space.s16) * 0.5
+                VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                    PageTitle(title: "VPN")
+                    VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                        overview
+                        VpnSubscriptionSection()
+                    }
+                    .frame(width: contentWidth - logWidth - Theme.Space.s16)
+                    .frame(width: contentWidth, alignment: .leading)
+                    // The left column determines the height. The log viewport
+                    // fills that same height without pushing the nodes down.
+                    .overlay(alignment: .topLeading) {
+                        GeometryReader { column in
+                            trafficGroup
+                                .frame(width: logWidth, height: column.size.height)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                    }
+                    nodeGroup
+                    logGroup
+                }
+                .frame(width: contentWidth, alignment: .leading)
+                .padding(Theme.Space.s16)
             }
-            .padding(Theme.Space.s16)
         }
+        .scrollHoverGate()
         .background(Theme.bgPrimary)
         .onAppear {
             portDraft = String(prefs.vpnMixedPort)
@@ -111,6 +130,21 @@ struct VPNView: View {
     }
 
     private var overviewHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.s8) {
+                overviewStatus
+                overviewControls
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                overviewStatus
+                overviewControls
+            }
+        }
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
+    }
+
+    private var overviewStatus: some View {
         HStack(spacing: Theme.Space.s8) {
             if manager.state == .starting {
                 OrbitLoader(size: 22, caption: "", spinning: true)
@@ -138,6 +172,11 @@ struct VPNView: View {
                     .help("当前出口")
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    private var overviewControls: some View {
+        HStack(spacing: Theme.Space.s8) {
             HStack(spacing: 6) {
                 AppGlyph(name: "number", size: 10)
                     .foregroundColor(Theme.textTertiary())
@@ -177,8 +216,7 @@ struct VPNView: View {
             }
             .disabled(manager.state == .missingCore)
         }
-        .padding(.horizontal, Theme.Space.s12)
-        .padding(.vertical, Theme.Space.s8)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// Drives the port-conflict alert from `manager.portConflict`.
@@ -565,6 +603,16 @@ struct VPNView: View {
 
     // MARK: Logs
 
+    /// 流量日志（域名）：内核每条 TCP 连接走出的出口与命中的规则。
+    ///
+    /// Its own section *and* its own store (`VpnDomainLog`, isolated like
+    /// `VpnLogStore`) — a connection line must not re-evaluate this page's
+    /// header, subscription list and node mosaic. Nothing here reads the store;
+    /// the section observes it on its own.
+    private var trafficGroup: some View {
+        VpnDomainLogSection()
+    }
+
     private var logGroup: some View {
         DisclosureGroup(isExpanded: $logsOpen) {
             VpnLogConsole()
@@ -736,6 +784,22 @@ private struct VPNTrafficStrip: View {
     @ObservedObject private var rates = VpnLiveRates.shared
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.s16) {
+                liveRates
+                totals
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                liveRates
+                totals
+            }
+        }
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
+        .opacity(manager.isRunning ? 1 : 0.45)
+    }
+
+    private var liveRates: some View {
         HStack(spacing: Theme.Space.s16) {
             VpnSpeedChart(history: rates.speedHistory)
                 .frame(width: 148, height: 44)
@@ -744,6 +808,11 @@ private struct VPNTrafficStrip: View {
                         help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
             compactStat("↑", VpnFormat.rate(rates.speedUp), Theme.claudeHi, width: 86,
                         help: "内核 mixed-port 实时上行，不是订阅额度。")
+        }
+    }
+
+    private var totals: some View {
+        HStack(spacing: Theme.Space.s16) {
             compactStat("↓累计", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: 64)
             compactStat("↑累计", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: 64)
             compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: 36)
@@ -753,9 +822,6 @@ private struct VPNTrafficStrip: View {
                 .frame(minWidth: 88, alignment: .trailing)
                 .opacity(manager.coreVersion == nil ? 0 : 1)
         }
-        .padding(.horizontal, Theme.Space.s12)
-        .padding(.vertical, Theme.Space.s8)
-        .opacity(manager.isRunning ? 1 : 0.45)
     }
 
     private func compactStat(_ label: String, _ value: String, _ tint: Color, width: CGFloat,

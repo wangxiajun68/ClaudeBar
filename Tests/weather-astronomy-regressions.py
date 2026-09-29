@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess, tempfile
 root = Path(__file__).resolve().parents[1]
 weather = (root / 'Sources/ClaudeBar/Utils/WeatherFetcher.swift').read_text().split('/// The card\'s weather, fetched and cached.')[0]
-source = weather + '\n' + (root / 'Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text()
+source = weather + '\n' + (root / 'Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Utils/CNWeatherCityTable.swift').read_text()
 source += r'''
 @main struct Probe {
     static func main() throws {
@@ -60,7 +60,96 @@ source += r'''
         precondition(missingToday.highC == missingToday.temperatureC && missingToday.sunrise == "—")
         payload["current"] = ["temperature_2m": NSNull(), "weather_code": 0]
         precondition(WeatherForecastFetcher.parse(payload, place: "缺失数据") == nil)
-        print("PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data")
+
+        // Domestic sources: 中国天气网 code table, Chinese condition text, and the
+        // Beaufort level → km/h conversion. 0–31 must not be read as WMO codes
+        // (WMO 2 is "partly", the CN table's 2 is 阴), which is why the code
+        // paths are separate functions.
+        let cnCodes: [(String, WeatherReading.Sky)] = [
+            ("d00", .clear), ("d0", .clear), ("n00", .clear),
+            ("d01", .partly), ("d02", .cloudy),
+            ("d7", .drizzle), ("d07", .drizzle), ("d07", .drizzle),
+            ("d4", .thunder), ("d5", .hail), ("d6", .sleet),
+            ("d13", .snow), ("d26", .snow), ("d53", .fog),
+            ("d301", .rain), ("d9", .rain), ("d12", .rain), ("d19", .sleet), ("", .cloudy), ("dmoon", .cloudy)]
+        for (code, expected) in cnCodes { precondition(WeatherReading.sky(forCNCode: code) == expected) }
+        precondition(WeatherReading.sky(for: 2) == .partly)
+        let texts: [(String, WeatherReading.Sky)] = [
+            ("晴", .clear), ("多云", .partly), ("阴", .cloudy),
+            ("小雨", .drizzle), ("中雨", .rain), ("大雨", .rain), ("暴雨", .rain),
+            ("阵雨", .rain), ("雷阵雨", .thunder), ("雷雨", .thunder),
+            ("冰雹", .hail), ("雨夹雪", .sleet), ("小雪", .snow),
+            ("雾", .fog), ("霾", .fog), ("", .cloudy), ("下开水", .cloudy)]
+        for (text, expected) in texts { precondition(WeatherReading.sky(forText: text) == expected) }
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "≤3") == 15)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "1-3") == 8)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "4") == 24)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: nil) == 0)
+        precondition(DomesticWeatherParser.rainChance(fromText: "阵雨") > 0)
+        precondition(DomesticWeatherParser.rainChance(fromText: "晴") == 0)
+        precondition(DomesticWeatherParser.placeName(city: [], province: "上海市", district: "浦东新区") == "上海 · 浦东新区")
+        precondition(DomesticWeatherParser.placeName(city: "杭州市", province: "浙江省", district: "西湖区") == "杭州 · 西湖区")
+        let coordinate = DomesticWeatherParser.coordinate("121.473667,31.230525")
+        precondition(coordinate?.latitude == 31.230525 && coordinate?.longitude == 121.473667)
+
+        let amapLive: [String: Any] = ["city": "上海市", "temperature": "25", "humidity": "68",
+                                       "winddirection": "东北", "windpower": "≤3", "weather": "阴",
+                                       "reporttime": "2026-09-29 11:33:13"]
+        let amapCasts: [[String: Any]] = [
+            ["date": "2026-09-29", "dayweather": "小雨", "nightweather": "小雨",
+             "daytemp": "26", "nighttemp": "22"],
+            ["date": "2026-09-30", "dayweather": "雷阵雨", "nightweather": "阴",
+             "daytemp": "25", "nighttemp": "21"]]
+        let amap = DomesticWeatherParser.reading(live: amapLive, forecast: ["casts": amapCasts],
+                                                 place: "上海 · 浦东新区",
+                                                 latitude: 31.23, longitude: 121.47)!
+        precondition(amap.temperatureC == 25 && amap.humidity == 68 && amap.windDirection == "东北")
+        precondition(amap.sky == .cloudy && amap.forecast.count == 2)
+        precondition(amap.forecast[1].sky == .thunder && amap.forecastNote == nil)
+        precondition(amap.latitude == 31.23 && amap.timezone == "Asia/Shanghai" && amap.source == "高德")
+        precondition(amap.forecast[0].rainChance! > 0 && amap.forecast[1].rainChance! > 0)
+        precondition(amap.highC == 26 && amap.lowC == 22)
+        let bare = DomesticWeatherParser.reading(live: amapLive, forecast: nil, place: "上海",
+                                                 latitude: nil, longitude: nil)!
+        precondition(bare.forecast.isEmpty && bare.forecastNote != nil && bare.highC == bare.temperatureC)
+        precondition(DomesticWeatherParser.reading(live: nil, forecast: nil, place: "x",
+                                                   latitude: nil, longitude: nil) == nil)
+
+        let dataSK: [String: Any] = ["cityname": "上海", "temp": "25.4", "sd": "68", "SD": "68%",
+                                     "WD": "北风", "WS": "1级", "weather": "阴",
+                                     "weathercode": "d02", "rain": "0"]
+        let fc: [String: Any] = ["f": [
+            ["fa": "d7", "fb": "n7", "fc": "26", "fd": "23", "fe": "东风", "fi": "9/29", "fj": "今天"],
+            ["fa": "d00", "fb": "n00", "fc": "27", "fd": "22", "fe": "东北风", "fi": "9/30", "fj": "星期三"]]]
+        let cn = DomesticWeatherParser.reading(dataSK: dataSK, forecast: fc)!
+        precondition(cn.temperatureC == 25.4 && cn.humidity == 68 && cn.sky == .cloudy)
+        precondition(cn.forecast.count == 2 && cn.forecast[0].sky == .drizzle && cn.forecast[1].sky == .clear)
+        precondition(cn.place == "上海" && cn.source == "中国天气网" && cn.timezone == "Asia/Shanghai")
+        let noPercent: [String: Any] = ["cityname": "上海", "temp": "25", "SD": "68%", "weathercode": "d02"]
+        precondition(DomesticWeatherParser.reading(dataSK: noPercent, forecast: nil)!.humidity == 68)
+        let script = #"var dataSK ={"temp":"25"};var fc ={"f":[{"fa":"d7","fb":"n7"}]};var alarmDZ ={"w":[]};"#
+        precondition(DomesticWeatherParser.jsonVariable("dataSK", in: script)?["temp"] as? String == "25")
+        precondition(DomesticWeatherParser.jsonVariable("fc", in: script)?["f"] != nil)
+        precondition(DomesticWeatherParser.jsonVariable("alarmDZ", in: script) != nil)
+        precondition(DomesticWeatherParser.jsonVariable("cityDZ", in: script) == nil)
+        let search = #"([{"ref":"101020100~shanghai~上海~Shanghai~上海~Shanghai~21~200000~SH~上海"}])"#
+        precondition(DomesticWeatherParser.searchCityID(fromSearchResponse: search) == "101020100")
+
+        // The offline city table is what replaced 中国天气网's dead search API.
+        precondition(DomesticWeatherParser.cityID(forName: "上海", tableJSON: CNWeatherCityTable.json) == "101020100")
+        precondition(DomesticWeatherParser.cityID(forName: "上海市", tableJSON: CNWeatherCityTable.json) == "101020100")
+        precondition(DomesticWeatherParser.cityID(forName: " 杭州 ", tableJSON: CNWeatherCityTable.json) == "101210101")
+        precondition(DomesticWeatherParser.cityID(forName: "北京", tableJSON: CNWeatherCityTable.json) == "101010100")
+        precondition(DomesticWeatherParser.cityID(forName: "浦东新区", tableJSON: CNWeatherCityTable.json) == nil)
+        precondition(DomesticWeatherParser.cityID(forName: "东京", tableJSON: CNWeatherCityTable.json) == nil)
+        precondition(DomesticWeatherParser.cityID(forName: "上海", tableJSON: "not json") == nil)
+        precondition(DomesticWeatherParser.cityLookup(in: CNWeatherCityTable.json).count > 300)
+
+        var located = reading.withCoordinates(latitude: 1, longitude: 2, timezone: "UTC")
+        precondition(located.latitude == 1 && located.longitude == 2 && located.timezone == "UTC")
+        located = reading.withCoordinates(latitude: nil, longitude: nil, source: "测试")
+        precondition(located.latitude == reading.latitude && located.source == "测试")
+        print("PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data, domestic sources")
     }
 }
 '''

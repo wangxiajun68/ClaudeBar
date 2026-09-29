@@ -213,6 +213,12 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(weatherCity, forKey: "weatherCity") }
     }
 
+    /// 高德 Web 服务 key（`console.amap.com` 申请）。留空则跳过 高德，
+    /// 天气直接走中国天气网兜底。存 UserDefaults 明文，与 `vpnControllerSecret` 同惯例。
+    @Published var amapAPIKey: String {
+        didSet { UserDefaults.standard.set(amapAPIKey, forKey: "amapAPIKey") }
+    }
+
     /// 概览问候卡的副标题用哪种称呼：本机名（默认）或机型芯片名。
     @Published var greetingShowsChip: Bool {
         didSet { UserDefaults.standard.set(greetingShowsChip, forKey: "greetingShowsChip") }
@@ -231,6 +237,7 @@ final class AppPreferences: ObservableObject {
         tokenUnitStyle = TokenUnitStyle(rawValue: UserDefaults.standard.string(forKey: "tokenUnitStyle") ?? "") ?? .chinese
         costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
         weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
+        amapAPIKey = UserDefaults.standard.string(forKey: "amapAPIKey") ?? ""
         greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
         greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard
         // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:

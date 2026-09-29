@@ -12,18 +12,29 @@ struct DashboardView: View {
     @ProviderState(.sessions) var providerStore: ProviderStore
     /// Injected by the window so a tile tap navigates to the page.
     var onNavigate: (AppPage) -> Void = { _ in }
+    /// Scroll phase and the greeting's viewport visibility, relayed to its
+    /// live sky without invalidating this page (see `PageScrollActivity`).
+    @State private var scrollActivity = PageScrollActivity()
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
                 titleBar
                 GreetingCard(onNavigate: onNavigate)
+                    .environment(\.pageScrollActivity, scrollActivity)
+                    .onScrollVisibilityChange(threshold: 0.02) { scrollActivity.onScreen = $0 }
                 ResourceStrip()
                 PowerFlowCard()
                 sessionOverview
             }
             .padding(Theme.Space.s24)
         }
+        .onScrollPhaseChange { _, phase in
+            let moving = phase != .idle
+            scrollActivity.moving = moving
+            ScrollHoverGate.set(moving)
+        }
+        .onDisappear { ScrollHoverGate.scrolling = false }
         .resourceMonitorScope(.dashboard)
         .background(Theme.bgPrimary)
     }

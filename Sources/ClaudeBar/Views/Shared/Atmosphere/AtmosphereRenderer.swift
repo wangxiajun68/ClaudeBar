@@ -516,11 +516,16 @@ final class AtmosphereRenderer {
     private var capturing = false
     private var lastFrame = CACurrentMediaTime()
     private var parallax = SIMD2<Float>.zero
-    private var nextFlash = CACurrentMediaTime() + 3
+    private var nextFlash = CACurrentMediaTime() + 1.2
     private var flashStart: Double = -10
     private var flashBolt = false
     private var flashX: Float = 0.5
     private var flashSeed: Float = 0
+    /// The strike's strokes: onset (s after `flashStart`) and peak brightness.
+    private var flashStrokes: [SIMD2<Double>] = []
+    /// A fixed strike for stills (previews and tests), in `lightning`'s
+    /// uniform layout. `nil` keeps the default: a dim deck and no channel.
+    var stillFlash: SIMD4<Float>?
     private var nextMeteor = CACurrentMediaTime() + 20
     private var meteorStart: Double = -10
     private var meteorPath = SIMD4<Float>()
@@ -763,7 +768,7 @@ final class AtmosphereRenderer {
         let rippleAge = now - rippleStart
         if !still, rippleAge < 1.1 { u.ripple = SIMD4(rippleAt.x, rippleAt.y, Float(rippleAge), rippleKind) }
 
-        u.flash = lightning(scene: scene, now: now, still: still)
+        u.flash = lightning(scene: scene, now: now, still: still || capturing)
         (u.meteor, u.meteorInfo) = meteor(scene: scene, input: input, now: now, still: still)
         return u
     }
@@ -776,26 +781,56 @@ final class AtmosphereRenderer {
         return 0.5 * t + 0.5 * (0.5 - 0.5 * cos(.pi * t))
     }
 
+    /// A thunderstorm's strikes, modelled on how lightning reads — within
+    /// WCAG 2.3.1 (at most three flashes in any second):
+    ///
+    /// - **Cloud-to-ground** (60 %): one channel, re-lit by 2–3 return strokes
+    ///   40–130 ms apart. Each stroke is a ~30 ms peak with a fast decay, so the
+    ///   bolt visibly flickers; the channel keeps its shape (`flashSeed`)
+    ///   because real return strokes reuse the ionised path.
+    /// - **In-cloud sheet** (40 %): no channel, the deck alone lights.
+    ///
+    /// Only the thin channel flickers. The deck — most of the card — takes one
+    /// smooth pulse per strike: it rises with the first stroke, holds through
+    /// the rest and then decays, never dipping between strokes. The next
+    /// strike starts at least 1.1 s after the last stroke, so no one-second
+    /// window holds more than three channel peaks or more than one deck pulse.
+    ///
+    /// Strikes cluster the way storm cells do: a quick follow-up 1.1–2.5 s
+    /// later a third of the time, otherwise 2.5–8 s.
+    ///
+    /// `x`: sky illumination, `y`: strike x (uv), `z`: channel seed,
+    /// `w`: channel brightness (0 for a sheet flash).
     private func lightning(scene: SkyScene, now: Double, still: Bool) -> SIMD4<Float> {
         guard scene.thunder > 0 else { return .zero }
-        if still { return SIMD4(0.18, 0.5, 0, 0) }
+        if still { return stillFlash.map { SIMD4($0.x * scene.thunder, $0.y, $0.z, $0.w * scene.thunder) } ?? SIMD4(0.18, 0.5, 0, 0) }
         if now >= nextFlash {
             flashStart = now
-            flashBolt = Double.random(in: 0...1, using: &rng) < 0.4
-            flashX = Float.random(in: 0.18...0.82, using: &rng)
+            flashBolt = Double.random(in: 0...1, using: &rng) < 0.6
+            flashX = Float.random(in: 0.14...0.86, using: &rng)
             flashSeed = Float.random(in: 0...64, using: &rng)
-            nextFlash = now + Double.random(in: 8...22, using: &rng)
+            let count = flashBolt ? Int.random(in: 2...3, using: &rng) : 1
+            var onset = 0.0
+            flashStrokes = (0..<count).map { index in
+                if index > 0 { onset += Double.random(in: 0.04...0.13, using: &rng) }
+                return SIMD2(onset, index == 0 ? 1 : Double.random(in: 0.5...0.95, using: &rng))
+            }
+            let quick = Double.random(in: 0...1, using: &rng) < 0.33
+            nextFlash = now + onset + (quick ? Double.random(in: 1.1...2.5, using: &rng)
+                                             : Double.random(in: 2.5...8, using: &rng))
         }
         let age = now - flashStart
-        let intensity: Double
-        switch age {
-        case ..<0: intensity = 0
-        case ..<0.06: intensity = 1
-        case ..<0.14: intensity = 0.15
-        case ..<0.18: intensity = 0.8
-        default: intensity = 0.8 * exp(-(age - 0.18) * 7)
+        guard age >= 0, let last = flashStrokes.last?.x else { return .zero }
+        var channel = 0.0
+        for stroke in flashStrokes {
+            let a = age - stroke.x
+            guard a >= 0 else { continue }
+            channel = max(channel, stroke.y * min(1, a / 0.012) * exp(-max(0, a - 0.03) * 22))
         }
-        return SIMD4(Float(intensity) * scene.thunder, flashX, flashSeed, flashBolt ? 1 : 0)
+        let hold = last + 0.05
+        let sky = (flashBolt ? 1 : 0.75) * min(1, age / 0.02) * (age < hold ? 1 : exp(-(age - hold) * 6))
+        let thunder = Double(scene.thunder)
+        return SIMD4(Float(sky * thunder), flashX, flashSeed, Float((flashBolt ? channel : 0) * thunder))
     }
 
     private func meteor(scene: SkyScene, input: Input, now: Double, still: Bool) -> (SIMD4<Float>, SIMD4<Float>) {

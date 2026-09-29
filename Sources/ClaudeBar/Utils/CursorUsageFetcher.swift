@@ -328,6 +328,24 @@ enum CursorUsageFetcher {
         Snapshot(note: "Cursor 额度查询失败")
     }
 
+    /// The account's billing cycle, from the last good allowance reading.
+    ///
+    /// Taken from memory rather than persisted separately: `CursorUsageStore`
+    /// already holds a `PlanUsage` with both ends of the cycle, and it is
+    /// persisted to `cursor-allowance.json`, so this is a read of state the app
+    /// keeps anyway. It exists for `CursorLedger`'s window planner, which needs
+    /// a fallback window for a period Cursor will not answer for (年 / 全部).
+    ///
+    /// `nil` before the first successful probe — the planner then narrows to
+    /// the most recent fitting slice and says so.
+    @MainActor
+    static func billingCycle() -> DateInterval? {
+        guard let start = CursorUsageStore.shared.plan?.billingCycleStart,
+              let end = CursorUsageStore.shared.plan?.billingCycleEnd,
+              end > start else { return nil }
+        return DateInterval(start: start, end: end)
+    }
+
     // MARK: - Plan (api2.cursor.sh Connect RPC)
 
     /// `POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
@@ -481,7 +499,15 @@ enum CursorUsageFetcher {
 
     private static func clampPercent(_ value: Double) -> Double { min(100, max(0, value)) }
 
-    private static func number(_ value: Any?) -> Double? {
+    /// A finite `Double` from a JSON value that may be a number **or a string**.
+    ///
+    /// Cursor is inconsistent about this across its own endpoints: the period
+    /// and Grok payloads send numbers, while `GetAggregatedUsageEvents` sends
+    /// every token count as a string (`"inputTokens":"914"`). Shared with
+    /// `CursorLedger` rather than reimplemented, because a second coercion that
+    /// only accepted `NSNumber` would silently read the whole aggregation as
+    /// zero — a wrong answer that looks like an empty month.
+    static func number(_ value: Any?) -> Double? {
         if let n = value as? NSNumber {
             let d = n.doubleValue
             return d.isFinite ? d : nil

@@ -33,7 +33,7 @@ struct Uniforms {
     float4 pointer;     // pt xy, active, unused
     float4 parallax;    // pt xy, dark appearance, unused
     float4 ripple;      // pt xy, age s, kind
-    float4 flash;       // intensity, bolt x (uv), seed, bolt visible
+    float4 flash;       // sky illumination, strike x (uv), channel seed, channel brightness
     float4 meteor;      // start uv, end uv
     float4 meteorInfo;  // progress, brightness, unused, unused
 };
@@ -141,6 +141,30 @@ static float snowLayer(float2 pt, float t, float cell, float speed, float size, 
     c.x += sin(t * (0.5 + h) + h * 40.0) * cell * 0.16;
     float r = size * (0.55 + 0.9 * hash21(id + 4.2));
     return smoothstep(r + blur, r * 0.25, length(f - c));
+}
+
+// A lightning channel's lateral offset (pt) at height y (pt) and its slope
+// dx/dy: straight runs between random kinks, at three scales, which is what
+// makes a bolt read as tortuous rather than as a wobbling line.
+static float2 zigzag(float y, float seed, float3 period, float3 amp) {
+    float2 r = float2(0.0);
+    for (int k = 0; k < 3; k++) {
+        float s = y / period[k];
+        float i = floor(s);
+        float a = hash11(i * 7.13 + seed + float(k) * 19.7) - 0.5;
+        float b = hash11((i + 1.0) * 7.13 + seed + float(k) * 19.7) - 0.5;
+        r.x += mix(a, b, s - i) * amp[k];
+        r.y += (b - a) * amp[k] / period[k];
+    }
+    return r;
+}
+
+// Brightness of one channel at `dist` pt (already corrected for its slope):
+// a white-hot core of `core` pt, a tight halo, and a wide scattered glow.
+static float2 channelLight(float dist, float core) {
+    float hot = smoothstep(core, 0.0, dist);
+    float halo = exp(-dist / (core * 3.2)) * 0.55 + exp(-dist / 28.0) * 0.16;
+    return float2(hot, halo);
 }
 
 // x: coverage, y: write time, zw: coverage gradient (points into the glyph).
@@ -292,10 +316,14 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
         c = mix(c, cc, alpha);
     }
 
-    // Lightning lights the deck from inside.
+    // Lightning lights the deck from inside, brightest around the strike and
+    // most where the cloud is thick; the open sky only brightens a little.
     if (u.flash.x > 0.001) {
-        float fx = exp(-abs(uv.x - u.flash.y) * 3.0);
-        c += float3(0.72, 0.78, 1.0) * u.flash.x * (0.12 + 0.75 * alpha * fx);
+        float cy = 0.14 + fract(u.flash.z * 0.371) * 0.16;
+        float2 off = float2((uv.x - u.flash.y) * aspect, (uv.y - cy) * 1.6);
+        float near = exp(-length(off) * 1.9);
+        float lit = 0.08 + alpha * (0.2 + 1.1 * near) * (0.6 + 0.4 * dens);
+        c += float3(0.70, 0.74, 1.0) * u.flash.x * lit;
     }
 
     // --- fog -----------------------------------------------------------------
@@ -326,16 +354,62 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
     }
 
     // --- lightning bolt --------------------------------------------------------
-    if (u.flash.w > 0.5 && u.flash.x > 0.05) {
-        float y = uv.y;
-        if (y > 0.14 && y < HORIZON + 0.08) {
-            float seed = u.flash.z;
-            float bx = u.flash.y + (fbm(nt, float2(y * 5.0, seed), 4) - 0.5) * 0.22
-                     + (nt.sample(noiseSampler, float2(y * 1.6, seed * 0.37)).g - 0.5) * 0.03;
-            float dist = abs(uv.x - bx) * W;
-            float fade = smoothstep(0.14, 0.2, y);
-            float bolt = (smoothstep(1.4, 0.0, dist) + exp(-dist / 9.0) * 0.35) * fade;
-            c += float3(0.92, 0.94, 1.0) * bolt * u.flash.x * 1.4;
+    // Cloud base to ground: a main channel of straight runs between kinks at
+    // three scales, a few tapering branches forking down and out from it, a
+    // white-hot core inside a violet halo, and a glow where it meets the
+    // ground. Only pixels in the strike's column do the work.
+    if (u.flash.w > 0.01) {
+        float seed = u.flash.z;
+        float top = (0.10 + fract(seed * 0.371) * 0.08) * skyH;
+        float ground = (HORIZON + 0.03) * skyH;
+        float x0 = u.flash.y * W;
+        float lean = (hash11(seed * 3.1) - 0.5) * 0.5;
+        if (abs(pt.x - x0) < 0.45 * skyH + 60.0 && pt.y > top - 4.0 && pt.y < ground + 24.0) {
+            float3 period = float3(46.0, 15.0, 4.5);
+            float3 amp = float3(58.0, 16.0, 4.0);
+            float hot = 0.0, halo = 0.0;
+            float y = clamp(pt.y, top, ground);
+            float2 z = zigzag(y - top, seed, period, amp);
+            float mainX = x0 + (y - top) * lean + z.x;
+            float slopeMain = lean + z.y;
+            float d = length(float2(pt.x - mainX, pt.y - y)) / sqrt(1.0 + slopeMain * slopeMain);
+            float2 l = channelLight(d, 1.5);
+            float taper = smoothstep(top - 2.0, top + 26.0, pt.y);
+            hot += l.x * taper;
+            halo += l.y * taper;
+
+            int branches = 3 + int(hash11(seed * 5.3) * 3.0);
+            for (int b = 0; b < 5; b++) {
+                if (b >= branches) break;
+                float hb = float(b) + seed * 1.7;
+                float span = ground - top;
+                float y0 = top + (0.12 + 0.62 * hash11(hb * 2.3)) * span;
+                float len = (0.12 + 0.26 * hash11(hb * 4.1)) * span;
+                if (pt.y < y0 - 3.0 || pt.y > y0 + len + 3.0) continue;
+                float side = hash11(hb * 6.7) > 0.5 ? 1.0 : -1.0;
+                float blean = side * (0.35 + 0.9 * hash11(hb * 8.9));
+                float2 zb0 = zigzag(y0 - top, seed, period, amp);
+                float bx0 = x0 + (y0 - top) * lean + zb0.x;
+                float yy = clamp(pt.y, y0, y0 + len);
+                float2 zb = zigzag(yy - y0, seed + hb * 13.0, float3(22.0, 7.0, 2.6), float3(20.0, 6.0, 2.0));
+                float bx = bx0 + (yy - y0) * blean + zb.x;
+                float slope = blean + zb.y;
+                float bd = length(float2(pt.x - bx, pt.y - yy)) / sqrt(1.0 + slope * slope);
+                // Clamped: at the tip rounding can put `along` a hair past 1,
+                // and pow() of a negative base is NaN (a black scanline).
+                float along = saturate((yy - y0) / len);
+                float fadeB = pow(1.0 - along, 1.6) * (0.4 + 0.35 * hash11(hb * 3.3));
+                float2 lb = channelLight(bd, 0.9);
+                hot += lb.x * fadeB;
+                halo += lb.y * fadeB * 0.8;
+            }
+
+            float groundGlow = exp(-length(float2(pt.x - mainX, (pt.y - ground) * 2.2)) / 22.0)
+                             * smoothstep(ground - 60.0, ground, pt.y);
+            float3 core = float3(1.0, 0.98, 1.0);
+            float3 violet = float3(0.66, 0.66, 1.0);
+            float below = smoothstep(ground + 24.0, ground, pt.y);
+            c += (core * min(1.0, hot) * 1.6 + violet * halo * 0.9 + violet * groundGlow * 0.5) * u.flash.w * below;
         }
     }
 

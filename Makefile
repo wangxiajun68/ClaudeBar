@@ -29,6 +29,7 @@ test:
 	python3 Tests/session-title-regressions.py
 	python3 Tests/quota-reset-regressions.py
 	python3 Tests/cursor-usage-regressions.py
+	python3 Tests/cursor-ledger-regressions.py
 	python3 Tests/completion-notify-regressions.py
 	python3 Tests/greeting-data-regressions.py
 	python3 Tests/greeting-name-regressions.py
@@ -44,3 +45,4 @@ test:
 	python3 Tests/card-shadow-regressions.py
 	python3 Tests/machine-mark-regressions.py
 	python3 Tests/fan-rotor-regressions.py
+	python3 Tests/vpn-domain-log-regressions.py

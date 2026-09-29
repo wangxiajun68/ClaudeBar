@@ -475,6 +475,10 @@ final class VpnManager: ObservableObject {
             state = .failed(Self.conflictMessage(conflict))
             return
         }
+        // The previous core's pipes are gone by now, so the half-line the domain
+        // log is still carrying can never be completed. Only the carry goes —
+        // the parsed table survives a port / TUN / subscription restart.
+        VpnDomainLog.shared.resetCarry()
         portConflict = nil
         state = .starting
         let profileURL = subscriptions.activeID.map { subscriptions.profileURL($0) }
@@ -559,6 +563,14 @@ final class VpnManager: ObservableObject {
                 let data = fh.availableData
                 guard !data.isEmpty else { fh.readabilityHandler = nil; return }
                 coreLog.append(data)
+                // The same bytes the file just got, handed to the domain log
+                // straight from the pipe. Hooking the *stream* rather than
+                // reading the *file* is what makes the log view live, and it
+                // means `CoreLogWriter`'s rotation (which rewrites the file
+                // from its tail) cannot confuse the reader with a stale byte
+                // offset. `ingest` only buffers and parses on this thread; the
+                // main actor gets a debounced batch.
+                VpnDomainLog.shared.ingest(data)
             }
         }
 

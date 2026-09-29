@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 
 struct WeatherDay: Equatable, Identifiable {
@@ -9,8 +10,11 @@ struct WeatherDay: Equatable, Identifiable {
     var wind: Double?
     var sunrise: Date?
     var sunset: Date?
+    /// A sky stated by the source rather than derived from `code`, for the
+    /// domestic tables (see `WeatherReading.skyHint`).
+    var skyHint: WeatherReading.Sky? = nil
     var id: Date { date }
-    var sky: WeatherReading.Sky { WeatherReading.sky(for: code) }
+    var sky: WeatherReading.Sky { skyHint ?? WeatherReading.sky(for: code) }
 }
 
 /// Open-Meteo WMO daily forecast. Six dates means today AND day +5.
@@ -31,7 +35,8 @@ enum WeatherForecastFetcher {
     private static func resolve(_ query: String) async throws -> Place? {
         let pair = query.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         if pair.count == 2, (-90...90).contains(pair[0]), (-180...180).contains(pair[1]) {
-            return Place(latitude: pair[0], longitude: pair[1], name: "当前位置")
+            let name = await PlaceNamer.shared.name(latitude: pair[0], longitude: pair[1]) ?? "当前位置"
+            return Place(latitude: pair[0], longitude: pair[1], name: name)
         }
         var url = URLComponents(string: "https://geocoding-api.open-meteo.com/v1/search")!
         url.queryItems = [URLQueryItem(name: "name", value: query), URLQueryItem(name: "count", value: "1"), URLQueryItem(name: "language", value: "zh")]
@@ -96,5 +101,39 @@ enum WeatherForecastFetcher {
     private static func number(_ value: Any?) -> Double? {
         guard let n = value as? NSNumber, n.doubleValue.isFinite else { return nil }
         return n.doubleValue
+    }
+}
+
+/// A location fix → "城市 · 区", the same shape a typed city resolves to.
+///
+/// Apple's reverse geocoder, in Chinese, keyed on the coordinate rounded to
+/// ~1 km (the fix's own accuracy). It is rate-limited per app, so a name is
+/// asked for once per place and reused by every 15-minute weather refresh.
+actor PlaceNamer {
+    static let shared = PlaceNamer()
+
+    private var cache: [String: String] = [:]
+
+    func name(latitude: Double, longitude: Double) async -> String? {
+        let key = String(format: "%.2f,%.2f", latitude, longitude)
+        if let cached = cache[key] { return cached }
+        let location = CLLocation(latitude: latitude, longitude: longitude)
+        guard let mark = try? await CLGeocoder().reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")).first,
+              let name = Self.format(mark) else { return nil }
+        cache[key] = name
+        return name
+    }
+
+    /// "上海市 · 浦东新区" → "上海 · 浦东新区". A municipality's `locality` and
+    /// `administrativeArea` are the same city, so it is named once.
+    static func format(_ mark: CLPlacemark) -> String? {
+        func trimmed(_ value: String?) -> String? {
+            guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+            return value
+        }
+        guard let city = trimmed(mark.locality) ?? trimmed(mark.administrativeArea) ?? trimmed(mark.name) else { return nil }
+        let short = city.count > 2 && city.hasSuffix("市") ? String(city.dropLast()) : city
+        guard let district = trimmed(mark.subLocality), district != city else { return short }
+        return "\(short) · \(district)"
     }
 }

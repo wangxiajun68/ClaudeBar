@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The live hardware marks on the 概览 resource strip.
@@ -39,74 +40,81 @@ struct HardwareIllustration: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.surfaceIsVisible) private var surfaceVisible
-    /// The sweep's clock, started when the mark appears — see `phase(level:at:)`
-    /// for why it is not an absolute date.
-    @State private var sweepStart = Date()
+    /// The mark fixture renders with `ImageRenderer`, which snapshots an
+    /// `NSViewRepresentable` over the canvas and replaces the bars. The live
+    /// app leaves this at its default.
+    @Environment(\.rendersHardwareSweep) private var rendersSweep
 
     /// Lucide's own grid. The outline is authored in these units.
     static let grid = LucideHardwareGeometry.grid
 
     var body: some View {
         let level = Self.clamp(load)
-        TimelineView(.animation(minimumInterval: 1.0 / 30,
-                                paused: !Self.animates(level,
-                                                       reduceMotion: reduceMotion,
-                                                       visible: surfaceVisible))) { timeline in
-            Canvas { ctx, size in
-                var c = ctx
-                // Two stacked lanes, and the split is the design:
-                //
-                //   ┌──────────────────────────┐
-                //   │   Lucide's icon, 24pt    │  ← which part is this
-                //   ├──────────────────────────┤
-                //   │   ▮▮▮▮▮▮▮▮▮▮▮▮  (a row)  │  ← how busy is it
-                //   └──────────────────────────┘
-                //
-                // The first attempt squeezed the reading *inside* the artwork and
-                // the two fought each other: bars crossed the GPU's port circles
-                // and the DIMM's chip windows. Giving the reading its own lane
-                // keeps the icon legible as an icon and the reading legible as a
-                // reading — neither has to compromise for the other.
-                // The lane is sized from the icon, not from the box: at 130pt
-                // the old `height * 0.22` gave the icon a hair under half the
-                // slot and the bars a lane thicker than the gap between two
-                // DIMM pads. Tying the lane to the *icon's* side keeps the mark
-                // the same drawing at every size the app hands it — 176×130 on
-                // the strip, 130×92 in a popover — which is what lets the two
-                // be read as one mark rather than as two drawings of one idea.
-                // The clamp is what keeps a 62pt popover mark from paying 20pt
-                // of its height for a lane.
-                let laneH = min(max(12, size.height * 0.17), max(12, size.height * 0.26))
-                let iconH = size.height - laneH - 7
-                let side = min(size.width, iconH)
-                let s = side / Self.grid
-                let iconRect = CGRect(x: (size.width - Self.grid * s) / 2,
-                                      y: 0,
-                                      width: Self.grid * s, height: Self.grid * s)
-                let lane = CGRect(x: (size.width - Self.grid * s) / 2,
-                                  y: iconRect.maxY + 7,
-                                  width: Self.grid * s, height: laneH)
-
-                // 1. The icon: Lucide's own stroke spec (2pt, round joins).
-                var icon = c
-                icon.translateBy(x: iconRect.minX, y: iconRect.minY)
-                icon.scaleBy(x: s, y: s)
-                // The path itself is cached per kind — see
-                // `LucideHardwareGeometry.path(for:)`. It is a constant drawing,
-                // and this closure can run once per display cycle.
-                let outline = LucideHardwareGeometry.path(for: Self.outline(for: kind))
-                icon.fill(outline, with: .color(tint.opacity(0.09)))
-                icon.stroke(outline, with: .color(tint),
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-
-                // 2. The reading, in its own lane.
-                let t = Self.phase(level: level, at: timeline.date.timeIntervalSince(sweepStart))
-                Self.drawReading(kind: kind, level: level, cells: cells, wells: wells,
-                                 t: t, tint: tint, lane: lane, ctx: &c)
+        let moving = Self.animates(level, reduceMotion: reduceMotion, visible: surfaceVisible)
+        // The icon and the bars are a reading: they change when the sampler
+        // does, about once a second. The highlight used to be redrawn from a
+        // display-linked clock wrapped around this canvas, and that clock lays
+        // the whole window out on every refresh — measured at roughly ten
+        // points of a core for a clock whose content was a filled rectangle.
+        // The highlight is the same drawing, moved by Core Animation
+        // (`ReadingSweep`) instead.
+        Canvas { ctx, size in
+            let placed = Self.placement(in: size)
+            var icon = ctx
+            icon.translateBy(x: placed.icon.minX, y: placed.icon.minY)
+            icon.scaleBy(x: placed.scale, y: placed.scale)
+            // The path itself is cached per kind — see
+            // `LucideHardwareGeometry.path(for:)`. It is a constant drawing.
+            let outline = LucideHardwareGeometry.path(for: Self.outline(for: kind))
+            icon.fill(outline, with: .color(tint.opacity(0.09)))
+            icon.stroke(outline, with: .color(tint),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            Self.drawReading(kind: kind, level: level, cells: cells, wells: wells,
+                             tint: tint, lane: placed.lane, ctx: &ctx)
+        }
+        // A 1 Hz reading must not open an animation transaction. Bar height
+        // would otherwise interpolate, and an in-flight transaction lays the
+        // hosting view out on every display cycle. The sweep is not in this
+        // transaction: it is a layer, and `transaction` cannot freeze it.
+        .transaction { $0.animation = nil }
+        .overlay {
+            if rendersSweep {
+                ReadingSweep(kind: kind, level: level, cells: cells, wells: wells,
+                             tint: tint, active: moving)
+                    .allowsHitTesting(false)
             }
         }
-        .onAppear { sweepStart = Date() }
         .accessibilityHidden(true)
+    }
+
+    /// Icon on top, reading lane beneath. One function, so the canvas and the
+    /// sweep layer clip to the same bars.
+    ///
+    /// Two stacked lanes, and the split is the design:
+    ///
+    ///   ┌──────────────────────────┐
+    ///   │   Lucide's icon, 24pt    │  ← which part is this
+    ///   ├──────────────────────────┤
+    ///   │   ▮▮▮▮▮▮▮▮▮▮▮▮  (a row)  │  ← how busy is it
+    ///   └──────────────────────────┘
+    ///
+    /// The first attempt squeezed the reading *inside* the artwork and the two
+    /// fought each other: bars crossed the GPU's port circles and the DIMM's
+    /// chip windows. The lane is sized from the icon, not from the box: at
+    /// 130pt the old `height * 0.22` gave the icon a hair under half the slot
+    /// and the bars a lane thicker than the gap between two DIMM pads. Tying
+    /// the lane to the *icon's* side keeps the mark the same drawing at every
+    /// size the app hands it. The clamp keeps a short popover mark from paying
+    /// 20pt of its height for a lane.
+    static func placement(in size: CGSize) -> (icon: CGRect, lane: CGRect, scale: CGFloat) {
+        let laneH = min(max(12, size.height * 0.17), max(12, size.height * 0.26))
+        let iconH = size.height - laneH - 7
+        let side = min(size.width, iconH)
+        let scale = side / grid
+        let icon = CGRect(x: (size.width - grid * scale) / 2, y: 0,
+                          width: grid * scale, height: grid * scale)
+        let lane = CGRect(x: icon.minX, y: icon.maxY + 7, width: icon.width, height: laneH)
+        return (icon, lane, scale)
     }
 
     /// The one place the app decides which *other* kind of glyph stands in for a
@@ -153,92 +161,304 @@ struct HardwareIllustration: View {
         visible && !reduceMotion && clamp(level) >= 0.04
     }
 
-    /// 0…1 for one sweep. Rate ∝ the reading.
-    ///
-    /// `time` is seconds since the mark appeared, *not* since the reference
-    /// date. Deriving it from an absolute clock means each mark's sweep phase
-    /// depends on the instant the app was launched — two tiles handed the same
-    /// reading could sit at visibly different points of the same sweep, and the
-    /// phase jumped whenever `TimelineView` was resumed after a pause (a hidden
-    /// window, Reduce Motion being turned off), landing the sweep mid-flight
-    /// instead of at its start.
-    static func phase(level: Double, at time: TimeInterval) -> Double {
-        let secs = time * (0.35 + clamp(level) * 1.35)
-        return secs.truncatingRemainder(dividingBy: 1)
+    /// One bar of the reading lane. `busy` is what receives a sweep.
+    struct LaneBar: Equatable {
+        var rect: CGRect
+        var radius: CGFloat
+        var busy: Bool
     }
 
-    /// Where each icon keeps the space that is legitimately a "gauge": inside the
-    /// die (CPU), inside the shroud (GPU), inside the modules (内存/硬盘). These
-    /// rects are in Lucide's own 24pt space and were chosen to sit inside the
-    /// stroked outline rather than crossing it.
+    /// The bars under `lane`, in core / sub-unit / area order.
+    static func laneBars(kind: Kind, level: Double, cells: [Double], wells: [Double],
+                         lane: CGRect) -> [LaneBar] {
+        let values = readings(kind: kind, level: level, cells: cells, wells: wells)
+        let count = max(1, values.count)
+        let gap: CGFloat = count > 10 ? 1.0 : (count > 6 ? 1.4 : 2.2)
+        let barW = (lane.width - gap * CGFloat(count - 1)) / CGFloat(count)
+        guard barW > 0.3 else { return [] }
+        return values.enumerated().map { index, value in
+            let column = CGRect(x: lane.minX + CGFloat(index) * (barW + gap), y: lane.minY,
+                                width: barW, height: lane.height)
+            let busy = value > 0.04
+            let h = busy ? max(lane.height * 0.34, lane.height * CGFloat(value)) : lane.height * 0.34
+            let bar = CGRect(x: column.minX, y: column.maxY - h, width: column.width, height: h)
+            return LaneBar(rect: bar, radius: min(lane.height * 0.30, barW * 0.42), busy: busy)
+        }
+    }
+
+    /// Cycles per second of the highlight. The old canvas used
+    /// `time * (0.35 + level * 1.35)` modulo one; this is that coefficient.
+    static func sweepRate(level: Double) -> Double {
+        0.35 + clamp(level) * 1.35
+    }
+
+    private static func readings(kind: Kind, level: Double, cells: [Double], wells: [Double]) -> [Double] {
+        let source: [Double]
+        switch kind {
+        case .cpu, .gpu: source = cells.isEmpty ? [level] : cells
+        case .memory, .disk: source = wells.isEmpty ? [level] : wells
+        }
+        var values = source
+        for index in values.indices { values[index] = clamp(values[index]) }
+        return values
+    }
+
     /// The reading, laid out in a lane under the icon.
     ///
     /// One bar per unit — one per logical core for the CPU, one per graphics
     /// sub-unit for the GPU, one per area for 内存 / 硬盘 — each filled from its
     /// own baseline by its own value. The bars are separated enough to be
     /// *countable*: "twelve cores, six of them busy" has to be readable off the
-    /// mark, which is the only reason to draw twelve of anything.
+    /// mark, which is the only reason to draw twelve of anything. The travelling
+    /// highlight is not drawn here; `ReadingSweep` owns it.
     private static func drawReading(kind: Kind, level: Double, cells: [Double],
-                                    wells: [Double], t: Double, tint: Color,
+                                    wells: [Double], tint: Color,
                                     lane: CGRect, ctx: inout GraphicsContext) {
-        // `cells.map(clamp)` allocated once per frame per mark; this runs at
-        // display rate for up to four marks at a time.
-        var values: [Double]
-        switch kind {
-        case .cpu, .gpu:
-            if cells.isEmpty {
-                values = [level]
-            } else {
-                values = cells
-                for index in values.indices { values[index] = clamp(values[index]) }
-            }
-        case .memory, .disk:
-            let source = wells.isEmpty ? [level] : wells
-            values = source
-            for index in values.indices { values[index] = clamp(values[index]) }
-        }
-
+        let values = readings(kind: kind, level: level, cells: cells, wells: wells)
         // The lane's own track, so the bars read as a gauge on a rail rather
         // than as loose marks under a picture.
         ctx.fill(Path(roundedRect: lane, cornerRadius: lane.height * 0.28),
                  with: .color(tint.opacity(0.12)))
 
-        let count = max(1, values.count)
-        let gap: CGFloat = count > 10 ? 1.0 : (count > 6 ? 1.4 : 2.2)
-        let barW = (lane.width - gap * CGFloat(count - 1)) / CGFloat(count)
-        guard barW > 0.3 else { return }
-        for (index, value) in values.enumerated() {
-            let rect = CGRect(x: lane.minX + CGFloat(index) * (barW + gap), y: lane.minY,
-                              width: barW, height: lane.height)
-            let busy = value > 0.04
-            // Bars grow from the lane's baseline: height ∝ the reading, so the
-            // shape of the row *is* the shape of the load.
-            let h = busy ? max(lane.height * 0.34, lane.height * CGFloat(value)) : lane.height * 0.34
-            let bar = CGRect(x: rect.minX, y: rect.maxY - h, width: rect.width, height: h)
-            let radius = min(lane.height * 0.30, barW * 0.42)
-            ctx.fill(Path(roundedRect: bar, cornerRadius: radius),
-                     with: .color(busy ? tint.opacity(0.50 + value * 0.50)
-                                       : tint.opacity(0.24)))
-            if busy { sweep(bar, t, tint, &ctx, opacity: 0.5, corner: radius) }
+        for (bar, value) in zip(laneBars(kind: kind, level: level, cells: cells, wells: wells, lane: lane), values) {
+            ctx.fill(Path(roundedRect: bar.rect, cornerRadius: bar.radius),
+                     with: .color(bar.busy ? tint.opacity(0.50 + value * 0.50)
+                                           : tint.opacity(0.24)))
+        }
+    }
+}
+
+private struct HardwareSweepKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Off only for the raster fixture. See `HardwareIllustration`.
+    var rendersHardwareSweep: Bool {
+        get { self[HardwareSweepKey.self] }
+        set { self[HardwareSweepKey.self] = newValue }
+    }
+}
+
+// MARK: - Sweep
+
+/// The angled highlight that used to be stroked inside the 30 Hz canvas.
+///
+/// One gradient per busy bar, clipped to that bar, translated by a repeating
+/// linear animation. `speed` is `HardwareIllustration.sweepRate` (cycles per
+/// second of a one-second animation), retimed with `timeOffset` the way
+/// `LucideRotor` retimes a blade, so a new reading does not jump the highlight
+/// back to the start. Below the idle threshold, under Reduce Motion, or while
+/// the surface or the window is hidden, `speed` is 0 and the highlight is not
+/// drawn. Nothing here invalidates SwiftUI.
+private struct ReadingSweep: NSViewRepresentable {
+    var kind: HardwareIllustration.Kind
+    var level: Double
+    var cells: [Double]
+    var wells: [Double]
+    var tint: Color
+    var active: Bool
+
+    func makeNSView(context: Context) -> ReadingSweepView { ReadingSweepView() }
+
+    func updateNSView(_ view: ReadingSweepView, context: Context) {
+        view.kind = kind
+        view.level = level
+        view.cells = cells
+        view.wells = wells
+        view.tint = NSColor(tint)
+        view.active = active
+        view.sync()
+    }
+}
+
+final class ReadingSweepView: NSView {
+    var kind: HardwareIllustration.Kind = .cpu
+    var level: Double = 0
+    var cells: [Double] = []
+    var wells: [Double] = []
+    var tint = NSColor.white
+    var active = false
+
+    private struct TintKey: Equatable {
+        var r: CGFloat
+        var g: CGFloat
+        var b: CGFloat
+        var a: CGFloat
+    }
+
+    private var bars: [HardwareIllustration.LaneBar] = []
+    private var paintedTint: TintKey?
+    private var sheens: [CALayer] = []
+    private var speed: Float = -1
+    private var running = false
+    private var observer: NSObjectProtocol?
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // No layer until the view is in a window. `ImageRenderer` (the mark
+        // regression) snapshots an `NSViewRepresentable` that already owns a
+        // layer, and that snapshot replaces the canvas. The bars are what the
+        // fixture measures; the highlight does not exist off-screen.
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    override func layout() {
+        super.layout()
+        sync()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        if let window {
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.sync() }
+        }
+        sync()
+    }
+
+    func sync() {
+        guard window != nil, bounds.width > 1, bounds.height > 1 else { return }
+        if layer == nil {
+            wantsLayer = true
+            let host = CALayer()
+            host.masksToBounds = false
+            // The view is flipped. A layer-hosting view does not inherit that,
+            // and the bar frames are in the canvas's top-left coordinates.
+            host.isGeometryFlipped = true
+            layer = host
+        }
+        let placed = HardwareIllustration.placement(in: bounds.size)
+        let next = HardwareIllustration.laneBars(kind: kind, level: level, cells: cells,
+                                                 wells: wells, lane: placed.lane)
+        let resolved = Self.components(tint)
+        let tintChanged = paintedTint != resolved
+        // A new reading changes bar heights, so the layers are rebuilt. The
+        // phase is taken first: otherwise every sample would snap the
+        // highlight back to the leading edge.
+        let carried = running ? capturePhase() : 0
+        let wasRunning = running
+        if next != bars || tintChanged || sheens.count != next.filter(\.busy).count {
+            bars = next
+            paintedTint = resolved
+            rebuild(next)
+        }
+        let visible = window?.occlusionState.contains(.visible) == true
+        let shouldRun = active && visible
+        let rate = shouldRun ? Float(HardwareIllustration.sweepRate(level: level)) : 0
+        if shouldRun != running {
+            running = shouldRun
+            // Coming back from a pause starts at the leading edge. A rebuild
+            // while the sweep was already running keeps the phase it had.
+            if shouldRun { restart(rate: rate, phase: wasRunning ? carried : 0) }
+            else { setSpeed(0, hide: true) }
+        } else if shouldRun {
+            setSpeed(rate, hide: false)
         }
     }
 
-    /// The light sweep: an angled highlight crossing `r`, clipped to it.
-    private static func sweep(_ r: CGRect, _ t: Double, _ tint: Color,
-                              _ ctx: inout GraphicsContext,
-                              opacity: Double, corner: CGFloat) {
-        var layer = ctx
-        layer.clip(to: Path(roundedRect: r, cornerRadius: corner))
-        let travel = r.width + r.height
-        let head = r.minX - r.height + travel * CGFloat(t)
-        let w = max(r.height, 1.2) * 1.1
-        layer.fill(Path(r.insetBy(dx: -1, dy: -1)),
-                   with: .linearGradient(
-                    Gradient(stops: [
-                        .init(color: tint.opacity(0), location: 0),
-                        .init(color: tint.opacity(opacity), location: 0.5),
-                        .init(color: tint.opacity(0), location: 1)]),
-                    startPoint: CGPoint(x: head - w, y: r.minY),
-                    endPoint: CGPoint(x: head + w, y: r.maxY)))
+    private func capturePhase() -> Double {
+        guard let sheen = sheens.first else { return 0 }
+        let local = sheen.convertTime(CACurrentMediaTime(), from: nil)
+        var phase = local.truncatingRemainder(dividingBy: 1)
+        if phase < 0 { phase += 1 }
+        return phase
+    }
+
+    private func rebuild(_ bars: [HardwareIllustration.LaneBar]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        sheens.forEach { $0.removeFromSuperlayer() }
+        sheens.removeAll()
+        let peak = tint.withAlphaComponent(0.5)
+        let clear = peak.withAlphaComponent(0)
+        for bar in bars where bar.busy {
+            let clip = CALayer()
+            clip.frame = bar.rect
+            clip.cornerRadius = bar.radius
+            clip.masksToBounds = true
+            let band = max(bar.rect.height, 1.2) * 1.1
+            let sheen = CAGradientLayer()
+            sheen.frame = CGRect(x: 0, y: 0, width: band * 2, height: bar.rect.height)
+            sheen.colors = [clear.cgColor, peak.cgColor, clear.cgColor]
+            sheen.locations = [0, 0.5, 1]
+            // Top-left to bottom-right: the canvas gradient ran from
+            // `(head - w, minY)` to `(head + w, maxY)`.
+            sheen.startPoint = CGPoint(x: 0, y: 0)
+            sheen.endPoint = CGPoint(x: 1, y: 1)
+            sheen.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            // Centre sits one bar-height off the leading edge at t = 0, and on
+            // the trailing edge at t = 1. Travel is `width + height`, the same
+            // span the canvas used (`r.width + r.height`).
+            sheen.opacity = 0
+            sheen.position = CGPoint(x: -bar.rect.height, y: bar.rect.height / 2)
+            let move = CABasicAnimation(keyPath: "position.x")
+            move.fromValue = -bar.rect.height
+            move.toValue = bar.rect.width
+            move.duration = 1
+            move.repeatCount = .infinity
+            move.timingFunction = CAMediaTimingFunction(name: .linear)
+            move.isRemovedOnCompletion = false
+            sheen.speed = 0
+            sheen.add(move, forKey: "sweep")
+            clip.addSublayer(sheen)
+            layer?.addSublayer(clip)
+            sheens.append(sheen)
+        }
+        CATransaction.commit()
+        speed = -1
+        running = false
+    }
+
+    /// `phase` is 0…1 through one pass. Zero after a pause; the value captured
+    /// before a rebuild when the sweep was already moving.
+    private func restart(rate: Float, phase: Double) {
+        let now = CACurrentMediaTime()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for sheen in sheens {
+            sheen.opacity = 1
+            sheen.timeOffset = phase
+            sheen.beginTime = now
+            sheen.speed = rate
+        }
+        CATransaction.commit()
+        speed = rate
+    }
+
+    private static func components(_ color: NSColor) -> TintKey {
+        guard let resolved = color.usingColorSpace(.sRGB) else { return TintKey(r: 0, g: 0, b: 0, a: 1) }
+        return TintKey(r: resolved.redComponent, g: resolved.greenComponent,
+                       b: resolved.blueComponent, a: resolved.alphaComponent)
+    }
+
+    /// Retimed in place. Freezing local time into `timeOffset` is what keeps
+    /// the highlight from jumping when the sampler publishes a new rate.
+    private func setSpeed(_ rate: Float, hide: Bool) {
+        let hidden = sheens.first.map { $0.opacity == 0 } ?? hide
+        guard rate != speed || hide != hidden else { return }
+        let now = CACurrentMediaTime()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for sheen in sheens {
+            if !hide, rate != speed {
+                let local = sheen.convertTime(now, from: nil)
+                sheen.timeOffset = local
+                sheen.beginTime = now
+            }
+            sheen.speed = rate
+            sheen.opacity = hide ? 0 : 1
+        }
+        CATransaction.commit()
+        speed = rate
     }
 }

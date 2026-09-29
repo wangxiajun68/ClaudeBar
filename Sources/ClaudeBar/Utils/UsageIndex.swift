@@ -152,6 +152,17 @@ struct UsageIndex {
             _ = exec(db, "DELETE FROM files WHERE path LIKE 'codex:%';")
             _ = exec(db, "PRAGMA user_version = 8")
         }
+        if version < 9 {
+            // v9 makes `ModelPricing.canonical` strip a trailing effort tier
+            // (`claude-opus-5-5-medium` → `claude-opus-5-5`), so Cursor's model
+            // names merge onto the row the local clients already record. That
+            // canonical form is baked into `costLine(for:)`'s dictionary and
+            // into the usage page's grouping, but **not** into `rollup.model`,
+            // which stores the raw recorded name — so no rebuild is needed
+            // here. The version bump exists only so a future step that *does*
+            // need one can tell this schema from v8.
+            _ = exec(db, "PRAGMA user_version = 9")
+        }
     }
 
     // MARK: - Public API

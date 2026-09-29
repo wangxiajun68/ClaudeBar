@@ -71,6 +71,22 @@ final class Counter: @unchecked Sendable {
     func end() -> Int { lock.lock(); defer { lock.unlock() }; active -= 1; return calls }
 }
 @main struct Regression {
+    /// Wait for an effect, not for a duration.
+    ///
+    /// The usage gate settles after two 60ms passes, but a loaded CI runner
+    /// stretches every scheduling hop after them, so a fixed sleep turns
+    /// "has it settled yet" into a coin flip. Every timing assertion below
+    /// polls for the state it wants and only then asserts it — the invariants
+    /// (overlap, coalescing, publish budget) are unaffected, they just get to
+    /// be observed at the moment they are true.
+    @MainActor static func waitUntil(_ timeout: Double, _ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
     @MainActor static func main() async {
         let fixture = CaptureFixture()
         fixture.catalog.records = (0..<100).map { Row(id: Int64($0), state: .streaming) }
@@ -93,6 +109,8 @@ final class Counter: @unchecked Sendable {
         }
         let pushWindow = Date().timeIntervalSince(started)
         precondition(streamPublishes >= 2, "Debouncing starves continuous streams")
+        // The last push's flush is still inside its throttle window, so the
+        // budget below is only final once this sleep has let it land.
         try? await Task.sleep(for: .milliseconds(200))
         precondition(fixture.streams.live[99]?.content == "token 59")
         let budget = Int(pushWindow / throttle) + 3
@@ -131,12 +149,12 @@ final class Counter: @unchecked Sendable {
         let model = IslandLiveModel()
         model.reloadUsage()
         for _ in 0..<100 { model.reloadUsage() }
-        try? await Task.sleep(for: .milliseconds(300))
+        await waitUntil(3) { IslandLiveModel.counter.calls >= 2 && !model.usageRefreshPending }
         precondition(IslandLiveModel.counter.maximum == 1, "Usage queries must not overlap")
         precondition(IslandLiveModel.counter.calls == 2, "Burst must coalesce to one trailing pass")
         precondition(model.usage == 2 && !model.usageRefreshPending)
         model.reloadUsage()
-        try? await Task.sleep(for: .milliseconds(150))
+        await waitUntil(3) { model.usage == 3 }
         precondition(model.usage == 3, "Gate must release for subsequent refreshes")
         print("PASS: 100 concurrent streams batch at 10 Hz without starvation; stale flush suppressed; 101 usage requests coalesce to 2 serial passes")
     }

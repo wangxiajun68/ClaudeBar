@@ -21,11 +21,14 @@
 | `cursorSessions` / `cursorExpanded` | `[CursorSessionInfo]` / `Set<String>` | Cursor 活跃会话 / 展开的会话 |
 | `usageStats` / `usageLoading` | `[ModelUsage]` / `Bool` | token 用量 |
 | `usagePeriod` / `usageReferenceDate` | `UsagePeriod` / `Date` | 用量周期，变化即重算 |
+| `usageSettlements` | `[String: ModelPricing.Cost]` | Cursor 的**实际扣费**，按 canonical 模型名。与 `usageStats` 平行、**永不并入**；`settlement(for:)` 按归一后的名字取。窗口与截断标记在 `CursorLedgerStore` 上（同一个事实只留一个出处） |
 | `collapsedProviderIDs` | `Set<UUID>` | 折叠的 Provider |
 
 ## 派生量（`ProviderStore+Derived.swift`）
 
 视图不再各自 reduce，统一读派生属性：`aliveSessions`、`busySessionCount`、`aliveCursorSessions`、`activeCursorCount`、`anyClaudeBusy`、`totalUsageTokens`、`totalUsageLabel`、`maxUsageTokens`、`activeProvider`、`activeModel`。
+
+用量页新增三个：`settlement(for:)`（某模型的实际扣费）、`settlementCovers(_:)`（该金额是否已覆盖给定窗口）、`settlementWindowLabel`（金额覆盖的窗口文案，供瓦片标注）。
 
 ## 非路径配置（`AppConfig.swift`）
 
@@ -46,6 +49,7 @@ refresh()
 ```
 
 - `usagePeriod` 与 `usageReferenceDate` 的 `didSet` 仅在值变化时触发 `refreshUsage()`（B8）。
+- **Cursor 的实际扣费走两个入口**：`ProviderStore.refresh()` 与用量页的周期切换（`selectPeriod` / `shiftUsage`）调 `requestSettlement()`，它按当前周期算出窗口交给 `CursorLedgerStore`（年 / 全部由账本退化为账单周期并标记）；账本读回来后发 `.cursorLedgerDidChange`，`startUsageWatcher` 里注册的观察者以 `refreshUsage(rescan: false)` 响应——**磁盘上什么都没变，只有钱变了**，所以不重走 transcript。用量页的瓦片读的一直是内存里那份读数，网络往返从不挡渲染。
 - `refreshSessions()` 的扫描在 `Task.detached(priority: .utility)` 中离主线程执行，回主线程发布结果、追加心跳采样、跑 `ConfirmedCompletionDetector`；**只有「新的一轮真的交付了答案」才通知**，规则是三条同时成立：该会话的**轮次键（turn key）变了**、该会话自己的文件**刚刚写过**（60 s 内）、当前不是忙状态。轮次键三家各取本地权威字段：Claude 用「轮次+步数计数 + 最终答复 uuid」（计数来自 transcript 尾窗，`ProviderStore.enrich` 里做单调夹紧，避免窗口滑动把键推回旧值）、Codex 用 `task_complete.turn_id`、Cursor 用 `turn-<字节偏移>`。这样被中断 / 杀掉的一轮（键没动）、起始前就存在的答案（首次见到只做基线）、以及没有任何人在看时结束的一轮（不新鲜）都不会播报；反过来，短于轮询间隔的一轮、以及忙→闲边沿之后才落盘的答案也能报出来。**Cursor 的「忙」另有一条写时钟界**：它中断时不写收尾的 `turn_ended`，只按行序判定会让一条冻结的 transcript 永远算忙（`CursorSessionMonitor.turnLiveWindowMs`，10 分钟），这条界只影响忙碌判定、不影响轮次键。
 - `refreshCursorSessions()` / `refreshUsage()` 的 `Task.detached` 用 `MainActor.run { [weak self] in }` 捕获弱引用，避免强引用 self（B2）。
 

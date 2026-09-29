@@ -16,14 +16,17 @@
 | `Utils/CurrentLocation.swift` | 问候卡天气的单次定位 fix（`CLLocationManager`，千米精度）：仅在「当前位置」开关打开后请求，关闭即丢弃坐标 |
 | `Utils/MachineIdentity.swift` | 这台机器的名字：`SCDynamicStoreCopyComputerName`（= `scutil --get ComputerName`，用户在系统设置 → 共享里打的名字），**不再读 `kern.hostname`**（那个名字在同一网络里会被改写，按地址发租约的路由器会让问候语叫出 `192.168.10.102`）。两步纯规则：`person(in:)` 从机器名里取人（「的」/ `'s` / `’s` 之前是名字，无所有格的机型标记 `deMacBook` / `sMacBook` / `iMac` … 之后再剥掉连接用的 `s`；不足两个字符的前缀是残留标记，整串保留），`displayName(for:)` 再把汉名写成**拼音、名在前**（`王夏军` → `Xiajun Wang`；拉丁名原样保留；姓氏取第一个字，双字姓是这条规则唯一拼不对的形状，见注释）。回退是 `Mac` 而不是主机名 |
 | `Utils/GreetingPhrase.swift` | 问候语里那声「招呼」的决定：`forDate(_:)` 先查节日表（固定节日 + 2026/2027 农历：春节 / 元宵 / 端午 / 中秋，加母亲节 / 父亲节 / 夏至），再落到**六个时段**（深夜 / 拂晓 / 上午 / 正午 / 下午 / 傍晚 / 夜里；22:00 那条线划分「傍晚」与「深夜」，23:28 不是傍晚）。**不随机**——每次重绘都变的问候语是老虎机，而卡片每次指针移动都会重绘。`Phrase { script, aside }`，`aside` 只在节日或该被点名的时刻出现 |
-| `Utils/WeatherFetcher.swift` | 天气读数的共享源 `WeatherStore`：优先 Open-Meteo，失败退回 wttr.in；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因 |
-| `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数 |
+| `Utils/WeatherFetcher.swift` | 天气读数的共享源 `WeatherStore`：取数顺序 **高德 → 中国天气网 → Open-Meteo → wttr.in**（前两家国内 IP 命中 `GEOIP,CN → Direct`，不依赖代理）；有定位时用 `lat,lon`，否则用「天气城市」，失败退回城市名并写明原因。`DomesticWeatherParser` 是两家国内源的纯解析（蒲福级→km/h、中文/`d`/`n` 天气码→`Sky`、`weather_index` 的 JS 变量取块、cityid 表查找），随本文件的标记前切片一起进回归测试 |
+| `Utils/WeatherAmapFetcher.swift` | 高德（AMap）Web 服务天气，免代理主源：地理编码 / 逆地理（直辖市 `city` 为空，回落 `province`）取 adcode，`weatherInfo` 的 `extensions=base`（实况）+ `extensions=all`（4 天预报）并发取；key 留空则直接跳过，只覆盖大陆城市 |
+| `Utils/WeatherCNFetcher.swift` | 中国天气网（中央气象台数据），免 key 兜底：`toy1` 搜索城市名 → cityid，`d1.weather.com.cn/weather_index/{id}.html` 取 `dataSK`（实况）与 `fc`（5–7 天预报），必须带 `Referer: http://www.weather.com.cn/`；cityid 来自编译进二进制的 `CNWeatherCityTable.swift`（该站的 `toy1` 名字搜索已失效，返回空数组；表由 `Tools/gen-cn-weather-cities.py` 从仍在服务的省→市树生成，只到地级市）；坐标与表外的区县名无法反查，回落 Open-Meteo |
+| `Utils/CNWeatherCityTable.swift` | 中国天气网 cityid 表（生成物，勿手改）：348 个地级市 → `weather_index` id，由 `Tools/gen-cn-weather-cities.py` 用 `city3jdata` 的省→市树 + 逐个 id 探测生成 |
+| `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用（坐标经 `PlaceNamer` 反向地理编码为"城市 · 区"，按约 1 km 缓存）、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数。现为海外城市与兜底源 |
 | `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
 | `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` 的符号/文案映射，以及那版 620pt popover 的成稿 `WeatherExplorer` / `SolarHorizon` / `ForecastStrip`——**三个都已无调用点**（popover 随预报内联下线，预报本身现在是 `GreetingInstruments.swift` 的 `ForecastRibbon`），保留待改 |
 | `Views/Shared/GreetingCard.swift` | 仪表盘问候卡：`GreetingCard`（读 store）+ 纯展示 `GreetingStatusSheet`。天空为 Metal 大气；左上时钟 + **自动 / 手动**天空模式，右上实时天气（地点、温度、图标化体感 / 湿度 / 风向 / 降水），右下六日预报带，左下日轨（手动时换成天气 × 时段 × 24h 时间轴控制台），底部窗台读数。无悬浮层：预报聚焦某天时右上原位改读那天，窗台胶囊悬停原位展开。手动模式的天气 / 时刻存 `@AppStorage("greeting.*")`，时刻拖动中只放 `@State`，落定才写回。时间动画由 `FrameTicker`（`CADisplayLink`）驱动；窗台、预报带、右上此刻包在 `Unchanged(key:)` 里，拖动时不重建（性能见 `docs/design/greeting-atmosphere.md` §5.7） |
 | `Views/Shared/GreetingTypefaceGallery.swift` | 设置 → 通用 → 天气与问候 → 问候字体：默认折起，只显示当前字体的字样；展开后是 `GreetingTypeface` 字样卡片网格，每张用该字体的真实轮廓写出当前问候语，点击即选（写入 `AppPreferences.greetingTypeface`）。**注意**：设置页那一行现在是一个原生 `Picker` 菜单（24 个选项与已选值都在），画廊视图本身**当前没有调用点**——它不在那次重做的清理范围内，按 [设置页](../../design/surfaces/settings.md) 的口径保留 |
-| `Views/Shared/GreetingInstruments.swift` | 问候卡的仪表：`WeatherGlyph`、`HumidityDrop`、`WindDial`、`InstrumentMetric`、`ForecastRibbon`（高低温带 + 降水柱，悬停聚焦 / 点击固定 / ←→）、`SunPath`（含日出日落时刻解析）、`MarkRing` / `DualRing`、`SkyModeToggle`、`SkyConsole` + `SkyTimeline`（手动天空） |
-| `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView` 与帧率策略）、`GreetingScript`（`GreetingTypeface` 字体目录：24 款可选、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
+| `Views/Shared/GreetingInstruments.swift` | 问候卡的仪表：`WeatherGlyph`、`HumidityDrop`、`WindDial`、`InstrumentMetric`、`ForecastRibbon`（高低温带 + 降水柱，悬停聚焦 / 点击固定 / ←→）、`SunPath`（含日出日落时刻解析）、`SillGauge`（窗台额度：剩余百分比，读法同弹窗 `QuotaSwayGauge`）、`SkyModeToggle`、`SkyConsole` + `SkyTimeline`（手动天空） |
+| `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView`、帧率策略、`PageScrollActivity` 滚动定帧、不阻塞主线程的 drawable 预算）、`GreetingScript`（`GreetingTypeface` 字体目录：24 款可选、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
 | `Views/Shared/CodexModelMark.swift` | popup 头部 chip 的客户端 mark：只有 `ProductBrandMark` 的品牌图形（13pt），家族名不再并排重复（chip 自己已写）；`CursorMark` 是同一个形状的 Cursor 版（不复用 `codex:` 三态，那个 `Bool` 会把它画成 Claude） |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
@@ -54,6 +57,7 @@
 | `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：网络 / 本机代理 / 附近与设备三段，顶部是链路本身的状态而非「连接」这个标题，RSSI 刻度与 `ConnectionStatus` 词汇表和卡片共用；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
 | `Resources/macbook-internals-illustration.png` | 独立生成的详细结构插画（PNG，非 SVG）；来源与提示词见 `ASSET-LICENSES.md`，随应用离线分发 |
 | `Sources/Fonts/*.ttf` + `*-OFL.txt` / `*-LICENSE.txt` | 问候的可选 20 款手写体与**各自的许可证**（每款一个文件，版权与保留字体名在其中）。`Sources/build.sh` 复制进 `Resources/Fonts`，`GreetingScript` 按文件名加载；字体不装进系统、不单独分发，出处逐条记在 `Resources/ASSET-LICENSES.md` |
+| `Tools/gen-cn-weather-cities.py` | 生成 `CNWeatherCityTable.swift`：从仍在服务的 `city3jdata` 省→市树取地级市，逐个探测 `weather_index/{id}.html` 是否有效再写回（该站的 `toy1` 名字搜索接口已失效，对任何中文城市名都返回空数组，所以名字→id 只能这样离线建表）。**表是生成物，改它要重跑脚本** |
 | `Tools/bench-atmosphere.py` | 问候卡天空的性能基准：用生产着色器按卡片实际尺寸离屏绘制各天气，报 GPU / CPU 每帧中位数，以及排版、栅格化、首次取字形的主线程耗时。SwiftUI 侧的每步更新耗时见 `Tools/render-greeting-preview.py --bench`（`BENCH_PACE=0` 定频对比，`--bench-baseline` 为对照） |
 | `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
 | `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
@@ -67,10 +71,13 @@
 | `Views/Shared/Tile.swift` | `TileGrid` + `.tile()` / `.hoverTile()`（宫格表面，即 `TileSurface` 的修饰符形态） |
 | `Models/CodexProviderStore.swift` | Codex 状态中枢 + 本机代理生命周期 |
 | `Models/CursorUsageStore.swift` | Cursor 额度的可观察持有者与轮询（`AppConfig.cursorQuotaPollInterval` 20 分钟）：启动先用 `lastKnown()` 的落盘读数渲染，探针回来原地替换；`loading` 只门住按钮，只有**从来没有读数**时才画转圈 |
-| `Utils/CursorUsageFetcher.swift` | Cursor 额度探针：读 `state.vscdb` 里 Cursor 自己的 token（无登录、无 cookie），**两套鉴权面**——Connect RPC 收裸 JWT、`cursor.com/api/*` 收 `<sub>::<jwt>` 编码后的 cookie + `Origin`；月度 `GetCurrentPeriodUsage`（含两个命名池 `autoPercentUsed`=Cursor Models / `apiPercentUsed`=Other Models，以 `cursorModelsFraction` / `otherModelsFraction` 暴露）与 Grok 周窗口 `GetSandUsageStatus`。已用比例取 `includedSpend / limit`，**不是** `totalSpend / limit`（后者含不在上限里的 `bonusSpend`）；两个池不各持 money limit，共享同一个 `limit` + `includedSpend`；失败重试退避 4 s，跨过系统代理写入窗口 |
+| `Utils/CursorUsageFetcher.swift` | Cursor 额度探针：读 `state.vscdb` 里 Cursor 自己的 token（无登录、无 cookie），**两套鉴权面**——Connect RPC 收裸 JWT、`cursor.com/api/*` 收 `<sub>::<jwt>` 编码后的 cookie + `Origin`；月度 `GetCurrentPeriodUsage`（含两个命名池 `autoPercentUsed`=Cursor Models / `apiPercentUsed`=Other Models，以 `cursorModelsFraction` / `otherModelsFraction` 暴露）与 Grok 周窗口 `GetSandUsageStatus`。已用比例取 `includedSpend / limit`，**不是** `totalSpend / limit`（后者含不在上限里的 `bonusSpend`）；两个池不各持 money limit，共享同一个 `limit` + `includedSpend`；失败重试退避 4 s，跨过系统代理写入窗口。`number(_:)` 是**本文件唯一**的 JSON 数值取值口（数字与字符串都收，聚合接口的 token 是字符串），`billingCycle()` 给账本提供窗口退化目标 |
+| `Utils/CursorLedger.swift` | Cursor 的**实际扣费**解码（`GetAggregatedUsageEvents` / `GetFilteredUsageEvents` 两个 RPC 的纯解析）：`Row`（四桶 token + `costCents`）与 `Snapshot`，以及窗口规划 `windowChunks` / `plan(for:billingCycle:)`。**token 字段是字符串**、`tokenUsage` 可能整个缺失、错误信封 `{"code":"internal"}` 必须返回 nil 而不是空结果（空结果 = $0.00 = 免费的月份）；`folded` 把 Cursor 的 `claude-opus-5-5-medium` 折到本地客户端的 `claude-opus-5-5`。全 `static`、无网络，供 `Tests/cursor-ledger-regressions.py` 切片 |
+| `Utils/CursorLedgerStore.swift` | 实际扣费的可观察持有者：按用量页当前周期取窗口（`年`/`全部` 退化为账单周期并标记）、失败保留旧值绝不写空、落盘 `cursor-ledger.json` 供启动即渲染；只在窗口变化/手动/超过 6 h 时发请求，落地后发 `.cursorLedgerDidChange`。与 `CursorUsageStore`（额度）分开：一个跟周期 chip 走、一个跟月度边界走 |
 | `Models/AppPreferences.swift` | 空闲通知、代理端口、第三方上游、VPN mixed-port / 系统代理 / TUN 等 |
-| `Utils/FilePaths.swift` | Claude / Codex / Cursor / App Group / `vpnDir`（Cursor 的落盘读数 `cursor-allowance.json` 在 Application Support 根下） |
-| `Utils/VpnManager.swift` | mihomo 进程、测速、流量流、超时 failover |
+| `Utils/FilePaths.swift` | Claude / Codex / Cursor / App Group / `vpnDir`（Cursor 的两份落盘读数 `cursor-allowance.json`（额度）与 `cursor-ledger.json`（实际扣费）都在 Application Support 根下） |
+| `Utils/VpnManager.swift` | mihomo 进程、测速、流量流、超时 failover；内核 stdout/stderr 的一段除写 `core.log` 外还顺手喂给 `VpnDomainLog`（同一份字节，所以日志的 8 MB 轮转不会让读取方拿到过期偏移） |
+| `Utils/VpnDomainLog.swift` | VPN 流量日志：把内核 `level=info` 的连接行（`[TCP] src --> host:port match 规则 using 出口`，失败走 `level=warning` 的 `dial 出口 (match 规则) … error:`）切出域名 / 端口 / 规则 / 出口，按出口末段（`[DIRECT]`→直连、`[REJECT]`→拒绝、否则已代理）归类，环形 1000 行 + 按域名汇总。只在内存。`VpnDomainFeed` 按字节缓冲、只在 `\n` 切断（分块可能落在多字节字符中间），解析在管道线程上做，主线程只收 ≤4 Hz 的批量发布 —— 与 `VpnLiveRates` 同一理由。`VpnWatchlist` 是「该走代理却走了直连」那条分析用的小services表 |
 | `Utils/XZArchive.swift` | `.xz` → 文件的流式解压（`libcompression` 的 `COMPRESSION_LZMA`，无第三方依赖）。收的是 `.xz` 容器而非裸 LZMA 流；峰值内存是字典 + 两个 1 MB 缓冲，不整档入内存。唯一调用者是内核解包 |
 | `Utils/VpnHTTP.swift` | 控制器 HTTP，禁用系统代理 |
 | `Utils/VpnSubscriptionStore.swift` | 订阅、YAML 合成、`tuneForStability` |
@@ -82,7 +89,8 @@
 | `Theme/Theme.swift` | 设计 token + `Theme.Ink`（作文字用的信号色，≥4.5:1） |
 | `Views/MainWindowView.swift` | 9 页 `AppPage`；顶栏 tabs（帮助走右上角问号）；每页只在选中时挂载（`TrafficPageState` 让流量页重进无代价） |
 | `Views/MenuBarView.swift` | popup 壳（460pt，与 `MenuBarController.sizeAndPosition` 同一数字）：Header + MachineKpiStrip + 能源流向 + 两面板 + 操作栏；只订阅外壳状态 |
-| `Views/Pages/VPNView.swift` | VPN 主界面 |
+| `Views/Pages/VPNView.swift` | VPN 主界面（节点宫格、实时速率、订阅，以及折叠的「日志」与「流量日志」两节；两节的徽章与内容都是独立小视图，`VPNView` 本身不观察那两个 store） |
+| `Views/Pages/VpnDomainLogSection.swift` | 「流量日志」一节：明细 / 汇总两个模式 + 路由筛选 + 搜索 + 复制 / 清空（清空二次确认）。汇总给出按命中排序的域名、路由构成微条、「常见服务走了直连」告警，以及「内核只记 TCP、不含字节数」的口径说明 |
 | `Models/IdleTransitionDetector.swift` | `ConfirmedCompletionDetector` / `QuotaResetDetector` / `QuotaPollScheduler` —— 完成、额度重置两种边沿检测 + 下次额度轮询的排程（按已知重置点对齐，不再是固定 15 分钟）（文件名是历史遗留） |
 | `Utils/SessionTitle.swift` | 会话卡片标题的唯一推导：Codex `threads.title` / Cursor `composerHeaders.name` / CC 首条人类 prompt，回退目录名 |
 | `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
@@ -99,7 +107,9 @@
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：只保留第三方 OpenAI / Anthropic 两个选择（默认跟随 Codex / Claude Code 当前供应商，不写 `config.toml` / `settings.json`）；CC / Codex 的只读卡已删——它们的选择在「模型」页 |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
-| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本。Cursor 两条：`cursor-usage-regressions.py`（解码器与 cookie 拼写）与 `cursor-turn-regressions.py`（忙碌的写时钟界） |
+| `Views/Pages/UsageView.swift` | 用量页：周期条（日 / 月 / 年 / 全部）、热力图、来源构成、按模型瓦片；瓦片上**两行钱**（估算 + Cursor 实扣）与一个单独的 `CursorTokenUsageCard`（按官方账单、按窗口取数）；刷新按钮同时失效额度快照与账本缓存 |
+| `Views/Pages/CursorTokenUsageCard.swift` | 用量页上 Cursor 的独立卡：按模型的四桶 token 与实扣金额（`CursorLedgerStore`），没有日粒度就不画走势与占比，只把 token 限定在**它实际覆盖的窗口**里并在卡上标出日期区间 |
+| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本。Cursor 三条：`cursor-usage-regressions.py`（解码器与 cookie 拼写）、`cursor-ledger-regressions.py`（实际扣费解码 / 折价窗口，模板在 `Tests/fixtures/cursor-ledger-probe.swift`）与 `cursor-turn-regressions.py`（忙碌的写时钟界）；VPN 域名日志一条 `vpn-domain-log-regressions.py`（本机 `core.log` 的真实行型、被切在多字节字符中间的残行、ClaudeBar 自身诊断的误判）。**时序类断言一律等效果不等时长**（`performance-regressions.py` 的发布预算与用量去重）——固定常数已经把两条 CI 跑红过 |
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |

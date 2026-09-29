@@ -110,6 +110,54 @@
 
 **限制**（经验证）：Cursor 自 ~2026-03 起停止写 token 计数，故近期月无数据；无 per-bubble model 字段。按设计决策，聚合为单条 `ModelUsage(model: "Cursor")`，作为全量值追加到所有周期。
 
+**这条路已经废弃。** 本次实测抽查 `bubbleId:*` 最近 2 万条，`tokenCount` **全部为 0**；
+`~/.cursor/ai-tracking/ai-code-tracking.db` 的 `ai_code_hashes` 只有 model 与行数、**没有 token**。
+Cursor 侧的 token 事实**只能联网拿**，local-first 在这里不成立。
+
+## `CursorLedger` / `CursorLedgerStore` — Cursor 的真实用量与金额
+
+Cursor 在 `api2.cursor.sh` 的 `DashboardService` 上暴露了两个未公开 RPC，**用本机
+`state.vscdb` 里已存的同一个裸 JWT 即可调用**，不新增任何凭据：
+
+| RPC | 返回 |
+|---|---|
+| `GetAggregatedUsageEvents` `{startDate,endDate}` | 按模型的 token 四桶 + `totalCents` |
+| `GetFilteredUsageEvents` `{startDate,endDate,page,pageSize}` | 逐次调用流水（含 `conversationId`） |
+
+**金额是真的**：流水里 `tokenUsage.totalCents == chargedCents`（9,895 条逐条核对）——
+这是 Cursor 实际扣掉的数额，不是刊例价折算。这使 Cursor 成为本应用第二个真金额来源
+（另一个是 OpenRouter），见 [15 模型花费](15-model-cost.md)。
+
+**四条形状约束，每条都由实测驱动**：
+
+- **token 字段是字符串**（`"inputTokens":"914"`），`totalCents` 是浮点。用 `as? Int` 会把整份
+  聚合读成 0——那渲染出来是「这个月没用量」，不是报错。走 `CursorUsageFetcher.number`。
+- **`tokenUsage` 可能整个缺失**（非 token 调用：`isTokenBasedCall=false`、`chargedCents=0`）。
+  那是真实的零值行，不是解析失败。
+- **窗口上限约 90 天，且非确定性失败**：>90 天的请求返回 `{"code":"internal"}` 且无数据，
+  且不按宽度稳定复现（实测 90d 失败、91d 成功、92d 失败）。12×30 天分块回填耗时 **306 s
+  且仍有 1 块失败**（每块已重试 3 次）→ **不做历史回填**，只做周期级取数，每块带重试，
+  **任何一块最终失败就整体返回 nil**，绝不返回残缺和。
+- **聚合不含 `grok-bot-*`**：本轮窗口聚合 $53.51 vs 流水 $57.72，差额全部是
+  `grok-bot-automation` / `grok-bot-default`。两个接口口径不同，流水才是完整的。
+
+**名字归一**：Cursor 按 effort 档位命名（`claude-opus-5-5-medium`），本地客户端记的是基础名
+（`claude-opus-5-5`）。`ModelPricing.canonical` 因此剥掉尾部的 effort / 速度档
+（`-low/-medium/-high/-xhigh/-fast/-thinking`，**循环剥**，因为实测出现过
+`claude-4.6-sonnet-medium-thinking` 这种叠加），两者才会落到同一行。归一同时作用于定价查表，
+方向安全：查表本就是「最长 slug 优先的前缀匹配」，剥掉只会落向基础档，且价目表里没有任何
+slug 以这些词结尾（`Tests/model-cost-regressions.py` 断言这一条）。
+
+**周期与窗口**：金额接口接受的是**窗口**，不是「今天 / 月 / 年」。`CursorLedgerStore` 用
+`UsageStats.interval(for:reference:)` 得出窗口；`年` / `全部` 超出上限时**退化为账单周期**
+（`GetCurrentPeriodUsage` 的两个边界，已在读），并置 `truncated`——UI 必须说明它覆盖的是
+一个账期而不是屏幕上的周期。窗口与页面周期不一致时**显示旧值并标明窗口**，而不是隐藏。
+
+**取数节奏**：窗口变化 / 手动刷新 / `fetchedAt` 超过 6 h 才发请求，在 detached task 上跑，
+用量页永远先用已有快照（含启动时从 `cursor-ledger.json` 反序列化的上一次读数）渲染。
+失败**保留旧值**、只记 `note`。落地后发 `.cursorLedgerDidChange`，`ProviderStore` 以
+`refreshUsage(rescan: false)` 响应——磁盘上什么都没变，只有钱变了。
+
 ## `BalanceFetcher` — DeepSeek 余额
 
 仅当 `baseURL` 的 host 含 `deepseek.com` 时工作（B5：原先用 `baseURL.contains("deepseek")` 字符串包含判定，会误匹配 `https://deepseek-proxy.evil.com/` 等主机；改为基于 `URL(string: baseURL)?.host` 的判定，避免向非预期主机发送 token）。请求 `<base>/user/balance`，Bearer token 鉴权，解析 `balance_infos[0].total_balance` / `currency`。5 秒超时，失败返回 nil（不报错）。`currency` 一并展示（B10：`balanceText = "\(balance) \(currency)"`）。

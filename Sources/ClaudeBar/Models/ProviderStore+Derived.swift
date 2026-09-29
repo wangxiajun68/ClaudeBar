@@ -160,6 +160,41 @@ extension ProviderStore {
     /// estimate's lines are rebuilt with `usageStats`, not per call.
     func costLine(for model: String) -> ModelPricing.Estimate.Line? { usageCostLines[model] }
 
+    /// Cursor's **actually charged** amount for one model, for a usage tile.
+    ///
+    /// Looks up by `ModelPricing.canonical(model)` because the map is keyed that
+    /// way: Cursor names the same upstream model by its effort tier
+    /// (`claude-opus-5-5-medium`) where the local clients record it bare
+    /// (`claude-opus-5-5`), and the canonical form is where the two meet.
+    /// Returning it unmerged would leave the charge on a row that does not
+    /// exist on the page.
+    ///
+    /// **Never added to `costLine(for:)`.** Separate figures, separate
+    /// questions — see `Docs/technical/15-model-cost.md`.
+    @MainActor
+    func settlement(for model: String) -> ModelPricing.Cost? {
+        usageSettlements[ModelPricing.canonical(model)]
+    }
+
+    /// Whether `usageSettlements` already covers `window`, so a tile can decide
+    /// whether to caption the money with a window. A day of slack, matching
+    /// `CursorLedgerStore.isStale`: a month view and a billing cycle start on
+    /// different days, and a one-day difference is not worth a warning.
+    @MainActor
+    func settlementCovers(_ window: DateInterval) -> Bool {
+        let store = CursorLedgerStore.shared
+        guard let covered = store.window else { return false }
+        return abs(covered.start.timeIntervalSince(window.start)) <= 86_400
+            && abs(covered.end.timeIntervalSince(window.end)) <= 86_400
+    }
+
+    /// The window the money on the tiles covers, formatted ("9月28日–10月28日"),
+    /// or nil when nothing is known.
+    @MainActor
+    var settlementWindowLabel: String? {
+        CursorLedgerStore.shared.windowLabel
+    }
+
     // MARK: - Active provider
 
     /// The currently active provider, if any.

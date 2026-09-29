@@ -10,18 +10,38 @@
 | 心跳采样 | 每轮 busy/idle 采样追加进 `heartbeats[pid]`，上限 `AppConfig.heartbeatLength`（24，≈ 最近一分钟） |
 | 空闲通知 | `ConfirmedCompletionDetector` 只做边沿检测（每轮交付一次），无额外轮询 |
 | Cursor DB 查询 | `Task.detached` 后台执行，DB 大但走 `(recency, composerId)` 索引 + LIMIT 80 |
+| Cursor 实际扣费 | `CursorLedgerStore` 只在窗口变化 / 手动刷新 / 读数超过 6 h 时才发一次网络请求（单次 1.5–3.6 s），在 detached task 上跑。**用量页从不等待它**：瓦片读的是内存里那份读数（启动时由 `cursor-ledger.json` 反序列化），落地后发通知再重发一次 `rescan: false` 的用量刷新。失败保留旧值。不做历史回填——12×30 天分块实测 306 s 且仍有块失败 |
 | transcript 扫描 | 只读尾部 96KB（会话）/ 32KB（子 agent），不全读 |
 | 索引扫描 | 目录用 `FileManager.enumerator` 一次取回属性（`contentModificationDate` / `fileSize`），不再对每个命中文件单独 `attributesOfItem`（后者每个文件多走两次 `getxattr`；本机 1250 个 transcript × 每次重扫） |
 | 用量统计 | `Task.detached` + 三级过滤 + `concurrentPerform` 并行解析；`UsageStats` 文件缓存带容量上限（4000）与驱逐，防项目树收缩后无限滞留 |
 | 主线程 | 所有 `@Published` 更新经 `MainActor.run { [weak self] in }` / 主线程回调 |
 | 快照写入 | `WidgetSnapshotWriter` diff 后写四路（B6：仅数据变化时写文件 + `reloadAllTimelines()`，避免每 2.5s 空转） |
-| 动画 | **没有常驻的 SwiftUI 时间线**。装饰动效全部走 `NSViewRepresentable` + Core Animation（`DecorativeMotion`、`LucideRotor`/`RotorLayerView`、`UiverseKit` 的 shine/conveyor），渲染服务器插值、不重算 body，并各自再查一次 `window?.occlusionState.contains(.visible)`；调用侧由 `UIWakePolicy` 的 `surfaceIsVisible` + 「减弱动效」双重门控。**按读数调速的那一类（`LucideRotor`）用 `timeOffset` 冻结相位后就地改 `speed`**，所以采样器每 1–2 s 推一次新 rpm 不会重建图层、也不会让扇叶跳回起点；`rpm < 80` 时速率**恰为 0**（扇叶停在原地，图层不消失）。`LucideRotor` 以角速度驱动（没有 `paused:` 参数，也不该有）。`DecorativeMotion.kind == .loadRing` 已随视图删除。全仓现有 **4 处** `TimelineView`，其中三处是 `.animation(...)` 调度、也就是**每帧重新校验 body** 的那一类：`WeatherBackdrop` 的天空（1/30–1/12，按天气分层，只作金属视图不可用时的回落）、`HardwareIllustration` 的读数扫光（1/30，`paused:` 由读数 / 可见性 / 减弱动效三者按帧判定）与问候卡的时钟（1s，`paused:` 由可见性 / 预览态判定，只包住时钟那一块）。剩下那处是 `.periodic`：灵动岛会话行的「N 分钟前」（30s）。问候卡的天空本身**不在这张表里**——它是 `MTKView`，自带渲染循环与帧率策略（见 [Greeting atmosphere](../../design/greeting-atmosphere.md) §5.7），不经过 SwiftUI 的显示周期。**`.animation` 的 `paused:` 不是省钱的挡板**：paused 为真时确实不跑，但为假时它让整个 hosting view 每个显示周期重跑一次 layout —— 2026-09-28 实测（见 [UI 审计待办](17-ui-audit-backlog.md) §11）：把它删掉、只留一条画纯色矩形的 30 Hz 时间线，一个 `topBar` 空壳就从中位数 4.0% 涨到 14.7%，两条涨到 17.2%；而把帧率从 30 降到 15 / 8 几乎不动（43.2 / 43.5 / 41.5%）。**新增动画前先确认门控边界**：漏一个就是常驻 display link，每 tick 一次全主线程布局 |
+| 动画 | **没有常驻的 SwiftUI 时间线**。装饰动效全部走 `NSViewRepresentable` + Core Animation（`DecorativeMotion`、`LucideRotor`/`RotorLayerView`、`UiverseKit` 的 shine/conveyor），渲染服务器插值、不重算 body，并各自再查一次 `window?.occlusionState.contains(.visible)`；调用侧由 `UIWakePolicy` 的 `surfaceIsVisible` + 「减弱动效」双重门控。**按读数调速的那一类（`LucideRotor`）用 `timeOffset` 冻结相位后就地改 `speed`**，所以采样器每 1–2 s 推一次新 rpm 不会重建图层、也不会让扇叶跳回起点；`rpm < 80` 时速率**恰为 0**（扇叶停在原地，图层不消失）。`LucideRotor` 以角速度驱动（没有 `paused:` 参数，也不该有）。`DecorativeMotion.kind == .loadRing` 已随视图删除。全仓现有 **3 处** `TimelineView`。其中一处是 `.animation(...)` 调度、也就是**每帧重新校验 body** 的那一类：`WeatherBackdrop` 的天空（1/30–1/12，按天气分层，只作金属视图不可用时的回落）。问候卡的时钟是 `.periodic(by: 1)`，一秒钟一次，不占显示周期；硬件读数的扫光不再走时间线，改由 `ReadingSweep` 的 `CAGradientLayer` 按 `0.35 + load × 1.35` 周/秒平移（2026-09-29，见下文）。剩下那处 `.periodic` 是灵动岛会话行的「N 分钟前」（30s）。问候卡的天空本身**不在这张表里**——它是 `MTKView`，自带渲染循环与帧率策略（见 [Greeting atmosphere](../../design/greeting-atmosphere.md) §5.7），不经过 SwiftUI 的显示周期。**`.animation` 的 `paused:` 不是省钱的挡板**：paused 为真时确实不跑，但为假时它让整个 hosting view 每个显示周期重跑一次 layout —— 2026-09-28 实测（见 [UI 审计待办](17-ui-audit-backlog.md) §11）：把它删掉、只留一条画纯色矩形的 30 Hz 时间线，一个 `topBar` 空壳就从中位数 4.0% 涨到 14.7%，两条涨到 17.2%；而把帧率从 30 降到 15 / 8 几乎不动（43.2 / 43.5 / 41.5%）。**新增动画前先确认门控边界**：漏一个就是常驻 display link，每 tick 一次全主线程布局 |
 **隐式动画的代价（同上一条是同一类问题，只是藏在 `value:` 里）**：`.animation(_:value:)` 的 `value` 若来自每秒变一次的数据（采样器读数、会话数、到期时间），它**每 tick 都会开启一个新的动画事务**；只要有事务在飞，每个显示周期都会把整个 hosting view 走一遍 layout + display list —— 不是只在插值期间。诊断特征：`sample` 稳态里 `+[NSAnimationContext runAnimationGroup:]` 出现在 `@objc NSHostingView.layout()` **内部**。实测（dashboard，`sample` 5s）：`RollingNumberText` 上的一行 `.animation(.snappy(0.38), value: value)` 让主线程样本里 `runAnimationGroup` 占 31%、`NSHostingView.layout()` 31%、`stepIdle`（display cycle 每帧重排窗口）56%；去掉后分别是 13% / 13% / 3%。**`.numericText` 自己会动，隐式 `.animation` 是多余的**。注意本机 `ps -p PID -o time=` 差值噪声很大（Chrome renderer 常驻半核，app 自身空载在 10–27% 之间摆动），CPU 数字只作旁证，以采样归属为准。新增 `value:` 键前先问：这个值多久变一次？`Tests/inflight-animation-regressions.py` 把这条规则钉在 `RollingNumberText`、`RollingNumberModifier`、`SectionHeader.trailingView` 上，并加上后来清掉的三处同类违反——灵动岛收起态的今日 token（`NotchIslandView.wings`）、灵动岛用量卡 hero（`IslandComponents.hero`）、未挂载的 `MetricTile`（`Tile.swift`，后经 [UI 审计待办](17-ui-audit-backlog.md) §10 连视图本身删除）；三处都是「1 Hz 读数 + 隐式动画」的同一个形状 |
 | 灵动岛常驻 | `IslandOrbit` 的 `repeatForever` 已换成 `DecorativeMotion(kind: .arc)` 的渲染服务器图层：同一启动器、同一 `-g` 树、同一个路径下换 bundle，交替采样得到「在飞事务里的 `NSHostingView.layout()` 占比」中位数 48.8%（旧）→ 31.9%（新），区间不相交，`runAnimationGroup` ≈420 → ≈285。**折叠 + 空闲**状态实测 0.5–0.7%（旧文档记的 0.8%），此时岛内几个 `.animation(_:value:)` 开关不影响读数。面板窗口按 `panelSize`（640×386）无条件给定，曾被认为是每帧代价的第二个乘数 —— 后续用「只改 `panelSize` 的两个 `-O` 构建」分三轮交替 A/B 否掉了：两臂每轮都重叠，小盒（320×80）第一轮反而更高，全部 17.0–31.6% 的散布是机器漂移。所以没有做第二个窗口 / 窗口动画缩放。见 [UI 审计待办](17-ui-audit-backlog.md) 第 7 条 |
 | 无窗口时的开销 | 隐藏主窗口（⌘W，不是「隐藏 App」）后 app 的 idle 从约 25–50% 掉到约 9%：没有窗口时 AppKit 不跑显示周期，SwiftUI 的 layout / display list 全部消失。可见性闸门确实在起作用；剩下的是后台扫描（`sample` 里只剩 `com.claudebar.audioaccessory`、`com.claudebar.proc`、NSURLSession 的叶子） |
 | 诊断口径 | **「把一个子视图从页面里删掉再看 CPU」不是有效实验**：删掉 `ResourceStrip`（6 个 tile）后 dashboard 的 idle 反而从 ~46% 变到 ~52–66%，因为只要有动画事务在飞，整棵 `NSHostingView` 每帧照样全量 layout。原先这条还写着「成本 ∝ hosting view 的尺寸」—— 后续用只改 `panelSize` 的两个 `-O` 构建（640×386 vs 320×80）分三轮交替 A/B 否掉了：两臂每轮都重叠，整体散布 17.0–31.6% 全是机器漂移，所以尺寸并不是那个乘数，**在飞的事务才是**（见第 7 条）。有效的量是**主线程样本里挂在哪个帧下的占比**（`NSHostingView.layout()` / `stepIdle` / `CALayer _display`），它在不同构建之间能稳定复现到 1 个百分点，而 CPU 差值在 10–27% 之间乱跳。见 [UI 审计待办](17-ui-audit-backlog.md) 第 7 条 |
 | 磁盘 | 抓包 DB payload 随 `listLimit` 显式级联删除 + 空闲页超阈值 `VACUUM`；媒体目录按孤儿 id 清扫；`core.log` / `vpn.log` 8MB 轮转（`CoreLogWriter`） |
 | 文本读取 | 所有「读尾部 N KB」路径（`SessionMonitor` / `CursorSessionMonitor` / `ExternalSessionMonitor`）与 JSONL 存储用 `String(decoding:as:)` 宽容解码：seek 常常落在多字节字符中间，严格 UTF-8 解码会让**整窗**失败（实测 600 份 transcript 中 31 份、291 份 rollout 中 14 份静默返回 0） |
+
+## 2026-09-29：概览离开显示周期
+
+概览上还有两条 `.animation` 时间线。§11 量过：一条只画纯色矩形的时间线就让 `topBar` 空壳从 4.0% 涨到 14.7%，把帧率从 30 降到 8 几乎不动——成本是「时间线活着」，不是它一秒钟画几次。降帧率保不住效果，删掉时间线又会让扫光和秒点停掉。这两条都改成渲染服务器或一秒钟一次的周期，画面不变。
+
+- **资源条扫光**（CPU / GPU / 内存 / 硬盘，忙的时候最多四条 30 Hz 时间线）。柱体仍由 `Canvas` 在采样变化时画一次；斜向高光是 `ReadingSweep`，每个忙柱一条渐变，裁在柱的圆角里，按原来的速率平移。负载跨采样时用 `timeOffset` 保住相位，不跳回起点。负载 < 4%、减弱动效、表面不可见或窗口被遮挡时速率为 0，高光不画，恢复时从柱的前缘重新开始。柱体上有 `.transaction { animation = nil }`，所以 1 Hz 读数不会打开隐式事务。`Tests/machine-mark-regressions.py` 改成断言文件里没有 `TimelineView`、扫光是 `CABasicAnimation`。
+- **问候时钟**从 `.animation(minimumInterval: 1)` 改成 `.periodic(by: 1)`。秒点仍然每秒亮灭一次，分钟仍走 `.numericText`。天空在被拖动、或卡片所在表面不可见时，不建时间线。
+- **滚动时的悬停**。指针扫过概览的瓦片会逐个翻转 `hovered`，每一次都是一次布局（设置页旧瓦片墙深滚时量过：指针在瓦片上 86 fps，停在空白槽里 102 fps）。`ScrollHoverGate` 在滚动的 tracking / 减速 / 动画阶段丢掉 enter/exit，停下后补发一次 `mouseMoved`，让指针底下那一张补上悬停。闸门本身不是可观察状态，避免在滚动最需要主线程的那一帧重算整页。
+
+## 2026-09-29：其余页面只排屏幕上的内容
+
+连接器清单是上一轮量过的最重页面（深滚约 68 fps，p50 16.4 ms，和指针在不在卡片上无关）。两处结构和那组数字对得上。每张卡都挂着 `rotation3DEffect`，角度为 0 也留在树上，滚动时整份网格逐帧重新光栅化。网格又套在普通 `VStack` 里，`ScrollView` 按理想高度问它，懒网格会把全部卡片排出来。模型目录是同一种嵌套，分组更少，上一轮约 88 fps。
+
+- `DepthTiltModifier` 只在这张卡被悬停、且没有减弱动效时才装上 3D 和一次扫光。抬起仍由 `.tile()` 负责。扫光在出现时就开始，因为覆盖层是连同悬停一起创建的。
+- 有卡片时，`LazyVGrid` 是 `ScrollView` 的直接内容，标题、筛选和提示放在 `Section` 的 header 里，横向内边距只加一次。空列表和扫描中仍是普通栈。
+- 模型目录的分组从 `VStack` 改成 `LazyVStack`，滚出屏幕的分类不再构建。组内网格仍是该分类的那几张卡。
+- `scrollHoverGate()` 接到会话、连接器、用量、流量、VPN、设置、帮助和模型目录的滚动上。概览仍自己写滚动阶段，因为它还要同时停住天空；两边都走 `ScrollHoverGate.set`。
+
+这一节没有新的帧间隔。上面的 68 fps / 88 fps 是 2026-09-26 的 `SCStream` 读数，这次没有重跑。VPN 节点马赛克仍是分组里的一整块网格（上一轮约 114 fps），设置页是短表单，流量列表本来就是 `LazyVStack`，都没有再拆结构。
 
 ## 2026-09-26：帧率审计（新口径：实测帧间隔）
 
@@ -53,7 +73,7 @@
 |----|------|----------|
 | 页面切换 20–35 次 >20 ms 帧 | 每 2 s 一次点击，8 页轮换 | A/B 过 `transition(.identity)`（完全去掉页面淡入淡出）与 `.opacity` 两种改法：`>20ms` 24→25→24，无差别。所谓「切换卡顿」的实际归属是**每 2 s 发生一次的 `EqualRowGrid` 尚未动画**（已修，见上 1.1）与**目标页首次挂载**，不是过渡动画本身。为了 0 可测收益去掉动效不符合「保证动效效果」的要求 |
 | **卡片阴影**（本轮最终定位到的那一层） | 见下节 | 已修：`TileSurface` 的 `.shadow` 改为图层阴影。下面的表格同时记录了**哪些表面不值得改**（面板、chip），那几条是负结果，别重复尝试 |
-| `HardwareIllustration` 的 30 Hz `TimelineView` + `Canvas` | 4 个 tile 同时每帧构造路径 | A/B `animates()` 恒 false：滚动 82–87 fps → 83–91 fps，区间重叠。上一轮已测过同结论。它已被 `surfaceIsVisible` / 减弱动效 / `load >= 4%` 三重门控，读数是「有东西在动」的正当代价 |
+| `HardwareIllustration` 的 30 Hz `TimelineView` + `Canvas` | 4 个 tile 同时每帧构造路径 | **已修（2026-09-29）**：A/B `animates()` 恒 false 曾把这条读成「不值得动」——滚动 82–87 fps → 83–91 fps，区间重叠。但那次量的是**滚动帧率**，而这条调度的代价在**空闲显示周期**上（见本节开头 2026-09-29 两节与 [UI 审计待办](17-ui-audit-backlog.md) §11）：时间线活着时每个显示周期都重排整个 hosting view。现在扫光是 `ReadingSweep` 的 `CAGradientLayer`，`TimelineView` 从这条路径上消失 |
 | `SankeyWaveLayer` 每 tick 重建 `CGPath` | `PowerFlowCard` 的波浪带，1 Hz | 属 1 Hz 而非每帧；`waves != self.waves` 的守卫在构造之后，是真实浪费但要重排 `SweepClock` 的接口，本轮未动 |
 | `TrafficView` 整页观察 `catalog` | `livePreview` 按 0.1 s 节流发布 | 该页的连接检查器确实要实时内容。**真正的修法是把 `livePreview` 拆成按行的子视图各自观察**，那是视图重构而不是性能补丁；本轮只修掉它在挂载路径上的同步 SQLite（见上 1.5） |
 | `VPNView` 的 O(nodes) 派生在 `body` 里 | `proxiesByName` / `livePath` 每次 body 重建 | 订阅体量大时才是问题；需把派生值上移到 `VpnManager` 作为存储态，改动面大，未做 |

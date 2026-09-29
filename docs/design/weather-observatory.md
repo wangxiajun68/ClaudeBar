@@ -41,22 +41,37 @@ draws no strip at all; the HUD's own "no weather" line already says why.
 | `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` glyph/caption mapping, the HUD's inline `ForecastStrip`, and `SolarHorizon`. `WeatherExplorer` / `SolarHorizon` no longer have a call site — the popover they were built for is gone |
 | `Views/Shared/WeatherBackdrop.swift` | `SkyPalette`, atmospheric Canvas and celestial projection |
 | `Utils/SkyAstronomy.swift` | Sun, moon, phase and bright-star horizon coordinates |
-| `Utils/WeatherForecastFetcher.swift` | Open-Meteo geocoding, current/daily request and parsing |
-| `Utils/WeatherFetcher.swift` | `WeatherReading`, fallback fetch and shared `WeatherStore` |
+| `Utils/WeatherForecastFetcher.swift` | Open-Meteo geocoding, current/daily request and parsing (overseas + fallback) |
+| `Utils/WeatherAmapFetcher.swift` | AMap geocode/regeo + current/daily request — the proxy-free primary source |
+| `Utils/WeatherCNFetcher.swift` | 中国天气网 keyless fallback: offline cityid table + `weather_index` JS payload |
+| `Utils/WeatherFetcher.swift` | `WeatherReading`, the provider chain (`高德 → 中国天气网 → Open-Meteo → wttr.in`), domestic parsers and shared `WeatherStore` |
 
-Open-Meteo supplies current conditions and daily forecasts in one payload.
-Named cities use its geocoding API; valid latitude/longitude pairs bypass that
-lookup. The request uses `forecast_days=6`, `timezone=auto` and Unix timestamps.
-Dates and sunrise/sunset labels are interpreted in the returned location's
-timezone. The detail footer links to the active provider.
+The provider chain is `高德 → 中国天气网 → Open-Meteo → wttr.in`. The two
+domestic sources answer over Chinese IPs, which the VPN's `GEOIP,CN → Direct`
+rule sends direct — so the card keeps working with no proxy at all, which is the
+reason they lead. AMap (when a key is configured, blank by default) supplies
+current conditions and a 4-day forecast from geocoded adcodes; 中国天气网, which
+needs no key, supplies both from its `weather_index` JS payload. Neither speaks
+WMO codes, so a reading carries a `skyHint` and the code tables live apart from
+`sky(for:)`; neither publishes a rain probability, sunrise/sunset or day/night,
+which are estimated or left blank.
 
-If Open-Meteo fails, the existing wttr.in fetch supplies current conditions
+Open-Meteo supplies current conditions and daily forecasts in one payload, and
+remains the source for overseas cities (the domestic pair covers mainland China
+only) and the last fallback. Named cities use its geocoding API; valid
+latitude/longitude pairs bypass that lookup. The request uses `forecast_days=6`,
+`timezone=auto` and Unix timestamps. Dates and sunrise/sunset labels are
+interpreted in the returned location's timezone. The detail footer links to the
+active provider.
+
+If every provider fails, the existing wttr.in fetch supplies current conditions
 and a forecast-unavailable note. Incomplete daily arrays retain valid dates
 and report partial availability; missing optional forecast metrics show a dash.
-The UI does not fabricate five extra days. `WeatherStore` shares one reading,
-uses a 15-minute freshness interval and a single in-flight request, and retains
-the last good reading after a failed refresh. Location use follows the existing
-permission gate; a configured city remains the fallback.
+The UI does not fabricate five extra days — a shorter forecast just draws fewer
+columns, and the horizon label counts what is there. `WeatherStore` shares one
+reading, uses a 15-minute freshness interval and a single in-flight request, and
+retains the last good reading after a failed refresh. Location use follows the
+existing permission gate; a configured city remains the fallback.
 
 ## Astronomy and atmosphere
 
@@ -84,9 +99,12 @@ decorative; celestial placement comes from the astronomy snapshot.
 
 ## Motion, accessibility and visibility
 
-The weather `TimelineView` requests minimum intervals of 1/12 second for clear
-skies, 1/16 for cloud/fog and 1/30 for precipitation. It pauses when
-`surfaceIsVisible` is false or Reduce Motion is enabled. Reduce Motion draws a
+The Canvas-era weather timeline requested minimum intervals of 1/12 second for
+clear skies, 1/16 for cloud/fog and 1/30 for precipitation, and paused when
+`surfaceIsVisible` was false or Reduce Motion was enabled. **That timeline is
+gone**: the sky is now an `MTKView` with its own frame-rate policy (see
+[Greeting atmosphere](greeting-atmosphere.md) §5.7), and `WeatherBackdrop`'s
+canvas is mounted only when no GPU is available. Reduce Motion draws a
 fixed atmospheric phase and suppresses pointer scaling and arrival movement.
 The minute astronomy task exits when the surface becomes hidden. These are
 implementation limits, not measured CPU/GPU or frame-rate guarantees.

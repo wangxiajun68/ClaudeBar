@@ -474,65 +474,45 @@ struct SunPath: View {
 
 // MARK: - Sill gauges
 
-/// A ring gauge with the product's mark at its centre: one glance says whose
-/// allowance and how much of it is gone.
-struct MarkRing: View {
-    var fraction: Double
-    var tint: Color
-    var brand: ProductBrandMark.Brand
-    var spinning: Bool
-
-    var body: some View {
-        ZStack {
-            Circle().stroke(.white.opacity(0.16), lineWidth: 2)
-            Circle().trim(from: 0, to: min(1, max(0, fraction)))
-                .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if spinning {
-                Image(systemName: "arrow.clockwise").font(.system(size: 7, weight: .bold))
-                    .symbolEffect(.rotate, options: .repeating, isActive: true)
-            } else {
-                ProductBrandMark(brand: brand, well: false, page: true).frame(width: 9, height: 9)
-            }
-        }
-        .frame(width: 20, height: 20)
-        .accessibilityHidden(true)
+/// One allowance on the sill, read the way the popup's `QuotaSwayGauge` reads
+/// it: the **remaining** share, the arc filling with what is left, the name
+/// over the figure. The tint keys off the remainder, so only a window close to
+/// empty is flagged.
+struct SillGauge: View {
+    struct Metric: Equatable, Identifiable {
+        var label: String
+        var usedPercent: Double
+        var id: String { label }
+        var remaining: Double { min(100, max(0, 100 - usedPercent)) }
     }
-}
 
-/// Two concentric allowance windows — the short one outside, the long one
-/// inside — so "the 5-hour window is nearly spent but the week is fine" is a
-/// shape, not a sentence.
-struct DualRing: View {
-    var outer: Double
-    var inner: Double?
-    var spinning: Bool
+    var metric: Metric
 
-    static func tint(_ used: Double) -> Color {
-        Color(hex: used > 0.85 ? 0xFF8A75 : used >= 0.6 ? 0xFFD37A : 0x7FD6FF)
+    static func tint(remaining: Double) -> Color {
+        Color(hex: remaining <= 10 ? 0xFF8A75 : remaining <= 25 ? 0xFFD37A : 0x7CE7B8)
     }
 
     var body: some View {
-        ZStack {
-            ring(outer, inset: 0, width: 2)
-            if let inner { ring(inner, inset: 4.5, width: 1.6) }
-            if spinning {
-                Image(systemName: "arrow.clockwise").font(.system(size: 6, weight: .bold))
-                    .symbolEffect(.rotate, options: .repeating, isActive: true)
+        let remaining = metric.remaining
+        HStack(spacing: 4) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.16), lineWidth: 2)
+                Circle().trim(from: 0, to: remaining / 100)
+                    .stroke(Self.tint(remaining: remaining), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
             }
+            .frame(width: 13, height: 13)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(metric.label)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.58))
+                Text("\(Int(remaining.rounded()))%")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+            }
+            .lineLimit(1)
+            .fixedSize()
         }
-        .frame(width: 20, height: 20)
         .accessibilityHidden(true)
-    }
-
-    private func ring(_ used: Double, inset: CGFloat, width: CGFloat) -> some View {
-        ZStack {
-            Circle().stroke(.white.opacity(0.14), lineWidth: width)
-            Circle().trim(from: 0, to: min(1, max(0, used)))
-                .stroke(Self.tint(used), style: StrokeStyle(lineWidth: width, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .padding(inset)
     }
 }
 
@@ -632,46 +612,60 @@ struct SkyConsole: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        // Each weather carries its own name. With icons alone, the part-of-day
+        // row directly beneath (same columns) read as their captions.
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 2) {
                 ForEach(Self.weathers, id: \.weather) { item in
                     let selected = item.weather == weather
                     Button { pickWeather(item.weather) } label: {
-                        WeatherGlyph(symbol: night ? item.night : item.day, size: 12, ink: ink, vivid: vivid)
-                            .frame(width: Self.cell, height: 24)
-                            .background {
-                                if selected {
-                                    Capsule().fill(ink.opacity(0.2)).matchedGeometryEffect(id: "weather", in: selection)
-                                }
+                        VStack(spacing: 2) {
+                            WeatherGlyph(symbol: night ? item.night : item.day, size: 12, ink: ink, vivid: vivid)
+                                .frame(height: 14)
+                            Text(item.title)
+                                .font(.system(size: 9, weight: selected ? .semibold : .medium))
+                                .foregroundStyle(ink.opacity(selected ? 0.95 : 0.7))
+                                .lineLimit(1)
+                        }
+                        .frame(width: Self.cell, height: 32)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(ink.opacity(0.2))
+                                    .matchedGeometryEffect(id: "weather", in: selection)
                             }
-                            .contentShape(Capsule())
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     }
                     .buttonStyle(InstrumentPressStyle())
-                    .opacity(selected ? 1 : 0.72)
-                    .help(item.title)
-                    .accessibilityLabel(item.title)
+                    .opacity(selected ? 1 : 0.78)
+                    .help("天气：" + item.title)
+                    .accessibilityLabel("天气，" + item.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
+            // A segmented track, so the time of day reads as its own control.
             HStack(spacing: 2) {
                 ForEach(Self.bands, id: \.band) { item in
                     let selected = item.band == band
                     Button { pickBand(item.band) } label: {
                         Text(item.title)
-                            .font(.system(size: 10, weight: selected ? .semibold : .medium))
-                            .foregroundStyle(ink.opacity(selected ? 0.95 : 0.6))
-                            .frame(width: Self.cell, height: 18)
+                            .font(.system(size: 9.5, weight: selected ? .semibold : .medium))
+                            .foregroundStyle(ink.opacity(selected ? 0.95 : 0.58))
+                            .frame(width: Self.cell, height: 16)
                             .background {
                                 if selected {
-                                    Capsule().fill(ink.opacity(0.16)).matchedGeometryEffect(id: "band", in: selection)
+                                    Capsule().fill(ink.opacity(0.2)).matchedGeometryEffect(id: "band", in: selection)
                                 }
                             }
                             .contentShape(Capsule())
                     }
                     .buttonStyle(InstrumentPressStyle())
+                    .help("时段：" + item.title)
+                    .accessibilityLabel("时段，" + item.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
+            .background(Capsule().fill(ink.opacity(0.07)))
             SkyTimeline(minutes: minutes, sunrise: sunrise, sunset: sunset, track: track, ink: ink,
                         night: night, scrub: scrub, commit: commit)
         }

@@ -43,6 +43,23 @@ VPN 页把 **mihomo**（Clash Meta）作为本机 sidecar：生成 runtime YAML 
 
 `startPolling` 从 `core.log` 当前 EOF 起读。约 25s 内对**当前叶子节点 `server`** 出现 ≥6 次 `i/o timeout`，则把主代理切到延迟最好的 HY2，其次 KR。60s 冷却。
 
+## 流量日志（域名）
+
+`log-level: info` 是固定写入 header 的，所以**每条新建 TCP 连接内核都会写一行**，VPN 页的「流量日志」把这一行变成域名、规则与出口。两种形状（`core.log` 实测 13 898 行中的 11 760 走代理 / 2 138 直连 / 0 拒绝，直连里 443 次是 dial 失败）：
+
+```
+level=info    msg="[TCP] 127.0.0.1:49701 --> api2.cursor.sh:443 match Match using 🐟 漏网之鱼[1 官网 tcp.bet]"
+level=warning msg="[TCP] dial 🎯 Direct (match GeoSite/CN) 127.0.0.1:49287 --> wetype.weixin.qq.com:443 error: dns resolve failed: …"
+```
+
+- **入口是管道不是文件**：`spawnProcess` 的 `readabilityHandler` 把同一份字节同时给 `CoreLogWriter` 和 `VpnDomainLog`。读文件要自己管偏移，而 `CoreLogWriter` 到 8 MB 会把文件重写成尾部 —— 流式回调天然没有这个问题，也让页面是实时的。
+- **必须同时有 `time="` 与 `level=info`/`warning`**：ClaudeBar 自己的诊断也写进这个文件（`extractFatal` 认的 `listen tcp … address already in use` 就是 `level=error` 且没有时间戳），只看 `[TCP]` 会把它们当成连接。
+- **出口末段决定归类**：`[DIRECT]`（含 `🎯 Direct[DIRECT]`）→ 直连，`[REJECT]` → 拒绝，其余→ 已代理；没有方括号时看最后一个空格分隔的词（裸 `DIRECT` / 裸 `🎯 Direct`）。有方括号时**只认方括号**，否则名字里带 REJECT 的节点会被误判成拦截。
+- **按字节缓冲、只在 `\n` 切断**：分块边界可能落在多字节字符中间（真实日志里就有一条被切成 `官网 tcp.bet]"` 的残行），所以 `VpnDomainFeed` 收 `Data`、解码只在行完整时做。
+- 解析在管道线程，主线程只收 ≤4 Hz 的合并发布；环形 1000 行，**只在内存**（`core.log` 本身仍是磁盘上的记录）。时间戳按位置切 `HH:mm:ss`，不建 `DateFormatter`，排序用到达序 —— 跨午夜不会让昨天的行排到今天后面。
+- **没有字节数、不记 UDP**：内核的每连接行不含字节，UDP 一行都不写（实测 0 条）。页面上写明了这一点，而不是画一个 `—` 冒充 0。
+- 内核重启（改端口 / TUN / 换订阅）只丢掉死管道留下的半行（`resetCarry`），已解析的表保留 —— 那正是用户在看的。
+
 ## 系统代理
 
 `networksetup` 写 HTTP / HTTPS / SOCKS → `127.0.0.1:<mixed-port>`。
@@ -59,7 +76,7 @@ VPN 页把 **mihomo**（Clash Meta）作为本机 sidecar：生成 runtime YAML 
 
 | 表面 | 内容 |
 |------|------|
-| 主窗口 **VPN** 页 | `VPNView`：开关、节点宫格、测速、订阅（`VPNSubscriptionSection`）、日志 |
+| 主窗口 **VPN** 页 | `VPNView`：开关、节点宫格、测速、订阅（`VPNSubscriptionSection`）、日志、流量日志（`VpnDomainLogSection`） |
 | 菜单栏 popup | `PanelHeader` **状态行**的 VPN 药丸 `VpnStatusPill`（节点 + 延迟，点击打开 `VpnNodePickerPanel`：选节点、测速）——它是一条连接状态而不是一种模型，所以不占切换行的格子；status item 上常驻图标 + 双行 ↓/↑ + 电池格（`VpnMenuBarRateView`，宽度由布局常量推导；电池格是 34×21 的无正极头胶囊，φ²∶1 ≈ 1.618∶1，比例见 `batteryGlyphWidth` 的注释） |
 
 status item 上三种读数都**不依赖隧道**：电池是这台机器的电量，↓/↑ 是这台机器的吞吐（`SystemThroughput`，读各网卡 `if_data`），两者隧道关闭时照常显示。隧道改变的是**速率来自谁、画成什么颜色**：运行时用 mihomo `/traffic` 自己的计数并画成绿色（绿=「走隧道」），停止时用系统总吞吐画成静息的白色（白色数字配绿顶会声称有流量在走代理）。工具提示写明「隧道速率 / 系统速率」。见 `tickVpnRate` 的注释。

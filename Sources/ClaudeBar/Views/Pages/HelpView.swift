@@ -87,6 +87,7 @@ struct HelpView: View {
             }
             .padding(.vertical, Theme.Space.s16)
         }
+        .scrollHoverGate()
         .background(Theme.bgSecondary)
     }
 
@@ -173,6 +174,7 @@ struct HelpView: View {
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollHoverGate()
         } else {
             StandbyEmptyState(label: "没有匹配的条目")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

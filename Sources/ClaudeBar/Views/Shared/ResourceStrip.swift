@@ -353,10 +353,9 @@ struct ResourceStrip: View {
                 // left, which is why 176 is the widest this may get — past that
                 // the caption beside it starts truncating again.
                 //
-                // No `.transaction { animation = nil }` any more: it existed to
-                // stop a sampler tick interpolating the *old* static marks, and
-                // the marks are now driven by `TimelineView` — suppressing
-                // animation on this subtree would freeze the motion.
+                // The mark suppresses its own implicit animation. The bars are a
+                // 1 Hz reading; the highlight is a layer (`ReadingSweep`) and
+                // does not depend on a SwiftUI transaction to move.
                 .frame(width: Self.markSlot.width, height: Self.markSlot.height)
                 .clipped()
             }

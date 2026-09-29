@@ -42,7 +42,11 @@ extension EnvironmentValues {
         try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 
         func write(_ name: String, _ mark: HardwareIllustration) {
-            let renderer = ImageRenderer(content: ZStack { Color.white; mark }.frame(width: 128, height: 104))
+            // The sweep is an AppKit layer. ImageRenderer snapshots that view
+            // over the canvas, so the fixture measures the bars with it off.
+            let renderer = ImageRenderer(content: ZStack { Color.white; mark }
+                .environment(\.rendersHardwareSweep, false)
+                .frame(width: 128, height: 104))
             renderer.scale = 8
             guard let cg = renderer.cgImage else { fatalError("no image for \(name)") }
             let rep = NSBitmapImageRep(cgImage: cg)

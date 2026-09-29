@@ -19,37 +19,50 @@ struct ConnectorsView: View {
     var body: some View {
         let shown = visibleRecords
         let clis = visibleCLIs
+        let count = focus == .local ? clis.count : shown.count
+        let loading = manager.isLoading && manager.records.isEmpty && manager.localCLIs.isEmpty
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                toolbar(count: focus == .local ? clis.count : shown.count)
-                notices
-                if manager.isLoading && manager.records.isEmpty && manager.localCLIs.isEmpty {
-                    loadingState
-                        .padding(.horizontal, Theme.Space.s24)
-                } else if focus == .local {
-                    cardGrid(isEmpty: clis.isEmpty) {
-                        ForEach(clis) { cli in
-                            LocalCLICard(cli: cli,
-                                         relatedCount: relatedCount(cli.name))
+            // The grid is the scroll view's own content, not a child of a
+            // `VStack`. A grid asked for its ideal height lays out every card;
+            // with a couple of hundred installs that is the whole inventory,
+            // and the scroll then pays for cards that are off screen. An empty
+            // or still-scanning page has nothing to virtualise, so it stays a
+            // plain stack.
+            if loading || count == 0 {
+                VStack(alignment: .leading, spacing: 0) {
+                    chrome(count: count)
+                    if loading { loadingState } else { emptyState }
+                }
+                .padding(.horizontal, Theme.Space.s24)
+                .padding(.bottom, Theme.Space.s24)
+            } else {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.gridGapPage) {
+                    Section {
+                        if focus == .local {
+                            ForEach(clis) { cli in
+                                LocalCLICard(cli: cli, relatedCount: relatedCount(cli.name))
+                            }
+                        } else {
+                            ForEach(shown) { record in
+                                ConnectorCard(
+                                    record: record,
+                                    contents: manager.pluginContents[record.id],
+                                    isBusy: busyIDs.contains(record.id),
+                                    onDetails: { selectedRecord = record },
+                                    onSetEnabled: { setEnabled($0, for: record) },
+                                    onRemove: { askRemove(record) }
+                                )
+                            }
                         }
-                    }
-                } else {
-                    cardGrid(isEmpty: shown.isEmpty) {
-                        ForEach(shown) { record in
-                            ConnectorCard(
-                                record: record,
-                                contents: manager.pluginContents[record.id],
-                                isBusy: busyIDs.contains(record.id),
-                                onDetails: { selectedRecord = record },
-                                onSetEnabled: { setEnabled($0, for: record) },
-                                onRemove: { askRemove(record) }
-                            )
-                        }
+                    } header: {
+                        chrome(count: count)
                     }
                 }
+                .padding(.horizontal, Theme.Space.s24)
+                .padding(.bottom, Theme.Space.s24)
             }
         }
+        .scrollHoverGate()
         .background(Theme.bgPrimary)
         .sheet(item: $selectedRecord) { record in
             ConnectorDetailSheet(record: record)
@@ -182,9 +195,18 @@ struct ConnectorsView: View {
             onRefresh: { Task { await manager.refresh(projectPath: selectedProject) } },
             onChooseProject: chooseProject
         )
-        .padding(.horizontal, Theme.Space.s24)
         .padding(.top, Theme.Space.s8)
         .padding(.bottom, Theme.Space.s16)
+    }
+
+    /// Title, filters and notices. Horizontal inset lives on the scroll
+    /// content, once, so the header and the cards share an edge.
+    private func chrome(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            toolbar(count: count)
+            notices
+        }
     }
 
     private func toolbar(count: Int) -> some View {
@@ -217,22 +239,7 @@ struct ConnectorsView: View {
                     .foregroundStyle(Theme.Ink.claude)
             }
         }
-        .padding(.horizontal, Theme.Space.s24)
         .padding(.bottom, Theme.Space.s12)
-    }
-
-    private func cardGrid<Cards: View>(isEmpty: Bool, @ViewBuilder cards: () -> Cards) -> some View {
-        Group {
-            if isEmpty {
-                emptyState
-            } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.gridGapPage) {
-                    cards()
-                }
-            }
-        }
-        .padding(.horizontal, Theme.Space.s24)
-        .padding(.bottom, Theme.Space.s24)
     }
 
     @ViewBuilder private var notices: some View {
@@ -354,7 +361,6 @@ struct ConnectorsView: View {
             InnerFrameRing(inset: 2.5, radius: Theme.Radius.md,
                            tint: tint.opacity(Theme.isDark ? 0.22 : 0.5))
         }
-        .padding(.horizontal, Theme.Space.s24)
         .padding(.bottom, Theme.Space.s8)
     }
 
@@ -699,10 +705,10 @@ private struct ConnectorCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
         .tile(tint: faceTint, hovered: hovered, lens: lens)
-        // The 3D card's gesture, on the one page where the tiles *are* the
-        // page. Only the hovered card transforms, so the cost is bounded to one
-        // subtree however many tiles are in the grid; Reduce Motion drops the
-        // tilt and keeps the lift `.tile()` already applies.
+        // Tilt and shine only while this card is the one under the pointer.
+        // The modifier used to leave a 3D transform on every card in the
+        // inventory, including the ones at rest, and scrolling re-rasterised
+        // each of them. The lift still comes from `.tile()`.
         .depthTilt(corner: Theme.Radius.lg, hovered: hovered, reduceMotion: reduceMotion)
         .hoverState($hovered)
     }

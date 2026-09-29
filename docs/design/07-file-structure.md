@@ -40,7 +40,10 @@ ClaudeBar/
 │   │   │   ├── CursorUsageFetcher.swift ← Cursor 额度（读它的账号 token；两个命名池 + Grok 周窗口）
 │   │   │   ├── PermissionCenter.swift   ← 权限清单与系统授权状态（见 §10）
 │   │   │   ├── CurrentLocation.swift    ← 问候卡天气的单次定位 fix（「当前位置」开关）
-│   │   │   ├── WeatherFetcher.swift     ← wttr.in 取天气；有定位用坐标，否则用天气城市
+│   │   │   ├── WeatherAmapFetcher.swift / WeatherCNFetcher.swift / CNWeatherCityTable.swift ← 两家国内天气源（免代理）
+│   │   │   ├── WeatherFetcher.swift     ← 天气源链：高德 → 中国天气网 → Open-Meteo → wttr.in
+│   │   │   ├── VpnDomainLog.swift       ← 内核连接行 → 域名 / 规则 / 出口（VPN 页的「流量日志」）
+│   │   │   ├── CursorLedger.swift / CursorLedgerStore.swift ← Cursor 的实际扣费（真金额，与估算并列不相加）
 │   │   │   ├── SystemThroughput.swift   ← 各网卡字节计数；隧道关闭时菜单栏 ↓/↑ 的来源
 │   │   │   ├── TerminalLauncher.swift / SessionHost.swift / OttyBridge.swift ← 回到会话
 │   │   │   ├── NotchGeometry.swift      ← 刘海尺寸（见 §10）

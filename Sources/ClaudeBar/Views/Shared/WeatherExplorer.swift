@@ -57,6 +57,20 @@ struct WeatherExplorer: View {
     private var dayLabel: String {
         selected.map { label($0.date, format: "M月d日") + " · 日间预报" } ?? "此刻 · 当地天空"
     }
+    /// The forecast horizon in words. The domestic sources serve four or five
+    /// days rather than six, so the span is counted, never assumed.
+    private var forecastHorizon: String {
+        let days = reading.forecast.count
+        return days > 1 ? "今天及未来 \(days - 1) 天" : "预报"
+    }
+    private var sourceURL: String {
+        switch reading.source {
+        case "高德": return "https://lbs.amap.com/"
+        case "中国天气网": return "http://www.weather.com.cn/"
+        case "Open-Meteo": return "https://open-meteo.com/"
+        default: return "https://wttr.in/"
+        }
+    }
     private func label(_ date: Date, format: String) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.timeZone = zone; f.dateFormat = format
         return f.string(from: date)
@@ -124,7 +138,7 @@ struct WeatherExplorer: View {
             HStack(spacing: 8) {
                 Image(systemName: "calendar").foregroundStyle(accent)
                 Text("天气展望").fontWeight(.semibold)
-                Text("今天及未来 5 天").foregroundStyle(soft)
+                Text(forecastHorizon).foregroundStyle(soft)
                 Spacer()
                 Text(reading.place).foregroundStyle(soft)
 
@@ -165,7 +179,7 @@ struct WeatherExplorer: View {
             HStack {
                 Text(reading.forecastNote ?? "")
                 Spacer(minLength: 0)
-                Button("天气数据 · \(reading.source) ↗") { openURL(URL(string: reading.source == "Open-Meteo" ? "https://open-meteo.com/" : "https://wttr.in/")!) }.buttonStyle(.plain)
+                Button("天气数据 · \(reading.source) ↗") { openURL(URL(string: sourceURL)!) }.buttonStyle(.plain)
                     .help("天气数据来源与许可")
             }.font(.system(size: 9)).foregroundStyle(soft)
         }

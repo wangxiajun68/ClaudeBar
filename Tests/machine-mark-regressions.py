@@ -60,8 +60,12 @@ assert 'LucideHardwareGeometry.path(for:' in illustration, \
     'the mark must draw Lucide geometry, not its own paths'
 assert 'lane' in illustration and 'drawReading' in illustration, \
     'the reading must be drawn in its own lane under the icon'
-assert 'TimelineView' in illustration, \
-    'the mark must be driven by a timeline so it actually moves'
+assert 'TimelineView' not in illustration, \
+    'the sweep must not be a TimelineView: a live .animation schedule lays out the whole window every frame'
+assert 'CABasicAnimation' in illustration and 'ReadingSweep' in illustration, \
+    'the highlight must move on a render-server layer, at the same rate as the old clock'
+assert 'sweepRate' in illustration, \
+    'the sweep rate (0.35 + load * 1.35 cycles/s) has to stay a named function'
 
 # --- 4. The ring is gone from every header call site ------------------------
 meter = strip[strip.index('private func meter('):strip.index('private func cpuAttributionCaption(')]

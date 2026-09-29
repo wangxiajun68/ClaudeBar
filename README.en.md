@@ -24,7 +24,7 @@
 
 ## Interface
 
-The main window is a dashboard: CPU die, GPU bars, memory tank, disk, Wi-Fi / Bluetooth, left and right fans — then the active vendor, live sessions, and tokens. The menu-bar popup is the same facts, compressed: three chips to switch CC / Codex / VPN, then living sessions and a monthly heatmap.
+The main window is a dashboard: CPU die, GPU bars, memory tank, disk, Wi-Fi / Bluetooth, left and right fans — then the active vendor, live sessions, and tokens. The menu-bar popup is the same facts, compressed: three chips to switch CC / Codex / Cursor allowance, the VPN node as a pill on the status row, then living sessions and a monthly heatmap.
 
 **Main window** · Ice / graphite tiles. Color lives in the charts.
 
@@ -42,15 +42,15 @@ ClaudeBar folds that pile into **one** menu-bar app. It stays in the top bar; th
 
 ## Six jobs
 
-**Switch.** Claude Code and Codex keep separate vendor lists. Activation writes `~/.claude/settings.json` and `~/.codex/config.toml` independently. The popup has three chips: CC, Codex, VPN node.
+**Switch.** Claude Code and Codex keep separate vendor lists. Activation writes `~/.claude/settings.json` and `~/.codex/config.toml` independently. The popup has three chips: CC, Codex, Cursor allowance. The VPN node is a pill on the status row.
 
 **Forward.** A local proxy on `127.0.0.1` (default 15721) bridges Chat and Responses. Claude Code and Codex follow the model you just activated; third-party clients can pick a different upstream without rewriting those two files. Turn on capture and the **Traffic** page shows conversations, tool calls, images, and raw frames.
 
-**Tunnel.** Bundled mihomo: subscriptions, node pick, delay tests, system proxy / TUN. Live ↓↑ rates sit in the menu bar. The outbound path is a breadcrumb (`Japan › telecom`), not a decorative metro line.
+**Tunnel.** Bundled mihomo: subscriptions, node pick, delay tests, system proxy / TUN. Live ↓↑ rates sit in the menu bar. The outbound path is a breadcrumb (`Japan › telecom`), not a decorative metro line. The VPN page's **domain log** turns each TCP connection the core opens into domain / matched rule / outbound, and sums up the domains that were sent direct when they should have gone through the tunnel — the core logs TCP only and no byte counts, which the page says outright.
 
 **Scene.** Sessions collect Claude Code, Cursor, Codex, and other CLIs onto one card: context bar, current tool, heartbeat, CPU / memory. Double-click to resume in the terminal or Cursor.
 
-**Usage.** Model tokens only. Day / month / year heatmap, CC / Codex / third-party columns, input · cache-hit · write · output mix. VPN quota stays on the VPN page.
+**Usage.** Model tokens only. Day / month / year heatmap, CC / Codex / third-party columns, input · cache-hit · write · output mix. The same period's cost is converted at published list prices (56 rate cards, CNY and USD kept apart, unpriced models say why) — **except Cursor's line, which is a real bill**: its own API returns what it actually charged, shown separately from the estimate and never added to it. VPN quota stays on the VPN page.
 
 **Machine.** A 2×3 grid: load, temps in the CPU / GPU captions, disk fill, Wi-Fi / Bluetooth / ethernet, two clickable fans (auto / max). Light is ice `#EEF3F8`. Dark is graphite `#16181C`. Neither follows system appearance.
 

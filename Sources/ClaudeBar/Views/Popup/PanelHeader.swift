@@ -82,6 +82,7 @@ struct PanelHeader: View {
                     .strokeBorder(Theme.hairline, lineWidth: 1)
             )
         }
+        .onAppear { codexStore.refreshConfiguredModel() }
         .onReceive(AppPreferences.shared.$codexProxyPort.removeDuplicates()) { codexProxyPort = $0 }
         .onReceive(AppPreferences.shared.$codexRoutingEnabled.removeDuplicates()) { codexRoutingEnabled = $0 }
         .onReceive(AppPreferences.shared.$vpnMixedPort.removeDuplicates()) { vpnMixedPort = $0 }
@@ -208,11 +209,14 @@ struct PanelHeader: View {
     }
 
     private var codexModel: String {
-        codexStore.activeProvider?.activeModel?.name ?? "未配置"
+        // The active custom provider is optional when Codex uses OpenAI.
+        // Read the actual selection instead of treating that as unconfigured.
+        codexStore.configuredModel ?? (codexStore.usesOfficialAccount ? "官方默认模型" : "默认模型")
     }
 
     private var codexVendor: String {
-        codexStore.activeProvider?.name ?? "添加供应商"
+        if codexStore.usesOfficialAccount { return "OpenAI 官方" }
+        return codexStore.providers.first { $0.id == codexStore.configuredProviderID }?.name ?? "Codex"
     }
 
     /// Rate-limit windows under the model name. Vendor stays when the
@@ -711,4 +715,3 @@ private struct ModelSwitchList: View {
         }
     }
 }
-

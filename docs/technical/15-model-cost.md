@@ -15,13 +15,15 @@
 
 | 文件 | 职责 |
 |------|------|
-| `Utils/ModelPricing.swift` | slug 归一化与匹配、逐桶计价、分币种累加、金额格式化、「无价」分类 |
+| `Utils/ModelPricing.swift` | slug 归一化与匹配、逐桶计价、分币种累加、金额格式化、「无价」分类。**只管估算**——不接受金额，也就不可能把实扣折进来 |
 | `Utils/ModelPriceTable.swift` | 内置价目表 + 无价名单。**更新价格只改这一个文件**，日期在 `ModelPricing.updated` |
+| `Utils/CursorLedger.swift` / `Utils/CursorLedgerStore.swift` | Cursor 的**实际扣费**：解码、窗口规划与取数节奏（见 [04 数据访问层](04-data-access-layer.md)） |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：双源查询、TTL 缓存、手动覆盖；默认模式下不发请求 |
-| `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行 |
+| `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行：估算一行、`Cursor 实扣` 一行，各自成句、永不相加 |
 | `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示） |
-| `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个入口 |
-| `Tests/model-cost-regressions.py` | 锁定 slug 匹配、币种隔离、无价分类与格式化 |
+| `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个估算入口；实扣走平行的 `usageSettlements` / `settlement(for:)` / `settlementCovers(_:)` |
+| `Tests/model-cost-regressions.py` | 锁定 slug 匹配（含 effort 档归一）、币种隔离、无价分类与格式化 |
+| `Tests/cursor-ledger-regressions.py` | 锁定实扣解码、窗口退化、以及「实扣到不了估算那条路」（`ModelUsage` 不带钱） |
 
 ## 计价口径
 
@@ -135,6 +137,18 @@ struct Cost { var cny: Double = 0; var usd: Double = 0 }
 | `claude-sonnet-4-6:free` | `claude-sonnet-4-6`（OpenRouter 的 `:free` / `:nitro`） |
 | `claude-sonnet-4-6-20250929` | `claude-sonnet-4-6`（日期戳） |
 | `glm-5.3-flash-latest` | `glm-5.3-flash`（`-latest` 后缀） |
+| `claude-opus-5-5-medium` | `claude-opus-5-5`（**effort / 速度档**） |
+| `claude-4.6-sonnet-medium-thinking` | `claude-4.6-sonnet`（档位叠加，**循环剥**） |
+
+最后一组是为了让 Cursor 的模型名落到本地客户端那一行：Cursor 按 effort 档命名
+（`claude-opus-5-5-medium`），Claude Code / Codex 记的是基础名（`claude-opus-5-5`），
+不归一的话同一个模型会在用量页裂成两行、Cursor 的实际扣费找不到归属的瓦片。剥的是受控的一组词
+（`-low` / `-medium` / `-high` / `-xhigh` / `-fast` / `-thinking`），**按连字符边界**匹配，
+所以厂商自己的 `-highspeed`（`minimax-m2.7-highspeed`）不受影响。
+
+这条同时作用于定价查表，方向是安全的：查表本就是最长 slug 优先的前缀匹配，剥掉只会落向基础档；
+而且**价目表与无价名单里没有任何键以这些词结尾**——有的话那个键永远命中不了
+（`Tests/model-cost-regressions.py` 对两张表都断言这一条）。
 
 匹配用 **token 边界的前缀**（`name == slug || name.hasPrefix(slug + "-")`），并且 **最长 slug 优先**——价目表与无价名单**合在一次查找里**比长度：
 
@@ -173,12 +187,36 @@ UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡（按偏好
 
 ## 哪些平台能拿到真金额
 
-估算之所以是估算，是因为绝大多数厂商不回传钱。例外只有两个，将来若要「精确到账单」，入口在这里：
+估算之所以是估算，是因为绝大多数厂商不回传钱。真金额来源只有两个：
 
-- **OpenRouter**：响应里的 `usage.cost`（credits）与 `usage.cost_details.upstream_inference_cost`；`prompt_tokens_details.cached_tokens` / `cache_write_tokens` 给的是读 / 写。`GET /api/v1/models` 的 `pricing.prompt` 等单位是 **USD per token**（不是 per million），`overrides[]` 里带 `min_prompt_tokens` 或 UTC 时段的条件价（OpenRouter 就用它表达 OpenAI 的长上下文档）。注意：`cost` 单位文档写的是 credits，从未给过 credits↔USD 的汇率。
-- **Cursor**：Admin API 的 usage-events 每条带 `tokenUsage.{inputTokens,outputTokens,cacheWriteTokens,cacheReadTokens,totalCents}` 与 `chargedCents`。
+- **OpenRouter**：响应里的 `usage.cost`（credits）与 `usage.cost_details.upstream_inference_cost`；`prompt_tokens_details.cached_tokens` / `cache_write_tokens` 给的是读 / 写。`GET /api/v1/models` 的 `pricing.prompt` 等单位是 **USD per token**（不是 per million），`overrides[]` 里带 `min_prompt_tokens` 或 UTC 时段的条件价（OpenRouter 就用它表达 OpenAI 的长上下文档）。注意：`cost` 单位文档写的是 credits，从未给过 credits↔USD 的汇率。**尚未接入。**
+- **Cursor**（**已接入**）：`api2.cursor.sh` 的 `DashboardService.GetAggregatedUsageEvents` / `GetFilteredUsageEvents`，用本机 `state.vscdb` 里已存的裸 JWT 调用，不新增凭据。每条带 `tokenUsage.{inputTokens,outputTokens,cacheWriteTokens,cacheReadTokens,totalCents}`，且 `totalCents == chargedCents`（9,895 条逐条核对）——**是实际扣掉的数额**。解码与窗口见 [04 数据访问层](04-data-access-layer.md) 的 `CursorLedger` 一节。
 
 其余厂商（含所有国产平台）都只有 token 事实，金额只能自己乘价目表——这正是本模块存在的理由。
+
+### 实际扣费与估算**并列，绝不合并**
+
+用量页「按模型」的瓦片上，一个模型可以同时有两行钱：
+
+```
+claude-opus-5-5        38.7M
+  估算  ¥1,284.60          ← token × 刊例价表，本模块算的
+  Cursor 实扣  $34.65      ← Cursor 自己扣的，来自它的账本
+  ⓘ 9月28日–10月28日        ← 仅当金额覆盖的窗口与页面周期不一致时出现
+```
+
+三条规则，都有回归断言守着：
+
+1. **永不相加。** 两个数回答不同的问题（「按刊例价这批 token 值多少」vs「Cursor 扣了多少」），
+   来自不同来源（本地价目表 vs Cursor 账本），可能覆盖不同窗口。把它们合成一个数，得到的既不是
+   估算也不是账单。`ModelUsage` **没有金额字段**，`ModelPricing.estimate` **只接受 token**——
+   类型系统就是这条规则的执行者（`Tests/cursor-ledger-regressions.py` 断言 `ModelUsage` 不带钱）。
+2. **措辞不共享。** 实扣那行写「Cursor 实扣」，估算那行写「按官方刊例价估算」；两者的
+   accessibility label 各自成句。实扣上出现「估算」二字是这个功能最不能犯的错。
+3. **窗口必须说出来。** Cursor 的金额接口接受的是**窗口**（上限约 90 天，超出非确定性报错），
+   不是「今天 / 月 / 年」。切到别的周期时**保留旧值并标明它属于哪个窗口**，而不是让数字消失
+   ——数字消失会读成「数据坏了」，而不是读成「口径不同」。`年` / `全部` 退化为账单周期并标注
+   「仅覆盖一个账期」，绝不返回一年的某个切片冒充总额。
 
 ## 为什么不接动态价源
 

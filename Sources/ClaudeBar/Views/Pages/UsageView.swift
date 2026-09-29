@@ -36,7 +36,10 @@ struct UsageView: View {
                         }
                         Spacer()
                         PeriodTabs(period: providerStore.usagePeriod, onSelect: selectPeriod)
-                        Button(action: { providerStore.refreshUsage(rescan: true) }) {
+                        Button(action: {
+                            providerStore.refreshUsage(rescan: true)
+                            providerStore.requestSettlement(force: true)
+                        }) {
                             GlyphWell(name: "arrow.clockwise", tint: Theme.textSecondary, size: 28)
                         }
                         .buttonStyle(.plain)
@@ -150,6 +153,7 @@ struct UsageView: View {
             }
             .padding(Theme.Space.s24)
         }
+        .scrollHoverGate()
         .background(Theme.bgPrimary)
     }
 
@@ -163,20 +167,20 @@ struct UsageView: View {
             SectionHeader(icon: "square.grid.2x2", title: "按平台",
                           tint: Theme.claude, ink: Theme.Ink.claude,
                           count: providerStore.usageBySource.values.flatMap { $0 }.count)
-            if total == 0 && !providerStore.usageLoading {
-                StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
-                                  tint: Theme.textSecondary, block: true)
-            } else {
-                TileGrid(.pageUsage) {
-                    ForEach(UsageSource.allCases) { source in
-                        UsagePlatformCard(
-                            source: source,
-                            stats: providerStore.usageBySource[source] ?? [],
-                            days: providerStore.usageDaysBySource[source] ?? [],
-                            overallTokens: total
-                        )
-                    }
+            Text("Cursor 按官方账单单独统计；上方图表和其他平台占比仅包含本地记录。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
+            TileGrid(.pageUsage) {
+                ForEach(UsageSource.allCases) { source in
+                    UsagePlatformCard(
+                        source: source,
+                        stats: providerStore.usageBySource[source] ?? [],
+                        days: providerStore.usageDaysBySource[source] ?? [],
+                        overallTokens: total
+                    )
                 }
+                CursorTokenUsageCard(window: UsageStats.interval(
+                    for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
             }
         }
     }
@@ -195,12 +199,23 @@ struct UsageView: View {
                     // whole model list, and reading it inside the loop made it
                     // a per-tile pass.
                     let scale = max(providerStore.maxUsageTokens, 1)
+                    // Cursor's real charge is not per-period — the API answers
+                    // for a window — so a tile is captioned with the window it
+                    // does cover whenever that is not the period on screen.
+                    // Resolved once for the whole grid: every tile compares
+                    // against the same two windows.
+                    let periodWindow = UsageStats.interval(for: providerStore.usagePeriod,
+                                                           reference: providerStore.usageReferenceDate)
+                    let settlementCaption = providerStore.settlementCovers(periodWindow)
+                        ? nil : providerStore.settlementWindowLabel
                     ForEach(providerStore.usageStats) { stat in
                         UsageModelCard(
                             stat: stat,
                             slices: providerStore.usageSourceSlices(for: stat),
                             share: Double(stat.totalTokens) / Double(scale),
-                            costLine: providerStore.costLine(for: stat.model)
+                            costLine: providerStore.costLine(for: stat.model),
+                            settlement: providerStore.settlement(for: stat.model),
+                            settlementWindow: settlementCaption
                         )
                     }
                 }
@@ -311,12 +326,20 @@ struct UsageView: View {
             providerStore.usagePeriod = period
             providerStore.usageReferenceDate = Date()
         }
+        // A new period is a new window, and Cursor's ledger answers for a
+        // window — so this is where the money read is re-aimed. After the two
+        // assignments above, because the window is derived from both of them.
+        // A no-op inside the store when the window is already in hand.
+        providerStore.requestSettlement()
     }
 
     private func shiftUsage(_ amount: Int) {
         providerStore.usageReferenceDate = UsageStats.shift(
             providerStore.usagePeriod, reference: providerStore.usageReferenceDate, by: amount
         )
+        // Paging to another month pages the money too — the ledger's window
+        // follows the reference date, not just the period kind.
+        providerStore.requestSettlement()
     }
 
 }

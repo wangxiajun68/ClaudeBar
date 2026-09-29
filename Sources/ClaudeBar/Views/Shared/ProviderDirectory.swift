@@ -145,7 +145,10 @@ struct ProviderCatalogBrowser: View {
         let showCustomSection = (category == nil || category == .gateway) && !restingCustoms.isEmpty
         VStack(alignment: .leading, spacing: 16) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                // Lazy, so a category that has scrolled off is not built. Each
+                // group is one child; the grid inside a visible group is the
+                // handful of cards in that category, not the whole directory.
+                LazyVStack(alignment: .leading, spacing: 24) {
                     if pinned.shows {
                         VStack(alignment: .leading, spacing: 12) {
                             // A bare 16pt grey row was the archetypal admin
@@ -195,7 +198,7 @@ struct ProviderCatalogBrowser: View {
                     }
                 }.padding(.bottom, 24)
             }
-        }.padding(.horizontal, 24).foregroundStyle(Theme.textPrimary)
+        }.scrollHoverGate().padding(.horizontal, 24).foregroundStyle(Theme.textPrimary)
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: category)
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: configuredOnly)
             .animation(reduceMotion ? nil : .snappy(duration: 0.32), value: activeID)

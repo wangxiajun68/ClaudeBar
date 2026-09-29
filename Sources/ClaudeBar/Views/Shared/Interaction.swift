@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - PressableStyle
@@ -80,6 +81,43 @@ extension View {
 
 // MARK: - HoverState
 
+/// True while a scroll view is tracking, decelerating or animating.
+///
+/// Not observable on purpose. Publishing scroll phase re-evaluates the page
+/// at the moment the scroll needs the main thread (the same reason
+/// `PageScrollActivity` is a reference). Hover writes consult it and drop
+/// enter/exit events for the duration, so a flick across a grid does not
+/// lift and drop a tile per frame. When the phase returns to idle the page
+/// posts one `mouseMoved`, and the tile actually under the pointer catches up.
+enum ScrollHoverGate {
+    static var scrolling = false
+
+    static func set(_ moving: Bool) {
+        let was = scrolling
+        scrolling = moving
+        // Off this turn: the phase callback is the frame that just went idle.
+        if was, !moving {
+            DispatchQueue.main.async { refresh() }
+        }
+    }
+
+    static func refresh() {
+        guard let window = NSApp.keyWindow else { return }
+        guard let event = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: window.mouseLocationOutsideOfEventStream,
+            modifierFlags: NSEvent.modifierFlags,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        ) else { return }
+        window.sendEvent(event)
+    }
+}
+
 /// Tracks pointer-in / pointer-out for a view, wrapped into a bindable
 /// `@State` so hover-driven UI can be read declaratively.
 struct HoverState: ViewModifier {
@@ -88,6 +126,7 @@ struct HoverState: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { hovering in
+                if ScrollHoverGate.scrolling { return }
                 if isHovered != hovering { isHovered = hovering }
             }
     }
@@ -97,6 +136,25 @@ extension View {
     /// Drive `isHovered` from pointer movement, animated with the theme spring.
     func hoverState(_ isHovered: Binding<Bool>) -> some View {
         modifier(HoverState(isHovered: isHovered))
+    }
+
+    /// Drop hover writes for the duration of a flick, then reconcile once.
+    ///
+    /// A grid of tiles that each own a hover flag lays out once per tile the
+    /// pointer crosses. The flag is the one in `ScrollHoverGate`; this is the
+    /// scroll view's half of it.
+    func scrollHoverGate() -> some View {
+        modifier(ScrollHoverGateModifier())
+    }
+}
+
+private struct ScrollHoverGateModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .onScrollPhaseChange { _, phase in
+                ScrollHoverGate.set(phase != .idle)
+            }
+            .onDisappear { ScrollHoverGate.scrolling = false }
     }
 }
 

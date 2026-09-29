@@ -14,9 +14,16 @@ struct SettingsView: View {
     @State private var codexPortDraft = ""
     @State private var portError: String?
     @State private var weatherCityDraft = ""
+    @State private var amapKeyDraft = ""
+    /// What the last committed key was, so the row can tell "unchanged" from
+    /// "edited but not saved". A separate `@State` rather than `prefs.amapAPIKey`
+    /// because the commit itself moves the pref — the confirmation has to
+    /// survive that.
+    @State private var amapKeySaved = ""
     @State private var showProxyAdvanced = false
     @FocusState private var codexPortFocused: Bool
     @FocusState private var weatherCityFocused: Bool
+    @FocusState private var amapKeyFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,12 +62,15 @@ struct SettingsView: View {
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
+            .scrollHoverGate()
             .id(category)
         }
         .background(Theme.bgPrimary)
         .onAppear {
             codexPortDraft = String(prefs.codexProxyPort)
             weatherCityDraft = prefs.weatherCity
+            amapKeyDraft = prefs.amapAPIKey
+            amapKeySaved = prefs.amapAPIKey
             refreshInstalledTerminals()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -72,10 +82,13 @@ struct SettingsView: View {
         .onChange(of: prefs.weatherCity) { _, city in
             if !weatherCityFocused { weatherCityDraft = city }
         }
+        .onChange(of: prefs.amapAPIKey) { _, key in
+            if !amapKeyFocused { amapKeyDraft = key }
+        }
         // Switching categories can remove a focused field before its blur
         // callback. Commit drafts explicitly at this boundary as well.
         .onChange(of: category) { old, _ in
-            if old == .general { commitWeatherCity() }
+            if old == .general { commitWeatherCity(); commitAmapKey() }
             if old == .proxy { commitCodexPort() }
         }
     }
@@ -149,6 +162,39 @@ struct SettingsView: View {
                         .onChange(of: weatherCityFocused) { _, focused in
                             if !focused { commitWeatherCity() }
                         }
+                }
+                SettingsDivider()
+                SettingsRow(title: "高德 Key", caption: "填写后走高德天气（仅大陆城市）；留空自动改用中国天气网，无需申请。") {
+                    HStack(spacing: 8) {
+                        SecureField("高德 Web 服务 Key", text: $amapKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                            .focused($amapKeyFocused)
+                            .accessibilityLabel("高德 Key")
+                            .onSubmit { commitAmapKey() }
+                        // A key is a credential: an explicit save, inside the row,
+                        // with the row itself saying whether it took. The other
+                        // text fields here still commit on blur — a city name is
+                        // cheap to retype, a pasted key is not, and a blur-commit
+                        // gives no confirmation that the secret was stored.
+                        ActionButton("保存", size: .regular) { commitAmapKey() }
+                            .disabled(!amapKeyEdited)
+                            // `ActionButton` draws its own plate, so `.disabled`
+                            // alone would leave it looking pressable while doing
+                            // nothing — dim it explicitly.
+                            .opacity(amapKeyEdited ? 1 : 0.45)
+                        if amapKeyEdited {
+                            Text("未保存")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.Ink.warning)
+                                .accessibilityLabel("高德 Key 有未保存的修改")
+                        } else if amapKeyDraft == amapKeySaved && !amapKeyDraft.isEmpty {
+                            Text("已保存")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.Ink.success)
+                                .accessibilityLabel("高德 Key 已保存")
+                        }
+                    }
                 }
                 SettingsDivider()
                 SettingsRow(title: "问候字体") {
@@ -276,6 +322,20 @@ struct SettingsView: View {
         guard city != prefs.weatherCity else { return }
         prefs.weatherCity = city
     }
+
+    private func commitAmapKey() {
+        let key = amapKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        amapKeyDraft = key
+        amapKeySaved = key
+        amapKeyFocused = false
+        guard key != prefs.amapAPIKey else { return }
+        prefs.amapAPIKey = key
+        WeatherStore.shared.refresh()
+    }
+
+    /// Whether the row's draft differs from what is stored — what the Save
+    /// button's enabled state and the 已保存／未保存 caption both read.
+    private var amapKeyEdited: Bool { amapKeyDraft != prefs.amapAPIKey }
 
     private func refreshInstalledTerminals() {
         installedTerminals = Set(ResumeTerminal.allCases.filter(\.isInstalled))

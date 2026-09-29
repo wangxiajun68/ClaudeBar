@@ -72,6 +72,24 @@ struct ModelUsage {
             precondition(base != flash, "glm-5 must not price glm-5.3-flash")
         }
 
+        // 2b. A trailing effort / speed tier is routing metadata too, and it is
+        //     the one that makes Cursor's rows collide with the local clients':
+        //     Cursor names the same upstream model `claude-opus-5-5-medium`
+        //     where Claude Code records `claude-opus-5-5`. Chains happen — the
+        //     account's own ledger carried `claude-4.6-sonnet-medium-thinking`
+        //     — so one strip is not enough.
+        precondition(ModelPricing.canonical("claude-opus-5-5-medium") == "claude-opus-5-5",
+                     "an effort tier must not split one model across two usage rows")
+        precondition(ModelPricing.canonical("grok-4.7-xhigh") == "grok-4.7")
+        precondition(ModelPricing.canonical("claude-4.6-sonnet-medium-thinking") == "claude-4.6-sonnet",
+                     "tier words stack, so the strip must loop")
+        // A vendor's own compound that merely *contains* a tier word is not a
+        // tier: the hyphen boundary is what keeps these intact.
+        precondition(ModelPricing.canonical("kimi-k2.7-code-highspeed") == "kimi-k2.7-code-highspeed")
+        precondition(ModelPricing.canonical("minimax-m2.7-highspeed") == "minimax-m2.7-highspeed")
+        // The base id itself must survive the new rule untouched.
+        precondition(ModelPricing.canonical("claude-sonnet-4-6") == "claude-sonnet-4-6")
+
         // 3. Slug identity across the vendors this app ships presets for, so a
         //    renamed or prefixed id cannot silently become 未计价.
         precondition(ModelPricing.rate(for: "deepseek-v4.1-flash") != nil,
@@ -219,6 +237,13 @@ struct ModelUsage {
             // and the model would show 未计价 forever.
             precondition(ModelPricing.canonical(entry.slug) == entry.slug,
                          "\(entry.slug) is not canonical: \(ModelPricing.canonical(entry.slug))")
+            // …and no key may end in an effort tier. The tier strip runs before
+            // the lookup, so such a key would be unreachable — permanently
+            // unpriced with nothing to show for it.
+            for tier in ["-xhigh", "-medium", "-thinking", "-high", "-low", "-fast"] {
+                precondition(!entry.slug.hasSuffix(tier),
+                             "\(entry.slug) ends in the effort tier \(tier); it can never be reached")
+            }
             precondition(entry.rate.input > 0 && entry.rate.output > 0,
                          "\(entry.slug) needs a real input and output price")
             precondition(entry.rate.cacheRead <= entry.rate.input,
@@ -239,6 +264,10 @@ struct ModelUsage {
         for (slug, reason) in ModelPriceTable.unpriced {
             precondition(ModelPricing.canonical(slug) == slug,
                          "unpriced key \(slug) is not canonical")
+            for tier in ["-xhigh", "-medium", "-thinking", "-high", "-low", "-fast"] {
+                precondition(!slug.hasSuffix(tier),
+                             "unpriced key \(slug) ends in the effort tier \(tier); it can never be reached")
+            }
             precondition(!reason.explanation.isEmpty, "\(slug) needs a tooltip line")
             for entry in ModelPriceTable.entries {
                 precondition(entry.slug != slug,

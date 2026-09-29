@@ -102,6 +102,21 @@ source += '''
                 if row == 0 { text(weather.0, at: CGPoint(x: CGFloat(column) * thumb.width + 8, y: CGFloat(sheetH) - label + 6)) }
             }
         }
+        // Lightning at the peak of a return stroke, one channel per seed.
+        for (band, seed) in [("night", Float(11.3)), ("dusk", Float(27.9)), ("afternoon", Float(42.6))] where only.isEmpty || only == "strike" {
+            let entry = bands.first { $0.0 == band }!
+            let astronomy = SkyAstronomy.snapshot(date: iso.date(from: entry.1)!, latitude: 23.13, longitude: 113.26)
+            let scene = SkyScene.make(sky: .thunder, rainChance: 90, windKph: 12, windDirection: "东南", astronomy: astronomy)
+            let renderer = AtmosphereRenderer(gpu: gpu)
+            renderer.input = .init(scene: scene, layout: GreetingTypesetter.layout(entry.2, name: "Xiajun Wang", cardWidth: width,
+                                                                                    skyHeight: skyHeight, margin: margin),
+                                   skyHeight: skyHeight, darkInk: scene.prefersDarkInk, darkAppearance: false,
+                                   reduceMotion: false, rainbow: false)
+            renderer.stillFlash = SIMD4(0.9, 0.3 + Float(seed.truncatingRemainder(dividingBy: 5)) * 0.1, seed, 1)
+            guard let image = renderer.snapshot(size: size, scale: 2, time: 37) else { fatalError("render failed") }
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
+                .write(to: out.appendingPathComponent("strike-\\(band).png"))
+        }
         if only.isEmpty, let image = sheet.makeImage() {
             try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
                 .write(to: out.appendingPathComponent("matrix.png"))

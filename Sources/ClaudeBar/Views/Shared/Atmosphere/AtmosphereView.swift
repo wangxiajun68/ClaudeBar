@@ -52,15 +52,54 @@ struct AtmosphereSurface: View {
     }
 }
 
+/// The hosting page's scroll state, for the live skies on it.
+///
+/// While the page moves (tracking, decelerating, animating) or once the card
+/// has scrolled out of the viewport, a sky holds the frame it has: the
+/// compositor then translates a still layer instead of blending — and
+/// re-blurring the glass sill over — a new frame on every scroll step.
+///
+/// A reference handed down once, not an environment flag: the state changes
+/// at the start and end of every scroll, and routing that through SwiftUI
+/// would re-evaluate the page (and the card's closures) at exactly the moment
+/// the scroll needs the main thread.
+@MainActor final class PageScrollActivity {
+    var moving = false { didSet { if moving != oldValue { update() } } }
+    var onScreen = true { didSet { if onScreen != oldValue { update() } } }
+    private let views = NSHashTable<AtmosphereMTKView>.weakObjects()
+
+    fileprivate func attach(_ view: AtmosphereMTKView) {
+        views.add(view)
+        view.setHeld(moving || !onScreen)
+    }
+
+    private func update() {
+        for view in views.allObjects { view.setHeld(moving || !onScreen) }
+    }
+}
+
+private struct PageScrollActivityKey: EnvironmentKey {
+    static let defaultValue: PageScrollActivity? = nil
+}
+
+extension EnvironmentValues {
+    var pageScrollActivity: PageScrollActivity? {
+        get { self[PageScrollActivityKey.self] }
+        set { self[PageScrollActivityKey.self] = newValue }
+    }
+}
+
 private struct AtmosphereMetal: NSViewRepresentable {
     var input: AtmosphereRenderer.Input
     var controller: AtmosphereController
     var active: Bool
+    @Environment(\.pageScrollActivity) private var scrollActivity
 
     func makeNSView(context: Context) -> AtmosphereMTKView {
         let view = AtmosphereMTKView(gpu: AtmosphereGPU.shared!)
         view.renderer.input = input
         controller.attach(view)
+        scrollActivity?.attach(view)
         view.setActive(active)
         return view
     }
@@ -73,6 +112,7 @@ private struct AtmosphereMetal: NSViewRepresentable {
             // afterwards, since the new weather may want 60 Hz or only 30.
             if weatherChanged { view.boost(for: AtmosphereRenderer.weatherFade) }
         }
+        scrollActivity?.attach(view)
         view.setActive(active)
     }
 
@@ -87,7 +127,16 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
     let renderer: AtmosphereRenderer
     private var tracking: NSTrackingArea?
     private var active = false
+    /// Held on its last frame while the page scrolls.
+    private var held = false
     private var pointerInside = false
+    /// Frames acquired and not yet presented, and when the last was acquired.
+    /// `currentDrawable` blocks the main thread (up to a second) when every
+    /// drawable is taken — which is exactly when the compositor is behind, in
+    /// a scroll. With one on screen and at most one pending, a third is always
+    /// free, so a frame is skipped instead.
+    private var pending = 0
+    private var lastAcquired: CFTimeInterval = 0
     private var boostedUntil = Date.distantPast
     private var observers: [NSObjectProtocol] = []
     private var windowObservers: [NSObjectProtocol] = []
@@ -145,6 +194,12 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
         retime()
     }
 
+    func setHeld(_ held: Bool) {
+        guard self.held != held else { return }
+        self.held = held
+        retime()
+    }
+
     /// 60 Hz while the pen is moving: a line written at 30 Hz visibly steps.
     func boostWhileWriting() {
         guard let duration = renderer.input?.layout?.writeDuration else { return }
@@ -171,11 +226,15 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
     /// Unattended precipitation gets 60 Hz, drifting cloud 30 Hz, and Low
     /// Power Mode or thermal pressure 30 / 15 Hz. A frame costs well under a
     /// millisecond of GPU time on Apple silicon (`Tools/bench-atmosphere.py`).
-    /// Hidden, occluded or inactive surfaces do not draw at all.
+    /// Hidden, occluded or inactive surfaces do not draw at all; a scrolling
+    /// page holds the frame already on screen.
     private func retime() {
         let visible = window?.occlusionState.contains(.visible) ?? false
         let running = active && visible && renderer.input?.reduceMotion == false
-        if running {
+        if running && held {
+            isPaused = true
+            enableSetNeedsDisplay = true
+        } else if running {
             let info = ProcessInfo.processInfo
             let constrained = info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
             let boosted = boostedUntil > Date()
@@ -232,8 +291,17 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { kick() }
 
     func draw(in view: MTKView) {
+        let now = CACurrentMediaTime()
+        // A presented handler that never fired must not stop the sky for good.
+        if pending >= 2, now - lastAcquired < 0.25 { return }
+        if pending >= 2 { pending = 0 }
         guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable,
               let commandBuffer = renderer.gpu.queue.makeCommandBuffer() else { return }
+        pending += 1
+        lastAcquired = now
+        drawable.addPresentedHandler { [weak self] _ in
+            DispatchQueue.main.async { if let self, self.pending > 0 { self.pending -= 1 } }
+        }
         let scale = window?.backingScaleFactor ?? 2
         renderer.encode(pass: pass, commandBuffer: commandBuffer, pixelSize: drawableSize, scale: scale)
         commandBuffer.present(drawable)

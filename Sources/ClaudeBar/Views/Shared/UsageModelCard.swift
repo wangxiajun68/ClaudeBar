@@ -2,6 +2,13 @@ import SwiftUI
 
 /// Desktop usage tile: model name, totals, tap to expand a source ring
 /// (Claude Code / Codex / 第三方).
+///
+/// **Two money figures, never one.** `costLine` is the list-price *estimate*
+/// (tokens × the published table). `settlement` is Cursor's *actual* charge for
+/// the same model, when this machine's Cursor account spent on it. They are
+/// rendered as two separately-labelled numbers and are never added: a single
+/// total that mixed them would be neither an estimate nor a bill. See
+/// `docs/technical/15-model-cost.md`.
 struct UsageModelCard: View {
     let stat: ModelUsage
     let slices: [SourceRing.Slice]
@@ -9,6 +16,16 @@ struct UsageModelCard: View {
     /// This model's estimated list-price cost, or the reason it has none.
     /// Nil only when the model has no recorded usage row at all.
     var costLine: ModelPricing.Estimate.Line? = nil
+    /// Cursor's **actually charged** amount for this model, if any.
+    ///
+    /// Kept as the raw `Cost` rather than a preformatted string so it goes
+    /// through the same `ModelPricing.present` path (分列 / 折算, and the
+    /// exchange-rate fallback) as the estimate beside it.
+    var settlement: ModelPricing.Cost? = nil
+    /// The window `settlement` covers, when it is not the period on screen —
+    /// already formatted by `CursorLedgerStore.windowLabel`. Nil when the two
+    /// agree, which is the common case.
+    var settlementWindow: String? = nil
     /// The single preference this tile renders, subscribed individually.
     /// Observing `AppPreferences.shared` wholesale meant every unrelated write
     /// — a VPN port commit, a notch flag, the token-unit toggle — re-evaluated
@@ -108,15 +125,34 @@ struct UsageModelCard: View {
         Theme.barColor(for: stat.model)
     }
 
-    /// Estimated list-price cost of this tile's tokens.
+    /// Estimated list-price cost of this tile's tokens, plus Cursor's actual
+    /// charge beside it when the account spent on this model.
     ///
     /// A model with no money renders its *reason* rather than a blank: the
     /// tokens above it are real, and a tile that shows nothing next to a
     /// number invites reading it as "free". 订阅制 and 未公开价 are different
     /// facts — one means you are not billed per token, the other means we
     /// cannot know — so they get their own words.
+    ///
+    /// **The two figures are separate rows and are never combined.** They answer
+    /// different questions ("what would this have cost at list price" vs "what
+    /// did Cursor take"), come from different sources (a local price table vs
+    /// Cursor's ledger), and cover possibly different windows — so each carries
+    /// its own word and the estimate's row is left exactly as it was.
     @ViewBuilder
     private func costLabel(_ shown: ModelPricing.Presented?) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            estimateRow(shown)
+            settlementRow
+        }
+        .accessibilityLabel(accessibilityMoney(shown))
+    }
+
+    /// The estimated line, or the reason there is none. Unchanged from before
+    /// the Cursor ledger existed — a model Cursor never touched must render
+    /// byte-identically to how it always did.
+    @ViewBuilder
+    private func estimateRow(_ shown: ModelPricing.Presented?) -> some View {
         if let line = costLine, let shown, let primary = shown.primary {
             VStack(alignment: .trailing, spacing: 1) {
                 RollingNumberText(ModelPricing.format(primary.amount, currency: primary.currency))
@@ -136,13 +172,65 @@ struct UsageModelCard: View {
                         .lineLimit(1)
                 }
             }
-            .accessibilityLabel("估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
-        } else {
+        } else if settlement == nil {
+            // The unpriced *reason* is only worth the space when there is no
+            // actual charge either. With a real figure below it, 「未计价」 for
+            // the same model reads as a contradiction rather than as an
+            // explanation of a missing estimate.
             Text(costLine?.unpriced?.label ?? "未计价")
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
                 .help(costLine?.unpriced?.explanation ?? "价目表未收录该模型，token 不计入花费合计")
         }
+    }
+
+    /// Cursor's real charge, worded so it can never be read as an estimate.
+    ///
+    /// 「Cursor 实扣」 rather than 「实收」 or a bare figure: the number belongs to
+    /// one vendor's ledger, and naming the vendor is what tells the user which
+    /// of the two rows on this tile is checkable against a statement.
+    @ViewBuilder
+    private var settlementRow: some View {
+        if let settlement {
+            let shown = presented(settlement)
+            VStack(alignment: .trailing, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text("Cursor 实扣")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.Ink.cursor)
+                    if let primary = shown.primary {
+                        RollingNumberText(ModelPricing.format(primary.amount, currency: primary.currency))
+                            .font(Theme.Font.micro)
+                            .monospacedDigit()
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                // Only when the money covers a different span than the tokens:
+                // a caption on every tile would be noise, and on the common
+                // case (month view over the billing cycle) the two agree.
+                if let settlementWindow {
+                    Text(settlementWindow)
+                        .font(.system(size: 9, weight: .regular, design: .rounded))
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// One label covering both figures, spelled out — VoiceOver gets no benefit
+    /// from the two-row layout, and 「估算」 on an actual charge (or the reverse)
+    /// is the one thing this tile must never say.
+    private func accessibilityMoney(_ shown: ModelPricing.Presented?) -> String {
+        var parts: [String] = []
+        if costLine != nil, let shown, let primary = shown.primary {
+            parts.append("估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
+        }
+        if let settlement, let primary = presented(settlement).primary {
+            parts.append("Cursor 实扣 \(ModelPricing.format(primary.amount, currency: primary.currency))")
+        }
+        return parts.joined(separator: "，")
     }
 
     private func presented(_ cost: ModelPricing.Cost) -> ModelPricing.Presented {

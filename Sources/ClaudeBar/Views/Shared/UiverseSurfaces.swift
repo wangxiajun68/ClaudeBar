@@ -217,22 +217,26 @@ private struct DepthTiltModifier: ViewModifier {
     var hovered: Bool
     var reduceMotion: Bool
 
-    func body(content: Content) -> some View {
-        content
-            .rotation3DEffect(angle, axis: (x: 1, y: 1, z: 0), perspective: 0.6)
-            .overlay {
-                if shine, !reduceMotion {
-                    ShineSweep(active: hovered,
-                               tint: Theme.isDark ? .white : .white.opacity(0.9))
-                        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    @ViewBuilder func body(content: Content) -> some View {
+        // The transform exists only while this one card is hovered. Leaving
+        // `rotation3DEffect` in the tree at 0° still promotes the card to a
+        // compositing layer, and a scrolling grid then re-rasterises every
+        // card on every frame — the connector inventory's steady 60 Hz.
+        // The lift stays on `.tile()`; this adds the tilt and the one-shot
+        // shine on top of it, for the card under the pointer only.
+        if hovered, !reduceMotion {
+            content
+                .rotation3DEffect(.degrees(2.2), axis: (x: 1, y: 1, z: 0), perspective: 0.6)
+                .overlay {
+                    if shine {
+                        ShineSweep(active: true,
+                                   tint: Theme.isDark ? .white : .white.opacity(0.9))
+                            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+                    }
                 }
-            }
-            .animation(reduceMotion ? nil : Theme.Motion.state, value: hovered)
-    }
-
-    private var angle: Angle {
-        guard hovered, !reduceMotion else { return .degrees(0) }
-        return .degrees(2.2)
+        } else {
+            content
+        }
     }
 }
 
@@ -240,9 +244,9 @@ extension View {
     /// The hero-card gesture. Pair it with `.tile(tint:lens:hovered:)` — this
     /// adds only the transform and the one-shot shine, never the surface.
     ///
-    /// Keep it off a card that lives in a scrolling grid: a 3D transform on a
-    /// moving subtree forces a rasterisation pass per frame, and a grid already
-    /// has the hover lift to answer the pointer.
+    /// Safe on a scrolling grid: the 3D transform is absent until the card is
+    /// the one under the pointer. A transform left at rest on every card
+    /// re-rasterises the grid on every scroll frame.
     func depthTilt(corner: CGFloat = 22, shine: Bool = true,
                    hovered: Bool, reduceMotion: Bool = false) -> some View {
         modifier(DepthTiltModifier(corner: corner, shine: shine,
@@ -272,11 +276,17 @@ struct ShineSweep: View {
         }
         .clipped()
         .allowsHitTesting(false)
-        .onChange(of: active) { _, on in
-            guard on else { phase = -1; return }
-            phase = -1
-            withAnimation(.easeOut(duration: 0.55)) { phase = 1 }
-        }
+        .onAppear { play(active) }
+        .onChange(of: active) { _, on in play(on) }
+    }
+
+    /// The sweep is created already active when a card gains the pointer, so
+    /// appearance has to start it; a later change (a control that keeps the
+    /// overlay mounted) comes through `onChange`.
+    private func play(_ on: Bool) {
+        guard on else { phase = -1; return }
+        phase = -1
+        withAnimation(.easeOut(duration: 0.55)) { phase = 1 }
     }
 }
 

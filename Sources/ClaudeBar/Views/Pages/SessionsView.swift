@@ -99,6 +99,7 @@ struct SessionsView: View {
             }
             .padding(Theme.Space.s24)
         }
+        .scrollHoverGate()
         .resourceMonitorScope(.sessions)
         .background(Theme.bgPrimary)
     }

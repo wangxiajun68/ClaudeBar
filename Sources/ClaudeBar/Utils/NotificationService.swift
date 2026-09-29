@@ -9,6 +9,16 @@ extension Notification.Name {
 
     /// SQLite vs JSON/JSONL persistence flipped in Settings.
     static let persistenceModeDidChange = Notification.Name("com.claudebar.persistenceModeDidChange")
+
+    /// `CursorLedgerStore` finished a read and its money map changed.
+    ///
+    /// A notification rather than a direct call because the reader and the
+    /// writer are on different schedules by design: the store reads on a
+    /// network clock for whichever window the usage page selected, while
+    /// `ProviderStore` republishes on the FSEvents clock. `ProviderStore`
+    /// reacts with `refreshUsage(rescan: false)` — no transcripts changed, only
+    /// the money.
+    static let cursorLedgerDidChange = Notification.Name("com.claudebar.cursorLedgerDidChange")
 }
 
 /// Completion notifications: after a new final answer is confirmed, tell the

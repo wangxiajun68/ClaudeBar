@@ -201,7 +201,7 @@ source += '''
                         resetsAt: Date().addingTimeInterval(272160))]
                     let card = GreetingStatusSheet(name: "Xiajun Wang", ccModel: empty ? "未配置" : "deepseek-v4.1-flash",
                         ccProvider: "Aibox", codexModel: empty ? "默认模型" : "gpt-6-astra",
-                        codexProvider: "OpenAI", balance: empty ? "未提供余额" : "0 Credits",
+                        codexProvider: "OpenAI",
                         tokens: empty ? 0 : 12840000, yesterdayTokens: empty ? 0 : 9640000,
                         calls: empty ? 0 : 286, spend: empty ? "暂无报价" : "¥404.70",
                         windows: empty ? [] : windows, quotaLoading: false,
@@ -256,7 +256,7 @@ struct BenchHost: View {
     let weather: WeatherReading
     var body: some View {
         GreetingStatusSheet(name: "Xiajun Wang", ccModel: "deepseek-v4.1-flash", ccProvider: "Aibox",
-            codexModel: "gpt-6-astra", codexProvider: "OpenAI", balance: "0 Credits",
+            codexModel: "gpt-6-astra", codexProvider: "OpenAI",
             tokens: 12840000 + model.tick, yesterdayTokens: 9640000, calls: 286, spend: "¥404.70",
             windows: [CodexQuotaWindow(label: "5 小时", usedPercent: 82, resetsAt: Date().addingTimeInterval(8360))],
             quotaLoading: false, quotaNote: nil, cursorPlan: nil, cursorLoading: false, cursorNote: nil,

@@ -27,13 +27,6 @@ struct GreetingCard: View {
         codexStore.configuredModel ?? "默认模型"
     }
 
-    private var balance: String {
-        if let providerID = codexStore.configuredProviderID,
-           let amount = providerStore.balanceAmounts[providerID] { return amount }
-        if codexStore.usesOfficialAccount, let credits = codexStore.creditBalance { return credits }
-        return providerStore.balanceLoading || codexStore.quotaLoading ? "查询中" : "未提供余额"
-    }
-
     private var spend: String {
         let shown = ModelPricing.present(providerStore.todayUsage.cost.cost,
                                          display: costDisplay, rate: fx.effectiveRate)
@@ -48,7 +41,6 @@ struct GreetingCard: View {
             ccProvider: providerStore.activeProvider?.name ?? "Claude Code",
             codexModel: codexModel,
             codexProvider: codexStore.usesOfficialAccount ? "ChatGPT" : (codexStore.providers.first { $0.id == codexStore.configuredProviderID }?.name ?? "Codex"),
-            balance: balance,
             tokens: providerStore.todayUsage.tokens,
             yesterdayTokens: providerStore.todayUsage.yesterdayTokens,
             calls: providerStore.todayUsage.calls,
@@ -109,7 +101,6 @@ struct GreetingStatusSheet: View {
     var ccProvider: String
     var codexModel: String
     var codexProvider: String
-    var balance: String
     var tokens: Int
     var yesterdayTokens: Int
     var calls: Int
@@ -277,7 +268,6 @@ struct GreetingStatusSheet: View {
         var ccProvider: String
         var codexModel: String
         var codexProvider: String
-        var balance: String
         var tokens: Int
         var yesterdayTokens: Int
         var calls: Int
@@ -354,7 +344,7 @@ struct GreetingStatusSheet: View {
                 .transition(.opacity)
             }
             Unchanged(key: SillKey(ccModel: ccModel, ccProvider: ccProvider, codexModel: codexModel,
-                                   codexProvider: codexProvider, balance: balance, tokens: tokens,
+                                   codexProvider: codexProvider, tokens: tokens,
                                    yesterdayTokens: yesterdayTokens, calls: calls, spend: spend, windows: windows,
                                    quotaLoading: quotaLoading, quotaNote: quotaNote, cursorPlan: cursorPlan,
                                    cursorLoading: cursorLoading, cursorNote: cursorNote, skyDate: skyDate,
@@ -939,42 +929,16 @@ struct GreetingStatusSheet: View {
             .accessibilityLabel("Codex，\(codexModel)，\(codexProvider)，打开模型管理")
             Rectangle().fill(.white.opacity(0.16)).frame(width: 0.5, height: 18)
             SillChip(action: refreshCursor, help: cursorHelp, detail: cursorDetail) {
-                MarkRing(fraction: cursorFraction, tint: cursorTint, brand: .cursor,
-                         spinning: cursorSpinning && cursorPlan == nil)
-                Text(cursorPlan == nil ? "—" : "\(cursorPercent)%")
-                    .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                allowance(brand: .cursor, metrics: cursorMetrics, loading: cursorLoading, narrow: m.narrow)
             }
             .disabled(cursorLoading)
-            .accessibilityLabel(cursorAccessibility)
-            SillChip(action: refreshQuota, help: "点击刷新 · " + quotaHelp, detail: quotaDetail) {
-                DualRing(outer: (windows.first?.usedPercent ?? 0) / 100,
-                         inner: windows.dropFirst().first.map { $0.usedPercent / 100 },
-                         spinning: quotaLoading && windows.isEmpty && !reduceMotion && visible)
-                if let window = windows.first {
-                    Text("\(Int(min(100, max(0, window.usedPercent)).rounded()))%")
-                        .font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                    if !m.narrow {
-                        Text(resetCountdown(window))
-                            .font(.system(size: 10, weight: .medium)).monospacedDigit()
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-                } else {
-                    Text("—").font(.system(size: 11, weight: .semibold))
-                }
+            .accessibilityLabel("刷新 Cursor 额度，" + cursorSummary)
+            SillChip(action: refreshQuota, help: "点击刷新 Codex 额度 · " + quotaHelp, detail: quotaDetail) {
+                allowance(brand: .codex, metrics: codexMetrics, loading: quotaLoading, narrow: m.narrow)
             }
             .disabled(quotaLoading)
             .accessibilityLabel("刷新 Codex 额度，" + quotaHelp)
             Spacer(minLength: 8)
-            if hasBalance && !m.narrow {
-                SillChip(action: showModels, help: "账户余额：" + balance) {
-                    Image(systemName: "creditcard").font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(balanceWarning ? Color(hex: 0xFFCC80) : .white.opacity(0.7))
-                    Text(balance).font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(balanceWarning ? Color(hex: 0xFFCC80) : .white.opacity(0.86))
-                        .lineLimit(1).frame(maxWidth: 110)
-                }
-                .accessibilityLabel("账户余额 \(balance)")
-            }
             SillChip(action: showUsage, help: "今日 \(tokens.formatted()) Token · 昨日 \(yesterdayTokens.formatted()) · 预估 \(spend) · \(calls.formatted()) 次 · 点击查看用量",
                      detail: "\(spend) · \(calls.formatted()) 次") {
                 if tokens > 0 || yesterdayTokens > 0 {
@@ -1006,59 +970,96 @@ struct GreetingStatusSheet: View {
         return String(format: "%@%.0f%%", change >= 0 ? "↑" : "↓", abs(change))
     }
 
-    private func resetCountdown(_ window: CodexQuotaWindow) -> String {
-        guard let reset = window.resetsAt else { return "" }
+    /// An allowance chip's face, matching the popup's switcher row: the
+    /// family's mark, then one remaining-share gauge per window or pool. A
+    /// narrow card keeps the first (the one that runs out soonest).
+    @ViewBuilder
+    private func allowance(brand: ProductBrandMark.Brand, metrics: [SillGauge.Metric],
+                           loading: Bool, narrow: Bool) -> some View {
+        ProductBrandMark(brand: brand, well: false, page: true).frame(width: 13, height: 13)
+        if metrics.isEmpty {
+            if loading && !reduceMotion && visible {
+                Image(systemName: "arrow.clockwise").font(.system(size: 9, weight: .bold))
+                    .symbolEffect(.rotate, options: .repeating, isActive: true)
+                    .foregroundStyle(.white.opacity(0.7))
+            } else {
+                Text("—").font(.system(size: 11, weight: .semibold))
+            }
+        } else {
+            ForEach(narrow ? Array(metrics.prefix(1)) : metrics) { SillGauge(metric: $0) }
+        }
+    }
+
+    /// Reset time counted from the sky clock's minute, so a scrubbed or
+    /// rendered sky agrees with itself.
+    private func resetCountdown(_ reset: Date?) -> String? {
+        guard let reset else { return nil }
         let minutes = max(0, Int(reset.timeIntervalSince(skyDate) / 60))
         if minutes == 0 { return "待重置" }
-        if minutes >= 1440 { return "↻\(minutes / 1440)天" }
-        return String(format: "↻%d:%02d", minutes / 60, minutes % 60)
+        if minutes >= 1440 { return "\(minutes / 1440)天后重置" }
+        return String(format: "%d:%02d 后重置", minutes / 60, minutes % 60)
     }
 
+    // MARK: Codex allowance — the popup's two rate-limit windows ("5 小时" / "7 天")
+
+    private var codexMetrics: [SillGauge.Metric] {
+        windows.map { SillGauge.Metric(label: $0.label, usedPercent: $0.usedPercent) }
+    }
+
+    /// Hover line: when each window comes back.
     private var quotaDetail: String? {
-        guard let second = windows.dropFirst().first else { return windows.isEmpty ? quotaPlacard : nil }
-        return "\(second.label) \(Int(min(100, max(0, second.usedPercent)).rounded()))%"
-    }
-
-    private var quotaPlacard: String {
-        if quotaLoading { return "读取中" }
-        if let quotaNote, !quotaNote.isEmpty { return quotaNote }
-        return "暂无额度"
+        guard !windows.isEmpty else {
+            if quotaLoading { return "读取中" }
+            if let quotaNote, !quotaNote.isEmpty { return quotaNote }
+            return "暂无额度"
+        }
+        let resets = windows.compactMap { window in resetCountdown(window.resetsAt).map { "\(window.label) \($0)" } }
+        return resets.isEmpty ? nil : resets.joined(separator: " · ")
     }
 
     private var quotaHelp: String {
         guard !windows.isEmpty else { return quotaNote ?? "暂无额度数据" }
         return windows.map {
+            let used = Int(min(100, max(0, $0.usedPercent)).rounded())
             let wait = $0.resetWait.isEmpty ? "" : "（\($0.resetWait)）"
-            return "\($0.label)已用 \(Int($0.usedPercent.rounded()))%，\($0.resetClock)\(wait)"
+            return "\($0.label)剩余 \(100 - used)%（已用 \(used)%），\($0.resetClock)\(wait)"
         }
         .joined(separator: " · ")
     }
 
-    private var cursorFraction: Double { cursorPlan.map { min(1, max(0, $0.usedFraction)) } ?? 0 }
-    private var cursorPercent: Int { Int((cursorFraction * 100).rounded()) }
-    private var cursorSpinning: Bool { cursorLoading && !reduceMotion && visible }
+    // MARK: Cursor allowance — the popup's two named pools ("Cursor" / "Other")
+
+    /// Cursor Models and Other Models, as the popup's chip draws them. A plan
+    /// that names neither (legacy / team shapes) falls back to the one monthly
+    /// share it does report.
+    private var cursorMetrics: [SillGauge.Metric] {
+        guard let plan = cursorPlan else { return [] }
+        var metrics: [SillGauge.Metric] = []
+        if let pool = plan.cursorModelsFraction { metrics.append(.init(label: "Cursor", usedPercent: pool * 100)) }
+        if let pool = plan.otherModelsFraction { metrics.append(.init(label: "Other", usedPercent: pool * 100)) }
+        if metrics.isEmpty { metrics.append(.init(label: "本月", usedPercent: plan.usedFraction * 100)) }
+        return metrics
+    }
+
+    private var cursorSummary: String {
+        guard cursorPlan != nil else { return cursorNote ?? "暂无读数" }
+        return cursorMetrics.map { "\($0.label) 剩余 \(Int($0.remaining.rounded()))%" }.joined(separator: "，")
+    }
+
     private var cursorHelp: String {
         var parts = ["点击刷新 Cursor 额度"]
-        if let plan = cursorPlan { parts.append("已用 \(cursorPercent)%"); parts.append(cursorPlanDetail(plan)) }
+        if cursorPlan != nil { parts.append(cursorSummary) }
+        if let detail = cursorPlan.map(cursorPlanDetail) { parts.append(detail) }
         if let cursorNote { parts.append(cursorNote) }
         return parts.joined(separator: " · ")
     }
-    private var cursorAccessibility: String {
-        "刷新 Cursor 额度，" + (cursorPlan == nil ? (cursorNote ?? "暂无读数") : "已用 \(cursorPercent)%")
-    }
+
     private var cursorDetail: String? {
         guard let plan = cursorPlan else { return cursorLoading ? "读取中" : cursorNote.map { _ in "Cursor 无读数" } }
         return cursorPlanDetail(plan)
     }
 
-    private var cursorTint: Color {
-        let used = cursorPlan?.usedFraction ?? 0
-        if used >= 0.9 { return Color(hex: 0xFF8A75) }
-        if used >= 0.75 { return Color(hex: 0xFFD37A) }
-        return Color(hex: 0x7FD6FF)
-    }
-
-    /// What the plan has spent and when it returns.
+    /// The popup's footer — the shared monthly spend — and when the month turns.
     private func cursorPlanDetail(_ plan: CursorUsageFetcher.PlanUsage) -> String {
         var parts: [String] = []
         if let spend = plan.spendText { parts.append(spend) }
@@ -1067,15 +1068,6 @@ struct GreetingStatusSheet: View {
             parts.append(days <= 0 ? "待重置" : "\(days)天后重置")
         }
         return parts.isEmpty ? "月度额度" : parts.joined(separator: " · ")
-    }
-
-    /// A real figure, as opposed to one of the placeholders `GreetingCard`
-    /// hands over while there is none.
-    private var hasBalance: Bool { !["未提供余额", "查询中", ""].contains(balance) }
-
-    private var balanceWarning: Bool {
-        let number = balance.split(separator: " ").first.map(String.init) ?? ""
-        return Double(number).map { $0 <= 0 } ?? false
     }
 }
 
@@ -1276,6 +1268,13 @@ private struct SillGlass: ViewModifier {
 /// The clock: minutes at 22pt light, a seconds point that breathes once a
 /// second, the date beside it at 11pt. While the sky is scrubbed it shows the
 /// previewed time instead, in amber, so the two never disagree.
+///
+/// The tick is `.periodic`, once a second. An `.animation` schedule — even one
+/// whose `minimumInterval` is a whole second — keeps the hosting view in the
+/// per-frame layout path for as long as it is unpaused (see the performance
+/// note on `TimelineView`). The dot still flips with the second, and the
+/// minute still rolls through `.numericText` when it changes. A scrubbed sky
+/// or a hidden surface draws the face once and does not schedule anything.
 private struct GreetingClock: View {
     var ink: Color
     var timezone: String?
@@ -1286,39 +1285,50 @@ private struct GreetingClock: View {
     private static let amber = Color(hex: 0xFFD27A)
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1, paused: !visible || preview != nil)) { context in
-            let shown = preview ?? context.date
-            let zone = preview == nil ? TimeZone.current : (timezone.flatMap(TimeZone.init(identifier:)) ?? .current)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    HStack(alignment: .top, spacing: 3) {
-                        Text(shown, format: Date.FormatStyle(timeZone: zone).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "en_GB")))
-                            .font(.system(size: 22, weight: .light)).monospacedDigit()
-                            .contentTransition(reduceMotion ? .identity : .numericText())
-                            .foregroundStyle(preview == nil ? ink.opacity(0.92) : Self.amber)
-                        if preview == nil {
-                            Circle().fill(ink)
-                                .frame(width: 3, height: 3)
-                                .opacity(Calendar.current.component(.second, from: context.date) % 2 == 0 ? 0.8 : 0.35)
-                                .padding(.top, 5)
-                        } else {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Self.amber)
-                                .padding(.top, 4)
-                        }
-                    }
-                    Text(shown.formatted(Date.FormatStyle(timeZone: zone).month().day().weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
-                        .font(.system(size: 11, weight: .medium)).tracking(0.4).foregroundStyle(ink.opacity(0.6))
+        Group {
+            if let preview {
+                face(shown: preview, second: nil)
+            } else if visible {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    face(shown: context.date, second: Calendar.current.component(.second, from: context.date))
                 }
-                if preview == nil, let timezone, let zone = TimeZone(identifier: timezone),
-                   zone.secondsFromGMT(for: context.date) != TimeZone.current.secondsFromGMT(for: context.date) {
-                    Text("天气当地 \(context.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone)))")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(ink.opacity(0.5))
-                }
+            } else {
+                face(shown: .now, second: nil)
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func face(shown: Date, second: Int?) -> some View {
+        let zone = preview == nil ? TimeZone.current : (timezone.flatMap(TimeZone.init(identifier:)) ?? .current)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                HStack(alignment: .top, spacing: 3) {
+                    Text(shown, format: Date.FormatStyle(timeZone: zone).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "en_GB")))
+                        .font(.system(size: 22, weight: .light)).monospacedDigit()
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .foregroundStyle(preview == nil ? ink.opacity(0.92) : Self.amber)
+                    if let second {
+                        Circle().fill(ink)
+                            .frame(width: 3, height: 3)
+                            .opacity(second % 2 == 0 ? 0.8 : 0.35)
+                            .padding(.top, 5)
+                    } else if preview != nil {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Self.amber)
+                            .padding(.top, 4)
+                    }
+                }
+                Text(shown.formatted(Date.FormatStyle(timeZone: zone).month().day().weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
+                    .font(.system(size: 11, weight: .medium)).tracking(0.4).foregroundStyle(ink.opacity(0.6))
+            }
+            if preview == nil, let timezone, let zone = TimeZone(identifier: timezone),
+               zone.secondsFromGMT(for: shown) != TimeZone.current.secondsFromGMT(for: shown) {
+                Text("天气当地 \(shown.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone)))")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(ink.opacity(0.5))
+            }
+        }
     }
 }
 

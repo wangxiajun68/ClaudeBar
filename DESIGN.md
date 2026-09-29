@@ -194,8 +194,9 @@ The rules that keep this a *reading* rather than a decoration:
    sweep at idle-ish, 0.6 s at full — so the strip is visibly working. **Below
    4 % it stops** (the `LucideRotor` discipline, `rpm >= 80`), and Reduce Motion
    or an off-screen surface stops it too. The sweep is derived from absolute time,
-   so a load change speeds it up rather than restarting it, and it is driven by
-   `TimelineView` inside the mark rather than by a second timer.
+   so a load change speeds it up rather than restarting it, and it is a
+   `CAGradientLayer` per busy bar (`ReadingSweep`) rather than a second timer or
+   a `TimelineView` — see Motion / performance.
 2. **A bar is a measurement or it is not drawn.** Twelve cores draw twelve bars;
    a driver that publishes no sub-units draws one bar at the aggregate instead of
    inventing three. The sampler's first tick has no per-core baseline, so the lane
@@ -286,14 +287,21 @@ delay, a selection tally — rolls per digit with the island's own effect:
   when hover begins) and the conveyor belt (`DecorativeMotion.kind == .conveyor`,
   a Core Animation layer). Neither repeats a SwiftUI animation.
 - The machine marks are `Canvas` geometry, redrawn only when the sampler
-  publishes a new reading (every 2 s, 1 s while a window is frontmost) — but the
-  sweep across their reading lanes is driven by a `TimelineView` at 30 Hz, paused
-  by the same three-way gate as every other ornament: the reading (below 4 % the
-  mark is still), `surfaceIsVisible`, and reduce-motion. So an idle machine
-  animates nothing, and a visible one pays for one canvas redraw per 33 ms, not
-  for a view graph. The rate-driven `LoadRing` that used to sit behind each meter
-  is gone: its five Core Animation layers were the strip's only per-frame cost,
-  and what they bought — a spinner reading as "waiting" — was the wrong idea.
+  publishes a new reading (every 2 s, 1 s while a window is frontmost). The
+  sweep across their reading lanes is **not** a schedule: each busy bar carries
+  one `ReadingSweep` `CAGradientLayer`, translated by the render server at a
+  rate proportional to that bar's own figure, so the app runs no per-frame
+  layout. It is gated the same three ways as every other ornament — the reading
+  (below 4 % the mark is still), `surfaceIsVisible`, and reduce-motion — and a
+  new reading keeps the phase instead of restarting it. An idle machine animates
+  nothing, and a visible one pays for a canvas redraw per sampler tick, not for
+  a view graph. **Do not put this back on a `TimelineView`**: §11 of the UI
+  audit measured that the cost of an `.animation`-scheduled timeline is the
+  *schedule*, not the pixels — it lays the whole hosting view out on every
+  display cycle, and lowering the frame rate does not help. The rate-driven
+  `LoadRing` that used to sit behind each meter is gone too: its five Core
+  Animation layers were the strip's only per-frame cost, and what they bought —
+  a spinner reading as "waiting" — was the wrong idea.
 - Overview fan instruments use native SF Symbols within a quiet
   neutral ring. Core Animation retimes rotation in place as RPM changes;
   below 80 RPM, off-screen, and Reduce Motion all stop the rotation.
@@ -350,19 +358,26 @@ bottom.
   `ultraThinMaterial` layer, tint and hairline on macOS 15. Reduce Transparency
   replaces both dock and weather HUD material with an opaque light or dark
   fill.
-- **Readings and actions:** model rows open model management; the Cursor chip's
-  gauges are Cursor's **own two pool names** — Cursor Models
-  (`autoPercentUsed`) and Other Models (`apiPercentUsed`) — which share the
-  month's single money limit, so the money rides underneath as one shared
-  figure rather than once per pool; the popover behind the chip names both in
-  full and adds the Grok Bot weekly window, which is an independent allowance
-  with its own reset. Codex's quota rings encode **used** percentage for up to
-  two windows and display their labels beside them; the first window includes
-  its reset countdown, and clicking the quota refreshes it. Today's usage opens
-  usage details and compares actual today / yesterday token totals with two
-  proportional bars; no hourly shape is inferred from daily totals. Cost is
-  labelled as an estimate in help and accessibility text. Loading, unavailable
-  quota and stale weather remain explicit states.
+- **Readings and actions:** model rows open model management. The dock's Cursor
+  and Codex chips and the popup's switcher chips read an allowance the **same
+  way** — `SillGauge`, **remaining** per cent, the arc growing with what is
+  left, amber at ≤ 25 % and red at ≤ 10 % — because two readings of one
+  allowance are read as two different numbers. Cursor's are Cursor's **own two
+  pool names** — Cursor Models (`autoPercentUsed`) and Other Models
+  (`apiPercentUsed`) — which share the month's single money limit, so the money
+  rides underneath as one shared figure rather than once per pool; the popover
+  behind the chip names both in full and adds the Grok Bot weekly window, which
+  is an independent allowance with its own reset. Codex's split into **5 小时 /
+  7 天** with each reset on the hover line, and a narrow card keeps only the
+  window that runs out first. The account balance chip is **gone**: an official
+  account almost always reads `0 Credits`, which is not a reading anyone acts
+  on. Today's usage opens usage details and compares actual today / yesterday
+  token totals with two proportional bars; no hourly shape is inferred from
+  daily totals. Cost is labelled as an **estimate** in help and accessibility
+  text — except on the usage page's model tiles, where Cursor's **actual charge**
+  is a second, separately-labelled figure (`Cursor 实扣`) that is never added to
+  the estimate. Loading, unavailable quota and stale weather remain explicit
+  states.
 - **Sky interaction:** horizontal dragging previews up to 12 hours before or
   after now. Left / right arrows move one hour, and Escape returns to now;
   matching accessibility actions are available. Drag release eases back over

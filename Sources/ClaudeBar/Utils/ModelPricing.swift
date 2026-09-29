@@ -355,7 +355,37 @@ enum ModelPricing {
             guard let range = name.range(of: separator + #"\d{8}$"#, options: .regularExpression) else { continue }
             name = String(name[..<range.lowerBound])
         }
+        // A trailing effort / speed tier. Cursor names the *same* upstream
+        // model by its reasoning tier (`claude-opus-5-5-medium`), where the
+        // client configures it bare (`claude-opus-5-5`), so without this the
+        // two land on separate usage rows and the Cursor charge has no row to
+        // attach to. Only the vendor's own effort vocabulary is stripped —
+        // `-thinking` is a tier of one model here, `-fast` a speed variant.
+        //
+        // Looped, not a single strip: Cursor writes the tier(s) as a chain
+        // (`claude-4.6-sonnet-medium-thinking` was in the account's own ledger),
+        // and one pass would leave `-medium` on the end.
+        //
+        // This runs before the price-table lookup, which is a longest-slug
+        // prefix match, so stripping can only ever move a lookup *towards* the
+        // base tier. No slug in `ModelPriceTable` ends in one of these words
+        // (asserted in `Tests/model-cost-regressions.py`), so nothing priced is
+        // made unpriced by this step.
+        while let tier = tierSuffix(of: name) {
+            name = String(name.dropLast(tier.count))
+        }
         return name
+    }
+
+    /// The effort / speed word this slug ends in, or nil. Ordered longest-first
+    /// so `-xhigh` is not read as `-high` — and matched on the *hyphen* so a
+    /// vendor's own compound like `-highspeed` is not mistaken for `-high`.
+    private static func tierSuffix(of name: String) -> String? {
+        for tier in ["-xhigh", "-medium", "-thinking", "-high", "-low", "-fast"]
+        where name.hasSuffix(tier) && name.count > tier.count {
+            return tier
+        }
+        return nil
     }
 
     /// Slug match with a token boundary: `claude-sonnet-4-6` claims

@@ -463,6 +463,7 @@ struct TrafficView: View {
                     .padding(.vertical, Theme.Space.s6)
                     .padding(.horizontal, Theme.Space.s8)
                 }
+                .scrollHoverGate()
             }
         }
         .frame(maxHeight: .infinity)

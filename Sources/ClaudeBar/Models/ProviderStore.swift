@@ -39,6 +39,26 @@ class ProviderStore: ObservableObject {
     private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
+    /// Cursor's **actually charged** amount per canonical model id, for the
+    /// window `CursorLedgerStore.window` covers.
+    ///
+    /// Deliberately parallel to `usageStats` and never folded into it.
+    /// `ModelPricing` estimates a model's cost from its tokens and the
+    /// published price table; this is the amount Cursor deducted, read from
+    /// Cursor's own ledger. The two live in different dictionaries, are
+    /// rendered as two labelled numbers, and are never summed — a single
+    /// number that mixed them would be neither an estimate nor a bill, and
+    /// `docs/technical/15-model-cost.md` is built on that distinction holding.
+    ///
+    /// Keyed by `ModelPricing.canonical(model)` so Cursor's
+    /// `claude-opus-5-5-medium` lands on the same row as Claude Code's
+    /// `claude-opus-5-5`. Read with `settlement(for:)`.
+    ///
+    /// Only the model id → amount map is published for the UI; the window and
+    /// the truncation flag are carried by `CursorLedgerStore` itself, which is
+    /// an observable in its own right — copying them here as well would be two
+    /// sources of truth for the same fact.
+    @Published private(set) var usageSettlements: [String: ModelPricing.Cost] = [:]
     /// Today's totals, independent of `usagePeriod`.
     ///
     /// The dashboard's 今日花费 / 今日 Token cards are a fixed window while
@@ -191,6 +211,11 @@ class ProviderStore: ObservableObject {
         refreshBalance()
         peer?.refreshQuota()
         refreshUsage(rescan: true)
+        // The Cursor ledger reads on its own clock (a network round trip for
+        // whichever window the usage page has selected), so it is kicked here
+        // rather than awaited: the usage page opens on the persisted reading
+        // and this only makes the next one land.
+        requestSettlement()
         refreshSessions()
         startSessionPolling()
         observeVisibility()
@@ -954,6 +979,12 @@ class ProviderStore: ObservableObject {
                         guard let self, !self.usageRefreshQueued else { return }
                         self.publishTodayUsage(today)
                         self.publishUsage(quick, quickSources, days, daysBySource)
+                        // Read here rather than out on the detached task: the
+                        // ledger store is a `@MainActor` observable, so the
+                        // money map can only be read where it is published —
+                        // and this hop already exists for the other two
+                        // publishes.
+                        self.publishSettlement(Self.querySettlement())
                     }
                 }
 
@@ -977,6 +1008,7 @@ class ProviderStore: ObservableObject {
                     // A new refresh cannot start between these operations.
                     self.publishTodayUsage(today)
                     self.publishUsage(final, finalSources, days, daysBySource)
+                    self.publishSettlement(Self.querySettlement())
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
                     return (false, false)
@@ -1033,6 +1065,53 @@ class ProviderStore: ObservableObject {
         UsageIndex.fetchBySource(in: interval)
     }
 
+    /// Cursor's actual charges for whatever window that store currently has,
+    /// plus the window and truncation flag. Read from memory (the ledger store
+    /// keeps its reading and rehydrates it from disk at launch) — **no network
+    /// here.** The usage page must render from cache instantly; the ledger
+    /// store does its own reading behind it and publishes when it lands.
+    @MainActor
+    private static func querySettlement() -> [String: ModelPricing.Cost] {
+        let store = CursorLedgerStore.shared
+        var out: [String: ModelPricing.Cost] = [:]
+        out.reserveCapacity(store.rows.count)
+        for (model, row) in store.rows {
+            if let cost = CursorLedger.cost(cents: row.costCents) { out[model] = cost }
+        }
+        return out
+    }
+
+    /// Ask the ledger for the window the period chips currently describe.
+    ///
+    /// **Fire-and-forget and not awaited** — the page renders from whatever
+    /// reading is already in memory, and this only makes the *next* one land.
+    /// Called when the period changes and when the window is first shown; the
+    /// ledger store owns the coalescing, the freshness window and the retry, so
+    /// calling it eagerly costs nothing and a duplicate call is a no-op.
+    ///
+    /// The billing cycle is handed over as the fallback for a period Cursor
+    /// will not answer for (年 / 全部): the ledger narrows to it and flags the
+    /// reading as truncated rather than returning a slice of a year that would
+    /// look like a total.
+    func requestSettlement(force: Bool = false) {
+        let window = UsageStats.interval(for: usagePeriod, reference: usageReferenceDate)
+        // `billingCycle()` is `@MainActor` and this type is not, so the hop is
+        // explicit rather than implicit: the cycle is one `PlanUsage` read off
+        // an observable on the main actor.
+        Task { @MainActor in
+            let cycle = CursorUsageFetcher.billingCycle()
+            CursorLedgerStore.shared.refresh(window: window, billingCycle: cycle, force: force)
+        }
+    }
+
+    /// Same assign-only-what-changed rule as the other publishes. The money map
+    /// is rebuilt on every usage refresh while it only changes when a Cursor
+    /// read lands, so an unconditional assignment would re-render the densest
+    /// page in the app on every FSEvents tick.
+    private func publishSettlement(_ fresh: [String: ModelPricing.Cost]) {
+        if usageSettlements != fresh { usageSettlements = fresh }
+    }
+
     /// Today's fixed-window totals, read where the period aggregates are read.
     ///
     /// Two day bounds, not one: the pace caption ("昨日的 96%") is the only
@@ -1064,6 +1143,7 @@ class ProviderStore: ObservableObject {
     private var usageWatcherStarted = false
     private var usageWatcherStoppedAt: Date?
     private var persistenceObserver: NSObjectProtocol?
+    private var settlementObserver: NSObjectProtocol?
 
     private func startUsageWatcher() {
         guard !usageWatcherStarted else { return }
@@ -1079,6 +1159,18 @@ class ProviderStore: ObservableObject {
                 forName: .persistenceModeDidChange, object: nil, queue: .main
             ) { [weak self] _ in
                 self?.refreshUsage(rescan: true)
+            }
+        }
+        // The Cursor ledger reads on its own schedule (it is a network read for
+        // whichever window the usage page has selected) and announces itself
+        // when a reading lands. `rescan: false` is the point: nothing on disk
+        // changed, only the money map, so the transcripts must not be walked
+        // again for it.
+        if settlementObserver == nil {
+            settlementObserver = NotificationCenter.default.addObserver(
+                forName: .cursorLedgerDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.refreshUsage(rescan: false)
             }
         }
     }
