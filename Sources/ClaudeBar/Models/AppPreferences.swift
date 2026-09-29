@@ -224,6 +224,14 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(greetingShowsChip, forKey: "greetingShowsChip") }
     }
 
+    /// 问候卡的天空是否开着「天气渲染」——云、雾、雨雪、闪电、玻璃雨滴这些按
+    /// 实时天气动的图层。关掉只剩按太阳高度角插值的天空渐变色（暖冷、明暗仍
+    /// 跟着一天走，只是不再下雨、不再飘云），所以卡片很安静、也很省电。
+    /// 问候语、时钟、日月与星仍然照画：关掉的是天气，不是整片天空。
+    @Published var greetingWeatherRendering: Bool {
+        didSet { UserDefaults.standard.set(greetingWeatherRendering, forKey: "greetingWeatherRendering") }
+    }
+
     /// 概览问候语的手写字体。存 `GreetingTypeface.rawValue`；认不出的值回到默认。
     @Published var greetingTypeface: GreetingTypeface {
         didSet { UserDefaults.standard.set(greetingTypeface.rawValue, forKey: "greetingTypeface") }
@@ -240,6 +248,7 @@ final class AppPreferences: ObservableObject {
         amapAPIKey = UserDefaults.standard.string(forKey: "amapAPIKey") ?? ""
         greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
         greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard
+        greetingWeatherRendering = UserDefaults.standard.object(forKey: "greetingWeatherRendering") as? Bool ?? true
         // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:
         // the stored value is a number, and a 0 rate is not a rate.
         let manual = UserDefaults.standard.double(forKey: "manualUSDToCNY")

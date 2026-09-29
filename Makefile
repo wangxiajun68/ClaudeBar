@@ -46,3 +46,4 @@ test:
 	python3 Tests/machine-mark-regressions.py
 	python3 Tests/fan-rotor-regressions.py
 	python3 Tests/vpn-domain-log-regressions.py
+	python3 Tests/vpn-provider-direct-regressions.py

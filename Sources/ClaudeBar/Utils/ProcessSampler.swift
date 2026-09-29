@@ -66,20 +66,33 @@ final class ProcessSampler {
         var memoryBytes: UInt64 = 0
     }
 
+    /// The per-unit readings behind the CPU / GPU silicon marks: busy fraction
+    /// per logical core (0…1, core order, empty until the second tick sets the
+    /// baseline) and the GPU sub-unit readings (0…100, empty when the driver
+    /// publishes none).
+    ///
+    /// **A separate published value on purpose.** These arrays change on nearly
+    /// every sample — some core is always a step away from where it was — so
+    /// while they lived inside `HostStats` the whole `host` value compared
+    /// unequal each tick, and `@Observable` (which tracks `host` as one
+    /// property) re-evaluated every reader of `host.cpu`, `host.memoryLabel`
+    /// and the rest: the entire resource strip and the energy card, once a
+    /// second, for readings that had not moved. Only the two marks read this.
+    struct CellLoad: Equatable {
+        var cores: [Double] = []
+        var gpuRenderers: [Double] = []
+    }
+
     struct HostStats: Equatable {
         var cpu: Double = 0
         var gpu: Double = 0
         var memoryUsed: UInt64 = 0
         var memoryTotal: UInt64 = 0
         var coreCount: Int = 1
-        /// Busy fraction per logical core, 0…1, in core order. Empty until the
-        /// sampler's second tick establishes the baseline.
-        var coreLoad: [Double] = []
-        /// GPU core count as the driver publishes it, and the three sub-unit
-        /// readings (device / renderer / tiler) as 0…100. Zero and empty on a
-        /// machine whose driver publishes neither.
+        /// GPU core count as the driver publishes it. Zero on a machine whose
+        /// driver publishes none. The per-unit readings live in `CellLoad`,
+        /// not here: see the note there.
         var gpuCoreCount: Int = 0
-        var gpuRenderers: [Double] = []
         /// Physical memory by page category, in bytes. These are the *real*
         /// buckets `vm_statistics64` reports — not an apportionment of
         /// `memoryUsed`, which is `active + inactive + speculative + wired +
@@ -183,6 +196,7 @@ final class ProcessSampler {
 
     var claudeBar = Snapshot()
     var host = HostStats()
+    var cells = CellLoad()
     var byKey: [Key: Snapshot] = [:]
     var shares: [Share] = []
     var trail: [Point] = []
@@ -426,15 +440,19 @@ final class ProcessSampler {
         // One `vm_statistics64` serves both the pressure figure and the mark's
         // parts, so the two cannot be read a tick apart.
         let memory = memoryBreakdown()
+        // Read on every tick even when nothing shows it: the per-core counters
+        // are differenced against the previous read, so skipping one would
+        // stretch the next interval and smear the reading.
+        let cellSnap = CellLoad(
+            cores: hostCoreLoad().map(Self.step(0.02)),
+            gpuRenderers: gpu.renderers.map(Self.step(2)))
         let hostSnap = HostStats(
             cpu: hostCPUPercent(),
             gpu: gpu.utilization,
             memoryUsed: memory.used,
             memoryTotal: ProcessInfo.processInfo.physicalMemory,
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
-            coreLoad: hostCoreLoad(),
             gpuCoreCount: gpu.coreCount,
-            gpuRenderers: gpu.renderers,
             memoryActive: memory.active,
             memoryWired: memory.wired,
             memoryCompressed: memory.compressed,
@@ -469,7 +487,7 @@ final class ProcessSampler {
         )
 
         guard wantsAttribution else {
-            publish(claudeBar: Snapshot(), host: hostSnap, byKey: [:], shares: [], point: point)
+            publish(claudeBar: Snapshot(), host: hostSnap, cells: cellSnap, byKey: [:], shares: [], point: point)
             return
         }
 
@@ -512,51 +530,81 @@ final class ProcessSampler {
 
         let cores = Double(hostSnap.coreCount)
         let shares = Self.makeShares(claudeBar: claudeBarSnap, byKey: byKey, host: hostSnap, cores: cores)
-        publish(claudeBar: claudeBarSnap, host: hostSnap, byKey: byKey, shares: shares, point: point)
+        publish(claudeBar: claudeBarSnap, host: hostSnap, cells: cellSnap, byKey: byKey, shares: shares, point: point)
     }
 
     private func publish(
         claudeBar: Snapshot,
         host: HostStats,
+        cells: CellLoad,
         byKey: [Key: Snapshot],
         shares: [Share],
         point: Point
     ) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            var host = host
-            host.cpu = host.cpu.rounded()
-            host.gpu = host.gpu.rounded()
-            host.memoryUsed = (host.memoryUsed / 1_048_576) * 1_048_576
-            host.diskUsed = (host.diskUsed / 1_048_576) * 1_048_576
-            host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
-            if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
-            if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
-            if let t = host.batteryTemperatureCelsius { host.batteryTemperatureCelsius = t.rounded() }
-            // RSSI jitters ±1 dBm and the power rails in milliwatts between
-            // samples; below these steps nothing on screen changes, so the
-            // equality check below can actually hold.
-            host.wifiRSSI = (host.wifiRSSI / 2) * 2
-            func tenth(_ value: Double?) -> Double? { value.map { ($0 * 10).rounded() / 10 } }
-            host.powerInputWatts = tenth(host.powerInputWatts)
-            host.powerSystemWatts = tenth(host.powerSystemWatts)
-            host.powerBatteryWatts = tenth(host.powerBatteryWatts)
-            host.batteryChargingWatts = tenth(host.batteryChargingWatts)
+        // Published values are rounded to what the labels print, so a reading
+        // that has not visibly moved compares equal and invalidates nothing.
+        // `cpu` to a whole percent and memory to 0.1 MB (under 10 MB) / 1 MB
+        // keeps both the "—" gate (`cpu < 0.5`) and the `%.0f` / `%.1f` text
+        // identical to what the raw value printed. `shares` was already built
+        // from the raw values on the sampler queue.
+        let byKey = byKey.mapValues { snap -> Snapshot in
+            var snap = snap
+            snap.cpu = snap.cpu.rounded()
+            let mb = Double(snap.memoryBytes) / 1_048_576
+            let stepMB = mb >= 10 ? 1.0 : 0.1
+            snap.memoryBytes = UInt64(((mb / stepMB).rounded() * stepMB) * 1_048_576)
+            return snap
+        }
+        let shares = shares.map { share -> Share in
+            var share = share
+            share.cpuShare = (share.cpuShare / 0.005).rounded() * 0.005
+            share.memShare = (share.memShare / 0.001).rounded() * 0.001
+            let mb = Double(share.memoryBytes) / 1_048_576
+            let stepMB = mb >= 10 ? 1.0 : 0.1
+            share.memoryBytes = UInt64(((mb / stepMB).rounded() * stepMB) * 1_048_576)
+            return share
+        }
+        DispatchQueue.main.async {
+            // Held while a scroll is in flight and applied once it stops: the
+            // readings are not on screen in any way that matters while the page
+            // is being moved, and each one is an invalidation of the strip.
+            ScrollHoverGate.afterScroll("ProcessSampler.publish") { [weak self] in
+                guard let self else { return }
+                var host = host
+                host.cpu = host.cpu.rounded()
+                host.gpu = host.gpu.rounded()
+                host.memoryUsed = (host.memoryUsed / 1_048_576) * 1_048_576
+                host.diskUsed = (host.diskUsed / 1_048_576) * 1_048_576
+                host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
+                if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
+                if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
+                if let t = host.batteryTemperatureCelsius { host.batteryTemperatureCelsius = t.rounded() }
+                // RSSI jitters ±1 dBm and the power rails in milliwatts between
+                // samples; below these steps nothing on screen changes, so the
+                // equality check below can actually hold.
+                host.wifiRSSI = (host.wifiRSSI / 2) * 2
+                func tenth(_ value: Double?) -> Double? { value.map { ($0 * 10).rounded() / 10 } }
+                host.powerInputWatts = tenth(host.powerInputWatts)
+                host.powerSystemWatts = tenth(host.powerSystemWatts)
+                host.powerBatteryWatts = tenth(host.powerBatteryWatts)
+                host.batteryChargingWatts = tenth(host.batteryChargingWatts)
 
-            if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
-            if self.host != host { self.host = host }
-            if self.byKey != byKey { self.byKey = byKey }
-            if self.shares != shares { self.shares = shares }
-            var trail = self.trail
-            if let last = trail.last,
-               abs(last.cpu - point.cpu) < 0.02,
-               abs(last.gpu - point.gpu) < 0.02,
-               abs(last.mem - point.mem) < 0.015 {
-                return
+                if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
+                if self.host != host { self.host = host }
+                if self.cells != cells { self.cells = cells }
+                if self.byKey != byKey { self.byKey = byKey }
+                if self.shares != shares { self.shares = shares }
+                var trail = self.trail
+                if let last = trail.last,
+                   abs(last.cpu - point.cpu) < 0.02,
+                   abs(last.gpu - point.gpu) < 0.02,
+                   abs(last.mem - point.mem) < 0.015 {
+                    return
+                }
+                trail.append(point)
+                if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
+                self.trail = trail
             }
-            trail.append(point)
-            if trail.count > self.trailCap { trail.removeFirst(trail.count - self.trailCap) }
-            self.trail = trail
         }
     }
 
@@ -649,6 +697,11 @@ final class ProcessSampler {
     ///
     /// The returned array is allocated by the kernel and must be handed back;
     /// `defer` does that on every path out, including the failure ones.
+    /// Round to a multiple of `size`. Sampler queue only.
+    private static func step(_ size: Double) -> (Double) -> Double {
+        { ($0 / size).rounded() * size }
+    }
+
     private func hostCoreLoad() -> [Double] {
         var cpuCount: natural_t = 0
         var info: processor_info_array_t?

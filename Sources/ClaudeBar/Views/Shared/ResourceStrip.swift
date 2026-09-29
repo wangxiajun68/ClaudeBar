@@ -307,9 +307,8 @@ struct ResourceStrip: View {
                         // not one bar for the whole card: the tile's own figure
                         // is already the aggregate, and a mark that only repeats
                         // it is the decoration this whole strip exists to avoid.
-                        HardwareSiliconMark(gpu: true, load: load, tint: tint,
-                                            cells: sampler.host.gpuRenderers.map { $0 / 100 },
-                                            markHeight: Self.hardwareMarkHeight)
+                        SiliconCells(gpu: true, load: load, tint: tint,
+                                     markHeight: Self.hardwareMarkHeight)
                     case .memory:
                         CapacityHardwareMark(disk: false, load: load,
                                              bytes: sampler.host.memoryTotal, tint: tint,
@@ -321,8 +320,8 @@ struct ResourceStrip: View {
                         // tick establishes the baseline, and the mark falls back
                         // to a single lit die until then rather than inventing
                         // per-core numbers.
-                        HardwareSiliconMark(load: load, tint: tint, cells: sampler.host.coreLoad,
-                                            markHeight: Self.hardwareMarkHeight)
+                        SiliconCells(gpu: false, load: load, tint: tint,
+                                     markHeight: Self.hardwareMarkHeight)
                     case .fans:
                         // The rotors take the tile's hue as well, so the card's
                         // badge, wash and blades are one colour — see
@@ -448,6 +447,27 @@ struct ResourceStrip: View {
         }
         lines.insert(hostLine, at: 0)
         return lines.joined(separator: "\n")
+    }
+}
+
+/// The CPU / GPU silicon mark with its per-unit cells read *here*, from
+/// `ProcessSampler.cells`. The cells change on nearly every sample, so reading
+/// them in `ResourceStrip.body` would re-evaluate the whole strip (six tiles,
+/// the link card, the tooltip text) each time; in this leaf only the mark is
+/// re-evaluated. Cells are `sampler.cells.cores` (CPU, 0…1) and
+/// `sampler.cells.gpuRenderers` (GPU, 0…100).
+struct SiliconCells: View {
+    private let sampler = ProcessSampler.shared
+    let gpu: Bool
+    let load: Double
+    let tint: Color
+    let markHeight: CGFloat
+
+    var body: some View {
+        HardwareSiliconMark(gpu: gpu, load: load, tint: tint,
+                            cells: gpu ? sampler.cells.gpuRenderers.map { $0 / 100 }
+                                       : sampler.cells.cores,
+                            markHeight: markHeight)
     }
 }
 

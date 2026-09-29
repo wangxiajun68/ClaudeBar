@@ -11,7 +11,7 @@ root = Path(__file__).resolve().parents[1]
 observation = (root / 'Sources/ClaudeBar/Models/ScopedStoreObservation.swift').read_text()
 motion = (root / 'Sources/ClaudeBar/Views/Shared/DecorativeMotion.swift').read_text()
 traffic = (root / 'Sources/ClaudeBar/Views/Pages/TrafficView.swift').read_text()
-blocks = traffic[traffic.index('enum ConvBlock:'):traffic.index('private struct TrafficRow:')]
+blocks = traffic[traffic.index('enum ConvBlock:'):traffic.index('private struct TrafficLiveRow:')]
 builder = traffic[traffic.index('struct ConversationInput:'):]
 scheduler = traffic[traffic.index('    private var conversationInput:'):traffic.index('    /// The list selection')]
 fields = sorted(set(re.findall(r'changes\(\$(\w+)\)', observation)))
@@ -21,6 +21,11 @@ swift = r'''
 import SwiftUI
 import Combine
 FIXTURE
+// The production gate defers while a scroll runs; nothing scrolls in this
+// fixture, so delivery is immediate.
+enum ScrollHoverGate {
+    static func afterScroll(_ key: AnyHashable, _ apply: @escaping () -> Void) { apply() }
+}
 private struct SurfaceKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var surfaceIsVisible: Bool {

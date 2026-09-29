@@ -166,6 +166,26 @@ struct SkyScene: Equatable {
             nightness: nightness)
     }
 
+    /// 天气渲染关掉时天空按这个天气画：一片按太阳高度角连续插值的晴空。
+    ///
+    /// 不是把整片天抹平——时段的调色、日月、星与云量都还在，所以卡片仍随一天
+    /// 呼吸，只是不再有雨雪、雾、闪电和玻璃上那层水。这就是设置里「天气渲染」
+    /// 关掉后的天空：一张贴图，不是一段天气。
+    static var pinned: SkyScene {
+        var scene = make(sky: .clear, rainChance: 0, windKph: 6, windDirection: "",
+                         astronomy: placeholderAstronomy)
+        // 星点是从真实坐标与星历投影出来的；关掉天气之后那串坐标既不是所在也
+        // 不是此刻，就不该再指，所以贴图版把这一层收掉（日月仍在，它们只跟
+        // 太阳高度角走）。
+        scene.stars = []
+        scene.starVisibility = 0
+        return scene
+    }
+
+    private static var placeholderAstronomy: SkyAstronomy.Snapshot {
+        SkyAstronomy.snapshot(date: Date(timeIntervalSinceReferenceDate: 0), latitude: 30, longitude: 0)
+    }
+
     /// Without coordinates the sky is still drawn: longitude from the time
     /// zone's offset, a mid latitude, and the same ephemeris. It is an
     /// illustration of *about now*, which beats a grey card.

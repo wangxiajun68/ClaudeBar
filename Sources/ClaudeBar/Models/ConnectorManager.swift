@@ -109,8 +109,8 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
 }
 
 /// Names found inside a plugin install. Read from the directory only.
-struct PluginBundleContents: Sendable {
-    struct Item: Identifiable, Sendable {
+struct PluginBundleContents: Sendable, Equatable {
+    struct Item: Identifiable, Sendable, Equatable {
         var id: String { kind + ":" + name }
         let kind: String
         let name: String
@@ -162,7 +162,7 @@ struct PluginBundleContents: Sendable {
     }
 }
 
-struct LocalCLIRecord: Identifiable, Sendable {
+struct LocalCLIRecord: Identifiable, Sendable, Equatable {
     let name: String
     let category: String
     let summary: String
@@ -189,7 +189,15 @@ struct LocalCLIRecord: Identifiable, Sendable {
 
 /// Reads local connector metadata only. No network call, server launch, or
 /// content from SKILL.md beyond its frontmatter is needed for the inventory.
+///
+/// **One instance for the app, not one per visit.** The page used to build its
+/// own manager on every mount, so each switch to 连接器 started from an empty
+/// inventory: a loading state in the first frame, then a second full mount when
+/// the scan landed. Held here, the last inventory is on screen in the first
+/// frame and the rescan (still off the main thread) only publishes what
+/// changed.
 @MainActor final class ConnectorManager: ObservableObject {
+    static let shared = ConnectorManager()
     @Published private(set) var records: [ConnectorRecord] = []
     @Published private(set) var pluginContents: [String: PluginBundleContents] = [:]
     @Published private(set) var localCLIs: [LocalCLIRecord] = []
@@ -239,10 +247,14 @@ struct LocalCLIRecord: Identifiable, Sendable {
                     scanCLIs ? LocalCLIInventory.scan() : retainedCLIs)
         }.value
         guard generation == scanGeneration else { return }
-        records = result.0
-        pluginContents = result.1
-        localCLIs = result.2
-        rebuildCounts()
+        // Publish only what changed: a rescan that finds the same inventory
+        // (nearly every visit) must not re-render ~200 cards.
+        if records != result.0 {
+            records = result.0
+            rebuildCounts()
+        }
+        if pluginContents != result.1 { pluginContents = result.1 }
+        if localCLIs != result.2 { localCLIs = result.2 }
         isLoading = false
     }
 

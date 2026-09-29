@@ -152,6 +152,11 @@ struct SettingsView: View {
             }
 
             SettingsGroup(title: "天气与问候") {
+                SettingsToggleRow(
+                    title: "天气渲染",
+                    caption: "开着：天空按实时天气画云、雨雪、雾与闪电。关掉：只留一片按太阳高度角变化的天空贴图，不再画天气，也不再联网取天气。",
+                    isOn: $prefs.greetingWeatherRendering)
+                SettingsDivider()
                 SettingsRow(title: "天气城市", caption: "未使用当前位置时生效，留空则不显示城市天气。") {
                     TextField("输入城市", text: $weatherCityDraft)
                         .textFieldStyle(.roundedBorder)

@@ -125,7 +125,16 @@ struct CaptureLive: Equatable {
 
 final class CaptureCatalog: ObservableObject {
     @Published var records: [CaptureSummary] = []
-    @Published var livePreview: [Int64: String] = [:]
+}
+
+/// The one-line preview of each in-flight capture, flushed every 100 ms while a
+/// stream runs. **Its own object, not a field of `CaptureCatalog`**: the page
+/// observes the catalog for the record list, and a stream's preview changing
+/// ten times a second used to re-evaluate that whole page — list, filters and
+/// inspector — for text that only the streaming row draws. Only that row
+/// observes this (`TrafficLiveRow`).
+final class CaptureLivePreview: ObservableObject {
+    @Published var map: [Int64: String] = [:]
 }
 
 final class CaptureStreams: ObservableObject {
@@ -151,6 +160,7 @@ final class ProxyCaptureStore {
 
     let catalog = CaptureCatalog()
     let streams = CaptureStreams()
+    let previews = CaptureLivePreview()
 
     private let lock = NSRecursiveLock()
     /// Set once the first list load has published; guards against a second
@@ -213,7 +223,7 @@ final class ProxyCaptureStore {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.catalog.records = rows
-                self.catalog.livePreview = [:]
+                self.previews.map = [:]
                 self.streams.live = [:]
             }
         }
@@ -335,7 +345,7 @@ final class ProxyCaptureStore {
                                    reasoning: assembler.reasoning,
                                    tools: assembler.tools)
             self.streams.live[id] = live
-            self.catalog.livePreview[id] = Self.clip(live.content.isEmpty ? live.reasoning : live.content)
+            self.previews.map[id] = Self.clip(live.content.isEmpty ? live.reasoning : live.content)
             self.patchMain(id) {
                 $0.state = state
                 $0.httpStatus = status
@@ -356,7 +366,7 @@ final class ProxyCaptureStore {
                 guard let row = self.catalog.records.first(where: { $0.id == id }) else { return }
                 if row.state != .streaming {
                     self.streams.live.removeValue(forKey: id)
-                    self.catalog.livePreview.removeValue(forKey: id)
+                    self.previews.map.removeValue(forKey: id)
                 }
             }
         }
@@ -455,7 +465,7 @@ final class ProxyCaptureStore {
         }
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records.removeAll { $0.id == id }
-            self?.catalog.livePreview.removeValue(forKey: id)
+            self?.previews.map.removeValue(forKey: id)
             self?.streams.live.removeValue(forKey: id)
         }
         try? FileManager.default.removeItem(at: CaptureMedia.mediaDir(captureID: id))
@@ -469,7 +479,7 @@ final class ProxyCaptureStore {
         }
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records = []
-            self?.catalog.livePreview = [:]
+            self?.previews.map = [:]
             self?.streams.live = [:]
         }
     }
@@ -890,7 +900,7 @@ final class ProxyCaptureStore {
                 $0.state == .streaming || $0.state == .pending
             }.map(\.id))
             var live = self.streams.live
-            var preview = self.catalog.livePreview
+            var preview = self.previews.map
             var changed = false
             for (id, buf) in snapshot where active.contains(id) {
                 live[id] = buf
@@ -900,7 +910,7 @@ final class ProxyCaptureStore {
             // One notification per batch, regardless of concurrent streams.
             // Completed/deleted records cannot be resurrected by a queued flush.
             if changed { self.streams.live = live }
-            if preview != self.catalog.livePreview { self.catalog.livePreview = preview }
+            if preview != self.previews.map { self.previews.map = preview }
         }
     }
 
@@ -908,7 +918,7 @@ final class ProxyCaptureStore {
         DispatchQueue.main.async { [weak self] in self?.patchMain(id, mutate) }
     }
 
-    /// Keep `streams.live` / `catalog.livePreview` bounded to the ids the list
+    /// Keep `streams.live` / `previews.map` bounded to the ids the list
     /// still shows, plus the one that just finished.
     ///
     /// Both maps are only otherwise removed by `delete`, `clearAll`,
@@ -920,7 +930,7 @@ final class ProxyCaptureStore {
             guard let self else { return }
             let live = Set(self.catalog.records.map(\.id)).union([id])
             self.streams.live = self.streams.live.filter { live.contains($0.key) }
-            self.catalog.livePreview = self.catalog.livePreview.filter { live.contains($0.key) }
+            self.previews.map = self.previews.map.filter { live.contains($0.key) }
         }
     }
 

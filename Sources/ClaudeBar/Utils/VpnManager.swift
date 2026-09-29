@@ -1088,6 +1088,7 @@ final class VpnManager: ObservableObject {
     }
 
     private func stopPolling() {
+        VpnDomainLog.shared.updateConnections([])
         pollTask?.cancel()
         pollTask = nil
         trafficStreamTask?.cancel()
@@ -1315,8 +1316,10 @@ extension VpnManager {
     }
 
     private func pollConnections() async {
-        guard let c = try? await api("GET", "/connections") else { return }
+        guard let c = try? await api("GET", "/connections"),
+              !Task.isCancelled, isRunning else { return }
         let conns = c["connections"] as? [[String: Any]] ?? []
+        VpnDomainLog.shared.updateConnections(conns)
         let activeConnections = conns.count
 
         // Root totals survive closed connections; summing the live array

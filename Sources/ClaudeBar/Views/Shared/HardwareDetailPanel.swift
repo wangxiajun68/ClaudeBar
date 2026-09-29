@@ -81,12 +81,12 @@ struct HardwareDetailPanel: View {
     /// ornament.
     private var caption: String {
         if gpu {
-            let units = sampler.host.gpuRenderers.count
+            let units = sampler.cells.gpuRenderers.count
             return units > 0
                 ? "每一格是一组图形子单元，按各自的实时占用点亮。"
                 : "芯片亮度表示整体负载。"
         }
-        let cores = sampler.host.coreLoad.count
+        let cores = sampler.cells.cores.count
         return cores > 0
             ? "每一个方块是一个逻辑核心（共 \(cores) 个），按各自的实时占用点亮。"
             : "芯片亮度表示整体负载。"
@@ -97,10 +97,7 @@ struct HardwareDetailPanel: View {
         let values = sampler.trail.map { gpu ? $0.gpu : $0.cpu }
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 18) {
-                HardwareSiliconMark(gpu: gpu, load: load / 100, tint: tint,
-                                    cells: gpu ? sampler.host.gpuRenderers.map { $0 / 100 }
-                                               : sampler.host.coreLoad,
-                                    markHeight: 62)
+                SiliconCells(gpu: gpu, load: load / 100, tint: tint, markHeight: 62)
                     .frame(width: 104)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name).font(Theme.Font.chromeEmph)

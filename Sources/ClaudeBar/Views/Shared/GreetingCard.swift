@@ -13,6 +13,9 @@ struct GreetingCard: View {
     @State private var city = AppPreferences.shared.weatherCity
     @State private var costDisplay = AppPreferences.shared.costDisplay
     @State private var typeface = AppPreferences.shared.greetingTypeface
+    /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画天气图层，这张卡也不再
+    /// 联网取天气（见 `GreetingCard` 自己的 `.task`）。
+    @State private var weatherRendering = AppPreferences.shared.greetingWeatherRendering
     @ObservedObject private var fx = ExchangeRate.shared
     @ObservedObject private var cursor = CursorUsageStore.shared
     @Environment(\.surfaceIsVisible) private var surfaceVisible
@@ -57,6 +60,7 @@ struct GreetingCard: View {
             weatherNote: weather.note,
             locating: PermissionGate.allows(.currentLocation),
             typeface: typeface,
+            weatherRendering: weatherRendering,
             refreshWeather: { weather.refresh() },
             refreshQuota: { codexStore.refreshQuota(manual: true) },
             refreshCursor: { cursor.refresh(manual: true) },
@@ -70,12 +74,13 @@ struct GreetingCard: View {
         }
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
         .onReceive(AppPreferences.shared.$greetingTypeface.removeDuplicates()) { typeface = $0 }
+        .onReceive(AppPreferences.shared.$greetingWeatherRendering.removeDuplicates()) { weatherRendering = $0 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             codexStore.refreshConfiguredModel()
         }
         .onAppear { codexStore.refreshConfiguredModel(); cursor.refresh() }
         .task(id: surfaceVisible) {
-            guard surfaceVisible else { return }
+            guard surfaceVisible, AppPreferences.shared.greetingWeatherRendering else { return }
             while !Task.isCancelled {
                 weather.refreshIfStale()
                 do { try await Task.sleep(for: .seconds(WeatherStore.staleAfter + 15)) }
@@ -123,6 +128,11 @@ struct GreetingStatusSheet: View {
     var locating: Bool = false
     /// The face the greeting is written in (设置 → 问候字体).
     var typeface: GreetingTypeface = .standard
+    /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画云、雨雪、雾、闪电与
+    /// 玻璃雨滴；右上不再是实时天气，而是一张贴图说明。
+    var weatherRendering = true
+    /// 预览工具用它一次渲染两种取值（见 Tools/render-greeting-preview.py）。
+    var manualWeatherFetch = false
     var refreshWeather: () -> Void
     var refreshQuota: () -> Void
     var refreshCursor: () -> Void
@@ -151,6 +161,8 @@ struct GreetingStatusSheet: View {
     /// is live `@State` while it moves and is written back when it settles,
     /// so a drag or a glide does not write defaults sixty times a second.
     @AppStorage("greeting.skyMode") private var skyMode = "auto"
+    /// 天气渲染关掉后，天空停在这一种天气上（`none` 即跟随实时读数）。
+    @AppStorage("greeting.pinnedWeather") private var pinnedWeatherRaw = "none"
     @AppStorage("greeting.manualWeather") private var manualWeatherRaw = SkyScene.Weather.clear.rawValue
     @AppStorage("greeting.manualMinutes") private var storedMinutes: Double = 17 * 60 + 40
     @State private var manualMinutes: Double?
@@ -162,11 +174,25 @@ struct GreetingStatusSheet: View {
     /// "Here and now": the sky clock plus any drag offset — or, in manual
     /// mode, today at the chosen hour. The weather reading never moves with
     /// either; only the sky does.
-    private var sceneDate: Date { manual ? manualDate : skyDate.addingTimeInterval(timeOffset) }
+    private var sceneDate: Date {
+        if manual { return manualDate }
+        if pinnedWeather != nil { return skyDate }
+        return skyDate.addingTimeInterval(timeOffset)
+    }
     private var zone: TimeZone { TimeZone(identifier: reading?.timezone ?? "") ?? .current }
 
     private var manual: Bool { skyMode == "manual" }
     private var manualWeather: SkyScene.Weather { SkyScene.Weather(rawValue: manualWeatherRaw) ?? .clear }
+    /// 是否在画实时天气：偏好关掉就画贴图，或天空正停在某一层固定天气上
+    /// （「预演」里选的），也都不再按实时读数取数。
+    private var liveWeather: Bool { Self.liveWeatherShown(rendering: manualWeatherFetch ? false : weatherRendering,
+                                                         pinned: pinnedWeatherRaw) }
+    private var pinnedWeather: SkyScene.Weather? { SkyScene.Weather(rawValue: pinnedWeatherRaw) }
+
+    /// 纯函数：preview 工具、测试和卡片读同一段逻辑。
+    static func liveWeatherShown(rendering: Bool, pinned: String) -> Bool {
+        rendering && pinned == "none"
+    }
     private var minutes: Double { manualMinutes ?? storedMinutes }
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
@@ -180,11 +206,24 @@ struct GreetingStatusSheet: View {
     private var astronomy: SkyAstronomy.Snapshot {
         reading?.astronomy(at: sceneDate) ?? SkyScene.estimatedAstronomy(date: sceneDate, timezone: zone)
     }
+    /// 「预演」里挑了一层天气时，天空用这一层，但时刻仍是此刻——调色板照一天走。
+    private var pinnedScene: SkyScene {
+        guard let weather = pinnedWeather else { return SkyScene.pinned }
+        let sample = Self.sample(weather)
+        return SkyScene.make(sky: sample.sky, rainChance: sample.rain, windKph: max(8, reading?.windKph ?? 10),
+                             windDirection: reading?.windDirection ?? "", astronomy: astronomy)
+    }
+
     private func makeScene() -> SkyScene {
         if manual {
             let sample = Self.sample(manualWeather)
             return SkyScene.make(sky: sample.sky, rainChance: sample.rain, windKph: max(8, reading?.windKph ?? 10),
                                  windDirection: reading?.windDirection ?? "", astronomy: astronomy)
+        }
+        if pinnedWeather != nil {
+            // The palette is what is on trial here, so the reading survives the
+            // fetch going stale — a stale calm sky would show the wrong state.
+            return pinnedScene
         }
         return SkyScene.make(sky: reading?.sky, rainChance: reading?.rainChance ?? 0, windKph: reading?.windKph ?? 6,
                              windDirection: reading?.windDirection ?? "", astronomy: astronomy)
@@ -227,6 +266,8 @@ struct GreetingStatusSheet: View {
         /// The manual console takes the sun path's corner and, when the card
         /// is too narrow for both, the forecast's too.
         var consoleWidth: CGFloat { narrow ? width - margin * 2 : min(440, width - margin * 2 - chartWidth - 32) }
+        /// 时钟下方「自动 / 手动 / 预演」那枚分段控件：多一段就多一格。
+        func skyToggleWidth(threeWay: Bool) -> CGFloat { threeWay ? 148 : 104 }
         var topClear: CGFloat { top + nowHeight + 6 }
         var bottomClear: CGFloat { chartTop - 6 }
     }
@@ -247,6 +288,9 @@ struct GreetingStatusSheet: View {
         var weatherLoading: Bool
         var weatherNote: String?
         var locating: Bool
+        /// 天气渲染关掉时，右上读的是天空自己的天气（固定的一种），所以天气层
+        /// 也是这份读数的输入。
+        var sky: SkyScene.Weather
         var visible: Bool
         var reduceMotion: Bool
         var width: CGFloat
@@ -294,24 +338,38 @@ struct GreetingStatusSheet: View {
         let layout = GreetingTypesetter.layout(phrase.script + ",", name: name, typeface: typeface, cardWidth: m.width,
                                                skyHeight: m.sky, margin: m.margin,
                                                topClear: m.topClear, bottomClear: m.bottomClear)
-        let ink = scene.prefersDarkInk ? Color(hex: 0x141E33) : Color.white
-        let vivid = !scene.prefersDarkInk
+        // 天空没有天气时（关掉实时天气、也没挑过哪一层）用的是一张固定调色板，
+        // 那片灰不是"光线弱"，不该据此点亮白字：`prefersDarkInk` 说的是问候语
+        // 背后的地面有多亮，这张贴图量它自己。挑了天气或跟着实时读数时，就量
+        // 画出来的那片天。
+        let inkGround = (liveWeather || pinnedWeather != nil) ? scene.prefersDarkInk : SkyScene.pinned.prefersDarkInk
+        let ink = inkGround ? Color(hex: 0x141E33) : Color.white
+        let vivid = !inkGround
         ZStack(alignment: .topLeading) {
             sky(scene: scene, layout: layout, metrics: m)
             skyGestures(layout: layout, metrics: m)
             greetingAccessibility(layout: layout)
+            let clockZone: String? = liveWeather ? reading?.timezone : nil
+            let clockPreview: Date? = manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate)
             VStack(alignment: .leading, spacing: 8) {
-                GreetingClock(ink: ink, timezone: reading?.timezone,
-                              preview: manual ? manualDate : (timeOffset == 0 ? nil : sceneDate))
-                SkyModeToggle(manual: manual, ink: ink) { setManual($0, scene: scene) }
+                GreetingClock(ink: ink, timezone: clockZone, preview: clockPreview)
+                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
+                              setManual: { setManual($0, scene: scene) },
+                              setPreview: { setPreview($0) },
+                              setRendering: { AppPreferences.shared.greetingWeatherRendering = $0 })
+                    .frame(width: m.skyToggleWidth(threeWay: self.weatherRendering || manual), alignment: .leading)
             }
             .padding(.leading, m.margin)
             .padding(.top, m.top)
             .modifier(StatusArrival(arrived: arrived, delay: 1.1, reduceMotion: reduceMotion))
             let nowNight = manual ? reading?.isDay == false : scene.nightness > 0.5
-            Unchanged(key: NowKey(reading: reading, hoveredDay: hoveredDay, pinnedDay: pinnedDay, night: nowNight,
-                                  darkInk: scene.prefersDarkInk, city: city, weatherLoading: weatherLoading,
-                                  weatherNote: weatherNote, locating: locating, visible: visible,
+            let shownReading = liveWeather ? reading : nil
+            let shownCity = liveWeather ? city : "贴图"
+            Unchanged(key: NowKey(reading: shownReading, hoveredDay: liveWeather ? hoveredDay : nil,
+                                  pinnedDay: pinnedDay, night: nowNight,
+                                  darkInk: scene.prefersDarkInk, city: shownCity, weatherLoading: weatherLoading,
+                                  weatherNote: liveWeather ? weatherNote : nil, locating: locating,
+                                  sky: scene.weather, visible: visible,
                                   reduceMotion: reduceMotion, width: m.width)) {
                 weatherNow(night: nowNight, ink: ink, vivid: vivid, metrics: m)
             }
@@ -327,14 +385,14 @@ struct GreetingStatusSheet: View {
                         .offset(x: m.margin, y: m.chartTop)
                         .transition(.opacity.combined(with: .offset(y: 10)))
                 } else {
-                    sunPath(scene: scene, ink: ink, vivid: vivid)
+                    sunPath(scene: scene, ink: ink, vivid: vivid, times: dayTimes)
                         .frame(width: m.sunWidth)
                         .offset(x: m.margin, y: m.sky - 14 - 57)
                         .transition(.opacity)
                 }
             }
             .modifier(StatusArrival(arrived: arrived, delay: 1.3, reduceMotion: reduceMotion))
-            if !(manual && m.narrow) {
+            if liveWeather, !(manual && m.narrow) {
                 Unchanged(key: ForecastKey(days: forecastDays, zone: zone, darkInk: scene.prefersDarkInk,
                                            hoveredDay: hoveredDay, pinnedDay: pinnedDay, arrived: arrived,
                                            reduceMotion: reduceMotion, width: m.width)) {
@@ -444,11 +502,15 @@ struct GreetingStatusSheet: View {
     /// ripple through the sky.
     private func skyGestures(layout: GreetingTypesetter.Layout, metrics m: Metrics) -> some View {
         let writing = layout.phraseFrame.union(layout.nameFrame).insetBy(dx: -8, dy: -8)
+        // 关掉天气渲染后这条手势只剩"点问候语重写一遍"：漫游一天是在挑时刻，
+        // 而固定的天空被有意钉在此刻。
+        let scrub = liveWeather
         return Color.clear
             .contentShape(Rectangle())
             .frame(width: m.width, height: m.sky)
             .gesture(DragGesture(minimumDistance: 12)
                 .onChanged { value in
+                    guard scrub else { return }
                     if manual {
                         // In manual mode the drag *sets* the hour and stays.
                         glider.stop()
@@ -461,6 +523,7 @@ struct GreetingStatusSheet: View {
                     }
                 }
                 .onEnded { _ in
+                    guard scrub else { return }
                     if manual { dragBase = nil; commitMinutes() } else { returnToNow() }
                 })
             .simultaneousGesture(SpatialTapGesture().onEnded { value in
@@ -478,9 +541,18 @@ struct GreetingStatusSheet: View {
             }
             .focusable()
             .focusEffectDisabled()
-            .onKeyPress(.leftArrow) { manual ? nudgeManual(-60) : adjustSky(by: -3600); return .handled }
-            .onKeyPress(.rightArrow) { manual ? nudgeManual(60) : adjustSky(by: 3600); return .handled }
-            .onKeyPress(.escape) { returnToNow(); pinnedDay = nil; return .handled }
+            .onKeyPress(.leftArrow) {
+                guard scrub else { return .ignored }
+                manual ? nudgeManual(-60) : adjustSky(by: -3600); return .handled
+            }
+            .onKeyPress(.rightArrow) {
+                guard scrub else { return .ignored }
+                manual ? nudgeManual(60) : adjustSky(by: 3600); return .handled
+            }
+            .onKeyPress(.escape) {
+                guard scrub else { pinnedDay = nil; return .handled }
+                returnToNow(); pinnedDay = nil; return .handled
+            }
             .onKeyPress(.space) {
                 guard !reduceMotion, metalReady else { return .ignored }
                 controller.rewrite()
@@ -488,12 +560,18 @@ struct GreetingStatusSheet: View {
                 return .handled
             }
             .accessibilityLabel("天空时间预览")
-            .accessibilityValue(manual ? "手动 \(previewTime)" : timeOffset == 0 ? "现在" : previewTime)
-            .accessibilityAction(named: Text("前一小时")) { adjustSky(by: -3600) }
-            .accessibilityAction(named: Text("后一小时")) { adjustSky(by: 3600) }
-            .accessibilityAction(named: Text("回到现在")) { returnToNow() }
-            .help(manual ? "拖动天空调整时间 · 点击问候语重写一遍"
-                         : "拖动或按 ←/→ 漫游一天 · 点击问候语重写一遍 · 松手或 Esc 回到现在")
+            .accessibilityValue(liveWeather ? (manual ? "手动 \(previewTime)" : timeOffset == 0 ? "现在" : previewTime)
+                                                 : "贴图")
+            .accessibilityAction(named: Text("前一小时")) { if scrub { adjustSky(by: -3600) } }
+            .accessibilityAction(named: Text("后一小时")) { if scrub { adjustSky(by: 3600) } }
+            .accessibilityAction(named: Text("回到现在")) { if scrub { returnToNow() } }
+            .help(skyHint)
+    }
+
+    private var skyHint: String {
+        if !liveWeather { return "点击问候语重写一遍 · 设置里可重新打开天气渲染" }
+        if manual { return "拖动天空调整时间 · 点击问候语重写一遍" }
+        return "拖动或按 ←/→ 漫游一天 · 点击问候语重写一遍 · 松手或 Esc 回到现在"
     }
 
     /// The GPU draws the words; VoiceOver still reads them as one sentence.
@@ -509,7 +587,7 @@ struct GreetingStatusSheet: View {
 
     // MARK: - Weather now
 
-    private var forecastDays: [WeatherDay] { Array((reading?.forecast ?? []).prefix(6)) }
+    private var forecastDays: [WeatherDay] { liveWeather ? Array((reading?.forecast ?? []).prefix(6)) : [] }
 
     /// The day the forecast ribbon is pointing at, if it is not today: hover
     /// wins over the pin so the pin can be compared against other days.
@@ -544,7 +622,31 @@ struct GreetingStatusSheet: View {
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: focusedDay?.date)
     }
 
+    @ViewBuilder
     private func locationRow(ink: Color, metrics m: Metrics) -> some View {
+        if liveWeather {
+            liveLocationRow(ink: ink, metrics: m)
+        } else {
+            // 关掉天气渲染后这里不再是一个"到某地的实时天气"按钮，它只是一个
+            // 标题，没有可刷新的东西。
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "photo")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(ink.opacity(0.7))
+                Text(city)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ink.opacity(0.88))
+                Text("贴图")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ink.opacity(0.55))
+            }
+            .lineLimit(1)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("天气渲染关闭，\(city) 只作贴图")
+        }
+    }
+
+    private func liveLocationRow(ink: Color, metrics m: Metrics) -> some View {
         Button(action: refreshWeather) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 if weatherNote != nil {
@@ -596,11 +698,31 @@ struct GreetingStatusSheet: View {
                 WeatherGlyph(symbol: reading.sky.symbol(night: night), size: 28, ink: ink, vivid: vivid)
                 bigTemperature(reading.temperatureC, ink: ink)
                 caption(reading.skyLabel, high: reading.highC, low: reading.lowC, ink: ink)
+            } else if !liveWeather {
+                // The pinned sky: no reading, so name the sky itself. The
+                // glyph is the sky's own weather, at the same size as the
+                // reading it stands in for.
+                WeatherGlyph(symbol: pinnedSkySymbol(night: night), size: 28, ink: ink, vivid: vivid)
+                caption(PinnedSky.sky(for: pinnedWeather).caption, high: nil, low: nil, ink: ink)
             } else {
                 WeatherGlyph(symbol: weatherLoading ? "cloud" : "icloud.slash", size: 24, ink: ink, vivid: false)
                     .opacity(0.8)
                 caption(weatherLoading ? "获取中" : "离线", high: nil, low: nil, ink: ink)
             }
+        }
+    }
+
+    /// 固定天空时的天气图标：挑过的一层用它的 SVG 图标，没挑过就是一片晴空。
+    private func pinnedSkySymbol(night: Bool) -> String {
+        switch pinnedWeather {
+        case .none, .clear: return night ? "moon.stars.fill" : "sun.max.fill"
+        case .cloudy: return night ? "cloud.moon.fill" : "cloud.sun.fill"
+        case .overcast: return "cloud.fill"
+        case .lightRain: return "cloud.drizzle.fill"
+        case .heavyRain: return "cloud.rain.fill"
+        case .thunder: return "cloud.bolt.rain.fill"
+        case .snow: return "cloud.snow.fill"
+        case .fog: return "cloud.fog.fill"
         }
     }
 
@@ -637,6 +759,12 @@ struct GreetingStatusSheet: View {
 
     @ViewBuilder
     private func metricRow(ink: Color, vivid: Bool) -> some View {
+        // 固定天空的体感 / 湿度 / 风读的是实时读数，关掉之后没有依据，这一行
+        // 就空着——空着比印一串已经不对的数好。
+        if liveWeather { liveMetricRow(ink: ink, vivid: vivid) }
+    }
+
+    private func liveMetricRow(ink: Color, vivid: Bool) -> some View {
         HStack(spacing: 12) {
             if let day = focusedDay {
                 if let rain = day.rainChance {
@@ -758,11 +886,17 @@ struct GreetingStatusSheet: View {
         pinnedDay = next == 0 ? nil : forecastDays[next].date
     }
 
-    private func sunPath(scene: SkyScene, ink: Color, vivid: Bool) -> some View {
-        let times = SunPath.times(on: sceneDate, reading: reading, zone: zone)
+    /// 日轨的日出日落。天气渲染关掉时不再按实时读数（那是屏幕上一个不是所在
+    /// 地的坐标）推算，改用本机时区与纬度约 30° 走一遍同一个星历——这是
+    /// `SkyScene.estimatedAstronomy` 已经在做的事，一处实现两处用。
+    private var dayTimes: (rise: Date, set: Date) {
+        SunPath.times(on: sceneDate, reading: liveWeather ? reading : nil, zone: zone)
+    }
+
+    private func sunPath(scene: SkyScene, ink: Color, vivid: Bool, times: (rise: Date, set: Date)) -> some View {
         let caption: String?
         if timeOffset != 0 { caption = "预览 \(previewTime)" }
-        else if skyHovered { caption = "拖动天空 · 漫游一天" }
+        else if skyHovered, liveWeather { caption = "拖动天空 · 漫游一天" }
         else { caption = aside(scene: scene) }
         return SunPath(sunrise: times.rise, sunset: times.set, now: sceneDate, zone: zone, ink: ink, vivid: vivid,
                        caption: caption, captionAccent: timeOffset != 0)
@@ -788,13 +922,33 @@ struct GreetingStatusSheet: View {
 
     private func skyConsole(scene: SkyScene, ink: Color, vivid: Bool) -> some View {
         let times = SunPath.times(on: skyDate, reading: reading, zone: zone)
-        return SkyConsole(weather: manualWeather, band: scene.band, minutes: minutes, night: scene.nightness > 0.5,
+        let picked = pinnedWeather ?? manualWeather
+        return SkyConsole(weather: picked, band: scene.band, minutes: minutes, night: scene.nightness > 0.5,
                           sunrise: minutesOfDay(times.rise), sunset: minutesOfDay(times.set),
-                          track: trackColors(), ink: ink, vivid: vivid,
-                          pickWeather: { manualWeatherRaw = $0.rawValue },
+                          track: trackColors(weather: picked), ink: ink, vivid: vivid,
+                          pickWeather: { weather in
+                              if skyMode == "preview" {
+                                  pinnedWeatherRaw = weather.rawValue
+                              } else {
+                                  manualWeatherRaw = weather.rawValue
+                              }
+                          },
                           pickBand: { glide(to: representativeMinutes($0)) },
                           scrub: { glider.stop(); manualMinutes = $0 },
                           commit: commitMinutes)
+    }
+
+    /// 「预演」只换天气图层，不换场景：时刻、日月、窗台、科目都留在原地，
+    /// 所以切换本身不闪；点一下取消就回到实时天空。
+    private func setPreview(_ on: Bool) {
+        if on {
+            guard weatherRendering else { return }
+            pinnedWeatherRaw = pinnedWeatherRaw == "none" ? SkyScene.Weather.clear.rawValue : pinnedWeatherRaw
+            skyMode = "preview"
+        } else {
+            pinnedWeatherRaw = "none"
+            skyMode = "auto"
+        }
     }
 
     /// Entering manual starts from the sky as it is now, so the switch itself
@@ -872,11 +1026,11 @@ struct GreetingStatusSheet: View {
     /// so they are kept until the weather, the day or the place changes.
     @MainActor private static var trackCache: (key: String, colors: [Color])?
 
-    private func trackColors() -> [Color] {
+    private func trackColors(weather: SkyScene.Weather) -> [Color] {
         let day = calendar.startOfDay(for: skyDate)
-        let key = "\(manualWeatherRaw)|\(day.timeIntervalSince1970)|\(reading?.latitude ?? 0),\(reading?.longitude ?? 0)"
+        let key = "\(weather.rawValue)|\(day.timeIntervalSince1970)|\(reading?.latitude ?? 0),\(reading?.longitude ?? 0)"
         if let cached = Self.trackCache, cached.key == key { return cached.colors }
-        let sample = Self.sample(manualWeather)
+        let sample = Self.sample(weather)
         let colors: [Color] = (0...24).map { hour in
             let date = day.addingTimeInterval(Double(hour) * 3600)
             let astronomy = reading?.astronomy(at: date) ?? SkyScene.estimatedAstronomy(date: date, timezone: zone)

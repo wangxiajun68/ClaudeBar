@@ -16,30 +16,25 @@ struct VPNView: View {
     @State private var mosaicWidth: CGFloat = 720
     @State private var portDraft = ""
     @State private var logsOpen = false
+    @State private var nodesOpen = false
     @FocusState private var portFocused: Bool
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView([.horizontal, .vertical]) {
                 let contentWidth = max(1040, geometry.size.width - Theme.Space.s16 * 2)
-                let logWidth = (contentWidth - Theme.Space.s16) * 0.5
                 VStack(alignment: .leading, spacing: Theme.Space.s12) {
                     PageTitle(title: "VPN")
-                    VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                        overview
-                        VpnSubscriptionSection()
-                    }
-                    .frame(width: contentWidth - logWidth - Theme.Space.s16)
-                    .frame(width: contentWidth, alignment: .leading)
-                    // The left column determines the height. The log viewport
-                    // fills that same height without pushing the nodes down.
-                    .overlay(alignment: .topLeading) {
-                        GeometryReader { column in
-                            trafficGroup
-                                .frame(width: logWidth, height: column.size.height)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
+                    VPNTopColumns(spacing: Theme.Space.s16) {
+                        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                            overview
+                            VpnSubscriptionSection()
                         }
+                        trafficGroup
+                            .contentShape(Rectangle())
+                            .clipped()
                     }
+                    .frame(width: contentWidth)
                     nodeGroup
                     logGroup
                 }
@@ -377,14 +372,98 @@ struct VPNView: View {
         }
     }
 
+    /// The node block, collapsed by default.
+    ///
+    /// A subscription is 50–400 leaves and the grid is the tallest thing on the
+    /// page, but the *only* fact a visit needs from it is "which node is
+    /// carrying my traffic" — the same fact the header chip and group tab
+    /// already assert. So the grid starts closed behind a one-line summary that
+    /// keeps saying it: expanding is per-visit state.
     private var liveNodeCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            groupTabs
-            mosaic
+        VStack(alignment: .leading, spacing: nodesOpen ? Theme.Space.s8 : 0) {
+            Button {
+                withAnimation(Theme.Animation.snappy) { nodesOpen.toggle() }
+            } label: {
+                HStack(spacing: Theme.Space.s8) {
+                    AppGlyph(name: "chevron.right", size: 10)
+                        .foregroundColor(Theme.textTertiary())
+                        .rotationEffect(.degrees(nodesOpen ? 90 : 0))
+                    activeNodeSummary
+                    Spacer(minLength: Theme.Space.s8)
+                    Text(nodesOpen ? "收起" : "展开")
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textSecondary)
+                }
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(nodesOpen ? "收起节点列表" : "展开全部节点")
+
+            if nodesOpen {
+                groupTabs
+                mosaic
+            }
         }
         .padding(Theme.Space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .panelCard()
+    }
+
+    /// The line that has to survive the collapse: the node the core is exiting
+    /// through, in the same chip the overview header uses. Idle, the primary
+    /// group's remembered leaf stands in — "本组记忆", the same word the cell
+    /// uses — and with neither (or before `/proxies` lands) the group name and
+    /// the node count, so the collapsed row is never an empty band.
+    private var activeNodeSummary: some View {
+        HStack(spacing: Theme.Space.s8) {
+            Text("当前节点")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textTertiary())
+            if manager.isRunning, let leaf = manager.liveLeafName, !leaf.isEmpty {
+                Text(leaf)
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(Theme.Ink.claude)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Theme.claude.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                    .help("当前出口")
+            } else if let group = currentGroup, let remembered = rememberedNode(group) {
+                Text(remembered)
+                    .font(Theme.Font.captionMono)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("本组记忆")
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textTertiary())
+            } else if let group = currentGroup {
+                Text(group.name)
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
+                Text("共 \(group.nodes.count) 个节点")
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textTertiary())
+            }
+        }
+    }
+
+    /// The primary group's remembered leaf, resolved *through* nested selectors
+    /// (`GLOBAL now = 主代理`, `主代理 now = 香港 A01`), so the collapsed row
+    /// names a node rather than an intermediate group. Two hops, then stop: a
+    /// cycle in the config must not spin here.
+    private func rememberedNode(_ group: VpnGroup) -> String? {
+        var name = group.current
+        for _ in 0..<2 {
+            guard !name.isEmpty, let next = manager.groups.first(where: { $0.name == name }) else { break }
+            name = next.current
+        }
+        return name.isEmpty ? nil : name
     }
 
     private var previewNodeCard: some View {
@@ -1190,5 +1269,32 @@ private struct VpnLogConsole: View {
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .panelCard()
+    }
+}
+
+/// Real sibling columns keep hit testing and scrolling inside each column.
+/// The left content sets the row height, with room for the log toolbar even
+/// when there are no subscriptions.
+private struct VPNTopColumns: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
+                      cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 1040
+        let columnWidth = max(0, (width - spacing) / 2)
+        let leftHeight = subviews.first?.sizeThatFits(
+            ProposedViewSize(width: columnWidth, height: nil)).height ?? 0
+        return CGSize(width: width, height: max(400, leftHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        let width = max(0, (bounds.width - spacing) / 2)
+        for (index, subview) in subviews.enumerated() {
+            subview.place(at: CGPoint(x: bounds.minX + CGFloat(index) * (width + spacing),
+                                      y: bounds.minY),
+                          anchor: .topLeading,
+                          proposal: ProposedViewSize(width: width, height: bounds.height))
+        }
     }
 }

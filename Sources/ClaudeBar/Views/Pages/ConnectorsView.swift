@@ -4,7 +4,7 @@ import SwiftUI
 /// Plugin, skill and MCP installs as a fixed-height grid. Enable, disable and
 /// remove sit on the card. Plugin contents are read once during the scan.
 struct ConnectorsView: View {
-    @StateObject private var manager = ConnectorManager()
+    @ObservedObject private var manager = ConnectorManager.shared
     @AppStorage("connectorProjectPath") private var projectPath = ""
     @State private var focus: ConnectorFocus = .plugin
     @State private var platform: ConnectorPlatform?
@@ -79,7 +79,13 @@ struct ConnectorsView: View {
         } message: {
             Text(pendingRemoval?.message ?? "")
         }
-        .task { await manager.refresh(projectPath: selectedProject) }
+        .task {
+            // The manager outlives the page, so a banner from the last visit
+            // would otherwise greet this one.
+            manager.errorMessage = nil
+            manager.noticeMessage = nil
+            await manager.refresh(projectPath: selectedProject)
+        }
         .onChange(of: projectPath) { _, _ in
             Task { await manager.refresh(projectPath: selectedProject, scanCLIs: false) }
         }

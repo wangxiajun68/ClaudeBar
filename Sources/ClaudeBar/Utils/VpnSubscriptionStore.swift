@@ -672,7 +672,10 @@ enum VpnConfigBuilder {
                     - any:53
                 """
         }
-        var out = header + "\n" + Self.tuneForStability(yaml) + footer
+        // Before `tuneForStability`, which rewrites rule *bodies* (bootstrap
+        // DNS, url-test intervals) and must see the profile's own rules — not
+        // after, so a pin we add is never a needle it could have matched.
+        var out = header + "\n" + Self.tuneForStability(VpnProviderDirect.inject(into: yaml)) + footer
         if !prefs.vpnTunEnabled {
             // Airports often set dns.listen: :53 which needs root and breaks
             // the resolver when the bind fails.

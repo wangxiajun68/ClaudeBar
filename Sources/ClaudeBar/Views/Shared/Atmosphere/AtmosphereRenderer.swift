@@ -40,9 +40,17 @@ final class AtmosphereGPU: @unchecked Sendable {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let pipeline: MTLRenderPipelineState
+    /// The slow picture (sky, clouds, fog), at half the drawable. Sampled by `pipeline`.
+    let skyPipeline: MTLRenderPipelineState
     let noise: MTLTexture
     let emptyText: MTLTexture
+    /// Precipitation plates. Baked once; the frame scrolls them.
+    let rainFine: MTLTexture
+    let rainCoarse: MTLTexture
+    let snowFine: MTLTexture
+    let snowCoarse: MTLTexture
     static let pixelFormat = MTLPixelFormat.bgra8Unorm
+    static let skyPixelFormat = MTLPixelFormat.rgba16Float
 
     @MainActor private(set) static var shared: AtmosphereGPU?
     @MainActor private(set) static var failed = false
@@ -89,16 +97,42 @@ final class AtmosphereGPU: @unchecked Sendable {
         guard let queue = device.makeCommandQueue() else { throw LoadError.noQueue }
         let library = try device.makeLibrary(source: AtmosphereShader.source, options: MTLCompileOptions())
         guard let vertex = library.makeFunction(name: "atmosphere_vertex"),
+              let skyFragment = library.makeFunction(name: "atmosphere_sky"),
               let fragment = library.makeFunction(name: "atmosphere_fragment") else { throw LoadError.noFunction }
+        let skyDescriptor = MTLRenderPipelineDescriptor()
+        skyDescriptor.vertexFunction = vertex
+        skyDescriptor.fragmentFunction = skyFragment
+        skyDescriptor.colorAttachments[0].pixelFormat = Self.skyPixelFormat
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
         descriptor.fragmentFunction = fragment
         descriptor.colorAttachments[0].pixelFormat = Self.pixelFormat
         self.device = device
         self.queue = queue
+        self.skyPipeline = try device.makeRenderPipelineState(descriptor: skyDescriptor)
         self.pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         self.noise = try Self.makeNoise(device: device, queue: queue)
         self.emptyText = try Self.makeEmpty(device: device)
+        guard let bakeFunction = library.makeFunction(name: "precip_bake") else { throw LoadError.noFunction }
+        let bakeDescriptor = MTLRenderPipelineDescriptor()
+        bakeDescriptor.vertexFunction = vertex
+        bakeDescriptor.fragmentFunction = bakeFunction
+        bakeDescriptor.colorAttachments[0].pixelFormat = .r8Unorm
+        let bake = try device.makeRenderPipelineState(descriptor: bakeDescriptor)
+        // Sizes are an integer number of cells, and they are the `world` values
+        // the composite shader scrolls by. One point per pixel.
+        self.rainFine = try Self.makePlate(device: device, queue: queue, pipeline: bake,
+                                           width: 112, height: 384, cell: SIMD2(8, 96),
+                                           shape: SIMD4(18, 0.6, 0, 0), seed: 1, kind: 0)
+        self.rainCoarse = try Self.makePlate(device: device, queue: queue, pipeline: bake,
+                                             width: 180, height: 320, cell: SIMD2(18, 160),
+                                             shape: SIMD4(42, 1.5, 0, 0), seed: 13, kind: 0)
+        self.snowFine = try Self.makePlate(device: device, queue: queue, pipeline: bake,
+                                           width: 192, height: 192, cell: SIMD2(24, 24),
+                                           shape: SIMD4(0, 0, 1.2, 0.6), seed: 3, kind: 1)
+        self.snowCoarse = try Self.makePlate(device: device, queue: queue, pipeline: bake,
+                                             width: 224, height: 224, cell: SIMD2(56, 56),
+                                             shape: SIMD4(0, 0, 3.2, 2.2), seed: 21, kind: 1)
     }
 
     /// 256² tileable value noise, 64 lattice cells per side, two independent
@@ -149,6 +183,41 @@ final class AtmosphereGPU: @unchecked Sendable {
         guard let texture = device.makeTexture(descriptor: descriptor) else { throw LoadError.noDevice }
         var zero: UInt8 = 0
         texture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &zero, bytesPerRow: 1)
+        return texture
+    }
+
+    /// One tileable precipitation plate, rendered once. `shape` is
+    /// (streak length, streak width, flake size, flake blur).
+    private static func makePlate(device: MTLDevice, queue: MTLCommandQueue, pipeline: MTLRenderPipelineState,
+                                  width: Int, height: Int, cell: SIMD2<Float>, shape: SIMD4<Float>,
+                                  seed: Float, kind: Float) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm,
+                                                                  width: width, height: height, mipmapped: true)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor),
+              let buffer = queue.makeCommandBuffer() else { throw LoadError.noDevice }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = texture
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+        guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { throw LoadError.noDevice }
+        var bytes = [
+            SIMD4<Float>(Float(width), Float(height), cell.x, cell.y),
+            shape,
+            SIMD4<Float>(seed, kind, 0, 0)
+        ]
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setFragmentBytes(&bytes, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+        if let blit = buffer.makeBlitCommandEncoder() {
+            blit.generateMipmaps(for: texture)
+            blit.endEncoding()
+        }
+        buffer.commit()
+        buffer.waitUntilCompleted()
+        guard buffer.status == .completed else { throw LoadError.noDevice }
         return texture
     }
 }
@@ -515,6 +584,12 @@ final class AtmosphereRenderer {
     /// A still is always the settled frame, never a moment of the entrance.
     private var capturing = false
     private var lastFrame = CACurrentMediaTime()
+    /// The slow picture. Redrawn on its own clock; precipitation samples it.
+    private var skyTexture: MTLTexture?
+    private var skySize = SIMD2<Int>(0, 0)
+    private var lastSkyTime = -Double.infinity
+    /// Whether the encode that just returned marched the clouds again.
+    private(set) var drewSky = true
     private var parallax = SIMD2<Float>.zero
     private var nextFlash = CACurrentMediaTime() + 1.2
     private var flashStart: Double = -10
@@ -556,6 +631,22 @@ final class AtmosphereRenderer {
     /// Writes the greeting again from the first stroke; the sky stays as it is.
     func rewrite() { writeStart = CACurrentMediaTime() + 0.08 }
 
+    /// The frame rate this sky needs when nothing is touching it.
+    ///
+    /// Anything that *falls* (rain, snow, hail, glass drops, a storm) is a plate
+    /// scrolling across the card and reads best at 30 Hz. A calm sky is not: the
+    /// cloud deck drifts at `t · wind · 0.01` of a card width a second, the
+    /// stars breathe at about one radian a second, and a meteor takes 0.85 s to
+    /// cross a fifth of the band — every one of them moves well under a pixel
+    /// per frame at 15 Hz, so drawing them twice as often was pure GPU and
+    /// main-thread cost with nothing on screen to show for it.
+    var restingRate: Int {
+        guard let scene = input?.scene else { return 30 }
+        let falling = scene.rain > 0.001 || scene.snow > 0.001 || scene.glassDrops > 0.001
+            || scene.thunder > 0.001 || scene.hail
+        return falling ? 30 : 15
+    }
+
     /// The pen is on the page: the view should run at full rate until it lifts.
     var writing: Bool {
         guard let layout = input?.layout, input?.reduceMotion == false else { return false }
@@ -570,12 +661,6 @@ final class AtmosphereRenderer {
         rippleKind = scene.rain > 0 || scene.snow > 0 || scene.nightness > 0.5 ? 1 : 0
     }
 
-    /// Whether the scene has motion worth 60 Hz.
-    var wantsHighRate: Bool {
-        guard let scene = input?.scene else { return false }
-        return scene.rain > 0 || scene.snow > 0 || scene.thunder > 0
-    }
-
     // MARK: - Encoding
 
     func encode(pass: MTLRenderPassDescriptor, commandBuffer: MTLCommandBuffer, pixelSize: CGSize, scale: CGFloat,
@@ -584,16 +669,74 @@ final class AtmosphereRenderer {
         updateText(input: input, scale: scale, commandBuffer: commandBuffer)
         var uniforms = makeUniforms(input: input, pixelSize: pixelSize, scale: scale, now: now)
         var stars = input.scene.stars.isEmpty ? [SIMD4<Float>()] : input.scene.stars
+        drewSky = false
+        if let sky = skyTarget(pixelSize: pixelSize), skyDue(now: now, flash: uniforms.flash) {
+            // Half the drawable, with the scale reduced by the same factor, so
+            // the shader's point space is still the card. The march then covers
+            // a quarter of the pixels. The composite samples this with a linear
+            // filter, which is the upscale.
+            var deck = uniforms
+            deck.resolution = SIMD2(Float(sky.width), Float(sky.height))
+            deck.scale = uniforms.scale * Float(sky.width) / max(uniforms.resolution.x, 1)
+            let skyPass = MTLRenderPassDescriptor()
+            skyPass.colorAttachments[0].texture = sky
+            skyPass.colorAttachments[0].loadAction = .dontCare
+            skyPass.colorAttachments[0].storeAction = .store
+            if let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: skyPass) {
+                encoder.setRenderPipelineState(gpu.skyPipeline)
+                encoder.setFragmentBytes(&deck, length: MemoryLayout<AtmosphereUniforms>.stride, index: 0)
+                encoder.setFragmentBytes(&stars, length: MemoryLayout<SIMD4<Float>>.stride * stars.count, index: 1)
+                encoder.setFragmentTexture(gpu.noise, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                encoder.endEncoding()
+                lastSkyTime = now
+                drewSky = true
+            }
+        }
+        guard let sky = skyTexture else { return }
         pass.colorAttachments[0].loadAction = .dontCare
         pass.colorAttachments[0].storeAction = .store
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(gpu.pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<AtmosphereUniforms>.stride, index: 0)
-        encoder.setFragmentBytes(&stars, length: MemoryLayout<SIMD4<Float>>.stride * stars.count, index: 1)
-        encoder.setFragmentTexture(gpu.noise, index: 0)
+        encoder.setFragmentTexture(sky, index: 0)
         encoder.setFragmentTexture(textTexture ?? gpu.emptyText, index: 1)
+        encoder.setFragmentTexture(gpu.rainFine, index: 2)
+        encoder.setFragmentTexture(gpu.rainCoarse, index: 3)
+        encoder.setFragmentTexture(gpu.snowFine, index: 4)
+        encoder.setFragmentTexture(gpu.snowCoarse, index: 5)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
+    }
+
+    /// The deck is a slow picture. Clouds drift, the sun crawls, and a baked
+    /// rain plate does not need the deck to move with it. 30 Hz is the rate a
+    /// cloud actually changes; 15 Hz under Low Power Mode or thermal pressure.
+    /// A strike lights the deck from inside, so the deck follows that pulse.
+    private func skyDue(now: Double, flash: SIMD4<Float>) -> Bool {
+        if capturing || flash.x > 0.02 || flash.w > 0.02 { return true }
+        let elapsed = now - lastSkyTime
+        if elapsed < 0 { return true }
+        let info = ProcessInfo.processInfo
+        let constrained = info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
+        return elapsed >= (constrained ? 1.0 / 15 : 1.0 / 30)
+    }
+
+    /// Half the drawable on each axis. The card is authored in points, and a
+    /// retina drawable is twice that, so this is one pixel per point.
+    private func skyTarget(pixelSize: CGSize) -> MTLTexture? {
+        let width = max(1, Int((pixelSize.width / 2).rounded(.down)))
+        let height = max(1, Int((pixelSize.height / 2).rounded(.down)))
+        guard width > 0, height > 0 else { return nil }
+        if let skyTexture, skySize.x == width, skySize.y == height { return skyTexture }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: AtmosphereGPU.skyPixelFormat,
+                                                                  width: width, height: height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .private
+        skyTexture = gpu.device.makeTexture(descriptor: descriptor)
+        skySize = SIMD2(width, height)
+        lastSkyTime = -Double.infinity
+        return skyTexture
     }
 
     /// A still frame, for Reduce Motion, previews and tests. `time` fixes the

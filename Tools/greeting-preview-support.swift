@@ -8,6 +8,7 @@ struct HoverState: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { hovering in
+                if ScrollHoverGate.scrolling { return }
                 if isHovered != hovering { isHovered = hovering }
             }
     }
@@ -17,6 +18,15 @@ extension View {
     /// Drive `isHovered` from pointer movement, animated with the theme spring.
     func hoverState(_ isHovered: Binding<Bool>) -> some View {
         modifier(HoverState(isHovered: isHovered))
+    }
+
+    /// Drop hover writes for the duration of a flick, then reconcile once.
+    ///
+    /// A grid of tiles that each own a hover flag lays out once per tile the
+    /// pointer crosses. The flag is the one in `ScrollHoverGate`; this is the
+    /// scroll view's half of it.
+    func scrollHoverGate() -> some View {
+        modifier(ScrollHoverGateModifier())
     }
 }
 

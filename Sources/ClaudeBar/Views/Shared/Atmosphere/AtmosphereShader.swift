@@ -2,12 +2,17 @@
 /// `MTLDevice.makeLibrary(source:options:)`. The build uses bare `swiftc`, which
 /// has no offline Metal compiler, and the runtime compiler ships with the OS.
 ///
-/// One full-screen triangle, one fragment function, layered far → near:
-/// sky gradient + horizon scattering → stars / moon / sun → cirrus → volumetric
-/// cloud deck (perspective plane, light-marched toward the sun or moon) → fog →
-/// far rain / snow → rainbow / meteor / lightning → the greeting (glass, rim-lit,
-/// under the cloud shadow) → near rain / snow → refraction through drops on the
-/// card's own glass. `Uniforms` must match `AtmosphereUniforms` field for field.
+/// One full-screen triangle. The picture is three cached fields:
+///
+/// - `atmosphere_sky` is the deck (gradient, stars, sun and moon, cirrus, the
+///   light-marched clouds, fog), drawn at half the drawable and only on the
+///   deck's own clock.
+/// - Rain and snow are plates baked once by `precip_bake` and then scrolled.
+///   A frame samples the plate; it does not hash a new streak.
+/// - `atmosphere_fragment` composites the deck, the plates, the bolt, the
+///   greeting and the glass drops.
+///
+/// `Uniforms` must match `AtmosphereUniforms` field for field.
 enum AtmosphereShader {
     static let source = #"""
 #include <metal_stdlib>
@@ -49,6 +54,21 @@ vertex VOut atmosphere_vertex(uint vid [[vertex_id]]) {
 
 constexpr sampler noiseSampler(filter::linear, mip_filter::linear, address::repeat);
 constexpr sampler textSampler(filter::linear, mip_filter::linear, address::clamp_to_zero);
+constexpr sampler skySampler(filter::linear, address::clamp_to_edge);
+constexpr sampler plateSampler(filter::linear, mip_filter::linear, address::repeat);
+
+// One sample of a baked rain or snow plate. `world` is that plate's size in
+// points, and it must match the texture it was baked into. Bright marks show
+// first, so a small `amount` is a few streaks and a large one fills the pane.
+static float plate(texture2d<float> tex, float2 pt, float angle, float t, float speed,
+                   float world, float amount, float lod) {
+    if (amount <= 0.001) return 0.0;
+    float cs = cos(angle), sn = sin(angle);
+    float2 p = float2(cs * pt.x - sn * pt.y, sn * pt.x + cs * pt.y);
+    p.y -= t * speed;
+    float s = tex.sample(plateSampler, p / world, level(lod)).r;
+    return s * smoothstep(1.0 - amount, 1.15 - amount * 0.85, s);
+}
 
 constant float HORIZON = 0.80;
 
@@ -182,7 +202,7 @@ static float4 greeting(texture2d<float> tt, float2 tuv, float px) {
 struct SceneOut { float3 color; float cloud; };
 
 static SceneOut scene(constant Uniforms &u, constant float4 *stars,
-                      texture2d<float> nt, texture2d<float> tt, float2 pt) {
+                      texture2d<float> nt, float2 pt) {
     float W = u.resolution.x / u.scale;
     float skyH = u.zenith.a;
     float aspect = W / skyH;
@@ -336,21 +356,44 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
         c = mix(c, fogCol, clamp(fogD * 0.72, 0.0, 0.92));
     }
 
-    // --- far precipitation ---------------------------------------------------
+    SceneOut o;
+    o.color = c;
+    o.cloud = alpha;
+    return o;
+}
+
+static float3 foreground(constant Uniforms &u, texture2d<float> tt, float2 pt, float3 c, float cloud,
+                         texture2d<float> rainFine, texture2d<float> rainCoarse,
+                         texture2d<float> snowFine, texture2d<float> snowCoarse) {
+    float W = u.resolution.x / u.scale;
+    float skyH = u.zenith.a;
+    float t = u.time;
+    float night = u.horizon.a;
+    float2 par = u.parallax.xy;
+    float2 uv = float2(pt.x / W, pt.y / skyH);
+    float2 sunPt = u.sun.xy * float2(W, skyH) + par * 0.05;
+    bool sunLight = u.sunColor.a > -3.0;
+    float2 lightPt = sunLight ? sunPt : u.moon.xy * float2(W, skyH) + par * 0.05;
+
+    // Plates are baked at full density. `plate` keeps the brightest marks when
+    // the weather is light and lets the rest in as it thickens. Sizes match
+    // the textures `AtmosphereGPU` bakes (points per tile).
     float slant = u.cloud.w;
     float3 dropCol = mix(float3(0.80, 0.86, 0.94), float3(0.55, 0.62, 0.75), night);
     if (u.precip.x > 0.001) {
         float2 rp = pt + par * 0.35;
-        float r = rainLayer(rp, t, slant, 7.0, 90.0, 520.0, 16.0, 0.55, u.precip.x * 0.55, 1.0)
-                + rainLayer(rp, t, slant, 11.0, 130.0, 700.0, 24.0, 0.7, u.precip.x * 0.45, 7.0);
-        c += dropCol * r * 0.26;
+        float amt = saturate(u.precip.x * 1.15);
+        float r = plate(rainFine, rp, slant, t, 540.0, 112.0, amt, 0.0)
+                + plate(rainFine, rp + 40.0, slant, t, 760.0, 112.0, amt * 0.85, 0.6);
+        c += dropCol * r * 0.34;
         c = mix(c, c * 0.9 + skyGradient(u, HORIZON) * 0.1, u.precip.x * 0.4);
     }
     if (u.precip.y > 0.001) {
-        float2 sp = pt + par * 0.3;
-        float s = snowLayer(sp, t, 22.0, 16.0, 0.9, 0.6, u.precip.y * 0.55, 3.0, 4.0)
-                + snowLayer(sp, t, 34.0, 28.0, 1.5, 0.8, u.precip.y * 0.5, 9.0, 7.0);
-        c = mix(c, float3(0.97, 0.98, 1.0) * mix(1.0, 0.7, night), clamp(s, 0.0, 1.0) * 0.75);
+        float2 sp = pt + par * 0.3 + float2(sin(t * 0.7) * 8.0, 0.0);
+        float amt = saturate(u.precip.y * 1.15);
+        float s = plate(snowFine, sp, 0.0, t, 18.0, 192.0, amt, 0.0)
+                + plate(snowFine, sp + 30.0, 0.0, t, 30.0, 192.0, amt * 0.9, 0.4);
+        c = mix(c, float3(0.97, 0.98, 1.0) * mix(1.0, 0.7, night), clamp(s, 0.0, 1.0) * 0.8);
     }
 
     // --- lightning bolt --------------------------------------------------------
@@ -482,7 +525,7 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
         // rim covered the whole stroke and the line read as a hollow tube.
         float3 glass = mix(refr * 1.15 + 0.1, inkLight, 0.9);
         glass *= mix(1.0, 0.94, clamp(tuv.y * 1.3 - 0.2, 0.0, 1.0));
-        glass *= 1.0 - alpha * 0.10;
+        glass *= 1.0 - cloud * 0.10;
         float3 inkDark = mix(float3(0.08, 0.12, 0.2), refr * 0.35, 0.25);
         glass = mix(glass, glass * float3(0.74, 0.79, 0.88), glare);
         float3 fill = mix(glass, inkDark, darkInk);
@@ -498,25 +541,24 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
     // --- near precipitation (in front of the greeting) ----------------------------
     if (u.precip.x > 0.001) {
         float2 rp = pt + par * 0.7;
-        float r = rainLayer(rp, t, slant * 1.15, 26.0, 260.0, 1100.0, 46.0, 1.6, u.precip.x * 0.32, 13.0);
-        c += dropCol * r * 0.20;
+        float r = plate(rainCoarse, rp, slant * 1.15, t, 1080.0, 180.0, saturate(u.precip.x), 0.0);
+        c += dropCol * r * 0.28;
     }
     if (u.precip.y > 0.001) {
-        float2 sp = pt + par * 0.75;
-        float s = snowLayer(sp, t, 70.0, 46.0, 3.2, 2.6, u.precip.y * 0.3, 21.0, 11.0);
-        c = mix(c, float3(1.0), clamp(s, 0.0, 1.0) * 0.6 * mix(1.0, 0.7, night));
+        float2 sp = pt + par * 0.75 + float2(sin(t * 0.5 + 1.3) * 12.0, 0.0);
+        float s = plate(snowCoarse, sp, 0.0, t, 46.0, 224.0, saturate(u.precip.y), 0.0);
+        c = mix(c, float3(1.0), clamp(s, 0.0, 1.0) * 0.65 * mix(1.0, 0.7, night));
     }
     if (u.effects.y > 0.5) {
         float2 hp = pt + par * 0.6;
-        float hl = snowLayer(hp, t * 5.0, 40.0, 150.0, 1.2, 0.4, 0.35, 31.0, 20.0);
+        float hl = plate(snowCoarse, hp, 0.15, t * 1.0, 420.0, 224.0, 0.55, 0.0);
         c = mix(c, float3(0.95), clamp(hl, 0.0, 1.0) * 0.7);
     }
 
-    SceneOut o;
-    o.color = c;
-    o.cloud = alpha;
-    return o;
+    return c;
 }
+
+
 
 // A bead of water seen against light: a dark meniscus at the rim (heavier on
 // top, where it faces away from the light), a bright caustic crescent low
@@ -586,11 +628,22 @@ static float4 glassDrops(float2 pt, float t, float amount, float H, float4 point
     return res;
 }
 
+fragment float4 atmosphere_sky(VOut in [[stage_in]],
+                                constant Uniforms &u [[buffer(0)]],
+                                constant float4 *stars [[buffer(1)]],
+                                texture2d<float> noiseTex [[texture(0)]]) {
+    SceneOut s = scene(u, stars, noiseTex, in.position.xy / u.scale);
+    return float4(s.color, saturate(s.cloud));
+}
+
 fragment float4 atmosphere_fragment(VOut in [[stage_in]],
                                     constant Uniforms &u [[buffer(0)]],
-                                    constant float4 *stars [[buffer(1)]],
-                                    texture2d<float> noiseTex [[texture(0)]],
-                                    texture2d<float> textTex [[texture(1)]]) {
+                                    texture2d<float> skyTex [[texture(0)]],
+                                    texture2d<float> textTex [[texture(1)]],
+                                    texture2d<float> rainFine [[texture(2)]],
+                                    texture2d<float> rainCoarse [[texture(3)]],
+                                    texture2d<float> snowFine [[texture(4)]],
+                                    texture2d<float> snowCoarse [[texture(5)]]) {
     float2 pt = in.position.xy / u.scale;
     float W = u.resolution.x / u.scale;
     float Hc = u.resolution.y / u.scale;
@@ -613,8 +666,12 @@ fragment float4 atmosphere_fragment(VOut in [[stage_in]],
     float4 drop = glassDrops(pt, u.time, u.effects.x, Hc, u.pointer);
     offset += drop.xy;
 
-    SceneOut s = scene(u, stars, noiseTex, textTex, pt + offset);
-    float3 c = s.color;
+    // The deck is already in the texture. A drop or a ripple shifts the sample,
+    // which is the refraction, without marching the clouds again.
+    float2 uv = (in.position.xy + offset * u.scale) / max(u.resolution, float2(1.0));
+    float4 sky = skyTex.sample(skySampler, uv);
+    float3 c = foreground(u, textTex, pt + offset, sky.rgb, sky.a,
+                          rainFine, rainCoarse, snowFine, snowCoarse);
     if (drop.z > 0.001) {
         c = mix(c, c * 1.1 + 0.025, drop.z * 0.6);
         c += drop.w;
@@ -632,6 +689,18 @@ fragment float4 atmosphere_fragment(VOut in [[stage_in]],
     c = select(c, 0.82 + (1.0 - exp(-(c - 0.82) * 5.5)) * 0.18, c > 0.82);
     c += (hash21(in.position.xy + fract(u.time) * 17.0) - 0.5) / 255.0;
     return float4(clamp(c, 0.0, 1.0), 1.0);
+}
+
+// Bakes one tile of the precipitation plate. Drawn once, at 1 point per pixel,
+// into a texture whose size is an integer number of cells so it repeats.
+// b0 = (width, height, cellW, cellH), b1 = (length, width, flake size, blur),
+// b2 = (seed, kind, _, _). kind 0 is rain, 1 is snow.
+fragment float4 precip_bake(VOut in [[stage_in]], constant float4 *b [[buffer(0)]]) {
+    float2 pt = in.position.xy;
+    float v = b[2].y < 0.5
+        ? rainLayer(pt, 0.0, 0.0, b[0].z, b[0].w, 0.0, b[1].x, b[1].y, 1.0, b[2].x)
+        : snowLayer(pt, 0.0, b[0].z, 0.0, b[1].z, b[1].w, 1.0, b[2].x, 0.0);
+    return float4(saturate(v), 0.0, 0.0, 1.0);
 }
 """#
 }

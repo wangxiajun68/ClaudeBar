@@ -66,6 +66,31 @@ assert 'ObservedObject private var log = VpnDomainLog.shared' in section, \
 assert 'tone: .destructive' in section and 'confirmClear' in section, \
     '清空 must confirm: it discards the aggregate the user is reading'
 
+# Exercise the actual view's filtering code without rendering SwiftUI. The
+# revision stays fixed while the user changes controls, reproducing the bug.
+filter_enum = section[section.index('    enum RouteFilter:'):
+                      section.index('    var body:')]
+filter_methods = section[section.index('    private func recompute()'):
+                         section.index('    private func copyVisible()')]
+filter_methods = filter_methods.replace('private func recompute()', 'func recompute()')
+filter_methods = filter_methods.replace('VpnDomainLog.stat', 'DomainStat.stat')
+filter_harness = r"""
+final class FilterHarness {
+    struct Log { var entries: [VpnDomainEntry]; var revision = 1 }
+    var log: Log
+    var query = ""
+    var routeFilter: RouteFilter = .all
+    var computedRevision = -1
+    var queryRows: [VpnDomainEntry] = []
+    var visibleRows: [VpnDomainEntry] = []
+    var visibleStats: [VpnDomainLogStat] = []
+    var tallyProxied = 0, tallyDirect = 0, tallyReject = 0
+    init(_ entries: [VpnDomainEntry]) { log = Log(entries: entries) }
+    FILTER_ENUM
+    FILTER_METHODS
+}
+""".replace('FILTER_ENUM', filter_enum).replace('FILTER_METHODS', filter_methods)
+
 # --- the harness ------------------------------------------------------------
 swift = r'''
 import Foundation
@@ -75,6 +100,8 @@ MODELS_AND_FEED
 enum DomainStat { STAT_FUNC }
 
 WATCHLIST
+
+FILTER_HARNESS
 
 @main struct Regression {
     static func feedAll(_ lines: [String]) -> [VpnDomainEntry] {
@@ -243,6 +270,25 @@ WATCHLIST
         precondition(VpnWatchlist.matches(host: "mycursor.com").isEmpty,
                      "suffix matching must not catch a lookalike")
 
+        let filters = FilterHarness(entries)
+        filters.recompute()
+        precondition(filters.visibleRows.count == 4)
+        filters.routeFilter = .direct
+        filters.recompute()
+        precondition(filters.visibleRows.count == 2 && filters.tallyProxied == 0,
+                     "route selection must update without a new log revision")
+        precondition(filters.visibleStats.allSatisfy { $0.proxied == 0 })
+        filters.query = "  APPLE\n"
+        filters.recompute()
+        precondition(filters.visibleRows.count == 1 && filters.visibleRows[0].host == "www.apple.com",
+                     "search must update while the log is idle, ignoring whitespace and case")
+        filters.query = "no-such-host"
+        filters.recompute()
+        precondition(filters.visibleRows.isEmpty && filters.visibleStats.isEmpty)
+        filters.query = ""
+        filters.routeFilter = .all
+        filters.recompute()
+        precondition(filters.visibleRows.count == 4, "clearing filters restores all rows")
         print("vpn domain log OK")
     }
 }
@@ -251,7 +297,8 @@ WATCHLIST
 swift = (swift
          .replace('MODELS_AND_FEED', feed)
          .replace('STAT_FUNC', stat)
-         .replace('WATCHLIST', watchlist))
+         .replace('WATCHLIST', watchlist)
+         .replace('FILTER_HARNESS', filter_harness))
 
 with tempfile.TemporaryDirectory() as tmp:
     temporary = Path(tmp)

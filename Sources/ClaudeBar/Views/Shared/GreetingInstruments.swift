@@ -518,38 +518,78 @@ struct SillGauge: View {
 
 // MARK: - Sky mode
 
-/// 自动 / 手动: whether the sky follows the live reading and the clock, or the
-/// weather and hour the user sets. One capsule, the selection sliding between
-/// the two halves.
+/// 天气渲染关掉后，天空停在一种天气上；这一层天气在天空里叫 `SkyScene.Weather`，
+/// 在卡片右上、控制台和日轨里则要用 `WeatherReading.Sky` 的说法（图标 / 名称）。
+/// 两张表本来各自成立，这里只是搭一座桥——不是第三张口径。
+enum PinnedSky {
+    static func sky(for weather: SkyScene.Weather?) -> WeatherReading.Sky {
+        switch weather {
+        case .none, .clear: return .clear
+        case .cloudy: return .partly
+        case .overcast: return .cloudy
+        case .lightRain: return .drizzle
+        case .heavyRain: return .rain
+        case .thunder: return .thunder
+        case .snow: return .snow
+        case .fog: return .fog
+        }
+    }
+}
+
+/// 实时 / 手动 / 贴图：天空跟着实时天气与钟点、跟着自选的天气与时刻，还是关掉
+/// 天气、只留一张天空贴图。一个胶囊，选中项在两三格之间滑动。
+///
+/// 只有实时天气关掉（`rendering == false`）之后第三格才出现——那之后天空停在
+/// 一种天气上，"贴图"这一格本身就是把它重新打开的开关。
 struct SkyModeToggle: View {
-    var manual: Bool
+    /// "auto" / "manual" / "preview"
+    var skyMode: String
+    /// 偏好里「实时天气（天气渲染）」那一项。关掉意思是天空现在停在某一层，
+    /// 也正是这一格出现的原因。
+    var rendering: Bool
     var ink: Color
-    var set: (Bool) -> Void
+    var setManual: (Bool) -> Void
+    /// 开 / 关「预演」（只在实时天气开着时有意义）。
+    var setPreview: (Bool) -> Void
+    /// 「贴图」那一段：把实时天气关掉的那一项再打开。
+    var setRendering: (Bool) -> Void
 
     @Namespace private var pill
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var previewing: Bool { skyMode == "preview" }
+    private var manual: Bool { skyMode == "manual" }
+    private var none: Bool { !rendering && !manual && !previewing }
+
+    private var selection: Int { manual ? 1 : (previewing ? 2 : 0) }
+
     var body: some View {
         HStack(spacing: 0) {
-            segment(false, title: "自动", symbol: "sparkles", help: "天空跟随实时天气与时间")
-            segment(true, title: "手动", symbol: "slider.horizontal.3", help: "自选天气与时段，拖动时间轴预览")
+            if none {
+                segment(0, title: "贴图", symbol: "photo",
+                        help: "天气渲染已关闭：天空停在一种天气上，点一下重新打开")
+            } else {
+                segment(0, title: "自动", symbol: "sparkles", help: "天空跟随实时天气与时间")
+                segment(1, title: "手动", symbol: "slider.horizontal.3", help: "自选天气与时段，拖动时间轴预览")
+            }
         }
         .padding(2)
         .background(ink.opacity(0.1), in: Capsule())
         .overlay(Capsule().strokeBorder(ink.opacity(0.16), lineWidth: 0.5))
-        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: manual)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: skyMode)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: rendering)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("天空模式")
     }
 
-    private func segment(_ value: Bool, title: String, symbol: String, help: String) -> some View {
-        let selected = manual == value
-        return Button { set(value) } label: {
+    private func segment(_ index: Int, title: String, symbol: String, help: String) -> some View {
+        let selected = selection == index
+        return Button { tap(index) } label: {
             HStack(spacing: 4) {
                 Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
                 Text(title).font(.system(size: 10, weight: .semibold))
             }
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
             .frame(height: 20)
             .foregroundStyle(ink.opacity(selected ? 0.95 : 0.55))
             .background {
@@ -562,6 +602,19 @@ struct SkyModeToggle: View {
         .buttonStyle(InstrumentPressStyle())
         .help(help)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func tap(_ index: Int) {
+        switch index {
+        case 0:
+            if none { setRendering(true) } else { setManual(false) }
+        case 1:
+            // 手动换自动，或预演换手动；同一个动作——真正的手动。
+            setPreview(false)
+            setManual(true)
+        default:
+            setPreview(!previewing)
+        }
     }
 }
 

@@ -28,7 +28,9 @@ enum CaptureState { case pending, streaming, completed }
 struct Row { var id: Int64; var state: CaptureState }
 final class Catalog: ObservableObject {
     var records: [Row] = []
-    @Published var livePreview: [Int64: String] = [:]
+}
+final class Previews: ObservableObject {
+    @Published var map: [Int64: String] = [:]
 }
 final class Streams: ObservableObject {
     @Published var live: [Int64: CaptureLive] = [:]
@@ -40,6 +42,7 @@ final class CaptureFixture {
     let liveFlushQueue = DispatchQueue(label: "regression.capture")
     let catalog = Catalog()
     let streams = Streams()
+    let previews = Previews()
     static func clip(_ text: String) -> String { String(text.prefix(80)) }
     SCHEDULE
     FLUSH
@@ -93,7 +96,7 @@ final class Counter: @unchecked Sendable {
         var streamPublishes = 0
         var previewPublishes = 0
         let s = fixture.streams.objectWillChange.sink { streamPublishes += 1 }
-        let p = fixture.catalog.objectWillChange.sink { previewPublishes += 1 }
+        let p = fixture.previews.objectWillChange.sink { previewPublishes += 1 }
         // An uninterrupted stream must publish before it goes quiet.
         //
         // The publish count is bounded *relative to elapsed time*, not by a

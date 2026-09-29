@@ -16,6 +16,8 @@ struct VpnDomainLogSection: View {
     @State private var copied = false
     @State private var confirmClear = false
     @State private var followTail = true
+    @State private var scrollingDetail = false
+    @State private var detailAtTail = true
 
     /// Detail rows after the *route* filter; the search pass feeds it.
     @State private var visibleRows: [VpnDomainEntry] = []
@@ -31,17 +33,18 @@ struct VpnDomainLogSection: View {
     @State private var tallyProxied = 0
     @State private var tallyDirect = 0
     @State private var tallyReject = 0
-    /// `log.revision` this cache was built from — a publish that changed
-    /// nothing (the store's own `clear`) is not worth another pass.
-    @State private var computedRevision = -1
     private static let tailTolerance: CGFloat = 24
-    /// 汇总表只画前 N 个域名；其余收口成一行。
-    private static let statLimit = 10
 
     enum Mode: String, CaseIterable, Identifiable {
-        case detail, summary
+        case detail, summary, connections
         var id: String { rawValue }
-        var label: String { self == .detail ? "明细" : "汇总" }
+        var label: String {
+            switch self {
+            case .detail: return "明细"
+            case .summary: return "汇总"
+            case .connections: return "实时连接"
+            }
+        }
     }
 
     enum RouteFilter: String, CaseIterable, Identifiable {
@@ -69,22 +72,36 @@ struct VpnDomainLogSection: View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             SectionHeader(icon: "globe.asia.australia", title: "流量日志", tint: Theme.claude)
             toolbar
-            Text("内核只在 info 级记录**新建 TCP 连接**：没有字节数、不记 UDP，"
-                 + "所以这里回答的是「谁走了哪条出口、命中了哪条规则」，不是「用了多少流量」。")
+            Text(mode == .connections
+                 ? "显示当前连接累计上传／下载；关闭的连接会移除。短连接可能在采样间隔内结束；进程名以内核识别结果为准。"
+                 : "每行是一条新建 TCP 连接，不等同于一次请求。历史日志没有字节数；切换「实时连接」查看上传、下载与进程。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .fixedSize(horizontal: false, vertical: true)
             HairlineDivider()
             content
+                .id("\(mode.rawValue)|\(routeFilter.rawValue)|\(query)")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .panelCard()
         .onAppear { recompute() }
-        .onReceive(log.$revision) { _ in recompute() }
-        .onChange(of: routeFilter) { _, _ in recompute() }
-        .onChange(of: query) { _, _ in recompute() }
+        .onChange(of: log.revision) { _, _ in recompute() }
+        .onChange(of: routeFilter) { _, _ in
+            followTail = true
+            copied = false
+            recompute()
+        }
+        .onChange(of: query) { _, _ in
+            followTail = true
+            copied = false
+            recompute()
+        }
+        .onChange(of: mode) { _, _ in
+            followTail = true
+            copied = false
+        }
         .alert("清空流量日志？", isPresented: $confirmClear) {
             Button("清空", role: .destructive) {
                 log.clear()
@@ -102,34 +119,62 @@ struct VpnDomainLogSection: View {
 
     private var toolbar: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            HStack(spacing: Theme.Space.s8) {
-                SegmentedCapsule(items: Mode.allCases,
-                                 selection: mode,
-                                 title: { $0.label },
-                                 tint: Theme.Ink.claude,
-                                 onSelect: { mode = $0 })
-                Spacer(minLength: 0)
-                RollingNumberText("\(visibleCount)")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(Theme.textTertiary())
-                    .monospacedDigit()
-                ActionButton(copied ? "已复制" : "复制") { copyVisible() }
-                    .disabled(visibleCount == 0)
-                ActionButton("清空", tone: .destructive) { confirmClear = true }
-                    .disabled(log.received == 0)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Theme.Space.s8) {
+                    modePicker
+                    Spacer(minLength: Theme.Space.s8)
+                    logActions
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                    modePicker
+                    HStack {
+                        Spacer(minLength: 0)
+                        logActions
+                    }
+                }
             }
             SegmentedCapsule(items: RouteFilter.allCases,
                              selection: routeFilter,
                              title: { $0.label },
-                             count: { $0 == .all ? queryRows.count : routeCount($0) },
+                             count: { filter in
+                                 if mode == .connections {
+                                     return searchedConnections.filter { filter.route == nil || $0.route == filter.route }.count
+                                 }
+                                 return filter == .all ? queryRows.count : routeCount(filter)
+                             },
                              tint: Theme.Ink.claude,
                              onSelect: { routeFilter = $0 })
-            InstrumentSearchField(prompt: "域名 / 出口 / 规则", text: $query)
+            InstrumentSearchField(prompt: mode == .connections ? "域名 / 进程 / 出口 / 规则" : "域名 / 出口 / 规则", text: $query)
         }
     }
 
+    private var modePicker: some View {
+        SegmentedCapsule(items: Mode.allCases, selection: mode,
+                         title: { $0.label }, tint: Theme.Ink.claude,
+                         onSelect: { mode = $0 })
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var logActions: some View {
+        HStack(spacing: Theme.Space.s8) {
+            RollingNumberText("\(visibleCount) \(mode == .summary ? "域名" : "条")")
+                .font(Theme.Font.captionMono)
+                .foregroundColor(Theme.textSecondary)
+                .monospacedDigit()
+            ActionButton(copied ? "已复制" : "复制") { copyVisible() }
+                .disabled(visibleCount == 0)
+            if mode != .connections {
+                ActionButton("清空", tone: .destructive) { confirmClear = true }
+                    .disabled(log.received == 0)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     @ViewBuilder private var content: some View {
-        if log.entries.isEmpty {
+        if mode == .connections {
+            connectionList
+        } else if log.entries.isEmpty {
             StandbyEmptyState(
                 label: "暂无流量记录",
                 symbol: "globe.asia.australia",
@@ -151,7 +196,11 @@ struct VpnDomainLogSection: View {
     }
 
     private var visibleCount: Int {
-        mode == .detail ? visibleRows.count : visibleStats.count
+        switch mode {
+        case .detail: return visibleRows.count
+        case .summary: return visibleStats.count
+        case .connections: return visibleConnections.count
+        }
     }
 
     /// Counted across the *search* set, not the route-filtered one — otherwise
@@ -159,6 +208,52 @@ struct VpnDomainLogSection: View {
     private func routeCount(_ filter: RouteFilter) -> Int {
         guard let route = filter.route else { return 0 }
         return queryRows.reduce(0) { $0 + ($1.route == route ? 1 : 0) }
+    }
+
+    private var searchedConnections: [VpnDomainConnection] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return log.connections.filter {
+            q.isEmpty || "\($0.endpoint) \($0.process) \($0.outbound) \($0.rule)".localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    private var visibleConnections: [VpnDomainConnection] {
+        searchedConnections.filter { routeFilter.route == nil || $0.route == routeFilter.route }
+    }
+
+    private var connectionList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s8) {
+                if visibleConnections.isEmpty {
+                    Text(manager.isRunning ? "暂无匹配的活动连接" : "启动代理后显示活动连接")
+                        .foregroundColor(Theme.textSecondary)
+                }
+                ForEach(visibleConnections) { connection in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(connection.endpoint)
+                            .font(Theme.Font.console)
+                            .foregroundColor(routeInk(connection.route))
+                            .textSelection(.enabled)
+                        HStack(spacing: Theme.Space.s12) {
+                            Text(connection.process)
+                                .lineLimit(1)
+                                .help(connection.process)
+                            Spacer(minLength: 0)
+                            Text("↑ " + VpnFormat.bytes(connection.upload))
+                            Text("↓ " + VpnFormat.bytes(connection.download))
+                        }
+                        .font(Theme.Font.captionMono)
+                        .foregroundColor(Theme.textPrimary)
+                        Text("\(connection.route.label) · \(connection.rule) → \(connection.outbound)")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(routeInk(connection.route))
+                            .lineLimit(2)
+                        HairlineDivider()
+                    }
+                }
+            }
+            .padding(Theme.Space.s8)
+        }
     }
 
     // MARK: Detail
@@ -185,6 +280,7 @@ struct VpnDomainLogSection: View {
                 }
                 .padding(Theme.Space.s8)
             }
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .frame(maxHeight: .infinity)
             .background(Theme.textTertiary().opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
@@ -196,11 +292,36 @@ struct VpnDomainLogSection: View {
                     - (geo.contentOffset.y + geo.containerSize.height)
                 return distanceFromBottom <= Self.tailTolerance
             } action: { _, atTail in
-                followTail = atTail
+                detailAtTail = atTail
+                if scrollingDetail { followTail = atTail }
             }
-            .onChange(of: visibleRows.count) { _, count in
-                guard followTail, count > 0 else { return }
-                proxy.scrollTo(visibleRows[count - 1].id, anchor: .bottom)
+            .onScrollPhaseChange { _, phase in
+                switch phase {
+                case .tracking, .interacting, .decelerating:
+                    scrollingDetail = true
+                    followTail = detailAtTail
+                case .idle:
+                    if scrollingDetail { followTail = detailAtTail }
+                    scrollingDetail = false
+                default:
+                    break
+                }
+            }
+            .onDisappear { scrollingDetail = false }
+            .onChange(of: visibleRows.last?.id) { _, id in
+                guard followTail, !scrollingDetail, let id else { return }
+                proxy.scrollTo(id, anchor: .bottom)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !followTail {
+                    ActionButton("回到最新") {
+                        followTail = true
+                        if let id = visibleRows.last?.id {
+                            proxy.scrollTo(id, anchor: .bottom)
+                        }
+                    }
+                    .padding(Theme.Space.s8)
+                }
             }
         }
     }
@@ -215,16 +336,18 @@ struct VpnDomainLogSection: View {
     // MARK: Summary
 
     private var summaryTable: some View {
-        ScrollView([.horizontal, .vertical]) {
-            summaryTableContent
-                .frame(minWidth: 560)
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
+                summaryTableContent
+                    .frame(width: max(640, geometry.size.width), alignment: .leading)
+            }
         }
     }
 
     private var summaryTableContent: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s6) {
             HStack(spacing: Theme.Space.s16) {
-                tally("共", "\(log.received) 次")
+                tally("筛选结果", "\(visibleRows.count) 次")
                 tally("域名", "\(visibleStats.count)")
                 tally("已代理", "\(tallyProxied)", tint: Theme.Ink.claude)
                 tally("直连", "\(tallyDirect)", tint: Theme.Ink.warning)
@@ -240,18 +363,15 @@ struct VpnDomainLogSection: View {
 
             HairlineDivider()
 
-            LazyVStack(alignment: .leading, spacing: 1) {
-                summaryHeader
-                ForEach(visibleStats.prefix(Self.statLimit)) { stat in
-                    summaryRow(stat)
+            LazyVStack(alignment: .leading, spacing: 1, pinnedViews: [.sectionHeaders]) {
+                Section {
+                    ForEach(visibleStats) { stat in
+                        summaryRow(stat)
+                    }
+                } header: {
+                    summaryHeader
+                        .background(Theme.bgPrimary)
                 }
-            }
-            if visibleStats.count > Self.statLimit {
-                let rest = visibleStats.dropFirst(Self.statLimit)
-                Text("其余 \(rest.count) 个域名 · \(rest.reduce(0) { $0 + $1.hits }) 次")
-                    .font(Theme.Font.caption)
-                    .foregroundColor(Theme.textTertiary())
-                    .padding(.top, 4)
             }
         }
     }
@@ -271,9 +391,10 @@ struct VpnDomainLogSection: View {
         HStack(spacing: Theme.Space.s8) {
             Text("域名").frame(maxWidth: .infinity, alignment: .leading)
             Text("次数").frame(width: 44, alignment: .trailing)
-            Text("路由").frame(width: 44, alignment: .trailing)
-            Text("最近").frame(width: 60, alignment: .trailing)
+            Text("路由").frame(width: 76, alignment: .leading)
+            Text("最近").frame(width: 72, alignment: .trailing)
             Text("出口").frame(width: 180, alignment: .leading)
+            Text("失败").frame(width: 44, alignment: .trailing)
         }
         .font(Theme.Font.microMono)
         .foregroundColor(Theme.textTertiary())
@@ -290,33 +411,47 @@ struct VpnDomainLogSection: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(stat.host)
             Text("\(stat.hits)")
                 .font(Theme.Font.console)
                 .foregroundColor(Theme.textPrimary)
                 .monospacedDigit()
                 .frame(width: 44, alignment: .trailing)
             routeChip(stat)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: 76, alignment: .leading)
             Text(stat.lastTimeText.isEmpty ? "—" : stat.lastTimeText)
                 .font(Theme.Font.console)
                 .foregroundColor(Theme.textTertiary())
-                .frame(width: 60, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 72, alignment: .trailing)
             Text(stat.lastOutbound.isEmpty ? "—" : stat.lastOutbound)
                 .font(Theme.Font.captionMono)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(width: 180, alignment: .leading)
-            if stat.failed > 0 {
-                Text("⚠ \(stat.failed)")
-                    .font(Theme.Font.captionMono)
-                    .foregroundColor(Theme.Ink.warning)
-            }
+                .help(stat.lastOutbound)
+            Text(stat.failed > 0 ? "\(stat.failed)" : "—")
+                .font(Theme.Font.captionMono)
+                .foregroundColor(stat.failed > 0 ? Theme.Ink.error : Theme.textTertiary())
+                .monospacedDigit()
+                .frame(width: 44, alignment: .trailing)
         }
         .padding(.horizontal, Theme.Space.s6)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.base1.opacity(0.5))
+        .textSelection(.enabled)
+        .contextMenu {
+            Button("复制域名") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(stat.host, forType: .string)
+            }
+            Button("复制出口") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(stat.lastOutbound, forType: .string)
+            }
+        }
     }
 
     /// One micro-bar of the host's route split. A host commonly appears under
@@ -326,6 +461,8 @@ struct VpnDomainLogSection: View {
         let total = max(1, stat.hits)
         return HStack(spacing: 3) {
             Text(stat.lastRoute.label)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .font(Theme.Font.micro)
                 .foregroundColor(routeInk(stat.lastRoute))
             GeometryReader { geo in
@@ -387,9 +524,9 @@ struct VpnDomainLogSection: View {
     // MARK: Cache / actions
 
     private func recompute() {
-        guard computedRevision != log.revision || queryRows.isEmpty != log.entries.isEmpty else { return }
-        computedRevision = log.revision
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        // Called only when data, query or route changes. Revision alone is
+        // insufficient: filters must work even when no new log has arrived.
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         queryRows = q.isEmpty ? log.entries : log.entries.filter { row in
             row.host.lowercased().contains(q)
                 || row.outbound.lowercased().contains(q)
@@ -426,6 +563,10 @@ struct VpnDomainLogSection: View {
         switch mode {
         case .detail:
             text = visibleRows.map(\.consoleLine).joined(separator: "\n")
+        case .connections:
+            text = visibleConnections.map {
+                "\($0.endpoint)\t\($0.process)\t↑ \(VpnFormat.bytes($0.upload))\t↓ \(VpnFormat.bytes($0.download))\t\($0.route.label)\t\($0.outbound)"
+            }.joined(separator: "\n")
         case .summary:
             text = visibleStats.map {
                 "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)"

@@ -86,8 +86,10 @@ assert not any('loadRing' in f.read_text() for f in all_shared), \
     'the loadRing decoration kind must be gone with its only caller'
 
 # --- The marks are fed real per-unit readings -------------------------------
-for needle in ['cells: sampler.host.gpuRenderers.map { $0 / 100 }',
-               'cells: sampler.host.coreLoad',
+for needle in ['SiliconCells(gpu: true',
+               'SiliconCells(gpu: false',
+               'cells: gpu ? sampler.cells.gpuRenderers.map { $0 / 100 }',
+               ': sampler.cells.cores',
                'wells: sampler.host.memoryWells',
                'wells: sampler.host.diskWells']:
     assert needle in strip, f'ResourceStrip must pass {needle!r} to the mark'

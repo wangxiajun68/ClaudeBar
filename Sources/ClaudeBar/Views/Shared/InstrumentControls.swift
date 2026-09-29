@@ -454,14 +454,18 @@ struct ActionButton<Label: View>: View {
                     // the filled plate sits above the page, and only barely.
                     // `.sparkle` carries its own glow inside `SparklePlate`, so
                     // this layer stays off for it.
-                    LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
-                                y: pressed ? 0 : (hovered ? 3 : 1.5),
-                                opacity: tone == .sparkle ? 0
-                                    : (emphasis.isPrimary && tone != .destructive
-                                       ? 0 : (tone == .destructive ? (hovered ? 0.20 : 0.13) : 0)),
-                                cornerRadius: metrics.height / 2,
-                                surface: .clear,
-                                color: .black)
+                    // Only a destructive control lifts; every other tone's
+                    // shadow was drawn at opacity 0, which still cost a hosted
+                    // `NSView` and two `CALayer`s per button. Not mounted at all
+                    // is the same picture.
+                    if tone == .destructive {
+                        LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                                    y: pressed ? 0 : (hovered ? 3 : 1.5),
+                                    opacity: hovered ? 0.20 : 0.13,
+                                    cornerRadius: metrics.height / 2,
+                                    surface: .clear,
+                                    color: .black)
+                    }
                 }
                 .contentShape(Capsule())
                 .modifier(ControlPressModifier(hovered: $hovered, pressed: $pressed))
@@ -739,12 +743,14 @@ struct ActionPlateButtonStyle: ButtonStyle {
                              hovered: hovered, pressed: pressed, metrics: metrics)
             }
             .background {
-                LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
-                            y: pressed ? 0 : (hovered ? 3 : 1.5),
-                            opacity: tone == .destructive ? (hovered ? 0.20 : 0.13)
-                                : (tone == .sparkle && hovered ? 0 : 0),
-                            cornerRadius: metrics.height / 2,
-                            surface: .clear, color: .black)
+                // Destructive only: any other tone drew this at opacity 0.
+                if tone == .destructive {
+                    LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                                y: pressed ? 0 : (hovered ? 3 : 1.5),
+                                opacity: hovered ? 0.20 : 0.13,
+                                cornerRadius: metrics.height / 2,
+                                surface: .clear, color: .black)
+                }
             }
             .contentShape(Capsule())
             .scaleEffect(down ? 0.97 : 1)

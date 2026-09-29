@@ -386,10 +386,16 @@ struct TrafficView: View {
             rebuildConversation()
         }
         .onReceive(streams.$live) { values in
-            let next = currentSummary.flatMap { values[$0.id] }
-            guard next != selectedLive else { return }
-            selectedLive = next
-            rebuildConversation()
+            // The inspector's live text is not on screen in any useful way
+            // while the list is being scrolled; apply the latest once it stops.
+            ScrollHoverGate.afterScroll("TrafficView.live") {
+                // `values`, not `streams.live`: `$live` emits in `willSet`,
+                // when the property still holds the previous batch.
+                let next = currentSummary.flatMap { values[$0.id] }
+                guard next != selectedLive else { return }
+                selectedLive = next
+                rebuildConversation()
+            }
         }
         .onDisappear {
             state.mounted = false
@@ -451,12 +457,23 @@ struct TrafficView: View {
                 ScrollView {
                     LazyVStack(spacing: 1) {
                         ForEach(filtered) { rec in
-                            TrafficRow(
-                                rec: rec,
-                                preview: catalog.livePreview[rec.id],
-                                selected: selectedID == rec.id,
-                                onInterrupt: { interrupt($0) }
-                            )
+                            // Only a row that is still streaming watches the
+                            // preview map (and so only it re-renders at the
+                            // 100 ms flush); every other row is `Equatable`
+                            // and skipped when the page body re-runs.
+                            Group {
+                                if rec.state == .streaming || rec.state == .pending {
+                                    TrafficLiveRow(rec: rec,
+                                                   selected: selectedID == rec.id,
+                                                   previews: ProxyCaptureStore.shared.previews,
+                                                   onInterrupt: { interrupt($0) })
+                                } else {
+                                    TrafficRow(rec: rec, preview: nil,
+                                               selected: selectedID == rec.id,
+                                               onInterrupt: { interrupt($0) })
+                                        .equatable()
+                                }
+                            }
                             .onTapGesture { selectedID = rec.id }
                         }
                     }
@@ -1058,7 +1075,25 @@ enum ConvBlock: Identifiable {
     }
 }
 
-private struct TrafficRow: View {
+/// An in-flight row: the one kind that redraws with the stream.
+private struct TrafficLiveRow: View {
+    let rec: CaptureSummary
+    let selected: Bool
+    @ObservedObject var previews: CaptureLivePreview
+    let onInterrupt: (CaptureSummary) -> Void
+
+    var body: some View {
+        TrafficRow(rec: rec, preview: previews.map[rec.id], selected: selected, onInterrupt: onInterrupt)
+    }
+}
+
+private struct TrafficRow: View, Equatable {
+    /// The closure is deliberately not compared: it calls into the store and
+    /// captures nothing that changes what the row draws.
+    static func == (lhs: TrafficRow, rhs: TrafficRow) -> Bool {
+        lhs.rec == rhs.rec && lhs.preview == rhs.preview && lhs.selected == rhs.selected
+    }
+
     let rec: CaptureSummary
     let preview: String?
     let selected: Bool

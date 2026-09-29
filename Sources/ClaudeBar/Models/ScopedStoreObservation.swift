@@ -18,8 +18,14 @@ final class StoreInvalidation: ObservableObject {
             self.pending = true
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.pending = false
-                if self.visible { self.objectWillChange.send() }
+                // Held while a scroll is in flight and delivered once it stops
+                // (see `ScrollHoverGate.afterScroll`); `pending` stays set in
+                // the meantime, so a burst still collapses to one invalidation.
+                ScrollHoverGate.afterScroll(ObjectIdentifier(self)) { [weak self] in
+                    guard let self else { return }
+                    self.pending = false
+                    if self.visible { self.objectWillChange.send() }
+                }
             }
         }
     }

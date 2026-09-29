@@ -48,7 +48,11 @@ enum AppPage: String, CaseIterable, Identifiable {
 /// The main window's SwiftUI content: a floating navigation capsule between
 /// the brand and live status, above the full-width detail area.
 struct MainWindowView: View {
-    @ProviderState(.configuration) var providerStore: ProviderStore
+    /// No fields: the shell reads nothing the store publishes (navigation
+    /// requests come through `$navigationRequest` below). It used to subscribe
+    /// to `.configuration`, so every balance refresh or provider write
+    /// re-evaluated the shell and rebuilt the page under it.
+    @ProviderState([]) var providerStore: ProviderStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The one preference this shell renders, subscribed individually.
     /// Observing `AppPreferences.shared` wholesale meant every unrelated
@@ -269,12 +273,19 @@ struct MainWindowView: View {
                 case .traffic: TrafficView()
                 }
             }
-            // The traffic page skips the page fade: animating a freshly
-            // mounted inspector is the hitch, not the mount.
+            // The outgoing page leaves in the same frame the incoming one is
+            // mounted (`removal: .identity`), so there are never two pages —
+            // two hosting subtrees, two sets of layers, an offscreen opacity
+            // group over each — alive at once for the length of a fade. The
+            // incoming page only fades in, with no offset: a translation of a
+            // freshly built page is a transform the compositor has to redo
+            // against a layer tree that is still being created. The traffic
+            // page skips even that: animating a freshly mounted inspector is
+            // the hitch, not the mount.
             .id(selectedPage)
             .transition(selectedPage == .traffic ? .identity : .asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 8)),
-                removal: .opacity
+                insertion: .opacity,
+                removal: .identity
             ))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

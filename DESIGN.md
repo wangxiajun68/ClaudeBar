@@ -403,9 +403,14 @@ bottom.
   because the build uses bare `swiftc`, which has no offline Metal compiler,
   while the runtime compiler ships with the OS. The `MTKView` keeps its own
   pointer tracking area, so parallax and wiping drops never invalidate the
-  SwiftUI graph. Frame rate follows what is on screen (display rate while
-  writing, fading or dragging; 60 for rain and snow; 30 for drifting cloud; 15
-  under Low Power Mode or thermal pressure) and the view draws nothing when
+  SwiftUI graph. The frame rate follows the hand, not the weather: the pen, a
+  weather fade, parallax while the pointer is actually moving and a drag through
+  the day run at the display's rate; a card at rest presents at 30 Hz (15 Hz when
+  calm) because the cloud deck has its own slower clock and rain and snow are a
+  baked plate being scrolled — a scrolled plate is continuous at 30 Hz. Low Power
+  Mode or thermal pressure is 30 Hz while the hand is down and 15 Hz otherwise.
+  Turning weather rendering off draws no cloud, precipitation, fog or lightning
+  at all, so the card has almost nothing to scroll. The view draws nothing when
   hidden, occluded or under Reduce Motion.
 
 The implementation reuses Open-Meteo weather and its wttr.in fallback, plus

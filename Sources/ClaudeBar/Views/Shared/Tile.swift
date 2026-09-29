@@ -260,6 +260,18 @@ final class ShadowHostView: NSView {
     /// The fuller shadow underneath. A layer can only carry one shadow, and the
     /// button's gloss wants two, so the lower one is a sibling layer.
     private let under = CALayer()
+    /// What was last written, so a redundant `updateNSView` (SwiftUI calls it
+    /// whenever any input compares unequal, and a hover flip re-issues the
+    /// whole tuple) does not rebuild the same `CGPath` and re-set every layer
+    /// property inside a fresh `CATransaction`.
+    private var applied: Applied?
+
+    private struct Applied: Equatable {
+        var size: CGSize
+        var radius: CGFloat, y: CGFloat, opacity: Double, cornerRadius: CGFloat
+        var surface: CGColor, color: CGColor
+        var underRadius: CGFloat, underY: CGFloat, underOpacity: Double, underColor: CGColor
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -276,6 +288,12 @@ final class ShadowHostView: NSView {
                cornerRadius: CGFloat, surface: NSColor, color: NSColor,
                underRadius: CGFloat, underY: CGFloat,
                underOpacity: Double, underColor: NSColor) {
+        let next = Applied(size: bounds.size, radius: radius, y: y, opacity: opacity,
+                           cornerRadius: cornerRadius, surface: surface.cgColor,
+                           color: color.cgColor, underRadius: underRadius, underY: underY,
+                           underOpacity: underOpacity, underColor: underColor.cgColor)
+        if applied == next { return }
+        applied = next
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -316,7 +334,7 @@ final class ShadowHostView: NSView {
         }
     }
 
-    func clear() { box.shadowOpacity = 0; under.shadowOpacity = 0 }
+    func clear() { box.shadowOpacity = 0; under.shadowOpacity = 0; applied = nil }
 }
 
 extension View {

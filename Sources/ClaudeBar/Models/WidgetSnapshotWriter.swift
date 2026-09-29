@@ -16,6 +16,26 @@ import WidgetKit
 /// All writes are best-effort: a failure in one target never blocks the
 /// others, and the UserDefaults copy acts as the last-resort fallback.
 enum WidgetSnapshotWriter {
+    /// Encoding, the dedup compare and four atomic writes (one of them into
+    /// another app's container) used to run on the main thread inside whatever
+    /// poll produced a changed snapshot — a session count moving while the
+    /// user scrolls cost a fsync'd write in the middle of a frame. The snapshot
+    /// is a value, so it is built where the model lives and handed here; this
+    /// serial queue keeps the writes ordered.
+    private static let queue = DispatchQueue(label: "claudebar.widget-snapshot", qos: .utility)
+    /// Last payload written, owned by `queue`.
+    nonisolated(unsafe) private static var lastKey: Data?
+
+    /// Hands `snapshot` to the writer without blocking the caller.
+    /// `force` drops the dedup key first — for a permission flip, where the
+    /// containers never received the unchanged payload.
+    static func submit(_ snapshot: WidgetSnapshot, force: Bool = false) {
+        queue.async {
+            if force { lastKey = nil }
+            lastKey = write(snapshot, deduplicatingAgainst: lastKey)
+        }
+    }
+
     /// Serializes `snapshot` and writes it to every target, then reloads the
     /// widget timelines. Returns early when the payload is byte-identical to
     /// the previous write, so the poll cadence does not hammer disk or

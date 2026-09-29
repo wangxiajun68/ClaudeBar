@@ -71,6 +71,7 @@ enum VpnSystemProxyController {
                 ["-setsecurewebproxystate", service, "on"],
                 ["-setsocksfirewallproxystate", service, "on"],
                 ["-setproxybypassdomains", service] + bypassDomains(),
+
             ]
             for args in commands {
                 let r = Process.runAndRead("/usr/sbin/networksetup", args: args)
@@ -136,8 +137,20 @@ enum VpnSystemProxyController {
         VpnTunDnsHelper.restoreSystemDNSNow()
     }
 
+    /// clash-verge's default list, plus the hosts the user's own providers are
+    /// served from.
+    ///
+    /// The defaults are all addresses and IP ranges, so they can never bypass a
+    /// *hostname*. That is the gap `VpnProviderDirect` documents: a provider
+    /// endpoint on a vanity domain sits in China but matches no geosite, so with
+    /// the hostname left to `scutil` the request goes out through a node abroad
+    /// and comes straight back. `-setproxybypassdomains` is the one macOS bypass
+    /// surface that takes hostnames, so the same list is applied here and to the
+    /// rule chain — this one removes the traffic, that one covers TUN and any
+    /// app holding its own proxy setting.
     nonisolated private static func bypassDomains() -> [String] {
         defaultBypass.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            + VpnProviderDirect.hosts()
     }
 
     /// Read back HTTP proxy on Wi-Fi / Ethernet — used by the guard loop.

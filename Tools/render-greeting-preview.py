@@ -69,12 +69,18 @@ for mark in ('anthropic', 'openai'):
 # A plain concatenation, not an f-string: the Swift below is full of braces and
 # an f-string would try to read them as fields.
 source = ("import AppKit\n@MainActor var fixtureSkyDate = Date()\n@MainActor var fixtureCardWidth: CGFloat = 1100\n"
+          + "@MainActor var fixtureSkyMode = \"auto\"\n"
+          + "@MainActor var fixturePinnedWeather = \"none\"\n"
+          + "@MainActor var fixtureWeatherRendering = true\n"
+          + "@MainActor var fixtureClockPreview: Date? = nil\n"
+          + "@MainActor func fixtureBenchOffset() -> TimeInterval { Double(benchClock.tick) * 90 }\n"
           + 'let brandMarks = "' + str(brand_marks) + '"\n'
           + 'let scriptFonts = "' + str(root / 'Sources/Fonts') + '"\n'
           + '''import SwiftUI
 final class AppPreferences {
     static let shared = AppPreferences()
     var isDark = false
+    var greetingWeatherRendering = true
 }
 struct SurfaceKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
@@ -135,6 +141,22 @@ source += declaration('Sources/ClaudeBar/Views/Shared/LucideHardwareGeometry.swi
 source += declaration('Sources/ClaudeBar/Views/Shared/InstrumentGlyph.swift', 'struct InstrumentGlyph: View, Animatable {')
 source += declaration('Sources/ClaudeBar/Views/Shared/InstrumentGlyph.swift', 'struct InstrumentBadge: View {')
 source += (root / 'Sources/ClaudeBar/Views/Shared/LucideHardwarePaths.swift').read_text() + '\n'
+# The allowance probe reads the account's cycle out of the store that owns it;
+# the fixture only builds the value types, so the store is an inert stand-in.
+source += '''
+final class CursorUsageStore {
+    @MainActor static let shared = CursorUsageStore()
+    private init() {}
+    var plan: CursorUsageFetcher.PlanUsage? { nil }
+}
+enum ScrollHoverGate { @MainActor static var scrolling = false }
+struct ScrollHoverGateModifier: ViewModifier {
+    func body(content: Content) -> some View { content }
+}
+// The `@State` stubs above have no setter callback, so the sheet is a still
+// fixture: its own assignments are inert.
+enum Unused {}
+'''
 source += declaration('Sources/ClaudeBar/Views/Shared/ProductBrandMark.swift', 'struct ProductBrandMark: View {')
 
 source += (root / 'Sources/ClaudeBar/Views/Shared/CodexModelMark.swift').read_text() + '\n'
@@ -148,11 +170,81 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/CodexModelMark.swift').read_te
 # gauges) are self-contained views; the whole file comes in as is.
 source += (root / 'Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift').read_text() + '\n'
 sheet = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
+# The fixture's `bare`/`pinned` passes drive the pinned weather through the
+# argument domain; the declaration is only here so the sheet has a default.
+sheet = sheet.replace('@AppStorage("greeting.pinnedWeather") private var pinnedWeatherRaw = "none"',
+                      '@AppStorage("greeting.pinnedWeather") private var pinnedWeatherRaw = "snow"')
 if '--bench-baseline' in sys.argv:
     # Every part rebuilt on every change, as before `Unchanged` existed.
     sheet = sheet.replace('static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }',
                           'static func == (lhs: Self, rhs: Self) -> Bool { false }')
-source += sheet[sheet.index('struct GreetingStatusSheet: View {'):].replace('@State private var arrived = false', '@State private var arrived = true').replace('@State private var cardWidth: CGFloat = 1100', '@State private var cardWidth: CGFloat = fixtureCardWidth').replace('skyDate = Date()', 'skyDate = fixtureSkyDate').replace('context.date', 'fixtureSkyDate').replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {').replace('private var sceneDate: Date { manual ? manualDate : skyDate.addingTimeInterval(timeOffset) }', 'private var sceneDate: Date { manual ? manualDate : skyDate.addingTimeInterval(timeOffset + Double(benchClock.tick) * 90) }')
+# The fixture already ran this module's body through the type checker once
+# before; `liveWeather` is a plain computed Bool on the sheet, so pin it here
+# rather than let it nest inside the big `VStack` literal.
+sheet = sheet.replace('private var liveWeather: Bool { Self.liveWeatherShown(rendering: manualWeatherFetch ? false : weatherRendering,\n                                                         pinned: pinnedWeatherRaw) }',
+                      'private var liveWeather: Bool { true }')
+sheet = sheet.replace(
+    """            let clockZone: String? = liveWeather ? reading?.timezone : nil
+            let clockPreview: Date? = manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate)
+""", "")
+# The clock and the mode toggle move into a helper: the fixture's whole `ZStack`
+# literal is what the type checker cannot handle in reasonable time once the
+# sky branch grew a second condition.
+sheet = sheet.replace(
+    """            VStack(alignment: .leading, spacing: 8) {
+                GreetingClock(ink: ink, timezone: clockZone, preview: clockPreview)
+                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
+                              setManual: { setManual($0, scene: scene) },
+                              setPreview: { setPreview($0) },
+                              setRendering: { AppPreferences.shared.greetingWeatherRendering = $0 })
+                    .frame(width: m.skyToggleWidth(threeWay: self.weatherRendering || manual), alignment: .leading)
+            }
+            .padding(.leading, m.margin)
+            .padding(.top, m.top)
+            .modifier(StatusArrival(arrived: arrived, delay: 1.1, reduceMotion: reduceMotion))
+""",
+    """            topInstruments(ink: ink, m: m, layout: layout)
+""")
+# The clock and the mode toggle move into a helper: the fixture's whole `ZStack`
+# literal is what the type checker cannot handle in reasonable time once the
+# sky branch grew a second condition.
+sheet = sheet.replace("    // MARK: - Sky",
+"""    private func topInstruments(ink: Color, m: Metrics, layout: GreetingTypesetter.Layout) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GreetingClock(ink: ink, timezone: liveWeather ? reading?.timezone : nil,
+                          preview: manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate))
+            SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
+                          setManual: { setManual($0, scene: makeScene()) },
+                          setPreview: { setPreview($0) },
+                          setRendering: { _ in })
+                .frame(width: m.skyToggleWidth(threeWay: self.weatherRendering || manual), alignment: .leading)
+        }
+        .padding(.leading, m.margin)
+        .padding(.top, m.top)
+        .modifier(StatusArrival(arrived: arrived, delay: 1.1, reduceMotion: reduceMotion))
+    }
+
+    // MARK: - Sky""")
+source += (sheet[sheet.index('struct GreetingStatusSheet: View {'):]
+    .replace('@State private var arrived = false', '@State private var arrived = true')
+      # The old template replayed a live @State init through a `.replace` on the
+      # body; those calls no longer exist, and `self.sensoryFeedback(...)` on a
+      # freshly rewritten body is what the type checker chokes on.
+    .replace('skyDate = Date()', 'skyDate = fixtureSkyDate')
+    .replace('.sensoryFeedback(.levelChange, trigger: Int(timeOffset / 3600))', '')
+    .replace('.sensoryFeedback(.levelChange, trigger: manual && dragBase != nil ? Int(minutes / 60) : -1)', '')
+    .replace('.sensoryFeedback(.selection, trigger: pinnedDay)', '')
+    .replace('.sensoryFeedback(.alignment, trigger: rewrites)', '')
+    .replace('.onChange(of: typeface) {', '.onChange(of: typeface) { _ in')
+      # The type checker times out on the fixture's whole modifier chain once the
+      # `onChange` closures lose their parameter lists; pin the one change here.
+    .replace("        .onChange(of: reading?.sky) { old, new in\n            // A rainbow is earned: rain that has just cleared, with the sun low\n            // enough (below 42°) for the bow to stand above the horizon.\n            if let old, [.rain, .drizzle, .thunder].contains(old), let new, [.clear, .partly].contains(new) {\n                rainbowUntil = Date().addingTimeInterval(1800)\n            }\n        }\n", '')
+    .replace('@State private var skyDate = Date()', '@State private var skyDate = fixtureSkyDate')
+    .replace('skyDate = Date()', 'skyDate = fixtureSkyDate')
+    .replace('context.date', 'fixtureSkyDate')
+    .replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {')
+    .replace('        return skyDate.addingTimeInterval(timeOffset)',
+             '        return skyDate.addingTimeInterval(timeOffset + fixtureBenchOffset())'))
 source += '''
 @main struct Probe {
     @MainActor static func main() throws {
@@ -165,12 +257,16 @@ source += '''
         GreetingScript.resourceRoot = URL(fileURLWithPath: scriptFonts)
         let out = URL(fileURLWithPath: CommandLine.arguments[1])
         if CommandLine.arguments.contains("--bench") { benchUpdates(); return }
-        for mode in ["auto", "manual"] {
+        for mode in ["auto", "manual", "pinned", "bare"] {
         // The sheet reads its sky mode through @AppStorage; the argument
         // domain is volatile, so the fixture never writes a preference.
-        UserDefaults.standard.setVolatileDomain(["greeting.skyMode": mode, "greeting.manualWeather": "snow",
+        UserDefaults.standard.setVolatileDomain(["greeting.skyMode": mode == "manual" ? "manual" : "auto",
+                                                 "greeting.manualWeather": "snow",
+                                                 "greeting.pinnedWeather": mode == "pinned" ? "snow" : "none",
                                                  "greeting.manualMinutes": 17.0 * 60 + 55],
                                                 forName: UserDefaults.argumentDomain)
+        // "bare": 天气渲染关着，但天空没有挑过任何一层——就是默认的贴图。
+        fixtureWeatherRendering = mode != "pinned" && mode != "bare"
         for dark in [false, true] {
             AppPreferences.shared.isDark = dark
             for width in [1100.0, 620.0] {
@@ -178,7 +274,7 @@ source += '''
                 // Light auto also writes the sunny card once per selectable
                 // face, so a face whose proportions break the layout shows up.
                 let faces = mode == "auto" && !dark ? GreetingTypeface.allCases.map { "face-" + $0.rawValue } : []
-                for scene in (mode == "manual" ? ["sun"] : ["sun", "rain", "night", "cloud", "snow", "empty"]) + faces {
+                for scene in (mode == "manual" ? ["sun"] : mode == "pinned" ? ["sun", "empty"] : ["sun", "rain", "night", "cloud", "snow", "empty"]) + faces {
                     let typeface = scene.hasPrefix("face-") ? GreetingTypeface(rawValue: String(scene.dropFirst(5)))! : .standard
                     fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-28T13:00:00Z" : "2026-09-28T02:17:01Z")!
                     let empty = scene == "empty"
@@ -211,7 +307,7 @@ source += '''
                             bonusSpendCents: nil, billingCycleEnd: Date().addingTimeInterval(9 * 86400)),
                         cursorLoading: false, cursorNote: empty ? "未读取到 Cursor 额度" : nil,
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
-                        weatherNote: nil, typeface: typeface, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
+                        weatherNote: nil, typeface: typeface, weatherRendering: fixtureWeatherRendering, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})
                         .environment(\\.colorScheme, dark ? .dark : .light)
                         .frame(width: width).padding(24).background(Theme.bgPrimary)
@@ -235,13 +331,13 @@ source += '''
                     guard let image = renderer.cgImage,
                           let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
                     else { fatalError("Render failed") }
-                    let name = "\\(mode == "manual" ? "manual-" : "")\\(dark ? "dark" : "light")-\\(Int(width))-\\(scene).png"
+                    let name = "\(mode.hasPrefix("face-") ? "" : mode + "-")\(dark ? "dark" : "light")-\(Int(width))-\(scene).png"
                     try png.write(to: out.appendingPathComponent(name))
                 }
             }
         }
+        print("Rendered \(44 + GreetingTypeface.allCases.count * 2) synthetic fixture views to \(out.path)")
         }
-        print("Rendered \\(28 + GreetingTypeface.allCases.count * 2) synthetic fixture views to \\(out.path)")
     }
 }
 '''

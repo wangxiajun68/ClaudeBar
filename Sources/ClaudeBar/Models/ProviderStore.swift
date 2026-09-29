@@ -98,10 +98,6 @@ class ProviderStore: ObservableObject {
     private var sessionScanPending = false
     private var cursorScanPending = false
     private var externalScanPending = false
-    /// Last serialized snapshot payload — `writeWidgetSnapshot()` skips the
-    /// file writes + widget reload when the data is unchanged (see
-    /// `WidgetSnapshotWriter.write`).
-    private var lastSnapshotData: Data?
 
     /// Poll cadence to fall back to when a scan has to be deferred because the
     /// previous one is still running. Only reached when a scan outlives its
@@ -582,8 +578,7 @@ class ProviderStore: ObservableObject {
                 case .widgetData:
                     // Force a write even if the payload is unchanged since the
                     // switch was off — the containers never got it.
-                    self.lastSnapshotData = nil
-                    self.writeWidgetSnapshot()
+                    self.writeWidgetSnapshot(force: true)
                 case .cursorData:
                     self.refreshCursorSessions()
                 default:
@@ -1177,8 +1172,11 @@ class ProviderStore: ObservableObject {
 
     // MARK: - Widget Snapshot
 
-    func writeWidgetSnapshot() {
-        lastSnapshotData = WidgetSnapshotWriter.write(buildSnapshot(), deduplicatingAgainst: lastSnapshotData)
+    /// Builds the snapshot here (it reads model state) and lets
+    /// `WidgetSnapshotWriter` encode, dedupe and write it off the main thread —
+    /// unchanged payloads are still skipped there.
+    func writeWidgetSnapshot(force: Bool = false) {
+        WidgetSnapshotWriter.submit(buildSnapshot(), force: force)
     }
 
     private func buildSnapshot() -> WidgetSnapshot {

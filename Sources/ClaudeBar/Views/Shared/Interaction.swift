@@ -90,14 +90,64 @@ extension View {
 /// lift and drop a tile per frame. When the phase returns to idle the page
 /// posts one `mouseMoved`, and the tile actually under the pointer catches up.
 enum ScrollHoverGate {
-    static var scrolling = false
+    static var scrolling = false {
+        didSet { if scrolling { since = CACurrentMediaTime() } }
+    }
+    private static var since: CFTimeInterval = 0
+    /// The longest a scroll may hold state back. Phase changes arrive only at
+    /// transitions, so a missed `.idle` (a scroll view removed mid-flick, a
+    /// finger resting on the trackpad) must not freeze live readings for good.
+    private static let holdLimit: CFTimeInterval = 4
+
+    /// True while a scroll is in progress *and* recent enough to trust.
+    static var isDeferring: Bool { scrolling && CACurrentMediaTime() - since < holdLimit }
+
+    private static var pending: [AnyHashable: () -> Void] = [:]
+    private static var watchdog = false
+
+    /// Run `apply` now, or — while a scroll is in flight — once it has stopped.
+    ///
+    /// Every store publish and sampler tick is a view invalidation, and an
+    /// invalidation during a scroll is main-thread work in the frame that has
+    /// the least room for it: nothing the user is looking at needs to change
+    /// while their finger is moving the page, so those writes are held and
+    /// applied together when the scroll settles. `key` coalesces: a later call
+    /// with the same key replaces the earlier block, so a source that ticks ten
+    /// times during a flick lands once, with its latest value.
+    static func afterScroll(_ key: AnyHashable, _ apply: @escaping () -> Void) {
+        guard isDeferring else {
+            pending[key] = nil
+            apply()
+            return
+        }
+        pending[key] = apply
+        guard !watchdog else { return }
+        watchdog = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdLimit + 0.05) {
+            watchdog = false
+            // Either the scroll ended without a callback, or it has run past
+            // the hold limit; in both cases the held writes go in now and new
+            // ones start a fresh hold.
+            flush()
+        }
+    }
+
+    private static func flush() {
+        guard !pending.isEmpty else { return }
+        let blocks = Array(pending.values)
+        pending.removeAll()
+        for block in blocks { block() }
+    }
 
     static func set(_ moving: Bool) {
         let was = scrolling
         scrolling = moving
         // Off this turn: the phase callback is the frame that just went idle.
         if was, !moving {
-            DispatchQueue.main.async { refresh() }
+            DispatchQueue.main.async {
+                flush()
+                refresh()
+            }
         }
     }
 

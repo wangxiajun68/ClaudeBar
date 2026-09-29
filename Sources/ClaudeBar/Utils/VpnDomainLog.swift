@@ -55,6 +55,19 @@ struct VpnDomainEntry: Identifiable, Equatable {
     }
 }
 
+/// A sampled live connection. Counters belong to this connection ID only;
+/// they must not be assigned to older log lines that share the same hostname.
+struct VpnDomainConnection: Identifiable, Equatable {
+    let id: String
+    let endpoint: String
+    let process: String
+    let route: VpnDomainRoute
+    let rule: String
+    let outbound: String
+    let upload: Int64
+    let download: Int64
+}
+
 /// Per-domain rollup. Built from the ring by `VpnDomainLog.stat`.
 struct VpnDomainLogStat: Identifiable, Equatable {
     var id: String { host }
@@ -396,6 +409,7 @@ final class VpnDomainLog: ObservableObject {
     /// recent past, and `received` preserves the session-wide tally.
     static let limit = 1000
 
+    @Published private(set) var connections: [VpnDomainConnection] = []
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
     /// Drives 「共 N 次 / M 域名」so the summary is not capped by the ring.
@@ -419,6 +433,30 @@ final class VpnDomainLog: ObservableObject {
     nonisolated func ingest(_ data: Data) {
         guard feed.ingest(data) else { return }
         Task { @MainActor [weak self] in self?.scheduleFlush() }
+    }
+
+    func updateConnections(_ snapshot: [[String: Any]]) {
+        let next = snapshot.compactMap { item -> VpnDomainConnection? in
+            guard let id = item["id"] as? String,
+                  let metadata = item["metadata"] as? [String: Any] else { return nil }
+            let host = metadata["host"] as? String ?? ""
+            let destination = host.isEmpty ? (metadata["destinationIP"] as? String ?? "未知目标") : host
+            let port = metadata["destinationPort"].map { String(describing: $0) } ?? ""
+            let chains = item["chains"] as? [String] ?? []
+            let outbound = chains.joined(separator: " → ")
+            let route: VpnDomainRoute = chains.contains(where: { $0.uppercased().hasPrefix("REJECT") })
+                ? .reject : (chains.contains("DIRECT") ? .direct : .proxied)
+            let name = metadata["process"] as? String ?? ""
+            let path = metadata["processPath"] as? String ?? ""
+            let process = name.isEmpty ? (path.isEmpty ? "进程未知" : URL(fileURLWithPath: path).lastPathComponent) : name
+            return VpnDomainConnection(
+                id: id, endpoint: port.isEmpty ? destination : "\(destination):\(port)",
+                process: process, route: route,
+                rule: item["rule"] as? String ?? "", outbound: outbound,
+                upload: max(0, JSONCoerce.int64Val(item["upload"])),
+                download: max(0, JSONCoerce.int64Val(item["download"])))
+        }.sorted { $0.id < $1.id }
+        if connections != next { connections = next }
     }
 
     func clear() {

@@ -138,6 +138,13 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
     private var pending = 0
     private var lastAcquired: CFTimeInterval = 0
     private var boostedUntil = Date.distantPast
+    /// The pointer moved inside the card recently, so the parallax is still
+    /// travelling. It eases toward its target with a time constant of ~140 ms,
+    /// so once the pointer has rested for `pointerSettle` it has arrived and
+    /// the view falls back to the resting rate instead of presenting an
+    /// unchanged frame at 60 Hz for as long as the pointer stays there.
+    private var pointerActiveUntil = Date.distantPast
+    private static let pointerSettle: TimeInterval = 0.8
     private var observers: [NSObjectProtocol] = []
     private var windowObservers: [NSObjectProtocol] = []
 
@@ -219,15 +226,16 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
         if isPaused { needsDisplay = true }
     }
 
-    /// Frame rate is the cheapest rate that still reads as motion. Anything
-    /// the hand is driving — the pen writing, a weather fade, the pointer
-    /// steering parallax, a drag through the day — runs at the display's
-    /// full rate (120 Hz on ProMotion), because that is where a step is felt.
-    /// Unattended precipitation gets 60 Hz, drifting cloud 30 Hz, and Low
-    /// Power Mode or thermal pressure 30 / 15 Hz. A frame costs well under a
-    /// millisecond of GPU time on Apple silicon (`Tools/bench-atmosphere.py`).
-    /// Hidden, occluded or inactive surfaces do not draw at all; a scrolling
-    /// page holds the frame already on screen.
+    /// The resting card presents at `AtmosphereRenderer.restingRate` (30 Hz for
+    /// falling weather, 15 Hz for a calm sky). Rain and snow are a plate being
+    /// scrolled, and a scrolled plate is continuous at 30 Hz the way a blurred
+    /// film frame is; pushing precipitation to the display rate was redrawing
+    /// the pane (and the glass sill over it) for motion the plate already
+    /// contains. The display rate is for the hand: the pen, a weather fade,
+    /// parallax, a drag through the day. The cloud deck has its own slower
+    /// clock inside the renderer. Low Power Mode or thermal pressure is 30 Hz
+    /// while the hand is down and 15 Hz otherwise. Hidden, occluded or inactive
+    /// surfaces do not draw; a scrolling page holds the frame on screen.
     private func retime() {
         let visible = window?.occlusionState.contains(.visible) ?? false
         let running = active && visible && renderer.input?.reduceMotion == false
@@ -237,11 +245,19 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
         } else if running {
             let info = ProcessInfo.processInfo
             let constrained = info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
-            let boosted = boostedUntil > Date()
+            let now = Date()
+            let boosted = boostedUntil > now
+            // The pen and a weather fade own the display rate. The pointer
+            // only needs 60 Hz — the parallax is a smoothed offset, and 60
+            // samples a second of an exponential ease read as continuous —
+            // and only while it is moving and the window can actually take it.
+            let hand = pointerInside && pointerActiveUntil > now && window?.isKeyWindow == true
             let display = max(60, window?.screen?.maximumFramesPerSecond ?? 60)
-            let rate = constrained ? (boosted ? 30 : 15)
-                : boosted || pointerInside ? display
-                : renderer.wantsHighRate ? 60 : 30
+            let resting = renderer.restingRate
+            let rate = constrained ? (boosted ? 30 : min(resting, 15))
+                : boosted ? display
+                : hand ? min(display, 60)
+                : resting
             if preferredFramesPerSecond != rate { preferredFramesPerSecond = rate }
             enableSetNeedsDisplay = false
             isPaused = false
@@ -265,11 +281,32 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
 
     override func mouseEntered(with event: NSEvent) {
         pointerInside = true
+        pointerActiveUntil = Date().addingTimeInterval(Self.pointerSettle)
         retime()
         updatePointer(event)
+        scheduleSettle()
     }
 
-    override func mouseMoved(with event: NSEvent) { updatePointer(event) }
+    override func mouseMoved(with event: NSEvent) {
+        let wasMoving = pointerActiveUntil > Date()
+        pointerActiveUntil = Date().addingTimeInterval(Self.pointerSettle)
+        updatePointer(event)
+        if !wasMoving { retime() }
+        scheduleSettle()
+    }
+
+    private var settleScheduled = false
+    /// One trailing `retime()` once the pointer has rested, however many moves
+    /// arrived in between.
+    private func scheduleSettle() {
+        guard !settleScheduled else { return }
+        settleScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pointerSettle + 0.05) { [weak self] in
+            guard let self else { return }
+            settleScheduled = false
+            if pointerActiveUntil > Date() { scheduleSettle() } else { retime() }
+        }
+    }
 
     override func mouseExited(with event: NSEvent) {
         pointerInside = false

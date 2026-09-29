@@ -4,9 +4,10 @@
 Compiles the production `SkyScene`, `AtmosphereShader`, `AtmosphereRenderer`
 and `GreetingScript` into a probe (-O) and reports, per representative scene:
 
-  gpu ms   median GPU time of one frame of the atmosphere pass, drawn
-           off-screen at the card's real drawable size (1100 pt card, 2x)
-  cpu µs   median CPU time to encode that frame (uniforms, fades, events)
+  sky ms    median GPU time of a frame that also redrew the cloud deck
+  front ms  median GPU time of a frame that only sampled the deck and drew
+            precipitation, the greeting and the drops
+  cpu µs    median CPU time to encode that frame (uniforms, fades, events)
 
 and the one-off CPU costs on the main thread: greeting layout, greeting
 rasterisation (the texture upload's CPU half) and `SkyScene.make`.
@@ -83,7 +84,7 @@ source += '''
             ("night clear", "2026-09-27T16:30:00Z", .clear, 0),
             ("night cloudy", "2026-09-27T16:30:00Z", .partly, 10),
             ("night rain", "2026-09-27T16:30:00Z", .rain, 90)]
-        print("scene              gpu ms   cpu µs")
+        print("scene               sky ms  front ms   cpu µs")
         for c in cases {
             let astronomy = SkyAstronomy.snapshot(date: iso.date(from: c.1)!, latitude: 23.13, longitude: 113.26)
             let scene = SkyScene.make(sky: c.2, rainChance: c.3, windKph: 12, windDirection: "东南", astronomy: astronomy)
@@ -97,7 +98,7 @@ source += '''
             // A still installs the greeting texture synchronously; the live
             // path rasterises it on a queue this loop never yields to.
             _ = renderer.snapshot(size: size, scale: scale)
-            var gpuTimes: [Double] = [], cpuTimes: [Double] = []
+            var skyTimes: [Double] = [], frontTimes: [Double] = [], cpuTimes: [Double] = []
             let t0 = CACurrentMediaTime()
             for i in 0..<(frames + 10) {
                 let pass = MTLRenderPassDescriptor()
@@ -110,13 +111,18 @@ source += '''
                 buffer.commit()
                 buffer.waitUntilCompleted()
                 // The first frames upload the greeting texture and warm caches.
+                // `sky` is a frame that also redrew the cloud deck; `front` only
+                // sampled it and drew precipitation, the greeting and the drops.
                 if i >= 10 {
-                    gpuTimes.append((buffer.gpuEndTime - buffer.gpuStartTime) * 1000)
+                    let ms = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
+                    if renderer.drewSky { skyTimes.append(ms) } else { frontTimes.append(ms) }
                     cpuTimes.append((c1 - c0) * 1_000_000)
                 }
             }
+            let skyMs = skyTimes.isEmpty ? 0 : median(skyTimes)
+            let front = frontTimes.isEmpty ? "     —" : String(format: "%6.2f", median(frontTimes))
             print(c.0.padding(toLength: 18, withPad: " ", startingAt: 0),
-                  String(format: "%6.2f   %6.1f", median(gpuTimes), median(cpuTimes)))
+                  String(format: "%6.2f  ", skyMs) + front + String(format: "   %6.1f", median(cpuTimes)))
         }
 
         func time(_ label: String, runs: Int = 20, _ body: () -> Void) {

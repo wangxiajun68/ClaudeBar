@@ -149,7 +149,14 @@ struct ProvidersView: View {
             onOpen: { connectionEdit = ProviderConnectionRoute(id: $0.id, isNew: false) }
         )
         .equatable()
-        .onAppear { providerStore.refreshBalance() }
+        // Not in the mount frame: `refreshBalance` flips `balanceLoading`
+        // before it awaits, and that write is a configuration invalidation
+        // landing inside the page-switch transaction.
+        .task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            providerStore.refreshBalance()
+        }
     }
 
     /// The page band. It was a hand-typed 26pt bold title with no page mark

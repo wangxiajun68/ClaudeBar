@@ -80,9 +80,10 @@
 | `Utils/VpnDomainLog.swift` | VPN 流量日志：把内核 `level=info` 的连接行（`[TCP] src --> host:port match 规则 using 出口`，失败走 `level=warning` 的 `dial 出口 (match 规则) … error:`）切出域名 / 端口 / 规则 / 出口，按出口末段（`[DIRECT]`→直连、`[REJECT]`→拒绝、否则已代理）归类，环形 1000 行 + 按域名汇总。只在内存。`VpnDomainFeed` 按字节缓冲、只在 `\n` 切断（分块可能落在多字节字符中间），解析在管道线程上做，主线程只收 ≤4 Hz 的批量发布 —— 与 `VpnLiveRates` 同一理由。`VpnWatchlist` 是「该走代理却走了直连」那条分析用的小services表 |
 | `Utils/XZArchive.swift` | `.xz` → 文件的流式解压（`libcompression` 的 `COMPRESSION_LZMA`，无第三方依赖）。收的是 `.xz` 容器而非裸 LZMA 流；峰值内存是字典 + 两个 1 MB 缓冲，不整档入内存。唯一调用者是内核解包 |
 | `Utils/VpnHTTP.swift` | 控制器 HTTP，禁用系统代理 |
-| `Utils/VpnSubscriptionStore.swift` | 订阅、YAML 合成、`tuneForStability` |
-| `Utils/VpnSystemProxyController.swift` | `networksetup` + Guard + TUN DNS |
+| `Utils/VpnSubscriptionStore.swift` | 订阅、YAML 合成、`tuneForStability`；合成前先插 `VpnProviderDirect.inject`（见下）——顺序不能反，`tuneForStability` 会改规则正文 |
+| `Utils/VpnSystemProxyController.swift` | `networksetup` + Guard + TUN DNS；绕过列表在 clash-verge 的默认项之外**追加本机供应商的 host**（默认项全是地址与网段，绕不过域名） |
 | `Utils/VpnNetProbe.swift` | 连通性探测 |
+| `Utils/VpnProviderDirect.swift` | 把本机**两份供应商表**里的 host 钉在规则链最前面（`DOMAIN,<host>,DIRECT`）并加进系统代理绕过列表：自建 / 虚拟域名的端点在国内却命不中 `GEOSITE,CN`，会落进末尾的 `MATCH` 绕道出国再回来（实测一台广州端点每轮 26–41 MB 上下文全这么走）。**拒绝名单**——认不出的 host 一律直连，只把 `anthropic.com` / `openai.com` / `x.ai` / `openrouter.ai` / `googleapis.com` / `nvidia.com` / `lmstudio.ai` 排除在外；注入按 profile 自己第一条规则的缩进写，否则 YAML 直接解析失败 |
 | `Utils/FanMonitor.swift` | SMC 风扇 / 温度；读取在后台队列，主线程只做去重发布 |
 | `Utils/ScreenshotHotKey.swift` | Carbon 全局 ⌘⇧A |
 | `Utils/ScreenshotOverlay.swift` | ScreenCaptureKit 拉框截图 |
@@ -96,7 +97,7 @@
 | `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
 | `Utils/ModelPriceTable.swift` | 内置官方刊例价表（每行标注来源，见 [§15](15-model-cost.md)）；更新只需改这一个文件 |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：用户要求折算时才联网（两个无 Key 日更源），也可手动钉住一个值 |
-| `Models/ConnectorManager.swift` | 连接器扫描：三家客户端的本机 Skills / MCP / 插件，及其启停方式；只读元数据，不启动服务 |
+| `Models/ConnectorManager.swift` | 连接器扫描：三家客户端的本机 Skills / MCP / 插件，及其启停方式；只读元数据，不启动服务。`shared` 是全应用一份（每次进页面新建会让清单从空起步），重扫只发布变化 |
 | `Models/MCPToolDiscovery.swift` | MCP `initialize` + `tools/list`（不发 `tools/call`），HTTP 与 stdio 两种传输，带超时与上限 |
 | `Views/Pages/ConnectorsView.swift` | 连接器页：客户端筛选 + 「本机共享」+ 类型筛选 + 搜索 + 等高卡片网格 |
 | `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
@@ -109,7 +110,7 @@
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |
 | `Views/Pages/UsageView.swift` | 用量页：周期条（日 / 月 / 年 / 全部）、热力图、来源构成、按模型瓦片；瓦片上**两行钱**（估算 + Cursor 实扣）与一个单独的 `CursorTokenUsageCard`（按官方账单、按窗口取数）；刷新按钮同时失效额度快照与账本缓存 |
 | `Views/Pages/CursorTokenUsageCard.swift` | 用量页上 Cursor 的独立卡：按模型的四桶 token 与实扣金额（`CursorLedgerStore`），没有日粒度就不画走势与占比，只把 token 限定在**它实际覆盖的窗口**里并在卡上标出日期区间 |
-| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本。Cursor 三条：`cursor-usage-regressions.py`（解码器与 cookie 拼写）、`cursor-ledger-regressions.py`（实际扣费解码 / 折价窗口，模板在 `Tests/fixtures/cursor-ledger-probe.swift`）与 `cursor-turn-regressions.py`（忙碌的写时钟界）；VPN 域名日志一条 `vpn-domain-log-regressions.py`（本机 `core.log` 的真实行型、被切在多字节字符中间的残行、ClaudeBar 自身诊断的误判）。**时序类断言一律等效果不等时长**（`performance-regressions.py` 的发布预算与用量去重）——固定常数已经把两条 CI 跑红过 |
+| `Tests/*.py` | 源码切片回归（`make test` / CI）；不改用户配置、不联网。`make test` 是那份清单的唯一出处，CI 调用它——两处各抄一份的写法已经漏掉过六个脚本。Cursor 三条：`cursor-usage-regressions.py`（解码器与 cookie 拼写）、`cursor-ledger-regressions.py`（实际扣费解码 / 折价窗口，模板在 `Tests/fixtures/cursor-ledger-probe.swift`）与 `cursor-turn-regressions.py`（忙碌的写时钟界）；VPN 两条：`vpn-domain-log-regressions.py`（本机 `core.log` 的真实行型、被切在多字节字符中间的残行、ClaudeBar 自身诊断的误判）与 `vpn-provider-direct-regressions.py`（哪些 host 该钉直连、已知境外域名不得被钉、规则缩进抄的是 profile 自己那一列）。**时序类断言一律等效果不等时长**（`performance-regressions.py` 的发布预算与用量去重）——固定常数已经把两条 CI 跑红过 |
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |
