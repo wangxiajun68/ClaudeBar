@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-09-29
+
+天气不再依赖代理（改走两家国内源）；Cursor 的实际扣费进用量页；VPN 页新增「流量日志」；问候卡重做成 Metal 大气天空、可切手动时刻与 24 款手写体；设置页按用途重做；概览不再有常驻显示周期。
+
 ### 变更
 
 - **天气不再依赖代理**：天气此前只走 Open-Meteo（`api.open-meteo.com` 解析到德国 Hetzner）与 wttr.in，两个域名都命不中 mihomo 规则链结尾的 `GEOIP,CN → Direct`，于是落进 `MATCH` 走代理组——VPN 节点一慢或一挂，概览卡的天气就没了，而关掉 VPN 时那两个接口其实一直是通的。现在取数顺序改成**高德 → 中国天气网（免 key）→ Open-Meteo → wttr.in**：前两家都是国内 IP，命中 `GEOIP,CN → Direct`，开不开 VPN 都走直连，境外源退成海外城市与极端情况的兜底。高德 key 在**设置 → 通用 → 天气与问候 → 高德 Key** 里填（只覆盖大陆城市，留空自动跳过、直接用免 key 的中国天气网），**不写进代码**——城市名到 中国天气网 cityid 的对照表编译在二进制里（该站的 `toy1` 名字搜索接口已经失效、对任何中文城市名都返回空数组，表由 `Tools/gen-cn-weather-cities.py` 从仍在服务的省→市树生成，只到地级市）。两家国内源都不说 WMO 码：高德给中文（"阴"/"雷阵雨"），中国天气网给 `d00`/`n7`/`d301` 这套 0–31 的码，两者都塞进现有 `sky(for:)` 会和 WMO 的 0–99 撞车，所以新增 `skyHint` 直接记下天气族、另有 `sky(forText:)` / `sky(forCNCode:)` 两张表；高德的 `windpower` 是蒲福**级**（"≤3"）而非风速，按级换算成 km/h 再喂给风向盘，不能把级别当速度印在表盘上。代价写在明处：两家都不给降水概率（由天气词估）、日出日落与昼夜（留空 / `nil`），中国天气网只给 4–5 天预报（4 天时预报带按实际天数画，标题不再写死「今天及未来 5 天」）。
@@ -623,7 +627,8 @@ Claude / Codex 供应商独立选择；流量简洁视图默认折叠工具与�
 - `build.sh` 用 `swiftc` + shell 构建（无 Xcode 工程）。
 - Pencil 原型 `ClaudeBar.pen` 与应用图标资源。
 
-[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/wangxiajun68/ClaudeBar/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.14.0
 [1.13.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.13.0
 [1.12.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.12.0
 [1.11.0]: https://github.com/wangxiajun68/ClaudeBar/releases/tag/v1.11.0
