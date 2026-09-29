@@ -10,7 +10,7 @@
 //   node driver.mjs --only 7 --preview  a contact sheet of one scene, for checking
 
 import { chromium } from 'playwright-core';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,20 +25,34 @@ const FRAMES = join(HERE, 'frames');
 // ---------------------------------------------------------------- timeline
 // prompt.md §4, in order. `dur` is scene-local; the driver adds the head start.
 export const TIMELINE = [
-  { n: 1,  id: 'opening',        dur: 6.6,  fn: 'scene1',  bg: 'light' },
-  { n: 2,  id: 'four-icons',     dur: 8.9,  fn: 'scene2',  bg: 'light' },
-  { n: 3,  id: 'greeting-sky',   dur: 16.2, fn: 'scene3',  bg: 'light' },
-  { n: 4,  id: 'glass-rain',     dur: 11.2, fn: 'scene4',  bg: 'light' },
-  { n: 5,  id: 'island-rest',    dur: 9.0,  fn: 'scene5',  bg: 'light' },
-  { n: 6,  id: 'island-alert',   dur: 10.6, fn: 'scene6',  bg: 'light' },
-  { n: 7,  id: 'island-open',    dur: 12.4, fn: 'scene7',  bg: 'light' },
-  { n: 8,  id: 'popup-switch',   dur: 13.4, fn: 'scene8',  bg: 'light' },
-  { n: 9,  id: 'popup-session',  dur: 9.8,  fn: 'scene9',  bg: 'light' },
-  { n: 10, id: 'main-window',    dur: 13.8, fn: 'scene10', bg: 'light' },
-  { n: 11, id: 'traffic',        dur: 7.8,  fn: 'scene11', bg: 'dark'  },
-  { n: 12, id: 'tunnel',         dur: 3.6,  fn: 'scene12', bg: 'light' },
-  { n: 13, id: 'closing',        dur: 3.8,  fn: 'scene13', bg: 'dark'  },
+  { n: 1,  id: 'opening',        dur: 3.6,  fn: 'scene1',  bg: 'light' },
+  { n: 2,  id: 'four-icons',     dur: 5.0,  fn: 'scene2',  bg: 'light' },
+  { n: 3,  id: 'greeting-sky',   dur: 9.0, fn: 'scene3',  bg: 'light' },
+  { n: 4,  id: 'glass-rain',     dur: 6.4, fn: 'scene4',  bg: 'light' },
+  { n: 5,  id: 'island-rest',    dur: 5.2,  fn: 'scene5',  bg: 'light' },
+  { n: 6,  id: 'island-alert',   dur: 5.8, fn: 'scene6',  bg: 'light' },
+  { n: 7,  id: 'island-open',    dur: 7.0, fn: 'scene7',  bg: 'light' },
+  { n: 8,  id: 'popup-switch',   dur: 7.4, fn: 'scene8',  bg: 'light' },
+  { n: 9,  id: 'popup-session',  dur: 5.6,  fn: 'scene9',  bg: 'light' },
+  { n: 10, id: 'main-window',    dur: 8.4, fn: 'scene10', bg: 'light' },
+  { n: 11, id: 'traffic',        dur: 4.6,  fn: 'scene11', bg: 'dark'  },
+  { n: 12, id: 'tunnel',         dur: 2.4,  fn: 'scene12', bg: 'light' },
+  { n: 13, id: 'closing',        dur: 2.6,  fn: 'scene13', bg: 'dark'  },
 ];
+
+/**
+ * Each scene is authored against the beat sheet in prompt.md §4 at a particular
+ * length, then the cut decides how long it actually gets. `stretch` is
+ * authored / actual, so `page.mjs` can hand a scene its own time base and a
+ * re-time is a one-line change to `dur` with no edit to the scene's beats.
+ */
+const AUTHORED = {
+  scene1: 6.6, scene2: 8.9, scene3: 16.2, scene4: 11.2, scene5: 9.0,
+  scene6: 10.6, scene7: 12.4, scene8: 13.4, scene9: 9.8, scene10: 13.8,
+  scene11: 7.8, scene12: 3.6, scene13: 3.8,
+};
+export const STRETCH = Object.fromEntries(
+  TIMELINE.map((s) => [s.fn, AUTHORED[s.fn] / s.dur]));
 
 export const TOTAL_SECONDS = TIMELINE.reduce((a, s) => a + s.dur, 0) - 0.2 * (TIMELINE.length - 1);
 export const TOTAL_FRAMES = Math.round(TOTAL_SECONDS * FPS);
@@ -130,7 +144,7 @@ function loadAssets() {
 // The page source lives in page.mjs so it can be syntax-checked and its
 // top-level collisions reported without launching a browser.
 const pageSource = () => page_source({
-  here: HERE, width: W, height: H, timeline: TIMELINE,
+  here: HERE, width: W, height: H, timeline: TIMELINE, stretch: STRETCH,
 });
 
 // ---------------------------------------------------------------- capture
@@ -181,6 +195,14 @@ async function capture(argv) {
     return shots;
   }
 
+  // Clear the sequence first. ffmpeg globs `f%05d.png`, so a shorter cut left in
+  // the same directory re-encodes the *old* longer film — the frames past the
+  // new total are still on disk and still match the pattern. Clearing is what
+  // makes a re-time actually land.
+  for (const f of readdirSync(FRAMES)) {
+    if (/^f\d{5}\.png$/.test(f)) unlinkSync(join(FRAMES, f));
+  }
+
   const total = TOTAL_FRAMES;
   const t0 = Date.now();
   for (let i = 0; i < total; i++) {
@@ -216,14 +238,15 @@ function encode() {
           '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p',
           '-movflags', '+faststart', '-r', String(FPS), mp4]);
 
-  // The GIF is the README's autoplay. Two passes so the flat card greys do not
-  // band, and it is the file that gets reached for on every clone, so it is
-  // budgeted: 1280 wide, 12.5 fps, and `max_colors` trimmed — a 20-minute
-  // feature's-worth of MP4 quality in a GIF is a README nobody finishes loading.
+  // The GIF is the README's autoplay, so it is the file every clone pays for.
+  // Two passes so the flat card greys do not band, and a hard budget: 900 wide,
+  // 8 fps, 128 colours. A GIF is not the film — it is the poster that proves the
+  // film exists, and it links to the MP4 for anyone who wants the real thing.
+  // Anything much past ~8 MB is a README nobody finishes loading.
   console.log('  encoding gif…');
   const pal = join(HERE, 'palette.png');
-  const gifFilter = 'fps=10,scale=1040:-1:flags=lanczos';
-  ffmpeg(['-i', mp4, '-vf', `${gifFilter},palettegen=max_colors=180:stats_mode=diff`, pal]);
+  const gifFilter = 'fps=8,scale=900:-1:flags=lanczos';
+  ffmpeg(['-i', mp4, '-vf', `${gifFilter},palettegen=max_colors=128:stats_mode=diff`, pal]);
   ffmpeg(['-i', mp4, '-i', pal, '-lavfi',
           `${gifFilter}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`,
           '-loop', '0', gif]);

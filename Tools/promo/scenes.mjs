@@ -623,8 +623,12 @@ export function scene8(g, t, env) {
 
   // Hover the CC chip, then open its switcher; the popover is 240pt of the real
   // `ModelSwitchList`, which a still cannot show.
-  const open = ramp(t, 2.8, 3.1, 'snap');
-  const pickT = 6.6;
+  // Scene 8 is 7.4 s in the cut, so the whole beat sheet has to fit in it: the
+  // popover opens, is read, the pick lands, the toast confirms. The list holds
+  // from ~2.2 s to ~5.4 s — long enough to read six rows — and the pick happens
+  // at 5.4 so the toast has the rest of the shot to itself.
+  const open = ramp(t, 1.9, 2.2, 'snap');
+  const pickT = 5.4;
   const picked = t > pickT;
 
   g.save();
@@ -639,9 +643,16 @@ export function scene8(g, t, env) {
   // The switcher popover, under the first 143pt column.
   const popT = open * (1 - ramp(t, pickT, pickT + 0.3, 'slow'));
   if (popT > 0.01) {
+    // The chip opens its list *below* itself (`arrowEdge: .bottom` in
+    // `HeaderSwitchChip`), so the list hangs under the switcher row rather than
+    // over the session tiles. Anchored to the CC chip's own box, with the
+    // popover's little arrow pointing back up at it.
     const cw = (POPUP_POINTS.w - 2 * 12 - 2) / 3;
-    const ox = px - w / 2 + 12 * scale;
-    const ow = 240 * scale, oy = py - h / 2 + (12 + 96 + 6) * scale;
+    const chipX = px - w / 2 + 12 * scale;
+    const chipW = cw * scale;
+    const ow = 232 * scale;
+    const ox = chipX + 14 * scale;
+    const oy = py - h / 2 + (12 + 86 + 8) * scale;
     const rows = [
       { header: 'Aibox' },
       { title: 'deepseek-v4-flash', active: !picked },
@@ -659,6 +670,23 @@ export function scene8(g, t, env) {
     fillRR(g, ox, oy, ow, oh, 12 * scale, '#FFFFFF');
     g.restore();
     strokeRR(g, ox, oy, ow, oh, 12 * scale, ink.hair, 1);
+    // The popover's anchor arrow, pointing up at the chip it came from.
+    const ax = chipX + chipW / 2;
+    g.save();
+    g.fillStyle = '#FFFFFF';
+    g.beginPath();
+    g.moveTo(ax - 7 * scale, oy + 1);
+    g.lineTo(ax + 7 * scale, oy + 1);
+    g.lineTo(ax, oy - 8 * scale);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = ink.hair; g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(ax - 7 * scale, oy + 1);
+    g.lineTo(ax, oy - 8 * scale);
+    g.lineTo(ax + 7 * scale, oy + 1);
+    g.stroke();
+    g.restore();
     text(g, '切换 Claude Code', ox + 12 * scale, oy + 16 * scale,
          { size: 10 * scale, weight: 500, color: ink.faint });
     let ry = oy + 26 * scale;
@@ -745,13 +773,17 @@ export function scene9(g, t, env) {
   // The popup is 856pt tall; the camera pans down it. The pan distance is what
   // the frame cannot hold at this zoom, so the shot ends on the usage panel and
   // never on the empty tail below it.
+  // The popup is 460x856pt; at 1.15 that is 529x984, which the 1080 frame holds
+  // whole. It sits left of centre so the terminal has somewhere to land, and it
+  // is never allowed to hang off the edge — a panel sliding out of frame reads
+  // as a mistake, not as a camera move.
   const scale = 1.15;
   const w = POPUP_POINTS.w * scale, h = POPUP_POINTS.h * scale;
-  const px = W * 0.58, py = H / 2;
+  const px = W * 0.36;
   // Start at the panel's top, travel down by exactly what the frame cannot hold.
-  const maxPan = Math.max(0, h - H + 120);
+  const maxPan = Math.max(0, h - H + 48);
   const pan = ramp(t, 2.4, 4.2, 'slow') * maxPan;
-  const top = -40 - pan;
+  const top = -24 - pan;
 
   g.save();
   g.globalAlpha = ramp(t, 0.2, 1.0, 'enter');
@@ -770,8 +802,8 @@ export function scene9(g, t, env) {
   // The terminal that a double-click on a session card opens, then folds back.
   const termA = gate(t, 5.4, 5.9, 7.8, 8.4);
   if (termA > 0.01) {
-    const tw = 760, th = 300;
-    const tx = W * 0.30, ty = H * 0.56;
+    const tw = 700, th = 280;
+    const tx = W * 0.72, ty = H * 0.62;
     const sc = lerp(0.86, 1, ramp(t, 5.4, 5.9, 'enter'));
     g.save();
     g.globalAlpha = termA;
@@ -800,9 +832,12 @@ export function scene9(g, t, env) {
   const copyIn = ramp(t, 0.4, 1.4, 'enter');
   const copyOut = ramp(t, 8.6, 9.6, 'slow');
   g.globalAlpha = copyIn * (1 - copyOut);
+  // The caption sits in the right-hand column the popup has vacated, on the
+  // popup's own centre line — not floating at some unrelated y.
   drawCopy(g, { title: '接着刚才那次会话。',
                 body: '目录 | 标题、上下文、当前工具、心跳、内存。双击就在终端里接上。',
-                x: 60, y: H * 0.66, width: 500, ink, titleSize: 58, bodySize: 19 });
+                x: W * 0.68, y: (H - 44 - 92) / 2, width: 430, ink,
+                titleSize: 50, bodySize: 18 });
   g.globalAlpha = 1;
 }
 
@@ -914,9 +949,11 @@ export function scene10(g, t, env) {
   const ink = INK.light;
   g.fillStyle = ink.canvas; g.fillRect(0, 0, W, H);
 
-  // The one pull-out in the film: from the terminal's neighbourhood out to the
-  // whole window (prompt.md §2). The window does not move when the page changes
-  // — only its content does.
+  // Captions live in their own band, never on top of a surface. The window is
+  // the subject of every shot in this scene; a caption laid over it is just the
+  // film covering the thing it is trying to show.
+  const BAND = 168;
+
   const pull = ramp(t, 0, 1.2, 'slow');
   const sc = lerp(1.06, 0.90, pull);
 
@@ -925,20 +962,23 @@ export function scene10(g, t, env) {
   for (const [at, pg] of cuts) if (t >= at) { page = pg; local = t - at; }
   const enter = ramp(local, 0, 0.45, 'enter');
 
-  const w = 1240, h = 776;
-  withCamera(g, { scale: sc, x: W / 2, y: H / 2 }, (c) => {
+  // The window is sized from the page it is showing, so nothing is ever cut
+  // mid-card. A page shorter than the box just leaves the box shorter — the
+  // window is a window, not a crop.
+  const w = 1180;
+  const natural = WINDOW_POINTS[page].h * (w / WINDOW_POINTS[page].w);
+  const h = Math.min(natural, H - BAND - 96);
+
+  withCamera(g, { scale: sc, x: W / 2, y: (H - BAND) / 2 }, (c) => {
     c.save();
     c.globalAlpha = enter;
     drawMainWindow(c, {
-      x: W / 2 - w / 2, y: H / 2 - h / 2, w, h, film: env, page, theme: 'light', ink,
-      // The tall pages (overview 1697pt, usage 1553pt) scroll by one notch as
-      // the shot holds, which is what the window does with a page that long.
+      x: W / 2 - w / 2, y: (H - BAND) / 2 - h / 2, w, h, film: env, page, theme: 'light', ink,
       scroll: 0,
     });
     c.restore();
   });
 
-  // A caption that names what the page is, refreshed per cut.
   const names = {
     overview: ['一块冰面。', '从 CPU 到能源流向。颜色只出现在图表里。'],
     sessions: ['三条产品线，一页。', 'Claude Code、Cursor、Codex 各自成频道，含子 Agent。'],
@@ -948,14 +988,14 @@ export function scene10(g, t, env) {
   const copyIn = ramp(local, 0.15, 0.75, 'enter');
   g.globalAlpha = copyIn * 0.98;
   drawCopy(g, { title: names[0], body: names[1],
-                x: 96, y: H - 230, width: 420, ink, titleSize: 44, bodySize: 17 });
+                x: 96, y: H - BAND + 34, width: 760, ink, titleSize: 46, bodySize: 17 });
   g.globalAlpha = 1;
 
-  // ⌘K rises over the window on the last beat.
+  // ⌘K rises on the last beat, in the band, next to the caption.
   const cmdK = page === 'vpn' ? ramp(local, 1.6, 1.9, 'snap') : 0;
   if (cmdK > 0) {
-    const pw = 620, ph = 300;
-    const px = W / 2 - pw / 2, py = H - 90 - ph * cmdK;
+    const pw = 560, ph = 268;
+    const px = W - 96 - pw, py = H - BAND + 24 + (1 - cmdK) * 26;
     g.save();
     g.globalAlpha = cmdK;
     g.save();
@@ -963,15 +1003,15 @@ export function scene10(g, t, env) {
     fillRR(g, px, py, pw, ph, 16, '#FFFFFF');
     g.restore();
     strokeRR(g, px, py, pw, ph, 16, ink.hair, 1);
-    text(g, '⌘K', px + 22, py + 34, { size: 12, weight: 600, color: ink.faint });
-    text(g, '跳页面、会话或模型', px + 56, py + 34, { size: 13, weight: 400, color: ink.body });
-    g.fillStyle = ink.hair; g.fillRect(px, py + 52, pw, 1);
+    text(g, '⌘K', px + 22, py + 32, { size: 12, weight: 600, color: ink.faint });
+    text(g, '跳页面、会话或模型', px + 56, py + 32, { size: 13, weight: 400, color: ink.body });
+    g.fillStyle = ink.hair; g.fillRect(px, py + 48, pw, 1);
     [['概览', '页面'], ['修 CI 红', '会话'], ['deepseek-v4-pro', '模型'],
      ['VPN · 日本 A01', '节点']].forEach(([nm, kind], i) => {
-      const iy = py + 62 + i * 40;
-      if (i === 2) fillRR(g, px + 8, iy, pw - 16, 34, 10, 'rgba(61,125,255,0.10)');
-      text(g, nm, px + 26, iy + 23, { size: 13, weight: i === 2 ? 600 : 400, color: ink.title });
-      text(g, kind, px + pw - 26, iy + 23,
+      const iy = py + 56 + i * 36;
+      if (i === 2) fillRR(g, px + 8, iy, pw - 16, 30, 10, 'rgba(61,125,255,0.10)');
+      text(g, nm, px + 26, iy + 21, { size: 13, weight: i === 2 ? 600 : 400, color: ink.title });
+      text(g, kind, px + pw - 26, iy + 21,
            { size: 11, weight: 400, color: ink.faint, align: 'right' });
     });
     g.restore();
@@ -990,12 +1030,16 @@ export function scene11(g, t, env) {
   const sc = lerp(0.94, 1.0, inA);
 
   // The traffic page is the one surface that is its own window in the app (it is
-  // a dark inspector), so the film shows it at its own proportions.
-  const w = 1240, h = 797;
-  withCamera(g, { scale: sc, x: W / 2, y: H / 2 }, (c) => {
+  // a dark inspector), so the film shows it at its own proportions. The caption
+  // gets the band above it — the inspector runs nearly the full height, so a
+  // caption at the bottom would be sitting on the log it is describing.
+  const BAND = 150;
+  const w = 1240, h = 676;
+  const cy = BAND + (H - BAND) / 2;
+  withCamera(g, { scale: sc, x: W / 2, y: cy }, (c) => {
     c.save();
     c.globalAlpha = inA;
-    drawWindowPage(c, { x: W / 2 - w / 2, y: H / 2 - h / 2, w, h, film: env, ink });
+    drawWindowPage(c, { x: W / 2 - w / 2, y: cy - h / 2, w, h, film: env, ink });
     c.restore();
   });
 
@@ -1003,7 +1047,7 @@ export function scene11(g, t, env) {
   const copyOut = ramp(t, 7.2, 7.8, 'slow');
   g.globalAlpha = copyIn * (1 - copyOut);
   drawCopy(g, { title: '留在本机。', body: '对话、工具调用、图片和原始报文。代理只转发到你自己的上游。',
-                x: 96, y: H - 190, width: 560, ink, titleSize: 48, bodySize: 18 });
+                x: 96, y: 44, width: 720, ink, titleSize: 44, bodySize: 17 });
   g.globalAlpha = 1;
 }
 

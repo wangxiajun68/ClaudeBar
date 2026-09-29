@@ -59,7 +59,7 @@ export function topLevelNames(script) {
   return seen;
 }
 
-export function pageSource({ here, width, height, timeline }) {
+export function pageSource({ here, width, height, timeline, stretch }) {
   const film = stripModules(readFileSync(join(here, 'film.mjs'), 'utf8'));
   const mod = stripModules(readFileSync(join(here, 'weather.mjs'), 'utf8'));
   const scenes = stripModules(readFileSync(join(here, 'scenes.mjs'), 'utf8'));
@@ -88,6 +88,7 @@ const win = typeof globalThis !== 'undefined' ? globalThis : this;
 let ENV = { assets: {} };
 win.setEnv = (a) => { ENV = { assets: a }; };
 const CUT = ${cut};
+const STRETCH = ${JSON.stringify(stretch)};
 win.draw = (t) => {
   const g = document.getElementById('c').getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -101,7 +102,10 @@ win.draw = (t) => {
   const fn = { scene1, scene2, scene3, scene4, scene5, scene6, scene7, scene8,
                scene9, scene10, scene11, scene12, scene13 }[chosen[0]];
   if (typeof fn !== 'function') throw new Error('no scene named ' + chosen[0]);
-  fn(g, local, ENV);
+  // Every scene is authored against its original beat sheet, then compressed to
+  // whatever length the cut gives it. Scaling the time base here means a scene
+  // can be re-timed from the timeline alone, with no edit to its own beats.
+  fn(g, local / STRETCH[chosen[0]], ENV);
   return chosen[0] + ' @ ' + local.toFixed(2);
 };
 </script></body></html>`;
