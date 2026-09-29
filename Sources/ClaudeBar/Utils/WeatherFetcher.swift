@@ -422,7 +422,20 @@ enum DomesticWeatherParser {
                                    wind: nil, sunrise: nil, sunset: nil,
                                    skyHint: WeatherReading.sky(forText: text)))
         }
-        let today = days.first { Calendar(identifier: .gregorian).isDate($0.date, inSameDayAs: Date()) } ?? days.first
+        // Today in the *reading's* timezone, not the device's.
+        //
+        // Both domestic sources report mainland China, and both date their
+        // forecast cells in Asia/Shanghai, so "which cell is today" has to be
+        // asked in that zone too. Asking it in the device's zone (the default
+        // calendar) is wrong twice over: a Mac in Tokyo reads the card an hour
+        // before midnight in Shanghai and gets *tomorrow's* high/low for two
+        // hours of every day, and a Mac in London or New York lands on the
+        // cell *before* the first one when the two zones are on different
+        // dates. `WeatherForecastFetcher` and the 中国天气网 path already pass
+        // the right zone; this was the one left on the device's.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? calendar.timeZone
+        let today = days.first { calendar.isDate($0.date, inSameDayAs: Date()) } ?? days.first
         return WeatherReading(
             place: place.isEmpty ? (live?["city"] as? String ?? "当前位置") : place,
             temperatureC: temperature,

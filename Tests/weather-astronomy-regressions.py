@@ -95,10 +95,25 @@ source += r'''
         let amapLive: [String: Any] = ["city": "上海市", "temperature": "25", "humidity": "68",
                                        "winddirection": "东北", "windpower": "≤3", "weather": "阴",
                                        "reporttime": "2026-09-29 11:33:13"]
+        // The two day cells are dated off *today in Asia/Shanghai*, because a
+        // mainland source dates them there. Hard-coded dates here made the
+        // suite read tomorrow's cell — and so assert tomorrow's high/low —
+        // whenever the runner's UTC date was already the next day (CI runs at
+        // 06:00 UTC), which is what turned this file red on 2026-09-29.
+        let cnDay: (Int) -> String = { offset in
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+            let day = calendar.date(byAdding: .day, value: offset, to: Date())!
+            let f = DateFormatter()
+            f.timeZone = calendar.timeZone
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: day)
+        }
         let amapCasts: [[String: Any]] = [
-            ["date": "2026-09-29", "dayweather": "小雨", "nightweather": "小雨",
+            ["date": cnDay(0), "dayweather": "小雨", "nightweather": "小雨",
              "daytemp": "26", "nighttemp": "22"],
-            ["date": "2026-09-30", "dayweather": "雷阵雨", "nightweather": "阴",
+            ["date": cnDay(1), "dayweather": "雷阵雨", "nightweather": "阴",
              "daytemp": "25", "nighttemp": "21"]]
         let amap = DomesticWeatherParser.reading(live: amapLive, forecast: ["casts": amapCasts],
                                                  place: "上海 · 浦东新区",
@@ -149,6 +164,31 @@ source += r'''
         precondition(located.latitude == 1 && located.longitude == 2 && located.timezone == "UTC")
         located = reading.withCoordinates(latitude: nil, longitude: nil, source: "测试")
         precondition(located.latitude == reading.latitude && located.source == "测试")
+
+        // Which forecast cell is "today" is asked in the *reading's* zone, not
+        // the device's. Both domestic sources report mainland China; asking it
+        // in the device's zone picked tomorrow's high/low for the last hours of
+        // a Shanghai day from a Tokyo Mac, and the cell *before* the first when
+        // the two zones are on different dates (which is how CI caught this:
+        // the runner is at 06:00 UTC, where the Shanghai date is already ahead
+        // of the flyer's own).
+        //
+        // Listed out of order on purpose: the *first* cell is Shanghai's
+        // tomorrow, so a selection that falls back to `days.first` — or that
+        // asks the device's calendar — cannot land on the intended cell.
+        let shanghaiCasts: [[String: Any]] = [
+            ["date": cnDay(1), "dayweather": "阴", "nightweather": "阴",
+             "daytemp": "19", "nighttemp": "15"],
+            ["date": cnDay(0), "dayweather": "小雨", "nightweather": "小雨",
+             "daytemp": "26", "nighttemp": "22"]]
+        let shanghaiLive: [String: Any] = ["city": "上海市", "temperature": "25", "weather": "阴",
+                                           "windpower": "≤3", "reporttime": "2026-09-29 03:30:00"]
+        let shanghai = DomesticWeatherParser.reading(live: shanghaiLive, forecast: ["casts": shanghaiCasts],
+                                                     place: "上海", latitude: nil, longitude: nil)!
+        precondition(shanghai.highC == 26 && shanghai.lowC == 22)
+        precondition(shanghai.timezone == "Asia/Shanghai")
+        precondition(shanghai.forecast.count == 2)
+
         print("PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data, domestic sources")
     }
 }
