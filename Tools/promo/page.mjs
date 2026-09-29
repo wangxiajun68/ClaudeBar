@@ -86,7 +86,7 @@ ${combined}
 
 const win = typeof globalThis !== 'undefined' ? globalThis : this;
 let ENV = { assets: {} };
-win.setEnv = (a) => { ENV = { assets: a }; bindEnv(ENV); };
+win.setEnv = (a) => { ENV = { assets: a }; };
 const CUT = ${cut};
 win.draw = (t) => {
   const g = document.getElementById('c').getContext('2d');

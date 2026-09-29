@@ -115,18 +115,21 @@
 
 ### 第 3 场 · 问候卡 · 天空（0:15.00 – 0:31.20）
 
-- **镜头**：**推近**。0:15.0 时卡片以 `scale 0.86 / opacity 0` 在左下出现，1.4 s 内到 `scale 1.00`；
-  0:19.4 起推近到 `scale 1.10`，镜头中心从卡片中心移到问候语基线（`y = H × 0.62`），
-  推近结束时问候语正好占满画面宽度的 62%。
+- **镜头**：**推近**。0:15.0 时卡片以 `scale 0.88 / opacity 0` 在左下出现，1.4 s 内到 `scale 1.00`；
+  0:18.6 起推近到 `scale 1.32`，镜头中心从卡片中心上移到问候语的排字带（`y ≈ H × 0.42`）。
+  卡片本身是 3.2:1 的横条，**只装下它**的镜头全是信箱黑边；推近到 1.3 倍以上，卡片自己的圆角
+  移出画面外，问候语的排字带占满画面宽度——那才是这一场的构图。
+- **画面来源**：**合成真实渲染图**，不是重画。取 `Tools/render-greeting-preview.py` 产出的
+  `light-1100-{sun,cloud,rain,night,snow}.png` —— 从生产 Swift 里的 Metal 天空、Borel 手写体、
+  六日预报、窗台抽出来的整卡静帧。卡片在预览图里的矩形是 `(48,48)–(2247,995)`（2x），
+  所以卡片自身是 **1100×474 pt**，影片按 1:1 画，和灵动岛、popup 一样。
 - **主角**：问候卡（`docs/design/greeting-atmosphere.md` 的 `GreetingStatusSheet`）。
 - **元素**：天空（Metal 大气：渐变 + 体积云 + 天体）、问候语 `good morning,`、签名 `XIAJUN WANG`、
   左上是时钟与自动/手动、右上是城市与天气读数、左下日轨、右侧六日预报、底部窗台（模型胶囊、Cursor 两池、Codex 两窗口、今日 token）。
 - **动作**：
-  - 0:19.4–0:23.0 天空**从清晨走到正午**：太阳高度角连续插值，云量从 0.78 走到 0.52，色温 5800K；
-  - 0:23.0–0:27.4 切到**日落**：地平线 `#FF9656`，问候语一侧出现 0.34 强度的金色边缘光；
-  - 0:27.4–0:31.2 切到**夜**：星空渐显（−6° 到 −18° 之间由 0 线性到 100%），月亮带月相终结线，
-    问候语换成 `good evening,`；
-  - 全过程中数字不许跳：温度、token 都按线性插值走。
+  - 0:16.6–0:27.6 **一天是四次交叠溶解**，不是四个切点：`walk` 从 0 走到 1，`sun → cloud → night`
+    逐个淡入，任何一帧都最多只有两张静帧在叠。天空从不倒退——同一天空重新出现会读成循环，不是一天。
+  - 太阳、云影、星空的运动都在静帧里，是应用自己渲染的，影片只负责叠化和推镜。
 - **文案**（都是应用真实措辞）：`good morning,` / `good evening,` / `XIAJUN WANG` / `广州 · 29° 多云` /
   `体感 32° · 湿 78% · 东南 3级` / `日落 18:21 · 拖动天空，漫游一天`
 - **层次**：天空是底（唯一允许饱和度高的层），问候语是主（玻璃字，折射天空），
@@ -136,8 +139,11 @@
 
 ### 第 4 场 · 天气卡 · 玻璃雨（0:31.00 – 0:42.20）
 
-- **镜头**：**静止的特写**。卡片保持 `scale 1.22`，取景只取卡片左上三分之二（天气区 + 问候语上半），
-  让雨丝从字前划过这件事被看见。
+- **镜头**：**推近的特写**。`scale 1.06 → 1.72`（0.6 s → 7.2 s），取景落在问候语的排字带上，
+  卡片左下角允许移出画面——被看见的是"雨丝从字前划过"，不是"这里有一张卡片"。
+- **画面来源**：**真实渲染图** `light-1100-rain.png`（真实的阵雨天空、真实的雨滴层、真实的字），
+  影片只叠它自己的动态雨滴。静帧里有雨滴，但它们不会落；会落的那几颗是影片画的，
+  画在同一张真实的雨天上、同一个刻度上。
 - **主角**：卡片表面的雨滴（`WeatherBackdrop` 的 L7 层）。
 - **元素**：小雨（远层 220 条 14pt 雨丝、近层 30 条 38pt 虚焦雨滴）、卡面 2–7pt 折射雨滴、
   问候语（此刻是主焦平面，雨滴在它前面）。
@@ -324,23 +330,36 @@
 
 | 场 | 素材 | 来源 | 新鲜度要求 |
 | --- | --- | --- | --- |
-| 3 / 4 | 问候卡（天空、玻璃字、窗台、预报） | `Tools/render-greeting-preview.py` 产出的 `auto-light-1100-*.png` 等 | **必须现场重跑**该脚本后再取图；它是从生产源码里抽声明的，所以图上就是当前实现 |
-| 8 / 9 | popup（状态行、三格、KPI、会话卡、用量面板） | 新的预览工具，从 `Views/Popup/*.swift` + `Views/MenuBarView.swift` 抽类型、喂合成数据 | 与源码同源；仓库里 `docs/screenshots/menubar-popup.png` 是 9 月 23 日的旧图，**不许使用** |
-| 7 / 5 / 6 | 灵动岛三个状态 | 新的预览工具，从 `Views/Island/*.swift` + `NotchIslandController.swift` 抽类型、喂合成数据 | 必须包含展开态的顶栏、2×2 会话格、156pt 用量卡与 30 天直方图 |
-| 10 | 主窗口（概览 / 会话 / 用量 / VPN） | 新的预览工具，从主窗口与各 Page 抽类型 | `docs/screenshots/main-window.png` 里**没有问候卡**（约 9 月 23 日），**不许使用** |
-| 11 | 流量页 | 同上 | `docs/screenshots/traffic.png` 是 9 月 3 日的旧图，**不许使用** |
+| 3 / 4 / 5 | 问候卡（Metal 天空、手写体、窗台、六日预报） | `Tools/render-greeting-preview.py` → `.build/greeting-preview/{light,dark}-1100-{sun,cloud,rain,night,snow}.png` | **必须现场重跑**该脚本再取图；第一、三、四场的天与雨就是这几张真实静帧的叠化 |
+| 5 / 6 / 7 | 灵动岛三个状态 | `Tools/render-island-preview.py` → `.build/island-preview/*.png`，再由 `Tools/promo/key-island.py` 抠成透明 | 必须包含展开态的顶栏、2×2 会话格、156pt 用量卡与 30 天直方图 |
+| 8 / 9 | popup（状态行、三格、KPI、会话卡、用量面板） | `Tools/render-popup-preview.py` → `.build/popup-preview/popup-{light,dark}.png` | 与源码同源；仓库里 `docs/screenshots/menubar-popup.png` 是 9 月 23 日的旧图，**不许使用** |
+| 10 / 11 | 主窗口（概览 / 会话 / 用量 / VPN / 流量） | `Tools/render-mainwindow-preview.py` → `.build/mainwindow-preview/*.png` | `docs/screenshots/main-window.png` 里**没有问候卡**（约 9 月 23 日），**不许使用** |
 
-落地方式（按优先级）：
+落地方式：**已经落地**，就是上面那张表里的四个工具。它们走的是同一套路——把生产 Swift 里的
+类型声明抽出来，拼成一份 `Probe.swift`，`swiftc` 编成无界面可执行文件，出 PNG：
 
-1. **首选**：新增 `Tools/render-promo-frames.py`，和 `render-greeting-preview.py` / `render-control-preview.py`
-   同一套路——把生产 Swift 文件里的类型声明抽出来拼接成一份 `Probe.swift`，用 `swiftc` 编成
-   无界面可执行文件，`ImageRenderer` 出 PNG。popup / 灵动岛 / 主窗口各出一份"合成数据快照"，
-   再按 §4 的运镜在影片里做动画。
-2. **兜底**：若某个表面无法在不改生产代码的前提下被抽出来（例如它硬依赖 `VKWebView`、
-   SQLite 或真实网络），则**降级为不展示该表面**，并把该场改成其它场景（例如把第 11 场
-   换成用量页的特写），绝不用过期截图顶替。
-3. 任何一帧只要出现"未配置""默认模型"这类真实的空态文案，都必须在合成数据里补成有内容的
-   状态——宣传片不展示空态。
+```
+python3 Tools/render-greeting-preview.py     # → .build/greeting-preview/
+python3 Tools/render-island-preview.py       # → .build/island-preview/
+python3 Tools/render-popup-preview.py        # → .build/popup-preview/
+python3 Tools/render-mainwindow-preview.py   # → .build/mainwindow-preview/
+python3 Tools/promo/key-island.py            # → .build/promo/assets/（灵动岛抠透明）
+python3 Tools/render-promo-film.py           # 跑上面全部 + 出 mp4/gif
+```
+
+两条硬约束：
+
+1. **缺图就是硬失败，不许静默兜底。** `Tools/promo/driver.mjs` 的 `loadAssets()` 找不到任何一张
+   表面渲染图就退出并列出缺哪些。悄悄换一张占位图，正是这套流水线存在的意义所在。同样，
+   `Tools/render-island-preview.py` 用 `NSHostingView` 而不是 `ImageRenderer`——后者会把
+   `ScrollView` 的内容渲染成空白，一张"成功的"空图比一张失败更糟。
+2. **无法抽出的表面降级为不展示**。若某个表面硬依赖 `VKWebView`、SMC、SQLite 或真实网络，
+   就把该场改成别的（例如把第 11 场换成用量页特写），或明确写进该工具的 docstring 里说明
+   缺哪一块（`render-popup-preview.py` 就略去了需要 SMC 的 `MachineKpiStrip` 与 `PowerFlowCard`），
+   绝不用过期截图顶替。
+
+另外：任何一帧只要出现"未配置""默认模型"这类真实的空态文案，都必须在合成数据里补成有内容的
+状态——宣传片不展示空态。
 
 ---
 

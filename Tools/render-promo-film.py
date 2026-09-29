@@ -77,6 +77,28 @@ def check(check_only: bool = False) -> None:
               f'({", ".join(sorted(p.name for p in FILM.glob("*.mjs")))})')
 
 
+def require_surfaces() -> None:
+    """The film composites the real surface renders; produce them if absent.
+
+    This is the hard rule in prompt.md §5: every panel in the film is drawn from
+    the current source by a preview tool, never a checked-in screenshot. Running
+    them here means a fresh clone gets a film that matches the app.
+    """
+    needed = [
+        (BUILD / 'island-preview/collapsed-light.png', 'render-island-preview.py'),
+        (BUILD / 'popup-preview/popup-light.png', 'render-popup-preview.py'),
+        (BUILD / 'mainwindow-preview/overview-light.png', 'render-mainwindow-preview.py'),
+    ]
+    missing = [script for path, script in needed if not path.is_file()]
+    for script in missing:
+        print(f'  rendering surfaces with Tools/{script}…')
+        run(['/usr/bin/python3', str(ROOT / 'Tools' / script)])
+    if missing or not (BUILD / 'assets/island-collapsed-light.png').is_file():
+        if not (BUILD / 'assets/island-collapsed-light.png').is_file() and not missing:
+            print('  keying island silhouettes…')
+        run(['/usr/bin/python3', str(ROOT / 'Tools/promo/key-island.py')])
+
+
 def install_deps() -> None:
     if (NODE_MODULES / 'playwright-core').is_dir():
         return
@@ -110,6 +132,7 @@ def main() -> int:
 
     if not args.encode:
         install_deps()
+        require_surfaces()
         run(['node', 'driver.mjs', '--frames'], cwd=BUILD)
     if not args.frames:
         run(['node', 'driver.mjs', '--encode'], cwd=BUILD)

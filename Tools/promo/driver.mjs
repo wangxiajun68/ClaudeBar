@@ -63,12 +63,60 @@ const ASSET_FILES = {
   cursor:     ['Sources/BrandAssets/cursor-light.png', 'image/png'],
 };
 
+/**
+ * The surfaces the film composites are the **real renders** — the app's own
+ * drawing, produced by the preview tools out of the production Swift:
+ *
+ *   .build/island-preview/     Tools/render-island-preview.py
+ *   .build/popup-preview/      Tools/render-popup-preview.py
+ *   .build/mainwindow-preview/ Tools/render-mainwindow-preview.py
+ *   .build/greeting-preview/   Tools/render-greeting-preview.py
+ *
+ * Missing ones are a hard failure rather than a silent fallback: a film that
+ * quietly substitutes a placeholder is exactly the failure this pipeline exists
+ * to prevent (prompt.md §5).
+ */
+const SURFACE_FILES = [
+  ...['collapsed', 'alert', 'expanded'].flatMap((state) =>
+    ['light', 'dark'].map((theme) => [
+      `island-${state}-${theme}`,
+      `.build/promo/assets/island-${state}-${theme}.png`,
+    ])),
+  ...['light', 'dark'].map((theme) => [
+    `popup-${theme}`, `.build/popup-preview/popup-${theme}.png`,
+  ]),
+  ...['overview', 'sessions', 'usage', 'vpn', 'traffic'].flatMap((page) =>
+    ['light', 'dark'].map((theme) => [
+      `window-${page}-${theme}`, `.build/mainwindow-preview/${page}-${theme}.png`,
+    ])),
+  // The status sheet's own stills, one per sky. The film walks the day by
+  // crossfading these, so the sky it shows is a sky the app really drew.
+  ...['light', 'dark'].flatMap((theme) =>
+    ['sun', 'cloud', 'rain', 'night', 'snow'].map((sky) => [
+      `greeting-${theme}-${sky}`, `.build/greeting-preview/${theme}-1100-${sky}.png`,
+    ])),
+];
+
 function loadAssets() {
   const out = {};
   for (const [key, [rel, mime]] of Object.entries(ASSET_FILES)) {
     const p = join(ROOT, rel);
     if (!existsSync(p)) { console.error(`  ! missing asset ${rel}`); continue; }
     out[key] = `data:${mime};base64,${readFileSync(p).toString('base64')}`;
+  }
+  const missing = [];
+  for (const [key, rel] of SURFACE_FILES) {
+    const p = join(ROOT, rel);
+    if (!existsSync(p)) { missing.push(rel); continue; }
+    out[key] = `data:image/png;base64,${readFileSync(p).toString('base64')}`;
+  }
+  if (missing.length) {
+    console.error('\n  missing surface renders — the film composites the real ones:\n'
+      + missing.map((m) => `    ${m}`).join('\n')
+      + '\n  run: python3 Tools/render-island-preview.py && python3 Tools/render-popup-preview.py'
+      + '\n       python3 Tools/render-mainwindow-preview.py && python3 Tools/render-greeting-preview.py'
+      + '\n       python3 Tools/promo/key-island.py\n');
+    process.exit(1);
   }
   return out;
 }
