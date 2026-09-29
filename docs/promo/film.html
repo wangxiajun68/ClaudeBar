@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>ClaudeBar</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: #f5f5f7;
+  }
+  #stage {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: #f5f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(900px 620px at 74% 48%, rgba(150, 170, 255, 0.18), transparent 62%);
+    opacity: 0;
+  }
+  .lockup, .copy, .shot {
+    position: absolute;
+  }
+  .lockup {
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .mark {
+    width: 188px;
+    height: 188px;
+    border-radius: 42px;
+    object-fit: cover;
+    box-shadow:
+      0 28px 70px rgba(20, 24, 32, 0.16),
+      0 2px 6px rgba(20, 24, 32, 0.06);
+  }
+  .lockup.end .mark {
+    width: 112px;
+    height: 112px;
+    border-radius: 26px;
+  }
+  .name {
+    margin: 32px 0 0;
+    font-size: 76px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    color: #1d1d1f;
+  }
+  .lockup.end .name {
+    margin-top: 26px;
+    font-size: 64px;
+  }
+  .sub {
+    margin: 14px 0 0;
+    font-size: 28px;
+    line-height: 1.25;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    color: #86868b;
+  }
+  .meta {
+    margin: 28px 0 0;
+    font-size: 17px;
+    letter-spacing: 0.04em;
+    color: #86868b;
+  }
+  .copy {
+    left: 120px;
+    top: 50%;
+    width: 620px;
+    transform: translateY(-50%);
+  }
+  .eye {
+    margin: 0 0 18px;
+    font-size: 15px;
+    font-weight: 590;
+    letter-spacing: 0.08em;
+    color: #86868b;
+  }
+  h1 {
+    margin: 0;
+    font-size: 84px;
+    line-height: 1.02;
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    color: #1d1d1f;
+  }
+  .body {
+    margin: 22px 0 0;
+    max-width: 480px;
+    font-size: 24px;
+    line-height: 1.45;
+    font-weight: 400;
+    letter-spacing: -0.011em;
+    color: #6e6e73;
+  }
+  .copy.light .eye { color: #a1a1a6; }
+  .copy.light h1 { color: #f5f5f7; }
+  .copy.light .body { color: #a1a1a6; }
+  .shot {
+    right: 112px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .shot img {
+    display: block;
+    height: auto;
+    border-radius: 18px;
+    box-shadow:
+      0 40px 90px rgba(20, 24, 32, 0.14),
+      0 2px 8px rgba(20, 24, 32, 0.05);
+  }
+  #popup img {
+    width: 446px;
+    border-radius: 26px;
+  }
+  #main img, #traffic img {
+    width: 1020px;
+    border-radius: 14px;
+  }
+  #widget img {
+    width: 620px;
+    border-radius: 36px;
+    box-shadow:
+      0 36px 80px rgba(20, 24, 32, 0.16),
+      0 2px 8px rgba(20, 24, 32, 0.06);
+  }
+  #traffic img {
+    box-shadow:
+      0 40px 100px rgba(0, 0, 0, 0.45),
+      0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glow"></div>
+
+  <div class="lockup" id="title">
+    <img class="mark" src="../../Sources/AppIcon-1024.png" alt="">
+    <div class="name">ClaudeBar</div>
+    <div class="sub">菜单栏里的 AI 工作台</div>
+  </div>
+
+  <div class="copy" id="c-popup">
+    <p class="eye">菜单栏</p>
+    <h1>点一下。</h1>
+    <p class="body">切换供应商，看活着的会话，读本月用量。然后回到终端。</p>
+  </div>
+  <div class="shot" id="popup">
+    <img src="../screenshots/menubar-popup.png" alt="">
+  </div>
+
+  <div class="copy" id="c-main">
+    <p class="eye">概览</p>
+    <h1>一块冰面。</h1>
+    <p class="body">从 CPU 到能源流向。颜色只出现在图表里。</p>
+  </div>
+  <div class="shot" id="main">
+    <img src="../screenshots/main-window.png" alt="">
+  </div>
+
+  <div class="copy light" id="c-traffic">
+    <p class="eye">流量</p>
+    <h1>留在本机。</h1>
+    <p class="body">对话、工具调用、图片和原始报文。代理只转发到你自己的上游。</p>
+  </div>
+  <div class="shot" id="traffic">
+    <img src="../screenshots/traffic.png" alt="">
+  </div>
+
+  <div class="copy" id="c-widget">
+    <p class="eye">桌面</p>
+    <h1>今天的数字。</h1>
+    <p class="body">同一份 Token 和会话，钉成一块小组件。</p>
+  </div>
+  <div class="shot" id="widget">
+    <img src="../screenshots/widget.png" alt="">
+  </div>
+
+  <div class="lockup end" id="end">
+    <img class="mark" src="../../Sources/AppIcon-1024.png" alt="">
+    <div class="name">ClaudeBar</div>
+    <div class="sub">开源。住在 macOS 顶栏。</div>
+    <div class="meta">macOS 15 · Apple Silicon · MIT</div>
+  </div>
+</div>
+<script>
+const nodes = {};
+for (const id of ["glow","title","c-popup","popup","c-main","main","c-traffic","traffic","c-widget","widget","end"]) {
+  nodes[id] = document.getElementById(id);
+}
+
+function ramp(t, a, b) {
+  if (t <= a) return 0;
+  if (t >= b) return 1;
+  const x = (t - a) / (b - a);
+  return 1 - Math.pow(1 - x, 3);
+}
+function gate(t, i0, i1, o0, o1) {
+  return ramp(t, i0, i1) * (1 - ramp(t, o0, o1));
+}
+function lerp(a, b, t) { return a + (b - a) * t; }
+function hex(n) { return n.toString(16).padStart(2, "0"); }
+function mix(a, b, t) {
+  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const A = p(a), B = p(b);
+  return "#" + [0, 1, 2].map((i) => hex(Math.round(lerp(A[i], B[i], t)))).join("");
+}
+
+const scenes = [
+  ["c-popup", "popup", 3.05, 3.85, 6.85, 7.55],
+  ["c-main", "main", 7.15, 7.95, 10.85, 11.55],
+  ["c-traffic", "traffic", 11.15, 11.95, 14.85, 15.55],
+  ["c-widget", "widget", 15.15, 15.95, 18.15, 18.85],
+];
+
+function place(el, opacity, dx) {
+  el.style.opacity = String(opacity);
+  const base = el.classList.contains("copy") || el.classList.contains("shot")
+    ? "translateY(-50%)"
+    : "";
+  const nudge = el.classList.contains("shot") ? ` translateX(${dx}px)` : ` translateY(calc(-50% + ${dx * 0.35}px))`;
+  if (el.classList.contains("copy") || el.classList.contains("shot")) {
+    el.style.transform = base + nudge;
+  }
+}
+
+window.render = function render(t) {
+  const title = gate(t, 0.15, 0.95, 2.75, 3.4);
+  nodes.title.style.opacity = String(title);
+  const titleIn = ramp(t, 0.15, 1.15);
+  nodes.title.style.transform = `translateY(${(1 - titleIn) * 18}px)`;
+
+  for (const [copyId, shotId, i0, i1, o0, o1] of scenes) {
+    const o = gate(t, i0, i1, o0, o1);
+    const enter = ramp(t, i0, i1);
+    const dx = (1 - enter) * 28;
+    place(nodes[copyId], o, (1 - enter) * 16);
+    place(nodes[shotId], o, dx);
+    const hold = ramp(t, i1, o0);
+    const scale = 1 + hold * 0.018;
+    const img = nodes[shotId].querySelector("img");
+    img.style.transform = `scale(${scale})`;
+    img.style.transformOrigin = "center center";
+  }
+
+  const endIn = ramp(t, 18.55, 19.45);
+  nodes.end.style.opacity = String(endIn);
+  nodes.end.style.transform = `translateY(${(1 - endIn) * 16}px)`;
+
+  const dark = gate(t, 11.15, 12.05, 14.85, 15.7);
+  document.getElementById("stage").style.background = mix("#f5f5f7", "#070709", dark);
+  nodes.glow.style.opacity = String(dark);
+};
+
+window.render(0);
+</script>
+</body>
+</html>

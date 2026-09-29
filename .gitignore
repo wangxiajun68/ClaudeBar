@@ -2,6 +2,10 @@
 .build/
 build/
 
+# The promo film's intermediate frames and its playwright-core install live in
+# .build/promo (gitignored above); only the encoded mp4 and gif are committed,
+# under docs/promo/. Render them with `python3 Tools/render-promo-film.py`.
+
 # Swiftc leftovers dropped at repo root
 /*.abi.json
 /*.swiftdoc
