@@ -137,6 +137,10 @@ final class BatteryChargeController {
     }
 
     func probe(retry: Bool = false) {
+        guard BuildChannel.allowsSystemIntegration else {
+            probeError = BuildChannel.restrictionMessage
+            return
+        }
         guard !probing, retry || (supported == nil && probeError == nil) else { return }
         probing = true; probeError = nil
         Task {
@@ -185,6 +189,7 @@ final class BatteryChargeController {
     var limitConfirmed: Bool { managesLimit && !pending && appliedLimit == Int(threshold) }
 
     func canApply(_ requested: Mode) -> Bool {
+        guard BuildChannel.allowsSystemIntegration else { return false }
         guard !shuttingDown, !authorizingHelper, !sleeping else { return false }
         guard process == nil || input != nil else { return false }
         if requested == .system { return !isRestoring }
@@ -273,6 +278,10 @@ final class BatteryChargeController {
     }
 
     private func start() throws {
+        guard BuildChannel.allowsSystemIntegration else {
+            throw NSError(domain: BuildChannel.bundleID, code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: BuildChannel.restrictionMessage])
+        }
         let child = Process(), incoming = Pipe(), outgoing = Pipe()
         child.executableURL = URL(fileURLWithPath: BatteryHelperInstaller.path)
         child.arguments = ["--serve"]

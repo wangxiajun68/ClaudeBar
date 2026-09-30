@@ -48,7 +48,7 @@ probe = r'''
 '''
 with tempfile.TemporaryDirectory(prefix='greeting-data-') as tmp:
     path = Path(tmp) / 'Probe.swift'
-    path.write_text(fetcher + '\n' + runtime + '\n' + coerce + '\n' + probe)
+    path.write_text((root / 'Sources/Shared/BuildChannel.swift').read_text() + '\n' + fetcher + '\n' + runtime + '\n' + coerce + '\n' + probe)
     binary = Path(tmp) / 'probe'
     subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

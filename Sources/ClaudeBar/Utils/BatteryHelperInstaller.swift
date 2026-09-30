@@ -13,6 +13,7 @@ enum BatteryHelperInstaller {
     }
 
     static func isInstalled() -> Bool {
+        guard BuildChannel.allowsSystemIntegration else { return false }
         var info = stat()
         guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
               info.st_uid == 0, info.st_mode & 0o7777 == 0o4755,
@@ -65,6 +66,7 @@ enum BatteryHelperInstaller {
     /// Called off the UI thread. A root-owned staging copy is verified before
     /// its setuid bit is set, avoiding source replacement during authorization.
     static func installIfNeeded() -> String? {
+        guard BuildChannel.allowsSystemIntegration else { return BuildChannel.restrictionMessage }
         if isInstalled() { return nil }
         guard let source = bundledURL, let hash = digest(source) else { return "缺少电池辅助工具，请重新构建或安装应用。" }
         let directory = "/Library/PrivilegedHelperTools"

@@ -104,6 +104,7 @@ enum CodexAppServerClient {
 
     private static func withServer<T>(timeout: TimeInterval,
                                       _ body: (Server) throws -> T) throws -> T {
+        guard BuildChannel.allowsSystemIntegration else { throw Failure.refused(BuildChannel.restrictionMessage) }
         guard let executable = CodexRuntime.executable() else { throw Failure.unavailable }
         let process = Process()
         let input = Pipe()

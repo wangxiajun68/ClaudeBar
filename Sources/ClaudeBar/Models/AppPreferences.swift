@@ -254,7 +254,7 @@ final class AppPreferences: ObservableObject {
         let manual = UserDefaults.standard.double(forKey: "manualUSDToCNY")
         manualUSDToCNY = manual > 0 ? manual : nil
         codexRoutingEnabled = UserDefaults.standard.object(forKey: "codexRoutingEnabled") as? Bool ?? false
-        codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? 15721
+        codexProxyPort = UserDefaults.standard.object(forKey: "codexProxyPort") as? Int ?? BuildChannel.proxyPort
         proxyThirdPartyTrafficEnabled = UserDefaults.standard.object(forKey: "proxyThirdPartyTrafficEnabled") as? Bool ?? true
         proxyThirdPartyOpenAIProviderID = Self.uuid(from: "proxyThirdPartyOpenAIProviderID")
         proxyThirdPartyAnthropicProviderID = Self.uuid(from: "proxyThirdPartyAnthropicProviderID")
@@ -269,7 +269,7 @@ final class AppPreferences: ObservableObject {
         vpnEnabled = vpn["vpnEnabled"] as? Bool ?? false
         vpnSystemProxyEnabled = vpn["vpnSystemProxyEnabled"] as? Bool ?? false
         vpnTunEnabled = vpn["vpnTunEnabled"] as? Bool ?? false
-        vpnMixedPort = vpn["vpnMixedPort"] as? Int ?? 7890
+        vpnMixedPort = vpn["vpnMixedPort"] as? Int ?? BuildChannel.vpnMixedPort
         vpnAllowLan = vpn["vpnAllowLan"] as? Bool ?? false
         vpnControllerSecret = vpn["vpnControllerSecret"] as? String ?? ""
         vpnGuardEnabled = vpn["vpnGuardEnabled"] as? Bool ?? true

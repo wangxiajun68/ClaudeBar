@@ -23,6 +23,7 @@ enum FanHelperInstaller {
     }
 
     private static func runPrivileged(args: [String]) -> String? {
+        guard BuildChannel.allowsSystemIntegration else { return BuildChannel.restrictionMessage }
         // Helper is setuid root (installed once) → run directly, no password.
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: helperPath)
@@ -51,6 +52,7 @@ enum FanHelperInstaller {
     /// app is the only thing that may install a root binary, so it is the only
     /// place that check belongs.
     static func install() {
+        guard BuildChannel.allowsSystemIntegration else { return }
         guard let source = bundledHelperPath else { return }
         guard verifySignature(of: source) else {
             DispatchQueue.main.async {

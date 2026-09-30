@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-source = (root / 'Sources/ClaudeBar/Models/BatteryChargeController.swift').read_text()
+source = (root / 'Sources/Shared/BuildChannel.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Models/BatteryChargeController.swift').read_text()
 source = source.replace('private(set) ', '').replace('private ', '')
 source = source.replace('UserDefaults.standard', 'testDefaults')
 source = source.replace('import Observation', '''import Observation

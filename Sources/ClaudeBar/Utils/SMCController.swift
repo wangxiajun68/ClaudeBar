@@ -422,6 +422,7 @@ final class SMCController {
     static let notPrivileged = kern_return_t(bitPattern: UInt32(0xe00002c1)) // kIOReturnNotPrivileged
 
     private func write(_ key: String, dataType: UInt32, dataSize: Int, bytes: [UInt8]) -> kern_return_t {
+        guard BuildChannel.allowsSystemIntegration else { return kIOReturnNotPermitted }
         var input = SMCKeyData()
         var output = SMCKeyData()
         input.key = FourCharCode(key).rawValue

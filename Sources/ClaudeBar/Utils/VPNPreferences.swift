@@ -14,7 +14,7 @@ extension AppPreferences {
             "vpnEnabled": UserDefaults.standard.object(forKey: "vpnEnabled") as? Bool ?? false,
             "vpnSystemProxyEnabled": UserDefaults.standard.object(forKey: "vpnSystemProxyEnabled") as? Bool ?? false,
             "vpnTunEnabled": UserDefaults.standard.object(forKey: "vpnTunEnabled") as? Bool ?? false,
-            "vpnMixedPort": UserDefaults.standard.object(forKey: "vpnMixedPort") as? Int ?? 7890,
+            "vpnMixedPort": UserDefaults.standard.object(forKey: "vpnMixedPort") as? Int ?? BuildChannel.vpnMixedPort,
             "vpnAllowLan": UserDefaults.standard.object(forKey: "vpnAllowLan") as? Bool ?? false,
             "vpnControllerSecret": {
                 if let s = UserDefaults.standard.string(forKey: "vpnControllerSecret"), !s.isEmpty {

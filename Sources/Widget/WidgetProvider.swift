@@ -8,7 +8,7 @@ private enum WidgetFilePaths {
     /// Shared App Group identifier — must match the main app's `FilePaths.appGroupID`.
     /// The widget runs sandboxed and cannot read `~/.claude`, so it reads the
     /// snapshot the main app publishes to this shared container.
-    static let appGroupID = "com.claudebar.app.widget"
+    static let appGroupID = BuildChannel.appGroupID
 
     static var widgetSnapshotFile: URL? {
         guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
@@ -77,7 +77,7 @@ struct WidgetProvider: TimelineProvider {
         }
 
         // 3. Fall back to ~/.claude/
-        if data == nil {
+        if data == nil && BuildChannel.allowsSystemIntegration {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let claudePath = home.appendingPathComponent(".claude/claude-bar-widget-data.json")
             data = try? Data(contentsOf: claudePath)

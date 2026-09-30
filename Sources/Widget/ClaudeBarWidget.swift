@@ -6,9 +6,9 @@ struct ClaudeBarWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "ClaudeBarWidget", provider: WidgetProvider()) { entry in
             WidgetEntryView(entry: entry)
-                .widgetURL(URL(string: "claudebar://"))
+                .widgetURL(URL(string: BuildChannel.urlScheme + "://"))
         }
-        .configurationDisplayName("ClaudeBar")
+        .configurationDisplayName(BuildChannel.appName)
         .description("Claude Code 状态概览")
         .supportedFamilies([.systemLarge])
         .contentMarginsDisabled()

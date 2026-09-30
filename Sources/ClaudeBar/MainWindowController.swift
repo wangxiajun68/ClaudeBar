@@ -167,7 +167,7 @@ final class MainWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "ClaudeBar"
+        window.title = BuildChannel.appName
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.standardWindowButton(.closeButton)?.superview?.isHidden = false

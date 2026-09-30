@@ -89,7 +89,7 @@ enum AppConfig {
 
     /// Bundle identifier of the widget extension. Its sandbox container is
     /// one of the snapshot write targets (see `WidgetSnapshotWriter`).
-    static let widgetBundleID = "com.claudebar.app.widget"
+    static let widgetBundleID = BuildChannel.widgetBundleID
 
     /// File name of the snapshot JSON in every write target.
     static let widgetSnapshotFileName = "claude-bar-widget-data.json"

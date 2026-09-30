@@ -646,14 +646,14 @@ enum VpnConfigBuilder {
             find-process-mode: off
             keep-alive-interval: 15
             keep-alive-idle: 600
-            external-controller: 127.0.0.1:9097
+            external-controller: 127.0.0.1:\(BuildChannel.vpnControllerPort)
             secret: "\(prefs.vpnControllerSecret)"
             external-controller-cors:
               allow-private-network: false
               allow-origins: []
             """
         var footer = ""
-        if prefs.vpnTunEnabled {
+        if prefs.vpnTunEnabled && BuildChannel.allowsSystemIntegration {
             // Profile dns is kept; appending a second `dns:` fatals mihomo.
             footer +=
                 """
@@ -671,7 +671,7 @@ enum VpnConfigBuilder {
         // DNS, url-test intervals) and must see the profile's own rules — not
         // after, so a pin we add is never a needle it could have matched.
         var out = header + "\n" + Self.tuneForStability(VpnProviderDirect.inject(into: yaml)) + footer
-        if !prefs.vpnTunEnabled {
+        if !prefs.vpnTunEnabled || !BuildChannel.allowsSystemIntegration {
             // Airports often set dns.listen: :53 which needs root and breaks
             // the resolver when the bind fails.
             for needle in ["listen: ':53'", "listen: \":53\"", "listen: :53", "listen: 0.0.0.0:53"] {

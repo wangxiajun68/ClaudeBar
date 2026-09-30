@@ -71,6 +71,10 @@ final class LaunchAtLogin: ObservableObject {
     /// Register or unregister, then re-read — never assume the call took, since
     /// the status is what the toggle shows.
     func setEnabled(_ on: Bool) {
+        guard BuildChannel.allowsSystemIntegration else {
+            lastError = BuildChannel.restrictionMessage
+            return
+        }
         do {
             if on {
                 try SMAppService.mainApp.register()

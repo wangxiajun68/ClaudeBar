@@ -298,7 +298,7 @@ private actor ConnectorMutationGate {
 private enum ConnectorInventory {
     private static var fm: FileManager { .default }
     private static var home: URL { fm.homeDirectoryForCurrentUser }
-    private static var vault: URL { home.appendingPathComponent("Library/Application Support/ClaudeBar/DisabledSkills", isDirectory: true) }
+    private static var vault: URL { FilePaths.appSupportDir.appendingPathComponent("DisabledSkills", isDirectory: true) }
     private static var registry: URL { vault.appendingPathComponent("registry.json") }
 
     private struct ParkedSkill: Codable {
@@ -694,6 +694,7 @@ private enum ConnectorInventory {
     }
 
     static func remove(_ record: ConnectorRecord) throws {
+        guard BuildChannel.allowsSystemIntegration else { throw ConnectorError.isolatedBuild }
         switch record.method {
         case .skillMove(let original): try removeSkill(original: original)
         case .codexSetting(let section): try removeTOMLSections(file: record.source, rootedAt: section)
@@ -706,6 +707,7 @@ private enum ConnectorInventory {
     }
 
     static func setEnabled(_ enabled: Bool, record: ConnectorRecord) throws {
+        guard BuildChannel.allowsSystemIntegration else { throw ConnectorError.isolatedBuild }
         switch record.method {
         case .skillMove(let original): try setSkillEnabled(enabled, original: original)
         case .codexSetting(let section): try setTOMLEnabled(enabled, file: record.source, sectionName: section)
@@ -900,9 +902,10 @@ private enum ConnectorInventory {
     }
 
     private enum ConnectorError: LocalizedError {
-        case changed, nativeOnly, missingClaudeCLI, missingCursorCLI, cliFailed
+        case changed, nativeOnly, missingClaudeCLI, missingCursorCLI, cliFailed, isolatedBuild
         var errorDescription: String? {
             switch self {
+            case .isolatedBuild: return BuildChannel.restrictionMessage
             case .changed: return "连接器文件已变化或目标位置被占用。请刷新后再试。"
             case .nativeOnly: return "此连接器需要在原生客户端中管理。"
             case .missingClaudeCLI: return "未找到 Claude Code 命令行程序；请在 Claude Code 的 /plugin 中管理。"

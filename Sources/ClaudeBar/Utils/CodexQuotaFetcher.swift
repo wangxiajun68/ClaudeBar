@@ -225,6 +225,7 @@ enum CodexQuotaFetcher {
     /// web endpoint directly. App Server owns token refresh and keeps this
     /// integration on Codex's documented account API.
     private static func fetchFromAppServer() -> Snapshot {
+        guard BuildChannel.allowsSystemIntegration else { return Snapshot(note: BuildChannel.restrictionMessage) }
         guard let executable = CodexRuntime.executable() else {
             logger.error("Codex executable not found")
             return Snapshot(note: "未找到 Codex，请先安装或打开 Codex")

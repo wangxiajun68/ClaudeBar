@@ -2,8 +2,9 @@ import Foundation
 
 enum FilePaths {
     static var claudeDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude")
+        BuildChannel.allowsSystemIntegration
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+            : appSupportDir.appendingPathComponent(".claude")
     }
 
     static var settingsFile: URL {
@@ -19,8 +20,9 @@ enum FilePaths {
 
     /// `~/.codex` — Codex CLI/desktop config root.
     static var codexDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex")
+        BuildChannel.allowsSystemIntegration
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+            : appSupportDir.appendingPathComponent(".codex")
     }
 
     static var codexConfigFile: URL {
@@ -41,7 +43,7 @@ enum FilePaths {
     /// extension. The sandboxed widget cannot read `~/.claude`, so the
     /// snapshot is published here instead. Keep in sync with the widget
     /// target's `WidgetFilePaths.appGroupID`.
-    static let appGroupID = "com.claudebar.app.widget"
+    static let appGroupID = BuildChannel.appGroupID
 
     static var widgetSnapshotFile: URL {
         // Prefer the shared App Group container (readable by the sandboxed
@@ -58,7 +60,7 @@ enum FilePaths {
     /// `~/Library/Application Support/ClaudeBar`
     static var appSupportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ClaudeBar", isDirectory: true)
+            .appendingPathComponent(BuildChannel.appName, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

@@ -148,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Handle widget tap → show the menu panel.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            if url.scheme == "claudebar" {
+            if url.scheme == BuildChannel.urlScheme {
                 menuBarController?.showPanel()
             }
         }

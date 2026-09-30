@@ -55,6 +55,7 @@ enum VpnSystemProxyController {
     }
 
     nonisolated static func applySystemProxyNow(port: Int) -> String {
+        guard BuildChannel.allowsSystemIntegration else { return BuildChannel.restrictionMessage }
         let services = networkServices()
         if services.isEmpty {
             return "系统代理：没有可用网络服务"
@@ -128,6 +129,7 @@ enum VpnSystemProxyController {
     }
 
     nonisolated static func clearSystemProxyNow() {
+        guard BuildChannel.allowsSystemIntegration else { return }
         for service in networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setautoproxystate", service, "off"])
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setwebproxystate", service, "off"])
@@ -175,6 +177,7 @@ final class VpnProxyGuard {
     private var timer: Timer?
 
     func start() {
+        guard BuildChannel.allowsSystemIntegration else { return }
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.check() }
@@ -225,6 +228,7 @@ enum VpnTunDnsHelper {
     }
 
     nonisolated static func setSystemDNSNow() {
+        guard BuildChannel.allowsSystemIntegration else { return }
         saveOriginalDNSIfNeeded()
         for service in VpnSystemProxyController.networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "223.5.5.5", "119.29.29.29"])
@@ -237,6 +241,7 @@ enum VpnTunDnsHelper {
     }
 
     nonisolated static func restoreSystemDNSNow() {
+        guard BuildChannel.allowsSystemIntegration else { return }
         guard FileManager.default.fileExists(atPath: dnsMarker.path) else { return }
         for service in VpnSystemProxyController.networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "Empty"])

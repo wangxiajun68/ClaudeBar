@@ -198,6 +198,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-session-waiting-') as folder:
     source.write_text('\n'.join([
         'import Foundation',
         'let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])',
+        (root / 'Sources/Shared/BuildChannel.swift').read_text(),
         file_paths,
         (utils / 'SessionTitle.swift').read_text(),
         # `UsageStats` carries the whole usage/period vocabulary and reaches for

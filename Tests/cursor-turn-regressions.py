@@ -206,6 +206,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cursor-monitor-') as folder:
         'FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
     source = folder / 'Regression.swift'
     source.write_text('\n'.join([
+        (root / 'Sources/Shared/BuildChannel.swift').read_text(),
         file_paths,
         (utils / 'SessionTitle.swift').read_text(),
         (utils / 'CursorDB.swift').read_text(),

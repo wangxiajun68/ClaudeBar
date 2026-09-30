@@ -180,7 +180,7 @@ final class ProxyCaptureStore {
 
     private static let dbURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("ClaudeBar", isDirectory: true)
+            .appendingPathComponent(BuildChannel.appName, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("proxy-capture.db")
     }()
