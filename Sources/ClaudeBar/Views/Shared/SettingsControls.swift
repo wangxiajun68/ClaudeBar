@@ -1,35 +1,34 @@
 import SwiftUI
 
-/// Settings use one quiet surface per group, with aligned rows inside it.
-/// Controls keep their own accessible labels; the visible label is never the
-/// only way to identify a switch or field.
+/// A single, quiet panel per purpose. The header belongs to the panel rather
+/// than floating between unrelated controls; settings never hover or lift.
 struct SettingsGroup<Content: View>: View {
     let title: String
+    var symbol: String = ""
     var caption: String = ""
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 4)
-                .accessibilityAddTraits(.isHeader)
-            VStack(spacing: 0, content: content)
-                .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 12))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Theme.divider, lineWidth: 1)
-                        .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                if !symbol.isEmpty {
+                    AppGlyph(name: symbol, size: 15).foregroundColor(Theme.Ink.claude)
                 }
+                Text(title).font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(Theme.textPrimary).accessibilityAddTraits(.isHeader)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.vertical, 16)
+            SettingsDivider()
+            VStack(spacing: 0, content: content)
             if !caption.isEmpty {
-                Text(caption)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textSecondary)
+                Text(caption).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 20).padding(.bottom, 16)
             }
         }
+        .background(Theme.cardSurface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.hairline))
     }
 }
 
@@ -39,37 +38,38 @@ struct SettingsRow<Control: View>: View {
     @ViewBuilder var control: () -> Control
 
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                if !caption.isEmpty {
-                    Text(caption)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 24) {
+                description.frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+                control().controlSize(.small).fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                description
+                control().controlSize(.small)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            control()
-                .controlSize(.small)
-                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 15)
-        .frame(minHeight: 58)
+        .padding(.horizontal, 20).padding(.vertical, 16)
+        .frame(minHeight: 64)
         .accessibilityElement(children: .contain)
+    }
+
+    private var description: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 13, weight: .medium))
+                .foregroundColor(Theme.textPrimary)
+            if !caption.isEmpty {
+                Text(caption).font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 
 struct SettingsDivider: View {
     var body: some View {
-        Rectangle()
-            .fill(Theme.divider)
-            .frame(height: 1)
-            .padding(.horizontal, 20)
-            .accessibilityHidden(true)
+        Rectangle().fill(Theme.hairline).frame(height: 1)
+            .padding(.horizontal, 20).accessibilityHidden(true)
     }
 }
 
@@ -80,10 +80,8 @@ struct SettingsToggleRow: View {
 
     var body: some View {
         SettingsRow(title: title, caption: caption) {
-            Toggle(title, isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(Theme.claude)
+            Toggle(title, isOn: $isOn).labelsHidden()
+                .toggleStyle(InstrumentToggleStyle(showsLabel: false, width: 48))
                 .accessibilityLabel(title)
         }
     }

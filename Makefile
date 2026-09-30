@@ -31,6 +31,9 @@ test:
 	python3 Tests/cursor-usage-regressions.py
 	python3 Tests/cursor-ledger-regressions.py
 	python3 Tests/completion-notify-regressions.py
+	python3 Tests/session-waiting-regressions.py
+	python3 Tests/island-session-alert-regressions.py
+	python3 Tests/waiting-notify-regressions.py
 	python3 Tests/greeting-data-regressions.py
 	python3 Tests/greeting-name-regressions.py
 	python3 Tests/weather-astronomy-regressions.py

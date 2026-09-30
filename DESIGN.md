@@ -233,7 +233,7 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
    spark, model bars). VPN quota stays on the VPN page.
 5. **VPN CTA** — dark sparkle pill. Live outbound path is a `›` breadcrumb,
    not a decorative metro line.
-6. **Settings** — one control per grid tile, including theme.
+6. **Settings** — six purpose-based categories, sidebar navigation and grouped rows; explicit Save / Apply for credentials and ports.
 7. **Connectors** — a header card (title, live counts, refresh, project picker)
    over a `SegmentedCapsule` type filter (插件 / Skills / MCP / 本机 CLI, each
    with its count), a second `SegmentedCapsule` for the platform (全部 / Claude

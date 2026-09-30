@@ -14,11 +14,11 @@ struct PermissionsSection: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
 
-            permissionGroup("会话与通知", permissions: [.cursorData, .notifications, .automation])
-            permissionGroup("系统功能", permissions: [.widgetData, .screenRecording, .bluetooth])
-            permissionGroup("位置", permissions: [.currentLocation, .location])
+            permissionGroup("会话与通知", symbol: "bell", permissions: [.cursorData, .notifications, .automation])
+            permissionGroup("系统功能", symbol: "macwindow", permissions: [.widgetData, .screenRecording, .bluetooth])
+            permissionGroup("位置", symbol: "location", permissions: [.currentLocation, .location])
 
-            SettingsGroup(title: "电池充电控制") {
+            SettingsGroup(title: "电池充电控制", symbol: "battery.100percent") {
                 SettingsRow(title: "辅助工具", caption: batteryController.lastError ?? "需要一次管理员授权，充电模式在概览的电池面板中调整。") {
                     if batteryController.helperInstalled {
                         Label("已授权", systemImage: "checkmark.circle")
@@ -36,8 +36,8 @@ struct PermissionsSection: View {
         .task { await batteryController.refreshHelperAuthorization() }
     }
 
-    private func permissionGroup(_ title: String, permissions: [AppPermission]) -> some View {
-        SettingsGroup(title: title) {
+    private func permissionGroup(_ title: String, symbol: String, permissions: [AppPermission]) -> some View {
+        SettingsGroup(title: title, symbol: symbol) {
             ForEach(permissions) { permission in
                 if permission != permissions.first { SettingsDivider() }
                 PermissionSettingsRow(permission: permission,
@@ -93,8 +93,7 @@ private struct PermissionSettingsRow: View {
                     }
                     Toggle(permission.title, isOn: Binding(get: { isOn }, set: onToggle))
                         .labelsHidden()
-                        .toggleStyle(.switch)
-                        .tint(Theme.claude)
+                        .toggleStyle(InstrumentToggleStyle(showsLabel: false, width: 48))
                         .accessibilityLabel(permission.title)
                         .accessibilityValue(isOn ? "已开启，\(status.label)" : "已关闭")
                 }

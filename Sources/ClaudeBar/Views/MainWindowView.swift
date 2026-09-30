@@ -62,6 +62,7 @@ struct MainWindowView: View {
     /// not prove the child unchanged and re-ran the whole active page's body
     /// (and all of its derived arrays) for a settings change it does not
     /// render.
+    @StateObject private var settingsState = SettingsState()
     @State private var appearance = AppPreferences.shared.appearance
     @State private var selectedPage: AppPage?
     @State private var showCommandPalette = false
@@ -263,7 +264,7 @@ struct MainWindowView: View {
                 case .providers: ProvidersView(editorRequest: $editorRequest)
                 case .connectors: ConnectorsView()
                 case .usage: UsageView()
-                case .settings: SettingsView()
+                case .settings: SettingsView(state: settingsState)
                 case .help: HelpView()
                 case .vpn: VPNView()
                 // Mounted only while selected. The expensive inspector state
