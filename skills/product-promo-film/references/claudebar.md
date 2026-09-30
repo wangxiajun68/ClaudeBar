@@ -68,3 +68,5 @@ node Tools/promo/driver.mjs --encode
 中间帧、调试稿、palette、teaser 位于 `.build/promo/`，可以在交付完成后清理。保留当前依赖和抠图资产以便复查；生产 UI 预览脚本属于可复用工具，不因生成本次视频而删除。2026-09-30 已清理历史帧缓存，不能假定完整序列仍存在。
 
 编码验收可使用技能自带的 `scripts/inspect_video.py`，传入影片路径及 `--width 1920 --height 1080 --fps 30 --duration 66 --frames 1980 --codec h264 --pixel-format yuv420p --count-frames --decode`。规格改变时使用新值。该工具只检查文件和解码，不修改影片，也不替代视觉播放。
+
+GitHub README 当前使用视频附件播放器，GIF 只是可选独立产物。更新成片时也要重新上传播放附件并同步双语 README，不能只替换仓库 MP4。附件上传和压缩命令以 `docs/promo/prompt.md` 的“GitHub README 视频播放”为准；通过网页编辑器上传即可，不必创建 Issue。当前本机 gh 2.98 没有 `--attach`，使用 CLI 上传前先检查实际版本的帮助。

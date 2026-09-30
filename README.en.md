@@ -23,14 +23,10 @@
   <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><strong>Download for macOS</strong></a>
 </p>
 
-<p align="center">
-  <a href="docs/promo/claudebar.mp4">
-    <img src="docs/promo/claudebar.gif" alt="ClaudeBar film" width="920">
-  </a>
-</p>
+https://github.com/user-attachments/assets/eb0dd190-6cbf-4349-a3c6-a799a273f89e
 
 <p align="center">
-  <a href="docs/promo/claudebar.mp4">Watch the full 66-second film</a><br>
+  <a href="docs/promo/claudebar.mp4">Download the high-quality film (1080p · 66 seconds)</a><br>
   Chinese interface and captions, matching the app
 </p>
 

@@ -23,14 +23,10 @@
   <a href="https://github.com/wangxiajun68/ClaudeBar/releases/latest"><strong>下载 macOS 版</strong></a>
 </p>
 
-<p align="center">
-  <a href="docs/promo/claudebar.mp4">
-    <img src="docs/promo/claudebar.gif" alt="ClaudeBar：从天气卡片进入 popup、灵动岛与桌面工作台的空间动画" width="920">
-  </a>
-</p>
+https://github.com/user-attachments/assets/eb0dd190-6cbf-4349-a3c6-a799a273f89e
 
 <p align="center">
-  <a href="docs/promo/claudebar.mp4">观看 66 秒完整影片</a>
+  <a href="docs/promo/claudebar.mp4">下载高清原片（1080p · 66 秒）</a>
 </p>
 
 ---

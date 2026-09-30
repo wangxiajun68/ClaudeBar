@@ -66,3 +66,9 @@ python3 Tools/serve-promo.py
 ## 可复用技能
 
 本仓库保存 [product-promo-film](../../skills/product-promo-film/SKILL.md) 技能源文件，包含通用制作流程、ClaudeBar 编辑适配与视频验收脚本。需要在其他环境使用时，将 `skills/product-promo-film/` 复制到该环境的 Codex 用户技能目录；后续可通过 `$product-promo-film` 发起版本更新或局部编辑。
+
+## GitHub README 视频播放
+
+中英文 README 使用单独成段的 GitHub 视频附件地址，显示原生点击播放控件。仓库 MP4 链接用于下载高清原片；GIF 不再作为 README 主预览。当前附件为完整66秒、1080p/30fps的播放版，约7.8MB；高清原片保留不变。
+
+更新影片后，从高清 MP4 生成小于10MB的 H.264 播放版，例如 `ffmpeg -i docs/promo/claudebar.mp4 -c:v libx264 -preset fast -crf 26 -pix_fmt yuv420p -movflags +faststart -an .build/promo/readme.mp4`，验证时长、帧数和解码后，通过 GitHub Markdown 编辑器的附件入口上传。将生成的 `https://github.com/user-attachments/assets/...` 地址同时更新到两版 README，保持空行分段，不包在 HTML `<p>` 或 Markdown 链接中。预览及推送后检查播放按钮与完整播放时长。网页附件上传不要求提交编辑器中的临时内容。
