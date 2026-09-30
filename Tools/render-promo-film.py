@@ -4,7 +4,7 @@ Render the ClaudeBar promo film.
 
 The film is not a screen recording: it is a timeline animation rendered one
 deterministic frame at a time and encoded with ffmpeg. Per frame Chrome is handed
-a `t` and a canvas is painted as a pure function of it — nothing reads the clock,
+a `t` and a CSS 3D scene is positioned as a function of it — nothing reads the clock,
 the network or a file at draw time, so a re-render reproduces a frame rather than
 merely resembling it.
 
@@ -17,7 +17,7 @@ merely resembling it.
 Outputs (docs/promo/ is committed; `.build/` is not):
 
     docs/promo/claudebar.mp4    1920x1080, 30 fps, H.264, yuv420p, +faststart
-    docs/promo/claudebar.gif    1280 wide, for the README's autoplay preview
+    docs/promo/claudebar.gif    800 wide, for the README's autoplay preview
 
 The scene list, the camera grammar and the copy all live in
 `docs/promo/prompt.md`, which is the film's single specification; the modules in
@@ -64,7 +64,7 @@ def check(check_only: bool = False) -> None:
         sys.exit('Google Chrome is required for frame capture — install it, or '
                  'point the driver at another Chromium with --browser.')
 
-    for module in ('film.mjs', 'weather.mjs', 'scenes.mjs', 'page.mjs', 'driver.mjs'):
+    for module in ('film.mjs', 'scenes.mjs', 'page.mjs', 'driver.mjs'):
         if not (FILM / module).is_file():
             sys.exit(f'Tools/promo/{module} is missing — the film cannot be rendered')
 
@@ -78,25 +78,18 @@ def check(check_only: bool = False) -> None:
 
 
 def require_surfaces() -> None:
-    """The film composites the real surface renders; produce them if absent.
+    """The film composites the real surface renders; refresh them from source.
 
     This is the hard rule in prompt.md §5: every panel in the film is drawn from
     the current source by a preview tool, never a checked-in screenshot. Running
     them here means a fresh clone gets a film that matches the app.
     """
-    needed = [
-        (BUILD / 'island-preview/collapsed-light.png', 'render-island-preview.py'),
-        (BUILD / 'popup-preview/popup-light.png', 'render-popup-preview.py'),
-        (BUILD / 'mainwindow-preview/overview-light.png', 'render-mainwindow-preview.py'),
-    ]
-    missing = [script for path, script in needed if not path.is_file()]
-    for script in missing:
-        print(f'  rendering surfaces with Tools/{script}…')
-        run(['/usr/bin/python3', str(ROOT / 'Tools' / script)])
-    if missing or not (BUILD / 'assets/island-collapsed-light.png').is_file():
-        if not (BUILD / 'assets/island-collapsed-light.png').is_file() and not missing:
-            print('  keying island silhouettes…')
-        run(['/usr/bin/python3', str(ROOT / 'Tools/promo/key-island.py')])
+    # Refresh from production on every full render, not only on missing files.
+    for script in ('render-popup-preview.py', 'render-mainwindow-preview.py',
+                   'render-greeting-preview.py', 'render-island-preview.py'):
+        print(f'  rendering current surfaces with Tools/{script}…', flush=True)
+        run([sys.executable, str(ROOT / 'Tools' / script)])
+    run([sys.executable, str(ROOT / 'Tools/promo/key-island.py')])
 
 
 def install_deps() -> None:
@@ -114,6 +107,8 @@ def main() -> int:
     parser.add_argument('--frames', action='store_true', help='render PNG frames only')
     parser.add_argument('--encode', action='store_true', help='encode from existing frames')
     parser.add_argument('--check', action='store_true', help='validate inputs and exit')
+    parser.add_argument('--storyboard', action='store_true', help='render all chapter proof frames')
+    parser.add_argument('--reuse-surfaces', action='store_true', help='reuse already refreshed surfaces')
     parser.add_argument('--only', type=int, metavar='N',
                         help='render one scene; with --preview, a contact strip')
     parser.add_argument('--preview', action='store_true',
@@ -124,18 +119,28 @@ def main() -> int:
     if args.check:
         return 0
 
+    if args.storyboard:
+        install_deps()
+        if not args.reuse_surfaces:
+            require_surfaces()
+        run(['node', str(FILM / 'driver.mjs'), '--storyboard'], cwd=BUILD)
+        return 0
+
     if args.only:
         install_deps()
-        run(['node', 'driver.mjs', '--only', str(args.only)]
+        if not args.reuse_surfaces:
+            require_surfaces()
+        run(['node', str(FILM / 'driver.mjs'), '--only', str(args.only)]
             + (['--preview'] if args.preview else []), cwd=BUILD)
         return 0
 
     if not args.encode:
         install_deps()
-        require_surfaces()
-        run(['node', 'driver.mjs', '--frames'], cwd=BUILD)
+        if not args.reuse_surfaces:
+            require_surfaces()
+        run(['node', str(FILM / 'driver.mjs'), '--frames'], cwd=BUILD)
     if not args.frames:
-        run(['node', 'driver.mjs', '--encode'], cwd=BUILD)
+        run(['node', str(FILM / 'driver.mjs'), '--encode'], cwd=BUILD)
     return 0
 
 

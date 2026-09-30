@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Render the production menu-bar popup at its real 460pt width, both themes.
 
-The popup is the app's highest-frequency surface, so it is also the one the
-README most needs a current picture of — `docs/screenshots/menubar-popup.png` is
-from 2026-09-23 and predates the 460pt shell and the switcher row. Every type
+The popup is rendered directly from the production Swift sources. Every type
 below is sliced out of the app's own Swift sources (the same
 `declaration(path, start)` pattern `render-greeting-preview.py` uses) so the PNG
 cannot drift; only the store layer is replaced, by inert stand-ins fed synthetic

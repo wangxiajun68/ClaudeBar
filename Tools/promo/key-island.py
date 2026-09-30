@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw
 except ImportError:  # pragma: no cover - environment guard
     sys.exit('Pillow is required: python3 -m pip install Pillow')
 
@@ -43,10 +43,21 @@ def key(img: 'Image.Image', theme: str) -> 'Image.Image':
     cfg = PLATES[theme]
     out = Image.new('RGBA', img.size, (0, 0, 0, 0))
     src, dst = img.load(), out.load()
+    # Only remove the plate connected to the padded preview's outer corner.
+    # Luminance alone deletes white lettering INSIDE the black island as well.
+    keep = cfg['full']
+    mask = img.convert('L').point(lambda value: 255 if value >= keep else 0)
+    if mask.getpixel((0, 0)) != 255:
+        raise ValueError('Preview corner is not the plate; background key must be updated')
+    ImageDraw.floodfill(mask, (0, 0), 128)
+    connected = mask.load()
     for y in range(img.height):
         for x in range(img.width):
             r, g, b, a = src[x, y]
             lum = (r * 299 + g * 587 + b * 114) // 1000
+            if connected[x, y] != 128:
+                dst[x, y] = (r, g, b, a)
+                continue
             if not cfg['invert']:
                 # Light: bright plate drops out, dark island stays.
                 cut, keep = cfg['plate'], cfg['full']

@@ -1,6 +1,6 @@
 # ClaudeBar 文档中心
 
-> 本仓库文档的唯一入口。最后更新：2026-09-25
+> 本仓库文档的唯一入口。最后更新：2026-09-30
 
 ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** 两层组织。先读设计建立产品上下文，再按需查阅技术实现。
 
@@ -27,7 +27,7 @@ docs/
 ├── RELEASING.md              维护者发版步骤
 ├── VERSIONING.md             版本号、tag、CHANGELOG 约定
 ├── CHANGELOG.md              用户可见的版本变更
-├── screenshots/              README 界面截图
+├── promo/                    宣传影片、介绍图与制作说明
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
 │   ├── 01–10 *.md

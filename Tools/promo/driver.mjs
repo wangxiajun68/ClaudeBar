@@ -7,10 +7,12 @@
 //   node driver.mjs --frames            render the PNG sequence
 //   node driver.mjs --encode            encode mp4 + gif from the sequence
 //   node driver.mjs                     both
-//   node driver.mjs --only 7 --preview  a contact sheet of one scene, for checking
+//   node driver.mjs --only 2 --preview  a contact sheet of one scene, for checking
 
-import { chromium } from 'playwright-core';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(new URL('../../.build/promo/package.json', import.meta.url));
+const { chromium } = require('playwright-core');
+import { readFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,61 +22,35 @@ import { pageSource as page_source } from './page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');
-const FRAMES = join(HERE, 'frames');
+const BUILD = join(ROOT, '.build/promo');
+const FRAMES = join(BUILD, 'frames');
 
 // ---------------------------------------------------------------- timeline
 // prompt.md §4, in order. `dur` is scene-local; the driver adds the head start.
 export const TIMELINE = [
-  { n: 1,  id: 'opening',        dur: 3.6,  fn: 'scene1',  bg: 'light' },
-  { n: 2,  id: 'four-icons',     dur: 5.0,  fn: 'scene2',  bg: 'light' },
-  { n: 3,  id: 'greeting-sky',   dur: 9.0, fn: 'scene3',  bg: 'light' },
-  { n: 4,  id: 'glass-rain',     dur: 6.4, fn: 'scene4',  bg: 'light' },
-  { n: 5,  id: 'island-rest',    dur: 5.2,  fn: 'scene5',  bg: 'light' },
-  { n: 6,  id: 'island-alert',   dur: 5.8, fn: 'scene6',  bg: 'light' },
-  { n: 7,  id: 'island-open',    dur: 7.0, fn: 'scene7',  bg: 'light' },
-  { n: 8,  id: 'popup-switch',   dur: 7.4, fn: 'scene8',  bg: 'light' },
-  { n: 9,  id: 'popup-session',  dur: 5.6,  fn: 'scene9',  bg: 'light' },
-  { n: 10, id: 'main-window',    dur: 8.4, fn: 'scene10', bg: 'light' },
-  { n: 11, id: 'traffic',        dur: 4.6,  fn: 'scene11', bg: 'dark'  },
-  { n: 12, id: 'tunnel',         dur: 2.4,  fn: 'scene12', bg: 'light' },
-  { n: 13, id: 'closing',        dur: 2.6,  fn: 'scene13', bg: 'dark'  },
+  { n: 1, id: 'weather', dur: 10, title: '天气，是工作台的第一眼。', subtitle: '天空、问候、天气与今日读数，同在一张卡片。' },
+  { n: 2, id: 'popup', dur: 12, title: '展开，\n就是全局。', subtitle: '从一眼概览，到每条会话。' },
+  { n: 3, id: 'island', dur: 11, title: '把进度，留在余光里。', subtitle: '灵动岛：常驻状态 → 完成提醒 → 展开详情。' },
+  { n: 4, id: 'desktop', dur: 13, title: '从顶栏，走进你的桌面。', subtitle: '原生主窗口：天气、系统负载、能源流向与会话。' },
+  { n: 5, id: 'workspace', dur: 12, title: '每一层设计，都装着真实的工作。', subtitle: '会话、用量、流量，各自展开。' },
+  { n: 6, id: 'closing', dur: 8, title: '一套工作台，三种打开方式。', subtitle: '天气卡片 · 菜单栏 popup · 灵动岛 · 桌面主窗口' },
 ];
-
-/**
- * Each scene is authored against the beat sheet in prompt.md §4 at a particular
- * length, then the cut decides how long it actually gets. `stretch` is
- * authored / actual, so `page.mjs` can hand a scene its own time base and a
- * re-time is a one-line change to `dur` with no edit to the scene's beats.
- */
-const AUTHORED = {
-  scene1: 6.6, scene2: 8.9, scene3: 16.2, scene4: 11.2, scene5: 9.0,
-  scene6: 10.6, scene7: 12.4, scene8: 13.4, scene9: 9.8, scene10: 13.8,
-  scene11: 7.8, scene12: 3.6, scene13: 3.8,
-};
-export const STRETCH = Object.fromEntries(
-  TIMELINE.map((s) => [s.fn, AUTHORED[s.fn] / s.dur]));
-
-export const TOTAL_SECONDS = TIMELINE.reduce((a, s) => a + s.dur, 0) - 0.2 * (TIMELINE.length - 1);
+// Scenes use seconds directly; no hidden second time base or overlapping cuts.
+export const TOTAL_SECONDS = TIMELINE.reduce((sum, s) => sum + s.dur, 0);
 export const TOTAL_FRAMES = Math.round(TOTAL_SECONDS * FPS);
-
-/** Which scene is on screen at film time t, and how far into it we are. */
 export function at(t) {
   let start = 0;
   for (let i = 0; i < TIMELINE.length; i++) {
-    const s = TIMELINE[i];
-    const end = start + s.dur;
-    if (t < end || i === TIMELINE.length - 1) return { scene: s, local: t - start, index: i };
-    start = end - 0.2;   // the 0.2 s that adjacent scenes share is the transition
+    const scene = TIMELINE[i];
+    if (t < start + scene.dur || i === TIMELINE.length - 1)
+      return { scene, local: Math.max(0, t - start), index: i };
+    start += scene.dur;
   }
 }
 
 // ---------------------------------------------------------------- assets
 const ASSET_FILES = {
-  icon:       ['Sources/AppIcon-1024.png', 'image/png'],
-  statusIcon: ['Sources/MenuBarIcon.png', 'image/png'],
-  anthropic:  ['Sources/BrandAssets/anthropic-light.png', 'image/png'],
-  openai:     ['Sources/BrandAssets/openai-light.png', 'image/png'],
-  cursor:     ['Sources/BrandAssets/cursor-light.png', 'image/png'],
+  icon: ['Sources/AppIcon-1024.png', 'image/png'],
 };
 
 /**
@@ -91,24 +67,17 @@ const ASSET_FILES = {
  * to prevent (prompt.md §5).
  */
 const SURFACE_FILES = [
-  ...['collapsed', 'alert', 'expanded'].flatMap((state) =>
-    ['light', 'dark'].map((theme) => [
-      `island-${state}-${theme}`,
-      `.build/promo/assets/island-${state}-${theme}.png`,
-    ])),
-  ...['light', 'dark'].map((theme) => [
-    `popup-${theme}`, `.build/popup-preview/popup-${theme}.png`,
+  ...['collapsed', 'alert', 'expanded'].map(state => [
+    `island-${state}-light`, `.build/promo/assets/island-${state}-light.png`,
   ]),
-  ...['overview', 'sessions', 'usage', 'vpn', 'traffic'].flatMap((page) =>
-    ['light', 'dark'].map((theme) => [
-      `window-${page}-${theme}`, `.build/mainwindow-preview/${page}-${theme}.png`,
-    ])),
-  // The status sheet's own stills, one per sky. The film walks the day by
-  // crossfading these, so the sky it shows is a sky the app really drew.
-  ...['light', 'dark'].flatMap((theme) =>
-    ['sun', 'cloud', 'rain', 'night', 'snow'].map((sky) => [
-      `greeting-${theme}-${sky}`, `.build/greeting-preview/${theme}-1100-${sky}.png`,
-    ])),
+  ['popup-light', '.build/popup-preview/popup-light.png'],
+  ...['overview', 'sessions', 'usage'].map(page => [
+    `window-${page}-light`, `.build/mainwindow-preview/${page}-light.png`,
+  ]),
+  ['window-traffic-dark', '.build/mainwindow-preview/traffic-dark.png'],
+  ...['sun', 'cloud', 'rain', 'night'].map(sky => [
+    `greeting-light-${sky}`, `.build/greeting-preview/light-1100-${sky}.png`,
+  ]),
 ];
 
 function loadAssets() {
@@ -137,20 +106,24 @@ function loadAssets() {
 
 // ---------------------------------------------------------------- page
 /**
- * The page is a blank canvas plus the two modules, inlined. draw(t) must be a
- * pure function of t, so the driver can render the same frame twice and get the
- * same bytes — that property is what makes a re-render trustworthy.
+ * The page contains the CSS 3D scene and its assets. draw(t) determines the
+ * layout and transforms directly from time, allowing deterministic seeking.
  */
 // The page source lives in page.mjs so it can be syntax-checked and its
 // top-level collisions reported without launching a browser.
 const pageSource = () => page_source({
-  here: HERE, width: W, height: H, timeline: TIMELINE, stretch: STRETCH,
+  here: HERE, width: W, height: H, timeline: TIMELINE,
 });
 
 // ---------------------------------------------------------------- capture
 async function capture(argv) {
   const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
   const preview = argv.includes('--preview');
+  const storyboard = argv.includes('--storyboard');
+  const rangeArg = argv.includes('--range') ? argv[argv.indexOf('--range') + 1] : null;
+  const ranges = rangeArg?.split(',').map(value => value.split(':').map(Number));
+  if (ranges?.some(([a, b]) => !Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b <= a || b > TOTAL_SECONDS))
+    throw new Error('Use --range start:end[,start:end], within the film duration');
   mkdirSync(FRAMES, { recursive: true });
 
   const browser = await chromium.launch({
@@ -164,27 +137,63 @@ async function capture(argv) {
   // failure that would only show up on a slow machine.
   await page.evaluate(async (a) => {
     const decoded = {};
-    await Promise.all(Object.entries(a).map(([key, src]) => new Promise((res) => {
+    await Promise.all(Object.entries(a).map(([key, src]) => new Promise((res, reject) => {
       const img = new Image();
       img.onload = () => { decoded[key] = img; res(); };
-      img.onerror = () => { console.error('asset failed to decode: ' + key); res(); };
+      img.onerror = () => reject(new Error('asset failed to decode: ' + key));
       img.src = src;
     })));
-    window.setEnv(decoded);
+    await window.setEnv(decoded);
   }, loadAssets());
 
+  if (argv.includes('--motion-check')) {
+    for (const time of [5, 16, 29, 39, 52, 64]) {
+      await page.evaluate(t => window.draw(t), time);
+      const first = await page.screenshot();
+      const originalStyles = await page.locator('#film-stage').evaluate(el => el.innerHTML);
+      const planes = await page.locator('#space .plane').evaluateAll(elements => elements
+        .filter(el => getComputedStyle(el).display !== 'none' && Number(getComputedStyle(el).opacity) > .15)
+        .map(el => ({ matrix: getComputedStyle(el).transform, bounds: el.getBoundingClientRect().toJSON() })));
+      if (!planes.length || !planes.some(p => p.matrix.startsWith('matrix3d(')))
+        throw new Error(`No actual perspective plane at ${time}`);
+      await page.evaluate(t => window.draw(t), time + .35);
+      const next = await page.screenshot();
+      if (time < 63 && first.equals(next)) throw new Error(`Static motion sample at ${time}`);
+      await page.evaluate(t => window.draw(t), time);
+      const repeatStyles = await page.locator('#film-stage').evaluate(el => el.innerHTML);
+      if (originalStyles !== repeatStyles) throw new Error(`History-dependent frame at ${time}`);
+      console.log(`motion ${time}s: 3D matrix, frame displacement and deterministic rewind OK`);
+    }
+    await browser.close(); return [];
+  }
   const shots = [];
+  if (storyboard) {
+    const dir = join(BUILD, 'storyboard'); mkdirSync(dir, { recursive: true });
+    let start = 0;
+    for (const scene of TIMELINE) {
+      for (const [name, local] of [['enter', 0], ['early', scene.dur * .22], ['hold', scene.dur * .5], ['late', scene.dur * .78], ['end', scene.dur - 1 / FPS]]) {
+        await page.evaluate(t => window.draw(t), start + local);
+        await page.screenshot({ path: join(dir, `${scene.id}-${name}.png`) });
+      }
+      start += scene.dur;
+    }
+    for (const [name, time] of [['poster', 5], ['overview', 37], ['sessions', 48], ['usage', 52]]) {
+      await page.evaluate(t => window.draw(t), time);
+      await page.screenshot({ path: join(ROOT, `docs/promo/${name}.png`) });
+    }
+    await browser.close(); console.log(`Storyboard: ${dir}`); return [];
+  }
   if (only) {
     const s = TIMELINE.find((x) => x.n === only);
     // The scene's own head start. `draw()` takes film time, so a preview that
     // passed scene-local time would silently render the *previous* scene.
     const offset = TIMELINE.slice(0, TIMELINE.indexOf(s))
-      .reduce((a, x) => a + x.dur - 0.2, 0);
+      .reduce((a, x) => a + x.dur, 0);
     const n = preview ? 12 : Math.round(s.dur * FPS);
     for (let i = 0; i < n; i++) {
-      const local = preview ? (i / (n - 1)) * s.dur : i / FPS;
+      const local = preview ? (i / (n - 1)) * (s.dur - 1 / FPS) : i / FPS;
       await page.evaluate((t) => window.draw(t), offset + local);
-      const dir = preview ? join(HERE, 'preview') : FRAMES;
+      const dir = preview ? join(BUILD, 'preview') : FRAMES;
       mkdirSync(dir, { recursive: true });
       const file = join(dir, `s${String(s.n).padStart(2, '0')}_${String(i).padStart(4, '0')}.png`);
       await page.screenshot({ path: file, clip: { x: 0, y: 0, width: W, height: H } });
@@ -200,16 +209,17 @@ async function capture(argv) {
   // new total are still on disk and still match the pattern. Clearing is what
   // makes a re-time actually land.
   for (const f of readdirSync(FRAMES)) {
-    if (/^f\d{5}\.png$/.test(f)) unlinkSync(join(FRAMES, f));
+    if (!ranges && /^f\d{5}\.png$/.test(f)) unlinkSync(join(FRAMES, f));
   }
 
   const total = TOTAL_FRAMES;
   const t0 = Date.now();
   for (let i = 0; i < total; i++) {
     const t = i / FPS;
+    if (ranges && !ranges.some(([a, b]) => t >= a && t < b)) continue;
     await page.evaluate((tt) => window.draw(tt), t);
     const file = join(FRAMES, `f${String(i).padStart(5, '0')}.png`);
-    await page.screenshot({ path: file, clip: { x: 0, y: 0, width: W, height: H } });
+    await page.screenshot({ path: file });
     if (i % 90 === 0) {
       const rate = (Date.now() - t0) / Math.max(1, i + 1);
       process.stdout.write(`\r  frame ${i}/${total}  ${(rate).toFixed(0)} ms/frame  ` +
@@ -232,6 +242,9 @@ function encode() {
   mkdirSync(out, { recursive: true });
   const mp4 = join(out, 'claudebar.mp4');
   const gif = join(out, 'claudebar.gif');
+  const frameNames = readdirSync(FRAMES).filter(f => /^f\d{5}\.png$/.test(f)).sort();
+  if (frameNames.length !== TOTAL_FRAMES || frameNames.some((name, i) => name !== `f${String(i).padStart(5, '0')}.png`))
+    throw new Error(`Incomplete frame sequence: expected ${TOTAL_FRAMES}, got ${frameNames.length}. Render --frames first.`);
 
   console.log('  encoding mp4…');
   ffmpeg(['-framerate', String(FPS), '-i', join(FRAMES, 'f%05d.png'),
@@ -239,15 +252,20 @@ function encode() {
           '-movflags', '+faststart', '-r', String(FPS), mp4]);
 
   // The GIF is the README's autoplay, so it is the file every clone pays for.
-  // Two passes so the flat card greys do not band, and a hard budget: 900 wide,
-  // 8 fps, 128 colours. A GIF is not the film — it is the poster that proves the
+  // Two passes so the flat card greys do not band, and a hard budget: 800 wide,
+  // 6 fps, 128 colours. A GIF is not the film — it is the poster that proves the
   // film exists, and it links to the MP4 for anyone who wants the real thing.
   // Anything much past ~8 MB is a README nobody finishes loading.
   console.log('  encoding gif…');
-  const pal = join(HERE, 'palette.png');
-  const gifFilter = 'fps=8,scale=900:-1:flags=lanczos';
-  ffmpeg(['-i', mp4, '-vf', `${gifFilter},palettegen=max_colors=128:stats_mode=diff`, pal]);
-  ffmpeg(['-i', mp4, '-i', pal, '-lavfi',
+  const teaser = join(BUILD, 'teaser.mp4');
+  const clips = [[2, 6], [14, 18], [26, 30], [36, 40], [59, 63]];
+  const segments = clips.map(([a, b], i) => `[0:v]trim=start=${a}:end=${b},setpts=PTS-STARTPTS[v${i}]`).join(';');
+  ffmpeg(['-i', mp4, '-filter_complex', segments + ';' + clips.map((_, i) => `[v${i}]`).join('') + `concat=n=${clips.length}:v=1:a=0[teaser]`,
+    '-map', '[teaser]', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', teaser]);
+  const pal = join(BUILD, 'palette.png');
+  const gifFilter = 'fps=6,scale=800:-1:flags=lanczos';
+  ffmpeg(['-i', teaser, '-vf', `${gifFilter},palettegen=max_colors=128:stats_mode=diff`, pal]);
+  ffmpeg(['-i', teaser, '-i', pal, '-lavfi',
           `${gifFilter}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`,
           '-loop', '0', gif]);
 
@@ -262,9 +280,9 @@ const argv = process.argv.slice(2);
 const onlyFrames = argv.includes('--frames');
 const onlyEncode = argv.includes('--encode');
 const main = async () => {
-  if (argv.includes('--only') || !onlyEncode) await capture(argv);
-  if (!onlyFrames && !argv.includes('--only')) encode();
-  if (!onlyEncode && !argv.includes('--only')) {
+  if (argv.includes('--motion-check') || argv.includes('--storyboard') || argv.includes('--only') || !onlyEncode) await capture(argv);
+  if (!onlyFrames && !argv.includes('--only') && !argv.includes('--storyboard') && !argv.includes('--motion-check')) encode();
+  if (!onlyEncode && !argv.includes('--only') && !argv.includes('--storyboard') && !argv.includes('--motion-check')) {
     console.log(`\n  ${TOTAL_SECONDS.toFixed(1)} s · ${TOTAL_FRAMES} frames · ${W}x${H} @ ${FPS}fps`);
   }
 };

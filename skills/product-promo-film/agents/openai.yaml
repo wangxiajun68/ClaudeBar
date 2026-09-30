@@ -1,0 +1,4 @@
+interface:
+  display_name: "产品宣传片制作"
+  short_description: "从真实产品界面制作空间动效宣传片，支持版本重做、局部编辑与交付验收"
+  default_prompt: "使用 $product-promo-film，根据当前项目和新版功能更新宣传视频，保留真实 UI，完成分镜、空间动效、渲染与验收。"

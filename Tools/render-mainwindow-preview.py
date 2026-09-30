@@ -1236,6 +1236,12 @@ _traffic = inject_member(
 # which is not the tab this fixture selects.
 _traffic = _traffic.replace('PlainDumpView(text: text)', 'Text(text).font(Theme.Font.captionMono)')
 assert 'PlainDumpView(' not in _traffic, 'TrafficView.swift: PlainDumpView survived the rewrite'
+# A still has no live capture lifecycle. Read the immutable seeded detail and
+# blocks directly; mounting/onChange must not replace them with an empty result
+# from the inert capture store. The production conversation drawing is unchanged.
+assert 'get { state.displayBlocks }' in _traffic
+_traffic = _traffic.replace('get { state.displayBlocks }', 'get { Fixture.trafficBlocks }')
+_traffic = _traffic.replace('get { state.detail }', 'get { Fixture.trafficDetail() }')
 source += _traffic
 source += require_file('Sources/ClaudeBar/Views/Pages/CursorTokenUsageCard.swift')
 
@@ -1390,7 +1396,18 @@ source += _widgets
 source += require_file('Sources/ClaudeBar/Views/Shared/DecorativeMotion.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/SectionHeader.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/ContextBar.swift')
-source += require_file('Sources/ClaudeBar/Views/Shared/InstrumentControls.swift')
+_controls = require_file('Sources/ClaudeBar/Views/Shared/InstrumentControls.swift')
+# Destructive buttons have the same AppKit shadow bridge as TileSurface.
+# Keep the actual control plate and label, omit only its animated shadow.
+_shadow = """LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                                    y: pressed ? 0 : (hovered ? 3 : 1.5),
+                                    opacity: hovered ? 0.20 : 0.13,
+                                    cornerRadius: metrics.height / 2,
+                                    surface: .clear,
+                                    color: .black)"""
+assert _shadow in _controls, 'ActionButton shadow moved — update renderer'
+_controls = _controls.replace(_shadow, 'Color.clear')
+source += _controls
 _search = require_file('Sources/ClaudeBar/Views/Shared/InstrumentSearchField.swift')
 _search, _n = rewrite_text_fields(_search, 'InstrumentSearchField.swift')
 assert _n == 1, f'InstrumentSearchField.swift: expected 1 TextField, rewrote {_n}'
@@ -1620,6 +1637,17 @@ source += r'''
         }
     }
 
+    static var trafficTurns: [CaptureTranscript.Turn] {
+        [CaptureTranscript.Turn(role: "user", text: "把概览页的资源条换成宫格，风扇瓦片保留调速。"),
+         CaptureTranscript.Turn(role: "tool", text: "读取 Sources/ClaudeBar/Views/Shared/ResourceStrip.swift", name: "Read"),
+         CaptureTranscript.Turn(role: "assistant", text: "资源条包含 CPU、GPU、内存、硬盘、网络和风扇。将沿用现有控件，保留风扇的调速入口，并在概览中展示能源流向。")]
+    }
+    static var trafficBlocks: [ConvBlock] {
+        ConversationBuilder.build(ConversationInput(
+            id: 1, history: trafficTurns, live: nil, response: nil,
+            headers: nil, full: false, streaming: false, query: ""))
+    }
+
     static func trafficDetail() -> CaptureDetail {
         let rec = trafficRecords()[0]
         let response = """
@@ -1634,7 +1662,9 @@ source += r'''
             requestJSON: request, rewrittenJSON: request,
             responseJSON: response, rawSSE: "",
             requestHeadersJSON: "{\"user-agent\":\"claude-cli/2.0.0\",\"accept\":\"text/event-stream\"}",
-            turns: [], toolCalls: [])
+            turns: trafficTurns, toolCalls: [CaptureTranscript.ToolCall(
+                id: "demo-read", name: "Read", arguments: "ResourceStrip.swift",
+                output: "CPU / GPU / 内存 / 硬盘 / 网络 / 风扇")])
     }
 
     static func trafficRecords() -> [CaptureSummary] {

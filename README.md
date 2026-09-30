@@ -7,8 +7,8 @@
 <h1 align="center">ClaudeBar</h1>
 
 <p align="center">
-  菜单栏里的 AI 工作台。<br>
-  同时跑着 Claude Code、Codex 和 Cursor 时，切模型、看会话、量 Token、管隧道，都在 macOS 顶栏。
+  面向 AI 开发工作流的原生 macOS 工作台。<br>
+  在菜单栏、灵动岛与桌面之间，统一管理模型、会话、用量与网络。
 </p>
 
 <p align="center">
@@ -25,91 +25,109 @@
 
 <p align="center">
   <a href="docs/promo/claudebar.mp4">
-    <img src="docs/promo/claudebar.gif" alt="ClaudeBar 介绍影片" width="920">
+    <img src="docs/promo/claudebar.gif" alt="ClaudeBar：从天气卡片进入 popup、灵动岛与桌面工作台的空间动画" width="920">
   </a>
 </p>
 
 <p align="center">
-  <a href="docs/promo/claudebar.mp4">观看完整影片</a>
+  <a href="docs/promo/claudebar.mp4">观看 66 秒完整影片</a>
 </p>
 
 ---
 
-Claude Code、Codex、Cursor 一起开着的时候，旁边通常还挤着 VPN、抓包代理和模型切换器。每个占一个托盘图标，每次切换都把你拉出终端。
+ClaudeBar 为使用 Claude Code、Codex 和 Cursor 的开发者提供统一的工作视图。通过菜单栏快速查看状态与切换模型，通过灵动岛跟踪 Agent 进度，通过桌面主窗口分析会话、用量和请求。应用采用 SwiftUI 与 AppKit 构建。
 
-ClaudeBar 把这些收成一个菜单栏应用。顶栏常驻，主窗口按需打开。点一下做完刚才那件事，再回到代码里。
+## 核心能力
 
-## 能力
-
-| | |
+| 模块 | 功能 |
 | --- | --- |
-| **切换** | Claude Code 与 Codex 各有一份供应商。激活分别写回 `~/.claude/settings.json` 和 `~/.codex/config.toml`，互不覆盖。菜单栏三格是 CC、Codex、Cursor 额度；VPN 节点是状态行上的一颗药丸。 |
-| **会话** | Claude Code、Cursor、Codex 和其他 CLI 收成一张牌：上下文、当前工具、心跳、CPU 与内存。双击卡片，在终端或 Cursor 里接上。 |
-| **用量** | 只统计模型 Token。日 / 月 / 年 / 全部热力，以及输入、缓存命中、写入、输出。花费按刊例价估算，人民币与美元分列；**Cursor 那一行是它自己接口回传的实际扣费**，与估算分开，永不相加。 |
-| **转发** | 本机代理听 `127.0.0.1`（默认 15721），Chat / Responses 互转。Claude Code 与 Codex 跟当前模型走；第三方客户端可另选上游。流量页留下对话、工具调用、图片和原始报文。 |
-| **隧道** | 捆绑 mihomo。订阅、选节点、测延迟、系统代理或 TUN。菜单栏显示实时速率。VPN 页把内核的每条 TCP 连接收成域名、命中规则和出口。 |
-| **连接器** | 一个页面看清三家客户端装了哪些 Skills、MCP 和插件。只读扫描，不启动服务。 |
-| **本机** | 概览是冰面或石墨宫格：负载、温度、磁盘、网络、两只风扇，以及能源流向。浅色 `#EEF3F8`，深色 `#16181C`，不跟系统外观走。有内置电池的机器可以设充电上限。 |
+| 模型与供应商 | 分别管理 Claude Code、Codex 的模型配置和上游供应商，保持两套配置独立。 |
+| 会话监控 | 汇集客户端会话，查看运行状态、上下文使用和工具活动；支持返回终端或 Cursor 继续工作。 |
+| 用量分析 | 按日、月、年及全部查看 Token 分布、来源、构成与活跃节奏；分别呈现费用估算和 Cursor 实际扣费。 |
+| 本地代理 | 提供本机 API 入口与 Chat / Responses 协议转换；启用流量记录后，可检查对话、工具调用、图片及原始报文。 |
+| VPN 与网络 | 内置 mihomo，支持订阅、节点选择、延迟测试、系统代理及 TUN；查看连接域名、匹配规则与出口。 |
+| 连接器 | 集中查看 Skills、MCP、插件及共享 CLI，支持详情和各客户端可用的启停操作。 |
+| Mac 状态 | 查看天气、CPU / GPU、内存、磁盘、网络、风扇与能源状态；支持内置电池机型的充电上限设置。 |
 
-另外：⌘K 跳页面、会话或模型；⌘⇧A 区域截图；桌面小组件看当日 Token；有刘海的屏幕上，灵动岛收着正在跑的 Agent。
+## 三种界面，一套工作流
 
-## 界面
+- **菜单栏 Popup**：快速查看工作状态、模型、额度和会话，减少窗口切换。
+- **灵动岛**：在支持的刘海屏幕上呈现 Agent 状态、完成提醒及展开详情。
+- **桌面主窗口**：提供概览、模型、会话、用量、流量、VPN 和连接器等完整工作视图，支持浅色与深色外观。
 
-主窗口是仪表盘。菜单栏是同一套事实的压缩版。
+### 工作概览
 
-<p>
-  <img src="docs/screenshots/main-window.png" alt="主窗口概览" width="920">
-</p>
+天气与问候、系统负载、能源流向和活跃会话共同构成桌面入口。
 
-<p>
-  <img src="docs/screenshots/menubar-popup.png" alt="菜单栏" width="420">
-</p>
+[![ClaudeBar 桌面概览](docs/promo/overview.png)](docs/promo/overview.png)
 
-## 安装
+### 会话与用量
 
-需要 **macOS 15+**，Apple Silicon。从 [Releases](https://github.com/wangxiajun68/ClaudeBar/releases/latest) 下载 DMG，拖进「应用程序」。
+会话页集中展示上下文、工具活动与运行状态；用量页按时间范围呈现来源、构成和使用趋势。
 
-Gatekeeper 拦住时：
+[![ClaudeBar 会话监控](docs/promo/sessions.png)](docs/promo/sessions.png)
 
-```bash
-xattr -cr /Applications/ClaudeBar.app && open /Applications/ClaudeBar.app
-```
+[![ClaudeBar 用量分析](docs/promo/usage.png)](docs/promo/usage.png)
 
-| 你想… | 走这里 |
+> 宣传影片与以上图片由项目源码渲染，使用固定演示数据。模型、额度及费用仅用于展示界面，不代表实际账户数据。
+
+## 安装与使用
+
+**系统要求：macOS 15 或更高版本，Apple Silicon（arm64）。**
+
+1. 从 [Releases](https://github.com/wangxiajun68/ClaudeBar/releases/latest) 下载 DMG。
+2. 打开 DMG，将 ClaudeBar 拖入「应用程序」，随后启动应用。
+3. 在模型页配置供应商与模型；按需要在设置中启用会话集成、代理和系统功能。
+
+Claude Code 与 Codex 的模型切换分别写入各自配置文件。**切换后请新开终端会话，使新配置生效。** Cursor 在本项目中提供会话、用量与额度集成。
+
+开启本地代理后，第三方客户端可使用 `http://127.0.0.1:<端口>/v1`，默认端口为 `15721`。流量查看需要先在设置中启用流量记录。⌘K 可快速跳转页面、会话和模型；启用区域截图后，可使用 ⌘⇧A。
+
+安装拦截、权限及集成问题请参阅 [FAQ](docs/FAQ.md)。
+
+## 数据与权限
+
+ClaudeBar 从各客户端的本地数据中读取会话和用量。模型切换、连接器启停等操作会按对应客户端的机制更新配置；连接器支持范围见 [技术说明](docs/technical/16-connectors.md)。
+
+| 数据来源或功能 | 主要路径与行为 |
 | --- | --- |
-| 换模型 | 菜单栏 CC / Codex 格，或主窗口 **模型**。新开一个终端会话后生效。 |
-| 换节点 | 菜单栏 VPN 格，或 **VPN** 页。 |
-| 看对话有没有打到代理 | 设置 → 本地代理 → 打开流量记录 → **流量** |
-| 让第三方走同一条上游 | Base URL `http://127.0.0.1:<端口>/v1`，设置里另选供应商 |
-| 接上刚才那次会话 | **会话** 页，或菜单栏里的卡片 |
-| 截一块屏幕 | ⌘⇧A（设置里可关） |
+| Claude Code | 读取 `~/.claude/`；切换模型时更新 `~/.claude/settings.json`。 |
+| Codex | 读取 `~/.codex/`；切换模型时更新 `~/.codex/config.toml`。 |
+| Cursor | 读取 `~/.cursor/projects/` 及 `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`；额度和账单通过 Cursor 接口获取。 |
+| 代理记录 | 启用记录后写入 `~/Library/Application Support/ClaudeBar/logs/`。 |
+| VPN | 内核、订阅与配置保存在 `~/Library/Application Support/ClaudeBar/vpn/`。 |
 
-## 它碰哪些文件
+ClaudeBar 本身不执行模型推理。本地代理将请求转发至配置的上游；天气、额度、账单及订阅等功能会访问对应服务。连接器清单扫描不启动 MCP 服务，打开 MCP 详情时会连接服务并读取工具列表，不调用工具。
 
-只读优先。除了你主动切换模型，不会改各工具自己的数据。ClaudeBar 不做推理，代理只转发到你已经配置的上游。
+需要系统权限的功能在设置中配置，并按 macOS 提示授权。代理记录可能包含对话和请求内容，应按项目的数据管理要求使用。
 
-| 谁 | 路径 | 权限 |
-| --- | --- | --- |
-| Claude Code | `~/.claude/` | 读；切换时写 `settings.json` |
-| Codex | `~/.codex/` | 读；切换时写 `config.toml` |
-| Cursor | `~/Library/.../state.vscdb` | 只读 |
-| 代理抓包 | `~/Library/Application Support/ClaudeBar/logs/` | 打开流量记录才写 |
-| VPN | `~/Library/Application Support/ClaudeBar/vpn/` | 订阅与内核配置，只留本机 |
+**费用口径：** 模型费用按 Token 与刊例价估算，不能作为实际账单。Cursor 接口返回的实际扣费单独显示，并标明适用窗口；不同口径、时间范围和币种的金额不合并。
 
-会向系统要权限的能力（小组件、通知、截图、自动化、蓝牙、Wi-Fi 名称、定位、Cursor 会话）默认关闭，在设置里逐项打开。
+## 开发与构建
 
-## 从源码构建
+使用 macOS、Xcode Command Line Tools（含 Swift 编译器）及 Python 3。构建细节与依赖参见 [构建与签名](docs/technical/07-build-and-signing.md)。
 
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
 cd ClaudeBar
-make build
+make ci
 ```
 
-[贡献](CONTRIBUTING.md) · [版本](docs/VERSIONING.md) · [发版](docs/RELEASING.md) · [更新日志](docs/CHANGELOG.md) · [FAQ](docs/FAQ.md)
+| 命令 | 结果 |
+| --- | --- |
+| `make ci` | 编译应用至 `.build/ClaudeBar.app`，不安装。 |
+| `make build` | 编译、签名并安装至 `/Applications`。 |
+| `make test` | 运行项目回归检查。 |
+| `make package` | 在 `.build/dist/` 生成发布包。 |
 
-## License
+宣传片的分镜、动效及生成流程见 [宣传片制作说明](docs/promo/prompt.md)。本地运行 `python3 Tools/serve-promo.py` 后，可访问 `http://127.0.0.1:8808/docs/promo/film.html` 查看章节播放器。
 
-[MIT](LICENSE)
+## 文档与贡献
 
-界面图标取自 [Lucide](https://lucide.dev)（ISC），随应用打包于 `Resources/Lucide.txt`。VPN 内核 [mihomo](https://github.com/MetaCubeX/mihomo) 以 `.xz` 压缩档内置，首次启动时在应用内解压。
+[文档索引](docs/README.md) · [FAQ](docs/FAQ.md) · [更新日志](docs/CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [安全报告](SECURITY.md) · [版本管理](docs/VERSIONING.md) · [发布流程](docs/RELEASING.md)
+
+提交问题时请提供系统版本、应用版本、复现步骤及相关日志，并移除密钥、账号和对话中的敏感内容。
+
+## 许可证
+
+ClaudeBar 项目代码采用 [MIT License](LICENSE)。第三方组件与素材遵循各自许可证：界面图标使用 Lucide（ISC），其声明位于 [Lucide.txt](Sources/Licenses/Lucide.txt)；字体及其他素材声明见 [ASSET-LICENSES.md](Sources/ClaudeBar/Resources/ASSET-LICENSES.md)；VPN 内核的打包方式见 [mihomo 说明](vendor/mihomo/README.md)。
