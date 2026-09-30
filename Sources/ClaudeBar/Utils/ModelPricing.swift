@@ -59,10 +59,60 @@ enum ModelPricing {
 
     /// The billing currency of a rate card. Vendors publish in one or the
     /// other; nothing here invents an exchange rate.
-    enum Currency {
+    ///
+    /// `Int`-backed rather than `String`-backed so a persisted override file
+    /// cannot be made unreadable by a rename: the raw value is a stable number,
+    /// and an unknown one decodes to nil rather than to a silently different
+    /// currency. `Codable` is on the enum itself because the override record
+    /// in `ModelPriceCatalog` round-trips through JSON.
+    enum Currency: Int, Codable {
         case cny, usd
 
         var symbol: String { self == .cny ? "¥" : "$" }
+
+        /// The vendor's own billing currency name, for the editor's picker.
+        var label: String { self == .cny ? "人民币" : "美元" }
+
+        var code: String { self == .cny ? "CNY" : "USD" }
+    }
+
+    /// Where an override's numbers came from. Persisted, so this is also the
+    /// audit trail the settings card renders: a row that says 内置 and a row
+    /// that says 官方页 are two different claims, and the UI must be able to
+    /// tell them apart.
+    enum PriceSource: Int, Codable, Equatable {
+        /// The user typed it in the settings card.
+        case manual
+        /// A row fetched from `models.dev`, whose prices are USD.
+        case fetchedUSD
+        /// A row parsed out of a vendor's own pricing page, in CNY.
+        case fetchedCNY
+        /// A row the user fetched, whose later manual edit replaced it. Kept so
+        /// the fetched value survives a revert to 手动 rather than being lost.
+        case fetchedAndEdited
+
+        var label: String {
+            switch self {
+            case .manual: return "手动"
+            case .fetchedUSD: return "models.dev"
+            case .fetchedCNY: return "官方页"
+            case .fetchedAndEdited: return "手动（曾抓取）"
+            }
+        }
+
+        /// One line explaining the provenance, shown under an edited row.
+        var explanation: String {
+            switch self {
+            case .manual:
+                return "你在设置中手动填写的价格"
+            case .fetchedUSD:
+                return "从 models.dev 拉取（美元刊例价）"
+            case .fetchedCNY:
+                return "从厂商官方定价页解析（人民币刊例价）"
+            case .fetchedAndEdited:
+                return "先抓取后手动修改"
+            }
+        }
     }
 
     /// One published rate card, in **currency units per million tokens**.
@@ -73,7 +123,7 @@ enum ModelPricing {
     /// model — the table sets `cacheWrite == input` rather than zero, and
     /// `Tests/model-cost-regressions.py` rejects any zero bucket, because a
     /// zero would render a silently free line.
-    struct Rate: Equatable {
+    struct Rate: Codable, Equatable {
         var currency: Currency
         var input: Double
         var output: Double
@@ -88,7 +138,7 @@ enum ModelPricing {
     /// "the vendor does not publish it", and an unknown slug means "this table
     /// has not caught up with your model". All three are excluded from the
     /// total; only the last is this app's to fix.
-    enum Unpriced {
+    enum Unpriced: Int, Codable, Equatable {
         /// A 会员 / 套餐 SKU billed by subscription, not per token. Pricing it
         /// at some model's API rate would invent a number.
         case subscription
@@ -269,18 +319,126 @@ enum ModelPricing {
         var reason: Unpriced? { if case .unpriced(let u) = self { return u }; return nil }
     }
 
-    /// Resolve a recorded model slug against both tables.
-    static func resolve(_ model: String) -> Resolution? {
+    /// One user/fetched override on top of the bundled table.
+    ///
+    /// Declared **here** rather than in `ModelPriceCatalog` for two reasons that
+    /// are really one: `ModelPricing` must resolve against overrides without
+    /// the catalog — the regression harness pastes this file and the price
+    /// table into a bare `swiftc` template with no app dependencies — and the
+    /// record is nothing but a `Rate` plus the metadata that makes it
+    /// auditable. The catalog owns the *list*; this owns one row.
+    ///
+    /// Overrides are **ordered by `effectiveFrom`**: the same slug may carry
+    /// several, and a date resolves to the newest one not after it. That is what
+    /// keeps a price change from rewriting history — a day of usage recorded
+    /// before the change still resolves to the old rate.
+    struct PriceOverride: Codable, Equatable {
+        var slug: String
+
+        /// The rate card, or nil when the row instead states a reason for there
+        /// being none.
+        var rate: Rate?
+        /// Why there is no `rate` — 订阅制 / 未公开价. Nil when `rate` is set.
+        var unpriced: Unpriced?
+
+        /// `yyyy-MM-dd`, the same day key `UsageIndex`/`ProxyUsageStore` roll up
+        /// by, so a usage day and an override date compare as plain strings.
+        var effectiveFrom: String
+
+        var source: PriceSource
+        /// The page the numbers were parsed from, when `source` is fetched.
+        /// Fetched rows are only auditable if this survives, so it is persisted
+        /// rather than reconstructed.
+        var sourceURL: String?
+        /// When the fetch or manual edit that produced this row ran.
+        var checkedAt: Date?
+        /// Free-text caveat recorded at write time — e.g. an official page that
+        /// quotes two context bands and had to be reduced to one.
+        var note: String?
+
+        /// The resolution this row states, or nil when it states neither a rate
+        /// nor a reason — a malformed row, which the catalog refuses to write.
+        var resolution: Resolution? {
+            if let rate { return .priced(rate) }
+            if let unpriced { return .unpriced(unpriced) }
+            return nil
+        }
+    }
+
+    /// The overrides in force, keyed by canonical slug, each list ascending by
+    /// `effectiveFrom`. Guarded rather than `@MainActor`-isolated because the
+    /// resolution path runs on the usage scan's detached tasks; swapping the
+    /// whole dictionary under one lock keeps it to a single critical section
+    /// and makes the read path free of torn state.
+    private static let overrideLock = NSLock()
+    nonisolated(unsafe) private static var overrides: [String: [PriceOverride]] = [:]
+
+    /// Install the catalog's overrides. An **empty** dictionary restores exactly
+    /// the bundled-table behaviour, which is what keeps this feature purely
+    /// additive: no number changes until a user or a fetch writes one.
+    static func replaceOverrides(_ table: [String: [PriceOverride]]) {
+        overrideLock.lock()
+        defer { overrideLock.unlock() }
+        overrides = table.mapValues { rows in
+            rows.sorted { $0.effectiveFrom < $1.effectiveFrom }
+        }
+    }
+
+    /// The overrides in force, for the settings card. A copy, so the caller
+    /// cannot mutate the store through it.
+    static var installedOverrides: [String: [PriceOverride]] {
+        overrideLock.lock()
+        defer { overrideLock.unlock() }
+        return overrides
+    }
+
+    /// Resolve a recorded model slug against both tables, as of `date`.
+    ///
+    /// Longest-match still decides (`glm-5` loses to `glm-5.3-flash`), but the
+    /// override table participates in the same pass: an override for a *longer*
+    /// slug beats a bundled row for a shorter one, and vice versa. That is the
+    /// same one-pass rule this method documents, extended to a third table —
+    /// checking overrides "first" would let an override for `glm-5` swallow the
+    /// bundled `glm-5.3-flash`.
+    static func resolve(_ model: String, on date: String) -> Resolution? {
         let name = canonical(model)
         guard !name.isEmpty else { return nil }
         var best: (slug: String, resolution: Resolution)?
+
+        overrideLock.lock()
+        let snapshot = overrides
+        overrideLock.unlock()
+
         func consider(_ slug: String, _ resolution: Resolution) {
             guard matches(name, slug) else { return }
             if best == nil || slug.count > best!.slug.count { best = (slug, resolution) }
         }
         for entry in table { consider(entry.slug, .priced(entry.rate)) }
         for (slug, reason) in ModelPriceTable.unpriced { consider(slug, .unpriced(reason)) }
+        for (slug, rows) in snapshot {
+            // The newest row starting on or before `date` wins; a row that
+            // starts later leaves the earlier one (or the bundled table) in
+            // force, which is what keeps a price change forward-only.
+            var applied: PriceOverride?
+            for row in rows where row.effectiveFrom <= date { applied = row }
+            if let applied, let resolution = applied.resolution { consider(slug, resolution) }
+        }
         return best?.resolution
+    }
+
+    /// Resolve as of today — the date-less entry point, for callers that are
+    /// genuinely about "now". Anything costing a *recorded* day must pass that
+    /// day: see `estimate(_:on:)` and `estimate(days:)`.
+    static func resolve(_ model: String) -> Resolution? {
+        resolve(model, on: dayKey(Date()))
+    }
+
+    /// `yyyy-MM-dd` in the local calendar — the day-key format both usage
+    /// rollups store (`UsageIndex`, `ProxyUsageStore`), so an override's
+    /// `effectiveFrom` and a usage day compare as plain strings.
+    static func dayKey(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
 
     /// The rate card for a recorded model slug, or nil when it has none —
@@ -296,12 +454,28 @@ enum ModelPricing {
     /// bucket is billed on its own line — that is the whole point of storing
     /// them disjointly.
     static func cost(of usage: ModelUsage) -> Cost? {
-        guard let rate = resolve(usage.model)?.rate else { return nil }
+        cost(of: usage, on: dayKey(Date()))
+    }
+
+    /// Cost one model's aggregate as of `date`.
+    static func cost(of usage: ModelUsage, on date: String) -> Cost? {
+        guard let rate = resolve(usage.model, on: date)?.rate else { return nil }
+        return cost(of: usage, rate: rate)
+    }
+
+    /// The four-bucket arithmetic, split out because the date-less and the dated
+    /// path bill identically — the only thing a date changes is *which* rate
+    /// they bill at.
+    private static func cost(of usage: ModelUsage, rate: Rate) -> Cost {
         let million = 1_000_000.0
-        let amount = Double(usage.inputTokens) / million * rate.input
-            + Double(usage.outputTokens) / million * rate.output
-            + Double(usage.cacheReadTokens) / million * rate.cacheRead
-            + Double(usage.cacheCreationTokens) / million * rate.cacheWrite
+        // Written as four named terms rather than one chained expression: the
+        // chain pushed this file's type-checker past its budget once already
+        // ("unable to type-check in reasonable time") and this is the hot path.
+        let input = Double(usage.inputTokens) / million * rate.input
+        let output = Double(usage.outputTokens) / million * rate.output
+        let cacheRead = Double(usage.cacheReadTokens) / million * rate.cacheRead
+        let cacheWrite = Double(usage.cacheCreationTokens) / million * rate.cacheWrite
+        let amount = input + output + cacheRead + cacheWrite
         var cost = Cost()
         switch rate.currency {
         case .cny: cost.cny = amount
@@ -310,14 +484,24 @@ enum ModelPricing {
         return cost
     }
 
-    /// Cost a whole period's per-model aggregates.
+    /// Cost a whole period's per-model aggregates, at today's prices.
     static func estimate(_ usages: [ModelUsage]) -> Estimate {
+        estimate(usages, on: dayKey(Date()))
+    }
+
+    /// Cost a set of per-model aggregates as of one date.
+    ///
+    /// Correct for a single day's slice and for the settings card's preview. A
+    /// *multi-day* period must go through `estimate(days:)` instead: pricing a
+    /// whole month at one date is exactly how a mid-month price change would
+    /// silently rewrite the days before it.
+    static func estimate(_ usages: [ModelUsage], on date: String) -> Estimate {
         var out = Estimate()
         for usage in usages {
             guard !usage.isZero else { continue }
-            guard let cost = cost(of: usage) else {
+            guard let cost = cost(of: usage, on: date) else {
                 out.lines.append(Estimate.Line(model: usage.model, cost: Cost(),
-                                               unpriced: unpricedReason(usage.model) ?? .unknownSlug))
+                                               unpriced: resolve(usage.model, on: date)?.reason ?? .unknownSlug))
                 out.unpricedModels += 1
                 out.unpricedTokens += usage.totalTokens
                 continue
@@ -326,6 +510,56 @@ enum ModelPricing {
             out.cost.cny += cost.cny
             out.cost.usd += cost.usd
             out.pricedModels += 1
+        }
+        return out
+    }
+
+    /// Cost a period held as one bucket per day, each day at the price in force
+    /// **on that day**.
+    ///
+    /// This is what makes a price change forward-only. The rollup already
+    /// carries `(day, model)` rows — `UsageIndex.fetchDailyModels(in:)` for
+    /// Claude Code / Codex and `ProxyUsageStore.fetchDailyModels(startDay:endDay:)`
+    /// for the proxy — so no schema change and no re-derivation is needed: the
+    /// per-day rows were always there, they were just summed into one period
+    /// before being priced.
+    ///
+    /// Lines are merged by recorded slug afterwards, so a model that spans a
+    /// price change still renders as one line, with the two segments' amounts
+    /// already added. The split is in the arithmetic, not the presentation.
+    static func estimate(days: [String: [ModelUsage]]) -> Estimate {
+        var out = Estimate()
+        var costByModel: [String: Cost] = [:]
+        var tokensByModel: [String: Int] = [:]
+        var unpricedByModel: [String: Unpriced] = [:]
+
+        for (day, usages) in days {
+            for usage in usages where !usage.isZero {
+                tokensByModel[usage.model, default: 0] += usage.totalTokens
+                if let cost = cost(of: usage, on: day) {
+                    let running = costByModel[usage.model] ?? Cost()
+                    costByModel[usage.model] = Cost(cny: running.cny + cost.cny,
+                                                    usd: running.usd + cost.usd)
+                } else {
+                    unpricedByModel[usage.model] = resolve(usage.model, on: day)?.reason ?? .unknownSlug
+                }
+            }
+        }
+
+        // Ordered by token volume, matching `estimate(_:)`, so the card's lines
+        // keep the same ranking whichever path produced them.
+        for (model, tokens) in tokensByModel.sorted(by: { $0.value > $1.value }) {
+            if let cost = costByModel[model] {
+                out.lines.append(Estimate.Line(model: model, cost: cost, unpriced: nil))
+                out.cost.cny += cost.cny
+                out.cost.usd += cost.usd
+                out.pricedModels += 1
+            } else {
+                out.lines.append(Estimate.Line(model: model, cost: Cost(),
+                                               unpriced: unpricedByModel[model] ?? .unknownSlug))
+                out.unpricedModels += 1
+                out.unpricedTokens += tokens
+            }
         }
         return out
     }

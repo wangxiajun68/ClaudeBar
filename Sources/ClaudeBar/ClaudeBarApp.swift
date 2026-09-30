@@ -81,6 +81,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // cost display — the default 分列 mode makes no outbound request at all.
         ExchangeRate.shared.start()
 
+        // Loads the saved price overrides and, only if a previous check has
+        // aged past the weekly interval, proposes a fresh one in the background.
+        // It never applies: a background job that changed a price on its own is
+        // the one thing this feature must not do.
+        ModelPriceCatalog.shared.autoCheckIfStale()
+
         // Re-read the login item so the Settings toggle reflects the system
         // rather than a remembered value. Also re-runs on every activation, so
         // a change made in System Settings shows up on return.

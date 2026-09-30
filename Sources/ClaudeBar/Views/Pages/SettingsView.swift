@@ -361,11 +361,47 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsCategory: String, CaseIterable, Identifiable {
+enum SettingsCategory: String, CaseIterable, Identifiable {
     case general = "通用"
+    case appearance = "外观与天气"
     case island = "灵动岛"
+    case usage = "用量与计费"
     case privacy = "权限与隐私"
     case proxy = "本地代理"
 
     var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .general: return "slider.horizontal.3"
+        case .appearance: return "sun.max"
+        case .island: return "rectangle.topthird.inset.filled"
+        case .usage: return "chart.bar.xaxis"
+        case .privacy: return "hand.raised"
+        case .proxy: return "point.3.connected.trianglepath.dotted"
+        }
+    }
+    var caption: String {
+        switch self {
+        case .general: return "从启动到继续会话，按你的工作习惯运行。"
+        case .appearance: return "选择界面配色，让天空与问候成为自己的风景。"
+        case .island: return "将会话进展与用量，留在屏幕顶部。"
+        case .usage: return "统一数字的读法，明确每一笔花费的估算依据。"
+        case .privacy: return "每项访问都有用途，系统授权由你掌握。"
+        case .proxy: return "管理本机模型请求转发，以及第三方客户端接入。"
+        }
+    }
+}
+
+/// Owned by the window shell above its appearance identity boundary. Switching
+/// palette must not erase navigation or submit/discard explicit drafts.
+@MainActor final class SettingsState: ObservableObject {
+    @Published var category: SettingsCategory = .general
+    @Published var codexPortDraft = ""
+    @Published var portError: String?
+    @Published var weatherCityDraft = ""
+    @Published var amapKeyDraft = ""
+    @Published var amapKeySaved = ""
+    @Published var showProxyAdvanced = false
+    @Published var showWeatherAdvanced = false
+    var initialized = false
 }

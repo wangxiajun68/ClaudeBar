@@ -39,6 +39,7 @@ class ProviderStore: ObservableObject {
     private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
+    @Published private(set) var usagePublishedInterval: DateInterval?
     /// Cursor's **actually charged** amount per canonical model id, for the
     /// window `CursorLedgerStore.window` covers.
     ///
@@ -993,11 +994,12 @@ class ProviderStore: ObservableObject {
                     let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
                     let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
+                    let dailyModels = Self.queryDailyModels(in: interval)
                     let today = Self.queryTodayUsage()
                     await MainActor.run { [weak self] in
                         guard let self, !self.usageRefreshQueued else { return }
                         self.publishTodayUsage(today)
-                        self.publishUsage(quick, quickSources, days, daysBySource)
+                        self.publishUsage(quick, quickSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
                         // Read here rather than out on the detached task: the
                         // ledger store is a `@MainActor` observable, so the
                         // money map can only be read where it is published —
@@ -1014,6 +1016,7 @@ class ProviderStore: ObservableObject {
                 let finalSources = Self.queryUsageBySource(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
                 let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
+                let dailyModels = Self.queryDailyModels(in: interval)
                 let today = Self.queryTodayUsage()
 
                 let next: (again: Bool, rescan: Bool) = await MainActor.run {
@@ -1026,7 +1029,7 @@ class ProviderStore: ObservableObject {
                     // Publish and release the gate in one main-actor transaction.
                     // A new refresh cannot start between these operations.
                     self.publishTodayUsage(today)
-                    self.publishUsage(final, finalSources, days, daysBySource)
+                    self.publishUsage(final, finalSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
                     self.publishSettlement(Self.querySettlement())
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
@@ -1048,17 +1051,14 @@ class ProviderStore: ObservableObject {
     /// Arrays are compared as sets of rows because the SQL grouping gives no
     /// stable order.
     private func publishUsage(_ stats: [ModelUsage], _ bySource: [UsageSource: [ModelUsage]],
-                              _ days: [DayUsage], _ daysBySource: [UsageSource: [DayUsage]]) {
+                              _ days: [DayUsage], _ daysBySource: [UsageSource: [DayUsage]],
+                              dailyModels: [String: [ModelUsage]], interval: DateInterval) {
         func same(_ a: [ModelUsage], _ b: [ModelUsage]) -> Bool {
             a.count == b.count && Set(a) == Set(b)
         }
         if !same(usageStats, stats) {
             usageStats = stats
-            let estimate = ModelPricing.estimate(stats)
-            var lines: [String: ModelPricing.Estimate.Line] = [:]
-            for line in estimate.lines { lines[line.model] = line }
-            usageCostLines = lines
-            usageEstimate = estimate
+            publishPrices(dailyModels: dailyModels)
         }
         let sourcesEqual = usageBySource.count == bySource.count
             && bySource.allSatisfy { key, value in usageBySource[key].map { same($0, value) } ?? false }
@@ -1073,7 +1073,35 @@ class ProviderStore: ObservableObject {
         }
         if usageDays != days { usageDays = days }
         if usageDaysBySource != daysBySource { usageDaysBySource = daysBySource }
+        if usagePublishedInterval != interval { usagePublishedInterval = interval }
         if usageLoading { usageLoading = false }
+    }
+
+    /// Rebuild the period's cost lines and total, **day by day**.
+    ///
+    /// The period's tokens could be priced in one pass, and until the price
+    /// table became editable that was correct. It is not any more: a user who
+    /// changes a price on the 20th must not have the 1st–19th re-costed at the
+    /// new rate, and the only way to hold that line is to price each day at the
+    /// rate in force on that day and add the days up. The rollup already stores
+    /// exactly that granularity, so this costs one extra query per publish, not
+    /// a new table or a migration.
+    ///
+    /// Lines are still merged by recorded slug, so the card shows one line per
+    /// model across the period; the split lives in the arithmetic.
+    private func publishPrices(dailyModels: [String: [ModelUsage]]) {
+        let estimate = ModelPricing.estimate(days: dailyModels)
+        var lines: [String: ModelPricing.Estimate.Line] = [:]
+        for line in estimate.lines { lines[line.model] = line }
+        usageCostLines = lines
+        usageEstimate = estimate
+    }
+
+    /// Per-day, per-model aggregates for the interval — third-party rows
+    /// included, so a relay-priced model is split across a price change the same
+    /// way a transcript one is.
+    private static func queryDailyModels(in interval: DateInterval) -> [String: [ModelUsage]] {
+        UsageIndex.fetchDailyModels(in: interval)
     }
 
     private static func queryUsage(in interval: DateInterval) -> [ModelUsage] {
@@ -1146,7 +1174,11 @@ class ProviderStore: ObservableObject {
         var out = TodayUsage()
         out.tokens = today.reduce(0) { $0 + $1.totalTokens }
         out.calls = today.reduce(0) { $0 + $1.calls }
-        out.cost = ModelPricing.estimate(today)
+        // Today is one day, so the dated form and the plain one agree — but say
+        // so explicitly, because a card labelled 今日 that priced itself at some
+        // other day's rate is exactly the confidently-wrong number this module's
+        // rules exist to avoid.
+        out.cost = ModelPricing.estimate(today, on: ModelPricing.dayKey(dayStart))
         out.yesterdayTokens = UsageIndex.fetch(in: DateInterval(start: yesterdayStart, end: dayStart))
             .reduce(0) { $0 + $1.totalTokens }
         return out
@@ -1163,6 +1195,7 @@ class ProviderStore: ObservableObject {
     private var usageWatcherStoppedAt: Date?
     private var persistenceObserver: NSObjectProtocol?
     private var settlementObserver: NSObjectProtocol?
+    private var priceObserver: NSObjectProtocol?
 
     private func startUsageWatcher() {
         guard !usageWatcherStarted else { return }
@@ -1188,6 +1221,15 @@ class ProviderStore: ObservableObject {
         if settlementObserver == nil {
             settlementObserver = NotificationCenter.default.addObserver(
                 forName: .cursorLedgerDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.refreshUsage(rescan: false)
+            }
+        }
+        // A price edit changes every cost line without changing one token, so
+        // the cached estimate has to be rebuilt while the transcripts stay put.
+        if priceObserver == nil {
+            priceObserver = NotificationCenter.default.addObserver(
+                forName: .modelPriceDidChange, object: nil, queue: .main
             ) { [weak self] _ in
                 self?.refreshUsage(rescan: false)
             }

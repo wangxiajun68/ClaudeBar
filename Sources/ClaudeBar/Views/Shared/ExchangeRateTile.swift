@@ -36,7 +36,7 @@ struct ExchangeRateTile: View {
         if editing {
             TextField("留空自动", text: $draft)
                 .accessibilityLabel("美元兑人民币手动汇率")
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(InstrumentFieldStyle())
                 .focused($rateFocused)
                 .frame(width: 72)
                 .multilineTextAlignment(.trailing)
