@@ -149,7 +149,7 @@ final class CursorUsageStore {
     private init() {}
     var plan: CursorUsageFetcher.PlanUsage? { nil }
 }
-enum ScrollHoverGate { @MainActor static var scrolling = false }
+enum ScrollHoverGate { @MainActor static var isDeferring = false }
 struct ScrollHoverGateModifier: ViewModifier {
     func body(content: Content) -> some View { content }
 }

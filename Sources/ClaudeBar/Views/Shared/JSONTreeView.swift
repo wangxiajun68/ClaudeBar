@@ -51,15 +51,18 @@ enum JSONTree {
     private static let arrayCap = 80
     private static let sseCap = 400
 
-    static func parse(_ raw: String) -> JSONDocument {
+    static func parse(_ raw: String) throws -> JSONDocument {
+        try Task.checkCancellation()
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return .empty }
+        // Avoid feeding an entire stream to the JSON decoder before discovering
+        // it is SSE. Only the retained tail needs a JSON outline.
+        if looksLikeSSE(trimmed) { return try parseSSE(trimmed) }
         if let obj = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)) {
-            return .tree(build(key: "", value: obj, path: "$"))
+            try Task.checkCancellation()
+            return .tree(try build(key: "", value: obj, path: "$"))
         }
-        if looksLikeSSE(trimmed) {
-            return parseSSE(trimmed)
-        }
+        try Task.checkCancellation()
         return .text(raw)
     }
 
@@ -73,7 +76,8 @@ enum JSONTree {
 
     // MARK: - JSON
 
-    private static func build(key: String, value: Any, path: String) -> JSONNode {
+    private static func build(key: String, value: Any, path: String) throws -> JSONNode {
+        try Task.checkCancellation()
         if value is NSNull {
             return JSONNode(id: path, key: key, kind: .null, count: 0, scalar: "null", children: [])
         }
@@ -92,13 +96,13 @@ enum JSONTree {
             var children: [JSONNode] = []
             children.reserveCapacity(shown)
             for i in 0..<shown {
-                children.append(build(key: "", value: arr[i], path: "\(path)/\(i)"))
+                children.append(try build(key: "", value: arr[i], path: "\(path)/\(i)"))
             }
             return JSONNode(id: path, key: key, kind: .array, count: arr.count, scalar: nil, children: children)
         }
         if let dict = value as? [String: Any] {
             let keys = dict.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-            let children = keys.map { k in build(key: k, value: dict[k] as Any, path: "\(path)/\(k)") }
+            let children = try keys.map { k in try build(key: k, value: dict[k] as Any, path: "\(path)/\(k)") }
             return JSONNode(id: path, key: key, kind: .object, count: dict.count, scalar: nil, children: children)
         }
         let fallback = String(describing: value)
@@ -125,30 +129,49 @@ enum JSONTree {
         s.hasPrefix("event:") || s.hasPrefix("data:") || s.contains("\nevent:") || s.contains("\ndata:")
     }
 
-    private static func parseSSE(_ raw: String) -> JSONDocument {
-        var parser = LineSSEParser()
-        var events: [(String, String, [String: Any]?)] = []
-        for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.hasSuffix("\r") ? String(line.dropLast()) : String(line)
-            if let ev = parser.push(line: trimmed) {
-                events.append((ev.name, ev.data, ev.json))
-            }
+    private static func parseSSE(_ raw: String) throws -> JSONDocument {
+        var parser = LineSSEParser(decodesJSON: false)
+        // Ring storage bounds decoded payload retention to the displayed tail,
+        // rather than keeping every event dictionary alive until parsing ends.
+        var events = [LineSSEParser.Event?](repeating: nil, count: sseCap)
+        var count = 0
+        func append(_ event: LineSSEParser.Event) {
+            events[count % sseCap] = event
+            count += 1
         }
-        if let ev = parser.finish() {
-            events.append((ev.name, ev.data, ev.json))
+        // Scan LF bytes without allocating a line array. Foundation's
+        // `.byLines` also splits Unicode paragraph separators, which are valid
+        // characters inside an SSE JSON string, not event delimiters.
+        let bytes = raw.utf8
+        var start = bytes.startIndex
+        func push(_ end: String.Index) {
+            let line = raw[start..<end]
+            let text = line.hasSuffix("\r") ? String(line.dropLast()) : String(line)
+            if let event = parser.push(line: text) { append(event) }
         }
-        let extra = max(0, events.count - sseCap)
-        let slice = extra > 0 ? Array(events.suffix(sseCap)) : events
-        let nodes: [JSONSSEEvent] = slice.enumerated().map { i, ev in
-            let (name, data, json) = ev
-            let node = json.map { build(key: "", value: $0, path: "sse/\(i)") }
+        for end in bytes.indices where bytes[end] == 10 {
+            try Task.checkCancellation()
+            push(end)
+            start = bytes.index(after: end)
+        }
+        try Task.checkCancellation()
+        if start != bytes.endIndex { push(bytes.endIndex) }
+        if let event = parser.finish() { append(event) }
+        let shown = min(count, sseCap)
+        let extra = max(0, count - sseCap)
+        let nodes: [JSONSSEEvent] = try (0..<shown).map { i in
+            let event = events[(extra + i) % sseCap]!
+            try Task.checkCancellation()
+            let json = (try? JSONSerialization.jsonObject(with: Data(event.data.utf8))) as? [String: Any]
+            let node = try json.map { try build(key: "", value: $0, path: "sse/\(i)") }
             let preview: String
             if let node {
                 preview = node.isContainer ? (node.kind == .array ? "[\(node.count)]" : "{\(node.count)}") : (node.scalar ?? "")
             } else {
-                preview = String(data.prefix(80))
+                preview = String(event.data.prefix(80))
             }
-            return JSONSSEEvent(id: i, name: name.isEmpty ? "data" : name, preview: preview, node: node, raw: data)
+            return JSONSSEEvent(id: i, name: event.name.isEmpty ? "data" : event.name,
+                                preview: preview, node: node, raw: event.data)
         }
         return .sse(events: nodes, truncated: extra)
     }
@@ -201,8 +224,13 @@ struct JSONTreeView: View {
         }
         .task(id: parseID.isEmpty ? source : parseID) {
             let src = source
-            let doc = await Task.detached(priority: .utility) { JSONTree.parse(src) }.value
-            guard !Task.isCancelled else { return }
+            let parser = Task.detached(priority: .utility) { try JSONTree.parse(src) }
+            let doc = await withTaskCancellationHandler {
+                try? await parser.value
+            } onCancel: {
+                parser.cancel()
+            }
+            guard !Task.isCancelled, let doc else { return }
             document = doc
         }
     }

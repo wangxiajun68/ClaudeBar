@@ -360,9 +360,10 @@ final class ProcessSampler {
     }
 
     private func applyPeriod() {
-        // No consumer: no visible window and no session to attribute to.
+        // Scopes can outlive visibility: the main hosting view stays mounted
+        // when its window is hidden. Attribution has no consumer then either.
         let wasSuspended = timerSuspended
-        let shouldSuspend = !wantsAttribution && !UIWakePolicy.hasVisibleWindow
+        let shouldSuspend = !UIWakePolicy.hasVisibleWindow
         if shouldSuspend != timerSuspended {
             timerSuspended = shouldSuspend
             setTimerSuspended(shouldSuspend)

@@ -286,6 +286,7 @@ private struct EnergySankey: View {
             appActive = NSApplication.shared.isActive
         }
         .onDisappear { onScreen = false }
+        .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in appActive = true }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in appActive = false }
     }
@@ -571,6 +572,8 @@ private struct SankeyWaveLayer: NSViewRepresentable {
     func updateNSView(_ view: SankeyWaveView, context: Context) {
         view.apply(waves: waves, animating: animating, travel: travel, pace: pace, dark: dark)
     }
+
+    static func dismantleNSView(_ view: SankeyWaveView, coordinator: ()) { view.stop() }
 }
 
 /// A subtle monochrome wave per destination. The shared clock preserves
@@ -591,6 +594,7 @@ private final class SankeyWaveView: NSView {
     private var dark = true
     private var renderedSize: CGSize = .zero
     private static let sweepKey = "sweep"
+    private var observer: NSObjectProtocol?
 
     override var isFlipped: Bool { true }
 
@@ -603,6 +607,36 @@ private final class SankeyWaveView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        if let window {
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.updatePlayback() }
+        }
+        updatePlayback()
+    }
+
+    func stop() {
+        animating = false
+        bands.values.forEach { $0.gradient.removeAnimation(forKey: Self.sweepKey) }
+        setSpeed(0)
+    }
+
+    private func updatePlayback() {
+        guard animating, window?.occlusionState.contains(.visible) == true else {
+            setSpeed(0)
+            return
+        }
+        let period = max(240, min(480, (travel.to - travel.from) * 0.65))
+        let speeds: [CGFloat] = [0, 24, 32, 40, 48]
+        setSpeed(Float(speeds[min(max(pace, 0), speeds.count - 1)] / period))
+    }
 
     override func layout() {
         super.layout()
@@ -684,15 +718,7 @@ private final class SankeyWaveView: NSView {
             }
         }
 
-        if animating {
-            // Points per second across the band; one animation cycle is one pass.
-            let speeds: [CGFloat] = [0, 24, 32, 40, 48]
-            setSpeed(Float(speeds[pace] / wavePeriod))
-        } else {
-            clock.speed = 1
-            clock.timeOffset = 0
-            clock.beginTime = 0
-        }
+        updatePlayback()
     }
 
     private func makeBand() -> Band {

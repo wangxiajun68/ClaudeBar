@@ -43,16 +43,27 @@ struct SkillMarkdownPreview: View {
             loading = true
             message = nil
             do {
-                let parsed = try await Task.detached(priority: .utility) {
+                let worker = Task.detached(priority: .utility) {
+                    try Task.checkCancellation()
                     let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                     guard size <= 512_000 else { throw PreviewError.tooLarge }
                     let data = try Data(contentsOf: file, options: .mappedIfSafe)
                     guard data.count <= 512_000 else { throw PreviewError.tooLarge }
-                    return Self.parse(String(decoding: data, as: UTF8.self))
-                }.value
+                    try Task.checkCancellation()
+                    return try Self.parse(String(decoding: data, as: UTF8.self))
+                }
+                let parsed = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled else { return }
                 blocks = parsed
                 if parsed.isEmpty { message = "文档没有可预览的内容" }
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled else { return }
                 message = "无法读取 SKILL.md，请检查文件是否仍在原位置。"
             }
             loading = false
@@ -156,7 +167,8 @@ struct SkillMarkdownPreview: View {
         return Text(raw)
     }
 
-    private static func parse(_ source: String) -> [MarkdownBlock] {
+    nonisolated private static func parse(_ source: String) throws -> [MarkdownBlock] {
+        try Task.checkCancellation()
         var lines = source.components(separatedBy: .newlines)
         if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
            let close = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
@@ -179,6 +191,7 @@ struct SkillMarkdownPreview: View {
             }
         }
         for line in lines {
+            try Task.checkCancellation()
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 flush()

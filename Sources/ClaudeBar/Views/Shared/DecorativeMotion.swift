@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Repeating decoration is interpolated by the render server. No timer,
 /// TimelineView, per-frame path construction, or SwiftUI layout is involved.
-struct DecorativeMotion: NSViewRepresentable {
+struct DecorativeMotion: View {
     enum Kind { case sparkles, sweep, orbit, pulse, scan, conveyor, arc }
     let kind: Kind
     var tint: Color = .white
@@ -11,6 +11,20 @@ struct DecorativeMotion: NSViewRepresentable {
     /// Stroke width for `kind == .arc`; ignored by the others. `nil` means a
     /// default proportional to the view's size.
     var lineWidth: CGFloat?
+
+    @State private var onScreen = true
+
+    var body: some View {
+        MotionLayer(kind: kind, tint: tint, active: active && onScreen, lineWidth: lineWidth)
+            .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
+    }
+}
+
+private struct MotionLayer: NSViewRepresentable {
+    let kind: DecorativeMotion.Kind
+    let tint: Color
+    let active: Bool
+    let lineWidth: CGFloat?
 
     func makeNSView(context: Context) -> MotionLayerView { MotionLayerView() }
     func updateNSView(_ view: MotionLayerView, context: Context) {

@@ -8,7 +8,7 @@ struct HoverState: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { hovering in
-                if ScrollHoverGate.scrolling { return }
+                if ScrollHoverGate.isDeferring { return }
                 if isHovered != hovering { isHovered = hovering }
             }
     }

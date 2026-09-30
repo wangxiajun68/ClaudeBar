@@ -12,6 +12,7 @@ struct LucideRotor: View {
     var artwork: CGImage? = FanArtwork.leftRotor
 
     @State private var mounted = false
+    @State private var onScreen = true
     /// The gauge's own fraction, quantised — see `gauge`.
     @State private var gauge = 0.0
     @Environment(\.surfaceIsVisible) private var windowVisible
@@ -19,7 +20,7 @@ struct LucideRotor: View {
 
     /// Below ~80 rpm a rotor's blades are not moving in any way a person would
     /// see; stopping there keeps an idle machine's chrome perfectly still.
-    private var spinning: Bool { mounted && windowVisible && rpm >= 80 && !reduceMotion }
+    private var spinning: Bool { mounted && onScreen && windowVisible && rpm >= 80 && !reduceMotion }
 
     /// The fraction the rim gauge is drawn at, quantised to a visible step.
     ///
@@ -90,6 +91,7 @@ struct LucideRotor: View {
         }
         .onChange(of: reduceMotion) { _, _ in gauge = gaugeValue }
         .onDisappear { mounted = false }
+        .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
         .accessibilityHidden(true)
     }
 }
@@ -106,6 +108,8 @@ private struct RotorLayer: NSViewRepresentable {
     func updateNSView(_ view: RotorLayerView, context: Context) {
         view.apply(tint: tint, degreesPerSecond: degreesPerSecond, artwork: artwork)
     }
+
+    static func dismantleNSView(_ view: RotorLayerView, coordinator: ()) { view.stop() }
 }
 
 final class RotorLayerView: NSView {
@@ -113,6 +117,8 @@ final class RotorLayerView: NSView {
     private var symbolTint: NSColor?
     private var currentArtwork: CGImage?
     private static let spinKey = "spin"
+    private var requestedSpeed: Float = 0
+    private var observer: NSObjectProtocol?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -145,7 +151,27 @@ final class RotorLayerView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        if let window {
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.updatePlayback() }
+        }
         ensureAnimation()
+        updatePlayback()
+    }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    func stop() {
+        requestedSpeed = 0
+        setSpeed(0)
+        rotor.removeAnimation(forKey: Self.spinKey)
+    }
+
+    private func updatePlayback() {
+        setSpeed(window?.occlusionState.contains(.visible) == true ? requestedSpeed : 0)
     }
 
     func apply(tint: NSColor, degreesPerSecond: Double, artwork: CGImage? = nil) {
@@ -169,7 +195,8 @@ final class RotorLayerView: NSView {
         }
         CATransaction.commit()
         ensureAnimation()
-        setSpeed(Float(degreesPerSecond / 360))
+        requestedSpeed = Float(degreesPerSecond / 360)
+        updatePlayback()
     }
 
     /// One turn per second of layer time; `speed` scales it to the RPM.

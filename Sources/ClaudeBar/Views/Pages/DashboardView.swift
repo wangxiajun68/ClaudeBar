@@ -15,6 +15,7 @@ struct DashboardView: View {
     /// Scroll phase and the greeting's viewport visibility, relayed to its
     /// live sky without invalidating this page (see `PageScrollActivity`).
     @State private var scrollActivity = PageScrollActivity()
+    @State private var scrollOwner = UUID()
 
     var body: some View {
         ScrollView {
@@ -32,9 +33,12 @@ struct DashboardView: View {
         .onScrollPhaseChange { _, phase in
             let moving = phase != .idle
             scrollActivity.moving = moving
-            ScrollHoverGate.set(moving)
+            ScrollHoverGate.set(moving, owner: scrollOwner)
         }
-        .onDisappear { ScrollHoverGate.scrolling = false }
+        .onDisappear {
+            scrollActivity.moving = false
+            ScrollHoverGate.set(false, owner: scrollOwner)
+        }
         .resourceMonitorScope(.dashboard)
         .background(Theme.bgPrimary)
     }

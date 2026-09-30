@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Observation
 
 @MainActor
@@ -11,6 +12,7 @@ final class FanMonitor {
     var lastError: String?
     var helperInstalled = FanHelperInstaller.isInstalled()
 
+    private var wakeObservation: AnyCancellable?
     private var timer: Timer?
     private var subscribers = 0
     private var pendingSpeedTasks: [Int: DispatchWorkItem] = [:]
@@ -25,16 +27,30 @@ final class FanMonitor {
     func start() {
         subscribers += 1
         helperInstalled = FanHelperInstaller.isInstalled()
+        if wakeObservation == nil {
+            wakeObservation = UIWakePolicy.observe { [weak self] in self?.syncPolling() }
+        }
+        syncPolling()
+    }
+
+    private func syncPolling() {
+        guard subscribers > 0, UIWakePolicy.hasVisibleWindow else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
         guard timer == nil else { return }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        timer?.tolerance = 0.25
     }
 
     func stop() {
         subscribers = max(0, subscribers - 1)
         guard subscribers == 0 else { return }
+        wakeObservation = nil
         timer?.invalidate()
         timer = nil
     }

@@ -9,10 +9,18 @@ root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Views/Shared/LucideRotor.swift').read_text()
 layer = source[source.index('final class RotorLayerView'):]
 probe = 'import AppKit\nimport QuartzCore\n' + layer + r'''
+final class FixtureWindow: NSWindow {
+    var shown = true
+    override var occlusionState: NSWindow.OcclusionState { shown ? [.visible] : [] }
+}
 @main struct Probe {
     @MainActor static func main() {
         _ = NSApplication.shared
         let view = RotorLayerView(frame: NSRect(x: 0, y: 0, width: 64, height: 64))
+        let window = FixtureWindow(contentRect: NSRect(x: 0, y: 0, width: 64, height: 64),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
         view.layout()
         view.apply(tint: .gray, degreesPerSecond: 24)
         let rotor = view.layer!.sublayers!.first!
@@ -51,6 +59,20 @@ probe = 'import AppKit\nimport QuartzCore\n' + layer + r'''
         assert((rotor.contents as! CGImage) === right)
         view.apply(tint: .gray, degreesPerSecond: 0)
         assert((rotor.contents as! CGImage) !== right, "Fallback must restore symbol contents")
+        window.shown = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        assert(rotor.speed == 0, "An occluded rotor must pause")
+        let hiddenPhase = rotor.convertTime(CACurrentMediaTime(), from: nil)
+        view.apply(tint: .gray, degreesPerSecond: 58)
+        assert(rotor.speed == 0, "A hidden RPM update must not restart playback")
+        window.shown = true
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        assert(abs(rotor.speed - Float(58.0 / 360)) < 0.00001)
+        assert(abs(rotor.convertTime(CACurrentMediaTime(), from: nil) - hiddenPhase) < 0.02)
+        view.removeFromSuperview()
+        assert(rotor.speed == 0, "A detached rotor must pause")
+        view.stop()
+        assert(rotor.animationKeys()?.isEmpty != false)
         print("PASS: illustration and turbine crops decode; symbol fallback renders; retiming, pause and resume preserve phase")
     }
 }

@@ -494,10 +494,12 @@ struct SessionLoadChip: View {
 /// Dashboard / sessions pages need attribution sampling while visible.
 struct ResourceMonitorScope: ViewModifier {
     let scope: ProcessSampler.MonitorScope
+    @Environment(\.surfaceIsVisible) private var visible
 
     func body(content: Content) -> some View {
         content
-            .onAppear { ProcessSampler.shared.setScope(scope, active: true) }
+            .onAppear { ProcessSampler.shared.setScope(scope, active: visible) }
+            .onChange(of: visible) { _, shown in ProcessSampler.shared.setScope(scope, active: shown) }
             .onDisappear { ProcessSampler.shared.setScope(scope, active: false) }
     }
 }

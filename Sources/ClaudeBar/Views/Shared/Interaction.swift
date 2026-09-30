@@ -90,30 +90,20 @@ extension View {
 /// lift and drop a tile per frame. When the phase returns to idle the page
 /// posts one `mouseMoved`, and the tile actually under the pointer catches up.
 enum ScrollHoverGate {
-    static var scrolling = false {
-        didSet { if scrolling { since = CACurrentMediaTime() } }
-    }
+    // Each scroll view owns its phase. An idle callback or disappearance in
+    // another window must not release the one still moving.
+    private static var owners: Set<UUID> = []
+    static var scrolling: Bool { !owners.isEmpty }
     private static var since: CFTimeInterval = 0
-    /// The longest a scroll may hold state back. Phase changes arrive only at
-    /// transitions, so a missed `.idle` (a scroll view removed mid-flick, a
-    /// finger resting on the trackpad) must not freeze live readings for good.
     private static let holdLimit: CFTimeInterval = 4
-
-    /// True while a scroll is in progress *and* recent enough to trust.
     static var isDeferring: Bool { scrolling && CACurrentMediaTime() - since < holdLimit }
 
     private static var pending: [AnyHashable: () -> Void] = [:]
-    private static var watchdog = false
+    private static var watchdog: DispatchWorkItem?
+    private static var generation: UInt64 = 0
 
-    /// Run `apply` now, or — while a scroll is in flight — once it has stopped.
-    ///
-    /// Every store publish and sampler tick is a view invalidation, and an
-    /// invalidation during a scroll is main-thread work in the frame that has
-    /// the least room for it: nothing the user is looking at needs to change
-    /// while their finger is moving the page, so those writes are held and
-    /// applied together when the scroll settles. `key` coalesces: a later call
-    /// with the same key replaces the earlier block, so a source that ticks ten
-    /// times during a flick lands once, with its latest value.
+    /// Coalesce background readings while scrolling. The hold has a deadline
+    /// even if idle is lost.
     static func afterScroll(_ key: AnyHashable, _ apply: @escaping () -> Void) {
         guard isDeferring else {
             pending[key] = nil
@@ -121,32 +111,42 @@ enum ScrollHoverGate {
             return
         }
         pending[key] = apply
-        guard !watchdog else { return }
-        watchdog = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + holdLimit + 0.05) {
-            watchdog = false
-            // Either the scroll ended without a callback, or it has run past
-            // the hold limit; in both cases the held writes go in now and new
-            // ones start a fresh hold.
-            flush()
-        }
+        scheduleWatchdog()
     }
 
-    private static func flush() {
-        guard !pending.isEmpty else { return }
+    private static func scheduleWatchdog() {
+        guard watchdog == nil, !pending.isEmpty else { return }
+        let expected = generation
+        let remaining = max(0, holdLimit - (CACurrentMediaTime() - since))
+        let work = DispatchWorkItem {
+            guard expected == generation else { return }
+            watchdog = nil
+            flushIfReady()
+        }
+        watchdog = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining + 0.01, execute: work)
+    }
+
+    private static func flushIfReady() {
+        // An idle callback queued by a previous gesture can land after a new
+        // gesture has started. Keep that gesture's writes held.
+        guard !isDeferring else { scheduleWatchdog(); return }
+        watchdog?.cancel()
+        watchdog = nil
+        generation &+= 1
         let blocks = Array(pending.values)
         pending.removeAll()
         for block in blocks { block() }
     }
 
-    static func set(_ moving: Bool) {
+    static func set(_ moving: Bool, owner: UUID) {
         let was = scrolling
-        scrolling = moving
-        // Off this turn: the phase callback is the frame that just went idle.
-        if was, !moving {
+        if moving { owners.insert(owner) } else { owners.remove(owner) }
+        if !was, scrolling { since = CACurrentMediaTime() }
+        if was, !scrolling {
             DispatchQueue.main.async {
-                flush()
-                refresh()
+                flushIfReady()
+                if !isDeferring { refresh() }
             }
         }
     }
@@ -176,7 +176,7 @@ struct HoverState: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onHover { hovering in
-                if ScrollHoverGate.scrolling { return }
+                if ScrollHoverGate.isDeferring { return }
                 if isHovered != hovering { isHovered = hovering }
             }
     }
@@ -199,12 +199,13 @@ extension View {
 }
 
 private struct ScrollHoverGateModifier: ViewModifier {
+    @State private var owner = UUID()
     func body(content: Content) -> some View {
         content
             .onScrollPhaseChange { _, phase in
-                ScrollHoverGate.set(phase != .idle)
+                ScrollHoverGate.set(phase != .idle, owner: owner)
             }
-            .onDisappear { ScrollHoverGate.scrolling = false }
+            .onDisappear { ScrollHoverGate.set(false, owner: owner) }
     }
 }
 

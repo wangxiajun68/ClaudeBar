@@ -33,6 +33,7 @@ struct WeatherBackdrop: View {
     /// timeline resumes; this one stays continuous with the moment the card
     /// was shown.
     @State private var start = Date()
+    @State private var onScreen = true
 
     private var night: Bool { isDay == false }
 
@@ -49,7 +50,7 @@ struct WeatherBackdrop: View {
     var body: some View {
         let palette = SkyPalette(sky: sky, night: night)
         return TimelineView(.animation(minimumInterval: ProcessInfo.processInfo.isLowPowerModeEnabled ? max(frameInterval, 1.0 / 15) : frameInterval,
-                                       paused: reduceMotion || !surfaceVisible)) { timeline in
+                                       paused: reduceMotion || !surfaceVisible || !onScreen)) { timeline in
             Canvas { ctx, size in
                 let t = timeline.date.timeIntervalSince(start)
                 var c = ctx
@@ -58,6 +59,7 @@ struct WeatherBackdrop: View {
             }
         }
         .onAppear { start = Date() }
+        .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

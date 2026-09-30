@@ -13,6 +13,11 @@ struct LineSSEParser {
 
     private var event = ""
     private var dataLines: [String] = []
+    private let decodesJSON: Bool
+
+    /// Assemblers decode every event; capped inspectors can defer decoding
+    /// until they know which tail events will actually be displayed.
+    init(decodesJSON: Bool = true) { self.decodesJSON = decodesJSON }
 
     mutating func push(line: String) -> Event? {
         if line.isEmpty { return flush() }
@@ -37,7 +42,7 @@ struct LineSSEParser {
         let data = dataLines.joined()
         guard !data.isEmpty else { return nil }
         if data == "[DONE]" { return Event(name: event, data: data, json: nil, done: true) }
-        let json = (try? JSONSerialization.jsonObject(with: Data(data.utf8))) as? [String: Any]
+        let json = decodesJSON ? (try? JSONSerialization.jsonObject(with: Data(data.utf8))) as? [String: Any] : nil
         return Event(name: event, data: data, json: json, done: false)
     }
 }

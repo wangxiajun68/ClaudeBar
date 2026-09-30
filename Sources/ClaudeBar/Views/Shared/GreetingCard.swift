@@ -1433,6 +1433,7 @@ private struct GreetingClock: View {
     var ink: Color
     var timezone: String?
     var preview: Date?
+    @State private var onScreen = true
     @Environment(\.surfaceIsVisible) private var visible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1442,7 +1443,7 @@ private struct GreetingClock: View {
         Group {
             if let preview {
                 face(shown: preview, second: nil)
-            } else if visible {
+            } else if visible && onScreen {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     face(shown: context.date, second: Calendar.current.component(.second, from: context.date))
                 }
@@ -1450,6 +1451,7 @@ private struct GreetingClock: View {
                 face(shown: .now, second: nil)
             }
         }
+        .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
         .accessibilityElement(children: .combine)
     }
 

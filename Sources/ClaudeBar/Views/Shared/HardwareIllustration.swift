@@ -44,13 +44,14 @@ struct HardwareIllustration: View {
     /// `NSViewRepresentable` over the canvas and replaces the bars. The live
     /// app leaves this at its default.
     @Environment(\.rendersHardwareSweep) private var rendersSweep
+    @State private var onScreen = true
 
     /// Lucide's own grid. The outline is authored in these units.
     static let grid = LucideHardwareGeometry.grid
 
     var body: some View {
         let level = Self.clamp(load)
-        let moving = Self.animates(level, reduceMotion: reduceMotion, visible: surfaceVisible)
+        let moving = Self.animates(level, reduceMotion: reduceMotion, visible: surfaceVisible && onScreen)
         // The icon and the bars are a reading: they change when the sampler
         // does, about once a second. The highlight used to be redrawn from a
         // display-linked clock wrapped around this canvas, and that clock lays
@@ -84,6 +85,7 @@ struct HardwareIllustration: View {
                     .allowsHitTesting(false)
             }
         }
+        .onScrollVisibilityChange(threshold: 0.01) { onScreen = $0 }
         .accessibilityHidden(true)
     }
 
@@ -270,6 +272,8 @@ private struct ReadingSweep: NSViewRepresentable {
         view.active = active
         view.sync()
     }
+
+    static func dismantleNSView(_ view: ReadingSweepView, coordinator: ()) { view.stop() }
 }
 
 final class ReadingSweepView: NSView {
@@ -326,8 +330,13 @@ final class ReadingSweepView: NSView {
         sync()
     }
 
+    func stop() {
+        running = false
+        setSpeed(0, hide: true)
+    }
+
     func sync() {
-        guard window != nil, bounds.width > 1, bounds.height > 1 else { return }
+        guard window != nil, bounds.width > 1, bounds.height > 1 else { stop(); return }
         if layer == nil {
             wantsLayer = true
             let host = CALayer()
