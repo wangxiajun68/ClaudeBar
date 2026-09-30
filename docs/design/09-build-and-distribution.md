@@ -7,15 +7,17 @@
 
 ```
 终端用户          →  GitHub Releases  →  ClaudeBar-x.y.z-macOS-arm64.dmg
-贡献者 / 维护者   →  Sources/build.sh / Makefile  →  .build/ClaudeBar.app
+贡献者 / 维护者   →  Sources/build.sh / Makefile  →  .build/<channel>/<name>.app
 CI (tag v*)       →  release.yml  →  DMG + zip + GitHub Release
 ```
 
 - **用户不运行 build.sh**。DMG 内含 `ClaudeBar.app` 与 `Applications` 快捷方式，拖放安装。
-- **开发构建**：`make build` 或 `bash Sources/build.sh`，ad-hoc 签名，安装到 `/Applications/ClaudeBar.app`。
-- **CI 构建**：`CLAUDEBAR_SKIP_INSTALL=1`，只产出 `.build/ClaudeBar.app`。
-- **发版打包**：`CLAUDEBAR_PACKAGE=1` 额外产出 `.build/dist/*.dmg`、`.zip` 及 `.sha256`。
+- **开发构建**：`make build` 默认 dev，生成独立身份的 ClaudeBar Dev，只编译、不安装。
+- **CI 构建**：分别编译 dev / release，只构建；dev job 运行回归。
+- **发版打包**：`make package` 使用 release 身份， 额外产出 `.build/dist/*.dmg`、`.zip` 及 `.sha256`。
 - **GitHub Release**：`main` 上打 tag `vMAJOR.MINOR.PATCH`；[release.yml](../../.github/workflows/release.yml) 自动上传。版本号约定见 [VERSIONING.md](../VERSIONING.md)，步骤见 [RELEASING.md](../RELEASING.md)。
+
+完整开发／测试／正式版命令与隔离边界见 [开发环境](../DEVELOPMENT.md)。
 
 ## 运行
 

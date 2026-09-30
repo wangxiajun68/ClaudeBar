@@ -1,52 +1,51 @@
-.PHONY: build ci package install test
+.DEFAULT_GOAL := build
+.PHONY: help build dev release ci package install install-dev install-release run setup doctor test test-fast
 
-VERSION := $(shell tr -d '[:space:]' < VERSION)
+PYTHON := $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
+export TEST
+export TEST_SUITES := build-isolation ui core performance rendering local-endpoint provider-icon product-mark session-title quota-reset cursor-usage cursor-ledger completion-notify session-waiting island-session-alert waiting-notify greeting-data greeting-name weather-astronomy menubar-strip connection-panel charge-limit model-cost proxy-usage codex-session inflight-animation cursor-turn card-shadow machine-mark fan-rotor vpn-domain-log vpn-provider-direct
 
-# Local development: compile, sign, install to /Applications
-build:
-	bash Sources/build.sh
+build: dev
 
-# Same as CI: compile only → .build/ClaudeBar.app
+dev:
+	CLAUDEBAR_CHANNEL=dev CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+
+release:
+	CLAUDEBAR_CHANNEL=release CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+
 ci:
-	CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
+	CLAUDEBAR_CHANNEL=dev CLAUDEBAR_SKIP_INSTALL=1 CODESIGN_IDENTITY=- bash Sources/build.sh
 
-# Release artifacts for GitHub (DMG + zip + checksums) → .build/dist/
 package:
-	CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
+	CLAUDEBAR_CHANNEL=release CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
 
-install: build
-	open /Applications/ClaudeBar.app
+install: install-dev
 
-# Source-slice regressions (Swift compiled on the fly). No app launch needed.
+install-dev:
+	CLAUDEBAR_CHANNEL=dev CLAUDEBAR_SKIP_INSTALL=0 bash Sources/build.sh
+
+install-release:
+	CLAUDEBAR_CHANNEL=release CLAUDEBAR_SKIP_INSTALL=0 bash Sources/build.sh
+
+run: dev
+	open ".build/dev/ClaudeBar Dev.app"
+
+setup:
+	python3 -m venv .venv
+	.venv/bin/python -m pip install -r Tests/requirements.txt
+
+doctor:
+	bash Tools/doctor.sh
+
 test:
-	python3 Tests/ui-regressions.py
-	python3 Tests/core-regressions.py
-	python3 Tests/performance-regressions.py
-	python3 Tests/rendering-regressions.py
-	python3 Tests/local-endpoint-regressions.py
-	python3 Tests/provider-icon-regressions.py
-	python3 Tests/product-mark-regressions.py
-	python3 Tests/session-title-regressions.py
-	python3 Tests/quota-reset-regressions.py
-	python3 Tests/cursor-usage-regressions.py
-	python3 Tests/cursor-ledger-regressions.py
-	python3 Tests/completion-notify-regressions.py
-	python3 Tests/session-waiting-regressions.py
-	python3 Tests/island-session-alert-regressions.py
-	python3 Tests/waiting-notify-regressions.py
-	python3 Tests/greeting-data-regressions.py
-	python3 Tests/greeting-name-regressions.py
-	python3 Tests/weather-astronomy-regressions.py
-	python3 Tests/menubar-strip-regressions.py
-	python3 Tests/connection-panel-regressions.py
-	python3 Tests/charge-limit-regressions.py
-	python3 Tests/model-cost-regressions.py
-	python3 Tests/proxy-usage-regressions.py
-	python3 Tests/codex-session-regressions.py
-	python3 Tests/inflight-animation-regressions.py
-	python3 Tests/cursor-turn-regressions.py
-	python3 Tests/card-shadow-regressions.py
-	python3 Tests/machine-mark-regressions.py
-	python3 Tests/fan-rotor-regressions.py
-	python3 Tests/vpn-domain-log-regressions.py
-	python3 Tests/vpn-provider-direct-regressions.py
+	$(PYTHON) Tests/run-tests.py
+
+test-fast:
+	$(MAKE) test TEST="build-isolation local-endpoint core"
+
+help:
+	@echo "build/dev: optimized incremental development build; run: launch development app"
+	@echo "test-fast: focused unit regressions; test TEST=core: one suite; test: full regression gate"
+	@echo "release: production app only; package: production DMG + zip"
+	@echo "install-dev: ~/Applications; install-release: /Applications (quit that version first)"
+	@echo "setup: test dependencies; doctor: read-only checks"

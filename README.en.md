@@ -102,7 +102,7 @@ Features requiring system permissions are configured in Settings and authorized 
 
 ## Development and builds
 
-Use macOS, Xcode Command Line Tools (including the Swift compiler), and Python 3. See [build and signing documentation](docs/technical/07-build-and-signing.md) for dependencies and implementation details.
+Use macOS, Xcode Command Line Tools (including the Swift compiler), and Python 3. See [development and channel isolation](docs/DEVELOPMENT.md) and [build and signing documentation](docs/technical/07-build-and-signing.md) for dependencies and implementation details.
 
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
@@ -112,8 +112,10 @@ make ci
 
 | Command | Result |
 | --- | --- |
-| `make ci` | Compiles to `.build/ClaudeBar.app` without installing. |
-| `make build` | Compiles, signs, and installs into `/Applications`. |
+| `make ci` | Compiles to `.build/dev/ClaudeBar Dev.app` without installing. |
+| `make build` | Builds the isolated development app in `.build/dev/ClaudeBar Dev.app`. |
+| `make test-fast` / `make test TEST=core` | Runs focused unit regressions without building the app. |
+| `make release` | Builds `.build/release/ClaudeBar.app` without installing. |
 | `make test` | Runs the project's regression checks. |
 | `make package` | Creates release packages in `.build/dist/`. |
 

@@ -28,36 +28,26 @@
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
 cd ClaudeBar
-make build      # 编译、本机自签「ClaudeBar Dev」、安装到 /Applications
+make setup
+make doctor
+make build      # 仅生成开发版，不覆盖正式版
+make run        # 启动开发版
 ```
 
 | 命令 | 作用 |
 |------|------|
-| `make build` | 日常开发：安装到 `/Applications/ClaudeBar.app` |
-| `make ci` | 与 CI 相同：仅产出 `.build/ClaudeBar.app` |
-| `make package` | 发版验证：产出 `.build/dist/*.dmg`、`.zip`、校验和 |
-| `make test` | 跑 `Tests/` 下的源码切片回归（见下） |
+| `make build` / `make dev` | 调试编译 → `.build/dev/ClaudeBar Dev.app` |
+| `make ci` | ad-hoc 签名的同一开发测试版 |
+| `make test-fast` / `make test TEST=core` | 快速单元烟测／单组验证，不编译 App |
+| `make release` | 正式版 → `.build/release/ClaudeBar.app`；仅构建 |
+| `make package` | 正式版 DMG、zip、校验和 → `.build/dist/` |
+| `make test` | 已登记源码切片和版本隔离回归 |
+| `make install-dev` | 显式安装开发测试版到 `~/Applications` |
+| `make install-release` | 显式覆盖 `/Applications/ClaudeBar.app`，必须先正常退出正式版 |
 
-等价于：
+增量编译、缓存复用与完整隔离边界、签名、脚本接口和集成验证流程见 [开发环境](docs/DEVELOPMENT.md)，代码协作规范见 [AGENTS.md](AGENTS.md)。默认构建不安装、不杀进程。开发测试版不会接管正式版 VPN，也不会修改系统代理、DNS、TUN 或硬件控制。
 
-```bash
-bash Sources/build.sh
-CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
-CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
-make test   # 清单只在 Makefile 里，CI 也是调用它
-```
-
-`Tests/` 下是**源码切片回归**：脚本从 `Sources/` 里切出待测函数，拼成一段临时 Swift 用 `swiftc` 编译运行。不需要启动 App、不写用户配置、不联网（只需 Python 3 标准库与 `swiftc`）。CI 在构建后跑同一组。改动被测函数名时记得同步脚本里的切片锚点。
-
-**例外**：`Tests/product-mark-regressions.py` 与 `Tests/machine-mark-regressions.py` 要用 Pillow / numpy 解码品牌 PNG（同样的两个包也是 `Tools/gen-brand-marks.py` 与 `Tools/make-claudebar-mark.py` 的依赖），CI 里由 "Python imaging deps" 那一步安装：`python3 -m pip install --user Pillow numpy`。
-
-VPN 内核：默认构建会下载 `vendor/mihomo/mihomo`。离线请先有该文件再设 `MIHOMO_SKIP_DOWNLOAD=1`。
-
-本机签名：构建脚本会创建并**信任** **ClaudeBar Dev**（`security find-identity -v` 里不能带 `CSSMERR_TP_NOT_TRUSTED`）。未信任的自签等于没签，屏幕录制会每次重编译都问。CI 仍用 ad-hoc（`CODESIGN_IDENTITY=-`）。换新证书后系统会再问一次屏幕录制。钥匙串若弹访问，选「始终允许」。
-
-改代码后若界面未更新：`killall ClaudeBar && open /Applications/ClaudeBar.app`。
-
----
+`Tests/` 使用 Python 提取生产 Swift 源码并在临时目录编译运行；不用启动 App。测试清单只在 Makefile 维护。图像检查依赖 Pillow / numpy，由 `make setup` 安装到 `.venv`。默认使用提交的 mihomo 压缩归档，离线构建不需要下载内核；更新须显式设置 `MIHOMO_UPDATE=1`。
 
 ## 分支策略
 

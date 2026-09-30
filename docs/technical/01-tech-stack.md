@@ -20,14 +20,16 @@
 
 ## 构建脚本 `Sources/build.sh`
 
-**开发者 / CI 专用**，不是面向终端用户的安装器。完整流程：读取根目录 `VERSION` → 编译主 app → 编译 Widget appex → 生成 Info.plist → ad-hoc 签名 →（默认）安装到 `/Applications` 并注册 Widget。
+**开发者 / CI 专用**，不是面向终端用户的安装器。流程：选择版本 → 读取 `VERSION` → 编译主 app 与 Widget → 生成版本独立的 Info.plist / entitlements → 签名 → 验证包。默认 dev，仅构建。完整操作见 [开发环境](../DEVELOPMENT.md)。
 
 | 环境变量 | 行为 |
 |----------|------|
-| （默认） | 编译、签名、安装到 `/Applications/ClaudeBar.app`，执行 `lsregister` / `pluginkit` |
-| `CLAUDEBAR_SKIP_INSTALL=1` | 仅产出 `.build/ClaudeBar.app`；不 `pkill`、不写 `/Applications`、不跑 `pluginkit`（**CI 必用**） |
-| `CLAUDEBAR_PACKAGE=1` | 在跳过安装前提下，额外打包 DMG / zip / sha256 |
-| `MIHOMO_SKIP_DOWNLOAD=1` | 不拉 GitHub 上的 mihomo，使用已有 `vendor/mihomo/mihomo` |
+| （默认） | 生成 `.build/dev/ClaudeBar Dev.app`，不安装、不杀进程 |
+| `CLAUDEBAR_CHANNEL=release` | 正式版 `.build/release/ClaudeBar.app` |
+| `CLAUDEBAR_SKIP_INSTALL=0` | 显式安装所选版本；正在运行则拒绝替换 |
+| `CLAUDEBAR_PACKAGE=1` | 仅 release 且跳过安装时，额外打包 DMG / zip / sha256 |
+| `MIHOMO_UPDATE=1` | 显式更新 mihomo；默认使用提交的压缩归档，不联网更新 |
+| `MIHOMO_SKIP_DOWNLOAD=1` | 禁止显式更新下载，仍打包已有归档 |
 
 **主 app 编译（摘录）：**
 

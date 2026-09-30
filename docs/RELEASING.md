@@ -8,7 +8,7 @@
 |------|------|
 | **终端用户** | [GitHub Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 **DMG**，拖入 Applications |
 | **维护者 / CI** | `Sources/build.sh` 编译并产出 `.build/dist/` 下的 DMG、zip、校验和 |
-| **贡献者** | `make build` 或 `bash Sources/build.sh` 本地开发安装 |
+| **贡献者** | `make build` 仅生成隔离开发版；`make install-dev` 显式安装开发版 |
 
 `Sources/build.sh` 是**开发者与 CI 脚本**，不是面向用户的安装器。用户不应需要 clone 仓库或运行 shell 脚本来安装应用。
 

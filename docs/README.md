@@ -119,3 +119,5 @@ docs/
 - 用户安装方式统一表述为：**GitHub Releases → DMG**；`Sources/build.sh` 仅用于开发与 CI。
 - 最低系统版本：**macOS 15+**，**Apple Silicon (arm64)**。
 - 技术文档中的 `B1`–`B11`、`D1`–`D3` 指 [CHANGELOG](CHANGELOG.md) `[1.5.0]` 段的审查项编号。
+
+开发环境与版本隔离：[DEVELOPMENT.md](DEVELOPMENT.md)；仓库开发规范：[AGENTS.md](../AGENTS.md)。

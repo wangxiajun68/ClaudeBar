@@ -101,7 +101,7 @@ ClaudeBar 本身不执行模型推理。本地代理将请求转发至配置的�
 
 ## 开发与构建
 
-使用 macOS、Xcode Command Line Tools（含 Swift 编译器）及 Python 3。构建细节与依赖参见 [构建与签名](docs/technical/07-build-and-signing.md)。
+使用 macOS、Xcode Command Line Tools（含 Swift 编译器）及 Python 3。两个版本的隔离与安装命令见 [开发环境](docs/DEVELOPMENT.md)，构建细节与依赖参见 [构建与签名](docs/technical/07-build-and-signing.md)。
 
 ```bash
 git clone https://github.com/wangxiajun68/ClaudeBar.git
@@ -111,8 +111,10 @@ make ci
 
 | 命令 | 结果 |
 | --- | --- |
-| `make ci` | 编译应用至 `.build/ClaudeBar.app`，不安装。 |
-| `make build` | 编译、签名并安装至 `/Applications`。 |
+| `make ci` | 编译应用至 `.build/dev/ClaudeBar Dev.app`，不安装。 |
+| `make build` | 仅生成隔离开发版 `.build/dev/ClaudeBar Dev.app`。 |
+| `make test-fast` / `make test TEST=core` | 快速单元烟测／单组验证，无需编译 App。 |
+| `make release` | 仅编译正式版 `.build/release/ClaudeBar.app`。 |
 | `make test` | 运行项目回归检查。 |
 | `make package` | 在 `.build/dist/` 生成发布包。 |
 

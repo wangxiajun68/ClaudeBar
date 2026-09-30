@@ -1,0 +1,4 @@
+# Test-only dependencies; use Python 3.12 in CI, macOS system Python 3.9 is supported.
+Pillow==11.3.0
+numpy==1.26.4; python_version < "3.10"
+numpy==2.2.6; python_version >= "3.10"

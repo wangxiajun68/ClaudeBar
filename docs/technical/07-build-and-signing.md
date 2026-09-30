@@ -3,13 +3,17 @@
 > ClaudeBar 技术文档 · §7
 > 相关：设计文档 [构建与分发](../design/09-build-and-distribution.md) · 技术文档 [技术栈与构建](01-tech-stack.md)
 
+## 版本隔离
+
+完整流程见 [开发测试与正式版本](../DEVELOPMENT.md)。默认构建是 dev 且不安装；开发测试共用 dev，使用优化和增量编译；release 保持正式版身份。应用与 Widget 的 bundle ID、App Group、URL scheme、数据目录均随版本隔离。开发测试版禁止系统网络和硬件写入。
+
 ## 签名流程
 
 **本机开发**用钥匙串里的自签身份 `ClaudeBar Dev`（`Sources/ensure-dev-cert.sh` 在缺失时创建，并把它设为登录钥匙串里的 code-signing trust root）。
 
 证书如果是 `CSSMERR_TP_NOT_TRUSTED`，`codesign` 仍能签上，但内核 / TCC 会把 App 当成未签名，屏幕录制绑到每次重编译都变的 CDHash，于是每次都要授权。`find-identity -v` 里必须能看到这张证（不要带 `CSSMERR`）。指定要求绑定证书根哈希，同一张证的重编译保持授权。哈希钉在 `~/Library/Application Support/ClaudeBar/dev-codesign-identity`。
 
-**CI** 无该证书，继续 ad-hoc（`codesign -s -`）。可用 `CODESIGN_IDENTITY=-` 强制 ad-hoc。
+**正式版默认及 CI** 使用 ad-hoc（`codesign -s -`）。可用 `CODESIGN_IDENTITY=-` 强制 ad-hoc。
 
 自底向上、不用 `--deep`：
 
@@ -50,21 +54,21 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 b
 ## CI 与发行物
 
 ```bash
-CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
-# → .build/ClaudeBar.app
+make ci
+# → .build/dev/ClaudeBar Dev.app
 
-CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
-# → .build/ClaudeBar.app
+make package
+# → .build/release/ClaudeBar.app
 # → .build/dist/ClaudeBar-{version}-macOS-arm64.dmg   （主发行物）
 # → .build/dist/ClaudeBar-{version}-macOS-arm64.zip   （辅助归档）
 # → 各文件的 .sha256 校验和
 ```
 
-跳过安装时不 `pkill`、不写 `/Applications`、不跑 `pluginkit`。GitHub Actions 与发版流水线必须走上述路径。
+所有默认构建均不安装、不结束进程、不注册 Widget。显式安装发现对应版本运行时会拒绝替换，必须正常退出。GitHub Actions 编译两个版本并验证签名与隔离身份。
 
 **DMG 打包（`CLAUDEBAR_PACKAGE=1` 时，`build.sh` 内自动执行）：**
 
-1. 在 `.build/dmg-staging/` 放入已签名的 `ClaudeBar.app`
+1. 在 `.build/release/dmg-staging/` 放入已签名的 `ClaudeBar.app`
 2. 创建指向 `/Applications` 的符号链接，供用户拖放安装
 3. `hdiutil create -volname "ClaudeBar" -srcfolder … -format UDZO` 生成压缩 DMG
 4. 对 DMG 与 zip 分别计算 `shasum -a 256`
@@ -76,7 +80,8 @@ zip 由 `ditto -c -k` 生成，供脚本化下载或校验；**终端用户首�
 ```bash
 lsregister -f "$INSTALLED_APP"                  # 重新索引 LaunchServices
 pluginkit -e use -i com.claudebar.app.widget    # 强制启用扩展
-killall widgetkitd                               # 重启 widget 守护进程
+
+# 不重启共享 widgetkitd；开发测试版安装使用各自 bundle ID。
 ```
 
 否则 Widget 画廊可能滞后一次启动。首次使用仍需在桌面右键手动添加 "ClaudeBar"（systemLarge）组件。

@@ -1,36 +1,13 @@
 #!/bin/bash
-# Developer / CI build script — not an end-user installer.
-#
-#   bash Sources/build.sh
-#     → compile, sign with local "ClaudeBar Dev" cert (create if missing),
-#       install to /Applications
-#
-#   CODESIGN_IDENTITY="-" bash Sources/build.sh
-#     → force ad-hoc (CI default)
-#
-#   CLAUDEBAR_SKIP_INSTALL=1 bash Sources/build.sh
-#     → compile only → .build/ClaudeBar.app (CI)
-#
-#   CLAUDEBAR_SKIP_INSTALL=1 CLAUDEBAR_PACKAGE=1 bash Sources/build.sh
-#     → compile + release artifacts → .build/dist/*.dmg (+ .zip) + checksums
-#
-# End users install from GitHub Releases (DMG). See CONTRIBUTING.md.
-set -e
+# Safe default: development build only. See docs/DEVELOPMENT.md.
+set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$PROJECT_DIR/Sources/build-config.sh"
 SOURCES_DIR="$PROJECT_DIR/Sources/ClaudeBar"
 WIDGET_DIR="$PROJECT_DIR/Sources/Widget"
-BUILD_DIR="$PROJECT_DIR/.build"
-APP_NAME="ClaudeBar"
-APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
-
-# Single canonical install location: /Applications. We no longer scatter
-# copies onto ~/Desktop (which produced duplicate bundle IDs and confused
-# LaunchServices / pluginkit widget registration).
-INSTALL_DIR="/Applications"
-INSTALLED_APP="$INSTALL_DIR/$APP_NAME.app"
 
 VERSION_FILE="$PROJECT_DIR/VERSION"
 if [ ! -f "$VERSION_FILE" ]; then
@@ -46,7 +23,14 @@ fi
 MACOS_MIN="${MACOS_MIN:-15.0}"
 MACOS_TARGET="arm64-apple-macos${MACOS_MIN}"
 
-echo "=== Building $APP_NAME $VERSION (macOS ${MACOS_MIN}+) ==="
+echo "=== Building $APP_NAME $VERSION [$CLAUDEBAR_CHANNEL] (macOS ${MACOS_MIN}+) ==="
+mkdir -p "$BUILD_DIR"
+BUILD_LOCK="$BUILD_DIR/.build-lock"
+if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
+    echo "Another $CLAUDEBAR_CHANNEL build is active. If it crashed, remove $BUILD_LOCK." >&2
+    exit 1
+fi
+trap 'rmdir "$BUILD_LOCK"' EXIT
 
 # --- Source coverage assertions ---
 # Both targets are compiled by globbing `find … -name '*.swift'`, so a file
@@ -95,7 +79,7 @@ fi
 # survives rebuilds. CI / explicit "-" stay ad-hoc.
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     SIGN_IDENTITY="$CODESIGN_IDENTITY"
-elif [ -n "${CI:-}" ]; then
+elif [ -n "${CI:-}" ] || [ "$CLAUDEBAR_CHANNEL" = release ]; then
     SIGN_IDENTITY="-"
 else
     SIGN_IDENTITY="$(bash "$PROJECT_DIR/Sources/ensure-dev-cert.sh")"
@@ -111,6 +95,14 @@ else
     fi
 fi
 
+# A no-change build reuses the signed bundle, but always verifies it before use.
+BUILD_FINGERPRINT="$(python3 "$PROJECT_DIR/Tools/build-cache.py" fingerprint "$SIGN_IDENTITY" "$MACOS_TARGET" "${SWIFT_FLAGS[*]}")"
+STAMP_FILE="$BUILD_DIR/build.fingerprint"
+if [ "${CLAUDEBAR_FORCE_REBUILD:-0}" != 1 ] && [ "${MIHOMO_UPDATE:-0}" != 1 ] \
+   && [ -f "$STAMP_FILE" ] && [ "$(cat "$STAMP_FILE")" = "$BUILD_FINGERPRINT" ] \
+   && python3 "$PROJECT_DIR/Tools/check-bundle.py" "$APP_BUNDLE" "$CLAUDEBAR_CHANNEL"; then
+    echo "=== Up to date: reusing verified $APP_NAME ==="
+else
 # Clean previous build
 rm -rf "$APP_BUNDLE"
 
@@ -139,6 +131,8 @@ cp "$SOURCES_DIR/Resources/ASSET-LICENSES.md" "$RESOURCES_DIR/"
 
 # Copy app icon
 ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon.icns"
+if [ "$CLAUDEBAR_CHANNEL" = dev ]; then ICONS_SOURCE="$PROJECT_DIR/Sources/AppIcon-Dev.icns"; fi
+require_file "$ICONS_SOURCE"
 if [ -f "$ICONS_SOURCE" ]; then
     cp "$ICONS_SOURCE" "$RESOURCES_DIR/AppIcon.icns"
     echo "Icon copied to bundle"
@@ -161,17 +155,16 @@ if [ -f "$FANCTL_SRC" ]; then
     FANCTL_OUT="$RESOURCES_DIR/claudebar-fanctl"
     clang -O2 -arch arm64 -arch x86_64 \
         -framework IOKit -framework CoreFoundation \
-        -o "$FANCTL_OUT" "$FANCTL_SRC" 2>/dev/null \
-    && echo "Fan helper built: $FANCTL_OUT"
+        -o "$FANCTL_OUT" "$FANCTL_SRC"
+    echo "Fan helper built: $FANCTL_OUT"
 fi
 
-# mihomo core for the VPN module — clash-verge-rev style prebuild: auto-fetch
-# the latest mihomo release into vendor/mihomo, skip when the local copy is
-# already up to date. Set MIHOMO_SKIP_DOWNLOAD=1 to build without the core.
+# Use the committed, versioned archive by default (offline and reproducible).
+# MIHOMO_UPDATE=1 explicitly opts into fetching a newer core; commit both files.
 MIHOMO_DIR="$PROJECT_DIR/vendor/mihomo"
 MIHOMO_BIN="$MIHOMO_DIR/mihomo"
 MIHOMO_VERSION_FILE="$MIHOMO_DIR/.version"
-if [ "${MIHOMO_SKIP_DOWNLOAD:-0}" != "1" ]; then
+if [ "${MIHOMO_UPDATE:-0}" = "1" ] && [ "${MIHOMO_SKIP_DOWNLOAD:-0}" != "1" ]; then
     MIHOMO_VERSION_URL="https://github.com/MetaCubeX/mihomo/releases/latest/download/version.txt"
     MIHOMO_URL_PREFIX="https://github.com/MetaCubeX/mihomo/releases/download"
     # curl honors https_proxy / HTTPS_PROXY env vars when set.
@@ -191,7 +184,7 @@ if [ "${MIHOMO_SKIP_DOWNLOAD:-0}" != "1" ]; then
             "$MIHOMO_URL_PREFIX/v$MIHOMO_LATEST/$MIHOMO_ASSET.gz" 2>/dev/null \
            || curl -fSL --connect-timeout 15 -o "$MIHOMO_DIR/mihomo.gz" \
             "$MIHOMO_URL_PREFIX/$MIHOMO_LATEST/$MIHOMO_ASSET.gz" 2>/dev/null; then
-            gunzip -f "$MIHOMO_DIR/mihomo.gz" && mv "$MIHOMO_DIR/mihomo" "$MIHOMO_BIN" \
+            gunzip -f "$MIHOMO_DIR/mihomo.gz" \
                 && chmod +x "$MIHOMO_BIN" \
                 && echo "$MIHOMO_LATEST" > "$MIHOMO_VERSION_FILE" \
                 && echo "mihomo core $MIHOMO_LATEST fetched."
@@ -202,7 +195,10 @@ if [ "${MIHOMO_SKIP_DOWNLOAD:-0}" != "1" ]; then
 fi
 MIHOMO_SRC="$MIHOMO_BIN"
 MIHOMO_VERSION="$(cat "$MIHOMO_VERSION_FILE" 2>/dev/null || true)"
-if [ -f "$MIHOMO_SRC" ]; then
+if [ "${MIHOMO_UPDATE:-0}" != "1" ]; then
+    cp "$SOURCES_DIR/Resources/mihomo-core.xz" "$RESOURCES_DIR/mihomo-core.xz"
+    echo "Bundled pinned mihomo archive ($(cat "$SOURCES_DIR/Resources/mihomo-core.version"))"
+elif [ -f "$MIHOMO_SRC" ]; then
     # Ship the core as an `.xz` — the same archive that is committed at
     # `Sources/ClaudeBar/Resources/mihomo-core.xz`, which is what lets a release
     # build pack it in 17 s instead of re-running LZMA over 54 MB.
@@ -241,27 +237,30 @@ if [ -f "$MIHOMO_SRC" ]; then
     # Strip quarantine so Gatekeeper lets the unpacked copy run.
     xattr -c "$MIHOMO_XZ" "$RESOURCES_DIR/mihomo-core" 2>/dev/null || true
 else
-    echo "NOTE: no mihomo core available — VPN core will not be bundled."
+    cp "$SOURCES_DIR/Resources/mihomo-core.xz" "$RESOURCES_DIR/mihomo-core.xz"
+    echo "Bundled pinned mihomo archive ($(cat "$SOURCES_DIR/Resources/mihomo-core.version"))"
 fi
 
 # Compile Swift sources
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
 echo "Using SDK: $SDK_PATH"
 
-swift_files=$(find "$SOURCES_DIR" -name "*.swift" | sort)
-if [ -z "$swift_files" ]; then
+swift_files=()
+while IFS= read -r file; do swift_files+=("$file"); done < <(find "$SOURCES_DIR" -name "*.swift" | sort)
+if [ "${#swift_files[@]}" = 0 ]; then
     echo "ERROR: no app sources found under $SOURCES_DIR" >&2
     exit 1
 fi
 
-# -O + -whole-module-optimization: without any optimization flag swiftc
-# defaults to -Onone, which leaves every layout witness thunk, value witness
-# and cross-file call uninlined. The app is an always-resident menu-bar
-# process whose SwiftUI layout path is the hot loop, so the 1.5x difference is
-# measurable in the profile (see docs/technical/08-performance.md).
-# All sources are passed in one invocation, so WMO is free here.
-swiftc -O -whole-module-optimization \
-    -o "$MACOS_DIR/$APP_NAME" \
+# Development uses per-file optimization plus the Swift driver's dependency graph.
+# Release keeps WMO. Object/dependency caches survive bundle reconstruction.
+APP_MAP_FLAGS=()
+if [ "$CLAUDEBAR_CHANNEL" = dev ]; then
+    APP_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/app" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "${swift_files[@]}")"
+    APP_MAP_FLAGS=(-emit-executable -emit-module-path "$BUILD_DIR/objects/app/$APP_EXECUTABLE.swiftmodule" -output-file-map "$APP_MAP")
+fi
+swiftc "${SWIFT_FLAGS[@]}" ${APP_MAP_FLAGS[@]+"${APP_MAP_FLAGS[@]}"} \
+    -o "$MACOS_DIR/$APP_EXECUTABLE" \
     -sdk "$SDK_PATH" \
     -target "$MACOS_TARGET" \
     -framework Metal \
@@ -280,13 +279,14 @@ swiftc -O -whole-module-optimization \
     -lsqlite3 \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
-    $swift_files
+    "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" \
+    "${swift_files[@]}"
 
 # Drop local symbols from the shipped binary (16 MB → 7 MB). `-x` keeps the
 # global/undefined symbols the dynamic linker needs. Must run before codesign.
-strip -x "$MACOS_DIR/$APP_NAME" 2>/dev/null || true
+if [ "$CLAUDEBAR_CHANNEL" = release ]; then strip -x "$MACOS_DIR/$APP_EXECUTABLE"; fi
 
-echo "Binary created: $MACOS_DIR/$APP_NAME"
+echo "Binary created: $MACOS_DIR/$APP_EXECUTABLE"
 
 # Create Info.plist
 cat > "$CONTENTS/Info.plist" << PLIST
@@ -295,11 +295,11 @@ cat > "$CONTENTS/Info.plist" << PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ClaudeBar</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>ClaudeBar</string>
+    <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.claudebar.app</string>
+    <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
@@ -307,11 +307,15 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>ClaudeBar</string>
+    <string>${APP_EXECUTABLE}</string>
     <key>LSMinimumSystemVersion</key>
     <string>${MACOS_MIN}</string>
     <key>LSUIElement</key>
     <false/>
+    <key>ClaudeBarBuildChannel</key>
+    <string>${CLAUDEBAR_CHANNEL}</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict><key>CFBundleURLSchemes</key><array><string>${URL_SCHEME}</string></array></dict></array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
@@ -352,13 +356,19 @@ cp -R "$PROJECT_DIR/Sources/BrandAssets" "$APPEX_RESOURCES/BrandAssets"
 # Compile the widget directly into the appex (no intermediate binary in MacOS/,
 # which previously left a stray ClaudeBarWidget binary alongside the main app
 # executable and made codesign --deep sign an extra artifact).
-widget_files=$(find "$WIDGET_DIR" -name "*.swift" | sort)
-if [ -z "$widget_files" ]; then
+widget_files=()
+while IFS= read -r file; do widget_files+=("$file"); done < <(find "$WIDGET_DIR" -name "*.swift" | sort)
+if [ "${#widget_files[@]}" = 0 ]; then
     echo "ERROR: no widget sources found under $WIDGET_DIR" >&2
     exit 1
 fi
 
-swiftc -O -whole-module-optimization \
+WIDGET_MAP_FLAGS=()
+if [ "$CLAUDEBAR_CHANNEL" = dev ]; then
+    WIDGET_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/widget" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "${widget_files[@]}")"
+    WIDGET_MAP_FLAGS=(-emit-executable -emit-module-path "$BUILD_DIR/objects/widget/ClaudeBarWidget.swiftmodule" -output-file-map "$WIDGET_MAP")
+fi
+swiftc "${SWIFT_FLAGS[@]}" ${WIDGET_MAP_FLAGS[@]+"${WIDGET_MAP_FLAGS[@]}"} \
     -o "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" \
     -module-name ClaudeBarWidget \
     -parse-as-library \
@@ -369,9 +379,10 @@ swiftc -O -whole-module-optimization \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -application_extension \
     -Xlinker -e -Xlinker _NSExtensionMain \
-    $widget_files
+    "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" \
+    "${widget_files[@]}"
 
-strip -x "$APPEX_CONTENTS/MacOS/ClaudeBarWidget" 2>/dev/null || true
+if [ "$CLAUDEBAR_CHANNEL" = release ]; then strip -x "$APPEX_CONTENTS/MacOS/ClaudeBarWidget"; fi
 
 echo "Widget binary: $APPEX_CONTENTS/MacOS/ClaudeBarWidget"
 
@@ -382,7 +393,7 @@ cat > "$APPEX_CONTENTS/Info.plist" << WPLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.claudebar.app.widget</string>
+    <string>${APP_GROUP_ID}</string>
     <key>CFBundleName</key>
     <string>ClaudeBarWidget</string>
     <key>CFBundleDisplayName</key>
@@ -418,11 +429,11 @@ WPLIST
 # Both targets declare the same App Group so the non-sandboxed main app and the
 # sandboxed widget agree on the shared container. macOS 26 registers widget
 # extensions only when the app group is consistent across host + extension.
-ENT_DIR="$PROJECT_DIR/.build/entitlements"
+ENT_DIR="$BUILD_DIR/entitlements"
 mkdir -p "$ENT_DIR"
 
 # Widget appex: sandbox ON + app group + network.
-cat > "$ENT_DIR/widget.plist" << 'WENT'
+cat > "$ENT_DIR/widget.plist" << WENT
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -431,7 +442,7 @@ cat > "$ENT_DIR/widget.plist" << 'WENT'
     <true/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>com.claudebar.app.widget</string>
+        <string>${APP_GROUP_ID}</string>
     </array>
     <key>com.apple.security.network.client</key>
     <true/>
@@ -440,7 +451,7 @@ cat > "$ENT_DIR/widget.plist" << 'WENT'
 WENT
 
 # Main app: sandbox OFF (needs ~/.claude) + app group + network + files.
-cat > "$ENT_DIR/app.plist" << 'AENT'
+cat > "$ENT_DIR/app.plist" << AENT
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -449,7 +460,7 @@ cat > "$ENT_DIR/app.plist" << 'AENT'
     <false/>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>com.claudebar.app.widget</string>
+        <string>${APP_GROUP_ID}</string>
     </array>
     <key>com.apple.security.network.client</key>
     <true/>
@@ -472,6 +483,7 @@ echo "=== Code-signing ==="
 xattr -cr "$APP_BUNDLE"
 
 codesign --force --sign "$SIGN_IDENTITY" --options runtime "$BATTERYCTL_OUT"
+if [ -f "${FANCTL_OUT:-}" ]; then codesign --force --sign "$SIGN_IDENTITY" --options runtime "$FANCTL_OUT"; fi
 
 # Sign bottom-up (no --deep): appex binary -> appex bundle -> main binary.
 # The main binary is signed explicitly so its entitlements are embedded
@@ -481,20 +493,25 @@ codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_
 codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/widget.plist" \
     "$APPEX_DIR"
 codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/app.plist" \
-    "$MACOS_DIR/$APP_NAME"
+    "$MACOS_DIR/$APP_EXECUTABLE"
 # IMPORTANT: pass --entitlements on the bundle wrapper too. Signing a bundle
 # re-seals the main executable; without --entitlements here codesign strips
 # the entitlements that were just embedded, leaving the main app with none.
 codesign --force --sign "$SIGN_IDENTITY" --options runtime --entitlements "$ENT_DIR/app.plist" \
     "$APP_BUNDLE"
+python3 "$PROJECT_DIR/Tools/check-bundle.py" "$APP_BUNDLE" "$CLAUDEBAR_CHANNEL"
 echo "Signed OK ($SIGN_IDENTITY)"
 if [ "$SIGN_IDENTITY" != "-" ]; then
     echo "Screen Recording TCC is bound to this certificate — rebuilds should not ask again."
 fi
 
+# Write the stamp only after successful compilation, signing and validation.
+printf '%s\n' "$BUILD_FINGERPRINT" > "$STAMP_FILE"
+fi
+
 # --- Release artifacts (DMG + zip) for GitHub Releases ---
 if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then
-    DIST_DIR="$BUILD_DIR/dist"
+    DIST_DIR="$PROJECT_DIR/.build/dist"
     mkdir -p "$DIST_DIR"
     ARTIFACT_BASE="ClaudeBar-${VERSION}-macOS-arm64"
 
@@ -528,12 +545,17 @@ if [ "${CLAUDEBAR_SKIP_INSTALL:-}" = "1" ]; then
     echo "=== Skipping install (CLAUDEBAR_SKIP_INSTALL=1) ==="
     echo "Build cache: $APP_BUNDLE"
     if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then
-        echo "Package:     $BUILD_DIR/dist/ClaudeBar-${VERSION}-macOS-arm64.dmg"
-        echo "             $BUILD_DIR/dist/ClaudeBar-${VERSION}-macOS-arm64.zip"
+        echo "Package:     $PROJECT_DIR/.build/dist/ClaudeBar-${VERSION}-macOS-arm64.dmg"
+        echo "             $PROJECT_DIR/.build/dist/ClaudeBar-${VERSION}-macOS-arm64.zip"
     fi
 else
     echo "=== Installing ==="
-    pkill -9 "$APP_NAME" 2>/dev/null || true
+    # Refuse to replace a running app. Never kill a production process or VPN.
+    if pgrep -x "$APP_EXECUTABLE" >/dev/null 2>&1; then
+        echo "Quit $APP_NAME normally before installing (VPN cleanup must finish)." >&2
+        exit 1
+    fi
+    mkdir -p "$INSTALL_DIR"
     rm -rf "$INSTALLED_APP"
     cp -R "$APP_BUNDLE" "$INSTALLED_APP"
     # The cp re-introduces xattrs; strip them again post-copy so the installed
@@ -544,8 +566,7 @@ else
     # it enabled. Without this the gallery can lag behind a rebuild by one launch.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
     "$LSREGISTER" -f "$INSTALLED_APP"
-    pluginkit -e use -i com.claudebar.app.widget 2>/dev/null || true
-    killall widgetkitd 2>/dev/null || true
+    pluginkit -e use -i "$WIDGET_ID" 2>/dev/null || true
 
     echo "=== Build complete ==="
     echo "Installed:   $INSTALLED_APP"
