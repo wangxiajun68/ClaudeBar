@@ -5,6 +5,7 @@ struct UsageView: View {
     @ProviderState([.usage, .configuration]) var providerStore: ProviderStore
     @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showCustomDatePicker = false
+    @State private var showDetails = false
 
     var body: some View {
         // Derived once: the subtitle's caption read both of these, so the body
@@ -12,146 +13,73 @@ struct UsageView: View {
         // per pass.
         let periodLabel = UsageStats.label(for: providerStore.usagePeriod,
                                            reference: providerStore.usageReferenceDate)
-        let totalLabel = providerStore.totalUsageLabel
         // The daily spark's buckets describe the period, so it is handed the
         // period's own interval rather than left to infer a span from whichever
         // days happen to have rows in them.
         let interval = UsageStats.interval(for: providerStore.usagePeriod,
                                            reference: providerStore.usageReferenceDate)
-        let spanKey = "\(providerStore.usagePeriod.rawValue)|\(providerStore.usageDays.first?.day ?? "")|\(providerStore.usageDays.last?.day ?? "")|\(providerStore.usageDays.count)"
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.s16) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 titleBar
 
-                VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                    HStack(alignment: .firstTextBaseline) {
-                        GlyphWell(name: "chart.bar", tint: Theme.chartPurple, size: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Token 活动")
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .foregroundColor(Theme.textPrimary)
-                            RollingNumberText("\(periodLabel) · \(totalLabel)")
-                                .font(Theme.Font.caption)
-                                .foregroundColor(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        if providerStore.usagePeriod != .all {
+                            Button(action: { shiftUsage(-1) }) { Image(systemName: "chevron.left").frame(width: 22, height: 24) }
+                                .buttonStyle(.plain).accessibilityLabel("上一周期")
                         }
-                        Spacer()
+                        Text(periodLabel).font(.system(size: 13, weight: .semibold)).fixedSize()
+                        if providerStore.usagePeriod != .all {
+                            Button(action: { shiftUsage(1) }) { Image(systemName: "chevron.right").frame(width: 22, height: 24) }
+                                .buttonStyle(.plain).accessibilityLabel("下一周期")
+                        }
+                        Spacer(minLength: 12)
                         PeriodTabs(period: providerStore.usagePeriod, onSelect: selectPeriod)
                         Button(action: {
                             providerStore.refreshUsage(rescan: true)
                             providerStore.requestSettlement(force: true)
                         }) {
-                            GlyphWell(name: "arrow.clockwise", tint: Theme.textSecondary, size: 28)
-                        }
-                        .buttonStyle(.plain)
-                        .help("重新统计本周期用量")
-                        .accessibilityLabel("重新统计本周期用量")
-                    }
-
-                    HStack(spacing: 8) {
-                        if providerStore.usagePeriod != .all {
-                            Button(action: { shiftUsage(-1) }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Theme.textSecondary)
-                                    .frame(width: 28, height: 28)
-                                    .background(Theme.bgOverlay, in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("上一周期")
-                        }
-                        Text(periodLabel)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundColor(Theme.textPrimary)
-                        if providerStore.usagePeriod != .all {
-                            Button(action: { shiftUsage(1) }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Theme.textSecondary)
-                                    .frame(width: 28, height: 28)
-                                    .background(Theme.bgOverlay, in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("下一周期")
-                        }
-                        Spacer()
-                        if providerStore.usageLoading {
-                            ProgressView().scaleEffect(0.6)
-                        } else {
-                            RollingNumberText(totalLabel)
-                                .font(Theme.Font.displayMetric)
-                                .foregroundColor(Theme.textPrimary)
-                                        }
-                    }
-
+                            Image(systemName: "arrow.clockwise").frame(width: 26, height: 26)
+                        }.buttonStyle(.plain).help("重新统计本周期用量").accessibilityLabel("重新统计本周期用量")
+                        if providerStore.usageLoading { ProgressView().controlSize(.small) }
+                    }.foregroundColor(Theme.textPrimary)
                     if showCustomDatePicker {
-                        DatePicker("", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
+                        DatePicker("日期", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
                             .datePickerStyle(.compact)
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }.padding(.horizontal, 14).padding(.vertical, 8).usageFigure()
+
+                if providerStore.usagePublishedInterval == interval {
+                    UsageAnalyticsSection(days: providerStore.usageDays, stats: providerStore.usageStats,
+                                          sources: providerStore.usageBySource,
+                                          period: providerStore.usagePeriod, interval: interval) { date in
+                        providerStore.usagePeriod = .day
+                        providerStore.usageReferenceDate = date
+                        showCustomDatePicker = false
                     }
 
-                    UsageHeatmap(
-                        days: providerStore.usageDays,
-                        period: providerStore.usagePeriod,
-                        reference: providerStore.usageReferenceDate,
-                        onSelectDay: { date in
-                            providerStore.usagePeriod = .day
-                            providerStore.usageReferenceDate = date
-                            showCustomDatePicker = false
-                        },
-                        onSelectMonth: { date in
-                            providerStore.usagePeriod = .month
-                            providerStore.usageReferenceDate = date
-                            showCustomDatePicker = false
+                    .id(interval)
+
+                    DisclosureGroup(isExpanded: $showDetails) {
+                        VStack(alignment: .leading, spacing: 24) {
+                            platformBreakdown
+                            providerBreakdown
+                            modelBreakdown
+                        }.padding(.top, 16)
+                    } label: {
+                        HStack(spacing: 8) {
+                            AppGlyph(name: "list.bullet.rectangle", size: 16).foregroundColor(Theme.Ink.claude)
+                            Text("记录明细").font(Theme.Font.body)
+                            Spacer()
+                            Text("平台 · 供应商 · 模型 · 官方账单").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                         }
-                    )
-                }
-                .padding(Theme.Space.s16)
-                // Each panel takes the hue of the chart it holds, so a page of
-                // figures reads as a set of colour-coded blocks rather than one
-                // flat sheet — the same wash the tiles inside use. The hue is
-                // the *shape* variant (`Theme.cursor`, not `Ink.cursor`): a wash
-                // is a fill, and the ink variant is mixed for text, which lands
-                // it dull and dark behind a chart.
-                .panelCard(tint: Theme.cursor)
-
-                EqualRowGrid(spacing: Theme.Space.s12, minColumnWidth: 0, fixedColumns: 2) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("来源")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundColor(Theme.textPrimary)
-                        Text("占这一时段的全部 token")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(Theme.textSecondary)
-                        SourceTriad(totals: providerStore.usageTotalBySource, spanKey: spanKey)
                     }
-                    .padding(Theme.Space.s16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .panelCard(tint: Theme.claude)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("节奏")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundColor(Theme.textPrimary)
-                        UsageDaySpark(days: providerStore.usageDays, interval: interval,
-                                      period: providerStore.usagePeriod)
-                    }
-                    .padding(Theme.Space.s16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .panelCard(tint: Theme.chartPurple)
+                    .padding(12).usageFigure()
+                } else {
+                    ProgressView("读取本周期记录…").frame(maxWidth: .infinity, minHeight: 240)
                 }
-
-                if !providerStore.usageStats.isEmpty {
-                    CacheAnatomyBar(stats: providerStore.usageStats, spanKey: spanKey)
-                        .padding(Theme.Space.s16)
-                        .panelCard(tint: Theme.chartGreen)
-                }
-
-                platformBreakdown
-                providerBreakdown
-                modelBreakdown
             }
-            .padding(Theme.Space.s24)
+            .padding(.horizontal, 20).padding(.vertical, 14)
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)

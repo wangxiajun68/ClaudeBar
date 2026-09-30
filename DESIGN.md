@@ -34,10 +34,16 @@ CatStatus-class **status sheet**: ice canvas in light, graphite in dark. White
 | Chart green `#34C759` | CPU die, remaining quota |
 | Chart blue `#5B9CFF` | GPU bars |
 | Chart amber `#FF9F0A` | Memory line |
-| Chart purple `#BF5AF2` | Usage heatmap / share bars |
+| Chart purple `#BF5AF2` | General usage accents; analytical figures use the palette below |
 | Ink / snow | Primary text in light / dark |
 
 Claude / Cursor / Codex hues remain for identity chips only.
+
+Usage analysis reserves a sequential **viridis** ramp for ordered daily token
+values. Source comparisons and token composition use fixed categorical plot
+colors rather than the heatmap ramp; zero-record days use the neutral well.
+The calendar legend uses the same viridis samples as the cells. See
+[the usage brief](docs/design/surfaces/usage.md) for normalization and data scope.
 
 Every signal hue has two variants and they are not interchangeable: `Theme.Ink.*`
 is the **text** version (mixed until it clears 4.5:1 on the ice canvas) and the
@@ -506,14 +512,75 @@ generic greeting is a smaller wrong than a numeric one.
 names, and asserts the drawn name carries no surviving ideograph.
 
 
+## Usage analysis
+
+Usage is a compact Operate surface for exploring recorded token totals. A single
+period toolbar leads into five inline 17pt metrics, then two analytical panels.
+Explanations move into native help rather than permanent metric captions. Panels
+use 14pt padding and 10pt gaps within the existing neutral surface language.
+The initially collapsed 记录明细 disclosure retains platform, provider, model and
+official billing actions.
+
+The activity panel links a dated trajectory to an empirical cumulative
+distribution. Points use viridis for prompt-side cache percentage, with gray
+for an undefined rate; connecting lines link observed statistical buckets and
+imply no hourly sampling. The default long-tail coordinate is asinh(Token / c),
+where c is the positive bucket median, at least 1. It retains zero observations;
+axis labels invert the transform back to Token. 原值 switches to a zero-based
+original-value scale. Both plots are 166pt tall. The alternative daily calendar
+is 174pt tall, retains the latest 366 elapsed dates and uses its own shared
+log1p total-value legend. ECDF percentages include ties and zero buckets at the
+current daily / monthly / yearly grain; hover links both plots.
+
+The structure panel pairs an annotated Top 8 source-by-model matrix with a
+Lorenz concentration curve. Matrix cells show actual source/model token totals
+under one log1p viridis scale; zero cells are gray. Model shares use all model
+tokens as denominator. The Lorenz curve includes every positive model sorted
+ascending; a dashed equality diagonal and shaded deviation describe concentration.
+Effective model count is inverse Simpson, 1 / sum(p²), across every positive
+model, independent of the Top 8 display cutoff. Viridis authorship and CC0
+color-data credits live in `Sources/ClaudeBar/Resources/ASSET-LICENSES.md`.
+
+Day, month and custom periods retain daily observations; year and all-history
+periods aggregate monthly, with all-history switching to years beyond 730 elapsed
+dates. Daily P50 / P95 include elapsed zero-record days and exclude future dates.
+Cache reads divide by input + cache read + cache write; output is excluded.
+Estimated costs and Cursor charges remain separately labelled inside details.
+No hourly profile, billing history, forecast, savings, density estimate or
+confidence band is inferred.
+
+Ground truth, research sources and interactions live in
+[the usage brief](docs/design/surfaces/usage.md). Verification of this denser
+trajectory / ECDF / matrix / Lorenz implementation is ongoing; earlier successful
+checks of the superseded stacked-bar version do not validate this revision.
+
 ## Settings
 
-Settings is an Operate surface with a quieter, native control language. Its
-four categories (通用 / 灵动岛 / 权限与隐私 / 本地代理) stay above a scrolling
-800pt-wide column. `SettingsGroup` owns the single neutral surface;
-`SettingsRow` aligns explanatory text left and native controls right. No
-per-option cards, colored glyph wells, depth lenses or hover lifts. Switches,
-segmented pickers and menus use macOS controls; secondary actions use the
-neutral button tone. This surface deliberately opts out of the dashboard's
-tile grammar. See [the settings brief](docs/design/surfaces/settings.md) for
-the retained preferences, removed clutter and build-dependent verification.
+Settings is an Operate surface with six purpose-based categories: 通用、外观与天气、
+灵动岛、用量与计费、权限与隐私、本地代理. A 200pt sidebar anchors containers at least
+860pt wide; narrower containers use one category menu. The main window currently
+has a 900pt minimum width, so compact layout is verified in the isolated preview.
+A 32pt rounded category title and a single
+line icon establish hierarchy above an independent, at-most-900pt scrolling column.
+`SettingsGroup` integrates its icon/header into one neutral 18pt panel. Rows align
+controls right and stack them below labels when necessary. No per-option cards,
+hover lifts or perpetual decoration.
+
+Settings now share `InstrumentToggleStyle`, `SegmentedCapsule`,
+`InstrumentFieldStyle`, `InstrumentMenuLabel` and neutral `ActionButton` with the
+rest of the app. Preference switches/selectors apply immediately; proxy ports
+have explicit Apply; credentials have explicit Save. System authorization keeps
+its own status and recovery link. See [the settings brief](docs/design/surfaces/settings.md).
+
+`MainWindowView` owns `SettingsState` as a `@StateObject` above `.id(appearance)`
+and passes it into Settings. Category, text drafts, port error and advanced-section
+disclosure state survive page navigation and palette changes within that window's
+lifetime. City text commits on submit, blur or leaving its category; credentials
+and ports require Save / Apply or submit, so navigation preserves unsaved drafts.
+
+Native previews cover all six categories at 1180pt and 700pt in light and dark,
+including an unsaved credential after navigation and rejection of port 99999 while
+retaining 15721. The production `Sources/build.sh` build succeeds with installation
+skipped; installation, actual system authorization and proxy rebinding remain
+outside that check. Independent model-pricing regression has seven existing
+price-logic / fixture failures; the Settings UI changes do not modify that logic.
