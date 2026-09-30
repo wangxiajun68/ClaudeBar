@@ -229,16 +229,6 @@ enum CursorLedger {
         }
         return Array(byModel.values)
     }
-
-    /// How many rows a page of `GetFilteredUsageEvents` holds, and whether the
-    /// parse saw them all.
-    ///
-    /// Cursor caps `pageSize` at 1000 — 2000 and above return a body with
-    /// neither `totalUsageEventsCount` nor `usageEventsDisplay` rather than an
-    /// error, which reads as "no usage" to a naive parser. Anything that pages
-    /// the ledger must use this constant and check `needsMorePages`.
-    static let maxPageSize = 1000
-
     /// `true` when a page left rows behind. `parseEvents` cannot tell on its
     /// own because it only sees one page.
     static func needsMorePages(page: [Row]?,

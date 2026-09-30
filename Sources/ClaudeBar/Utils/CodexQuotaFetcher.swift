@@ -225,7 +225,7 @@ enum CodexQuotaFetcher {
     /// web endpoint directly. App Server owns token refresh and keeps this
     /// integration on Codex's documented account API.
     private static func fetchFromAppServer() -> Snapshot {
-        guard let executable = codexExecutable() else {
+        guard let executable = CodexRuntime.executable() else {
             logger.error("Codex executable not found")
             return Snapshot(note: "未找到 Codex，请先安装或打开 Codex")
         }
@@ -429,27 +429,6 @@ enum CodexQuotaFetcher {
 
     private static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-    }
-
-    private static func codexExecutable() -> URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // ChatGPT.app moved the bundled CLI into `codex-cli/bin` (codex
-        // 0.158 reads the layout from `codex-package.json`). Older installs
-        // still ship it directly under Resources, so try both.
-        var candidates = [
-            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(home)/.local/bin/codex",
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex",
-        ]
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            candidates += path.split(separator: ":").map { "\($0)/codex" }
-        }
-        return candidates.first(where: FileManager.default.isExecutableFile(atPath:))
-            .map(URL.init(fileURLWithPath:))
     }
 
     private static func finish(_ process: Process, input: Pipe,

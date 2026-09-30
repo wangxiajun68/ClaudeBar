@@ -22,9 +22,8 @@
 | `Utils/CNWeatherCityTable.swift` | 中国天气网 cityid 表（生成物，勿手改）：348 个地级市 → `weather_index` id，由 `Tools/gen-cn-weather-cities.py` 用 `city3jdata` 的省→市树 + 逐个 id 探测生成 |
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo 六日预报（今天 + 5 天）：地理编码 / 坐标直用（坐标经 `PlaceNamer` 反向地理编码为"城市 · 区"，按约 1 km 缓存）、`forecast_days=6`、`timezone=auto`；日数组缺失时保留有效日期并标明部分可用，不编造天数。现为海外城市与兜底源 |
 | `Utils/SkyAstronomy.swift` | 低精度天文：J2000 轨道根数 → 赤道坐标 → 观察者地平高度 / 方位角；太阳、月亮、月相与固定亮星表。UTC 驱动恒星时，设备时区不改变天空。**是插画用的近似，不是导航级星图** |
-| `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` 的符号/文案映射，以及那版 620pt popover 的成稿 `WeatherExplorer` / `SolarHorizon` / `ForecastStrip`——**三个都已无调用点**（popover 随预报内联下线，预报本身现在是 `GreetingInstruments.swift` 的 `ForecastRibbon`），保留待改 |
+| `Views/Shared/WeatherReadingSky.swift` | `WeatherReading.Sky` 的 SF Symbols 符号名与中文文案映射（`symbol(night:)` / `caption`），给天气卡、预报带与供应商图标用。原文件里的 620pt popover 成稿 `WeatherExplorer` / `SolarHorizon` / `ForecastStrip` 已无调用点，已删除；预报现在是 `GreetingInstruments.swift` 的 `ForecastRibbon` |
 | `Views/Shared/GreetingCard.swift` | 仪表盘问候卡：`GreetingCard`（读 store）+ 纯展示 `GreetingStatusSheet`。天空为 Metal 大气；左上时钟 + **自动 / 手动**天空模式，右上实时天气（地点、温度、图标化体感 / 湿度 / 风向 / 降水），右下六日预报带，左下日轨（手动时换成天气 × 时段 × 24h 时间轴控制台），底部窗台读数。无悬浮层：预报聚焦某天时右上原位改读那天，窗台胶囊悬停原位展开。手动模式的天气 / 时刻存 `@AppStorage("greeting.*")`，时刻拖动中只放 `@State`，落定才写回。时间动画由 `FrameTicker`（`CADisplayLink`）驱动；窗台、预报带、右上此刻包在 `Unchanged(key:)` 里，拖动时不重建（性能见 `docs/design/greeting-atmosphere.md` §5.7） |
-| `Views/Shared/GreetingTypefaceGallery.swift` | 设置 → 通用 → 天气与问候 → 问候字体：默认折起，只显示当前字体的字样；展开后是 `GreetingTypeface` 字样卡片网格，每张用该字体的真实轮廓写出当前问候语，点击即选（写入 `AppPreferences.greetingTypeface`）。**注意**：设置页那一行现在是一个原生 `Picker` 菜单（24 个选项与已选值都在），画廊视图本身**当前没有调用点**——它不在那次重做的清理范围内，按 [设置页](../../design/surfaces/settings.md) 的口径保留 |
 | `Views/Shared/GreetingInstruments.swift` | 问候卡的仪表：`WeatherGlyph`、`HumidityDrop`、`WindDial`、`InstrumentMetric`、`ForecastRibbon`（高低温带 + 降水柱，悬停聚焦 / 点击固定 / ←→）、`SunPath`（含日出日落时刻解析）、`SillGauge`（窗台额度：剩余百分比，读法同弹窗 `QuotaSwayGauge`）、`SkyModeToggle`、`SkyConsole` + `SkyTimeline`（手动天空） |
 | `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView`、帧率策略、`PageScrollActivity` 滚动定帧、不阻塞主线程的 drawable 预算）、`GreetingScript`（`GreetingTypeface` 字体目录：24 款可选、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
 | `Views/Shared/CodexModelMark.swift` | popup 头部 chip 的客户端 mark：只有 `ProductBrandMark` 的品牌图形（13pt），家族名不再并排重复（chip 自己已写）；`CursorMark` 是同一个形状的 Cursor 版（不复用 `codex:` 三态，那个 `Bool` 会把它画成 Claude） |
@@ -59,7 +58,6 @@
 | `Sources/Fonts/*.ttf` + `*-OFL.txt` / `*-LICENSE.txt` | 问候的可选 20 款手写体与**各自的许可证**（每款一个文件，版权与保留字体名在其中）。`Sources/build.sh` 复制进 `Resources/Fonts`，`GreetingScript` 按文件名加载；字体不装进系统、不单独分发，出处逐条记在 `Resources/ASSET-LICENSES.md` |
 | `Tools/gen-cn-weather-cities.py` | 生成 `CNWeatherCityTable.swift`：从仍在服务的 `city3jdata` 省→市树取地级市，逐个探测 `weather_index/{id}.html` 是否有效再写回（该站的 `toy1` 名字搜索接口已失效，对任何中文城市名都返回空数组，所以名字→id 只能这样离线建表）。**表是生成物，改它要重跑脚本** |
 | `Tools/bench-atmosphere.py` | 问候卡天空的性能基准：用生产着色器按卡片实际尺寸离屏绘制各天气，报 GPU / CPU 每帧中位数，以及排版、栅格化、首次取字形的主线程耗时。SwiftUI 侧的每步更新耗时见 `Tools/render-greeting-preview.py --bench`（`BENCH_PACE=0` 定频对比，`--bench-baseline` 为对照） |
-| `Tools/gen-fan-blade.py` | 把 Lucide `fan` 的一片叶转成单位空间并**断言它仍是 Lucide 的形状**（每条弧必须是 131.8° 的 6.082 半径弧、四个内点必须相隔 90°、最后一个弦必须回到起点）。旧版几何生成工具；当前风扇插画不再依赖它 |
 | `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
 | `Tools/make-claudebar-mark.py` | 从 `Sources/AppIcon-1024.png` 推出 ClaudeBar 自己的 mark（两个明暗变体），给用量图例里的「第三方」用；`Tests/provider-icon-regressions.py` 因此要能读 RGBA 真彩色 PNG |
 | `Tools/recompress-icon.py` | 无损重压 `Sources/AppIcon.icns`：容器里每个尺寸各是一张独立 PNG，逐成员重编并**逐像素比对**后才落盘（不通过就整档拒写）。重压后 2,071,438 → 1,705,955 B；`--check` 断言它已是最小 |
@@ -103,8 +101,7 @@
 | `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
 | `Views/Shared/SkillMarkdownPreview.swift` | SKILL.md 的原生 SwiftUI 渲染（标题 / 列表 / 引用 / 代码块 / 表格） |
 | `Views/Shared/ExchangeRateTile.swift` | 设置 → 通用 → 用量与花费 → 美元兑人民币：显示当前汇率与日期、手动钉值（清空恢复自动查询） |
-| `Views/Shared/VpnTopChrome.swift` | `VpnStatusPill`（popup 状态行的节点 / 延迟药丸）+ `VpnNodePickerPanel`（它打开的面板）+ `CursorUsagePanel`（Cursor chip 的面板）+ `VpnDelayStyle` |
-| `Views/Shared/UsageRiver.swift` | `CacheAnatomyBar`（周期 token 构成） |
+| `Views/Shared/VpnTopChrome.swift` | `VpnStatusPill`（popup 状态行的节点 / 延迟药丸）+ `CursorUsagePanel`（Cursor chip 的面板）+ `VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除 |
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：只保留第三方 OpenAI / Anthropic 两个选择（默认跟随 Codex / Claude Code 当前供应商，不写 `config.toml` / `settings.json`）；CC / Codex 的只读卡已删——它们的选择在「模型」页 |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |
 | `Sources/ci/extract-changelog.py` | 切出某版本的 CHANGELOG 段，拼 Release 说明 |

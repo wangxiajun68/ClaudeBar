@@ -25,7 +25,7 @@ Status of the original nine findings, after the fix pass:
 | 6 | `UsagePanel` date-picker popover anchor | **fixed** — zero-size sibling anchor |
 | 7 | Collapsed island still lays out the expanded box | **closed** — premise withdrawn by measurement |
 | 8 | Two `EXC_BREAKPOINT` crash reports | **fixed** — a mount that never injected `\.providerSource` |
-| 9 | `ProviderTile` unmounted | kept, deliberately (see the entry) |
+| 9 | `ProviderTile` unmounted | kept here; **deleted later** (2026-09-30, see the entry) |
 | 10 | `MetricTile` unmounted (last caller gone with §5) | **fixed** — deleted |
 | 11 | 10 more unmounted view types + one dead store field | **fixed** — deleted |
 | 12 | The idle display cycle: two 30 Hz `.animation` timelines | **fixed** — sweep is a layer, clock is periodic (§11) |
@@ -193,8 +193,9 @@ dashboard (or a second VPN control in the popup) for content that is already on
 screen somewhere the user opens more often. Deleted, together with the
 `VpnNodeMenu` type they were the last caller of, and the three doc rows that
 pointed at them (`technical/09-file-index.md`, `technical/11-vpn.md`,
-`technical/15-model-cost.md`). `VpnDelayStyle` and `VpnNodePickerPanel` stay —
-`PanelHeader` uses both.
+`technical/15-model-cost.md`). `VpnDelayStyle` stays (`PanelHeader` uses it);
+`VpnNodePickerPanel` was later deleted too — the pill now routes to the main
+window's VPN page instead of opening the panel in place.
 
 ## 6. `UsagePanel`'s date-picker popover anchor — FIXED
 
@@ -357,7 +358,15 @@ reason is that the shipped bundle has no such mount. The `-g -Onone` build ran
 has no `UIPreviewProbe`. Nothing about `com.claudebar.sym` or the group
 container was ever involved.
 
-## 9. `ProviderTile` has no call site either
+## 9. `ProviderTile` — the unmounted tile, deleted (2026-09-30)
+
+**Later note.** This entry originally kept `ProviderTile`, on the argument that
+everything it composes is live and it is the only finished per-provider grid
+tile. A later repo-wide pass found the same was true of `GreetingTypefaceGallery`
+and the `WeatherExplorer` trio, and deleted all of them together — one file each,
+no orphaned types, and the directory grid now renders through
+`ProviderDirectoryCard`. The argument below is kept as the reasoning that was
+made at the time; the outcome above supersedes it.
 
 Found while closing §3 and §5: that work removed two unmounted *editors* and two
 unmounted *tiles*, and left a fifth unmounted view in place —
@@ -514,7 +523,7 @@ drawing back on `.animation`.
 (`style: .tile`, the default) and a 13pt popup chip (`.inline`). The tile lost
 its caller when the greeting card was rebuilt — `GreetingStatusSheet.modelCell`
 now draws `modelIdentity(codex:model:provider:)` and carries the allowance in its
-own `quotaRow`/`resetLine` pair, so `CodexQuotaGauges` owns that reading — and
+own `quotaRow`/`resetLine` pair, which owned that reading — and
 nothing in `Sources/` or `Tests/` has passed `.tile` since. What went with it,
 all reachable only from that arm:
 

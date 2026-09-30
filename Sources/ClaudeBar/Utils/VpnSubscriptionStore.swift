@@ -54,11 +54,6 @@ final class VpnSubscriptionStore: ObservableObject {
     /// Set by VpnManager at startup; when non-nil, profile downloads go
     /// through 127.0.0.1:<port> (some airport domains are blocked directly).
     weak var manager: VpnManager?
-
-    var activeSubscription: VpnSubscription? {
-        subscriptions.first { $0.id == activeID }
-    }
-
     private init() {
         load()
     }

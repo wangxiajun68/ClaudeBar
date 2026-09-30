@@ -2,6 +2,11 @@
 """Exercise account credit parsing through real rate-limit payloads.
 No network and no local account credentials: compile the production fetcher
 with its response parser made internal in the temporary test module only.
+
+`CodexRuntime` is compiled in whole because `CodexQuotaFetcher` resolves the
+installed `codex` binary through it — the same resolver `CodexAppServerClient`
+uses to reach the app server, so the slice has to carry it to keep the
+production call site compiling rather than stubbing it out.
 """
 from pathlib import Path
 import subprocess
@@ -10,6 +15,8 @@ root = Path(__file__).resolve().parents[1]
 fetcher = (root / 'Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift').read_text()
 fetcher = fetcher.replace('private static func parseResponse', 'static func parseResponse')
 coerce = (root / 'Sources/ClaudeBar/Utils/JSONCoerce.swift').read_text()
+runtime = (root / 'Sources/ClaudeBar/Utils/CodexAppServerClient.swift').read_text()
+runtime = runtime[:runtime.index('/// Lists and cleans up Codex threads')]
 probe = r'''
 @main struct Probe {
     static func main() {
@@ -41,7 +48,7 @@ probe = r'''
 '''
 with tempfile.TemporaryDirectory(prefix='greeting-data-') as tmp:
     path = Path(tmp) / 'Probe.swift'
-    path.write_text(fetcher + '\n' + coerce + '\n' + probe)
+    path.write_text(fetcher + '\n' + runtime + '\n' + coerce + '\n' + probe)
     binary = Path(tmp) / 'probe'
     subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

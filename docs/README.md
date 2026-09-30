@@ -30,11 +30,11 @@ docs/
 ├── promo/                    宣传影片、介绍图与制作说明
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
-│   ├── 01–10 *.md
+│   ├── 01–10 *.md + 专题 *.md
 │   └── surfaces/             按界面分的设计说明
 └── technical/                技术实现（代码如何工作）
     ├── README.md
-    └── 01–16 *.md
+    └── 01–17 *.md + 专题 *.md
 ```
 
 ---
@@ -85,6 +85,7 @@ docs/
 | 14 | [performance-audit](technical/14-performance-audit.md) | 桌面 / popup / 灵动岛刷新与渲染审查 |
 | 15 | [model-cost](technical/15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配 |
 | 16 | [connectors](technical/16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停 |
+| 17 | [ui-audit-backlog](technical/17-ui-audit-backlog.md) | 「审查每个页面」那一轮的全部发现与修复记录 |
 
 完整索引：[technical/README.md](technical/README.md)
 

@@ -711,9 +711,6 @@ private final class VpnMenuBarRateView: NSView {
     static func stripWidth(battery: Bool) -> CGFloat {
         battery ? fullWidth : ratesWidth
     }
-
-    func displayedWidth(battery: Bool) -> CGFloat { Self.stripWidth(battery: battery) }
-
     private let iconView = NSImageView()
     private let downLabel = VpnMenuBarRateView.makeLabel()
     private let upLabel = VpnMenuBarRateView.makeLabel()
@@ -836,8 +833,6 @@ private final class VpnMenuBarRateView: NSView {
     var batteryLabelIsHidden: Bool { batteryLabel.isHidden }
     var batteryDetailIsHidden: Bool { batteryDetail.isHidden }
     var downLabelTextColor: NSColor { downLabel.textColor ?? .white }
-    var upLabelTextColor: NSColor { upLabel.textColor ?? .white }
-
     override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
     override var fittingSize: NSSize { intrinsicContentSize }
 

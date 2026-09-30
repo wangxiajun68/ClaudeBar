@@ -672,22 +672,3 @@ struct VpnDomainLogSection: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
 }
-
-/// The collapsed section's trailing badge.
-///
-/// Its own view on purpose, exactly like `CollapsedLogBadge`: `VpnDomainLog`
-/// publishes up to 4 Hz while a browser is loading a page, and observing it
-/// from `VPNView` would re-evaluate the whole page (header, subscription list,
-/// node mosaic) for a badge that is not even rendered once the section is open.
-struct VPNTrafficLogBadge: View {
-    @ObservedObject private var log = VpnDomainLog.shared
-
-    var body: some View {
-        if log.received > 0 {
-            let failed = log.entries.reduce(0) { $0 + ($1.failed ? 1 : 0) }
-            StatusPill(label: failed > 0 ? "\(log.received) 次 · \(failed) 失败" : "\(log.received) 次",
-                       tint: failed > 0 ? Theme.statusWarning : Theme.statusIdle,
-                       ink: failed > 0 ? Theme.Ink.warning : Theme.textSecondary)
-        }
-    }
-}

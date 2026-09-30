@@ -4,6 +4,9 @@ import SwiftUI
 /// breathe. Empty tool families are omitted instead of occupying a blank row.
 struct SessionsPanelView: View {
     @ProviderState([.sessions, .heartbeats]) var providerStore: ProviderStore
+    /// The session a cleanup was confirmed for; drives the dialog above the
+    /// panel's session list.
+    @State private var pendingCleanup: ExternalSessionInfo?
 
     var body: some View {
         let claude = providerStore.aliveSessions
@@ -71,10 +74,27 @@ struct SessionsPanelView: View {
             ForEach(tree) { node in
                 ExternalSessionCardView(session: node.session,
                                         descendantCount: node.descendantCount,
-                                        childAgents: node.children.flatMap(\.flattened)) {
-                    resumeCodex(node.session)
-                }
+                                        childAgents: node.children.flatMap(\.flattened),
+                                        onDoubleTap: { resumeCodex(node.session) },
+                                        onCleanUp: { cleanUpCodex(node.session) })
             }
+        }
+        // Attached at the section, not the card: one presentation for the whole
+        // block, driven by the item the user actually acted on.
+        .confirmationDialog(pendingCleanup.map { "清理「\($0.displayName)」？" } ?? "清理卡住的会话",
+                            isPresented: Binding(
+                                get: { pendingCleanup != nil },
+                                set: { if !$0 { pendingCleanup = nil } }
+                            ),
+                            titleVisibility: .visible) {
+            Button("清理", role: .destructive) {
+                if let session = pendingCleanup { providerStore.cleanUpExternalSession(session) }
+                pendingCleanup = nil
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这个会话的回合已经停止推进（多半是卡在审批上或写到一半就退出了）。\n"
+                 + "会先在 Codex 里删掉它的续写分支，再删除它本身；Codex 若拒绝删除，则改为归档。")
         }
     }
 
@@ -90,5 +110,9 @@ struct SessionsPanelView: View {
     private func resumeCodex(_ session: ExternalSessionInfo) {
         TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
                                             pid: session.holderPID, inDesktop: session.inDesktop)
+    }
+
+    private func cleanUpCodex(_ session: ExternalSessionInfo) {
+        pendingCleanup = session
     }
 }

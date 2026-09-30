@@ -972,24 +972,6 @@ private struct VPNProbeRow: View {
 
 }
 
-// MARK: - Width probe
-
-private struct MosaicWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 720
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-private struct WidthProbe: View {
-    var body: some View {
-        GeometryReader { geo in
-            Color.clear.preference(key: MosaicWidthKey.self, value: geo.size.width)
-        }
-        .frame(height: 0)
-    }
-}
-
 // MARK: - Speed chart
 
 /// Dual sparkline with Catmull-Rom smoothing. Latest sample is on the right.
@@ -1086,35 +1068,6 @@ struct VpnSpeedChart: View {
 }
 
 // MARK: - Log console
-
-/// The collapsed console's trailing badge.
-///
-/// Its own view on purpose: `VpnLogStore` grows on every core line — a node
-/// delay test logs several lines per node, so a 26-node 测速 writes dozens —
-/// and observing it from `VPNView` re-evaluated the whole page (header,
-/// subscription list, mosaic and console) twice per line, for a badge that is
-/// not even rendered once the console is open.
-///
-/// It reports the *state*, not a line count: the ring buffer caps at 500, so a
-/// three-line failure and a 500-line one both ended up reading "500 行" and the
-/// count could not say how bad things were.
-private struct CollapsedLogBadge: View {
-    @ObservedObject private var logStore = VpnLogStore.shared
-    @ObservedObject private var manager = VpnManager.shared
-
-    var body: some View {
-        let failed: Bool = { if case .failed = manager.state { return true }; return false }()
-        let lines = logStore.lines.count
-        // Nothing worth announcing: a healthy core that has simply been up for
-        // a while is not news.
-        if failed || lines > 0 {
-            StatusPill(label: failed ? "启动失败 · 查看日志" : "\(lines) 行",
-                       tint: failed ? Theme.statusError : Theme.statusWarning,
-                       ink: failed ? Theme.Ink.error : Theme.Ink.warning)
-        }
-    }
-}
-
 private struct VpnLogConsole: View {
     @ObservedObject private var logStore = VpnLogStore.shared
     private var lines: [String] { logStore.lines }

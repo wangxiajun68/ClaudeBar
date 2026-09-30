@@ -24,7 +24,12 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     /// Retained in the unarchived thread index; in the legacy fallback, live.
     /// This is visibility, not evidence that a turn is currently running.
     var isAlive: Bool
-    var isActive: Bool           // live writer / recent open turn + lifecycle state
+    var isActive: Bool           // an open turn that is still being written
+    /// An open turn that stopped advancing — the writer is gone (crashed, or
+    /// parked on an approval Codex never journals). Such a thread is listed but
+    /// not running, and this is what offers it for cleanup; see
+    /// `ExternalAgentKind.codex.runningWindow` for the measurement.
+    var hasStalledTurn = false
     var completionID: String? = nil // completed turn id with a final assistant message
     var contextTokens: Int = 0
     var contextLimit: Int = 0
@@ -77,12 +82,14 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     ///
     /// So a Codex thread parked on an approval is, from this app's point of
     /// view, indistinguishable from one whose writer simply went quiet: the
-    /// rollout stops advancing, `updatedAt` ages out, and the thread reads idle
-    /// after the busy window. Fabricating a park from staleness would false-fire
-    /// on every idle thread, which is the exact failure this whole state
-    /// machine exists to avoid. When Codex journals a park (or exposes one over
-    /// the app-server the way it does approvals), this is the one place to
-    /// teach it — every surface already reads `isWaiting`.
+    /// rollout stops advancing and `updatedAt` ages out. That is why the park is
+    /// not fabricated here — but it *is* why an open turn is only evidence of a
+    /// run while it keeps being written (see
+    /// `ExternalAgentKind.codex.runningWindow`). A parked thread therefore ages
+    /// out on the rollout's own silence and reads idle, no matter how long
+    /// Codex's app-server keeps its file open. When Codex journals a park (or
+    /// exposes one over the app-server the way it does approvals), this is the
+    /// one place to teach it — every surface already reads `isWaiting`.
     var isWaiting: Bool { false }
 
     /// Prefer the indexed task title; legacy rollouts fall back to the project.
@@ -158,6 +165,25 @@ enum ExternalAgentKind: String, CaseIterable {
     /// after this long without a write.
     var orphanedTurnWindow: TimeInterval { 10 * 60 }
 
+    /// How recently a rollout must have been written for its *open turn* to
+    /// still count as a run in progress.
+    ///
+    /// A rollout stops advancing for two very different reasons, and only one
+    /// of them is a crash: the writer died mid-turn, or Codex parked the thread
+    /// on an approval it never journals (see `ExternalSessionInfo.isWaiting`).
+    /// Both leave `task_started` without `task_complete`, and neither is
+    /// distinguishable from the other on disk — so the only honest reading of
+    /// an open turn is "it was advancing a moment ago".
+    ///
+    /// Codex appends `token_count` within seconds of every model or tool step,
+    /// so a gap this long means nothing is driving the turn. Measured across
+    /// 6142 in-turn gaps in this machine's corpus: median 0 s, p99 86 s, and
+    /// the two worst (3.19 h, 0.52 h) are both pre-approval stalls, not work.
+    /// Deliberately below those, and it is the single knob for the trade:
+    /// raising it tolerates a slower approval round trip at the cost of
+    /// showing a parked thread as running for longer.
+    var runningWindow: TimeInterval { 5 * 60 }
+
     /// How recently a sub-agent must have been written to be returned.
     ///
     /// A sub-agent is a *child of a live session*, so only a currently-running
@@ -173,10 +199,16 @@ enum ExternalAgentKind: String, CaseIterable {
 ///
 /// Both the CLI (`codex`, `codex resume`) and Codex Desktop's bundled
 /// `codex app-server` keep a thread's rollout JSONL open for as long as the
-/// thread is loaded, so an open descriptor is the liveness signal a Claude
-/// session gets from its pid. Listing every pid costs a few syscalls each;
-/// descriptors are read only for the one or two `codex` executables — about
-/// 4 ms per scan in total.
+/// thread is loaded. That is a statement about *where the thread lives*, not
+/// about whether a turn is running: the CLI holds it for exactly as long as it
+/// is running, but the managed app-server holds it while the thread is merely
+/// loaded, and it never unloads a thread that is parked on an unanswered
+/// approval — the observed case kept a rollout open for hours after the turn
+/// died. So the holder decides resume routing (`holderPID` / `inDesktop`) and
+/// nothing else; liveness comes from whether the rollout is still being written.
+///
+/// Listing every pid costs a few syscalls each; descriptors are read only for
+/// the one or two `codex` executables — about 4 ms per scan in total.
 enum CodexProcessScan {
     struct Holder: Equatable {
         let pid: Int
@@ -347,17 +379,12 @@ struct ExternalSessionMonitor {
                             : isInteractiveMain(source: parsed.sourceKind, threadSource: parsed.threadSource)
                                 && parsed.spawnDepth == 0
                         else { continue }
-                        // `task_complete` is the authoritative end of a Codex
-                        // task, including dispatched sub-agents. Old rollout
-                        // formats without lifecycle events get only the brief
-                        // writer-recency fallback instead of lingering for days.
-                        let isRunning = parsed.hasOpenTask
-                            ?? (now - meta.mtime <= ExternalAgentKind.codex.busyWindow)
                         let base = (file as NSString).deletingPathExtension
                         let sessionId = String(base.suffix(36))
                         let holder = holders[path]
                         let alive = isLive(holder: holder, openTask: parsed.hasOpenTask, updated: meta.mtime, now: now)
                         guard alive else { continue }
+                        let running = isRunning(openTask: parsed.hasOpenTask, updated: meta.mtime, now: now)
                         let info = ExternalSessionInfo(
                             kind: .codex,
                             sessionId: sessionId,
@@ -366,7 +393,8 @@ struct ExternalSessionMonitor {
                             updatedAt: meta.mtime * 1000,
                             model: parsed.model,
                             isAlive: alive,
-                            isActive: isRunning,
+                            isActive: running,
+                            hasStalledTurn: parsed.hasOpenTask == true && !running,
                             completionID: parsed.completionID,
                             contextTokens: parsed.contextUsed,
                             contextLimit: parsed.contextLimit,
@@ -423,15 +451,30 @@ struct ExternalSessionMonitor {
     private static var indexReadAt = Date.distantPast
     private static var indexRows: [IndexedThread]?
 
-    /// Archive membership comes from the desktop index, not rollout recency.
-    /// Cache only membership; the rollout cache still updates live turn state.
-    /// Live means a process holds the rollout. Without one, only a turn that
-    /// is still open and was written recently counts — a crashed CLI leaves
-    /// its last turn open forever.
+    /// Whether a thread is retained at all, in the legacy fallback scan: an open
+    /// turn is held for `orphanedTurnWindow` and a closed one for as long as it
+    /// is recent. The indexed path does not ask — there, archive membership
+    /// decides and the row is authoritative even for an idle thread.
+    ///
+    /// A holder is deliberately *not* part of this. Remaining visible and
+    /// currently running are different questions, and only `isRunning` answers
+    /// the second; this one decides whether a thread that no process has open is
+    /// worth walking to at all.
     private static func isLive(holder: CodexProcessScan.Holder?, openTask: Bool?,
                                updated: TimeInterval, now: TimeInterval) -> Bool {
         if holder != nil { return true }
         return openTask == true && now - updated <= ExternalAgentKind.codex.orphanedTurnWindow
+    }
+
+    /// Whether a turn is running: it is open *and* something is still writing
+    /// it. The holder says only "a process still has this thread loaded", which
+    /// for Codex Desktop's managed app-server is a cache entry that outlives the
+    /// turn (an unanswered approval keeps the thread loaded indefinitely), so it
+    /// is not consulted — see `ExternalAgentKind.codex.runningWindow`. A legacy
+    /// rollout without lifecycle events falls back to writer recency.
+    static func isRunning(openTask: Bool?, updated: TimeInterval, now: TimeInterval) -> Bool {
+        if let openTask { return openTask && now - updated <= ExternalAgentKind.codex.runningWindow }
+        return now - updated <= ExternalAgentKind.codex.busyWindow
     }
 
     private static func indexedCodexSessions(now: TimeInterval,
@@ -466,13 +509,14 @@ struct ExternalSessionMonitor {
                       (parsed?.spawnDepth ?? 0) == 0 else { continue }
             }
             let holder = holders[row.path]
-            let live = isLive(holder: holder, openTask: parsed?.hasOpenTask, updated: updated, now: now)
+            let running = isRunning(openTask: parsed?.hasOpenTask, updated: updated, now: now)
             let info = ExternalSessionInfo(
                 kind: .codex, sessionId: row.id,
                 cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
                 startedAt: row.created * 1000, updatedAt: updated * 1000,
                 model: parsed?.model ?? "", isAlive: true,
-                isActive: live && (parsed?.hasOpenTask ?? (now - updated <= ExternalAgentKind.codex.busyWindow)),
+                isActive: running,
+                hasStalledTurn: parsed?.hasOpenTask == true && !running,
                 completionID: parsed?.completionID,
                 contextTokens: parsed?.contextUsed ?? 0, contextLimit: parsed?.contextLimit ?? 0,
                 parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",

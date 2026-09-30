@@ -38,19 +38,6 @@ final class CursorUsageStore: ObservableObject {
             readingAt = last.at
         }
     }
-
-    /// Test/preview seam: publish a parsed reading without touching the
-    /// network. Only the render harness uses it — production always goes
-    /// through `refresh()`, which owns the credential read, cache and poll.
-    func injectForPreview(plan: CursorUsageFetcher.PlanUsage?,
-                          grok: CursorUsageFetcher.GrokUsage?) {
-        self.plan = plan
-        self.grok = grok
-        self.note = nil
-        self.loading = false
-        self.readingAt = plan == nil && grok == nil ? nil : Date()
-    }
-
     /// Launch the poll. Idempotent — safe to call from every `onAppear`.
     func start() {
         timer?.invalidate()

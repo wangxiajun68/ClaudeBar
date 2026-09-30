@@ -82,11 +82,6 @@ enum CodexConfigWriter {
         "disable_response_storage",
         "model_catalog_json",
     ]
-
-    /// Preamble block written before the managed keys, once per file, so a
-    /// clobbered `config.toml` is at least traceable to the app.
-    static let managedMarker = "# Managed by ClaudeBar — [model_providers.custom] and the keys below are rewritten on every switch."
-
     /// `[model_providers.custom]` is the one table name that can collide with
     /// a table the user wrote by hand: it is Codex's own documented convention
     /// and `activeKey` defaults to `custom` (`CodexProvider.key`), so a user

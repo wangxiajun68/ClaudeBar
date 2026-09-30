@@ -23,7 +23,7 @@
 
 **460pt 而不是 424**：多出的 36pt 全给切换行——三列各 143pt，`deepseek-v4.1-flash` 这类长模型名能整名放下（424 时 127pt 的列把它截成 `deepsee...flash`），两个 Codex 额度窗口也不必缩写。
 
-**status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是**状态行的 VPN 药丸**（`VpnStatusPill`，打开 `VpnNodePickerPanel`）——它是一条连接状态，不是一种模型，所以住状态行而不占切换行的第三格；那一格现在给 Cursor 额度。
+**status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是**状态行的 VPN 药丸**（`VpnStatusPill`，切到主窗口 VPN 页）——它是一条连接状态，不是一种模型，所以住状态行而不占切换行的第三格；那一格现在给 Cursor 额度。
 
 > settings.json 缺失且 Codex 列表为空时，供应商/会话/用量替换为「未找到 settings.json」警告卡；资源条与 VPN 页头仍在。
 

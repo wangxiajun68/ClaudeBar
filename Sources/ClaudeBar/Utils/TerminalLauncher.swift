@@ -43,9 +43,6 @@ enum ResumeTerminal: String, CaseIterable, Identifiable {
         if has(.warp) { return .warp }
         return .terminal
     }
-
-    /// Only the AppleScript-driven terminals need 自动化.
-    var needsAutomation: Bool { self == .warp || self == .terminal }
 }
 
 /// Launching external terminal / editor actions shared by the menu-bar popup,

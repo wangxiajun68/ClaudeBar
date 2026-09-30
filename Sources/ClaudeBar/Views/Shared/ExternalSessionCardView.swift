@@ -13,6 +13,10 @@ struct ExternalSessionCardView: View {
     /// sub-agents and on sessions that spawned nothing.
     var childAgents: [ExternalSessionInfo] = []
     var onDoubleTap: (() -> Void)? = nil
+    /// Offered only for a session whose open turn stopped advancing (see
+    /// `ExternalSessionInfo.hasStalledTurn`). The card never deletes anything
+    /// itself — the owner runs the confirmation and the cleanup.
+    var onCleanUp: (() -> Void)? = nil
 
     private var isActive: Bool { session.isActive }
     @State private var isHovered = false
@@ -39,6 +43,12 @@ struct ExternalSessionCardView: View {
                 }
                 StatusPill(label: session.kind.displayName,
                            tint: Theme.external, ink: Theme.Ink.success)
+                if let onCleanUp, session.hasStalledTurn {
+                    ActionChip(systemImage: "bandage",
+                               tint: Theme.Ink.warning,
+                               help: "清理这个卡住的会话",
+                               action: onCleanUp)
+                }
             }
 
             HStack(spacing: 6) {

@@ -239,7 +239,6 @@ private struct ControlPlate<S: InsettableShape>: View {
 /// | `transform: translateY(-2px)` | the 2pt hover lift |
 /// | `transition: all 450ms ease-in-out` | `Theme.Animation.sparkle` |
 /// | `.text { color: #AAAAAA }` → `white` | `labelColor` |
-/// | `.sparkle { fill: #AAAAAA }` → `white`, `scale(1.2)` | `SparkleGlyph` |
 ///
 /// **Two things the CSS does that this app will not, and why:**
 ///
@@ -327,62 +326,6 @@ struct SparklePlate: View {
             .animation(reduceMotion ? nil : Theme.Animation.snappy, value: pressed)
     }
 }
-
-/// The reference's three-point sparkle: one large star and two small ones,
-/// `#AAAAAA` at rest and `white` scaled 1.2 under the pointer.
-///
-/// Drawn as a `Path` rather than borrowed from `DecorativeMotion`, because that
-/// type's `.sparkles` mark is a *pulsing* Core Animation layer — correct for the
-/// VPN CTA, which is reporting that something is running, and wrong here where
-/// the mark only has to answer the pointer. One static path, one scale.
-struct SparkleGlyph: View {
-    var size: CGFloat = 14
-    var active: Bool
-
-    private static let rest = Color(hex: 0xAAAAAA)
-
-    var body: some View {
-        ZStack {
-            // Large four-point star, lower-left of the cluster.
-            star(points: 4, innerRatio: 0.30)
-                .frame(width: size * 0.72, height: size * 0.72)
-                .offset(x: -size * 0.13, y: size * 0.08)
-            // Two small ones: upper-right and lower-right.
-            star(points: 4, innerRatio: 0.28)
-                .frame(width: size * 0.30, height: size * 0.30)
-                .offset(x: size * 0.30, y: -size * 0.26)
-            star(points: 4, innerRatio: 0.28)
-                .frame(width: size * 0.24, height: size * 0.24)
-                .offset(x: size * 0.28, y: size * 0.30)
-        }
-        .foregroundStyle(active ? Color.white : Self.rest)
-        .frame(width: size, height: size)
-        .scaleEffect(active ? 1.2 : 1)
-        .animation(.easeInOut(duration: 0.8), value: active)
-        .accessibilityHidden(true)
-    }
-
-    /// A star with `points` spikes, alternating outer and inner radius.
-    private func star(points: Int, innerRatio: CGFloat) -> some View {
-        GeometryReader { geo in
-            let r = min(geo.size.width, geo.size.height) / 2
-            let c = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            Path { p in
-                let steps = points * 2
-                for i in 0...steps {
-                    let angle = Double(i) * .pi / Double(points) - .pi / 2
-                    let radius = i.isMultiple(of: 2) ? r : r * innerRatio
-                    let pt = CGPoint(x: c.x + CGFloat(cos(angle)) * radius,
-                                     y: c.y + CGFloat(sin(angle)) * radius)
-                    if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-                }
-                p.closeSubpath()
-            }
-            .fill()
-        }
-    }
-}
-
 // MARK: - ActionButton
 
 /// The app's push button: 刷新 / 清空 / 启用 / 移除 / 打开 — every labelled
@@ -782,20 +725,6 @@ struct ActionPlateButtonStyle: ButtonStyle {
 }
 
 extension View {
-    /// `ActionButton`'s plate for a call site that builds its own `Button` and
-    /// label — a `ProgressView` swapped in while a test runs, a figure that rolls
-    /// as it updates.
-    ///
-    /// A call site that simply wants a title should use `ActionButton("…")`.
-    /// This exists so "the label is a view" does not mean "the button is a
-    /// different control", which is how the app ended up with three shapes.
-    func actionButton(tone: ControlTone = .neutral,
-                      tint: Color = Theme.claude,
-                      metrics: ControlMetrics = .regular,
-                      emphasis: ControlEmphasis = .standard) -> some View {
-        buttonStyle(ActionPlateButtonStyle(tone: tone, tint: tint, ink: nil,
-                                           metrics: metrics, emphasis: emphasis))
-    }
 }
 
 import SwiftUI

@@ -2,7 +2,7 @@
 
 Scope：`Views/Shared/GreetingCard.swift` 与其 Metal 大气
 （`Views/Shared/Atmosphere/`）、`Views/Shared/GreetingInstruments.swift`、
-`Views/Shared/GreetingTypefaceGallery.swift`、`Views/Shared/SettingsControls.swift`
+`Views/Shared/SettingsControls.swift`
 （Dashboard 顶部卡片）。本文是重构目标规格，取代 [DESIGN.md › Greeting sky window](../../DESIGN.md)
 中"信息面板"式布局；数据层（`WeatherReading`、`SkyAstronomy`、`GreetingPhrase`、
 `MachineIdentity`）保持不变。`SkyGreeting.swift` 与 `WeatherBackdrop.swift` 的
@@ -216,7 +216,7 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 | 阴 | 整片低云层，底部有波状纹理（层积云），无直射光 | coverage 0.18；天体仅留 5% 漫射亮斑；全局对比度 × 0.8 |
 | 小雨 | 远层细雨丝 + 近层稀疏虚焦雨滴 + 地平线雾化 | 远层 220 条，长 14pt，宽 0.6，速 620pt/s，α 0.22；近层 30 条，长 38pt，宽 1.4，α 0.35，模糊 4px；倾角 = 风速 × 0.6°，上限 18° |
 | 大雨 | 同上加密 + 雨幕（带状密度波）+ 溅射 | 远层 520，近层 90；每 1.6–3s 一道雨幕横扫（亮度 −12%）；卡片底边溅射 12 个/秒，寿命 0.28s |
-| 雷暴 | 厚云 + 大雨 + 闪电 | 成簇出现：1/3 概率 1.1–2.5 s 后紧跟下一次，否则 2.5–8 s。60% 为云地闪：主通道由三级尺度的直段折线构成（周期 46 / 15 / 4.5 pt），3–5 条分叉向下外侧逐渐变细变暗，白热核心 + 紫蓝光晕 + 触地辉光；同一通道 2–3 次回击，间隔 40–130 ms，每次约 30 ms 峰值后快衰减。40% 为无通道的云内闪。云底按闪电位置径向照亮，厚云处最亮。只有细通道闪烁；云层每次闪电只亮一次（首击升起、回击期间保持、随后衰减，中间不回暗），相邻两次间隔 ≥ 1.1 s，任何一秒内闪烁 ≤ 3 次（WCAG 2.3.1）。预览：`render-atmosphere-preview.py --only strike` |
+| 雷暴 | 厚云 + 大雨 + 闪电 | 成簇出现：1/3 概率 1.1–2.5 s 后紧跟下一次，否则 2.5–8 s。60% 为云地闪：主通道由三级尺度的直段折线构成（周期 46 / 15 / 4.5 pt），3–5 条分叉向下外侧逐渐变细变暗，白热核心 + 紫蓝光晕 + 触地辉光；同一通道 2–3 次回击，间隔 40–130 ms，每次约 30 ms 峰值后快衰减。40% 为无通道的云内闪。云底按闪电位置径向照亮，厚云处最亮。只有细通道闪烁；云层每次闪电只亮一次（首击升起、回击期间保持、随后衰减，中间不回暗），相邻两次间隔 ≥ 1.1 s，任何一秒内闪烁 ≤ 3 次（WCAG 2.3.1）。预览：`render-greeting-preview.py` 的雷暴档 |
 | 雪 | 三层深度雪花，布朗漂移 + 风向偏移 | 远 180（1–1.5px，速 18pt/s，模糊 1px）、中 90（2–3px，32pt/s）、近 16（5–8px，54pt/s，模糊 5px，带六角微光）；水平漂移 `sin(t×0.7 + seed) × 12pt`；地面 12pt 渐积白边 |
 | 雾 | 分层高度雾 + 缓慢流动的雾絮，远景完全溶解 | 三层雾带，密度 `exp(−y × k)`，k = 2.2 / 3.4 / 5.0；流速 2/5/9 pt/s；天体变成无边缘的柔光斑（半径 ×3，亮度 ×0.35） |
 | 毛毛雨 / 雨夹雪 / 冰雹 | 小雨参数 ×0.5 / 雨丝与雪花 6:4 混合 / 雷暴 + 1.5px 白色高速颗粒 | — |

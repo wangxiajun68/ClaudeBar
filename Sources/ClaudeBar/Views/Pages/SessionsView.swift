@@ -85,6 +85,10 @@ private struct BusyPulseRing: View {
 /// Mirrors the menu-bar popup's sessions at full width.
 struct SessionsView: View {
     @ProviderState([.sessions, .expansion]) var providerStore: ProviderStore
+    /// The session a stuck-thread cleanup was confirmed for. One dialog serves
+    /// both the tile and the grid card, so it lives on the page rather than on
+    /// each of them.
+    @State private var pendingCleanup: ExternalSessionInfo?
 
     var body: some View {
         ScrollView {
@@ -207,18 +211,41 @@ struct SessionsView: View {
             } else if tree.count == 1 {
                 // A lone session needs no grid: its swarm cluster wants the
                 // whole page width, where 60 cards can spread out.
-                ExternalSessionTile(node: tree[0])
+                ExternalSessionTile(node: tree[0], onCleanUp: requestCleanup)
             } else {
                 // Several sessions: regular grid cells, the same 宫格 the Claude
                 // and Cursor sections use. A session with no sub-agents is just
                 // a card — it is not drawn any taller than its own readout.
                 TileGrid(.pageSession) {
                     ForEach(tree) { node in
-                        ExternalSessionGridCard(node: node)
+                        ExternalSessionGridCard(node: node, onCleanUp: requestCleanup)
                     }
                 }
             }
         }
+        // One dialog for the section, driven by whichever card asked. Same
+        // reasoning as the popup's: cleanup is a Codex-wide action, so it is
+        // described once instead of in every tile.
+        .confirmationDialog(pendingCleanup.map { "清理「\($0.displayName)」？" } ?? "清理卡住的会话",
+                            isPresented: Binding(
+                                get: { pendingCleanup != nil },
+                                set: { if !$0 { pendingCleanup = nil } }
+                            ),
+                            titleVisibility: .visible) {
+            Button("清理", role: .destructive) {
+                if let session = pendingCleanup { providerStore.cleanUpExternalSession(session) }
+                pendingCleanup = nil
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这个会话的回合已经停止推进（多半是卡在审批上或写到一半就退出了）。\n"
+                 + "会先在 Codex 里删掉它的续写分支，再删除它本身；Codex 若拒绝删除，则改为归档。")
+        }
+    }
+
+    /// Ask before removing, from either card shape.
+    private func requestCleanup(_ session: ExternalSessionInfo) {
+        pendingCleanup = session
     }
 
     // MARK: Helpers
@@ -560,6 +587,9 @@ private struct CursorTileFull: View {
 /// can actually spread out.
 private struct ExternalSessionTile: View {
     let node: ProviderStore.ExternalSessionNode
+    /// Offered only while the session's open turn has stopped advancing; the
+    /// page owns the confirmation and the cleanup itself.
+    var onCleanUp: ((ExternalSessionInfo) -> Void)? = nil
     @State private var isHovered = false
 
     private var session: ExternalSessionInfo { node.session }
@@ -627,6 +657,10 @@ private struct ExternalSessionTile: View {
                     StatusPill(label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
                                 tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.external : Theme.statusIdle),
                                 ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.success : Theme.Ink.idle))
+                    if let onCleanUp, session.hasStalledTurn {
+                        ActionChip(systemImage: "bandage", tint: Theme.Ink.warning,
+                                   help: "清理这个卡住的会话") { onCleanUp(session) }
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: Theme.Space.s4) {
@@ -744,6 +778,7 @@ private struct ExternalSessionTile: View {
 /// double-click resumes the session.
 private struct ExternalSessionGridCard: View {
     let node: ProviderStore.ExternalSessionNode
+    var onCleanUp: ((ExternalSessionInfo) -> Void)? = nil
     @State private var isHovered = false
     @State private var showSwarm = false
 
@@ -789,6 +824,10 @@ private struct ExternalSessionGridCard: View {
                 StatusPill(label: isActive ? "运行中" : "空闲",
                                 tint: isActive ? Theme.external : Theme.statusIdle,
                                 ink: isActive ? Theme.Ink.success : Theme.Ink.idle)
+                if let onCleanUp, session.hasStalledTurn {
+                    ActionChip(systemImage: "bandage", tint: Theme.Ink.warning,
+                               help: "清理这个卡住的会话") { onCleanUp(session) }
+                }
             }
 
             // Context + recency, space-reserved so cards in a row stay level.

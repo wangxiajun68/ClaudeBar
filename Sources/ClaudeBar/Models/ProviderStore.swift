@@ -99,6 +99,9 @@ class ProviderStore: ObservableObject {
     private var sessionScanPending = false
     private var cursorScanPending = false
     private var externalScanPending = false
+    /// One cleanup at a time: it spawns a `codex app-server`, and two of them
+    /// racing would each try to delete the same fork.
+    private var externalCleanupPending = false
 
     /// Poll cadence to fall back to when a scan has to be deferred because the
     /// previous one is still running. Only reached when a scan outlives its
@@ -127,6 +130,53 @@ class ProviderStore: ObservableObject {
     }
     var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
     private var externalCompletionDetector = ConfirmedCompletionDetector<String>()
+
+    /// The outcome of the last stuck-thread cleanup, for the surface that asked
+    /// for it to report honestly (deleted vs downgraded to archive vs failed).
+    @Published var externalCleanupNotice: String?
+
+    /// Remove a Codex thread whose open turn stopped advancing — the state that
+    /// would otherwise be listed forever as a session that is neither running
+    /// nor resumable (see `ExternalSessionInfo.hasStalledTurn`).
+    ///
+    /// Only ever called from an explicit user action: the app never deletes a
+    /// thread on its own. `CodexAppServerClient` owns the protocol, including
+    /// deleting the target's forks first, because Codex refuses to delete a
+    /// thread that forked history still references.
+    ///
+    /// The monitor does not re-check the stall here — the caller passed the
+    /// confirmation dialog with the session's name and directory in front of
+    /// them, and a rule that quietly changed its mind between prompt and
+    /// confirmation would be worse than one that answers to the button.
+    func cleanUpExternalSession(_ session: ExternalSessionInfo) {
+        guard !externalCleanupPending else { return }
+        externalCleanupPending = true
+        externalCleanupNotice = nil
+        Task.detached(priority: .userInitiated) {
+            let outcome: Result<CodexAppServerClient.Removal, Error>
+            do { outcome = .success(try CodexAppServerClient.remove(threadId: session.sessionId)) }
+            catch { outcome = .failure(error) }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.externalCleanupPending = false
+                switch outcome {
+                case .success(.deleted):
+                    self.externalCleanupNotice = "已删除 \(session.displayName)"
+                case .success(.archived(let reason)):
+                    // Codex refused the delete and the thread was archived
+                    // instead. Say so, and say why — a cleanup that silently
+                    // did less than it promised is the bug this app exists to
+                    // not have.
+                    self.externalCleanupNotice = "已归档 \(session.displayName)：\(reason)"
+                case .failure(let error):
+                    self.externalCleanupNotice = "清理失败：\(error.localizedDescription)"
+                }
+                // Re-scan now rather than waiting for the 5 s idle poll: the row
+                // is still on screen, and it should leave with the action.
+                self.refreshExternalSessions()
+            }
+        }
+    }
 
     /// Cross-surface page requests, relayed to whoever currently owns the main
     /// window's content. Posted by the menu-bar popup and by other pages
@@ -894,19 +944,6 @@ class ProviderStore: ObservableObject {
         providers.append(p)
         saveProviders()
         return p
-    }
-
-    /// Drop a Claude-shaped preset (from `CodexPreset`) into the unified list.
-    @MainActor
-    func addFromCodexPreset(_ preset: CodexProvider) {
-        var claude = ProviderBridge.toClaude(preset)
-        claude.id = UUID()
-        if claude.models.isEmpty {
-            claude.models = [ModelConfig(name: "default")]
-            claude.activeModelID = claude.models.first?.id
-        }
-        providers.append(claude)
-        saveProviders()
     }
 
     /// Keep the shared local proxy's Claude upstream current. This does not

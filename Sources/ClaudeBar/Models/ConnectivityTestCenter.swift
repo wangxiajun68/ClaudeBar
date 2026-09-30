@@ -29,9 +29,6 @@ final class ConnectivityTestCenter: ObservableObject {
     func outcome(_ key: String) -> ConnectivityOutcome {
         outcomes[key] ?? .idle
     }
-
-    static func vendorKey(_ id: UUID) -> String { "v:\(id.uuidString)" }
-
     func testProxy(port: Int, running: Bool) {
         run(Self.proxyKey) {
             if !running {
@@ -46,18 +43,6 @@ final class ConnectivityTestCenter: ObservableObject {
                 latencyMS: hit.ok ? hit.latencyMS : nil)
         }
     }
-
-    static func vendorModelKey(_ providerID: UUID, _ modelID: UUID) -> String {
-        "v:\(providerID.uuidString):\(modelID.uuidString)"
-    }
-
-    func testVendor(id: UUID, claude: Provider, model: ModelConfig?, codex: CodexProvider?) {
-        let key = model.map { Self.vendorModelKey(id, $0.id) } ?? Self.vendorKey(id)
-        run(key) {
-            await Self.probeVendor(claude: claude, modelName: model?.name, codex: codex)
-        }
-    }
-
     private func run(_ key: String, work: @escaping () async -> ConnectivityOutcome) {
         tasks[key]?.cancel()
         outcomes[key] = ConnectivityOutcome(state: .running, detail: "检测中…")
@@ -67,54 +52,5 @@ final class ConnectivityTestCenter: ObservableObject {
             self?.outcomes[key] = result
             self?.tasks[key] = nil
         }
-    }
-
-    private static func probeVendor(claude: Provider, modelName: String?,
-                                    codex: CodexProvider?) async -> ConnectivityOutcome {
-        let name = (modelName ?? claude.activeModel?.name ?? "").trimmingCharacters(in: .whitespaces)
-        if let codex {
-            let url = codex.baseURL.trimmingCharacters(in: .whitespaces)
-            var key = codex.apiKey.trimmingCharacters(in: .whitespaces)
-            let slug = (modelName ?? codex.activeModel?.name ?? name).trimmingCharacters(in: .whitespaces)
-            if url.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL") }
-            // A loopback server has no auth to fail, so an empty key is not an
-            // error there; the probe still needs a non-empty header to send.
-            if key.isEmpty {
-                guard ProviderCatalogEntry.isLocalEndpoint(url) else {
-                    return ConnectivityOutcome(state: .failed, detail: "未填写 API Key")
-                }
-                key = ProviderCatalogEntry.localEndpointPlaceholderKey
-            }
-            if slug.isEmpty { return ConnectivityOutcome(state: .failed, detail: "未指定模型") }
-            let hit = await ConnectivityProbe.openai(
-                baseURL: url, apiKey: key, model: slug, wireAPI: codex.wireAPI)
-            return ConnectivityOutcome(
-                state: hit.ok ? .passed : .failed,
-                detail: "Codex \(hit.ok ? "✓" : "✗") \(hit.summary)",
-                latencyMS: hit.ok ? hit.latencyMS : nil)
-        }
-
-        if claude.baseURL.trimmingCharacters(in: .whitespaces).isEmpty {
-            return ConnectivityOutcome(state: .failed, detail: "未填写 Base URL")
-        }
-        var apiKey = claude.authToken.trimmingCharacters(in: .whitespaces)
-        // Same rule as the Codex branch: no auth to fail on loopback, so do not
-        // report "未填写 API Key" as a failure for a perfectly healthy local
-        // server — that reads as a misconfiguration and sends users hunting.
-        if apiKey.isEmpty {
-            guard ProviderCatalogEntry.isLocalEndpoint(claude.baseURL) else {
-                return ConnectivityOutcome(state: .failed, detail: "未填写 API Key")
-            }
-            apiKey = ProviderCatalogEntry.localEndpointPlaceholderKey
-        }
-        if name.isEmpty {
-            return ConnectivityOutcome(state: .failed, detail: "未指定模型")
-        }
-        let hit = await ConnectivityProbe.anthropic(
-            baseURL: claude.baseURL, apiKey: apiKey, model: name)
-        return ConnectivityOutcome(
-            state: hit.ok ? .passed : .failed,
-            detail: "Claude \(hit.ok ? "✓" : "✗") \(hit.summary)",
-            latencyMS: hit.ok ? hit.latencyMS : nil)
     }
 }

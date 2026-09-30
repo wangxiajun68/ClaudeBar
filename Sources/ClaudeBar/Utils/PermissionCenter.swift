@@ -215,9 +215,6 @@ final class PermissionCenter: ObservableObject {
     func systemStatus(_ permission: AppPermission) -> PermissionStatus {
         statuses[permission] ?? .askOnUse
     }
-
-    var enabledCount: Int { AppPermission.allCases.filter { isEnabled($0) }.count }
-
     /// Flip a switch. Turning one on asks macOS right away, while the user is
     /// looking at the reason — not later, from some background poll.
     func setEnabled(_ permission: AppPermission, _ on: Bool) {

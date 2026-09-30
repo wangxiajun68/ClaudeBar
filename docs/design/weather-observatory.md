@@ -38,7 +38,7 @@ draws no strip at all; the HUD's own "no weather" line already says why.
 | Source | Responsibility |
 | --- | --- |
 | `Views/Shared/GreetingCard.swift` | Store bindings, responsive band, dock zones and visible-time updates |
-| `Views/Shared/WeatherExplorer.swift` | `WeatherReading.Sky` glyph/caption mapping, the HUD's inline `ForecastStrip`, and `SolarHorizon`. `WeatherExplorer` / `SolarHorizon` no longer have a call site — the popover they were built for is gone |
+| `Views/Shared/WeatherReadingSky.swift` (was `WeatherExplorer.swift`) | `WeatherReading.Sky` glyph/caption mapping. The HUD-era `WeatherExplorer` / `SolarHorizon` / `ForecastStrip` views this file also carried lost their call site with the popover and have since been deleted; only the extension above survives |
 | `Views/Shared/WeatherBackdrop.swift` | `SkyPalette`, atmospheric Canvas and celestial projection |
 | `Utils/SkyAstronomy.swift` | Sun, moon, phase and bright-star horizon coordinates |
 | `Utils/WeatherForecastFetcher.swift` | Open-Meteo geocoding, current/daily request and parsing (overseas + fallback) |

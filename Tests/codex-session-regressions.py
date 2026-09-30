@@ -22,6 +22,11 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
     thread('idle', age=86400*30)
     thread('running', open_turn=True)
     thread('stale-open', age=86400, open_turn=True)
+    # The shape a real stuck thread takes (`cxwait2`): indexed, unarchived, one
+    # `task_started` and no `task_complete`, and stopped being written. It must
+    # stay *listed* — it is a real session the user can resume — but it must not
+    # count as running. The holder is what used to make it run forever.
+    thread('stalled', age=3600, open_turn=True)
     thread('missing', age=86400, missing=True)
     thread('malformed', age=86400, malformed=True)
     thread('archived', archived=1)
@@ -37,8 +42,14 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
         static func main() {
             let sessions = ExternalSessionMonitor.fetchActive()
             let ids = Set(sessions.map(\\.sessionId))
-            precondition(ids == Set(["idle", "running", "stale-open", "missing", "malformed"]), "Unarchived main threads must remain visible: \\(ids)")
+            precondition(ids == Set(["idle", "running", "stale-open", "stalled", "missing", "malformed"]), "Unarchived main threads must remain visible: \\(ids)")
             precondition(sessions.filter(\\.isActive).map(\\.sessionId) == ["running"])
+            // Every open turn that stopped advancing is offered for cleanup —
+            // both the hours-old one and the day-old one. `idle`, `missing` and
+            // `malformed` have no open turn at all, so they are never cleanup
+            // candidates however old they are.
+            precondition(sessions.filter(\\.hasStalledTurn).map(\\.sessionId).sorted() == ["stale-open", "stalled"],
+                         "a stopped open turn is what cleanup acts on: \\(sessions.filter(\\.hasStalledTurn).map(\\.sessionId))")
             precondition(sessions.allSatisfy { $0.displayName == "Title " + $0.sessionId })
             precondition(sessions.allSatisfy { !$0.isSubagent })
 
@@ -91,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
             precondition(outcomes == [expected.joined(separator: ",")],
                          "concurrent scans disagreed: \\(outcomes)")
 
-            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state and titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks")
+            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state means a *recently written* open turn, so a stalled one is listed but idle and offered for cleanup; titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks")
         }
     }''')
     binary = work / 'regression'
@@ -105,3 +116,42 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
                     str(root/'Sources/ClaudeBar/Utils/SessionTitle.swift'),
                     str(harness),'-o',str(binary)], check=True)
     subprocess.run([str(binary)], env={**os.environ, 'CODEX_HOME':folder}, check=True)
+
+# A second, tiny harness for the holder rule itself.
+#
+# No test here can *be* a holder: `CodexProcessScan.openRollouts()` reads the
+# live process table of whatever process runs the fixture, and CI has no
+# `codex` executable holding a rollout open, so the holder branch is
+# unreachable end to end. That is exactly the branch a stuck thread hangs off,
+# so it is exercised by calling the shipped rule with both answers instead of
+# faking a holder: a stalled rollout must read idle *either way*, which is the
+# property the fix is about, and a freshly written one must read running even
+# with no holder at all (the CLI case the rule used to get wrong by ignoring
+# non-holders' recency).
+with tempfile.TemporaryDirectory(prefix='claudebar-codex-rule-') as folder2:
+    work2 = Path(folder2)
+    harness = work2 / 'Main.swift'
+    harness.write_text('''import Foundation
+    enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }
+    @main struct Regression {
+        static func main() {
+            let now = Date().timeIntervalSince1970
+            func running(openTurn: Bool?, age: TimeInterval) -> Bool {
+                ExternalSessionMonitor.isRunning(openTask: openTurn, updated: now - age, now: now)
+            }
+            precondition(running(openTurn: true, age: 5) == true, "an open turn still being written is running")
+            precondition(running(openTurn: false, age: 5) == false, "a closed turn is never running")
+            precondition(running(openTurn: nil, age: 5) == true, "legacy rollout keeps the writer-recency fallback")
+            precondition(running(openTurn: nil, age: 3600) == false, "a quiet legacy rollout is not running")
+            precondition(running(openTurn: true, age: 3600) == false,
+                         "an open turn nobody is writing is NOT running — this is the cxwait2 shape")
+            print("PASS: running means a *recently written* open turn, independent of any holder")
+        }
+    }''')
+    binary = work2 / 'regression'
+    subprocess.run(['swiftc','-parse-as-library',
+                    str(root/'Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/JSONCoerce.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/SessionTitle.swift'),
+                    str(harness),'-o',str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)

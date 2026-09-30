@@ -51,6 +51,15 @@ extension ProviderStore {
     /// Any external session busy.
     var anyExternalBusy: Bool { activeExternalCount > 0 }
 
+    /// Root sessions whose open turn stopped advancing — a writer that died
+    /// mid-turn, or a thread Codex parked on an approval it never journals.
+    /// Roots only, for the same reason as `aliveExternalSessions`: cleanup is a
+    /// user action on a session, and a helper is not one. Read once here so the
+    /// "is this stuck?" test lives in the monitor and nowhere else.
+    var stalledExternalSessions: [ExternalSessionInfo] {
+        externalSessions.filter { $0.isAlive && !$0.isSubagent && $0.hasStalledTurn }
+    }
+
     /// One node of the Codex session tree: a user session plus the sub-agents
     /// it spawned (recursively, though Codex currently only nests one level).
     struct ExternalSessionNode: Identifiable {

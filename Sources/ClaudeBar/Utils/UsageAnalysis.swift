@@ -51,9 +51,6 @@ struct UsageAnalysis {
     let temporalTotal: Int
     let calendarRows: [Bucket]
     let calendarMaximum: Int
-    var peakShare: Double { temporalTotal > 0 ? Double(peak?.total ?? 0) / Double(temporalTotal) : 0 }
-    var topModelShare: Double { total > 0 ? Double(models.first?.tokens ?? 0) / Double(total) : 0 }
-
     init(days: [DayUsage], stats: [ModelUsage], period: UsagePeriod,
          interval: DateInterval, now: Date = Date(), calendar: Calendar = .current) {
         var parts = [0, 0, 0, 0]

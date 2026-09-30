@@ -161,11 +161,6 @@ final class ModelPriceCatalog: ObservableObject {
     func resolution(for slug: String) -> ModelPricing.Resolution? {
         ModelPricing.resolve(slug)
     }
-
-    var overrideCount: Int {
-        overrides.values.reduce(0) { $0 + $1.count }
-    }
-
     var customSlugCount: Int {
         overrides.values.filter { !$0.isEmpty }.count
     }
@@ -270,13 +265,6 @@ final class ModelPriceCatalog: ObservableObject {
         guard overrides.removeValue(forKey: slug) != nil else { return }
         commit()
     }
-
-    func revertAll() {
-        guard !overrides.isEmpty else { return }
-        overrides = [:]
-        commit()
-    }
-
     // MARK: - Checking
 
     /// Run a full check against every source.
@@ -398,16 +386,6 @@ final class ModelPriceCatalog: ObservableObject {
     }
 
     // MARK: - Check queue
-
-    /// Replace the pending candidates with a fetch's findings. Rows that agree
-    /// with what is already live are recorded as `isUnchanged` and not applied.
-    func setCandidates(_ rows: [Candidate], report: Report) {
-        candidates = rows
-        self.report = report
-        lastCheckedAt = report.at
-        saveMeta()
-    }
-
     func applyAllCandidates() {
         for candidate in candidates where !candidate.isUnchanged {
             apply(candidate)

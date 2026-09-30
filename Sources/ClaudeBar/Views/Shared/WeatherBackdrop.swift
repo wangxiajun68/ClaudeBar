@@ -614,32 +614,6 @@ struct SkyPalette {
                       isLightGround: false, highlight: Color(hex: 0xFFC24D))
         }
     }
-
-    /// Interpolate atmospheric color anchors using the locally calculated solar altitude.
-    /// Overcast and precipitation keep their own weather-specific palettes.
-    func daybreak(elevation: Double?) -> SkyPalette {
-        guard let elevation else { return self }
-        let anchors: [(Double, UInt, UInt)] = [
-            (-18, 0x050B1F, 0x0B1A3A), (-9, 0x0E1E4D, 0x3A2A6B),
-            (-3, 0x1F3A7A, 0xE9788A), (5, 0x3B6FB8, 0xFFD8A0),
-            (30, 0x2F6FD6, 0x9CCBF5), (65, 0x1E5FCC, 0x7FB8F0)
-        ]
-        let upper = anchors.firstIndex { $0.0 >= elevation } ?? anchors.count - 1
-        let lower = max(0, upper - 1)
-        let fraction = min(1, max(0, (elevation - anchors[lower].0) / max(1, anchors[upper].0 - anchors[lower].0)))
-        func mix(_ a: UInt, _ b: UInt) -> Color {
-            func channel(_ shift: UInt) -> Double {
-                let x = Double((a >> shift) & 255), y = Double((b >> shift) & 255)
-                return (x + (y - x) * fraction) / 255
-            }
-            return Color(red: channel(16), green: channel(8), blue: channel(0))
-        }
-        var result = self
-        result.top = mix(anchors[lower].1, anchors[upper].1)
-        result.bottom = mix(anchors[lower].2, anchors[upper].2)
-        return result
-    }
-
     /// No reading: the page's own ice, dark type. It must not announce a sky.
     static var neutral: SkyPalette {
         if Theme.isDark {

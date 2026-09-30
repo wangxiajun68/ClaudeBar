@@ -383,15 +383,6 @@ enum ModelPricing {
             rows.sorted { $0.effectiveFrom < $1.effectiveFrom }
         }
     }
-
-    /// The overrides in force, for the settings card. A copy, so the caller
-    /// cannot mutate the store through it.
-    static var installedOverrides: [String: [PriceOverride]] {
-        overrideLock.lock()
-        defer { overrideLock.unlock() }
-        return overrides
-    }
-
     /// Resolve a recorded model slug against both tables, as of `date`.
     ///
     /// Longest-match still decides (`glm-5` loses to `glm-5.3-flash`), but the

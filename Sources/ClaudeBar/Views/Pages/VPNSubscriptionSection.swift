@@ -183,12 +183,6 @@ struct VpnSubscriptionSection: View {
         .background(browsing ? Theme.claude.opacity(0.045) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-
-    private func trafficSummary(_ sub: VpnSubscription) -> String {
-        if sub.total <= 0 { return "流量未查询 · \(expireText(sub))" }
-        return "剩余 \(VpnFormat.bytes(sub.remainingBytes)) · 已用 \(VpnFormat.bytes(sub.usedBytes))/\(VpnFormat.bytes(sub.total)) · \(expireText(sub))"
-    }
-
     private func expireText(_ sub: VpnSubscription) -> String {
         guard let expires = sub.expires else { return "未查询" }
         let date = Self.day.string(from: expires)
