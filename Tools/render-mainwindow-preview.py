@@ -154,7 +154,7 @@ def fixture_text_field(text, expr, path):
     that property. Only the field itself changes — `fixtureField` takes the same
     `Binding<String>` the field did.
     """
-    return 'fixtureField(' + text + ', text: ' + expr + ')' 
+    return 'fixtureField(' + text + ', text: ' + expr + ')'
 
 def rewrite_text_fields(text, path):
     """Replace every `TextField(_:text:)` in a page slice with `fixtureField`.
@@ -1216,7 +1216,7 @@ assert '.scrollHoverGate()' not in _traffic, 'TrafficView.swift: a scrollHoverGa
 _traffic = _traffic.replace(CONVERSATION_TAIL, CONVERSATION_TOP)
 assert CONVERSATION_TOP.strip() in _traffic, 'TrafficView.swift: the conversation body lost its top alignment'
 assert '.frame(maxHeight: .infinity, alignment: .top)' in _traffic, \
-    'TrafficView.swift: the row list lost its fill' 
+    'TrafficView.swift: the row list lost its fill'
 # Seed the list cache the page would otherwise fill in `onAppear`. See
 # `inject_member` for why a still needs this and why nothing else does.
 _traffic = inject_member(
@@ -1652,11 +1652,11 @@ source += r'''
         let rec = trafficRecords()[0]
         let response = """
         {"content":[{"type":"text","text":"概览页的资源条已经换成宫格：\n\n1. CPU / GPU / 内存 / 硬盘 / 连接 / 风扇 六格等宽；\n2. 风扇瓦片保留点击调速，其余区域打开详情面板；\n3. 能源流向卡在资源条下方，用 SMC 实时读数。"}]}
-        
+
 """
         let request = """
         {"model":"claude-opus-5-5","max_tokens":4096,"system":"You are Claude Code.","messages":[{"role":"user","content":"把概览页的资源条换成宫格，风扇瓦片保留调速。"}]}
-        
+
 """
         return CaptureDetail(summary: rec,
             requestJSON: request, rewrittenJSON: request,
