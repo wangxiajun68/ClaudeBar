@@ -4,6 +4,7 @@ import AppKit
 /// Subscription URL manager: add / edit / copy, remaining traffic, expiry.
 /// Mirrors clash-verge's profile extra (`subscription-userinfo`).
 struct VpnSubscriptionSection: View {
+    var onBrowse: () -> Void = {}
     @ObservedObject private var store = VpnSubscriptionStore.shared
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var prefs = AppPreferences.shared
@@ -12,32 +13,29 @@ struct VpnSubscriptionSection: View {
     @State private var editor: SubEditor?
     @State private var busyID: UUID?
     @State private var queryingAll = false
-    @State private var hoverID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: Theme.Space.s8) {
-                SectionHeader(icon: "link", title: "订阅", tint: Theme.claude)
+                HStack(spacing: 8) {
+                    AppGlyph(name: "link", size: 16).foregroundColor(Theme.Ink.claude)
+                    Text("订阅").font(Theme.Font.body)
+                }
                 Spacer(minLength: 0)
-                Button {
-                    Task {
-                        queryingAll = true
-                        await store.queryAll()
-                        queryingAll = false
-                    }
-                } label: {
-                    ZStack {
-                        Text("查询流量")
-                            .opacity(queryingAll ? 0 : 1)
-                        if queryingAll {
-                            ProgressView().controlSize(.mini)
+                Button { editor = .add } label: { AppGlyph(name: "plus", size: 14) }
+                    .buttonStyle(.plain).help("添加订阅")
+                Menu {
+                    Button(queryingAll ? "查询中…" : "查询全部流量") {
+                        Task {
+                            queryingAll = true
+                            await store.queryAll()
+                            queryingAll = false
                         }
                     }
-                    .frame(width: 72, height: 22)
-                }
-                .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil)
-                .help("向机场查询剩余流量与有效期（不替换节点配置）")
-                ActionButton("添加链接") { editor = .add }
+                    .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil)
+                } label: { AppGlyph(name: "ellipsis", size: 14) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("订阅操作")
             }
 
             if let err = store.errorMessage {
@@ -53,9 +51,10 @@ struct VpnSubscriptionSection: View {
                     .foregroundColor(Theme.textTertiary())
                     .padding(.vertical, Theme.Space.s8)
             } else {
-                VStack(spacing: Theme.Space.s8) {
+                LazyVStack(spacing: 0) {
                     ForEach(store.subscriptions) { sub in
                         card(sub)
+                        if sub.id != store.subscriptions.last?.id { HairlineDivider() }
                     }
                 }
             }
@@ -101,109 +100,88 @@ struct VpnSubscriptionSection: View {
         let active = sub.id == store.activeID
         let browsing = (store.browsingID ?? store.activeID) == sub.id
         let busy = busyID == sub.id
-        let hovered = hoverID == sub.id
         let runningHere = active && manager.isRunning
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                Circle()
-                    .fill(active ? Theme.claude : Theme.textTertiary().opacity(0.4))
-                    .frame(width: 6, height: 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(sub.name)
-                            .font(Theme.Font.bodySmall)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Button { store.browse(sub.id); onBrowse() } label: {
+                    HStack(spacing: 8) {
+                        AppGlyph(name: runningHere ? "checkmark.circle.fill" : "link", size: 14)
+                            .foregroundColor(runningHere ? Theme.Ink.claude : Theme.textSecondary)
+                        Text(sub.name).font(Theme.Font.bodySmall)
                             .foregroundColor(Theme.textPrimary)
-                            .lineLimit(1)
-                        if active {
-                            StatusPill(label: "使用中", tint: Theme.claude, ink: Theme.Ink.claude)
-                        } else if browsing {
-                            Text("查看中")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
+                        if browsing && !active {
+                            Text("查看中").font(Theme.Font.micro).foregroundColor(Theme.Ink.claude)
                         }
-                        Text("\(sub.nodeCount) 节点")
-                            .rollingNumber()
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textTertiary())
+                        Spacer(minLength: 0)
                     }
-                    Text(trafficSummary(sub))
-                        .rollingNumber()
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textTertiary())
-                        .lineLimit(1)
+                    .contentShape(Rectangle())
                 }
-                Spacer(minLength: 8)
-                ActionButton(runningHere ? "使用中" : (active ? "启动" : "使用"),
-                             emphasis: runningHere ? .standard : .primary) {
-                    activate(sub)
+                .buttonStyle(.plain)
+                .help("查看节点 · 不切换运行配置")
+                if busy { ProgressView().controlSize(.mini) }
+                Menu {
+                    Button("查看节点") { store.browse(sub.id); onBrowse() }
+                    Button("更新节点配置") {
+                        Task {
+                            busyID = sub.id
+                            if await store.refresh(sub.id), store.activeID == sub.id {
+                                manager.reloadConfig()
+                            }
+                            busyID = nil
+                        }
+                    }
+                    Button("查询流量与到期时间") {
+                        Task {
+                            busyID = sub.id
+                            _ = await store.queryInfo(sub.id)
+                            busyID = nil
+                        }
+                    }
+                    Divider()
+                    Button("复制订阅链接") { store.copyURL(sub.id) }
+                    if let home = sub.homeURL, let url = URL(string: home) {
+                        Button("打开机场主页") { NSWorkspace.shared.open(url) }
+                    }
+                    Button("编辑订阅") { editor = .edit(sub) }
+                    Button("删除", role: .destructive) { pendingDelete = sub }
+                } label: { AppGlyph(name: "ellipsis", size: 13) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .disabled(busyID != nil || queryingAll)
+                .help("订阅详情与操作")
+            }
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(sub.total > 0 ? "剩余 " + VpnFormat.bytes(sub.remainingBytes) : "流量未查询")
+                        .font(Theme.Font.captionMono).foregroundColor(Theme.textPrimary)
+                    Text("\(sub.nodeCount) 节点 · \(expireText(sub))")
+                        .font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                .disabled(runningHere || busy)
-                .help(runningHere ? "内核正在用这份订阅" : "切换内核到这份订阅并启动")
-                cardTools(sub, busy: busy)
+                Spacer(minLength: 0)
+                if runningHere {
+                    Text("运行中").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
+                } else {
+                    ActionButton(active ? "启动" : "启用", tone: .neutral) { activate(sub) }
+                        .disabled(busyID != nil || manager.state == .starting || queryingAll)
+                        .help("切换并启用这份订阅")
+                }
             }
             if sub.total > 0 {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.textTertiary().opacity(0.18))
-                        Capsule()
-                            .fill(barColor(sub.usedRatio))
-                            .frame(width: max(4, geo.size.width * sub.usedRatio))
+                        Capsule().fill(Theme.hairline)
+                        Capsule().fill(Theme.claude.opacity(0.65))
+                            .frame(width: geo.size.width * sub.usedRatio)
                     }
                 }
-                .frame(height: 3)
+                .frame(height: 2)
+                .help("已用 " + VpnFormat.bytes(sub.usedBytes) + " / " + VpnFormat.bytes(sub.total))
             }
         }
-        .padding(.horizontal, Theme.Space.s12)
-        .padding(.vertical, 8)
-        .tile(tint: browsing ? Theme.claude : nil, hovered: hovered)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            if inside { hoverID = sub.id }
-            else if hoverID == sub.id { hoverID = nil }
-        }
-        .onTapGesture { store.browse(sub.id) }
-        .help("查看「\(sub.name)」的节点。切换出口请点「使用」。")
-        .opacity(busy ? 0.85 : 1)
-    }
-
-    private func cardTools(_ sub: VpnSubscription, busy: Bool) -> some View {
-        HStack(spacing: 2) {
-            ActionChip(systemImage: "arrow.clockwise", tint: Theme.textSecondary, help: "更新节点配置") {
-                Task {
-                    busyID = sub.id
-                    if await store.refresh(sub.id), store.activeID == sub.id {
-                        manager.reloadConfig()
-                    }
-                    busyID = nil
-                }
-            }
-            .disabled(busy || queryingAll)
-            ActionChip(systemImage: "info.circle", tint: Theme.textSecondary, help: "查询剩余流量与有效期") {
-                Task {
-                    busyID = sub.id
-                    _ = await store.queryInfo(sub.id)
-                    busyID = nil
-                }
-            }
-            .disabled(busy || queryingAll)
-            Menu {
-                Button("复制订阅链接") { store.copyURL(sub.id) }
-                if let home = sub.homeURL, let u = URL(string: home) {
-                    Button("打开机场主页") { NSWorkspace.shared.open(u) }
-                }
-                Button("编辑名称与链接") { editor = .edit(sub) }
-                Button("删除", role: .destructive) { pendingDelete = sub }
-            } label: {
-                AppGlyph(name: "ellipsis", size: 12)
-                    .foregroundColor(Theme.textSecondary)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 22, height: 22)
-            .help("复制、编辑、删除")
-        }
+        .padding(.horizontal, 10).padding(.vertical, 14)
+        .background(browsing ? Theme.claude.opacity(0.045) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private func trafficSummary(_ sub: VpnSubscription) -> String {

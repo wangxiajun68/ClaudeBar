@@ -4,32 +4,30 @@ import SwiftUI
 /// VPN 页的「流量日志」：内核每条 TCP 连接的域名、命中的规则、走出的出口。
 ///
 /// 只看 `VpnDomainLog`，所以一行日志不会让 `VPNView` 的页头、订阅卡与节点宫格
-/// 重排 —— 与 `VpnLogConsole` 同一条隔离规则。右栏高度由左侧内容决定，
-/// 日志在卡片内部滚动。
+/// 重排。工作区高度由窗口决定，日志在独立视口内部滚动。
 struct VpnDomainLogSection: View {
+    var isVisible = true
     @ObservedObject private var log = VpnDomainLog.shared
     @ObservedObject private var manager = VpnManager.shared
 
     @State private var mode: Mode = .detail
     @State private var routeFilter: RouteFilter = .all
     @State private var query = ""
+    @State private var failedOnly = false
+    @State private var routeCounts: [VpnDomainRoute: Int] = [:]
+    @State private var matchedCount = 0
+    @State private var selectedEntry: VpnDomainEntry?
+    @State private var pendingRows = 0
+    @State private var lastSeenID: UInt64?
     @State private var copied = false
     @State private var confirmClear = false
     @State private var followTail = true
     @State private var scrollingDetail = false
     @State private var detailAtTail = true
 
-    /// Detail rows after the *route* filter; the search pass feeds it.
+    /// Immutable results from the background query; body does no historical folds.
     @State private var visibleRows: [VpnDomainEntry] = []
-    /// Detail rows after the *search* only. The route pill's counts have to be
-    /// read from this, not from `visibleRows`: counting inside the already
-    /// route-filtered set shows `0` for every pill except the selected one.
-    @State private var queryRows: [VpnDomainEntry] = []
     @State private var visibleStats: [VpnDomainLogStat] = []
-    /// Route tallies of `visibleRows`, folded once per recompute instead of in
-    /// the body: `summaryTable` is evaluated on every publish, and three
-    /// `reduce` passes plus a full per-domain fold over a 1000-row ring is not
-    /// something to redo for a digit that changed in the store.
     @State private var tallyProxied = 0
     @State private var tallyDirect = 0
     @State private var tallyReject = 0
@@ -70,46 +68,42 @@ struct VpnDomainLogSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            SectionHeader(icon: "globe.asia.australia", title: "流量日志", tint: Theme.claude)
             toolbar
-            Text(mode == .connections
-                 ? "显示当前连接累计上传／下载；关闭的连接会移除。短连接可能在采样间隔内结束；进程名以内核识别结果为准。"
-                 : "每行是一条新建 TCP 连接，不等同于一次请求。历史日志没有字节数；切换「实时连接」查看上传、下载与进程。")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textTertiary())
-                .fixedSize(horizontal: false, vertical: true)
             HairlineDivider()
             content
-                .id("\(mode.rawValue)|\(routeFilter.rawValue)|\(query)")
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .panelCard()
-        .onAppear { recompute() }
-        .onChange(of: log.revision) { _, _ in recompute() }
-        .onChange(of: routeFilter) { _, _ in
-            followTail = true
-            copied = false
-            recompute()
-        }
-        .onChange(of: query) { _, _ in
-            followTail = true
-            copied = false
-            recompute()
-        }
-        .onChange(of: mode) { _, _ in
-            followTail = true
-            copied = false
+        .vpnSurface()
+        .foregroundColor(Theme.textPrimary)
+        .task(id: requestKey) { await recompute() }
+        .onChange(of: routeFilter) { _, _ in resetFollow() }
+        .onChange(of: query) { _, _ in resetFollow() }
+        .onChange(of: failedOnly) { _, _ in resetFollow() }
+        .onChange(of: mode) { _, _ in resetFollow() }
+        .popover(item: $selectedEntry) { entry in
+            VStack(alignment: .leading, spacing: 12) {
+                Text(entry.endpoint).font(Theme.Font.body).textSelection(.enabled)
+                LabeledContent("时间", value: entry.timeText)
+                LabeledContent("路由", value: entry.route.label)
+                LabeledContent("规则", value: entry.rule)
+                LabeledContent("出口", value: entry.outbound)
+                LabeledContent("结果", value: entry.failed ? "失败" : "已记录")
+            }
+            .font(Theme.Font.caption)
+            .textSelection(.enabled)
+            .padding(20).frame(width: 420)
         }
         .alert("清空流量日志？", isPresented: $confirmClear) {
             Button("清空", role: .destructive) {
                 log.clear()
-                recompute()
+                resetFollow()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将清空 \(log.received) 次连接记录与按域名的汇总，无法恢复。"
+            Text("将清空当前保留的 \(log.entries.count) 条记录与汇总，无法恢复。"
                  + "磁盘上的 core.log 不受影响。")
                 .rollingNumber()
         }
@@ -118,54 +112,100 @@ struct VpnDomainLogSection: View {
     // MARK: Toolbar
 
     private var toolbar: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Theme.Space.s8) {
-                    modePicker
-                    Spacer(minLength: Theme.Space.s8)
-                    logActions
-                }
-                VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    modePicker
-                    HStack {
-                        Spacer(minLength: 0)
-                        logActions
+        GeometryReader { geometry in
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    AppGlyph(name: "globe.asia.australia", size: 16)
+                        .foregroundColor(Theme.Ink.claude)
+                    if geometry.size.width >= 1000 {
+                        Text("流量日志").font(Theme.Font.body).fixedSize()
                     }
                 }
+                .accessibilityLabel("流量日志")
+                .help(mode == .connections
+                      ? "当前活动连接的累计流量；短连接可能在采样间隔内结束。"
+                      : "保留 \(log.entries.count.formatted()) / \(VpnDomainLog.limit.formatted()) 条；每条记录是一条新建连接。")
+                modePicker(compact: geometry.size.width < 720)
+                InstrumentSearchField(prompt: "搜索域名、出口、规则", text: $query)
+                    .frame(minWidth: 100, maxWidth: .infinity)
+                routePicker
+                logActions
             }
-            SegmentedCapsule(items: RouteFilter.allCases,
-                             selection: routeFilter,
-                             title: { $0.label },
-                             count: { filter in
-                                 if mode == .connections {
-                                     return searchedConnections.filter { filter.route == nil || $0.route == filter.route }.count
-                                 }
-                                 return filter == .all ? queryRows.count : routeCount(filter)
-                             },
-                             tint: Theme.Ink.claude,
-                             onSelect: { routeFilter = $0 })
-            InstrumentSearchField(prompt: mode == .connections ? "域名 / 进程 / 出口 / 规则" : "域名 / 出口 / 规则", text: $query)
+            .frame(height: 36)
+        }
+        .frame(height: 36)
+    }
+
+    private func modePicker(compact: Bool) -> some View {
+        SegmentedCapsule(items: Mode.allCases, selection: mode,
+                         title: { compact && $0 == .connections ? "连接" : $0.label },
+                         symbol: compact ? nil : modeSymbol,
+                         tint: Theme.Ink.claude,
+                         onSelect: { mode = $0 })
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("日志视图")
+    }
+
+    private func modeSymbol(_ item: Mode) -> String {
+        switch item {
+        case .detail: return "list.bullet.rectangle"
+        case .summary: return "chart.bar.xaxis"
+        case .connections: return "arrow.triangle.branch"
         }
     }
 
-    private var modePicker: some View {
-        SegmentedCapsule(items: Mode.allCases, selection: mode,
-                         title: { $0.label }, tint: Theme.Ink.claude,
-                         onSelect: { mode = $0 })
-            .fixedSize(horizontal: true, vertical: false)
+    private var routePicker: some View {
+        HStack(spacing: 8) {
+            Picker("路由", selection: $routeFilter) {
+                ForEach(RouteFilter.allCases) { filter in
+                    let count = mode == .connections
+                        ? searchedConnections.filter { filter.route == nil || $0.route == filter.route }.count
+                        : (filter.route.map { routeCounts[$0, default: 0] } ?? matchedCount)
+                    Text("\(filter.label) · \(count)").tag(filter)
+                }
+            }
+            .labelsHidden().frame(width: 105)
+            if mode != .connections {
+                Toggle("仅失败", isOn: $failedOnly)
+                    .toggleStyle(.checkbox).font(Theme.Font.caption)
+                    .fixedSize()
+            }
+        }
+        .controlSize(.small)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var logActions: some View {
-        HStack(spacing: Theme.Space.s8) {
-            RollingNumberText("\(visibleCount) \(mode == .summary ? "域名" : "条")")
-                .font(Theme.Font.captionMono)
-                .foregroundColor(Theme.textSecondary)
-                .monospacedDigit()
-            ActionButton(copied ? "已复制" : "复制") { copyVisible() }
+        HStack(spacing: 4) {
+            if mode == .detail {
+                Button {
+                    followTail.toggle()
+                    if followTail { pendingRows = 0 }
+                } label: {
+                    AppGlyph(name: followTail ? "arrow.down.to.line" : "pause", size: 14)
+                        .frame(width: 28, height: 32)
+                }
+                .buttonStyle(.plain).foregroundColor(followTail ? Theme.Ink.claude : Theme.textSecondary)
+                .font(Theme.Font.caption)
+                .accessibilityLabel(followTail ? "暂停跟随" : "跟随最新记录")
+                .help("跟随最新记录；向上滚动自动暂停")
+            }
+            Button { copyVisible() } label: {
+                AppGlyph(name: copied ? "checkmark" : "doc.on.doc", size: 14)
+                    .foregroundColor(copied ? Theme.Ink.success : Theme.textSecondary)
+                    .frame(width: 28, height: 32)
+            }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "已复制" : "复制日志")
                 .disabled(visibleCount == 0)
+                .help("复制当前筛选结果")
             if mode != .connections {
-                ActionButton("清空", tone: .destructive) { confirmClear = true }
-                    .disabled(log.received == 0)
+                Menu {
+                    Button("清空记录", role: .destructive) { confirmClear = true }
+                        .disabled(log.received == 0)
+                } label: { AppGlyph(name: "ellipsis", size: 14) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("日志操作")
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -203,13 +243,6 @@ struct VpnDomainLogSection: View {
         }
     }
 
-    /// Counted across the *search* set, not the route-filtered one — otherwise
-    /// every pill but the selected one reads 0.
-    private func routeCount(_ filter: RouteFilter) -> Int {
-        guard let route = filter.route else { return 0 }
-        return queryRows.reduce(0) { $0 + ($1.route == route ? 1 : 0) }
-    }
-
     private var searchedConnections: [VpnDomainConnection] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return log.connections.filter {
@@ -232,7 +265,7 @@ struct VpnDomainLogSection: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(connection.endpoint)
                             .font(Theme.Font.console)
-                            .foregroundColor(routeInk(connection.route))
+                            .foregroundColor(Theme.textPrimary)
                             .textSelection(.enabled)
                         HStack(spacing: Theme.Space.s12) {
                             Text(connection.process)
@@ -259,78 +292,119 @@ struct VpnDomainLogSection: View {
     // MARK: Detail
 
     private var detailConsole: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(visibleRows) { row in
-                        Text(row.consoleLine)
-                            .font(Theme.Font.console)
-                            .foregroundColor(rowColor(row))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .help(row.consoleLine)
-                            .id(row.id)
-                            .contextMenu {
-                                Button("复制该行") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(row.consoleLine, forType: .string)
+        GeometryReader { geometry in
+            let width = max(650, geometry.size.width)
+            ScrollView(.horizontal) {
+                VStack(spacing: 0) {
+                    detailHeader.frame(width: width)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(visibleRows) { row in
+                                    detailRow(row).id(row.id)
                                 }
                             }
-                    }
-                }
-                .padding(Theme.Space.s8)
-            }
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .frame(maxHeight: .infinity)
-            .background(Theme.textTertiary().opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
-            // Auto-follow is a convenience, not a cage: the console used to jump
-            // to the newest line unconditionally, so reading back was impossible.
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                let distanceFromBottom = geo.contentSize.height
-                    + geo.contentInsets.bottom
-                    - (geo.contentOffset.y + geo.containerSize.height)
-                return distanceFromBottom <= Self.tailTolerance
-            } action: { _, atTail in
-                detailAtTail = atTail
-                if scrollingDetail { followTail = atTail }
-            }
-            .onScrollPhaseChange { _, phase in
-                switch phase {
-                case .tracking, .interacting, .decelerating:
-                    scrollingDetail = true
-                    followTail = detailAtTail
-                case .idle:
-                    if scrollingDetail { followTail = detailAtTail }
-                    scrollingDetail = false
-                default:
-                    break
-                }
-            }
-            .onDisappear { scrollingDetail = false }
-            .onChange(of: visibleRows.last?.id) { _, id in
-                guard followTail, !scrollingDetail, let id else { return }
-                proxy.scrollTo(id, anchor: .bottom)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if !followTail {
-                    ActionButton("回到最新") {
-                        followTail = true
-                        if let id = visibleRows.last?.id {
+                        }
+                        .defaultScrollAnchor(.bottom, for: .initialOffset)
+                        .onScrollGeometryChange(for: Bool.self) { geo in
+                            geo.contentSize.height + geo.contentInsets.bottom
+                                - (geo.contentOffset.y + geo.containerSize.height) <= Self.tailTolerance
+                        } action: { _, atTail in
+                            detailAtTail = atTail
+                            if scrollingDetail { followTail = atTail }
+                        }
+                        .onScrollPhaseChange { _, phase in
+                            switch phase {
+                            case .tracking, .interacting, .decelerating:
+                                scrollingDetail = true
+                                followTail = detailAtTail
+                            case .idle:
+                                if scrollingDetail { followTail = detailAtTail }
+                                scrollingDetail = false
+                            default: break
+                            }
+                        }
+                        .onDisappear { scrollingDetail = false }
+                        .onChange(of: visibleRows.last?.id) { _, id in
+                            guard followTail, !scrollingDetail, let id else { return }
                             proxy.scrollTo(id, anchor: .bottom)
                         }
+                        .onChange(of: followTail) { _, follow in
+                            if follow, let id = visibleRows.last?.id {
+                                pendingRows = 0
+                                proxy.scrollTo(id, anchor: .bottom)
+                            }
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            if !followTail {
+                                ActionButton(pendingRows > 0 ? "\(pendingRows) 条新记录 · 回到最新" : "回到最新", tone: .neutral) {
+                                    followTail = true
+                                    pendingRows = 0
+                                    if let id = visibleRows.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                                }
+                                .padding(8)
+                            }
+                        }
+                        .frame(width: width)
                     }
-                    .padding(Theme.Space.s8)
                 }
+                .frame(width: width, height: geometry.size.height)
             }
         }
     }
 
-    /// `Theme.Ink.*` — the signal hues that are legible as *text* (the raw
-    /// accent colours are 1.8–3.4:1 on the light canvas).
-    private func rowColor(_ row: VpnDomainEntry) -> Color {
-        if row.failed { return Theme.Ink.error }
-        return routeInk(row.route)
+    private var detailHeader: some View {
+        HStack(spacing: 12) {
+            Text("时间").frame(width: 64, alignment: .leading)
+            Text("域名").frame(maxWidth: .infinity, alignment: .leading)
+            Text("路由").frame(width: 52, alignment: .leading)
+            Text("出口").frame(width: 160, alignment: .leading)
+            Text("结果").frame(width: 42, alignment: .trailing)
+        }
+        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+        .padding(.horizontal, 8).frame(height: 32)
+        .background(Theme.bgSecondary)
+    }
+
+    private func detailRow(_ row: VpnDomainEntry) -> some View {
+        // Text remains text: no row button or tap gesture can steal selection.
+        HStack(spacing: 12) {
+            Text(row.timeText).foregroundColor(Theme.textSecondary)
+                .frame(width: 64, alignment: .leading)
+            Text(row.endpoint).foregroundColor(Theme.textPrimary)
+                .lineLimit(1).truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(row.route.label).foregroundColor(routeInk(row.route))
+                .frame(width: 52, alignment: .leading)
+            Text(row.outbound).foregroundColor(Theme.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
+                .frame(width: 160, alignment: .leading)
+            Button { selectedEntry = row } label: {
+                AppGlyph(name: row.failed ? "exclamationmark.circle" : "ellipsis", size: 12)
+                    .foregroundColor(row.failed ? Theme.Ink.error : Theme.textSecondary)
+                    .frame(width: 42, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("查看完整连接详情")
+            .accessibilityLabel(row.failed ? "失败 · 查看详情" : "查看连接详情")
+        }
+        .font(Theme.Font.captionMono)
+        .textSelection(.enabled)
+        .padding(.horizontal, 8).frame(height: 30)
+        .frame(maxWidth: .infinity)
+        .background(row.id % 2 == 0 ? Theme.bgSecondary.opacity(0.65) : Color.clear)
+        .help(row.consoleLine)
+        .contextMenu {
+            Button("复制该行") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(row.consoleLine, forType: .string)
+            }
+            Button("复制域名") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(row.host, forType: .string)
+            }
+        }
     }
 
     // MARK: Summary
@@ -340,6 +414,7 @@ struct VpnDomainLogSection: View {
             ScrollView([.horizontal, .vertical]) {
                 summaryTableContent
                     .frame(width: max(640, geometry.size.width), alignment: .leading)
+                    .frame(minHeight: geometry.size.height, alignment: .topLeading)
             }
         }
     }
@@ -379,7 +454,7 @@ struct VpnDomainLogSection: View {
     private func tally(_ label: String, _ value: String, tint: Color? = nil) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .foregroundColor(Theme.textTertiary())
+                .foregroundColor(Theme.textSecondary)
             Text(value)
                 .font(Theme.Font.captionMono)
                 .foregroundColor(tint ?? Theme.textPrimary)
@@ -397,7 +472,7 @@ struct VpnDomainLogSection: View {
             Text("失败").frame(width: 44, alignment: .trailing)
         }
         .font(Theme.Font.microMono)
-        .foregroundColor(Theme.textTertiary())
+        .foregroundColor(Theme.textSecondary)
         .padding(.horizontal, Theme.Space.s6)
         .padding(.vertical, 3)
     }
@@ -421,7 +496,7 @@ struct VpnDomainLogSection: View {
                 .frame(width: 76, alignment: .leading)
             Text(stat.lastTimeText.isEmpty ? "—" : stat.lastTimeText)
                 .font(Theme.Font.console)
-                .foregroundColor(Theme.textTertiary())
+                .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: 72, alignment: .trailing)
             Text(stat.lastOutbound.isEmpty ? "—" : stat.lastOutbound)
@@ -523,39 +598,57 @@ struct VpnDomainLogSection: View {
 
     // MARK: Cache / actions
 
-    private func recompute() {
-        // Called only when data, query or route changes. Revision alone is
-        // insufficient: filters must work even when no new log has arrived.
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        queryRows = q.isEmpty ? log.entries : log.entries.filter { row in
-            row.host.lowercased().contains(q)
-                || row.outbound.lowercased().contains(q)
-                || row.rule.lowercased().contains(q)
-        }
-        guard let route = routeFilter.route else {
-            visibleRows = queryRows
-            tallyRoutes()
-            visibleStats = VpnDomainLog.stat(entries: visibleRows)
-            return
-        }
-        visibleRows = queryRows.filter { $0.route == route }
-        tallyRoutes()
-        visibleStats = VpnDomainLog.stat(entries: visibleRows)
+    private struct RequestKey: Equatable {
+        let revision: Int
+        let isVisible: Bool
+        let mode: Mode
+        let route: RouteFilter
+        let query: String
+        let failedOnly: Bool
     }
 
-    /// Folded once per pass, not in `body` — see the tallies' comment.
-    private func tallyRoutes() {
-        var proxied = 0, direct = 0, reject = 0
-        for row in visibleRows {
-            switch row.route {
-            case .proxied: proxied += 1
-            case .direct: direct += 1
-            case .reject: reject += 1
-            }
+    private var requestKey: RequestKey {
+        RequestKey(revision: mode == .connections ? 0 : log.revision,
+                   isVisible: isVisible, mode: mode, route: routeFilter, query: query, failedOnly: failedOnly)
+    }
+
+    private func resetFollow() {
+        followTail = true
+        pendingRows = 0
+        lastSeenID = nil
+        copied = false
+    }
+
+    private func recompute() async {
+        guard isVisible, mode != .connections else { return }
+        let entries = log.entries
+        let key = requestKey
+        // Debounce typing; task identity cancels obsolete searches and page work.
+        if !key.query.isEmpty {
+            do { try await Task.sleep(nanoseconds: 150_000_000) }
+            catch { return }
         }
-        tallyProxied = proxied
-        tallyDirect = direct
-        tallyReject = reject
+        guard !Task.isCancelled else { return }
+        let worker = Task.detached(priority: .userInitiated) {
+            VpnDomainQuery.run(entries: entries, query: key.query,
+                               route: key.route.route, failedOnly: key.failedOnly,
+                               summary: key.mode == .summary)
+        }
+        let result = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: { worker.cancel() }
+        guard !Task.isCancelled, requestKey == key else { return }
+        if !followTail, let lastSeenID {
+            pendingRows += result.rows.reduce(0) { $0 + ($1.id > lastSeenID ? 1 : 0) }
+        }
+        lastSeenID = entries.last?.id
+        visibleRows = result.rows
+        visibleStats = result.stats
+        routeCounts = result.counts
+        matchedCount = result.matched
+        tallyProxied = key.route == .all || key.route == .proxied ? result.counts[.proxied, default: 0] : 0
+        tallyDirect = key.route == .all || key.route == .direct ? result.counts[.direct, default: 0] : 0
+        tallyReject = key.route == .all || key.route == .reject ? result.counts[.reject, default: 0] : 0
     }
 
     private func copyVisible() {

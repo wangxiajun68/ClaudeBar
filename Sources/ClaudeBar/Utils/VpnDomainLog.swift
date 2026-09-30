@@ -389,6 +389,41 @@ final class VpnDomainFeed: @unchecked Sendable {
     }
 }
 
+/// Fixed-capacity FIFO. Appending at capacity replaces one slot rather than
+/// moving all retained entries; IDs and chronological order survive wraparound.
+struct VpnDomainRing {
+    private var slots: [VpnDomainEntry?]
+    private var head = 0
+    private(set) var count = 0
+
+    init(capacity: Int) {
+        precondition(capacity > 0)
+        slots = Array(repeating: nil, count: capacity)
+    }
+
+    mutating func append(contentsOf batch: [VpnDomainEntry]) {
+        for entry in batch {
+            if count < slots.count {
+                slots[(head + count) % slots.count] = entry
+                count += 1
+            } else {
+                slots[head] = entry
+                head = (head + 1) % slots.count
+            }
+        }
+    }
+
+    func snapshot() -> [VpnDomainEntry] {
+        (0..<count).compactMap { slots[(head + $0) % slots.count] }
+    }
+
+    mutating func clear() {
+        slots = Array(repeating: nil, count: slots.count)
+        head = 0
+        count = 0
+    }
+}
+
 /// Ring of recent mihomo connections, keyed by destination domain.
 ///
 /// Separate from `VpnManager` for the same reason `VpnLiveRates` and
@@ -404,18 +439,18 @@ final class VpnDomainFeed: @unchecked Sendable {
 final class VpnDomainLog: ObservableObject {
     static let shared = VpnDomainLog()
 
-    /// Ring cap. A browsing session produces a few thousand connections an
-    /// hour; 1000 keeps the mosaic's worth of memory and still covers the
-    /// recent past, and `received` preserves the session-wide tally.
-    static let limit = 1000
+    /// Ten thousand recent connections, bounded in memory.
+    static let limit = 10_000
+    private var ring = VpnDomainRing(capacity: VpnDomainLog.limit)
 
     @Published private(set) var connections: [VpnDomainConnection] = []
+    @Published private(set) var connectionRevision = 0
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
-    /// Drives 「共 N 次 / M 域名」so the summary is not capped by the ring.
+    /// Session total; per-domain summaries deliberately cover retained rows only.
     @Published private(set) var received = 0
     /// Bumped on every publish. The section's cache reads it instead of
-    /// re-hashing 1000 rows.
+    /// invalidating retained-row query results.
     @Published private(set) var revision = 0
 
     private let feed = VpnDomainFeed()
@@ -456,11 +491,15 @@ final class VpnDomainLog: ObservableObject {
                 upload: max(0, JSONCoerce.int64Val(item["upload"])),
                 download: max(0, JSONCoerce.int64Val(item["download"])))
         }.sorted { $0.id < $1.id }
-        if connections != next { connections = next }
+        if connections != next {
+            connections = next
+            connectionRevision &+= 1
+        }
     }
 
     func clear() {
         feed.reset()
+        ring.clear()
         entries = []
         received = 0
         revision &+= 1
@@ -541,10 +580,8 @@ final class VpnDomainLog: ObservableObject {
         lastFlush = Date()
         let batch = feed.drain()
         guard !batch.isEmpty else { return }
-        entries.append(contentsOf: batch)
-        if entries.count > Self.limit {
-            entries.removeFirst(entries.count - Self.limit)
-        }
+        ring.append(contentsOf: batch)
+        entries = ring.snapshot()
         received += batch.count
         revision &+= 1
     }

@@ -53,7 +53,7 @@ assert 'VpnDomainLog.shared.resetCarry()' in manager, \
     'a core restart must drop the carry buffer from the dead pipe'
 
 view = (root / 'Sources/ClaudeBar/Views/Pages/VPNView.swift').read_text()
-assert 'VpnDomainLogSection()' in view and 'private var trafficGroup' in view, \
+assert 'VpnDomainLogSection(isVisible:' in view and 'private func trafficGroup' in view, \
     'VPNView must mount the 流量日志 section'
 assert 'ObservedObject private var domainLog' not in view and \
     'VpnDomainLog.shared' not in view, \
@@ -63,33 +63,37 @@ assert 'ObservedObject private var domainLog' not in view and \
 section = (root / 'Sources/ClaudeBar/Views/Pages/VpnDomainLogSection.swift').read_text()
 assert 'ObservedObject private var log = VpnDomainLog.shared' in section, \
     'the section is the observer the page delegates to'
-assert 'tone: .destructive' in section and 'confirmClear' in section, \
+assert 'role: .destructive' in section and 'confirmClear' in section, \
     '清空 must confirm: it discards the aggregate the user is reading'
 
-# Exercise the actual view's filtering code without rendering SwiftUI. The
-# revision stays fixed while the user changes controls, reproducing the bug.
+# Exercise production query computation independently of SwiftUI scheduling.
 filter_enum = section[section.index('    enum RouteFilter:'):
                       section.index('    var body:')]
-filter_methods = section[section.index('    private func recompute()'):
-                         section.index('    private func copyVisible()')]
-filter_methods = filter_methods.replace('private func recompute()', 'func recompute()')
-filter_methods = filter_methods.replace('VpnDomainLog.stat', 'DomainStat.stat')
+query_source = (root / 'Sources/ClaudeBar/Utils/VpnDomainQuery.swift').read_text()
+query_source = query_source.replace('import Foundation', '').replace('VpnDomainLog.stat', 'DomainStat.stat')
 filter_harness = r"""
+QUERY_SOURCE
 final class FilterHarness {
-    struct Log { var entries: [VpnDomainEntry]; var revision = 1 }
-    var log: Log
+    var entries: [VpnDomainEntry]
     var query = ""
     var routeFilter: RouteFilter = .all
-    var computedRevision = -1
-    var queryRows: [VpnDomainEntry] = []
+    var failedOnly = false
     var visibleRows: [VpnDomainEntry] = []
     var visibleStats: [VpnDomainLogStat] = []
-    var tallyProxied = 0, tallyDirect = 0, tallyReject = 0
-    init(_ entries: [VpnDomainEntry]) { log = Log(entries: entries) }
+    var tallyProxied = 0
+    var counts: [VpnDomainRoute: Int] = [:]
+    init(_ entries: [VpnDomainEntry]) { self.entries = entries }
     FILTER_ENUM
-    FILTER_METHODS
+    func recompute() {
+        let result = VpnDomainQuery.run(entries: entries, query: query,
+                                       route: routeFilter.route, failedOnly: failedOnly, summary: true)
+        visibleRows = result.rows
+        visibleStats = result.stats
+        counts = result.counts
+        tallyProxied = result.rows.filter { $0.route == .proxied }.count
+    }
 }
-""".replace('FILTER_ENUM', filter_enum).replace('FILTER_METHODS', filter_methods)
+""".replace('FILTER_ENUM', filter_enum).replace('QUERY_SOURCE', query_source)
 
 # --- the harness ------------------------------------------------------------
 swift = r'''
@@ -289,7 +293,43 @@ FILTER_HARNESS
         filters.routeFilter = .all
         filters.recompute()
         precondition(filters.visibleRows.count == 4, "clearing filters restores all rows")
-        print("vpn domain log OK")
+        precondition(filters.counts[.proxied] == 2 && filters.counts[.direct] == 2)
+        filters.routeFilter = .direct
+        filters.recompute()
+        precondition(filters.counts[.proxied] == 2,
+                     "route counts must retain the unselected route's search results")
+        let detail = VpnDomainQuery.run(entries: entries, query: "", route: nil,
+                                        failedOnly: false, summary: false)
+        precondition(detail.stats.isEmpty && detail.rows.count == 4,
+                     "detail view must not build per-domain summaries")
+        var failureFixture = entries[0]
+        failureFixture.failed = true
+        let failures = VpnDomainQuery.run(entries: entries + [failureFixture], query: "", route: nil,
+                                          failedOnly: true, summary: false)
+        precondition(failures.rows.allSatisfy { $0.failed })
+        let portSearch = VpnDomainQuery.run(entries: [failureFixture], query: String(failureFixture.port),
+                                           route: nil, failedOnly: false, summary: false)
+        precondition(portSearch.rows.count == 1, "search also matches target ports")
+
+        // Capacity, order, eviction, wraparound, and reuse after clear.
+        var ring = VpnDomainRing(capacity: 10_000)
+        let batch = (1...25_000).map { id -> VpnDomainEntry in
+            var row = entries[0]
+            row.id = UInt64(id)
+            return row
+        }
+        ring.append(contentsOf: Array(batch.prefix(9_000)))
+        precondition(ring.count == 9_000 && ring.snapshot().first?.id == 1)
+        ring.append(contentsOf: Array(batch.dropFirst(9_000)))
+        let retained = ring.snapshot()
+        precondition(ring.count == 10_000 && retained.first?.id == 15_001
+                     && retained.last?.id == 25_000)
+        precondition(zip(retained, retained.dropFirst()).allSatisfy { $1.id == $0.id + 1 })
+        ring.clear()
+        precondition(ring.count == 0 && ring.snapshot().isEmpty)
+        ring.append(contentsOf: Array(batch.prefix(3)))
+        precondition(ring.snapshot().map(\.id) == [1, 2, 3])
+        print("vpn domain log OK · query + 10,000-row ring")
     }
 }
 '''
