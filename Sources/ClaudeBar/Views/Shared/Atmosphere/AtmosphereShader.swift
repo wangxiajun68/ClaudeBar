@@ -141,11 +141,33 @@ static float rainLayer(float2 pt, float t, float angle, float cellW, float cellH
     float2 f = float2(p.x / cellW - col, fract(p.y / cellH));
     float x = 0.15 + 0.7 * hash21(cell + seed + 3.7);
     float dx = abs(f.x - x) * cellW;
-    float yLen = min(0.95, len / cellH);
+    float yLen = min(0.95, len * (0.45 + 0.75 * hash21(cell + 5.9)) / cellH);
     float y0 = hash21(cell + 9.1) * (1.0 - yLen);
     float a = (f.y - y0) / yLen;
     if (a < 0.0 || a > 1.0) return 0.0;
-    return smoothstep(width, 0.0, dx) * pow(sin(a * 3.14159), 0.8) * (0.55 + 0.45 * hash21(cell + 2.3));
+    // A rounded, bright head with a tapered exposure trail behind it. Shapes
+    // and lengths vary per drop; this is baked once, not evaluated each frame.
+    float radius = width * (0.65 + 0.6 * hash21(cell + 2.3));
+    float profile = smoothstep(0.0, 0.76, a) * smoothstep(1.0, 0.86, a);
+    float taper = mix(0.22, 1.0, smoothstep(0.0, 0.82, a));
+    return smoothstep(radius * taper, 0.0, dx) * profile * (0.55 + 0.45 * h);
+}
+
+// Independent lanes slide a baked plate at different terminal velocities. No
+// particle buffers, CPU simulation or per-drop view updates. The rectangular
+// tile uses its actual dimensions, preserving the head/tail proportions.
+static float fallingRain(texture2d<float> tex, float2 pt, float t, float slant,
+                         float speed, float2 tile, float laneWidth, float amount,
+                         float seed, float lod) {
+    float2 p = float2(pt.x - pt.y * slant, pt.y);
+    float lane = floor(p.x / laneWidth);
+    float variation = hash11(lane * 7.13 + seed);
+    p.y -= t * speed * (0.72 + 0.56 * variation);
+    p.y += variation * tile.y;
+    float s = tex.sample(plateSampler, p / tile, level(lod)).r;
+    // Modulate population per lane, never threshold the drop's tapered shape.
+    float population = smoothstep(variation - 0.08, variation + 0.08, amount);
+    return s * population;
 }
 
 static float snowLayer(float2 pt, float t, float cell, float speed, float size, float blur,
@@ -382,10 +404,15 @@ static float3 foreground(constant Uniforms &u, texture2d<float> tt, float2 pt, f
     float3 dropCol = mix(float3(0.80, 0.86, 0.94), float3(0.55, 0.62, 0.75), night);
     if (u.precip.x > 0.001) {
         float2 rp = pt + par * 0.35;
-        float amt = saturate(u.precip.x * 1.15);
-        float r = plate(rainFine, rp, slant, t, 540.0, 112.0, amt, 0.0)
-                + plate(rainFine, rp + 40.0, slant, t, 760.0, 112.0, amt * 0.85, 0.6);
-        c += dropCol * r * 0.34;
+        float amt = saturate(u.precip.x);
+        float gust = u.precip.w * sin(t * 0.63) * 0.035;
+        float lean = slant * 0.55 + gust;
+        float speed = mix(210.0, 340.0, amt) * (1.0 + u.precip.w * 0.16);
+        float r = fallingRain(rainFine, rp * 1.35, t, lean * 0.7, speed,
+                              float2(252, 512), 14.0, amt, 1.0, 0.6)
+                + fallingRain(rainFine, rp + float2(73, 29), t, lean, speed * 1.4,
+                              float2(252, 512), 14.0, amt * 0.82, 7.0, 0.0);
+        c += dropCol * r * 0.28;
         c = mix(c, c * 0.9 + skyGradient(u, HORIZON) * 0.1, u.precip.x * 0.4);
     }
     if (u.precip.y > 0.001) {
@@ -541,8 +568,11 @@ static float3 foreground(constant Uniforms &u, texture2d<float> tt, float2 pt, f
     // --- near precipitation (in front of the greeting) ----------------------------
     if (u.precip.x > 0.001) {
         float2 rp = pt + par * 0.7;
-        float r = plate(rainCoarse, rp, slant * 1.15, t, 1080.0, 180.0, saturate(u.precip.x), 0.0);
-        c += dropCol * r * 0.28;
+        float gust = u.precip.w * sin(t * 0.63) * 0.035;
+        float r = fallingRain(rainCoarse, rp, t, slant * 0.65 + gust,
+                              520.0 + u.precip.w * 90.0, float2(384, 640), 32.0,
+                              saturate(u.precip.x) * 0.72, 13.0, 0.0);
+        c += dropCol * r * 0.24;
     }
     if (u.precip.y > 0.001) {
         float2 sp = pt + par * 0.75 + float2(sin(t * 0.5 + 1.3) * 12.0, 0.0);

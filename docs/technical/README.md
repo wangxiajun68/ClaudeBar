@@ -1,6 +1,8 @@
 # 技术文档
 
-> ClaudeBar 实现细节，与 `Sources/` 代码对应。产品设计见 [../design/](../design/)。
+> ClaudeBar 实现细节，与 `Sources/` 代码对应。产品设计见 [../design/](../design)。
+
+本目录按模块描述当前架构、数据契约、生命周期和验证入口。版本变更放在 [CHANGELOG](../CHANGELOG.md)，历史测量和审查证据放在 [reviews](../reviews/README.md)。
 
 本目录描述 **怎么做**。建议先读设计文档了解意图，再按章节或任务索引查阅实现。
 
@@ -21,14 +23,11 @@
 | 09 | [file-index.md](09-file-index.md) | Swift 文件职责速查 | 快速定位代码 |
 | 10 | [extension-guide.md](10-extension-guide.md) | 扩展功能检查清单 | 加新能力前 |
 | 11 | [vpn.md](11-vpn.md) | mihomo sidecar、系统代理、测速 | 改 VPN 页 / 内核 |
-| 12 | [battery-control.md](12-battery-control.md) | 电池目标 / 自动管理 / 充电 / 放电、特权辅助进程。[battery-control-audit-2026-09-27.md](12-battery-control-audit-2026-09-27.md) 是那一轮深度审查的现场记录（问题清单 + 修复记录） | 改能源卡 / 电池控制 |
+| 12 | [battery-control.md](12-battery-control.md) | 电池目标、自动管理、充放电与特权辅助进程 | 改能源卡 / 电池控制 |
 | 13 | [provider-directory.md](13-provider-directory.md) | 供应商目录、协议核查、Codex 会话监控 | 改模型页 / 会话判定 |
-| 14 | [performance-audit.md](14-performance-audit.md) | 桌面 / popup / 灵动岛的刷新与渲染审查 | 优化卡顿 / 掉帧 |
 | 15 | [model-cost.md](15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配规则 | 改价格 / 加模型 |
 | 16 | [connectors.md](16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停机制 | 改连接器 / MCP 发现 |
-| 17 | [ui-audit-backlog.md](17-ui-audit-backlog.md) | 「审查每个页面」那一轮的全部发现：每条修了什么、怎么修的、拿什么数拒掉了哪条猜测；末尾附测量方法 | 接手审查遗留项 |
-
-| 18 | [低负载与动效审查](18-performance-audit-2026-09-30.md) | 隐藏采样、组件可见性、滚动门、解析取消、SSE/Metal 测量与完整静态扫描清单 | 性能优化验收 |
+| 18 | [weather-and-atmosphere.md](18-weather-and-atmosphere.md) | 天气数据、真实日出日落、天空引擎、文字布局与性能边界 | 改天气 / 问候卡 |
 
 ---
 

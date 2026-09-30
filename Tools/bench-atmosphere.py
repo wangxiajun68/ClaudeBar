@@ -12,7 +12,7 @@ and `GreetingScript` into a probe (-O) and reports, per representative scene:
 and the one-off CPU costs on the main thread: greeting layout, greeting
 rasterisation (the texture upload's CPU half) and `SkyScene.make`.
 
-Usage: python3 Tools/bench-atmosphere.py [--width 1100] [--scale 2] [--frames 120]
+Usage: python3 Tools/bench-atmosphere.py [--width 1100] [--scale 2] [--frames 120] [--contrast]
 A frame budget is 16.7 ms at 60 Hz and 8.3 ms at 120 Hz; the sky should use a
 small fraction of it, since the window server and SwiftUI share the GPU.
 """
@@ -98,6 +98,39 @@ source += '''
             // A still installs the greeting texture synchronously; the live
             // path rasterises it on a queue this loop never yields to.
             _ = renderer.snapshot(size: size, scale: scale)
+            if CommandLine.arguments.contains("--contrast") {
+                // Sample the backgrounds where the small information labels
+                // actually sit. These frames contain the production sky and
+                // all effects, before SwiftUI paints its 86%-opaque white ink.
+                let top = margin - 8
+                let regions = [CGRect(x: margin, y: top, width: 160, height: 50),
+                               CGRect(x: width - margin - 300, y: top, width: 300, height: 84),
+                               CGRect(x: margin, y: sky - 64, width: min(420, width - margin * 2), height: 44),
+                               CGRect(x: width - margin - 260, y: sky - 60, width: 260, height: 40)]
+                func linear(_ v: Double) -> Double { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+                func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
+                    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+                }
+                var worst = Double.infinity
+                for phase in [42.0, 42.4, 42.8] {
+                    let image = renderer.snapshot(size: size, scale: scale, time: phase)!
+                    let data = image.dataProvider!.data!
+                    let bytes = CFDataGetBytePtr(data)!
+                    for region in regions {
+                        for y in stride(from: Int(region.minY), through: Int(region.maxY), by: 2) {
+                            for x in stride(from: Int(region.minX), through: Int(region.maxX), by: 2) {
+                                let offset = Int(CGFloat(y) * scale) * image.bytesPerRow + Int(CGFloat(x) * scale) * 4
+                                let b = Double(bytes[offset]) / 255, g = Double(bytes[offset + 1]) / 255, r = Double(bytes[offset + 2]) / 255
+                                let background = luminance(r, g, b)
+                                let foreground = luminance(0.86 + r * 0.14, 0.86 + g * 0.14, 0.86 + b * 0.14)
+                                worst = min(worst, (foreground + 0.05) / (background + 0.05))
+                            }
+                        }
+                    }
+                }
+                print(String(format: "  information contrast %@: %.2f:1 (3 phases)", c.0, worst))
+                precondition(worst >= 4.5, "Information ink contrast")
+            }
             var skyTimes: [Double] = [], frontTimes: [Double] = [], cpuTimes: [Double] = []
             let t0 = CACurrentMediaTime()
             for i in 0..<(frames + 10) {
@@ -148,4 +181,4 @@ probe.write_text(source)
 binary = out / 'bench'
 subprocess.run(['swiftc', '-O', '-parse-as-library', '-target', 'arm64-apple-macos15.0', str(probe),
                 '-o', str(binary)], check=True)
-subprocess.run([str(binary), arg('--width', '1100'), arg('--scale', '2'), arg('--frames', '120')], check=True)
+subprocess.run([str(binary), arg('--width', '1100'), arg('--scale', '2'), arg('--frames', '120')] + (['--contrast'] if '--contrast' in args else []), check=True)

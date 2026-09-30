@@ -17,6 +17,70 @@ enum SkyAstronomy {
         var night: Bool { sun.altitude < -6 }
         var twilight: Double { max(0, 1 - abs(sun.altitude + 2) / 12) }
     }
+    struct SolarEvents: Equatable {
+        var sunrise: Date?
+        var sunset: Date?
+    }
+    private struct SolarKey: Hashable {
+        var day: Date
+        var zone: String
+        var latitude: Double
+        var longitude: Double
+    }
+    private final class SolarCache: @unchecked Sendable {
+        let lock = NSLock()
+        var values: [SolarKey: SolarEvents] = [:]
+        var order: [SolarKey] = []
+    }
+    private static let solarCache = SolarCache()
+
+    /// Civil-day solar crossings at the standard apparent horizon (-0.833°).
+    /// Forecast timestamps remain authoritative; this is a coordinate-based fallback.
+    /// Missing crossings (including polar day/night) stay nil rather than invented clocks.
+    static func solarEvents(on date: Date, latitude: Double, longitude: Double, zone: TimeZone) -> SolarEvents {
+        let missing = SolarEvents()
+        guard date.timeIntervalSince1970.isFinite, latitude.isFinite, longitude.isFinite,
+              abs(latitude) <= 90, abs(longitude) <= 180 else { return missing }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        guard let day = calendar.dateInterval(of: .day, for: date) else { return missing }
+        let key = SolarKey(day: day.start, zone: zone.identifier, latitude: latitude, longitude: longitude)
+        solarCache.lock.lock()
+        defer { solarCache.lock.unlock() }
+        if let cached = solarCache.values[key] { return cached }
+        func altitude(_ instant: Date) -> Double {
+            snapshot(date: instant, latitude: latitude, longitude: longitude).sun.altitude + 0.833
+        }
+        var result = missing
+        var start = day.start
+        var previous = altitude(start)
+        // Bounded work once per location/day, never one solve per animation frame.
+        while start < day.end {
+            let end = min(start.addingTimeInterval(300), day.end)
+            let next = altitude(end)
+            if (previous <= 0 && next > 0) || (previous > 0 && next <= 0) {
+                let rising = next > previous
+                var low = start, high = end
+                while high.timeIntervalSince(low) > 0.5 {
+                    let middle = low.addingTimeInterval(high.timeIntervalSince(low) / 2)
+                    if (altitude(middle) > 0) == rising { high = middle } else { low = middle }
+                }
+                let crossing = low.addingTimeInterval(high.timeIntervalSince(low) / 2)
+                if crossing < day.end {
+                    if rising { result.sunrise = crossing } else { result.sunset = crossing }
+                }
+            }
+            start = end
+            previous = next
+        }
+        if solarCache.order.count >= 32 {
+            solarCache.values.removeValue(forKey: solarCache.order.removeFirst())
+        }
+        solarCache.values[key] = result
+        solarCache.order.append(key)
+        return result
+    }
+
     private static let rad = Double.pi / 180
     static func snapshot(date: Date, latitude: Double, longitude: Double) -> Snapshot {
         let d = date.timeIntervalSince1970 / 86400 + 2440587.5 - 2451545

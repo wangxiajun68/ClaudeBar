@@ -175,13 +175,13 @@ struct ForecastRibbon: View {
                         .position(x: x, y: Self.glyphRow)
                     Text("\(Int(day.high.rounded()))°")
                         .font(.system(size: focused ? 10 : 9, weight: .semibold)).monospacedDigit()
-                        .foregroundStyle(ink.opacity(focused ? 0.96 : 0.66))
+                        .foregroundStyle(ink.opacity(focused ? 1 : 0.86))
                         .fixedSize()
                         .position(x: x, y: points[index].high.y - 8)
                     if focused {
                         Text("\(Int(day.low.rounded()))°")
                             .font(.system(size: 9, weight: .medium)).monospacedDigit()
-                            .foregroundStyle(ink.opacity(0.62))
+                            .foregroundStyle(ink.opacity(0.86))
                             .fixedSize()
                             .position(x: x, y: points[index].low.y + 8)
                             .transition(.opacity)
@@ -192,7 +192,7 @@ struct ForecastRibbon: View {
                         }
                         Text(weekday(day.date, index: index))
                             .font(.system(size: 9, weight: focused ? .semibold : .medium))
-                            .foregroundStyle(ink.opacity(focused ? 0.94 : 0.55))
+                            .foregroundStyle(ink.opacity(focused ? 1 : 0.86))
                     }
                     .fixedSize()
                     .position(x: x, y: Self.labelRow)
@@ -343,8 +343,8 @@ struct ForecastRibbon: View {
 /// it is now (or at the scrubbed time), the travelled part drawn solid. At
 /// night the moon walks a shallow arc under the horizon towards sunrise.
 struct SunPath: View {
-    var sunrise: Date
-    var sunset: Date
+    var sunrise: Date?
+    var sunset: Date?
     var now: Date
     var zone: TimeZone
     var ink: Color
@@ -365,7 +365,7 @@ struct SunPath: View {
                     Text(caption)
                         .font(.system(size: 9, weight: .medium))
                         .italic(!captionAccent)
-                        .foregroundStyle(captionAccent ? Color(hex: 0xFFD27A) : ink.opacity(0.58))
+                        .foregroundStyle(captionAccent ? Color(hex: 0xFFD27A) : ink.opacity(0.86))
                         .lineLimit(1)
                         .transition(.opacity)
                 }
@@ -375,10 +375,10 @@ struct SunPath: View {
         }
         .shadow(color: .black.opacity(vivid ? 0.28 : 0), radius: 4, y: 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("日出 \(clock(sunrise))，日落 \(clock(sunset))" + (caption.map { "，\($0)" } ?? ""))
+        .accessibilityLabel("日出 \(sunrise == nil ? "暂无时间" : clock(sunrise))，日落 \(sunset == nil ? "暂无时间" : clock(sunset))" + (caption.map { "，\($0)" } ?? ""))
     }
 
-    private func time(_ date: Date, symbol: String) -> some View {
+    private func time(_ date: Date?, symbol: String) -> some View {
         HStack(spacing: 3) {
             Image(systemName: symbol).font(.system(size: 8))
                 .symbolRenderingMode(vivid ? .multicolor : .hierarchical)
@@ -388,17 +388,23 @@ struct SunPath: View {
         .fixedSize()
     }
 
-    private func clock(_ date: Date) -> String {
-        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: Locale(identifier: "en_GB"), timeZone: zone))
+    private func clock(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        return date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: Locale(identifier: "en_GB"), timeZone: zone))
     }
 
     /// Where the body is along its arc, 0…1, and whether it is the sun's.
-    private var progress: (fraction: Double, day: Bool) {
+    private var progress: (fraction: Double, day: Bool)? {
+        guard let sunrise, let sunset else { return nil }
         let length = sunset.timeIntervalSince(sunrise)
-        guard length > 0 else { return (0.5, true) }
+        guard length > 0 else { return nil }
         if now >= sunrise && now <= sunset { return (now.timeIntervalSince(sunrise) / length, true) }
-        let dusk = now > sunset ? sunset : sunset.addingTimeInterval(-86400)
-        let dawn = now > sunset ? sunrise.addingTimeInterval(86400) : sunrise
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: sunset),
+              let tomorrow = calendar.date(byAdding: .day, value: 1, to: sunrise) else { return nil }
+        let dusk = now > sunset ? sunset : yesterday
+        let dawn = now > sunset ? tomorrow : sunrise
         let night = max(1, dawn.timeIntervalSince(dusk))
         return (min(1, max(0, now.timeIntervalSince(dusk) / night)), false)
     }
@@ -423,7 +429,7 @@ struct SunPath: View {
         horizon.addLine(to: CGPoint(x: size.width, y: Self.horizon))
         context.stroke(horizon, with: .color(ink.opacity(0.34)), lineWidth: 0.5)
 
-        let (f, isDay) = progress
+        guard let (f, isDay) = progress else { return }
         context.stroke(arc(dayPoint, to: 1), with: .color(ink.opacity(0.42)),
                        style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [1.5, 3]))
         let sunColor = vivid ? Color(hex: 0xFFD27A) : Color(hex: 0xE08A2E)
@@ -446,29 +452,34 @@ struct SunPath: View {
         }
     }
 
-    /// Sunrise and sunset for the day `date` falls on, in `zone`: the
-    /// forecast's instants when it has that day, otherwise the current
-    /// reading's clock strings (`HH:mm`, or wttr.in's `06:18 AM`) set on that
-    /// day, otherwise 06:00 / 18:00 so the arc still reads as a day.
-    static func times(on date: Date, reading: WeatherReading?, zone: TimeZone) -> (rise: Date, set: Date) {
+    /// Resolve events for the selected civil day, without fixed-hour placeholders.
+    static func times(on date: Date, reading: WeatherReading?, zone: TimeZone) -> (rise: Date?, set: Date?) {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
-        if let day = reading?.forecast.first(where: { calendar.isDate($0.date, inSameDayAs: date) }),
-           let rise = day.sunrise, let set = day.sunset {
-            return (rise, set)
-        }
-        func parse(_ text: String?, fallback: Int) -> Date {
-            let fallbackDate = calendar.date(bySettingHour: fallback, minute: 0, second: 0, of: date) ?? date
-            guard let text else { return fallbackDate }
-            let digits = text.split { !$0.isNumber }.compactMap { Int($0) }
-            guard digits.count >= 2 else { return fallbackDate }
-            let upper = text.uppercased()
+        let forecast = reading?.forecast.first { calendar.isDate($0.date, inSameDayAs: date) }
+        func parse(_ text: String?) -> Date? {
+            guard let text else { return nil }
+            let pattern = #"^\s*(\d{1,2}):(\d{2})(?:\s*(AM|PM))?\s*$"#
+            guard let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return nil }
+            let value = String(text[match]).trimmingCharacters(in: .whitespaces).uppercased()
+            let digits = value.split { !$0.isNumber }.compactMap { Int($0) }
+            guard digits.count == 2, (0...59).contains(digits[1]) else { return nil }
             var hour = digits[0]
-            if upper.contains("PM"), hour < 12 { hour += 12 }
-            if upper.contains("AM"), hour == 12 { hour = 0 }
-            return calendar.date(bySettingHour: min(23, hour), minute: min(59, digits[1]), second: 0, of: date) ?? fallbackDate
+            let meridiem = value.hasSuffix("AM") || value.hasSuffix("PM")
+            guard (meridiem ? 1...12 : 0...23).contains(hour) else { return nil }
+            if meridiem { hour = hour % 12 + (value.hasSuffix("PM") ? 12 : 0) }
+            return calendar.date(bySettingHour: hour, minute: digits[1], second: 0, of: date)
         }
-        return (parse(reading?.sunrise, fallback: 6), parse(reading?.sunset, fallback: 18))
+        let currentDay = reading.map { calendar.isDate($0.observedAt, inSameDayAs: date) } ?? false
+        // Strings have no date. Never reuse today's clocks for another forecast day.
+        var rise = forecast?.sunrise ?? (forecast == nil && currentDay ? parse(reading?.sunrise) : nil)
+        var set = forecast?.sunset ?? (forecast == nil && currentDay ? parse(reading?.sunset) : nil)
+        if (rise == nil || set == nil), let latitude = reading?.latitude, let longitude = reading?.longitude {
+            let events = SkyAstronomy.solarEvents(on: date, latitude: latitude, longitude: longitude, zone: zone)
+            rise = rise ?? events.sunrise
+            set = set ?? events.sunset
+        }
+        return (rise, set)
     }
 }
 
@@ -591,7 +602,7 @@ struct SkyModeToggle: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 20)
-            .foregroundStyle(ink.opacity(selected ? 0.95 : 0.55))
+            .foregroundStyle(ink.opacity(selected ? 1 : 0.86))
             .background {
                 if selected {
                     Capsule().fill(ink.opacity(0.2)).matchedGeometryEffect(id: "pill", in: pill)
@@ -630,8 +641,8 @@ struct SkyConsole: View {
     var minutes: Double
     var night: Bool
     /// Minutes after local midnight.
-    var sunrise: Double
-    var sunset: Double
+    var sunrise: Double?
+    var sunset: Double?
     /// The sky's colour at each hour, 00:00…24:00.
     var track: [Color]
     var ink: Color
@@ -677,7 +688,7 @@ struct SkyConsole: View {
                                 .frame(height: 14)
                             Text(item.title)
                                 .font(.system(size: 9, weight: selected ? .semibold : .medium))
-                                .foregroundStyle(ink.opacity(selected ? 0.95 : 0.7))
+                                .foregroundStyle(ink.opacity(selected ? 1 : 0.86))
                                 .lineLimit(1)
                         }
                         .frame(width: Self.cell, height: 32)
@@ -703,7 +714,7 @@ struct SkyConsole: View {
                     Button { pickBand(item.band) } label: {
                         Text(item.title)
                             .font(.system(size: 9.5, weight: selected ? .semibold : .medium))
-                            .foregroundStyle(ink.opacity(selected ? 0.95 : 0.58))
+                            .foregroundStyle(ink.opacity(selected ? 1 : 0.86))
                             .frame(width: Self.cell, height: 16)
                             .background {
                                 if selected {
@@ -713,7 +724,8 @@ struct SkyConsole: View {
                             .contentShape(Capsule())
                     }
                     .buttonStyle(InstrumentPressStyle())
-                    .help("时段：" + item.title)
+                    .disabled(sunrise == nil || sunset == nil)
+                    .help(sunrise == nil || sunset == nil ? "暂无该地点当天的日出日落时间，可拖动时间轴" : "时段：" + item.title)
                     .accessibilityLabel("时段，" + item.title)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
@@ -733,8 +745,8 @@ struct SkyConsole: View {
 /// rides above it. Snaps to five minutes; ←/→ step a quarter hour.
 struct SkyTimeline: View {
     var minutes: Double
-    var sunrise: Double
-    var sunset: Double
+    var sunrise: Double?
+    var sunset: Double?
     var track: [Color]
     var ink: Color
     var night: Bool
@@ -754,7 +766,7 @@ struct SkyTimeline: View {
                     .overlay(Capsule().strokeBorder(ink.opacity(0.28), lineWidth: 0.5))
                     .frame(width: width, height: 8)
                     .offset(y: 17)
-                ForEach([sunrise, sunset], id: \.self) { mark in
+                ForEach([sunrise, sunset].compactMap { $0 }, id: \.self) { mark in
                     Capsule().fill(ink.opacity(0.55))
                         .frame(width: 1.5, height: 12)
                         .offset(x: CGFloat(mark / Self.day) * width - 0.75, y: 15)

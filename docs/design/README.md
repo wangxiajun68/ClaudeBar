@@ -1,6 +1,6 @@
 # 设计文档
 
-> ClaudeBar 产品 / 交互 / 视觉设计。技术实现见 [../technical/](../technical/)。
+> ClaudeBar 产品 / 交互 / 视觉设计。技术实现见 [../technical/](../technical)。
 
 本目录描述 **做什么** 与 **怎么交互**。建议按编号顺序阅读前几章建立全局认识，其余按需查阅。
 
@@ -23,7 +23,7 @@
 | — | [greeting-atmosphere.md](greeting-atmosphere.md) | 概览问候卡：Metal 大气天空、手动天空控制台、24 款问候字体、逐层配色与帧率预算 | 改问候卡 / 天空时 |
 | — | [weather-observatory.md](weather-observatory.md) | **已取代**：Canvas 版问候带与 HUD 内联预报区（`ForecastStrip`）的现场记录；仍成立的是 Open-Meteo 与天文口径 | 查早期结论时 |
 
-按界面组织的说明放在 [`surfaces/`](surfaces/)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：四类分组、精简清单与验证边界）。
+按界面组织的说明放在 [`surfaces/`](surfaces)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：四类分组、精简清单与验证边界）。
 
 ---
 

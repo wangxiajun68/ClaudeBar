@@ -351,12 +351,12 @@ struct WeatherBackdrop: View {
         // Far: a mist of hairlines. Mid: the curtain. Near: a few drops with
         // a bright head and a tail that fades — a uniform stroke reads as a
         // pencil line, which is what the last shower looked like.
-        let far = streaks(count: 48 + Int(load * 36), speed: 0.38, length: 0.07,
-                          angle: 0.08, seed: 104729, t: t, size: size)
-        let mid = streaks(count: 22 + Int(load * 16), speed: 0.55, length: 0.12,
-                          angle: 0.14, seed: 224737, t: t, size: size)
-        let near = streaks(count: 8 + Int(load * 6), speed: 0.78, length: 0.20,
-                           angle: 0.20, seed: 479909, t: t, size: size)
+        let far = streaks(count: 48 + Int(load * 36), speed: 0.38, length: 0.012,
+                          angle: 0.025, seed: 104729, t: t, size: size)
+        let mid = streaks(count: 22 + Int(load * 16), speed: 0.55, length: 0.022,
+                          angle: 0.05, seed: 224737, t: t, size: size)
+        let near = streaks(count: 8 + Int(load * 6), speed: 0.78, length: 0.036,
+                           angle: 0.075, seed: 479909, t: t, size: size)
         stroke(far, width: 0.6, color: Color(hex: 0xD5E4F5).opacity(0.28), ctx: &ctx)
         stroke(mid, width: 0.9, color: Color.white.opacity(0.42), ctx: &ctx)
         tapered(near, width: 1.15, ctx: &ctx)
@@ -374,10 +374,11 @@ struct WeatherBackdrop: View {
         var out: [Streak] = []
         out.reserveCapacity(count)
         let shear = CGFloat(sin(Double(angle)))
-        let len = length * size.height
+        let baseLength = length * size.height
         for i in 0..<count {
             let s = Double((i * seed) % 997) / 997
-            let travel = (t * speed + s).truncatingRemainder(dividingBy: 1)
+            let len = baseLength * CGFloat(0.65 + 0.7 * s)
+            let travel = (t * speed * (0.72 + 0.56 * s) + s).truncatingRemainder(dividingBy: 1)
             let y = -len + CGFloat(travel) * (size.height + len)
             let horizontal = Double((i * 1299709 + seed * 17) % 991) / 991
             let x = CGFloat(horizontal) * size.width + y * shear * 0.40

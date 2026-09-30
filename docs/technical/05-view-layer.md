@@ -43,7 +43,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - **Widget 是独立编译目标**，看不到 app 的 `rollingNumber()`，所以 `WidgetViews.swift` 里有一份同 transition 的私有副本 `widgetRollingNumber()`（同样不配隐式 `.animation(value:)`）。改 transition 时两处都要改。
 - **加在哪一层**：加在**渲染数字的那个 `Text` / `Label` 叶子上**，不是容器上——容器上会连带整棵子树进出 transition。数字夹在句子里（"共 N 个可用 · 已选 M 个"）也照样加：`.numericText` 只滚数字字形，周围文案不动。
 - **不要再用裸的 `.contentTransition(.numericText())`**：那正是重复实现；一律走 `rollingNumber()`。
-- 同样地，**不要给这些叶子补 `.animation(_:value:)`**：值每秒/每次轮询都变，隐式动画会让事务常驻在飞，每个显示周期都重排整个 hosting view（见 [08-performance.md](08-performance.md)），而 `.numericText` 自己就是动画。`Tests/inflight-animation-regressions.py` 把这条钉在 `RollingNumberText` / `RollingNumberModifier` / `SectionHeader.trailingView` 上，另外三处同一违反（灵动岛收起态的今日 token、灵动岛用量卡 hero、未挂载的 `MetricTile`）已一并删掉——都是「1 Hz 读数 + 隐式动画」的同一个形状，下一处不该再写。`MetricTile` 随后连视图本身也删了（[17](17-ui-audit-backlog.md) §10）。
+- 同样地，**不要给这些叶子补 `.animation(_:value:)`**：值每秒/每次轮询都变，隐式动画会让事务常驻在飞，每个显示周期都重排整个 hosting view（见 [08-performance.md](08-performance.md)），而 `.numericText` 自己就是动画。`Tests/inflight-animation-regressions.py` 把这条钉在 `RollingNumberText` / `RollingNumberModifier` / `SectionHeader.trailingView` 上，另外三处同一违反（灵动岛收起态的今日 token、灵动岛用量卡 hero、未挂载的 `MetricTile`）已一并删掉——都是「1 Hz 读数 + 隐式动画」的同一个形状，下一处不该再写。`MetricTile` 随后连视图本身也删了（[17](../reviews/ui-audit-backlog.md) §10）。
 - **按钮标题里的数字也算数字**：`Button("… \(count)")` 会自己造一个够不到的 `Text`。要滚就改用 `Button { … } label: { Text("… \(count)").rollingNumber() }`（导入表就是这么写的）。
 - 静态文案（路径、版本号、模型名、确认弹窗里一次算好的计数）不需要滚动——没有"变动"可言。
 
@@ -74,7 +74,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 ## `ProviderTile` — deleted
 
-- `ProviderTile`（`Views/ProviderRow.swift`）自 `2fd24f7` 起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30 随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [17](17-ui-audit-backlog.md) §9。
+- `ProviderTile`（`Views/ProviderRow.swift`）自 `2fd24f7` 起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30 随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [17](../reviews/ui-audit-backlog.md) §9。
 - `popup` 的模型切换走 `PanelHeader` 的 chip → `ModelSwitchList`，不用瓦片网格；`PopupModelTile` 已删除。
 - `formatContext`：`200000 → 200K`、`1000000 → 1M`。
 

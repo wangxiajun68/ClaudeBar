@@ -343,8 +343,9 @@ bottom.
   not close the counters of a / e / o; high-contrast faces are not stroked,
   since a hairline plus a stroke is a smudge. Falls back to
   `SnellRoundhand-Bold` if the resources are missing. The name beside it is
-  rounded system bold, already Latinised pinyin by `MachineIdentity`
-  (`Xiajun Wang`). The clock, weather, models and usage keep system type and
+  rounded system medium at 18–28pt, with natural 0.015em tracking and the
+  authored case preserved; already Latinised pinyin by `MachineIdentity`
+  (`Xiajun Wang`). Long names may drop below the phrase; both clear the instruments. The clock, weather, models and usage keep system type and
   monospaced figures.
 - **Composition:** a 272 / 300pt sky band leaves room around the greeting. The
   clock sits at the upper left with the auto / manual sky toggle under it; the
@@ -413,7 +414,13 @@ bottom.
   weather fade, parallax while the pointer is actually moving and a drag through
   the day run at the display's rate; a card at rest presents at 30 Hz (15 Hz when
   calm) because the cloud deck has its own slower clock and rain and snow are a
-  baked plate being scrolled — a scrolled plate is continuous at 30 Hz. Low Power
+  baked plates. Rain uses tapered bright heads, rectangular atlas dimensions
+  and independent lane velocities at three depths; thunder adds density, speed
+  and a small gust. No per-drop CPU simulation or SwiftUI view is involved.
+  Information uses opaque-enough white ink over fixed, feathered navy corners,
+  composited after precipitation and lightning; the greeting chooses navy or
+  light ink from the sky luminance at a 0.18 crossover. The native fallback
+  follows the same information backing and type rules. Low Power
   Mode or thermal pressure is 30 Hz while the hand is down and 15 Hz otherwise.
   Turning weather rendering off draws no cloud, precipitation, fog or lightning
   at all, so the card has almost nothing to scroll. The view draws nothing when

@@ -73,10 +73,37 @@ struct SkyScene: Equatable {
         return 0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
     }
 
-    /// Pale skies (snow, fog, bright haze) take deep ink; everything else takes
-    /// light glass. Above 0.42 white type drops below 2.3:1 even with the
-    /// shade pool, while navy ink clears 7:1.
-    var prefersDarkInk: Bool { greetingGroundLuminance > 0.42 }
+    /// Choose the greeting's ink at the light/dark contrast crossover, before
+    /// white lettering disappears into a daytime sky.
+    var prefersDarkInk: Bool { greetingGroundLuminance > 0.18 }
+
+    /// Stable local sky estimate for instrument ink. Match the shader's sky
+    /// gradient and broad scattering/fog; exclude moving stars, raindrops and
+    /// lightning so small highlights do not make the labels flicker.
+    func instrumentGround(at uv: SIMD2<Float>, aspect: Float) -> SIMD3<Float> {
+        let t = min(1, max(0, uv.y / (Self.horizonLine + 0.06)))
+        var c = t < 0.55
+            ? simd_mix(zenith, mid, SIMD3(repeating: t / 0.55))
+            : simd_mix(mid, horizon, SIMD3(repeating: (t - 0.55) / 0.45))
+        let distance = (uv - SIMD2(sunUV.x, Self.horizonLine + 0.02)) * SIMD2(aspect * 0.42, 2.1)
+        c += glow * glowStrength * exp(-simd_dot(distance, distance) * 1.6)
+        let depth = Self.smooth(0.05, Self.horizonLine + 0.05, uv.y)
+        let fogColor = simd_mix(horizon, SIMD3<Float>(0.86, 0.88, 0.9) * (1 - 0.7 * nightness), SIMD3(repeating: 0.35))
+        c = simd_mix(c, fogColor, SIMD3(repeating: min(0.92, fog * (0.25 + 0.75 * depth) * 0.72)))
+        return simd_clamp(c, SIMD3(repeating: 0), SIMD3(repeating: 1))
+    }
+
+    /// Compare the two actual inks in linear sRGB, rather than choosing by
+    /// clock time or appearance. Top and horizon instruments can differ.
+    func prefersDarkInk(at uv: SIMD2<Float>, aspect: Float) -> Bool {
+        func luminance(_ c: SIMD3<Float>) -> Float {
+            func linear(_ v: Float) -> Float { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+            return 0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
+        }
+        let background = luminance(instrumentGround(at: uv, aspect: aspect))
+        let navy = luminance(SIMD3<Float>(20, 30, 51) / 255)
+        return (background + 0.05) / (navy + 0.05) > 1.05 / (background + 0.05)
+    }
 
     // MARK: - Construction
 
@@ -129,7 +156,7 @@ struct SkyScene: Equatable {
             snow = sky == .sleet ? 0.45 : 0
             (fog, thunder, drops) = (0.28, 0, drizzle ? 0.3 : 0.55)
         case .heavyRain: (rain, snow, fog, thunder, drops) = (0.78 + chance * 0.22, 0, 0.42, 0, 1)
-        case .thunder: (rain, snow, fog, thunder, drops) = (0.85, 0, 0.3, 1, 1)
+        case .thunder: (rain, snow, fog, thunder, drops) = (0.96, 0, 0.3, 1, 1)
         case .snow: (rain, snow, fog, thunder, drops) = (0, 0.85, 0.3, 0, 0)
         case .fog: (rain, snow, fog, thunder, drops) = (0, 0, 1, 0, 0)
         }

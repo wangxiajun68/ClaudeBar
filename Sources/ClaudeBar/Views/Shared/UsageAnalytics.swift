@@ -98,15 +98,17 @@ struct UsageAnalyticsSection: View {
             else if a.buckets.isEmpty { emptyFigure }
             else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 18) {
-                        trajectory(a).frame(minWidth: 390, maxWidth: .infinity)
-                        distribution(a).frame(width: 270)
-                    }
+                    GeometryReader { geo in
+                        HStack(alignment: .top, spacing: 16) {
+                            trajectory(a).frame(width: (geo.size.width - 16) * 0.64)
+                            distribution(a).frame(maxWidth: .infinity)
+                        }
+                    }.frame(minWidth: 700).frame(height: 200)
                     VStack(spacing: 16) { trajectory(a); distribution(a) }
                 }
                 HStack(spacing: 8) {
                     Text("缓存 0%").font(Theme.Font.micro)
-                    LinearGradient(colors: PlotInk.viridis, startPoint: .leading, endPoint: .trailing).frame(width: 72, height: 5)
+                    LinearGradient(colors: [PlotInk.blue, PlotInk.teal], startPoint: .leading, endPoint: .trailing).frame(width: 64, height: 5)
                     Text("100%").font(Theme.Font.micro)
                     Spacer()
                     Text(detail(a)).font(Theme.Font.captionMono).lineLimit(1).textSelection(.enabled)
@@ -117,20 +119,25 @@ struct UsageAnalyticsSection: View {
     private func trajectory(_ a: UsageAnalysis) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("日历轨迹").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                Text("用量轨迹").font(Theme.Font.labelSection).foregroundColor(Theme.textPrimary)
                 Spacer()
-                Text(compressed ? "asinh 轴 · 零值保留" : "Token · 从零起始").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                Text("峰值 \(UsageStats.formatTokens(a.bucketMaximum)) · \(compressed ? "长尾轴" : "线性轴")").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
             }
             Chart {
                 ForEach(a.buckets) { row in
+                    AreaMark(x: .value("日期", row.date), y: .value("Token", coordinate(Double(row.total), a)))
+                        .foregroundStyle(LinearGradient(colors: [PlotInk.blue.opacity(0.24), PlotInk.blue.opacity(0.03)], startPoint: .top, endPoint: .bottom))
                     LineMark(x: .value("日期", row.date), y: .value("Token", coordinate(Double(row.total), a)))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.35)).lineStyle(StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(PlotInk.blue).lineStyle(StrokeStyle(lineWidth: 1.8, lineJoin: .round))
                     PointMark(x: .value("日期", row.date), y: .value("Token", coordinate(Double(row.total), a)))
-                        .foregroundStyle(cacheColor(row)).symbolSize(row.total > 0 ? 28 : 16)
+                        .foregroundStyle(cacheColor(row)).symbolSize(row.total > 0 ? 24 : 12)
                         .accessibilityLabel(Text("\(UsageStats.formatter("yyyy-M-d").string(from: row.date))，\(row.total.formatted()) Token"))
                 }
                 RuleMark(y: .value("中位数", coordinate(a.bucketMedian, a)))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .annotation(position: .top, alignment: .leading) {
+                        Text("P50 \(UsageStats.formatTokens(Int(a.bucketMedian)))").font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
+                    }
                 if let row = inspected(a) {
                     RuleMark(x: .value("选中日期", row.date)).foregroundStyle(Theme.textSecondary.opacity(0.35))
                     PointMark(x: .value("日期", row.date), y: .value("Token", coordinate(Double(row.total), a)))
@@ -158,23 +165,34 @@ struct UsageAnalyticsSection: View {
                     }
                 }
             }
-            .frame(height: 166)
+            .frame(height: 174)
             .accessibilityLabel("日期与 Token 的活动轨迹；颜色为提示侧缓存命中率。连线连接统计周期，不表示小时采样。")
         }
     }
     private func distribution(_ a: UsageAnalysis) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("经验累积分布").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                Text("用量分布 · ECDF").font(Theme.Font.labelSection).foregroundColor(Theme.textPrimary)
                 Spacer()
                 Text("≤ Token").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
             }
             Chart {
+                AreaMark(x: .value("Token", 0.0), y: .value("比例", 0.0))
+                    .foregroundStyle(PlotInk.teal.opacity(0.10)).interpolationMethod(.stepEnd)
                 LineMark(x: .value("Token", 0.0), y: .value("比例", 0.0))
-                    .foregroundStyle(PlotInk.blue).interpolationMethod(.stepEnd)
+                    .foregroundStyle(PlotInk.teal).lineStyle(StrokeStyle(lineWidth: 2)).interpolationMethod(.stepEnd)
+                ForEach([50.0, 95.0], id: \.self) { level in
+                    RuleMark(y: .value("累计比例", level))
+                        .foregroundStyle(PlotInk.teal.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .trailing) {
+                            Text("\(Int(level))%").font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
+                        }
+                }
                 ForEach(a.distribution) { point in
+                    AreaMark(x: .value("Token", coordinate(point.x, a)), y: .value("比例", point.y * 100))
+                        .foregroundStyle(PlotInk.teal.opacity(0.10)).interpolationMethod(.stepEnd)
                     LineMark(x: .value("Token", coordinate(point.x, a)), y: .value("比例", point.y * 100))
-                        .foregroundStyle(PlotInk.blue).interpolationMethod(.stepEnd)
+                        .foregroundStyle(PlotInk.teal).lineStyle(StrokeStyle(lineWidth: 2)).interpolationMethod(.stepEnd)
                 }
                 if let row = inspected(a) {
                     RuleMark(x: .value("选中 Token", coordinate(Double(row.total), a)))
@@ -202,7 +220,7 @@ struct UsageAnalyticsSection: View {
                     }
                 }
             }
-            .frame(height: 166)
+            .frame(height: 174)
             .accessibilityLabel("经验累积分布。纵轴是总量小于等于横轴 Token 的周期比例，包含零记录周期。")
         }
     }
@@ -214,7 +232,7 @@ struct UsageAnalyticsSection: View {
     }
     private func cacheColor(_ row: UsageAnalysis.Bucket) -> Color {
         guard let rate = row.hitRate else { return Theme.textSecondary.opacity(0.65) }
-        return PlotInk.viridis[min(63, max(0, Int(rate * 63)))]
+        return PlotInk.cache(rate)
     }
     private func inspected(_ a: UsageAnalysis) -> UsageAnalysis.Bucket? {
         if let distributionX { return a.buckets.min { abs(coordinate(Double($0.total), a) - distributionX) < abs(coordinate(Double($1.total), a) - distributionX) } }
@@ -258,29 +276,32 @@ struct UsageAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 heading("来源 × 模型", "square.grid.3x3")
-                Text("Top 8").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                Text("Top \(matrix.count)").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                 Spacer()
                 Text("首位 \(UsageAnalysis.share(a.models.first?.tokens ?? 0, of: a.total)) · 有效模型 \(String(format: "%.1f", a.effectiveModels))/\(a.models.count)")
                     .font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
                     .help("有效模型数 = 1 / Σ(模型 Token 占比²)。所有模型权重相同时等于模型数；由少数模型主导时更小。")
             }
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 18) {
+                HStack(alignment: .top, spacing: 16) {
                     matrixView(a).frame(minWidth: 480, maxWidth: .infinity)
-                    concentration(a).frame(width: 270)
+                    concentration(a).frame(width: 240)
                 }
                 VStack(spacing: 16) { matrixView(a); concentration(a) }
             }
         }.padding(14).usageFigure()
     }
     private func matrixView(_ a: UsageAnalysis) -> some View {
-        Grid(horizontalSpacing: 5, verticalSpacing: 5) {
+        Grid(horizontalSpacing: 10, verticalSpacing: 6) {
             GridRow {
                 Text("模型 / Token").frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(sourceRows) { source in
                     VStack(spacing: 2) {
-                        Text(source.source.label).lineLimit(1)
-                        Text(UsageStats.formatTokens(source.tokens)).font(Theme.Font.micro)
+                        HStack(spacing: 4) {
+                            Circle().fill(PlotInk.source(source.source)).frame(width: 5, height: 5)
+                            Text(source.source.label).lineLimit(1)
+                        }
+                        Text(UsageStats.formatTokens(source.tokens)).font(Theme.Font.captionMono).foregroundColor(Theme.textPrimary)
                     }.frame(minWidth: 70, maxWidth: .infinity)
                 }
                 Text("占比").frame(width: 48, alignment: .trailing)
@@ -288,45 +309,52 @@ struct UsageAnalyticsSection: View {
             ForEach(matrix) { row in
                 GridRow {
                     Text(row.name).font(Theme.Font.captionMono).lineLimit(1).frame(minWidth: 145, maxWidth: .infinity, alignment: .leading).help(row.name)
-                    ForEach(0..<3, id: \.self) { index in matrixCell(row.cells[index]) }
-                    Text(UsageAnalysis.share(row.tokens, of: a.total)).font(Theme.Font.captionMono).frame(width: 48, alignment: .trailing)
+                    ForEach(0..<3, id: \.self) { index in matrixCell(row.cells[index], source: UsageSource.allCases[index]) }
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(UsageAnalysis.share(row.tokens, of: a.total)).font(Theme.Font.captionMono)
+                        GeometryReader { geo in
+                            Rectangle().fill(Theme.bgOverlay)
+                            Rectangle().fill(PlotInk.blue).frame(width: geo.size.width * min(1, Double(row.tokens) / Double(max(1, a.total))))
+                        }.frame(height: 3)
+                    }.frame(width: 48, alignment: .trailing)
                 }
                 .accessibilityElement(children: .combine)
             }
             GridRow {
-                Text("总量色阶").font(Theme.Font.micro).foregroundColor(Theme.textSecondary).frame(maxWidth: .infinity, alignment: .leading)
-                LinearGradient(colors: PlotInk.viridis, startPoint: .leading, endPoint: .trailing).frame(height: 5).gridCellColumns(2)
-                Text(UsageStats.formatTokens(matrixMaximum)).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                Text("")
-            }
+                Text("单元格条长 / 共同线性尺度").gridCellColumns(3).frame(maxWidth: .infinity, alignment: .leading)
+                Text("最大 " + UsageStats.formatTokens(matrixMaximum)).gridCellColumns(2).frame(maxWidth: .infinity, alignment: .trailing)
+            }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
         }.foregroundColor(Theme.textPrimary)
-        .help("单元格是来源与模型的实际 Token 总量；正值颜色按 log1p(Token) 缩放，全矩阵共享色阶。灰色短横表示零，未加大微小占比。")
+        .help("单元格为来源与模型的实际 Token 总量；条形长度按全矩阵最大值线性缩放，颜色区分来源。微小份额仍显示实际数值，不放大条形。")
     }
-    private func matrixCell(_ value: Int) -> some View {
-        let intensity = value > 0 ? log1p(Double(value)) / log1p(Double(matrixMaximum)) : 0
-        let index = min(63, max(0, Int(intensity * 63)))
-        let rgb = PlotInk.viridisRGB[index]
-        let luminance = [rgb.0, rgb.1, rgb.2].map { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
-        let brightness = luminance[0] * 0.2126 + luminance[1] * 0.7152 + luminance[2] * 0.0722
-        return Text(value > 0 ? UsageStats.formatTokens(value) : "—")
-            .font(Theme.Font.captionMono).frame(minWidth: 70, maxWidth: .infinity).frame(height: 25)
-            .foregroundColor(value > 0 ? (brightness > 0.179 ? Color.black : Color.white) : Theme.textSecondary)
-            .background(value > 0 ? PlotInk.viridis[index] : Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 3))
-            .help("\(value.formatted()) Token")
-            .accessibilityLabel("\(value.formatted()) Token")
+    private func matrixCell(_ value: Int, source: UsageSource) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value > 0 ? UsageStats.formatTokens(value) : "—")
+                .font(Theme.Font.captionMono).foregroundColor(value > 0 ? Theme.textPrimary : Theme.textSecondary)
+            GeometryReader { geo in
+                Rectangle().fill(Theme.bgOverlay.opacity(0.65))
+                Rectangle().fill(PlotInk.source(source))
+                    .frame(width: geo.size.width * Double(max(0, value)) / Double(matrixMaximum))
+            }.frame(height: 4)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .frame(minWidth: 70, maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 4))
+        .help("\(value.formatted()) Token")
+        .accessibilityLabel("\(value.formatted()) Token")
     }
     private func concentration(_ a: UsageAnalysis) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack { Text("Lorenz 集中曲线").font(Theme.Font.caption).foregroundColor(Theme.textSecondary); Spacer() }
+            HStack { Text("模型集中度 · Lorenz").font(Theme.Font.labelSection).foregroundColor(Theme.textPrimary); Spacer() }
             if a.models.count < 2 {
                 Text(a.models.isEmpty ? "暂无模型" : "只有 1 个模型").font(Theme.Font.caption).foregroundColor(Theme.textSecondary).frame(maxWidth: .infinity, minHeight: 135)
             } else {
                 Chart {
                     ForEach(a.lorenz) { row in
                         AreaMark(x: .value("模型比例", row.x * 100), yStart: .value("Token 累计", row.y * 100), yEnd: .value("均衡", row.x * 100))
-                            .foregroundStyle(PlotInk.purple.opacity(0.12))
+                            .foregroundStyle(PlotInk.blue.opacity(0.10))
                         LineMark(x: .value("模型比例", row.x * 100), y: .value("Token 累计", row.y * 100))
-                            .foregroundStyle(PlotInk.purple).lineStyle(StrokeStyle(lineWidth: 1.6))
+                            .foregroundStyle(PlotInk.blue).lineStyle(StrokeStyle(lineWidth: 2))
                     }
                     LineMark(x: .value("模型比例", 0.0), y: .value("均衡", 0.0), series: .value("参考", "均衡"))
                         .foregroundStyle(Theme.textSecondary.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
@@ -345,7 +373,7 @@ struct UsageAnalyticsSection: View {
                 .frame(height: 135)
                 .accessibilityLabel("Lorenz 曲线，模型按 Token 从少到多排序。横轴模型累计比例，纵轴 Token 累计比例；虚线为完全均衡。")
             }
-            Text("模型累计 → Token 累计 · 偏离虚线越大，越集中").font(Theme.Font.micro).foregroundColor(Theme.textSecondary).lineLimit(2)
+            Text("横轴 模型累计 · 纵轴 Token 累计").font(Theme.Font.micro).foregroundColor(Theme.textSecondary).lineLimit(2)
         }
     }
     private var emptyFigure: some View { Text("本周期无已到达日期").font(Theme.Font.caption).foregroundColor(Theme.textSecondary).frame(maxWidth: .infinity, minHeight: 100) }
@@ -359,7 +387,6 @@ private enum PlotInk {
     static let blue = Color(red: 0.16, green: 0.43, blue: 0.72)
     static let teal = Color(red: 0.10, green: 0.60, blue: 0.53)
     static let orange = Color(red: 0.88, green: 0.48, blue: 0.14)
-    static let purple = Color(red: 0.56, green: 0.40, blue: 0.69)
     // Viridis by N. J. Smith, S. van der Walt and E. Firing (CC0),
     // sampled uniformly at 64 positions using Matplotlib. See ASSET-LICENSES.md.
     static let viridisRGB: [(Double, Double, Double)] = [
@@ -429,6 +456,10 @@ private enum PlotInk {
         (0.993248, 0.906157, 0.143936),
     ]
     static let viridis = viridisRGB.map { Color(red: $0.0, green: $0.1, blue: $0.2) }
+    static func cache(_ rate: Double) -> Color {
+        let t = min(1, max(0, rate))
+        return Color(red: 0.16 - 0.06 * t, green: 0.43 + 0.17 * t, blue: 0.72 - 0.19 * t)
+    }
     static func source(_ source: UsageSource) -> Color {
         switch source { case .claude: return blue; case .codex: return orange; case .thirdParty: return teal }
     }

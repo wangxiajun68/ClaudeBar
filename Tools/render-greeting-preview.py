@@ -103,7 +103,7 @@ source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'extension Color {'
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
 source += (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
-source += (root / 'Sources/ClaudeBar/Views/Shared/WeatherExplorer.swift').read_text() + '\n'
+source += declaration('Sources/ClaudeBar/Views/Shared/WeatherReadingSky.swift', 'extension WeatherReading.Sky {')
 source += (root / 'Sources/ClaudeBar/Utils/GreetingPhrase.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 source += declaration('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
@@ -118,6 +118,7 @@ _cursor_fetcher = _cursor_fetcher.replace(
     'CursorDB.readCredentials()', 'nil as CursorCredentials?')
 source += _cursor_fetcher + '\n'
 # The fetcher persists its last reading under the app-support directory.
+source += (root / 'Sources/Shared/BuildChannel.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Utils/FilePaths.swift').read_text() + '\n'
 # The credential value type the fetcher's guard reads; the standalone struct has
 # no SQLite in it, so the fixture can carry it without the database layer.
@@ -192,8 +193,8 @@ sheet = sheet.replace(
 # sky branch grew a second condition.
 sheet = sheet.replace(
     """            VStack(alignment: .leading, spacing: 8) {
-                GreetingClock(ink: ink, timezone: clockZone, preview: clockPreview)
-                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
+                GreetingClock(ink: topLeftInk, timezone: clockZone, preview: clockPreview)
+                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: topLeftInk,
                               setManual: { setManual($0, scene: scene) },
                               setPreview: { setPreview($0) },
                               setRendering: { AppPreferences.shared.greetingWeatherRendering = $0 })
@@ -203,7 +204,7 @@ sheet = sheet.replace(
             .padding(.top, m.top)
             .modifier(StatusArrival(arrived: arrived, delay: 1.1, reduceMotion: reduceMotion))
 """,
-    """            topInstruments(ink: ink, m: m, layout: layout)
+    """            topInstruments(ink: topLeftInk, m: m, layout: layout)
 """)
 # The clock and the mode toggle move into a helper: the fixture's whole `ZStack`
 # literal is what the type checker cannot handle in reasonable time once the
@@ -227,6 +228,7 @@ sheet = sheet.replace("    // MARK: - Sky",
     // MARK: - Sky""")
 source += (sheet[sheet.index('struct GreetingStatusSheet: View {'):]
     .replace('@State private var arrived = false', '@State private var arrived = true')
+    .replace('@State private var cardWidth: CGFloat = 1100', '@State private var cardWidth: CGFloat = fixtureCardWidth')
       # The old template replayed a live @State init through a `.replace` on the
       # body; those calls no longer exist, and `self.sensoryFeedback(...)` on a
       # freshly rewritten body is what the type checker chokes on.
@@ -257,7 +259,8 @@ source += '''
         GreetingScript.resourceRoot = URL(fileURLWithPath: scriptFonts)
         let out = URL(fileURLWithPath: CommandLine.arguments[1])
         if CommandLine.arguments.contains("--bench") { benchUpdates(); return }
-        for mode in ["auto", "manual", "pinned", "bare"] {
+        let review = CommandLine.arguments.contains("--weather-review")
+        for mode in (review ? ["auto", "manual"] : ["auto", "manual", "pinned", "bare"]) {
         // The sheet reads its sky mode through @AppStorage; the argument
         // domain is volatile, so the fixture never writes a preference.
         UserDefaults.standard.setVolatileDomain(["greeting.skyMode": mode == "manual" ? "manual" : "auto",
@@ -267,21 +270,21 @@ source += '''
                                                 forName: UserDefaults.argumentDomain)
         // "bare": 天气渲染关着，但天空没有挑过任何一层——就是默认的贴图。
         fixtureWeatherRendering = mode != "pinned" && mode != "bare"
-        for dark in [false, true] {
+        for dark in (review ? [false] : [false, true]) {
             AppPreferences.shared.isDark = dark
             for width in [1100.0, 620.0] {
                 fixtureCardWidth = width
                 // Light auto also writes the sunny card once per selectable
                 // face, so a face whose proportions break the layout shows up.
-                let faces = mode == "auto" && !dark ? GreetingTypeface.allCases.map { "face-" + $0.rawValue } : []
-                for scene in (mode == "manual" ? ["sun"] : mode == "pinned" ? ["sun", "empty"] : ["sun", "rain", "night", "cloud", "snow", "empty"]) + faces {
+                let faces = !review && mode == "auto" && !dark ? GreetingTypeface.allCases.map { "face-" + $0.rawValue } : []
+                for scene in (mode == "manual" ? ["sun"] : mode == "pinned" ? ["sun", "empty"] : ["sun", "rain", "heavy", "thunder", "night", "cloud", "snow", "fog", "empty"]) + faces {
                     let typeface = scene.hasPrefix("face-") ? GreetingTypeface(rawValue: String(scene.dropFirst(5)))! : .standard
                     fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-28T13:00:00Z" : "2026-09-28T02:17:01Z")!
                     let empty = scene == "empty"
                     var weather = WeatherReading(place: "广州 · 天河区", temperatureC: 29, feelsLikeC: 32,
-                        conditionCode: scene == "rain" ? 296 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
+                        conditionCode: scene == "rain" ? 296 : scene == "heavy" ? 308 : scene == "thunder" ? 389 : scene == "fog" ? 248 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
                         windKph: 8, windDirection: "东南", isDay: scene != "night", sunrise: "06:18", sunset: "18:22",
-                        rainChance: 20, observedAt: Date(), latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
+                        rainChance: ["heavy", "thunder"].contains(scene) ? 90 : 20, observedAt: Date(), latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
                     var calendar = Calendar(identifier: .gregorian)
                     calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
                     let start = calendar.startOfDay(for: fixtureSkyDate)
@@ -336,7 +339,7 @@ source += '''
                 }
             }
         }
-        print("Rendered \(44 + GreetingTypeface.allCases.count * 2) synthetic fixture views to \(out.path)")
+        print("Rendered synthetic fixture views to \(out.path)")
         }
     }
 }
@@ -414,6 +417,6 @@ path = out / 'Probe.swift'
 path.write_text(source)
 binary = out / 'probe'
 bench = '--bench' in sys.argv or '--bench-baseline' in sys.argv
-subprocess.run(['swiftc'] + (['-O'] if bench else []) + ['-parse-as-library', '-target', 'arm64-apple-macos15.0',
+subprocess.run(['swiftc'] + (['-O'] if bench else []) + ['-parse-as-library', '-D', 'CLAUDEBAR_DEV', '-target', 'arm64-apple-macos15.0',
                 str(path), '-o', str(binary)], check=True)
-subprocess.run([str(binary), str(out)] + (['--bench'] if bench else []), check=True)
+subprocess.run([str(binary), str(out)] + (['--bench'] if bench else ['--weather-review'] if '--weather-review' in sys.argv else []), check=True)

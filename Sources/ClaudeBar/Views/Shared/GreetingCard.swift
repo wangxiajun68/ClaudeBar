@@ -202,8 +202,15 @@ struct GreetingStatusSheet: View {
         calendar.timeZone = zone
         return calendar
     }
-    private var manualDate: Date { calendar.startOfDay(for: skyDate).addingTimeInterval(minutes * 60) }
-    private func minutesOfDay(_ date: Date) -> Double { date.timeIntervalSince(calendar.startOfDay(for: date)) / 60 }
+    private var manualDate: Date {
+        let clock = SkyTimeline.wrap(minutes)
+        return calendar.date(bySettingHour: Int(clock) / 60, minute: Int(clock) % 60,
+                             second: Int((clock - floor(clock)) * 60), of: skyDate) ?? skyDate
+    }
+    private func minutesOfDay(_ date: Date) -> Double {
+        let parts = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return Double((parts.hour ?? 0) * 60 + (parts.minute ?? 0)) + Double(parts.second ?? 0) / 60
+    }
     /// With no coordinates (or no reading at all) the sky is estimated from the
     /// time zone, so a failed fetch still shows *about now* rather than grey.
     private var astronomy: SkyAstronomy.Snapshot {
@@ -341,13 +348,15 @@ struct GreetingStatusSheet: View {
         let layout = GreetingTypesetter.layout(phrase.script + ",", name: name, typeface: typeface, cardWidth: m.width,
                                                skyHeight: m.sky, margin: m.margin,
                                                topClear: m.topClear, bottomClear: m.bottomClear)
-        // 天空没有天气时（关掉实时天气、也没挑过哪一层）用的是一张固定调色板，
-        // 那片灰不是"光线弱"，不该据此点亮白字：`prefersDarkInk` 说的是问候语
-        // 背后的地面有多亮，这张贴图量它自己。挑了天气或跟着实时读数时，就量
-        // 画出来的那片天。
-        let inkGround = (liveWeather || pinnedWeather != nil) ? scene.prefersDarkInk : SkyScene.pinned.prefersDarkInk
-        let ink = inkGround ? Color(hex: 0x141E33) : Color.white
-        let vivid = !inkGround
+        // Each information region chooses ink against its own sky band.
+        let topLeftDark = scene.prefersDarkInk(at: SIMD2(0.12, Float((m.top + 30) / m.sky)), aspect: Float(m.width / m.sky))
+        let topRightDark = scene.prefersDarkInk(at: SIMD2(0.85, Float((m.top + m.nowHeight / 2) / m.sky)), aspect: Float(m.width / m.sky))
+        let bottomLeftDark = scene.prefersDarkInk(at: SIMD2(0.18, Float((m.sky - 42) / m.sky)), aspect: Float(m.width / m.sky))
+        let bottomRightDark = scene.prefersDarkInk(at: SIMD2(0.85, Float((m.chartTop + m.chartHeight / 2) / m.sky)), aspect: Float(m.width / m.sky))
+        let topLeftInk = topLeftDark ? Color(hex: 0x141E33) : Color.white
+        let topRightInk = topRightDark ? Color(hex: 0x141E33) : Color.white
+        let bottomLeftInk = bottomLeftDark ? Color(hex: 0x141E33) : Color.white
+        let bottomRightInk = bottomRightDark ? Color(hex: 0x141E33) : Color.white
         ZStack(alignment: .topLeading) {
             sky(scene: scene, layout: layout, metrics: m)
             skyGestures(layout: layout, metrics: m)
@@ -355,8 +364,8 @@ struct GreetingStatusSheet: View {
             let clockZone: String? = liveWeather ? reading?.timezone : nil
             let clockPreview: Date? = manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate)
             VStack(alignment: .leading, spacing: 8) {
-                GreetingClock(ink: ink, timezone: clockZone, preview: clockPreview)
-                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
+                GreetingClock(ink: topLeftInk, timezone: clockZone, preview: clockPreview)
+                SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: topLeftInk,
                               setManual: { setManual($0, scene: scene) },
                               setPreview: { setPreview($0) },
                               setRendering: { AppPreferences.shared.greetingWeatherRendering = $0 })
@@ -370,11 +379,11 @@ struct GreetingStatusSheet: View {
             let shownCity = liveWeather ? city : "贴图"
             Unchanged(key: NowKey(reading: shownReading, hoveredDay: liveWeather ? hoveredDay : nil,
                                   pinnedDay: pinnedDay, night: nowNight,
-                                  darkInk: scene.prefersDarkInk, city: shownCity, weatherLoading: weatherLoading,
+                                  darkInk: topRightDark, city: shownCity, weatherLoading: weatherLoading,
                                   weatherNote: liveWeather ? weatherNote : nil, locating: locating,
                                   sky: scene.weather, visible: visible,
                                   reduceMotion: reduceMotion, width: m.width)) {
-                weatherNow(night: nowNight, ink: ink, vivid: vivid, metrics: m)
+                weatherNow(night: nowNight, ink: topRightInk, vivid: !topRightDark, metrics: m)
             }
             .equatable()
                 .padding(.trailing, m.margin)
@@ -383,12 +392,12 @@ struct GreetingStatusSheet: View {
                 .modifier(StatusArrival(arrived: arrived, delay: 1.2, reduceMotion: reduceMotion))
             Group {
                 if manual {
-                    skyConsole(scene: scene, ink: ink, vivid: vivid)
+                    skyConsole(scene: scene, ink: bottomLeftInk, vivid: !bottomLeftDark)
                         .frame(width: m.consoleWidth, alignment: .leading)
                         .offset(x: m.margin, y: m.chartTop)
                         .transition(.opacity.combined(with: .offset(y: 10)))
                 } else {
-                    sunPath(scene: scene, ink: ink, vivid: vivid, times: dayTimes)
+                    sunPath(scene: scene, ink: bottomLeftInk, vivid: !bottomLeftDark, times: dayTimes)
                         .frame(width: m.sunWidth)
                         .offset(x: m.margin, y: m.sky - 14 - 57)
                         .transition(.opacity)
@@ -396,10 +405,10 @@ struct GreetingStatusSheet: View {
             }
             .modifier(StatusArrival(arrived: arrived, delay: 1.3, reduceMotion: reduceMotion))
             if liveWeather, !(manual && m.narrow) {
-                Unchanged(key: ForecastKey(days: forecastDays, zone: zone, darkInk: scene.prefersDarkInk,
+                Unchanged(key: ForecastKey(days: forecastDays, zone: zone, darkInk: bottomRightDark,
                                            hoveredDay: hoveredDay, pinnedDay: pinnedDay, arrived: arrived,
                                            reduceMotion: reduceMotion, width: m.width)) {
-                    forecast(ink: ink, vivid: vivid, metrics: m)
+                    forecast(ink: bottomRightInk, vivid: !bottomRightDark, metrics: m)
                 }
                 .equatable()
                 .transition(.opacity)
@@ -488,7 +497,7 @@ struct GreetingStatusSheet: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         } else {
-            FallbackSky(scene: scene, reading: reading, astronomy: astronomy, layout: layout)
+            FallbackSky(scene: scene, reading: reading, astronomy: astronomy, layout: layout, skyHeight: m.sky)
                 .frame(width: m.width, height: m.total)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -635,13 +644,13 @@ struct GreetingStatusSheet: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Image(systemName: "photo")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(ink.opacity(0.7))
+                    .foregroundStyle(ink.opacity(0.86))
                 Text(city)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(ink.opacity(0.88))
                 Text("贴图")
                     .font(.system(size: 11))
-                    .foregroundStyle(ink.opacity(0.55))
+                    .foregroundStyle(ink.opacity(0.86))
             }
             .lineLimit(1)
             .accessibilityElement(children: .combine)
@@ -658,23 +667,23 @@ struct GreetingStatusSheet: View {
                 }
                 Image(systemName: locating ? "location.fill" : "mappin.and.ellipse")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(ink.opacity(0.7))
+                    .foregroundStyle(ink.opacity(0.86))
                     .symbolEffect(.pulse, options: .repeating, isActive: weatherLoading && visible && !reduceMotion)
                 Text(placeParts.city)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(ink.opacity(0.88))
                 if let district = placeParts.district {
-                    Text(district).font(.system(size: 11)).foregroundStyle(ink.opacity(0.6))
+                    Text(district).font(.system(size: 11)).foregroundStyle(ink.opacity(0.86))
                 }
                 if let focusedDay {
                     Text("· " + dayName(focusedDay.date))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(ink.opacity(0.78))
+                        .foregroundStyle(ink.opacity(0.86))
                         .transition(.opacity)
                 } else if !m.narrow, let coordinates {
                     Text(coordinates)
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ink.opacity(0.42))
+                        .foregroundStyle(ink.opacity(0.86))
                         .transition(.opacity)
                 }
             }
@@ -755,7 +764,7 @@ struct GreetingStatusSheet: View {
             .labelStyle(CompactLabelStyle())
             .font(.system(size: 10, weight: .medium))
             .monospacedDigit()
-            .foregroundStyle(ink.opacity(0.62))
+            .foregroundStyle(ink.opacity(0.86))
         }
         .fixedSize()
     }
@@ -811,7 +820,7 @@ struct GreetingStatusSheet: View {
             } else {
                 Text(weatherNote != nil ? "点击地点重试 · 天空按时区推算" : "天空按时区推算")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(ink.opacity(0.55))
+                    .foregroundStyle(ink.opacity(0.86))
             }
         }
     }
@@ -889,14 +898,12 @@ struct GreetingStatusSheet: View {
         pinnedDay = next == 0 ? nil : forecastDays[next].date
     }
 
-    /// 日轨的日出日落。天气渲染关掉时不再按实时读数（那是屏幕上一个不是所在
-    /// 地的坐标）推算，改用本机时区与纬度约 30° 走一遍同一个星历——这是
-    /// `SkyScene.estimatedAstronomy` 已经在做的事，一处实现两处用。
-    private var dayTimes: (rise: Date, set: Date) {
-        SunPath.times(on: sceneDate, reading: liveWeather ? reading : nil, zone: zone)
+    /// Weather rendering preferences do not change the reading's location or solar events.
+    private var dayTimes: (rise: Date?, set: Date?) {
+        SunPath.times(on: sceneDate, reading: reading, zone: zone)
     }
 
-    private func sunPath(scene: SkyScene, ink: Color, vivid: Bool, times: (rise: Date, set: Date)) -> some View {
+    private func sunPath(scene: SkyScene, ink: Color, vivid: Bool, times: (rise: Date?, set: Date?)) -> some View {
         let caption: String?
         if timeOffset != 0 { caption = "预览 \(previewTime)" }
         else if skyHovered, liveWeather { caption = "拖动天空 · 漫游一天" }
@@ -927,7 +934,7 @@ struct GreetingStatusSheet: View {
         let times = SunPath.times(on: skyDate, reading: reading, zone: zone)
         let picked = pinnedWeather ?? manualWeather
         return SkyConsole(weather: picked, band: scene.band, minutes: minutes, night: scene.nightness > 0.5,
-                          sunrise: minutesOfDay(times.rise), sunset: minutesOfDay(times.set),
+                          sunrise: times.rise.map { minutesOfDay($0) }, sunset: times.set.map { minutesOfDay($0) },
                           track: trackColors(weather: picked), ink: ink, vivid: vivid,
                           pickWeather: { weather in
                               if skyMode == "preview" {
@@ -936,7 +943,7 @@ struct GreetingStatusSheet: View {
                                   manualWeatherRaw = weather.rawValue
                               }
                           },
-                          pickBand: { glide(to: representativeMinutes($0)) },
+                          pickBand: { if let target = representativeMinutes($0) { glide(to: target) } },
                           scrub: { glider.stop(); manualMinutes = $0 },
                           commit: commitMinutes)
     }
@@ -973,16 +980,17 @@ struct GreetingStatusSheet: View {
 
     /// Where each part of the day is at its most itself, from today's sunrise
     /// and sunset — so "日落" is the sunset here, not 18:00 everywhere.
-    private func representativeMinutes(_ band: SkyScene.Band) -> Double {
+    private func representativeMinutes(_ band: SkyScene.Band) -> Double? {
         let times = SunPath.times(on: skyDate, reading: reading, zone: zone)
-        let rise = minutesOfDay(times.rise), set = minutesOfDay(times.set), noon = (rise + set) / 2
+        guard let sunrise = times.rise, let sunset = times.set else { return nil }
+        let rise = minutesOfDay(sunrise), set = minutesOfDay(sunset), noon = (rise + set) / 2
         switch band {
         case .dawn: return rise - 35
-        case .sunrise: return rise + 12
+        case .sunrise: return rise
         case .morning: return (rise + noon) / 2 + 20
         case .noon: return noon
         case .afternoon: return noon + (set - noon) * 0.55
-        case .sunset: return set - 8
+        case .sunset: return set
         case .dusk: return set + 32
         case .night: return SkyTimeline.wrap(set + 200)
         }
@@ -1292,6 +1300,7 @@ private struct FallbackSky: View {
     var reading: WeatherReading?
     var astronomy: SkyAstronomy.Snapshot
     var layout: GreetingTypesetter.Layout
+    var skyHeight: CGFloat
 
     private func color(_ c: SIMD3<Float>) -> Color { Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)) }
 
@@ -1319,8 +1328,8 @@ private struct FallbackSky: View {
             if !layout.name.isEmpty {
                 Text(layout.name)
                     .font(Font(GreetingTypesetter.nameFont(size: layout.nameSize)))
-                    .tracking(layout.nameSize * 0.16)
-                    .foregroundStyle(ink.opacity(0.82))
+                    .tracking(GreetingTypesetter.nameTracking(size: layout.nameSize))
+                    .foregroundStyle(ink)
                     .fixedSize()
                     .alignmentGuide(.top) { $0[.firstTextBaseline] }
                     .offset(x: layout.nameOrigin.x, y: layout.nameOrigin.y)
@@ -1480,12 +1489,12 @@ private struct GreetingClock: View {
                     }
                 }
                 Text(shown.formatted(Date.FormatStyle(timeZone: zone).month().day().weekday(.abbreviated).locale(Locale(identifier: "zh_CN"))))
-                    .font(.system(size: 11, weight: .medium)).tracking(0.4).foregroundStyle(ink.opacity(0.6))
+                    .font(.system(size: 11, weight: .medium)).tracking(0.4).foregroundStyle(ink.opacity(0.86))
             }
             if preview == nil, let timezone, let zone = TimeZone(identifier: timezone),
                zone.secondsFromGMT(for: shown) != TimeZone.current.secondsFromGMT(for: shown) {
                 Text("天气当地 \(shown.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone)))")
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(ink.opacity(0.5))
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(ink.opacity(0.86))
             }
         }
     }

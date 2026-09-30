@@ -82,10 +82,9 @@ docs/
 | 11 | [vpn](technical/11-vpn.md) | mihomo sidecar、系统代理、测速与故障切换 |
 | 12 | [battery-control](technical/12-battery-control.md) | 电池限充 / 暂停 / 放电与特权辅助进程 |
 | 13 | [provider-directory](technical/13-provider-directory.md) | 供应商目录、协议核查、Codex 会话监控 |
-| 14 | [performance-audit](technical/14-performance-audit.md) | 桌面 / popup / 灵动岛刷新与渲染审查 |
 | 15 | [model-cost](technical/15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配 |
 | 16 | [connectors](technical/16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停 |
-| 17 | [ui-audit-backlog](technical/17-ui-audit-backlog.md) | 「审查每个页面」那一轮的全部发现与修复记录 |
+| 18 | [weather-and-atmosphere](technical/18-weather-and-atmosphere.md) | 天气、日出日落、天空渲染与问候布局 |
 
 完整索引：[technical/README.md](technical/README.md)
 
@@ -105,7 +104,7 @@ docs/
 | 改模型价目 / 花费口径 | [technical/15](technical/15-model-cost.md) |
 | 改连接器页（Skills / MCP） | [technical/16](technical/16-connectors.md) |
 | 构建 / 签名 / 发版 | [09](design/09-build-and-distribution.md) · [technical/07](technical/07-build-and-signing.md) · [VERSIONING](VERSIONING.md) · [RELEASING](RELEASING.md) |
-| 性能优化 | [technical/08](technical/08-performance.md) · [technical/14](technical/14-performance-audit.md) |
+| 性能优化 | [technical/08](technical/08-performance.md) |
 | 边界与错误 | [08](design/08-error-handling.md) |
 | 新功能扩展 | [technical/10](technical/10-extension-guide.md) |
 | 定位某个文件 | [design/07](design/07-file-structure.md) · [technical/09](technical/09-file-index.md) |
@@ -114,6 +113,7 @@ docs/
 
 ## 文档约定
 
+- 技术文档按模块描述当前职责、数据流、契约、异常边界和验证入口，不追加按日期排列的工作日志。发布变更进入 CHANGELOG，具体审查与实测过程进入 reviews；引用历史证据时明确其适用范围。
 - 每篇设计/技术文档顶部有面包屑：`> ClaudeBar 设计/技术文档 · §N`，并链到相关章节。
 - 跨文档引用使用相对路径 Markdown 链接。
 - 用户安装方式统一表述为：**GitHub Releases → DMG**；`Sources/build.sh` 仅用于开发与 CI。

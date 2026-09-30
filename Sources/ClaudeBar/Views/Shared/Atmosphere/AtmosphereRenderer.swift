@@ -122,11 +122,11 @@ final class AtmosphereGPU: @unchecked Sendable {
         // Sizes are an integer number of cells, and they are the `world` values
         // the composite shader scrolls by. One point per pixel.
         self.rainFine = try Self.makePlate(device: device, queue: queue, pipeline: bake,
-                                           width: 112, height: 384, cell: SIMD2(8, 96),
-                                           shape: SIMD4(18, 0.6, 0, 0), seed: 1, kind: 0)
+                                           width: 252, height: 512, cell: SIMD2(14, 64),
+                                           shape: SIMD4(10, 0.9, 0, 0), seed: 1, kind: 0)
         self.rainCoarse = try Self.makePlate(device: device, queue: queue, pipeline: bake,
-                                             width: 180, height: 320, cell: SIMD2(18, 160),
-                                             shape: SIMD4(42, 1.5, 0, 0), seed: 13, kind: 0)
+                                             width: 384, height: 640, cell: SIMD2(32, 128),
+                                             shape: SIMD4(18, 1.6, 0, 0), seed: 13, kind: 0)
         self.snowFine = try Self.makePlate(device: device, queue: queue, pipeline: bake,
                                            width: 192, height: 192, cell: SIMD2(24, 24),
                                            shape: SIMD4(0, 0, 1.2, 0.6), seed: 3, kind: 1)
@@ -241,7 +241,7 @@ enum GreetingTypesetter {
     struct Layout: Equatable {
         /// Script text, as drawn.
         var phrase: String
-        /// Upper-case caption, as drawn.
+        /// Person's name, preserving its authored case.
         var name: String
         var typeface: GreetingTypeface
         var fontSize: CGFloat
@@ -272,10 +272,12 @@ enum GreetingTypesetter {
     }
 
     static func nameFont(size: CGFloat) -> CTFont {
-        NSFont.systemFont(ofSize: size, weight: .semibold) as CTFont
+        let font = NSFont.systemFont(ofSize: size, weight: .medium)
+        let descriptor = font.fontDescriptor.withDesign(.rounded) ?? font.fontDescriptor
+        return (NSFont(descriptor: descriptor, size: size) ?? font) as CTFont
     }
 
-    static func nameTracking(size: CGFloat) -> CGFloat { size * 0.16 }
+    static func nameTracking(size: CGFloat) -> CGFloat { size * 0.015 }
 
     static func nameLine(_ text: String, size: CGFloat, color: CGColor? = nil) -> CTLine {
         var attributes: [NSAttributedString.Key: Any] = [.font: nameFont(size: size), .kern: nameTracking(size: size)]
@@ -340,7 +342,7 @@ enum GreetingTypesetter {
         // All lower case, like the Mac's "hello": a script capital is the
         // heaviest shape in the line and pulls the eye off the rest of it.
         let text = phrase.lowercased()
-        let caption = name.uppercased()
+        let caption = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let line = GreetingScript.line(text, typeface: typeface)
         let weight = typeface.weight
         let top = topClear ?? skyHeight * 0.24
@@ -352,7 +354,7 @@ enum GreetingTypesetter {
         size = min(size, available / max(0.01, line.bounds.maxX - min(0, line.bounds.minX) + weight * 2))
 
         func nameMetrics(for size: CGFloat) -> (size: CGFloat, width: CGFloat) {
-            let nameSize = max(11, (size * 0.095).rounded())
+            let nameSize = min(28, max(18, (size * 0.18).rounded()))
             return (nameSize, caption.isEmpty ? 0 : measure(nameLine(caption, size: nameSize)))
         }
         // Inline if the name fits after the phrase at no less than 88 % of the
@@ -361,33 +363,39 @@ enum GreetingTypesetter {
         var inline = false
         var name = nameMetrics(for: size)
         if !caption.isEmpty {
-            let gap = size * 0.22
-            let inlineSize = min(size, (available - name.width - gap) / max(0.01, line.bounds.maxX))
+            // Account for the phrase's negative left bearing as well as the
+            // gap. Script fonts can extend well before their pen origin.
+            let inlineSize = min(size, (available - name.width) / max(0.01, line.bounds.width + weight + 0.22))
             if inlineSize >= size * 0.88 {
                 size = inlineSize
                 inline = true
             } else {
-                // The dropped name's line (≈ 1.9 × its 0.095 em size, below the
-                // lowest ink) has to fit in the band as well.
-                size = min(size, band / max(0.01, ascent + descent + weight * 2 + 0.19))
+                // Reserve the larger signature's line below the lowest ink.
+                size = min(size, (band - name.size * 2) / max(0.01, ascent + descent + weight * 2))
             }
             name = nameMetrics(for: size)
         }
         // A dropped name adds its own line under the descenders; the band has
         // to hold it too.
         if !inline, !caption.isEmpty {
-            size = min(size, (band - name.size * 2.0) / max(0.01, ascent + descent + weight * 2))
+            // The drop clears whichever is taller: the script's descender or
+            // the signature itself. Both cases must fit inside the free band.
+            size = min(size,
+                       (band - name.size * 1.9) / max(0.01, ascent + descent + weight * 2),
+                       (band - name.size * 2.9) / max(0.01, ascent + weight))
             name = nameMetrics(for: size)
         }
-        size = max(40, size.rounded(.down))
+        // A 40pt floor overflowed tall faces such as Zapfino in narrow cards.
+        // Respect measured ink bounds rather than the nominal em size.
+        size = max(16, size.rounded(.down))
 
         // A dropped name hangs under the phrase's right end, which is where the
         // comma and the last descender are — so it clears the lowest ink.
         let drop = max((descent + weight) * size, name.size) + name.size * 1.6
-        let hang = inline || caption.isEmpty ? descent * size : max(descent * size, drop + name.size * 0.3)
-        let spare = max(0, band - ascent * size - hang)
-        let baseline = (top + spare * 0.46 + ascent * size).rounded()
-        let origin = CGPoint(x: (margin - line.bounds.minX * size).rounded(), y: baseline)
+        let hang = inline || caption.isEmpty ? (descent + weight) * size : max((descent + weight) * size, drop + name.size * 0.3)
+        let spare = max(0, band - (ascent + weight) * size - hang)
+        let baseline = (top + spare * 0.46 + (ascent + weight) * size).rounded()
+        let origin = CGPoint(x: (margin + size * weight - line.bounds.minX * size).rounded(), y: baseline)
         let ink = CGRect(x: origin.x + line.bounds.minX * size, y: origin.y + line.bounds.minY * size,
                          width: line.bounds.width * size, height: line.bounds.height * size)
             .insetBy(dx: -size * weight, dy: -size * weight)
@@ -396,7 +404,7 @@ enum GreetingTypesetter {
             nameOrigin = CGPoint(x: (origin.x + line.bounds.maxX * size + size * 0.22).rounded(), y: baseline)
         } else {
             let right = min(ink.maxX - size * 0.05, cardWidth - margin)
-            nameOrigin = CGPoint(x: (right - name.width).rounded(),
+            nameOrigin = CGPoint(x: max(margin, (right - name.width).rounded()),
                                  y: (baseline + drop).rounded())
         }
         // About 0.2 s an em of advance — the unhurried pace of the Mac's
@@ -452,8 +460,8 @@ enum GreetingTypesetter {
                 context.scaleBy(x: 1, y: -1)
                 context.textPosition = .zero
                 context.setShouldSmoothFonts(false)
-                // The name is the quieter voice: 82 % ink.
-                CTLineDraw(nameLine(layout.name, size: layout.nameSize, color: CGColor(gray: 0.82, alpha: 1)), context)
+                // Hierarchy comes from size, not translucent, unreadable ink.
+                CTLineDraw(nameLine(layout.name, size: layout.nameSize, color: CGColor(gray: 1, alpha: 1)), context)
                 context.restoreGState()
             }
             return true
