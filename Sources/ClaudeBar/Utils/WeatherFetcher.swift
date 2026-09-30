@@ -678,8 +678,14 @@ final class WeatherStore {
     /// Fetch unless the current reading is fresh. A location switch with no
     /// fix yet always fetches: a city reading from two minutes ago must not
     /// hide the position the user just allowed.
+    ///
+    /// The build gate is read alongside the switch so the card never enters the
+    /// "waiting for a fix" state in a build that will not ask for one: without
+    /// it, `refresh` would park on a coordinate that can never arrive and the
+    /// card would show nothing instead of the city.
     func refreshIfStale() {
-        if PermissionGate.allows(.currentLocation), CurrentLocation.shared.query == nil {
+        if BuildChannel.promptsForSystemPermissions,
+           PermissionGate.allows(.currentLocation), CurrentLocation.shared.query == nil {
             refresh()
             return
         }
@@ -692,7 +698,7 @@ final class WeatherStore {
     /// fix yet, this asks for one and returns; the fix calls back into here.
     func refresh() {
         guard inflight == nil else { rerun = true; return }
-        if PermissionGate.allows(.currentLocation) {
+        if BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.currentLocation) {
             switch CurrentLocation.shared.status {
             case .authorizedAlways, .authorizedWhenInUse:
                 if let query = CurrentLocation.shared.query {

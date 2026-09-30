@@ -324,7 +324,8 @@ private final class Engine: @unchecked Sendable {
         // One profiler invocation supplies topology and battery data. Failed
         // logs shorten the fallback interval without spawning on every poll.
         let ttl: TimeInterval = consecutiveLogMisses >= 3 ? 30 : 300
-        if PermissionGate.allows(.bluetooth),
+        if BuildChannel.promptsForSystemPermissions,
+           PermissionGate.allows(.bluetooth),
            forceProfiler || now.timeIntervalSince(lastProfilerAt) >= ttl {
             lastProfilerAt = now
             if let snapshot = ProfilerSource.read() {

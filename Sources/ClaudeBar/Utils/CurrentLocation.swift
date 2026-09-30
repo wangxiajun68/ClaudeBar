@@ -12,6 +12,13 @@ import CoreLocation
 /// The system grant is the same one Wi-Fi 名称 uses. This switch is the
 /// app's own gate for *reading coordinates*. Off means the coordinate is
 /// dropped and the card goes back to `weatherCity`.
+///
+/// The build channel is the **second** gate, ahead of the switch, because a
+/// grant is durable state in the user's TCC database: the request below is the
+/// only thing in this file that can raise a system prompt, and a development
+/// build must never leave one behind (see
+/// `BuildChannel.promptsForSystemPermissions`). Every entry point therefore
+/// guards on `requestFix()`, the single place that can reach the manager.
 final class CurrentLocation: NSObject, CLLocationManagerDelegate {
     static let shared = CurrentLocation()
 
@@ -36,7 +43,23 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
 
     /// The switch just turned on. Ask if macOS has not, otherwise take a fix.
     func start() {
-        guard PermissionGate.allows(.currentLocation) else { return }
+        requestFix()
+    }
+
+    /// The switch turned off. Forget the fix so the next fetch cannot use it.
+    func stop() {
+        pending = false
+        coordinate = nil
+        manager.stopUpdatingLocation()
+    }
+
+    /// The card wants a position and does not have one yet.
+    ///
+    /// The one path to a system prompt. `PermissionGate` answers for the user's
+    /// switch (`refreshIfStale` in `WeatherStore` gates too, for callers that
+    /// only want a fix when one is already allowed); this answers for the build.
+    func requestFix() {
+        guard BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.currentLocation) else { return }
         status = manager.authorizationStatus
         switch status {
         case .notDetermined:
@@ -52,19 +75,6 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// The switch turned off. Forget the fix so the next fetch cannot use it.
-    func stop() {
-        pending = false
-        coordinate = nil
-        manager.stopUpdatingLocation()
-    }
-
-    /// The card wants a position and does not have one yet.
-    func requestFix() {
-        guard PermissionGate.allows(.currentLocation) else { return }
-        start()
-    }
-
     private func takeFix() {
         guard !pending else { return }
         pending = true
@@ -74,7 +84,7 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let was = status
         status = manager.authorizationStatus
-        guard PermissionGate.allows(.currentLocation) else { return }
+        guard BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.currentLocation) else { return }
         switch status {
         case .authorizedAlways, .authorizedWhenInUse:
             // Only the grant itself starts a fix. A later callback (setting

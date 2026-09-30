@@ -49,8 +49,11 @@ enum WidgetSnapshotWriter {
     static func write(_ snapshot: WidgetSnapshot, deduplicatingAgainst lastData: Data?) -> Data? {
         // Every target below is another app's container (the widget's
         // sandbox, the App Group); on macOS 15+ touching them raises the
-        // "access data from other apps" prompt, so it is strictly opt-in.
-        guard PermissionGate.allows(.widgetData) else { return lastData }
+        // "access data from other apps" prompt, so it is strictly opt-in —
+        // both by the user's switch and by the build channel, since that
+        // prompt's grant is durable TCC state a dev build must not create
+        // (see `BuildChannel.promptsForSystemPermissions`).
+        guard BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.widgetData) else { return lastData }
         var normalized = snapshot
         normalized.updatedAt = Date(timeIntervalSince1970: 0)
         // One encoder, two encodes: the first for the dedup key, the second

@@ -217,6 +217,11 @@ final class PermissionCenter: ObservableObject {
     }
     /// Flip a switch. Turning one on asks macOS right away, while the user is
     /// looking at the reason — not later, from some background poll.
+    ///
+    /// The switch's *stored* value is the user's intent and moves either way;
+    /// the system request it would raise is skipped in builds that must not
+    /// leave a TCC grant behind, so the switch still records the choice without
+    /// prompting (see `BuildChannel.promptsForSystemPermissions`).
     func setEnabled(_ permission: AppPermission, _ on: Bool) {
         guard isEnabled(permission) != on else { return }
         switch permission {
@@ -229,7 +234,7 @@ final class PermissionCenter: ObservableObject {
         }
         enabled[permission] = on
         if permission == .currentLocation, !on { CurrentLocation.shared.stop() }
-        if on { request(permission) }
+        if on, BuildChannel.promptsForSystemPermissions { request(permission) }
         NotificationCenter.default.post(name: .permissionDidChange, object: permission)
         scheduleStatusRefresh()
     }

@@ -39,6 +39,14 @@ final class ScreenshotOverlayController {
     }
 
     private func run() async {
+        // Never raise the prompt from an isolated build — the grant is durable
+        // TCC state, and a rebuild of a dev or ad-hoc signed app reads as a new
+        // app to TCC, which is what made this prompt reappear every time.
+        guard BuildChannel.promptsForSystemPermissions else {
+            capturing = false
+            NSSound.beep()
+            return
+        }
         if !CGPreflightScreenCaptureAccess() {
             _ = CGRequestScreenCaptureAccess()
             capturing = false

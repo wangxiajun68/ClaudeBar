@@ -343,7 +343,7 @@ enum HardwareSensors {
     /// status is still sampled: a Mac with neither Wi-Fi nor Ethernet still
     /// reports 本机 when the radio is on.
     private static func bluetoothPowerState() -> Bool {
-        guard PermissionGate.allows(.bluetooth) else { return false }
+        guard BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.bluetooth) else { return false }
         return (IOBluetoothHostController.default()?.powerState.rawValue ?? 0) != 0
     }
 
@@ -351,7 +351,8 @@ enum HardwareSensors {
         var status = LinkStatus()
         let wifi = CWWiFiClient.shared().interface()
         status.wifiOn = wifi?.powerOn() ?? false
-        if PermissionGate.allows(.location), let ssid = wifi?.ssid(), !ssid.isEmpty {
+        if BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.location),
+           let ssid = wifi?.ssid(), !ssid.isEmpty {
             status.wifiName = ssid
         }
         let rssi = Int(wifi?.rssiValue() ?? 0)

@@ -29,4 +29,15 @@ enum BuildChannel {
     static let widgetBundleID = bundleID + ".widget"
     static let appGroupID = widgetBundleID
     static let restrictionMessage = "开发／测试版本不接管系统 VPN、代理、DNS、硬件控制或外部客户端配置。请使用正式版本验证这些功能。"
+
+    /// Whether this build may ask macOS for permissions that prompt.
+    ///
+    /// Same rule and the same reason as `allowsSystemIntegration`: a grant is
+    /// written into the user's TCC database and **outlives the app that asked
+    /// for it**. A throwaway dev build has no business leaving Location /
+    /// Bluetooth / Screen Recording entries behind — and it is exactly those
+    /// entries that make a rebuild re-prompt, because an ad-hoc or changed
+    /// identity is a new app to TCC. Keeping prompts out of dev is therefore
+    /// both the privacy boundary and what makes rebuilding stop nagging.
+    static var promptsForSystemPermissions: Bool { allowsSystemIntegration }
 }

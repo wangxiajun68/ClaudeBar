@@ -58,7 +58,10 @@ struct GreetingCard: View {
             city: city,
             weatherLoading: weather.loading,
             weatherNote: weather.note,
-            locating: PermissionGate.allows(.currentLocation),
+            // The build gate is part of the answer, not just the switch: a card
+            // that claims to be "locating" in a build that will not ask would
+            // spin forever instead of falling back to the city.
+            locating: BuildChannel.promptsForSystemPermissions && PermissionGate.allows(.currentLocation),
             typeface: typeface,
             weatherRendering: weatherRendering,
             refreshWeather: { weather.refresh() },

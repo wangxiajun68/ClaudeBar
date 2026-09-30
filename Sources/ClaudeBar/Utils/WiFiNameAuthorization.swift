@@ -3,6 +3,12 @@ import Combine
 import CoreLocation
 
 /// Requests CoreWLAN's SSID permission without starting location updates.
+///
+/// Gated by the build channel before anything else, and only ever reached from
+/// an explicit switch in Settings — never from a poll. CoreWLAN treats the
+/// Wi-Fi name as Location data, so the grant this raises is the *same* TCC
+/// entry as 当前位置: a development build must not create one
+/// (see `BuildChannel.promptsForSystemPermissions`).
 final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = WiFiNameAuthorization()
     @Published private(set) var status: CLAuthorizationStatus
@@ -22,6 +28,7 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
     var authorized: Bool { status == .authorizedAlways }
 
     func request() {
+        guard BuildChannel.promptsForSystemPermissions else { return }
         guard !requesting else { return }
         status = manager.authorizationStatus
         guard status == .notDetermined else {
@@ -48,6 +55,7 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
     }
 
     func openSettings() {
+        guard BuildChannel.promptsForSystemPermissions else { return }
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") else { return }
         NSWorkspace.shared.open(url)
     }

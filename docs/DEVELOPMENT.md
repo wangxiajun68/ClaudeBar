@@ -61,7 +61,7 @@ make package            # 正式版 DMG / zip / SHA-256 → .build/dist/
 
 默认构建均不安装、不杀进程。显式安装发现对应版本运行时会拒绝替换；正常退出该版本后再安装。开发版安装不重启共享 Widget 守护进程，不会结束正式版或其 VPN。
 
-本机开发默认使用 `ClaudeBar Dev` 自签证书以稳定权限，缺失时会创建并信任它。只验证编译、避免操作钥匙串时使用 `CODESIGN_IDENTITY=- make build`。正式版默认 ad-hoc 签名，尚未配置 Developer ID 凭据和 Apple 公证；可显式指定 `CODESIGN_IDENTITY`。
+本机开发默认使用 `ClaudeBar Dev` 自签证书以稳定权限，缺失时会创建并信任它；**两个版本都用它**，包括正式版——ad-hoc 签名没有证书可依据，指定要求退化成整份二进制的 cdhash，每次重编译都会被 TCC 当成新 App，屏幕录制反复要求授权。只验证编译、避免操作钥匙串时使用 `CODESIGN_IDENTITY=- make build`；CI 默认 ad-hoc。尚未配置 Developer ID 凭据和 Apple 公证，发布前需要先配置（见 [构建与签名](technical/07-build-and-signing.md)）。
 
 只有要替换本机正式版时，正常退出正式版，显式执行 `make install-release`。此操作会覆盖 `/Applications/ClaudeBar.app`，不属于日常开发流程。`make package` 不安装、不发布到 GitHub；tag 流程见 [RELEASING.md](RELEASING.md)。
 
