@@ -28,6 +28,8 @@
 | 16 | [connectors.md](16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停机制 | 改连接器 / MCP 发现 |
 | 17 | [ui-audit-backlog.md](17-ui-audit-backlog.md) | 「审查每个页面」那一轮的全部发现：每条修了什么、怎么修的、拿什么数拒掉了哪条猜测；末尾附测量方法 | 接手审查遗留项 |
 
+| 18 | [低负载与动效审查](18-performance-audit-2026-09-30.md) | 隐藏采样、组件可见性、滚动门、解析取消、SSE/Metal 测量与完整静态扫描清单 | 性能优化验收 |
+
 ---
 
 ## 推荐阅读顺序
