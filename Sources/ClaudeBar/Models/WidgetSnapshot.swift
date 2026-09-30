@@ -42,13 +42,18 @@ struct WidgetSnapshot: Codable {
 
     struct SessionSummary: Codable {
         var pid: Int
-        var status: String       // "busy", "idle"
+        var status: String       // "busy", "waiting", "idle"
         var model: String
         var contextTokens: Int
         var contextLimit: Int
         var contextRatio: Double
         var projectFolder: String
         var currentActivity: String
+        /// A session parked on the user — a permission prompt or a question
+        /// dialog. Optional so a snapshot written by an older build still
+        /// decodes; `status == "waiting"` carries the same fact for readers
+        /// that only look at the string.
+        var waiting: Bool?
     }
 
     /// A Cursor (IDE) session summary. Cursor identifies sessions by
@@ -57,24 +62,31 @@ struct WidgetSnapshot: Codable {
     /// type instead of reusing `SessionSummary`.
     struct CursorSessionSummary: Codable {
         var composerId: String
-        var status: String           // "active" / "idle"
+        var status: String           // "active" / "waiting" / "idle"
         var contextRatio: Double     // 0...1 (from contextPercent / 100)
         var contextPercent: Double   // -1 if unknown
         var projectFolder: String
         var currentActivity: String
         var relativeUpdated: String  // "5m" etc., precomputed by the host app
+        var waiting: Bool?
     }
 
     /// An external-agent (Codex) session. `status` uses the same vocabulary as
     /// the other summaries so the widget renders all three with one row style.
     struct ExternalSessionSummary: Codable {
         var id: String
-        var status: String           // "busy" / "idle"
+        var status: String           // "busy" / "waiting" / "idle"
         var model: String
         var contextTokens: Int
         var contextLimit: Int
         var contextRatio: Double
         var projectFolder: String
         var relativeUpdated: String
+        /// A Codex thread parked on the user. Codex journals no such state today
+        /// (see `ExternalSessionInfo.isWaiting`), so this is `false` for every
+        /// snapshot a current build writes — it is here so the widget reads one
+        /// shape for all three agents and a future signal needs no format bump.
+        /// Optional so older snapshots still decode.
+        var waiting: Bool?
     }
 }

@@ -111,6 +111,10 @@ final class NotchIslandController {
     }
 
     func start() {
+        // Watch for parks from the moment the app runs, so a disabled island (no
+        // panel, no strip) still posts the fallback banner.
+        ensureModel()
+
         prefs.$notchIslandEnabled
             .removeDuplicates()
             .sink { [weak self] enabled in
@@ -154,11 +158,12 @@ final class NotchIslandController {
         guard panel == nil, let screen = NotchGeometry.preferredScreen() else { return }
         let geometry = NotchGeometry(screen: screen)
         let state = NotchIslandState(geometry: geometry, showsWings: prefs.notchIslandShowsWings)
-        let model = IslandLiveModel(providerStore: providerStore, codexStore: codexStore)
+        // The model is created once in `start()` and outlives the panel, so the
+        // alert edges keep firing whether or not the strip is on screen. Here
+        // the panel only adopts the existing model.
+        let model = ensureModel()
         model.setPeriodicRefresh(prefs.notchIslandShowsWings)
         self.state = state
-        self.model = model
-        bind(model, to: state)
 
         let actions = IslandActions(
             openSession: { [weak self] session in
@@ -215,20 +220,29 @@ final class NotchIslandController {
         panel?.contentView = nil
         panel = nil
         state = nil
-        modelCancellables.removeAll()
+        // The model is deliberately **not** torn down with the panel: its
+        // `needsInput` edge is what posts the fallback banner when the strip is
+        // off, so destroying it here would make a disabled island silently stop
+        // reporting parks again. Only the periodic usage refresh, which exists
+        // for the wings, is stopped.
         model?.setPeriodicRefresh(false)
-        model = nil
     }
 
-    private func bind(_ model: IslandLiveModel, to state: NotchIslandState) {
-        modelCancellables.removeAll()
+    /// Create the model on first use and wire its alert edges exactly once.
+    ///
+    /// The edges are subscribed here, not in `install()`, because they must
+    /// survive the panel: a disabled island still has to notice a session
+    /// parking on the user (the fallback banner in `showAlert` is the point).
+    @discardableResult
+    private func ensureModel() -> IslandLiveModel {
+        if let model { return model }
+        let model = IslandLiveModel(providerStore: providerStore, codexStore: codexStore)
+        self.model = model
 
         // No `model.$sessions` bridge: it used to write a `sessionCount` on the
         // state purely to animate the lane's height, but the strip has been a
         // fixed-height window since the island stopped resizing around its
-        // sessions (see `NotchIslandState.sessionsLaneHeight`). The bridge only
-        // produced a `morphSpring` animation and a state invalidation per poll
-        // whose result nothing read.
+        // sessions (see `NotchIslandState.sessionsLaneHeight`).
 
         model.quotaReset
             .sink { [weak self] window in
@@ -241,6 +255,19 @@ final class NotchIslandController {
                 MainActor.assumeIsolated { self?.showAlert(for: .finished(session)) }
             }
             .store(in: &modelCancellables)
+
+        // The other "your move" edge. The strip is the preferred surface — a
+        // permission prompt is answered where it was asked — but it is not
+        // always available, and a parked session must never go unannounced
+        // while the menu-bar icon reads *idle*. `showAlert` falls back to a
+        // system banner exactly when the strip cannot carry it.
+        model.needsInput
+            .sink { [weak self] session in
+                MainActor.assumeIsolated { self?.showAlert(for: .needsInput(session)) }
+            }
+            .store(in: &modelCancellables)
+
+        return model
     }
 
     private func applyWings(_ shows: Bool) {
@@ -389,7 +416,21 @@ final class NotchIslandController {
     /// "something you were waiting for just became true", both auto-dismiss on
     /// the same deadline, and both expand the island on click.
     private func showAlert(for alert: IslandAlert) {
-        guard prefs.notchIslandAlertsEnabled, let state, state.mode != .expanded else { return }
+        // The strip is the primary surface, but it is not always available:
+        // alerts can be off, the island can be off, and a strip already open
+        // (`.expanded`) refuses an alert by design. For a *finished* turn that
+        // is acceptable — the expanded strip lists it and the system banner
+        // still fires from `ProviderStore`. For a **parked** session it is not:
+        // the strip alert is a one-shot edge with no retry, the menu-bar icon
+        // reads *idle* while a session waits, and nothing else would tell the
+        // user. So when the strip cannot carry the park, post the system banner
+        // instead — the one channel that survives a hidden island, a disabled
+        // island, and an open strip alike.
+        if case .needsInput(let session) = alert, !canShowStripAlert {
+            notifyParkedFallback(for: session)
+            return
+        }
+        guard canShowStripAlert, let state else { return }
         alertDeadline = Date().addingTimeInterval(Self.alertDuration)
         withAnimation(IslandStyle.alertSpring) {
             state.alert = alert
@@ -397,6 +438,40 @@ final class NotchIslandController {
         }
         syncMouseCapture()
         startTicking()
+    }
+
+    /// Whether the notch strip could take an alert *right now*.
+    ///
+    /// Three ways it cannot: the island feature is off (no strip exists), alerts
+    /// are off, or the strip is sitting open (`.expanded` already lists the
+    /// sessions and refuses to be interrupted). The requirement is the *feature*
+    /// flag rather than `panel != nil`, so a strip that is on but mid-install
+    /// still counts as "the strip will carry this" instead of double-firing a
+    /// banner beside it.
+    private var canShowStripAlert: Bool {
+        prefs.notchIslandEnabled && prefs.notchIslandAlertsEnabled && state?.mode != .expanded
+    }
+
+    /// The banner that stands in for a strip that could not show a park. Claude
+    /// carries the reason ("等待你确认 · Bash"); Cursor's is its one plan line.
+    private func notifyParkedFallback(for session: IslandSession) {
+        switch session.agent {
+        case .claude:
+            // `IslandSession` is the island's flattened view; the banner wants
+            // the store's richer session, keyed by the pid `flatten` stamped.
+            guard let pid = session.pid,
+                  let real = providerStore.sessions.first(where: { $0.pid == pid }) else { return }
+            NotificationService.shared.notifyNeedsInput(session: real)
+        case .cursor:
+            guard let composer = providerStore.cursorSessions.first(where: { $0.composerId == session.sessionId })
+            else { return }
+            NotificationService.shared.notifyNeedsInput(cursor: composer)
+        case .codex:
+            // Codex never reports a park (see `ExternalSessionInfo.isWaiting`),
+            // so there is no banner to post; the branch is here so a future
+            // signal is wired, not silently dropped.
+            break
+        }
     }
 
     private func startTicking() {

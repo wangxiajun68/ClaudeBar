@@ -139,6 +139,51 @@ struct QuotaResetDetector {
     }
 }
 
+/// Edge detector for "a session just parked on the user".
+///
+/// The completion detector's mirror image, and the missing half of the same
+/// story. A turn that delivers an answer and a turn that stops at a permission
+/// prompt (or an `AskUserQuestion` dialog) are both "the ball is in your court
+/// now", but only the first had a key to fire on: a waiting turn writes no new
+/// answer, so `ConfirmedCompletionDetector` stays silent for as long as the
+/// prompt is up. On every surface that reads `isBusy` the session kept saying
+/// 运行中 instead — see `SessionStatus.waiting`.
+///
+/// The rule is the *transition into* waiting, not the state:
+///
+///   * only entering counts, so a session that sits at a prompt for an hour
+///     announces itself once rather than once per poll;
+///   * the first sighting of an id only seeds it — a session already parked
+///     when the island appears is one whose prompt the user is looking at, and
+///     a burst of banners at launch is what this avoids;
+///   * a session that leaves the waiting state re-arms, so answering a prompt
+///     and being asked again later is two alerts;
+///   * ids that disappear between polls are pruned, never reported.
+struct WaitingStateDetector<ID: Hashable> {
+    /// Ids seen at least once — the seed set.
+    private var known: Set<ID> = []
+    /// Ids currently believed to be parked.
+    private var waiting: Set<ID> = []
+
+    /// Mark ids that *entered* the waiting state in this poll.
+    mutating func record(_ snapshots: [(id: ID, isWaiting: Bool)]) -> Set<ID> {
+        var entered: Set<ID> = []
+        var next: Set<ID> = []
+        for snapshot in snapshots {
+            if snapshot.isWaiting {
+                next.insert(snapshot.id)
+                if known.contains(snapshot.id), !waiting.contains(snapshot.id) {
+                    entered.insert(snapshot.id)
+                }
+            }
+            known.insert(snapshot.id)
+        }
+        waiting = next
+        known.formIntersection(Set(snapshots.map(\.id)))
+        return entered
+    }
+}
+
 /// Decides when the next Codex allowance poll is worth making — the heartbeat,
 /// plus one extra look on top when a reset instant is near.
 ///

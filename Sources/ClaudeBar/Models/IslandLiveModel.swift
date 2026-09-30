@@ -4,12 +4,17 @@ import SwiftUI
 
 /// What the island's alert strip is showing.
 ///
-/// A session finishing and a quota window rolling over are both "something you
-/// were waiting for just became true", so they share one strip, one timer and
-/// one dismissal path. They carry different payloads, hence a sum type rather
-/// than a widened session struct.
+/// A session finishing, a session parked on the user, and a quota window
+/// rolling over are all "something you were waiting for just became true", so
+/// they share one strip, one timer and one dismissal path. They carry different
+/// payloads, hence a sum type rather than a widened session struct.
 enum IslandAlert: Equatable, Identifiable {
     case finished(IslandSession)
+    /// The turn is parked on the user: a permission prompt or an
+    /// `AskUserQuestion` dialog is on screen. This is the state that used to be
+    /// indistinguishable from 运行中 — nothing is running, and the user is the
+    /// one being waited on, so it is the alert that matters most.
+    case needsInput(IslandSession)
     case quotaReset(CodexQuotaWindow)
 
     /// Identity decides when the strip is replaced mid-animation: a newer
@@ -17,6 +22,7 @@ enum IslandAlert: Equatable, Identifiable {
     var id: String {
         switch self {
         case .finished(let session): return "finished:\(session.id)"
+        case .needsInput(let session): return "needsInput:\(session.id)"
         case .quotaReset(let window): return "quota:\(window.label)"
         }
     }
@@ -24,6 +30,7 @@ enum IslandAlert: Equatable, Identifiable {
     var agent: IslandAgent {
         switch self {
         case .finished(let session): return session.agent
+        case .needsInput(let session): return session.agent
         case .quotaReset: return .codex
         }
     }
@@ -62,6 +69,15 @@ struct IslandSession: Identifiable, Equatable {
     let activity: String
     let model: String
     let isBusy: Bool
+    /// The turn is parked on the user, waiting on a permission prompt or an
+    /// `AskUserQuestion` dialog. Not busy and not idle: nothing is running, and
+    /// the next move is the user's. Carried alongside `isBusy` rather than
+    /// folded into it because the two are mutually exclusive states of the same
+    /// session — one has work in flight, the other has *none*.
+    var isWaiting = false
+    /// One sentence for what the user is being asked for, e.g.
+    /// "等待你确认 · Bash". See `SessionInfo.waitingReason`.
+    var waitingReason = ""
     /// Context-window fill, 0...1; 0 when the limit is unknown.
     let contextRatio: Double
     let updatedAt: Date
@@ -125,6 +141,12 @@ final class IslandLiveModel: ObservableObject {
     /// of the rule.
     let finished = PassthroughSubject<IslandSession, Never>()
 
+    /// A session that just parked on the user — a permission prompt or an
+    /// `AskUserQuestion` dialog came up. Edge-detected on entering the waiting
+    /// state, so a session that sits at a prompt for an hour announces itself
+    /// once, not once per poll. See `WaitingStateDetector`.
+    let needsInput = PassthroughSubject<IslandSession, Never>()
+
     /// A Codex quota window that just rolled over. Fires once per rollover —
     /// see `QuotaResetDetector`, which is what keeps a 4.2 s glance from
     /// re-announcing the same reset.
@@ -137,9 +159,13 @@ final class IslandLiveModel: ObservableObject {
 
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
 
+    /// Sessions parked on the user (a permission prompt or a question dialog).
+    var waitingSessions: [IslandSession] { sessions.filter(\.isWaiting) }
+
     private weak var providerStore: ProviderStore?
     private var cancellables: Set<AnyCancellable> = []
     private var completionDetector = ConfirmedCompletionDetector<String>()
+    private var waitingDetector = WaitingStateDetector<String>()
     private var quotaResetDetector = QuotaResetDetector()
     private var usageRefreshPending = false
     private var usageRefreshQueued = false
@@ -233,6 +259,18 @@ final class IslandLiveModel: ObservableObject {
         for session in fresh where completed.contains(session.id) {
             finished.send(session)
         }
+        // Entering the waiting state is an edge of its own: a permission prompt
+        // arriving is exactly as much "your move" as an answer arriving, and
+        // neither the busy nor the idle edge covers it (the pending tool keeps
+        // `isBusy` true through the whole wait). A session already parked when
+        // the island first sees it only seeds the detector — the user is
+        // looking at the prompt already.
+        let parked = waitingDetector.record(fresh.map {
+            (id: $0.id, isWaiting: $0.isWaiting)
+        })
+        for session in fresh where parked.contains(session.id) {
+            needsInput.send(session)
+        }
         sessions = fresh
         if fresh.map(\.id) != oldIDs { reloadSessionCosts() }
     }
@@ -270,7 +308,9 @@ final class IslandLiveModel: ObservableObject {
             out.append(IslandSession(
                 id: "cc:\(s.pid)", agent: .claude, project: s.projectFolder,
                 activity: s.currentActivity, model: s.model,
-                isBusy: s.status == .busy || s.toolPending, contextRatio: s.contextRatio,
+                isBusy: s.isBusy,
+                isWaiting: s.isWaiting, waitingReason: s.waitingReason,
+                contextRatio: s.contextRatio,
                 updatedAt: Date(timeIntervalSince1970: s.updatedAt / 1000),
                 cwd: s.cwd, sessionId: s.sessionId, completionID: s.completionID, pid: s.pid))
         }
@@ -278,7 +318,10 @@ final class IslandLiveModel: ObservableObject {
             out.append(IslandSession(
                 id: "cursor:\(s.composerId)", agent: .cursor, project: s.projectFolder,
                 activity: s.currentActivity, model: "",
-                isBusy: s.status == .active || s.toolPending, contextRatio: s.contextRatio,
+                isBusy: s.isBusy,
+                isWaiting: s.isWaiting,
+                waitingReason: s.isWaiting ? "等待你确认计划" : "",
+                contextRatio: s.contextRatio,
                 updatedAt: Date(timeIntervalSince1970: s.lastUpdatedAt / 1000),
                 cwd: s.cwd, sessionId: s.composerId, completionID: s.completionID))
         }
@@ -286,12 +329,23 @@ final class IslandLiveModel: ObservableObject {
             out.append(IslandSession(
                 id: "codex:\(s.sessionId)", agent: .codex, project: s.projectFolder,
                 activity: "", model: s.model,
-                isBusy: s.isActive, contextRatio: s.contextRatio,
+                isBusy: s.isActive,
+                // Codex journals no park, so this is `false` today; carried
+                // through anyway so the island reads one field for every agent
+                // and a future signal only has to teach `ExternalSessionInfo`.
+                // See its `isWaiting` for the evidence behind the empty case.
+                isWaiting: s.isWaiting,
+                waitingReason: s.isWaiting ? "等待你确认" : "",
+                contextRatio: s.contextRatio,
                 updatedAt: Date(timeIntervalSince1970: s.updatedAt / 1000),
                 cwd: s.cwd, sessionId: s.sessionId, completionID: s.completionID,
                 pid: s.holderPID, inDesktop: s.inDesktop))
         }
         return out.sorted { lhs, rhs in
+            // Parked sessions float above merely-busy ones: a session that is
+            // waiting on the user is the one that needs an answer, and it would
+            // otherwise sink below every session that is happily working away.
+            if lhs.isWaiting != rhs.isWaiting { return lhs.isWaiting }
             if lhs.isBusy != rhs.isBusy { return lhs.isBusy }
             return lhs.updatedAt > rhs.updatedAt
         }
@@ -401,8 +455,11 @@ final class IslandLiveModel: ObservableObject {
             let c = cal.dateComponents([.year, .month, .day], from: date)
             let key = String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
             let models = byDay[key] ?? []
+            // Priced at the rate in force on that day, not at today's: the
+            // series is a month of history, and a mid-month price change must
+            // leave the days before it exactly where they were.
             return IslandDay(date: date, tokens: models.reduce(0) { $0 + $1.totalTokens },
-                             cost: ModelPricing.estimate(models))
+                             cost: ModelPricing.estimate(models, on: key))
         }
         return usage
     }

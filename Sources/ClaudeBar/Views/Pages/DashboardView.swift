@@ -81,6 +81,11 @@ struct DashboardView: View {
 
     /// Claude busy sessions + active Cursor sessions — from the store's own
     /// derived values rather than three fresh filter passes per body.
+    ///
+    /// A session parked on the user is deliberately absent: see
+    /// `SessionStatus.waiting` — it is not running, and counting it here is what
+    /// made the dashboard's 运行中 figure include sessions that had nothing in
+    /// flight. The overview tiles below say 等待确认 for exactly those.
     private var runningCount: Int {
         providerStore.busySessionCount
             + providerStore.activeCursorCount
@@ -185,6 +190,9 @@ struct DashboardView: View {
         /// `tint` as readable text, for the running/idle capsule.
         let pillInk: Color
         let busy: Bool
+        /// Parked on the user (Claude Code only today) — a third state the
+        /// busy/idle capsule could not express. See `SessionStatus.waiting`.
+        var waiting: Bool = false
         let project: String
         let activity: String
         let contextRatio: Double
@@ -204,9 +212,12 @@ struct DashboardView: View {
                     mark: .claude,
                     tint: Theme.claude,
                     pillInk: Theme.Ink.claude,
-                    busy: s.status == .busy,
+                    busy: s.isBusy,
+                    waiting: s.isWaiting,
                     project: s.displayTitle,
-                    activity: s.currentActivity,
+                    activity: s.isWaiting
+                        ? (s.waitingReason.isEmpty ? "等待你确认" : s.waitingReason)
+                        : s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,
@@ -297,7 +308,8 @@ private struct OverviewTile: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 HStack(spacing: 8) {
-                    OverviewStatusDot(tint: row.tint, isBusy: row.busy)
+                    OverviewStatusDot(tint: row.waiting ? Theme.statusWarning : row.tint,
+                                      isBusy: row.busy || row.waiting)
                     // Mark + word: the mark is what makes the family readable
                     // before the two-character label is, and it is the same
                     // artwork the session tiles, the island and the popup header
@@ -307,9 +319,9 @@ private struct OverviewTile: View {
                         .fixedSize()
                     Spacer()
                     StatusPill(
-                        label: row.busy ? "运行中" : "空闲",
-                        tint: row.busy ? row.tint : Theme.statusIdle,
-                        ink: row.busy ? row.pillInk : Theme.Ink.idle
+                        label: row.waiting ? "等待确认" : (row.busy ? "运行中" : "空闲"),
+                        tint: row.waiting ? Theme.statusWarning : (row.busy ? row.tint : Theme.statusIdle),
+                        ink: row.waiting ? Theme.Ink.warning : (row.busy ? row.pillInk : Theme.Ink.idle)
                     )
                 }
                 Text(row.project)
@@ -350,7 +362,7 @@ private struct OverviewTile: View {
         .buttonStyle(.plain)
         .hoverState($isHovered)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.platform)，\(row.project)，\(row.busy ? "运行中" : "空闲")，上下文 \(row.contextLabel)")
+        .accessibilityLabel("\(row.platform)，\(row.project)，\(row.waiting ? "等待确认" : (row.busy ? "运行中" : "空闲"))，上下文 \(row.contextLabel)")
         .accessibilityHint("在会话页查看")
     }
 }

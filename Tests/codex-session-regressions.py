@@ -57,6 +57,16 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
                          "the parent is itself a returned main thread, or the tree drops the child")
             precondition(child.isActive, "an open sub-agent turn reads as running")
 
+            // Codex journals no park: a thread held on an approval is
+            // indistinguishable on disk from one whose writer went quiet, so
+            // `isWaiting` is deliberately the empty case (see its doc comment,
+            // measured against codex-cli 0.159.0). Pin it here so a rollout
+            // format that *does* start journaling a park, or a future code
+            // path that fabricates one from staleness, fails loudly rather than
+            // silently mislabelling every idle thread as parked.
+            precondition((scan.main + scan.subagents).allSatisfy { !$0.isWaiting },
+                         "no Codex thread may report a park: the rollout carries no such state")
+
             // `scan()` runs off-main and polls can overlap (the app kicks it
             // from detached tasks), which is the whole reason `indexRows`,
             // `codexFileCache` and `indexReadAt` sit behind `NSLock`s. Run
@@ -81,7 +91,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
             precondition(outcomes == [expected.joined(separator: ",")],
                          "concurrent scans disagreed: \\(outcomes)")
 
-            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state and titles; recent sub-agent returned and stale sub-agent dropped; 16 overlapping scans agree under the caches' locks")
+            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state and titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks")
         }
     }''')
     binary = work / 'regression'

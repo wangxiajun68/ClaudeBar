@@ -25,6 +25,11 @@ struct WidgetPalette {
     /// effectively invisible.
     var idleDot: Color { isDark ? Color(hex: 0xA8ADB4) : Color(hex: 0x6C6C70) }
     var busyDot: Color { isDark ? Color(hex: 0x6EA8FF) : Color(hex: 0x1D4FB8) }
+    /// A session parked on the user. The main app's `statusWarning` reads on
+    /// the widget's darker card as well as the ice canvas, and it is already
+    /// the hue the context gauge uses for its middle band — the widget has one
+    /// amber, so this is it.
+    var waitingDot: Color { Color(hex: 0xFF9F0A) }
 
     // MARK: Text
 
@@ -264,11 +269,20 @@ struct WidgetEntryView: View {
 
     // MARK: - Sections
 
+    /// "· N 待确认" appended to a section's detail line, empty when there are
+    /// none. Waiting sessions are the ones the *user* has to act on, so the
+    /// header has to say they exist — counting them under 运行中 would hide the
+    /// only number on the widget that asks for anything.
+    private func waitingSuffix(_ count: Int) -> String {
+        count > 0 ? " · \(count) 待确认" : ""
+    }
+
     @ViewBuilder
     private func sessionSection(_ s: WidgetSnapshot, _ p: WidgetPalette) -> some View {
         if !s.sessions.isEmpty {
             sectionHeader(title: "活跃会话",
-                          detail: "\(s.sessions.count) 个 · \(s.sessions.filter { $0.status == "busy" }.count) 运行中",
+                          detail: "\(s.sessions.count) 个 · \(s.sessions.filter { $0.status == "busy" }.count) 运行中"
+                              + waitingSuffix(s.sessions.filter { $0.status == "waiting" }.count),
                           icon: nil,
                           p: p,
                           topPadding: 10)
@@ -284,7 +298,8 @@ struct WidgetEntryView: View {
         if !s.cursorSessions.isEmpty {
             // Cursor's own cube, the same artwork the app's headers draw.
             sectionHeader(title: "Cursor",
-                          detail: "\(s.cursorSessions.count) · \(s.cursorSessions.filter { $0.status == "active" }.count) 活跃",
+                          detail: "\(s.cursorSessions.count) · \(s.cursorSessions.filter { $0.status == "active" }.count) 活跃"
+                              + waitingSuffix(s.cursorSessions.filter { $0.status == "waiting" }.count),
                           icon: nil,
                           p: p,
                           topPadding: s.sessions.isEmpty ? 10 : 6,
@@ -304,7 +319,8 @@ struct WidgetEntryView: View {
             // same arrangement as `WidgetPalette` below: the surface is a
             // separate target and the tokens are mirrored, not shared.
             sectionHeader(title: "Codex",
-                          detail: "\(s.externalSessions.count) · \(s.externalSessions.filter { $0.status == "busy" }.count) 运行中",
+                          detail: "\(s.externalSessions.count) · \(s.externalSessions.filter { $0.status == "busy" }.count) 运行中"
+                              + waitingSuffix(s.externalSessions.filter { $0.status == "waiting" }.count),
                           icon: nil,
                           p: p,
                           topPadding: (s.sessions.isEmpty && s.cursorSessions.isEmpty) ? 10 : 6,
@@ -455,9 +471,10 @@ struct WidgetEntryView: View {
 
     private func sessionRow(_ s: WidgetSnapshot.SessionSummary, _ p: WidgetPalette) -> some View {
         let isBusy = s.status == "busy"
+        let isWaiting = s.status == "waiting"
         return HStack(spacing: 8) {
             Circle()
-                .fill(isBusy ? p.busyDot : p.idleDot)
+                .fill(isWaiting ? p.waitingDot : (isBusy ? p.busyDot : p.idleDot))
                 .frame(width: 6, height: 6)
 
             rowTitle(s.projectFolder.isEmpty ? "session-\(s.pid)" : s.projectFolder,
@@ -478,9 +495,10 @@ struct WidgetEntryView: View {
 
     private func cursorSessionRow(_ s: WidgetSnapshot.CursorSessionSummary, _ p: WidgetPalette) -> some View {
         let isActive = s.status == "active"
+        let isWaiting = s.status == "waiting"
         return HStack(spacing: 8) {
             Circle()
-                .fill(isActive ? p.cursorAccent : p.idleDot)
+                .fill(isWaiting ? p.waitingDot : (isActive ? p.cursorAccent : p.idleDot))
                 .frame(width: 6, height: 6)
 
             rowTitle(s.projectFolder.isEmpty ? "cursor" : s.projectFolder,
@@ -503,9 +521,14 @@ struct WidgetEntryView: View {
 
     private func externalSessionRow(_ s: WidgetSnapshot.ExternalSessionSummary, _ p: WidgetPalette) -> some View {
         let isBusy = s.status == "busy"
+        // "waiting" cannot occur for a current Codex build (see
+        // `ExternalSessionInfo.isWaiting`); the branch is here so all three
+        // agents' rows read the same vocabulary and a future signal needs no
+        // widget change.
+        let isWaiting = s.status == "waiting"
         return HStack(spacing: 8) {
             Circle()
-                .fill(isBusy ? p.busyDot : p.idleDot)
+                .fill(isWaiting ? p.waitingDot : (isBusy ? p.busyDot : p.idleDot))
                 .frame(width: 6, height: 6)
 
             rowTitle(s.projectFolder.isEmpty ? "codex" : s.projectFolder,

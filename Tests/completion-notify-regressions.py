@@ -23,9 +23,17 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Models/IdleTransitionDetector.swift').read_text()
-start = source.index('struct ConfirmedCompletionDetector<ID: Hashable> {')
-end = source.index('\n}\n', start) + len('\n}\n')
-body = source[start:end]
+
+def slice_type(_source, declaration):
+    start = _source.index(declaration)
+    return _source[start:_source.index('\n}\n', start) + len('\n}\n')]
+
+body = slice_type(source, 'struct ConfirmedCompletionDetector<ID: Hashable> {')
+# The waiting-state detector is the same "the ball is in your court" edge from
+# the other side — an answer arriving vs. a prompt arriving — and it lives in
+# the same file for the same reason. Both are extracted here so the two rules
+# are exercised together.
+body += '\n' + slice_type(source, 'struct WaitingStateDetector<ID: Hashable> {')
 
 swift = r'''
 import Foundation
@@ -111,8 +119,56 @@ DETECTOR
         let mixed = d9.record([snap("a", key: "1|u"), snap("b", busy: true, key: nil)])
         precondition(mixed == ["a"], "only the session that delivered fires; got \(mixed)")
 
+        // --- WaitingStateDetector: the other "your move" edge ---
+        // A permission prompt writes no answer, so the detector above stays
+        // silent for the whole wait. That is exactly the case that used to be
+        // reported as "运行中" forever; these are its rules.
+
+        typealias Wait = (id: String, isWaiting: Bool)
+        func w(_ id: String, waiting: Bool) -> Wait { (id, waiting) }
+
+        // W1. Entering the waiting state fires.
+        var w1 = WaitingStateDetector<String>()
+        _ = w1.record([w("a", waiting: false)])              // seed, not waiting
+        let parked = w1.record([w("a", waiting: true)])
+        precondition(parked == ["a"], "entering waiting fires; got \(parked)")
+
+        // W2. Staying parked does not fire again — the session file is re-read
+        //     every poll and says "waiting" for as long as the prompt is up.
+        for _ in 0..<50 {
+            precondition(w1.record([w("a", waiting: true)]).isEmpty,
+                         "an hour at one prompt is one alert, not one per poll")
+        }
+
+        // W3. Leaving and being asked again is two alerts.
+        _ = w1.record([w("a", waiting: false)])
+        let again = w1.record([w("a", waiting: true)])
+        precondition(again == ["a"], "a second prompt is a second alert; got \(again)")
+
+        // W4. A session already parked at launch only seeds — the user is
+        //     looking at that prompt, and this must not be a wall of banners.
+        var w4 = WaitingStateDetector<String>()
+        precondition(w4.record([w("a", waiting: true)]).isEmpty, "the first sighting seeds")
+
+        // W5. Ids that disappear are pruned, so a session that was waiting,
+        //     died, and came back does not fire for the state it left.
+        var w5 = WaitingStateDetector<String>()
+        _ = w5.record([w("a", waiting: false)])
+        _ = w5.record([w("a", waiting: true)])
+        _ = w5.record([])
+        precondition(w5.record([w("a", waiting: true)]).isEmpty,
+                     "a returning id re-seeds rather than re-firing")
+
+        // W6. Independent sessions: one parked prompt must not announce another.
+        var w6 = WaitingStateDetector<String>()
+        _ = w6.record([w("a", waiting: false), w("b", waiting: false)])
+        let only = w6.record([w("a", waiting: true), w("b", waiting: false)])
+        precondition(only == ["a"], "only the session that parked fires; got \(only)")
+
         print("PASS: fires on a new key (normal, short, after-busy, later turns), stays silent for "
               + "killed/stale/repeated/unseeded turns, seeds at launch, prunes departures")
+        print("PASS: waiting-state edge fires on entry only, once per prompt, re-arms on re-ask, "
+              + "seeds at launch, prunes departures")
     }
 }
 '''.replace('DETECTOR', body)

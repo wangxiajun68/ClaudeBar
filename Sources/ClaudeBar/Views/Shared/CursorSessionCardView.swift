@@ -7,7 +7,8 @@ struct CursorSessionCardView: View {
     let session: CursorSessionInfo
     var onDoubleTap: (() -> Void)? = nil
 
-    private var isActive: Bool { session.status == .active }
+    private var isActive: Bool { session.isBusy }
+    private var isWaiting: Bool { session.isWaiting }
     private var ratio: Double { session.contextRatio }
     private var accentColor: Color {
         ratio < 0.6 ? Theme.cursorAccent : (ratio < 0.85 ? Theme.statusWarning : Theme.statusError)
@@ -36,9 +37,9 @@ struct CursorSessionCardView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 StatusPill(
-                    label: isActive ? "运行中" : "空闲",
-                    tint: isActive ? Theme.cursorAccent : Theme.statusIdle,
-                    ink: isActive ? Theme.Ink.cursor : Theme.Ink.idle
+                    label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
+                    tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.cursorAccent : Theme.statusIdle),
+                    ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.cursor : Theme.Ink.idle)
                 )
             }
 
@@ -66,9 +67,13 @@ struct CursorSessionCardView: View {
                 .truncationMode(.tail)
                 .help(session.subtitle)
 
-            Text(session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity)
+            // The activity line doubles as the reason line while parked — see
+            // `statusLine`.
+            Text(statusLine)
                 .font(Theme.Font.micro)
-                .foregroundColor(isActive ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
+                .foregroundColor(isWaiting ? Theme.statusWarning
+                                           : (isActive ? Theme.textPrimary.opacity(0.7)
+                                                       : Theme.textTertiary()))
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
@@ -78,8 +83,17 @@ struct CursorSessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label.accessibilityText)，\(isActive ? "运行中" : "空闲")")
+        .accessibilityLabel("\(label.accessibilityText)，\(isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"))")
         .accessibilityHint("连按在 Cursor 中打开")
         .onTapGesture(count: 2) { onDoubleTap?() }
+    }
+
+    /// The activity line: what the agent is doing, or — while the run is held
+    /// up on the user — what it is waiting for. A pending plan is the decision
+    /// Cursor actually surfaces (应用 / 拒绝), so it names that rather than
+    /// claiming the session is still working.
+    private var statusLine: String {
+        if isWaiting { return "等待你确认计划" }
+        return session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity
     }
 }

@@ -47,6 +47,44 @@ struct ExternalSessionInfo: Identifiable, Equatable {
 
     var isSubagent: Bool { parentThreadId != nil || threadSource == "subagent" }
 
+    /// Parked on the user — always `false` for Codex today, deliberately.
+    ///
+    /// Claude Code writes its park into the session record (`"status":
+    /// "waiting"`), Cursor writes it into the composer head
+    /// (`hasPendingPlan` / `hasBlockingPendingActions`), and each has a real
+    /// `isWaiting` to read. **Codex publishes no such thing on disk**, and this
+    /// property exists so that fact is stated once instead of being assumed
+    /// away by every surface.
+    ///
+    /// Verified against the installed `codex-cli 0.159.0` and this machine's
+    /// rollout corpus, not assumed:
+    ///
+    ///   * Codex raises approvals over the **app-server JSON-RPC** protocol
+    ///     (`ServerRequest::CommandExecutionRequestApproval` /
+    ///     `FileChangeRequestApproval` / `PermissionsRequestApproval`), which is
+    ///     a live connection, not a file — nothing about an open prompt is ever
+    ///     journaled;
+    ///   * across every `event_msg` in `~/.codex/sessions`, the only lifecycle
+    ///     events are `task_started` / `task_complete` / `turn_aborted`; the
+    ///     `item_started` event that would bracket an in-flight call is emitted
+    ///     to the app-server and **never written to a rollout** (0 occurrences
+    ///     in the whole corpus);
+    ///   * every journaled `item_completed` carries `completed` or `failed` —
+    ///     there is no `in_progress` / `pending` / `awaiting_approval` status to
+    ///     read;
+    ///   * the desktop index (`threads`) has an `approval_mode` column, but that
+    ///     is the *policy* for the thread, not whether it is currently held.
+    ///
+    /// So a Codex thread parked on an approval is, from this app's point of
+    /// view, indistinguishable from one whose writer simply went quiet: the
+    /// rollout stops advancing, `updatedAt` ages out, and the thread reads idle
+    /// after the busy window. Fabricating a park from staleness would false-fire
+    /// on every idle thread, which is the exact failure this whole state
+    /// machine exists to avoid. When Codex journals a park (or exposes one over
+    /// the app-server the way it does approvals), this is the one place to
+    /// teach it — every surface already reads `isWaiting`.
+    var isWaiting: Bool { false }
+
     /// Prefer the indexed task title; legacy rollouts fall back to the project.
     var displayName: String {
         if !agentNickname.isEmpty { return agentNickname }

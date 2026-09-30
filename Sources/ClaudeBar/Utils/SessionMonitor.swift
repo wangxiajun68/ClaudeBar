@@ -20,6 +20,29 @@ struct SessionInfo: Identifiable, Equatable {
     var currentActivity: String = ""    // e.g. "Bash" or "Read · path.swift"
     var firstPrompt: String = ""        // first human prompt → card title
     var toolPending: Bool = false       // a tool_use has no following tool_result
+    /// Non-empty while the turn is parked on the user rather than on the model.
+    ///
+    /// This is the third state the busy/idle pair could not express. Measured
+    /// against a live CLI: a Bash approval prompt and an `AskUserQuestion`
+    /// dialog both leave the session file at `status: "waiting"`, and the
+    /// transcript's last record is an assistant `tool_use` with no
+    /// `tool_result` — so `toolPending` is true and every surface drawn from it
+    /// said **运行中** while nothing was running and the user was the one being
+    /// waited on. The idle notification never fired either, for the mirror
+    /// reason: no new answer exists, so the completion key is nil forever.
+    ///
+    /// `status` carries the CLI's own word for it; this field carries the
+    /// coarse bucket the CLI writes alongside it. The 2.1.285 binary emits
+    /// `"permission prompt"` / `"input needed"` from
+    /// `CRe({status, waitingFor})`, and the dialog descriptors behind
+    /// `"input needed"` are `"dialog open"` / `"sandbox request"` /
+    /// `"goal proposal"` — so this string is a *bucket*, never a tool name.
+    var waitingFor: String = ""
+    /// Bare name of the trailing `tool_use` with no `tool_result` yet
+    /// (`"Bash"`, `"AskUserQuestion"`, `"ExitPlanMode"`), empty when nothing is
+    /// pending. This is the transcript's contribution to the waiting state —
+    /// the CLI only writes a coarse bucket, this says which tool.
+    var pendingTool: String = ""
     var completionID: String? = nil     // UUID of the latest final assistant answer
     /// Turns + assistant steps seen in the transcript's tail window.
     ///
@@ -39,6 +62,62 @@ struct SessionInfo: Identifiable, Equatable {
     var contextRatio: Double {
         guard contextLimit > 0 else { return 0 }
         return min(1.0, Double(contextTokens) / Double(contextLimit))
+    }
+
+    /// The turn is parked on the user, not on the model.
+    ///
+    /// The CLI's `status` is the authority; the transcript only supplies the
+    /// *reason*. That split matters: `toolPending` is true both while a tool is
+    /// genuinely running and while the CLI sits on the approval for it, so a
+    /// tool-pending session is only "waiting" when the session file says so.
+    var isWaiting: Bool { status == .waiting }
+
+    /// Mid-work — what every "运行中" in the app means. See
+    /// `SessionStatus.isWorking`.
+    var isBusy: Bool { !isWaiting && (status.isWorking || toolPending) }
+
+    /// One sentence for what the user is being asked for, e.g. "等待你确认 · Bash"
+    /// / "等待确认计划". Empty when not waiting.
+    ///
+    /// Derived in one place because five surfaces say it (the island strip and
+    /// its row, the popup card, the sessions tile, the dashboard overview), and
+    /// the two inputs disagree: the CLI's `waitingFor` is a coarse bucket, while
+    /// the transcript knows *which* tool is parked — the half that actually
+    /// tells the user what to go answer.
+    ///
+    /// The `waitingFor` values are the CLI's own, read out of the 2.1.285
+    /// binary, not guessed. Its writer is
+    /// `waitingFor = status != "waiting" ? nil : (tool_name == "AskUserQuestion"
+    /// || tool_name.startsWith("dialog:") ? "input needed" : "permission prompt")`,
+    /// and the dialog descriptors it can raise carry `"dialog open"`,
+    /// `"sandbox request"`, and `"goal proposal"`. Only the two the writer
+    /// produces are load-bearing for the *tool* bucket; the rest arrive with an
+    /// empty or non-tool `pendingTool`, which is why they fall through to the
+    /// bucket test rather than a tool name.
+    var waitingReason: String {
+        guard isWaiting else { return "" }
+        switch pendingTool {
+        case "ExitPlanMode":
+            // Not a permission so much as a decision: CC shows the plan and the
+            // user picks whether to run it.
+            return "等待确认计划"
+        case "AskUserQuestion":
+            return "等待你选择"
+        case "":
+            // No trailing tool in the scanned window (a dialog raised before the
+            // model wrote another step, a tail that scrolled past the tool_use).
+            // The CLI's coarse bucket is all that is left; `"input needed"` is
+            // its word for a question, everything else for a go-ahead.
+            return waitingFor == "input needed" ? "等待你选择" : "等待你确认"
+        default:
+            // A `dialog:` pseudo-tool is a CLI-raised dialog, not a tool the
+            // model called — naming it to the user would read as jargon. Fall
+            // back to the bucket word instead of "等待你确认 · dialog:...".
+            if pendingTool.hasPrefix("dialog:") {
+                return waitingFor == "input needed" ? "等待你选择" : "等待你确认"
+            }
+            return "等待你确认 · \(pendingTool)"
+        }
     }
 
     /// Compact context label, e.g. "159K / 200K".
@@ -78,7 +157,33 @@ struct SessionInfo: Identifiable, Equatable {
 
 enum SessionStatus: String {
     case idle, busy, unknown
+    /// Parked on the user: a permission prompt or an AskUserQuestion dialog is
+    /// on screen and the CLI is not doing any work. Written by the CLI itself
+    /// into the session record (`"status": "waiting"`); see
+    /// `SessionInfo.waitingFor`.
+    case waiting
+    /// The CLI is inside an interactive shell it launched — `/shell` (also
+    /// reachable as `!`), where the user is driving a subprocess rather than
+    /// the model. The CLI's own status enum is
+    /// `["busy","shell","idle","waiting"]` (read out of the 2.1.285 binary),
+    /// so this is a fourth value the app used to drop into `unknown`.
+    ///
+    /// It is work, not a park: the CLI is not waiting on the user for a
+    /// decision, it is holding an open tool the user chose to step into. Left
+    /// as `unknown`, a `/shell` session whose transcript still showed a
+    /// dangling tool read as 运行中 anyway, but one whose tail had moved on
+    /// read as 空闲 while the user was actually in the shell — the reason this
+    /// is spelled out rather than folded in.
+    case shell
     var label: String { rawValue }
+
+    /// The session is mid-work, not parked on the user — the property every
+    /// "is this thing running" question in the app actually means. `waiting` is
+    /// deliberately excluded: a session at a permission prompt has nothing in
+    /// flight, and treating it as busy is what made the island say 运行中.
+    /// `shell` counts as working for the same reason `busy` does: something is
+    /// live and the ball is not in the user's court.
+    var isWorking: Bool { self == .busy || self == .shell }
 }
 
 /// Status of a subagent, derived from whether its latest tool_use has a
@@ -119,6 +224,9 @@ struct ContextScan {
     /// Turns + assistant steps in the window. Near-monotone; see
     /// `SessionInfo.turnCount`.
     let turnCount: Int
+    /// Name of the trailing `tool_use` that has no `tool_result` yet, when one
+    /// is pending — the reason a waiting turn is waiting. Empty otherwise.
+    var pendingTool: String = ""
     /// The first human prompt, used as the card title (see `SessionTitle`).
     var title: String = ""
 }
@@ -148,6 +256,10 @@ struct SessionMonitor {
             let name = (obj["name"] as? String) ?? ""
             let statusStr = (obj["status"] as? String) ?? ""
             let status = SessionStatus(rawValue: statusStr) ?? .unknown
+            // The CLI's own coarse bucket for what it is blocked on
+            // ("permission prompt" / "input needed"); empty otherwise. Only
+            // meaningful with `waiting` — the CLI writes it there alone.
+            let waitingFor = status == .waiting ? ((obj["waitingFor"] as? String) ?? "") : ""
             let updatedAt = (obj["updatedAt"] as? Double) ?? (obj["updatedAt"] as? Int).map(Double.init) ?? startedAt
 
             // Liveness check: kill(pid, 0) returns 0 if process exists.
@@ -161,7 +273,8 @@ struct SessionMonitor {
                 name: name,
                 status: status,
                 updatedAt: updatedAt,
-                isAlive: alive
+                isAlive: alive,
+                waitingFor: waitingFor
             ))
         }
 
@@ -254,6 +367,7 @@ struct SessionMonitor {
         var lastModel = ""
         var msgCount = 0
         var lastActivity = ""
+        var lastToolName = ""
         var completionID: String?
         // Turns + assistant steps seen in the window: a counter that only ever
         // grows while the transcript grows, and that a window shift can lower
@@ -302,7 +416,8 @@ struct SessionMonitor {
                     completionID = uuid
                 }
             }
-            // Track the latest tool_use → activity.
+            // Track the latest tool_use → activity, and keep the bare tool name
+            // so a *waiting* turn can name what it is waiting for.
             if line.contains("\"type\":\"tool_use\""),
                let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let message = obj["message"] as? [String: Any] {
@@ -310,6 +425,10 @@ struct SessionMonitor {
                 if !activity.isEmpty {
                     lastActivity = activity
                     lastToolUseLine = lineIndex
+                }
+                if let name = (message["content"] as? [[String: Any]])?
+                    .last(where: { ($0["type"] as? String) == "tool_use" })?["name"] as? String {
+                    lastToolName = name
                 }
             }
             // A tool_result following a tool_use means that call completed.
@@ -335,6 +454,7 @@ struct SessionMonitor {
         return ContextScan(tokens: lastContext, model: lastModel, count: msgCount,
                            activity: lastActivity, toolPending: pending, completionID: completionID,
                            turnCount: turnCount + stepCount,
+                           pendingTool: pending ? lastToolName : "",
                            title: firstHumanPrompt(for: session))
     }
 

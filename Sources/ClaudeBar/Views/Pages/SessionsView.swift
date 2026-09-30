@@ -298,19 +298,20 @@ private struct SessionTileFull: View {
     let session: SessionInfo
     let store: ProviderStore
     let isExpanded: Bool
-    private var isBusy: Bool { session.status == .busy }
+    private var isBusy: Bool { session.isBusy }
+    private var isWaiting: Bool { session.isWaiting }
     @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
-                PulsingStatusDot(isOn: isBusy, color: Theme.statusBusy, big: true)
+                PulsingStatusDot(isOn: isBusy, color: isWaiting ? Theme.statusWarning : Theme.statusBusy, big: true)
                 SessionTitleLine(label: session.cardLabel,
                                  font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
-                StatusPill(label: isBusy ? "运行中" : "空闲",
-                           tint: isBusy ? Theme.statusBusy : Theme.statusIdle,
-                           ink: isBusy ? Theme.Ink.claude : Theme.Ink.idle)
+                StatusPill(label: isWaiting ? "等待确认" : (isBusy ? "运行中" : "空闲"),
+                           tint: isWaiting ? Theme.statusWarning : (isBusy ? Theme.statusBusy : Theme.statusIdle),
+                           ink: isWaiting ? Theme.Ink.warning : (isBusy ? Theme.Ink.claude : Theme.Ink.idle))
             }
 
             // Context block and activity line are always rendered (dimmed
@@ -334,8 +335,9 @@ private struct SessionTileFull: View {
             }
             .opacity(session.contextTokens > 0 ? 1 : 0.25)
 
-            ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
-                         isBusy: isBusy, color: Theme.statusBusy)
+            ActivityLine(activity: isWaiting ? waitingActivity : (session.currentActivity.isEmpty ? " " : session.currentActivity),
+                         isBusy: isBusy || isWaiting,
+                         color: isWaiting ? Theme.statusWarning : Theme.statusBusy)
             SessionLoadChip(key: .pid(session.pid))
 
             HStack(spacing: 4) {
@@ -398,6 +400,11 @@ private struct SessionTileFull: View {
         else { store.expandedSessionPIDs.insert(session.pid) }
     }
 
+    /// The reason line while the turn is parked on the user.
+    private var waitingActivity: String {
+        session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason
+    }
+
     /// Reveal the session's working directory in Finder.
     private func revealCwd() {
         guard !session.cwd.isEmpty,
@@ -451,19 +458,20 @@ private struct SessionTileFull: View {
 /// carries the violet cursor tint while active.
 private struct CursorTileFull: View {
     let session: CursorSessionInfo
-    private var isActive: Bool { session.status == .active }
+    private var isActive: Bool { session.isBusy }
+    private var isWaiting: Bool { session.isWaiting }
     @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
-                PulsingStatusDot(isOn: isActive, color: Theme.cursorAccent, big: true)
+                PulsingStatusDot(isOn: isActive, color: isWaiting ? Theme.statusWarning : Theme.cursorAccent, big: true)
                 SessionTitleLine(label: session.cardLabel,
                                  font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
-                StatusPill(label: isActive ? "运行中" : "空闲",
-                           tint: isActive ? Theme.cursorAccent : Theme.statusIdle,
-                           ink: isActive ? Theme.Ink.cursor : Theme.Ink.idle)
+                StatusPill(label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
+                           tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.cursorAccent : Theme.statusIdle),
+                           ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.cursor : Theme.Ink.idle))
             }
 
             // Space-reserved context + activity lines — see SessionTileFull.
@@ -485,8 +493,10 @@ private struct CursorTileFull: View {
             }
             .opacity(session.contextPercent >= 0 ? 1 : 0.25)
 
-            ActivityLine(activity: session.currentActivity.isEmpty ? " " : session.currentActivity,
-                         isBusy: isActive, color: Theme.cursorAccent)
+            ActivityLine(activity: isWaiting ? "等待你确认计划"
+                                             : (session.currentActivity.isEmpty ? " " : session.currentActivity),
+                         isBusy: isActive || isWaiting,
+                         color: isWaiting ? Theme.statusWarning : Theme.cursorAccent)
             SessionLoadChip(key: .cursor, shared: true)
             HStack {
                 Text(session.name)
@@ -555,6 +565,11 @@ private struct ExternalSessionTile: View {
     private var session: ExternalSessionInfo { node.session }
     private var tint: Color { Theme.external }
     private var isActive: Bool { session.isActive }
+    /// Codex journals no park (see `ExternalSessionInfo.isWaiting`), so this is
+    /// `false` today; reading it here keeps the tile's three-state vocabulary
+    /// identical to the Claude and Cursor tiles, and a future signal lands in
+    /// one place.
+    private var isWaiting: Bool { session.isWaiting }
 
     /// Every agent below this node, in pre-order (sub-agents first, then their
     /// own children).
@@ -605,13 +620,13 @@ private struct ExternalSessionTile: View {
             // tile's swarm gets the same amount of room.
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 HStack(spacing: 8) {
-                    PulsingStatusDot(isOn: isActive, color: tint, big: true)
+                    PulsingStatusDot(isOn: isActive, color: isWaiting ? Theme.statusWarning : tint, big: true)
                     SessionTitleLine(label: session.cardLabel,
                                      font: .system(size: 14, weight: .semibold, design: .rounded))
                     Spacer(minLength: 4)
-                    StatusPill(label: isActive ? "运行中" : "空闲",
-                                tint: isActive ? Theme.external : Theme.statusIdle,
-                                ink: isActive ? Theme.Ink.success : Theme.Ink.idle)
+                    StatusPill(label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
+                                tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.external : Theme.statusIdle),
+                                ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.success : Theme.Ink.idle))
                 }
 
                 VStack(alignment: .leading, spacing: Theme.Space.s4) {
@@ -735,6 +750,11 @@ private struct ExternalSessionGridCard: View {
     private var session: ExternalSessionInfo { node.session }
     private var tint: Color { Theme.external }
     private var isActive: Bool { session.isActive }
+    /// Codex journals no park (see `ExternalSessionInfo.isWaiting`), so this is
+    /// `false` today; reading it here keeps the tile's three-state vocabulary
+    /// identical to the Claude and Cursor tiles, and a future signal lands in
+    /// one place.
+    private var isWaiting: Bool { session.isWaiting }
 
     /// Card width the strip is sized against — an estimate, not a measurement,
     /// so the grid row height does not reflow on every poll.

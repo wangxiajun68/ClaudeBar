@@ -209,7 +209,16 @@ struct IslandSessionRow: View {
     }
 
     @ViewBuilder private var subtitle: some View {
-        if session.isBusy {
+        if session.isWaiting {
+            // Parked on the user. Same slot as the busy line, different verb:
+            // the session is not working, the user is the one being waited on —
+            // that distinction is the entire reason this state exists.
+            Text(waitingLine)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(IslandStyle.amber.opacity(0.95))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } else if session.isBusy {
             Text(busyLine)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(IslandStyle.color(session.agent).opacity(0.95))
@@ -233,6 +242,10 @@ struct IslandSessionRow: View {
         if !session.activity.isEmpty { return session.activity }
         if !session.model.isEmpty { return session.model + " · 运行中" }
         return "思考中…"
+    }
+
+    private var waitingLine: String {
+        session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason
     }
 }
 

@@ -33,6 +33,20 @@ struct CursorSessionInfo: Identifiable, Equatable {
     var toolPending: Bool = false   // bounded transcript/checkpoint evidence → working
     var completionID: String? = nil // byte offset of the latest successful final answer
     var subagents: [CursorSubagentInfo] = []
+    /// Cursor is parked on the user: a plan is waiting to be applied, or an
+    /// action is blocking the run. Written by Cursor into the composer head
+    /// (`hasPendingPlan` / `hasBlockingPendingActions`).
+    ///
+    /// Reached for the same reason Claude's `waiting` state exists — a run
+    /// parked on a decision is not *running* — but read from a different place.
+    /// Cursor's own predicate for "is this composer quiet" is
+    /// `status != "generating" && hasPendingPlan != true && !blocking`, i.e.
+    /// Cursor itself treats both flags as "an agent is busy" only in the sense
+    /// that it cannot be driven by a background submit. What they mean to this
+    /// app is the opposite: the human is the hold-up. See
+    /// `SessionStatus.waiting` for the measured Claude Code evidence; the
+    /// Cursor flags are documented in `docs/technical/cursor-session-monitor-investigation.md`.
+    var hasPendingDecision: Bool = false
 
     /// Context fill ratio 0...1 (0 if percent unknown).
     var contextRatio: Double {
@@ -46,6 +60,14 @@ struct CursorSessionInfo: Identifiable, Equatable {
         guard contextPercent >= 0 else { return "—" }
         return String(format: "%.0f%%", contextPercent)
     }
+
+    /// Parked on the user rather than working. See `hasPendingDecision`.
+    var isWaiting: Bool { hasPendingDecision }
+
+    /// Mid-work: a turn is in flight and *not* held up by a decision. The
+    /// dashboard's 运行中 count and the menu-bar pulse both mean this, so the
+    /// parked case has to be subtracted here rather than at each call site.
+    var isBusy: Bool { status == .active && !hasPendingDecision }
 
     /// Folder name derived from cwd, e.g. "ClaudeBar".
     var projectFolder: String {
@@ -197,6 +219,11 @@ struct CursorSessionMonitor {
             let unfinishedAt = (obj["unfinishedRunAt"] as? Double) ?? 0
             let scan = scanTranscript(cwd: cwd, composerId: composerId)
 
+            // A plan waiting to be applied, or an action blocking the run:
+            // Cursor's own two flags for "this composer is held up on a human".
+            let pendingDecision = (obj["hasPendingPlan"] as? Bool) == true
+                || (obj["hasBlockingPendingActions"] as? Bool) == true
+
             // A terminal marker closes its own run, including errors. An old
             // answer must not close a newer run that has not reached JSONL yet.
             let terminalCurrent = scan.ended && scan.modifiedAt >= unfinishedAt
@@ -221,7 +248,8 @@ struct CursorSessionMonitor {
                 title: name,
                 subtitle: subtitle,
                 toolPending: turnInFlight,
-                completionID: terminalCurrent ? scan.completionID : nil
+                completionID: terminalCurrent ? scan.completionID : nil,
+                hasPendingDecision: pendingDecision
             ))
         }
 

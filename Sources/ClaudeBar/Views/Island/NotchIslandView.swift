@@ -445,7 +445,7 @@ private struct IslandAlertContent: View {
                 if let openSession = sessionToOpen {
                     Button { actions.openSession(openSession) } label: {
                         HStack(spacing: 4) {
-                            Text(openSession.agent == .cursor ? "打开" : "继续")
+                            Text(openLabel(openSession))
                             Image(systemName: "arrow.up.forward")
                                 .font(.system(size: 9, weight: .bold))
                         }
@@ -481,8 +481,21 @@ private struct IslandAlertContent: View {
 
     /// The session this alert can jump back into; nil for a quota rollover.
     private var sessionToOpen: IslandSession? {
-        if case .finished(let session) = alert { return session }
-        return nil
+        switch alert {
+        case .finished(let session): return session
+        case .needsInput(let session): return session
+        case .quotaReset: return nil
+        }
+    }
+
+    /// "继续" for a finished turn, "去确认" for one parked on the user: the two
+    /// alerts open the same session but ask for different things, and the verb
+    /// is the whole difference the user sees.
+    private func openLabel(_ session: IslandSession) -> String {
+        switch alert {
+        case .needsInput: return "去确认"
+        case .finished, .quotaReset: return session.agent == .cursor ? "打开" : "继续"
+        }
     }
 
     private var alertQuotaLabel: String {
@@ -494,6 +507,8 @@ private struct IslandAlertContent: View {
         switch alert {
         case .finished(let session):
             return session.project.isEmpty ? session.agent.label : session.project
+        case .needsInput(let session):
+            return session.project.isEmpty ? session.agent.label : session.project
         case .quotaReset(let window):
             return "\(window.label) 已重置"
         }
@@ -504,6 +519,9 @@ private struct IslandAlertContent: View {
         case .finished(let session):
             let who = session.agent.label + (session.model.isEmpty ? "" : " · " + session.model)
             return who + " · 等待你的下一步"
+        case .needsInput(let session):
+            let who = session.agent.label + (session.model.isEmpty ? "" : " · " + session.model)
+            return who + " · " + (session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)
         case .quotaReset:
             return "额度已刷新 · 可以继续使用"
         }
@@ -512,15 +530,19 @@ private struct IslandAlertContent: View {
     private var verdict: String {
         switch alert {
         case .finished: return "已完成"
+        case .needsInput: return "需确认"
         case .quotaReset: return "已重置"
         }
     }
 
-    /// Mint for a finished turn; amber for a refilled allowance — the same
-    /// pairing the quota gauges use when a window is nearly spent.
+    /// Mint for a finished turn, amber for a refilled allowance — the same
+    /// pairing the quota gauges use when a window is nearly spent — and the
+    /// waiting state's own hue, which is the warning yellow the rest of the app
+    /// already reads as "attention, not error".
     private var verdictTint: Color {
         switch alert {
         case .finished: return IslandStyle.mint
+        case .needsInput: return IslandStyle.amber
         case .quotaReset: return IslandStyle.amber
         }
     }
@@ -528,6 +550,7 @@ private struct IslandAlertContent: View {
     private var badgeSymbol: String {
         switch alert {
         case .finished: return "checkmark.circle.fill"
+        case .needsInput: return "hand.raised.fill"
         case .quotaReset: return "arrow.clockwise.circle.fill"
         }
     }

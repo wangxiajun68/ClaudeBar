@@ -42,7 +42,8 @@ func runTests() throws {
     func add(_ id: String, headAge: Double = 1, checkpointAge: Double? = nil,
              unfinishedAge: Double? = nil, transcript: String? = nil,
              transcriptAge: Double = 1, locationActive: Bool = true,
-             archived: Bool = false, parent: String? = nil, rootParent: String? = nil) throws {
+             archived: Bool = false, parent: String? = nil, rootParent: String? = nil,
+             pendingPlan: Bool = false, blocking: Bool = false) throws {
         var obj: [String: Any] = ["composerId": id, "name": id,
             "createdAt": now - headAge * 1000, "lastUpdatedAt": now - headAge * 1000,
             "workspaceIdentifier": ["uri": ["fsPath": cwd]],
@@ -52,6 +53,8 @@ func runTests() throws {
                                    "subagentTypeName": "explore"]
         }
         if let unfinishedAge { obj["unfinishedRunAt"] = now - unfinishedAge * 1000 }
+        if pendingPlan { obj["hasPendingPlan"] = true }
+        if blocking { obj["hasBlockingPendingActions"] = true }
         if let checkpointAge { obj["conversationCheckpointLastUpdatedAt"] = now - checkpointAge * 1000 }
         let json = String(decoding: try JSONSerialization.data(withJSONObject: obj), as: UTF8.self)
         var stmt: OpaquePointer?
@@ -80,9 +83,24 @@ func runTests() throws {
     func session(_ id: String) -> CursorSessionInfo? {
         CursorSessionMonitor.fetchActive().first { $0.composerId == id }
     }
+    // Production `isBusy` (not a local re-derivation): the monitor's own
+    // `status == .active || toolPending` pair *is* what `isBusy` means, so
+    // reading the published property keeps this helper from drifting from the
+    // predicate the whole app filters on.
     func busy(_ id: String) -> Bool {
         guard let s = session(id) else { return false }
-        return s.isAlive && (s.status == .active || s.toolPending)
+        return s.isAlive && s.isBusy
+    }
+    /// The third state: parked on the user. Cursor writes it into the head's
+    /// own flags (`hasPendingPlan` / `hasBlockingPendingActions`), which the
+    /// monitor used to ignore entirely — a plan waiting to be applied read as
+    /// 运行中 on every surface.
+    func parked(_ id: String) -> Bool {
+        guard let s = session(id) else { return false }
+        return s.isAlive && s.isWaiting && !s.isBusy
+    }
+    func waiting(_ id: String, pendingPlan: Bool = false, blocking: Bool = false) throws {
+        try add(id, headAge: 1, pendingPlan: pendingPlan, blocking: blocking)
     }
 
     // Observed failure: SQLite checkpoints keep moving for a 16-minute run,
@@ -162,6 +180,19 @@ func runTests() throws {
           "abandoned child transcripts still expire")
     check(children.first { $0.id == "child-done" }?.status == .done,
           "a current child terminal marker beats sticky unfinished metadata")
+
+    // A plan waiting to be applied, or a blocking action: Cursor's own signal
+    // that the run is held up on a human. It used to be ignored, so such a
+    // composer read as 运行中 on every surface while nothing was running.
+    reset()
+    try waiting("pending-plan", pendingPlan: true)
+    check(parked("pending-plan"), "a pending plan is parked on the user, not running")
+    check(!busy("pending-plan"), "a pending plan must not count as running")
+    try waiting("blocking-action", blocking: true)
+    check(parked("blocking-action"), "a blocking pending action parks the run on the user")
+    try add("plain-idle", headAge: 600, locationActive: false)
+    check(!parked("plain-idle") && !busy("plain-idle"),
+          "a composer with neither flag is plain idle")
 
     print("\(checks - failures.count)/\(checks) Cursor monitor checks passed")
     if !failures.isEmpty { exit(1) }

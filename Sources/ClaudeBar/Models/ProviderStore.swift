@@ -261,7 +261,7 @@ class ProviderStore: ObservableObject {
     private static func heartbeatSamples(from sessions: [SessionInfo]) -> [Int: Bool] {
         var out: [Int: Bool] = [:]
         for s in sessions where s.isAlive {
-            out[s.pid] = s.status == .busy || s.toolPending
+            out[s.pid] = s.isBusy
         }
         return out
     }
@@ -299,7 +299,7 @@ class ProviderStore: ObservableObject {
         // ends — the transcript's mtime can be a minute older.
         let completed = claudeCompletionDetector.record(alive.map { session in
             (id: session.pid,
-             isBusy: session.status == .busy || session.toolPending,
+             isBusy: session.isBusy,
              turnKey: session.completionID.map { "\(session.turnCount)|\($0)" },
              fresh: now - session.updatedAt <= Self.completionFreshness * 1000)
         })
@@ -319,7 +319,7 @@ class ProviderStore: ObservableObject {
         // the runtime's own clock against that field.
         let now = Date().timeIntervalSince1970 * 1000
         let completed = cursorCompletionDetector.record(fresh.map {
-            (id: $0.composerId, isBusy: $0.status == .active || $0.toolPending,
+            (id: $0.composerId, isBusy: $0.isBusy,
              turnKey: $0.completionID,
              fresh: now - $0.lastUpdatedAt <= Self.completionFreshness * 1000)
         })
@@ -332,9 +332,15 @@ class ProviderStore: ObservableObject {
     }
 
     /// Menu-bar icon: any Claude / Cursor / Codex session mid-turn.
+    ///
+    /// Deliberately **not** "any session that is not idle": a session parked on
+    /// a permission prompt (`SessionStatus.waiting`) has nothing in flight, so
+    /// it must not hold the menu-bar icon at busy or keep the poll on the
+    /// busy-tier cadence. What the user is waiting for in that state is their
+    /// own input, and the card says so.
     private func refreshAnyBusy() {
-        let claude = sessions.contains { $0.isAlive && ($0.status == .busy || $0.toolPending) }
-        let cursor = cursorSessions.contains { $0.status == .active || $0.toolPending }
+        let claude = sessions.contains { $0.isAlive && $0.isBusy }
+        let cursor = cursorSessions.contains { $0.isBusy }
         // Roots only: a helper is a child of a session that is itself in this
         // array, so counting it would double-report the same run and make the
         // poll cadence flip on a fan-out that the user's own turn already
@@ -368,6 +374,7 @@ class ProviderStore: ObservableObject {
                 result[i].messageCount = old.messageCount
                 result[i].currentActivity = old.currentActivity
                 result[i].toolPending = old.toolPending
+                result[i].pendingTool = old.pendingTool
                 result[i].completionID = old.completionID
                 result[i].turnCount = old.turnCount
                 result[i].firstPrompt = old.firstPrompt
@@ -375,7 +382,7 @@ class ProviderStore: ObservableObject {
                 result[i].subagents = old.subagents
                 result[i].workflows = old.workflows
                 result[i].transcriptSize = size
-                if old.toolPending { result[i].status = .busy }
+                Self.applyTranscriptBusyFallback(&result[i])
                 continue
             }
             let ctx = SessionMonitor.fetchContext(for: result[i])
@@ -384,6 +391,7 @@ class ProviderStore: ObservableObject {
             result[i].messageCount = ctx.count
             result[i].currentActivity = ctx.activity
             result[i].toolPending = ctx.toolPending
+            result[i].pendingTool = ctx.pendingTool
             result[i].completionID = ctx.completionID
             // The counter is read from a sliding transcript window, so letting
             // it fall would put the key back to a value that was already
@@ -392,13 +400,29 @@ class ProviderStore: ObservableObject {
             result[i].turnCount = max(result[i].turnCount, ctx.turnCount)
             result[i].firstPrompt = ctx.title
             result[i].transcriptSize = size
-            if ctx.toolPending { result[i].status = .busy }
+            Self.applyTranscriptBusyFallback(&result[i])
             result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
             let subs = SessionMonitor.fetchSubagents(for: result[i])
             result[i].subagents = subs.direct
             result[i].workflows = subs.workflows
         }
         return result
+    }
+
+    /// Older CLIs have no `status` field, so a dangling `tool_use` is the only
+    /// evidence that the turn is still live — that is what this keeps.
+    ///
+    /// Older *builds of this app* also used it unconditionally, and that is the
+    /// bug the `waiting` state exists to fix: a session parked on a permission
+    /// prompt has a dangling `tool_use` too (the tool has not run yet), so
+    /// `toolPending` alone said "busy" and the island kept saying 运行中 while
+    /// the user was the one being waited on. The CLI's own `status` now
+    /// distinguishes the two cases — `waiting` for parked, `busy` for actually
+    /// working — so the transcript fallback is only consulted when that field
+    /// is absent.
+    private static func applyTranscriptBusyFallback(_ session: inout SessionInfo) {
+        guard session.status == .unknown, session.toolPending else { return }
+        session.status = .busy
     }
 
     /// Case-insensitive model name → configured context-token limit. Captured
@@ -1196,28 +1220,30 @@ class ProviderStore: ObservableObject {
             activeModelName: currentEnv?.ANTHROPIC_MODEL ?? "",
             balanceText: balanceText,
             totalSessionCount: alive.count,
-            busySessionCount: alive.filter { $0.status == .busy }.count,
+            busySessionCount: alive.filter(\.isBusy).count,
             sessions: alive.prefix(5).map { s in
                 WidgetSnapshot.SessionSummary(
                     pid: s.pid,
-                    status: s.status.label,
+                    status: s.isWaiting ? "waiting" : s.status.label,
                     model: s.model,
                     contextTokens: s.contextTokens,
                     contextLimit: s.contextLimit,
                     contextRatio: s.contextRatio,
                     projectFolder: s.projectFolder,
-                    currentActivity: s.currentActivity
+                    currentActivity: s.isWaiting ? s.waitingReason : s.currentActivity,
+                    waiting: s.isWaiting
                 )
             },
             cursorSessions: cursorSessions.prefix(5).map { s in
                 WidgetSnapshot.CursorSessionSummary(
                     composerId: s.composerId,
-                    status: s.status.label,
+                    status: s.isWaiting ? "waiting" : s.status.label,
                     contextRatio: s.contextRatio,
                     contextPercent: s.contextPercent,
                     projectFolder: s.projectFolder,
-                    currentActivity: s.currentActivity,
-                    relativeUpdated: s.relativeUpdated
+                    currentActivity: s.isWaiting ? "等待你确认计划" : s.currentActivity,
+                    relativeUpdated: s.relativeUpdated,
+                    waiting: s.isWaiting
                 )
             },
             // `aliveExternalSessions`, not the raw array: since the swarm tree
@@ -1230,13 +1256,14 @@ class ProviderStore: ObservableObject {
             externalSessions: aliveExternalSessions.prefix(5).map { s in
                 WidgetSnapshot.ExternalSessionSummary(
                     id: s.id,
-                    status: s.isActive ? "busy" : "idle",
+                    status: s.isWaiting ? "waiting" : (s.isActive ? "busy" : "idle"),
                     model: s.model,
                     contextTokens: s.contextTokens,
                     contextLimit: s.contextLimit,
                     contextRatio: s.contextRatio,
                     projectFolder: s.displayName,
-                    relativeUpdated: s.relativeUpdated
+                    relativeUpdated: s.relativeUpdated,
+                    waiting: s.isWaiting
                 )
             },
             updatedAt: Date()

@@ -7,7 +7,8 @@ struct SessionCardView: View {
     var heartbeat: [Bool]? = nil
     var onDoubleTap: (() -> Void)? = nil
 
-    private var isBusy: Bool { session.status == .busy }
+    private var isBusy: Bool { session.isBusy }
+    private var isWaiting: Bool { session.isWaiting }
     private var ratio: Double { session.contextRatio }
     private var ctxColor: Color { Theme.contextInk(ratio) }
     @State private var isHovered = false
@@ -37,9 +38,9 @@ struct SessionCardView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 StatusPill(
-                    label: isBusy ? "运行中" : "空闲",
-                    tint: isBusy ? Theme.statusBusy : Theme.statusIdle,
-                    ink: isBusy ? Theme.Ink.claude : Theme.Ink.idle
+                    label: statusLabel,
+                    tint: statusTint,
+                    ink: statusInk
                 )
             }
 
@@ -58,9 +59,10 @@ struct SessionCardView: View {
             }
 
             HStack(spacing: 6) {
-                Text(session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity)
+                Text(statusLine)
                     .font(Theme.Font.micro)
-                    .foregroundColor(isBusy ? Theme.textPrimary.opacity(0.75) : Theme.textTertiary(0.55))
+                    .foregroundColor(isBusy || isWaiting ? Theme.textPrimary.opacity(0.75)
+                                                         : Theme.textTertiary(0.55))
                     .lineLimit(1)
                 if !session.model.isEmpty {
                     Text("· \(session.model)")
@@ -92,9 +94,33 @@ struct SessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label.accessibilityText)，\(isBusy ? "运行中" : "空闲")，上下文 \(contextLabel)")
+        .accessibilityLabel("\(label.accessibilityText)，\(statusLabel)，上下文 \(contextLabel)")
         .accessibilityHint("连按在终端中恢复会话")
         .onTapGesture(count: 2) { onDoubleTap?() }
+    }
+
+    /// Three states, not two. "等待确认" is the one that used to read 运行中
+    /// while the session sat on a permission prompt doing nothing.
+    private var statusLabel: String {
+        if isWaiting { return "等待确认" }
+        return isBusy ? "运行中" : "空闲"
+    }
+
+    private var statusTint: Color {
+        if isWaiting { return Theme.statusWarning }
+        return isBusy ? Theme.statusBusy : Theme.statusIdle
+    }
+
+    private var statusInk: Color {
+        if isWaiting { return Theme.Ink.warning }
+        return isBusy ? Theme.Ink.claude : Theme.Ink.idle
+    }
+
+    /// The activity line doubles as the reason line while parked: what the
+    /// session is blocked on is the only useful thing to say about it.
+    private var statusLine: String {
+        if isWaiting { return session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason }
+        return session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity
     }
 
     /// How many agents this session spawned, and how many are running.

@@ -30,6 +30,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     private var authorized = false
     private static let categoryID = "IDLE_SESSION"
+    /// The parked-on-you category. Separate from `IDLE_SESSION` because the
+    /// action is different — a parked prompt is answered in place ("去确认"),
+    /// not resumed — and because iOS/macOS key the action set off the category.
+    private static let waitingCategoryID = "NEEDS_INPUT"
 
     private override init() {
         super.init()
@@ -57,16 +61,54 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Categories
 
-    /// Register the idle category (with a Resume action) once.
+    /// Register both categories (each with its own foreground action) once.
     private func ensureCategory() {
         let resume = UNNotificationAction(identifier: "RESUME", title: "在终端继续",
                                           options: [.foreground])
-        let category = UNNotificationCategory(
+        let idle = UNNotificationCategory(
             identifier: Self.categoryID, actions: [resume], intentIdentifiers: [])
-        UNUserNotificationCenter.current().setNotificationCategories([category])
+        // "去确认" reuses the same tap handler as quick-free: both end in
+        // `TerminalLauncher` bringing the session forward, which is exactly what
+        // answering a parked prompt requires. The label is what differs.
+        let confirm = UNNotificationAction(identifier: "RESUME", title: "去确认",
+                                           options: [.foreground])
+        let waiting = UNNotificationCategory(
+            identifier: Self.waitingCategoryID, actions: [confirm], intentIdentifiers: [])
+        UNUserNotificationCenter.current().setNotificationCategories([idle, waiting])
     }
 
     // MARK: - Posting
+
+    /// A session just parked on the user — a permission prompt, a plan to
+    /// approve, or an `AskUserQuestion` dialog.
+    ///
+    /// The island's strip is the primary surface for this edge, but it is not
+    /// always on screen: the user can turn the island off, and its alert is a
+    /// one-shot that a strip already open (`.expanded`) refuses. When that
+    /// happens nothing else tells the user — the menu-bar icon goes *idle*
+    /// while a session waits, by design — so this banner is the fallback that
+    /// keeps a parked Claude session from going silent. The caller decides when
+    /// the strip could not carry it; this only posts.
+    func notifyNeedsInput(session: SessionInfo) {
+        post(
+            title: "Claude 需要你确认",
+            body: "\(session.projectFolder) · \(session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)",
+            subtitle: "waiting-\(session.pid)",
+            categoryID: Self.waitingCategoryID,
+            pid: session.pid
+        )
+    }
+
+    /// Cursor flavor of the parked-on-user banner.
+    func notifyNeedsInput(cursor session: CursorSessionInfo) {
+        post(
+            title: "Cursor 需要你确认",
+            body: "\(session.projectFolder) · 等待你确认计划",
+            subtitle: "waiting-cursor-\(session.composerId)",
+            categoryID: Self.waitingCategoryID,
+            pid: nil
+        )
+    }
 
     /// A confirmed final answer, never the last intermediate tool name.
     func notifyIdle(session: SessionInfo) {

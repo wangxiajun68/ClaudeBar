@@ -9,16 +9,24 @@ extension ProviderStore {
     var aliveSessions: [SessionInfo] { sessions.filter(\.isAlive) }
 
     /// Alive sessions currently busy.
-    var busySessionCount: Int { aliveSessions.filter { $0.status == .busy }.count }
+    var busySessionCount: Int { aliveSessions.filter(\.isBusy).count }
+
+    /// Alive sessions parked on the user — a permission prompt or an
+    /// `AskUserQuestion` dialog is on screen. See `SessionStatus.waiting`.
+    var waitingSessionCount: Int { aliveSessions.filter(\.isWaiting).count }
 
     /// Alive Cursor sessions.
     var aliveCursorSessions: [CursorSessionInfo] { cursorSessions }
 
     /// Cursor sessions currently active.
-    var activeCursorCount: Int { cursorSessions.filter { $0.status == .active }.count }
+    var activeCursorCount: Int { cursorSessions.filter(\.isBusy).count }
+
+    /// Cursor sessions parked on the user — a plan awaiting 应用, or a blocking
+    /// action. See `CursorSessionInfo.hasPendingDecision`.
+    var waitingCursorCount: Int { cursorSessions.filter(\.isWaiting).count }
 
     /// Is any Claude session busy (drives brand pulse / status icon).
-    var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.status == .busy } }
+    var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.isBusy } }
 
     /// Visible Codex **threads** — roots only.
     ///
