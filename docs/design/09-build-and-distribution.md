@@ -29,6 +29,6 @@ CI (tag v*)       →  release.yml  →  DMG + zip + GitHub Release
 - **macOS 26+**：命令面板结果区启用 Liquid Glass 容器；按钮不分系统版本，一律走 `ActionButton`（`InstrumentControls.swift`）
 - **Widget**：安装后 `lsregister` + `pluginkit`；桌面右键添加 ClaudeBar 小组件
 - **VPN 内核**：构建脚本把 mihomo 打成 `Resources/mihomo-core.xz`（13 MB，首次启动在应用内解压成 `mihomo`）；见 [technical/11](../technical/11-vpn.md)
-- **签名**：ad-hoc，无公证；适合本机或受信任环境
+- **签名**：本机构建用自签 `ClaudeBar Dev`；CI 用 ad-hoc。两者都无公证，适合本机或受信任环境
 
 详细签名与 Widget 注册见 [构建与签名](../technical/07-build-and-signing.md)。

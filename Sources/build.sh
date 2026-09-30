@@ -76,10 +76,16 @@ if ! [ "$WIDGET_DIR/WidgetSnapshot.swift" -ef "$SOURCES_DIR/Models/WidgetSnapsho
 fi
 
 # Local builds use a stable self-signed identity so TCC (Screen Recording)
-# survives rebuilds. CI / explicit "-" stay ad-hoc.
+# survives rebuilds. **Both channels**, not just dev: the release app was ad-hoc
+# signed and an ad-hoc signature has no certificate to identify it by, so its
+# designated requirement degrades to `cdhash H"..."` — the hash of the whole
+# binary. Every rebuild therefore landed in TCC as a brand-new app and re-asked
+# for Screen Recording, which made the screenshot tool unusable for anyone
+# building locally. Only CI and an explicit CODESIGN_IDENTITY stay ad-hoc; a
+# Developer ID, when one is configured, is passed through the same variable.
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     SIGN_IDENTITY="$CODESIGN_IDENTITY"
-elif [ -n "${CI:-}" ] || [ "$CLAUDEBAR_CHANNEL" = release ]; then
+elif [ -n "${CI:-}" ]; then
     SIGN_IDENTITY="-"
 else
     SIGN_IDENTITY="$(bash "$PROJECT_DIR/Sources/ensure-dev-cert.sh")"

@@ -13,7 +13,7 @@
 
 证书如果是 `CSSMERR_TP_NOT_TRUSTED`，`codesign` 仍能签上，但内核 / TCC 会把 App 当成未签名，屏幕录制绑到每次重编译都变的 CDHash，于是每次都要授权。`find-identity -v` 里必须能看到这张证（不要带 `CSSMERR`）。指定要求绑定证书根哈希，同一张证的重编译保持授权。哈希钉在 `~/Library/Application Support/ClaudeBar/dev-codesign-identity`。
 
-**正式版默认及 CI** 使用 ad-hoc（`codesign -s -`）。可用 `CODESIGN_IDENTITY=-` 强制 ad-hoc。
+**正式版本机构建同样**使用 `ClaudeBar Dev` 自签身份——不是 ad-hoc。ad-hoc 没有证书可供识别，指定要求会退化成 `cdhash H"..."`（整份二进制的哈希），于是每次重编译在 TCC 眼里都是新 App，屏幕录制反复要求授权，截图功能对本地开发者等于不可用。默认 ad-hoc 只保留给 CI 与显式 `CODESIGN_IDENTITY=-`；配置了 Developer ID 时，直接用它覆盖同一个变量即可（未配置前不要发布到 GitHub Releases）。
 
 自底向上、不用 `--deep`：
 
