@@ -5,7 +5,7 @@ struct UsageView: View {
     @ProviderState([.usage, .configuration]) var providerStore: ProviderStore
     @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showCustomDatePicker = false
-    @State private var showDetails = false
+    @State private var showDetails = true
 
     var body: some View {
         // Derived once: the subtitle's caption read both of these, so the body
@@ -94,7 +94,7 @@ struct UsageView: View {
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
             SectionHeader(icon: "square.grid.2x2", title: "按平台",
                           tint: Theme.claude, ink: Theme.Ink.claude,
-                          count: providerStore.usageBySource.values.flatMap { $0 }.count)
+                          count: UsageSource.allCases.count + 1)
             Text("Cursor 按官方账单单独统计；上方图表和其他平台占比仅包含本地记录。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
@@ -123,9 +123,6 @@ struct UsageView: View {
                                   tint: Theme.textSecondary, block: true)
             } else {
                 TileGrid(.pageUsage) {
-                    // Hoisted: `maxUsageTokens` is a computed property over the
-                    // whole model list, and reading it inside the loop made it
-                    // a per-tile pass.
                     let scale = max(providerStore.maxUsageTokens, 1)
                     // Cursor's real charge is not per-period — the API answers
                     // for a window — so a tile is captioned with the window it
@@ -288,7 +285,7 @@ private struct UsageProviderCard: View {
     var body: some View {
         let total = group.total
         let share = overallTokens > 0 ? Double(total.totalTokens) / Double(overallTokens) : 0
-        let shareLabel = share > 0 && share < 0.01 ? "<1%" : "\(Int((share * 100).rounded()))%"
+        let shareLabel = UsageAnalysis.share(total.totalTokens, of: overallTokens)
         return Button {
             withAnimation(Theme.Animation.smooth) { open.toggle() }
         } label: {
@@ -336,6 +333,7 @@ private struct UsageProviderCard: View {
                     live: hovered
                 )
                 .frame(height: 28)
+                .help("装饰曲线，不代表逐日用量；真实趋势见上方用量图。")
 
                 if open {
                     VStack(alignment: .leading, spacing: 8) {
@@ -387,7 +385,7 @@ private struct UsagePlatformCard: View {
     var body: some View {
         let total = stats.reduce(into: ModelUsage(model: source.label)) { $0.merge($1) }
         let share = overallTokens > 0 ? Double(total.totalTokens) / Double(overallTokens) : 0
-        let shareLabel = share > 0 && share < 0.01 ? "<1%" : "\(Int((share * 100).rounded()))%"
+        let shareLabel = UsageAnalysis.share(total.totalTokens, of: overallTokens)
         let ranked = stats.sorted { $0.totalTokens > $1.totalTokens }
 
         return Button {

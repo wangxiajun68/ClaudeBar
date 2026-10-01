@@ -38,6 +38,13 @@ struct UsageAnalysis {
         var id: Double { x }
     }
     let distribution: [CurvePoint]
+    let density: [CurvePoint]
+    let densityLower: Double
+    let densityUpper: Double
+    let densityMaximum: Double
+    let densityBandwidth: Double?
+    let bucketQ25: Double
+    let bucketQ75: Double
     let lorenz: [CurvePoint]
     let effectiveModels: Double
     let tokenScale: Double
@@ -122,6 +129,38 @@ struct UsageAnalysis {
             }
         }
         distribution = empirical
+        let observations = ordered.map(Double.init)
+        bucketQ25 = Self.quantile(observations, fraction: 0.25)
+        bucketQ75 = Self.quantile(observations, fraction: 0.75)
+        if observations.count >= 5, empirical.count >= 3 {
+            let mean = observations.reduce(0, +) / Double(observations.count)
+            let deviation = sqrt(observations.reduce(0) { $0 + pow($1 - mean, 2) } / Double(observations.count - 1))
+            let interquartile = (bucketQ75 - bucketQ25) / 1.34
+            let scale = interquartile > 0 ? min(deviation, interquartile) : deviation
+            let bandwidth = max(1, 0.9 * scale * pow(Double(observations.count), -0.2))
+            densityBandwidth = bandwidth
+            let lower = max(0, (observations.first ?? 0) - 3 * bandwidth)
+            let upper = (observations.last ?? 0) + 3 * bandwidth
+            densityLower = lower; densityUpper = upper
+            let normalizer = Double(observations.count) * bandwidth * sqrt(2 * .pi)
+            // Gaussian KDE with reflection at zero: token counts cannot be
+            // negative. Samples remain separate from this explicitly estimated curve.
+            density = (0..<96).map { index in
+                let x = lower + (upper - lower) * Double(index) / 95
+                let sum = observations.reduce(0.0) { total, value in
+                    total + exp(-0.5 * pow((x - value) / bandwidth, 2))
+                        + exp(-0.5 * pow((x + value) / bandwidth, 2))
+                }
+                return CurvePoint(x: x, y: sum / normalizer)
+            }
+        } else {
+            density = []; densityBandwidth = nil
+            let span = max(1, (observations.last ?? 0) - (observations.first ?? 0))
+            let padding = max(span, (observations.last ?? 0) * 0.15) * 0.12
+            densityLower = max(0, (observations.first ?? 0) - padding)
+            densityUpper = max(1, (observations.last ?? 0) + padding)
+        }
+        densityMaximum = density.map(\.y).max() ?? 0
         let ascending = models.map(\.tokens).sorted()
         let modelSum = ascending.reduce(0, +)
         var concentration = [CurvePoint(x: 0, y: 0)]

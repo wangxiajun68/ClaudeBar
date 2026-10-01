@@ -79,6 +79,7 @@ struct UsageModelCard: View {
                     live: hovered
                 )
                 .frame(height: 28)
+                .help("装饰曲线，不代表逐日用量；金额为刊例估算。")
                 if open {
                     HStack(alignment: .center, spacing: 12) {
                         SourceRing(

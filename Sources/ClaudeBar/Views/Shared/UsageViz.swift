@@ -33,7 +33,7 @@ struct TokenMixStrip: View {
         let t = Self.totals(stats)
         return VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geo in
-                HStack(spacing: 1) {
+                HStack(spacing: 0) {
                     slice(t.input, geo.size.width, Theme.claude, total: t.sum)
                     slice(t.hit, geo.size.width, Theme.external, total: t.sum)
                     slice(t.write, geo.size.width, Theme.statusWarning, total: t.sum)
@@ -56,7 +56,7 @@ struct TokenMixStrip: View {
     private func slice(_ n: Int, _ width: CGFloat, _ color: Color, total: Int) -> some View {
         if n > 0 {
             color.opacity(0.9)
-                .frame(width: max(2, width * CGFloat(n) / CGFloat(total)))
+                .frame(width: width * CGFloat(n) / CGFloat(total))
         }
     }
 
