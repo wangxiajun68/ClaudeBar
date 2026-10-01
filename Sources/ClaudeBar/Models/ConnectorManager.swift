@@ -33,6 +33,108 @@ enum ConnectorKind: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// What a batch is allowed to do with a record.
+///
+/// Derived from the same cases the card's own buttons branch on, which is the
+/// point: a batch may only offer what the single card offers, and a record the
+/// card refuses to touch must not be quietly changed in bulk.
+enum ConnectorBatchCapability: Equatable, Sendable {
+    /// The record carries its own state, so a batch can offer the opposite of
+    /// it — and can tell that a 停用 on an already-stopped record is a no-op.
+    case state(Bool)
+    /// The state cannot be read from disk (Cursor MCP). Selectable, and both
+    /// commands are real: the batch acts on what the user asked for, not on a
+    /// state it pretends to know.
+    case command
+    /// Nothing to apply. `native` records land here even when they can be
+    /// *removed* — an MCP config has no enabled flag, so offering 启用 for one
+    /// would promise a write the gate then rejects.
+    case none
+}
+
+/// The three things the batch bar can do. One enum rather than three methods
+/// because the bar, the confirmation copy and the outcome summary all have to
+/// agree on which action is in flight.
+enum ConnectorBatchAction: Equatable, Sendable {
+    case disable, enable, remove
+}
+
+/// Which records a bulk action actually touches.
+///
+/// Pure policy, kept out of the view so it can be exercised without a running
+/// app — and so the *count* the confirmation shows and the set that then
+/// executes are the same function, not two filters that merely look alike.
+enum ConnectorBatch {
+    static func records(_ records: [ConnectorRecord],
+                        for action: ConnectorBatchAction) -> [ConnectorRecord] {
+        records.filter { record in
+            switch action {
+            // 停用 and 启用 are not each other's complement. A record whose state
+            // is already the target is left out (nine of ten selected skills are
+            // usually already off, and re-running the move on each would be that
+            // many needless disk operations); a Cursor MCP, whose state this app
+            // cannot read at all, is offered *both* commands — exactly as its own
+            // card does — so it takes the action the user asked for.
+            case .disable:
+                return record.batchCapability == .state(true) || record.batchCapability == .command
+            case .enable:
+                return record.batchCapability == .state(false) || record.batchCapability == .command
+            case .remove:
+                return record.canRemove
+            }
+        }
+    }
+
+    /// How many of `records` a batch would have to skip — no action reaches
+    /// them, and the bar says so rather than letting the totals imply they were
+    /// covered.
+    static func inert(_ records: [ConnectorRecord]) -> Int {
+        records.filter { $0.batchCapability == .none && !$0.canRemove }.count
+    }
+}
+
+/// What one batch run actually did. Collected rather than published per record
+/// so the page can report once, and so a partial failure still lets the rest
+/// of the selection through — the alternative (abort on first error) leaves the
+/// user unsure which half landed.
+struct ConnectorBatchOutcome: Equatable, Sendable {
+    var disabled = 0
+    var enabled = 0
+    var removed = 0
+    /// Skill folders physically moved (into the vault, back out of it, or to
+    /// the Trash). Separated because it is the one effect that is more than a
+    /// config line, and the notice says so.
+    var movedSkills = 0
+    /// Commands handed to Cursor, whose own state this app cannot read.
+    var cursorCommands = 0
+    var skipped = 0
+    var failures: [String] = []
+
+    var hasWork: Bool { disabled + enabled + removed > 0 }
+
+    /// One line for the page banner. Failures are deliberately absent — they go
+    /// to `errorMessage`, and a run that both worked and failed should not say
+    /// the same count twice in two banners.
+    func notice(_ action: ConnectorBatchAction) -> String? {
+        var parts: [String] = []
+        switch action {
+        case .disable: if disabled > 0 { parts.append("已停用 \(disabled) 项") }
+        case .enable: if enabled > 0 { parts.append("已启用 \(enabled) 项") }
+        case .remove: if removed > 0 { parts.append("已移除 \(removed) 项") }
+        }
+        if movedSkills > 0 {
+            switch action {
+            case .disable: parts.append("\(movedSkills) 个 Skill 目录已移入停用区")
+            case .enable: parts.append("\(movedSkills) 个 Skill 目录已还原")
+            case .remove: parts.append("\(movedSkills) 个 Skill 目录已进废纸篓")
+            }
+        }
+        if cursorCommands > 0 { parts.append("Cursor 的实际状态请在 Customize 中核对") }
+        if skipped > 0 { parts.append("跳过 \(skipped) 项") }
+        return parts.isEmpty ? nil : parts.joined(separator: "，") + "。"
+    }
+}
+
 struct MCPConnection: Sendable, Equatable {
     let command: String
     let arguments: [String]
@@ -80,6 +182,20 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
         return source
     }
     var canToggle: Bool { enabled != nil && !isNative }
+
+    /// What a batch is allowed to do with this record. See
+    /// `ConnectorBatchCapability` — derived here, once, so the card's own
+    /// buttons and the batch bar cannot drift apart.
+    var batchCapability: ConnectorBatchCapability {
+        switch method {
+        case .cursorMCP: return .command
+        // A native record's only batchable write is the MCP config file it
+        // points at (`canRemove`), and that write is a removal — there is no
+        // enabled flag for a batch to flip.
+        case .native: return .none
+        default: return enabled.map { .state($0) } ?? .none
+        }
+    }
 
     /// The client's own mark for a card's well, when the connector belongs to
     /// exactly one of the three clients — all of which ship bundled artwork, so
@@ -269,6 +385,7 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
             }
             await refresh(projectPath: projectPath, scanCLIs: false)
         } catch {
+            noticeMessage = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -280,8 +397,82 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
             noticeMessage = "已移除 \(record.name)"
             await refresh(projectPath: projectPath, scanCLIs: false)
         } catch {
+            noticeMessage = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Apply one action to a selection.
+    ///
+    /// Serial and sequential on purpose: the vault's `registry.json` is
+    /// read-modify-written per skill, so parallel calls would clobber each
+    /// other through `ConnectorMutationGate`'s own serialisation (each would
+    /// read the file before the previous one wrote it). Sequential also lets a
+    /// partial failure leave a consistent on-disk state instead of a half-applied
+    /// pile of racing writes.
+    ///
+    /// The page runs one batch at a time and freezes while it does, so the
+    /// selection it hands in is still the selection on screen.
+    func batch(_ action: ConnectorBatchAction,
+               over records: [ConnectorRecord], projectPath: String?) async -> ConnectorBatchOutcome {
+        var outcome = ConnectorBatchOutcome()
+        for record in records {
+            let capability = record.batchCapability
+            var skillMoved = false
+            do {
+                switch action {
+                case .disable, .enable:
+                    switch capability {
+                    case .none:
+                        outcome.skipped += 1
+                        continue
+                    case .state(let enabled):
+                        // Already there. Nine of ten selected skills are usually
+                        // already off, and re-running the move on each would be
+                        // nine needless disk operations and a misleading count.
+                        guard enabled != (action == .enable) else {
+                            outcome.skipped += 1
+                            continue
+                        }
+                    case .command:
+                        break
+                    }
+                    try await ConnectorMutationGate.shared.setEnabled(action == .enable, record: record)
+                    if case .skillMove = record.method { skillMoved = true }
+                    // Only a Cursor command leaves the app able to *know* it
+                    // worked; the client's own state is the authority.
+                    if case .command = capability { outcome.cursorCommands += 1 }
+                case .remove:
+                    guard record.canRemove else {
+                        outcome.skipped += 1
+                        continue
+                    }
+                    try await ConnectorMutationGate.shared.remove(record)
+                    if case .skillMove = record.method { skillMoved = true }
+                }
+            } catch {
+                outcome.failures.append("\(record.name)：\(error.localizedDescription)")
+                continue
+            }
+            if skillMoved { outcome.movedSkills += 1 }
+            switch action {
+            case .disable: outcome.disabled += 1
+            case .enable: outcome.enabled += 1
+            case .remove: outcome.removed += 1
+            }
+        }
+        // One rescan for the whole run, not one per record: 40 skills would
+        // otherwise walk the disk 40 times and rebuild the grid 40 times.
+        if outcome.hasWork { await refresh(projectPath: projectPath, scanCLIs: false) }
+        if !outcome.failures.isEmpty {
+            let head = "\(outcome.failures.count) 项未能完成"
+            let shown = outcome.failures.prefix(3).joined(separator: "；")
+            errorMessage = outcome.failures.count > 3 ? "\(head)：\(shown)…" : "\(head)：\(shown)"
+        } else {
+            errorMessage = nil
+        }
+        noticeMessage = outcome.notice(action)
+        return outcome
     }
 }
 

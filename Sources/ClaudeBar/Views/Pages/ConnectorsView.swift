@@ -12,6 +12,13 @@ struct ConnectorsView: View {
     @State private var busyIDs: Set<String> = []
     @State private var selectedRecord: ConnectorRecord?
     @State private var pendingRemoval: RemovalRequest?
+    /// Bulk mode. Off on every mount — the browse state is the page's default,
+    /// and a surface that reopened with checkboxes on the cards would make the
+    /// ordinary path look like the special one.
+    @State private var batchMode = false
+    @State private var selection: Set<String> = []
+    @State private var pendingBatch: BatchConfirm?
+    @State private var isBatching = false
 
     private let columns = [GridItem(.adaptive(minimum: 268), spacing: Theme.Space.gridGapPage, alignment: .top)]
     private var selectedProject: String? { projectPath.isEmpty ? nil : projectPath }
@@ -30,7 +37,7 @@ struct ConnectorsView: View {
             // plain stack.
             if loading || count == 0 {
                 VStack(alignment: .leading, spacing: 0) {
-                    chrome(count: count)
+                    chrome(count: count, bulkAvailable: false)
                     if loading { loadingState } else { emptyState }
                 }
                 .padding(.horizontal, Theme.Space.s24)
@@ -40,6 +47,8 @@ struct ConnectorsView: View {
                     Section {
                         if focus == .local {
                             ForEach(clis) { cli in
+                                // No checkbox here, and none on the bar either:
+                                // see `batchTargets`.
                                 LocalCLICard(cli: cli, relatedCount: relatedCount(cli.name))
                             }
                         } else {
@@ -48,6 +57,9 @@ struct ConnectorsView: View {
                                     record: record,
                                     contents: manager.pluginContents[record.id],
                                     isBusy: busyIDs.contains(record.id),
+                                    selecting: batchMode,
+                                    selected: selection.contains(record.id),
+                                    onToggleSelection: { toggleSelection(record.id) },
                                     onDetails: { selectedRecord = record },
                                     onSetEnabled: { setEnabled($0, for: record) },
                                     onRemove: { askRemove(record) }
@@ -55,7 +67,7 @@ struct ConnectorsView: View {
                             }
                         }
                     } header: {
-                        chrome(count: count)
+                        chrome(count: count, bulkAvailable: focus != .local)
                     }
                 }
                 .padding(.horizontal, Theme.Space.s24)
@@ -64,6 +76,14 @@ struct ConnectorsView: View {
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)
+        // The bar is an inset rather than another child of the scroll content:
+        // the grid is a `LazyVGrid` directly under the `ScrollView` (that is what
+        // lets it virtualise), so it cannot be wrapped in a stack to make room.
+        // An inset takes the space out of the scroll view's own frame, so the
+        // last row scrolls clear of the bar instead of hiding under it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if batchMode && focus != .local && !manager.records.isEmpty { batchBar() }
+        }
         .sheet(item: $selectedRecord) { record in
             ConnectorDetailSheet(record: record)
                 .frame(width: 760, height: 620)
@@ -79,6 +99,18 @@ struct ConnectorsView: View {
         } message: {
             Text(pendingRemoval?.message ?? "")
         }
+        .confirmationDialog(pendingBatch?.title ?? "批量操作", isPresented: batchPresented, titleVisibility: .visible) {
+            if let request = pendingBatch {
+                Button(request.action == .remove ? "移除" : (request.action == .enable ? "启用" : "停用"),
+                       role: request.action == .remove ? .destructive : nil) {
+                    pendingBatch = nil
+                    run(request)
+                }
+            }
+            Button("取消", role: .cancel) { pendingBatch = nil }
+        } message: {
+            Text(pendingBatch?.message ?? "")
+        }
         .task {
             // The manager outlives the page, so a banner from the last visit
             // would otherwise greet this one.
@@ -88,6 +120,18 @@ struct ConnectorsView: View {
         }
         .onChange(of: projectPath) { _, _ in
             Task { await manager.refresh(projectPath: selectedProject, scanCLIs: false) }
+        }
+        // Bulk mode lives on the records, not on what the grid happens to be
+        // showing. Switching the type filter therefore has to drop the ticks:
+        // the bar would otherwise keep counting records of a kind it can no
+        // longer act on, and switching back would silently re-arm them.
+        // (A hidden tick can still be *deliberate* — see `batchBar`'s platform
+        // pills, which say what the off-screen half of the selection is.)
+        .onChange(of: focus) { _, item in
+            let live = Set(item == .local
+                           ? []
+                           : manager.records.filter { $0.kind == kind(of: item) }.map(\.id))
+            if !selection.isSubset(of: live) { selection.formIntersection(live) }
         }
         // `selectedRecord` is a *copy* captured at click time, and any refresh
         // replaces `manager.records` wholesale — so an open detail sheet could
@@ -106,6 +150,10 @@ struct ConnectorsView: View {
 
     private var removalPresented: Binding<Bool> {
         Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })
+    }
+
+    private var batchPresented: Binding<Bool> {
+        Binding(get: { pendingBatch != nil }, set: { if !$0 { pendingBatch = nil } })
     }
 
     /// How many records belong to a focus category — a table lookup, not a walk.
@@ -207,15 +255,15 @@ struct ConnectorsView: View {
 
     /// Title, filters and notices. Horizontal inset lives on the scroll
     /// content, once, so the header and the cards share an edge.
-    private func chrome(count: Int) -> some View {
+    private func chrome(count: Int, bulkAvailable: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            toolbar(count: count)
+            toolbar(count: count, bulkAvailable: bulkAvailable)
             notices
         }
     }
 
-    private func toolbar(count: Int) -> some View {
+    private func toolbar(count: Int, bulkAvailable: Bool) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
             HStack(spacing: Theme.Space.s8) {
                 ConnectorKindFilter(items: ConnectorFocus.allCases,
@@ -235,6 +283,12 @@ struct ConnectorsView: View {
                     .rollingNumber()
                     .font(Theme.Font.microMedium)
                     .foregroundStyle(Theme.textSecondary)
+                if bulkAvailable {
+                    ChipButton("批量管理", symbol: "checklist", on: batchMode) {
+                        withAnimation(Theme.Motion.state) { toggleBatchMode() }
+                    }
+                    .help(batchMode ? "退出批量管理；已选内容会被清空" : "选中多张卡片，一次停用、启用或移除")
+                }
             }
             InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
                 .frame(height: 38)
@@ -284,6 +338,237 @@ struct ConnectorsView: View {
         Task {
             await manager.remove(record, projectPath: selectedProject)
             busyIDs.remove(record.id)
+        }
+    }
+
+    // MARK: - Bulk selection
+
+    /// The targets 批量管理 can act on: exactly the rows on screen.
+    ///
+    /// The 本机 CLI tab has none. A CLI is a command on the PATH — nothing this
+    /// page can enable, disable or remove — and its "related" skills are a
+    /// *derived* association, so letting a CLI stand in for the skills that
+    /// depend on it would make one click edit records the user never saw.
+    private func batchTargets(records shown: [ConnectorRecord]) -> [BatchTarget] {
+        shown.map { BatchTarget(id: $0.id, name: $0.name, platforms: $0.platforms) }
+    }
+
+    private func toggleBatchMode() {
+        batchMode.toggle()
+        // Leaving bulk mode drops the selection: the bar is gone, so there is
+        // nothing left on screen to tell the user what is still ticked.
+        if !batchMode { selection.removeAll() }
+    }
+
+    private func toggleSelection(_ id: String) {
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    }
+
+    /// The selection as records, in the order the manager lists them.
+    ///
+    /// Filtered to real records of the current kind — the same source
+    /// `selection` is named and pruned from (`batchTargets`), so the two cannot
+    /// describe different sets.
+    private func selectedRecords() -> [ConnectorRecord] {
+        let kind = kind(of: focus)
+        return manager.records.filter { $0.kind == kind && selection.contains($0.id) }
+    }
+
+    /// How many ticks an action would actually apply to — the number in the
+    /// confirmation, not the number of checkboxes.
+    private func actionableCount(_ action: ConnectorBatchAction) -> Int {
+        batchRecords(action).count
+    }
+
+    /// The records an action would apply to, in the manager's order. One
+    /// function for both the count and the run — see `ConnectorBatch.records`.
+    private func batchRecords(_ action: ConnectorBatchAction) -> [ConnectorRecord] {
+        ConnectorBatch.records(selectedRecords(), for: action)
+    }
+
+
+    /// What a Remove would touch, for the copy. The plugin / MCP half is a
+    /// config edit; a skill is a whole folder, which is the part worth naming.
+    private func removalSplit() -> (skills: Int, others: Int) {
+        let records = batchRecords(.remove)
+        let skills = records.filter { if case .skillMove = $0.method { return true } else { return false } }.count
+        return (skills, records.count - skills)
+    }
+
+    private func askBatch(_ action: ConnectorBatchAction) {
+        let count = actionableCount(action)
+        guard count > 0 else { return }
+        let places = Set(selectionTargets
+            .filter { selection.contains($0.id) }
+            .flatMap(\.platforms).map(\.title))
+        let where_ = places.isEmpty ? "" : "，涉及 " + places.sorted().joined(separator: "、")
+        // Cursor's own state cannot be read, so a 停用 there is a *command*, not
+        // a state change — the confirmation says so rather than promising an
+        // outcome the app cannot know it got.
+        let cursor = batchRecords(action).filter { $0.batchCapability == .command }.count
+        let cursorNote = cursor > 0 ? "，其中 \(cursor) 项由 Cursor 执行、状态请在 Customize 中核对" : ""
+        let title: String
+        let message: String
+        switch action {
+        case .disable:
+            title = "停用选中的 \(count) 项？"
+            message = "独立 Skill 目录会整体移入 ClaudeBar 停用区；MCP 与插件只改对应配置的一行。"
+                + where_ + cursorNote + "。"
+        case .enable:
+            title = "启用选中的 \(count) 项？"
+            message = "此前停用的 Skill 会还原到原位置；被占用的路径会跳过而不是覆盖。" + where_ + cursorNote + "。"
+        case .remove:
+            let split = removalSplit()
+            title = "移除选中的 \(count) 项？"
+            message = "Skill 会进废纸篓；插件和 MCP 会从该平台的配置里删掉。"
+                + (split.skills > 0 ? "其中 \(split.skills) 个 Skill 目录会连同内容一起进废纸篓。" : "")
+                + where_ + "。此操作不可撤销。"
+        }
+        pendingBatch = BatchConfirm(action: action, title: title, message: message)
+    }
+
+    private func run(_ request: BatchConfirm) {
+        let records = batchRecords(request.action)
+        guard !records.isEmpty else { return }
+        isBatching = true
+        Task {
+            _ = await manager.batch(request.action, over: records, projectPath: selectedProject)
+            selection.removeAll()
+            isBatching = false
+        }
+    }
+
+    /// The targets behind the current selection, for the confirmation copy.
+    private var selectionTargets: [BatchTarget] {
+        batchTargets(records: visibleRecords)
+    }
+
+    /// The bulk action bar: a tile the width of the grid, pinned under it. It
+    /// reports first (how many of what), then the shortcuts, then the three
+    /// actions — destructive last, the same order the single card uses.
+    ///
+    /// The readout and the buttons are driven by the *records* the selection
+    /// resolves to, not by `selection.count`, so a tick that belongs to a kind
+    /// the bar cannot act on can never be counted as something 停用 will do.
+    @ViewBuilder private func batchBar() -> some View {
+        let records = selectedRecords()
+        let all = batchTargets(records: visibleRecords)
+        let targets = Set(all.map(\.id))
+        let selected = all.filter { selection.contains($0.id) }
+        VStack(alignment: .leading, spacing: Theme.Space.s10) {
+            HStack(spacing: Theme.Space.s8) {
+                Text("已选 \(selected.count) 项")
+                    .rollingNumber()
+                    .font(Theme.Font.chromeEmph)
+                    .foregroundStyle(Theme.textPrimary)
+                ForEach(selectedPlatforms(selected), id: \.self) { item in
+                    StatusPill(label: "\(item.title) \(selected.filter { $0.platforms.contains(item) }.count)",
+                               tint: platformFaceTint(item), ink: platformTint(item))
+                }
+                if selected.isEmpty {
+                    Text("点卡片左上角的复选框选中；下面的快捷键可以整批选。")
+                        .font(Theme.Font.micro)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: Theme.Space.s8)
+                if isBatching {
+                    ProgressView().controlSize(.small)
+                }
+                Text(selectionActionability)
+                    .font(Theme.Font.micro)
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            HStack(spacing: Theme.Space.s8) {
+                // The shortcuts are `ChipButton`s, not tinted text: a bare
+                // coloured label is not a control, and these two sit in the
+                // same row as three real buttons. `on: false` because they are
+                // *momentary* — nothing stays "selected" after 全选.
+                Menu {
+                    Button("选本页全部") { selection = targets }
+                    Divider()
+                    ForEach(ConnectorPlatform.allCases) { item in
+                        Button("只选 \(item.title)（\(all.filter { $0.platforms.contains(item) }.count)）") {
+                            selection = Set(all.filter { $0.platforms.contains(item) }.map(\.id))
+                        }
+                    }
+                    Divider()
+                    Button("选全部 Skills（不只看本页）") { selectKind(.skill) }
+                    Button("选全部 MCP（不只看本页）") { selectKind(.mcp) }
+                    Button("选全部插件（不只看本页）") { selectKind(.plugin) }
+                } label: {
+                    InstrumentMenuLabel(title: "按平台 / 类型快选", tint: Theme.Ink.claude)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("按平台只筛本页；按类型可选整个清单里的同类项")
+                Spacer(minLength: Theme.Space.s8)
+                ChipButton("全选本页", symbol: "checkmark.square", on: false) { selection = targets }
+                    .disabled(selected.count == all.count)
+                ChipButton("清空", symbol: "xmark.square", on: false) { selection.removeAll() }
+                    .disabled(selection.isEmpty)
+                Spacer(minLength: Theme.Space.s8)
+                ActionButton("停用") { askBatch(.disable) }
+                    .disabled(isBatching || actionableCount(.disable) == 0)
+                ActionButton("启用") { askBatch(.enable) }
+                    .disabled(isBatching || actionableCount(.enable) == 0)
+                ActionButton("移除", tone: .destructive) { askBatch(.remove) }
+                    .disabled(isBatching || actionableCount(.remove) == 0)
+            }
+            .frame(height: 30)
+        }
+        .padding(.horizontal, Theme.Space.s16)
+        .padding(.vertical, Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: Theme.claude, lift: false)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.bottom, Theme.Space.s12)
+        .background(Theme.bgPrimary)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// The one-line readout of what the selection can actually do. Three facts
+    /// the three buttons would otherwise state only by being disabled.
+    private var selectionActionability: String {
+        let records = selectedRecords()
+        guard !records.isEmpty else { return "先在上面的网格里选中要处理的项" }
+        var parts: [String] = []
+        let off = actionableCount(.disable)
+        let on = actionableCount(.enable)
+        let removable = actionableCount(.remove)
+        if off > 0 { parts.append("可停用 \(off)") }
+        if on > 0 { parts.append("可启用 \(on)") }
+        if removable > 0 { parts.append("可移除 \(removable)") }
+        if parts.isEmpty { return "这些项由客户端管理，本页只能查看" }
+        let inert = ConnectorBatch.inert(records)
+        return parts.joined(separator: " · ") + (inert > 0 ? " · 其余 \(inert) 项由客户端管理" : "")
+    }
+
+    private func selectedPlatforms(_ selected: [BatchTarget]) -> [ConnectorPlatform] {
+        ConnectorPlatform.allCases.filter { item in selected.contains { $0.platforms.contains(item) } }
+    }
+
+    /// Select every record of a kind across the *whole* inventory, not just the
+    /// page — "停用全部 MCP" has no per-client shortcut otherwise. The platform
+    /// menu narrows this to one client afterwards.
+    private func selectKind(_ item: ConnectorFocus) {
+        guard item != .local else { return }
+        let kind = kind(of: item)
+        selection = Set(manager.records.filter { $0.kind == kind }.map(\.id))
+    }
+
+    private func platformFaceTint(_ item: ConnectorPlatform) -> Color {
+        switch item {
+        case .claude: return Theme.claude
+        case .codex: return Theme.codex
+        case .cursor: return Theme.cursor
+        }
+    }
+
+    private func platformTint(_ item: ConnectorPlatform) -> Color {
+        switch item {
+        case .claude: return Theme.Ink.claude
+        case .codex: return Theme.Ink.codex
+        case .cursor: return Theme.Ink.cursor
         }
     }
 
@@ -615,10 +900,70 @@ private struct RemovalRequest: Identifiable {
     let message: String
 }
 
+/// One row the bulk bar can act on: the identity a tick is keyed by, plus the
+/// two facts the bar prints. Deliberately *not* a `ConnectorRecord` — the bar
+/// only ever needs to count and name, and copying the whole record (with its
+/// URLs and connection stanza) into every bar render would rebuild far more
+/// than the counts it reads.
+private struct BatchTarget: Identifiable {
+    let id: String
+    let name: String
+    let platforms: [ConnectorPlatform]
+}
+
+/// A bulk action awaiting confirmation. `confirmationDialog` needs its title
+/// and message to survive the dialog's own re-render, so they are computed once
+/// (with the counts the user was shown) rather than derived from a live
+/// selection that the dialog itself might outlive.
+private struct BatchConfirm: Identifiable {
+    let id = UUID()
+    let action: ConnectorBatchAction
+    let title: String
+    let message: String
+}
+
+/// The selection box. Drawn rather than a stock `Toggle`: a checkbox in this app
+/// is a small target on a card that already answers the pointer, so it takes the
+/// same 6 → 10 % wash and hoisted rim `ActionIcon` uses, and its checked state is
+/// the accent's ink, not a system blue.
+private struct ConnectorTick: View {
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(selected ? Theme.Ink.claude : Theme.textSecondary)
+                .frame(width: 24, height: 24)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Theme.claude.opacity(hovered ? 0.10 : 0))
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { if hovered != $0 { hovered = $0 } }
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: selected)
+        .accessibilityLabel(selected ? "取消选择" : "选择")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
 private struct ConnectorCard: View {
     let record: ConnectorRecord
     let contents: PluginBundleContents?
     let isBusy: Bool
+    /// Bulk mode. In it the body opens the detail sheet as usual — the tick is
+    /// its own target in the corner — and the card's own action row is dropped,
+    /// because the same three actions are on the bar one row below and two
+    /// copies of "停用" that act differently is exactly how a user clicks the
+    /// wrong one.
+    var selecting = false
+    var selected = false
+    var onToggleSelection: (() -> Void)? = nil
     let onDetails: () -> Void
     let onSetEnabled: (Bool) -> Void
     let onRemove: () -> Void
@@ -655,6 +1000,13 @@ private struct ConnectorCard: View {
             Button(action: onDetails) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 10) {
+                        // Bulk mode puts the tick *before* the well, at the
+                        // card's leading edge: the header is where the eye
+                        // already is, and a checkbox in the action row would sit
+                        // beside the very buttons it replaces.
+                        if selecting {
+                            ConnectorTick(selected: selected) { onToggleSelection?() }
+                        }
                         // A connector that belongs to one client shows that
                         // client's mark; the kind (plugin / skill / MCP) is
                         // already printed under the name, and the chip row
@@ -703,13 +1055,33 @@ private struct ConnectorCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("查看详情")
+            .help(selecting ? "查看详情；左上角是选择框" : "查看详情")
             Spacer(minLength: 0)
             HairlineDivider()
-            actions
+            // The action row gives way to an empty strip of the same height
+            // rather than disappearing: the card is a fixed 210pt, and a footer
+            // that collapsed would make every tile in the grid reflow the moment
+            // bulk mode is toggled.
+            if selecting {
+                Color.clear.frame(height: 30)
+            } else {
+                actions
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
+        // The tick is *overlaid* at the card's corner rather than placed in the
+        // header row: it needs the same position on every card regardless of how
+        // long the name is or whether the card carries one platform pill or two,
+        // and a grid whose checkboxes wander is a grid you have to search. 24 /
+        // 26 centres it on the `GlyphWell` beside it (16pt card padding + half a
+        // 40pt well, and 16 + 10 in from the 16pt corner radius).
+        .overlay(alignment: .topLeading) {
+            if selecting {
+                ConnectorTick(selected: selected) { onToggleSelection?() }
+                    .offset(x: 26, y: 24)
+            }
+        }
         .tile(tint: faceTint, hovered: hovered, lens: lens)
         // Tilt and shine only while this card is the one under the pointer.
         // The modifier used to leave a 3D transform on every card in the
