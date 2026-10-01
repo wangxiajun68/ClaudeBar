@@ -11,10 +11,7 @@ struct UsageAnalyticsSection: View {
     var onSelectDay: (Date) -> Void
     @State private var analysis: UsageAnalysis?
     @State private var sourceRows: [SourceValue] = []
-    @State private var matrix: [MatrixRow] = []
     @State private var compressed = false
-    @State private var calendarMode = false
-    @State private var showStatistics = false
     @State private var selectedDate: Date?
 
     private struct Request: Equatable {
@@ -26,10 +23,6 @@ struct UsageAnalyticsSection: View {
         let source: UsageSource; let tokens: Int
         var id: UsageSource { source }
     }
-    private struct MatrixRow: Identifiable {
-        let name: String; let tokens: Int; let cells: [Int]
-        var id: String { name }
-    }
     private struct TokenPart: Identifiable {
         let name: String; let tokens: Int; let color: Color
         var id: String { name }
@@ -40,16 +33,13 @@ struct UsageAnalyticsSection: View {
             if let a = analysis {
                 VStack(alignment: .leading, spacing: 14) {
                     metrics(a)
-                    activity(a)
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 14) {
-                            sourceComposition.frame(minWidth: 400, maxWidth: .infinity)
-                            tokenComposition(a).frame(minWidth: 400, maxWidth: .infinity)
+                            activityCard(a).frame(minWidth: 380, idealWidth: 380, maxWidth: .infinity)
+                            structureCard(a).frame(minWidth: 380, idealWidth: 380, maxWidth: .infinity)
                         }
-                        VStack(spacing: 14) { sourceComposition; tokenComposition(a) }
+                        VStack(spacing: 14) { activityCard(a); structureCard(a) }
                     }
-                    structure(a)
-                    statisticalDetails(a)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ProgressView("整理本周期用量…").frame(maxWidth: .infinity, minHeight: 180)
@@ -62,16 +52,10 @@ struct UsageAnalyticsSection: View {
                 let sourceValues = UsageSource.allCases.map { source in
                     SourceValue(source: source, tokens: request.sources[source, default: []].reduce(0) { $0 + $1.totalTokens })
                 }
-                let dictionaries = UsageSource.allCases.map { source in
-                    request.sources[source, default: []].reduce(into: [String: Int]()) { $0[$1.model, default: 0] += $1.totalTokens }
-                }
-                let matrixRows = a.models.prefix(8).map { model in
-                    MatrixRow(name: model.name, tokens: model.tokens, cells: dictionaries.map { $0[model.name, default: 0] })
-                }
-                return (a, sourceValues, matrixRows)
+                return (a, sourceValues)
             }.value
             guard !Task.isCancelled else { return }
-            analysis = result.0; sourceRows = result.1; matrix = result.2
+            analysis = result.0; sourceRows = result.1
             selectedDate = nil
         }
     }
@@ -98,80 +82,52 @@ struct UsageAnalyticsSection: View {
             .accessibilityElement(children: .combine)
     }
 
-    private func activity(_ a: UsageAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                heading("用量节奏", "chart.xyaxis.line")
+    private func activityCard(_ a: UsageAnalysis) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                heading(a.buckets.count > 1 ? "用量趋势" : "来源份额", a.buckets.count > 1 ? "chart.xyaxis.line" : "square.grid.2x2")
                 Spacer()
-                Text("按\(a.grain) · \(a.buckets.count) 个周期").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                Menu {
-                    Button(calendarMode ? "显示轨迹" : "显示日历") { calendarMode.toggle() }
-                    if a.buckets.count > 1 {
-                        Button(compressed ? "使用原值坐标" : "使用长尾坐标") { compressed.toggle() }
-                    }
-                } label: { Image(systemName: "slider.horizontal.3") }
-                    .menuStyle(.borderlessButton).fixedSize().help("选择图表和坐标尺度").accessibilityLabel("图表选项")
+                caption(a.buckets.count > 1 ? "按\(a.grain) · \(a.buckets.count) 个周期" : "本地记录")
+                if a.buckets.count > 1 {
+                    Button { compressed.toggle() } label: { Image(systemName: "slider.horizontal.3") }
+                        .buttonStyle(.plain).help(compressed ? "使用原值坐标" : "使用长尾坐标")
+                        .accessibilityLabel("切换坐标尺度")
+                }
             }
-            if calendarMode { calendarContent(a) }
-            else if a.buckets.isEmpty { emptyFigure }
-            else if a.bucketMaximum == 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("0").font(Theme.Font.displayMetric).foregroundColor(Theme.textPrimary)
-                    caption("Token · \(a.buckets.count) 个已到达周期尚无用量记录")
-                }.frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
+            if a.buckets.count > 1 { trajectory(a) }
+            else {
+                sourceComposition
+                Spacer(minLength: 0)
+                caption(a.buckets.isEmpty ? "本周期无已到达日期" : "来源占比不含 Cursor 官方账单")
             }
-            else if a.buckets.count == 1, let row = a.buckets.first { singleObservation(row, grain: a.grain) }
-            else { trajectory(a) }
-        }.padding(20).usageFigure()
+        }.padding(16).frame(maxWidth: .infinity).frame(height: 200, alignment: .topLeading).usageFigure()
     }
 
-    private func singleObservation(_ row: UsageAnalysis.Bucket, grain: String) -> some View {
-        HStack(spacing: 26) {
-            ZStack {
-                Circle().fill(UsagePlotPalette.blue.opacity(Theme.isDark ? 0.25 : 0.15))
-                Circle().strokeBorder(UsagePlotPalette.blue.opacity(0.65), lineWidth: 2)
-                VStack(spacing: 3) {
-                    Text(grain == "日" ? UsageStats.formatter("MMM").string(from: row.date) : grain)
-                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                    Text(UsageStats.formatter(grain == "日" ? "dd" : grain == "月" ? "MM" : "yyyy").string(from: row.date))
-                        .font(.system(size: 36, weight: .medium, design: .rounded)).foregroundColor(Theme.textPrimary)
+    private func structureCard(_ a: UsageAnalysis) -> some View {
+        let parts = [TokenPart(name: "输入", tokens: a.input, color: Theme.claude),
+                     TokenPart(name: "缓存读取", tokens: a.hit, color: Theme.external),
+                     TokenPart(name: "缓存写入", tokens: a.write, color: Theme.statusWarning),
+                     TokenPart(name: "输出", tokens: a.output, color: Theme.cursor)]
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                heading("Token 构成", "chart.bar.xaxis")
+                Spacer()
+                caption("命中 \(rateLabel(a.hitRate))")
+            }
+            VStack(spacing: 8) {
+                ForEach(parts) { part in
+                    compositionRow(part.name, tokens: part.tokens, total: a.total, color: part.color)
                 }
-            }.frame(width: 114, height: 114).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(UsageStats.formatTokens(row.total)).font(.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit()).foregroundColor(Theme.textPrimary)
-                    caption("Token")
-                }
-                HStack(spacing: 24) {
-                    observationValue("提示侧", UsageStats.formatTokens(row.prompt))
-                    observationValue("输出", UsageStats.formatTokens(row.output))
-                    observationValue("缓存命中", rateLabel(row.hitRate))
-                }
-                caption(row.total > 0 ? "\(row.label) · 当前仅一个观测周期" : "\(row.label) 尚无用量记录")
-            }.frame(maxWidth: .infinity, alignment: .leading)
-        }.accessibilityElement(children: .combine)
-            .accessibilityLabel("\(row.label)，\(row.total.formatted()) Token；单个观测周期，不构造小时趋势。")
-    }
-    private func observationValue(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            caption(title)
-            Text(value).font(.system(size: 14, weight: .medium, design: .rounded).monospacedDigit()).foregroundColor(Theme.textPrimary)
-        }
+            }
+            Spacer(minLength: 0)
+        }.padding(16).frame(maxWidth: .infinity).frame(height: 200, alignment: .topLeading).usageFigure()
     }
 
     private func trajectory(_ a: UsageAnalysis) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(inspected(a).map { UsageStats.formatTokens($0.total) } ?? UsageStats.formatTokens(a.temporalTotal))
-                    .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit()).foregroundColor(Theme.textPrimary)
-                Text(inspected(a).map { $0.label } ?? "周期内日期记录合计")
-                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                Spacer()
-                Text(compressed ? "长尾坐标" : "原值坐标 · 从零开始").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-            }
             GeometryReader { geo in
                 let left: CGFloat = 70
-                let height: CGFloat = 112
+                let height: CGFloat = 82
                 let width = max(1, geo.size.width - left)
                 let column = width / Double(a.buckets.count)
                 Canvas { context, _ in
@@ -235,7 +191,7 @@ struct UsageAnalyticsSection: View {
                     case .ended: selectedDate = nil
                     }
                 }
-            }.frame(height: 138)
+            }.frame(height: 108)
             HStack {
                 Text(inspected(a).map { "\($0.total.formatted()) Token · 缓存命中 \(rateLabel($0.hitRate))" } ?? "峰值 \(UsageStats.formatTokens(a.bucketMaximum)) · \(a.buckets.count) 个观测周期")
                 Spacer()
@@ -257,249 +213,41 @@ struct UsageAnalyticsSection: View {
         let stride = max(1, Int(ceil(Double(a.buckets.count) / 8)))
         return a.buckets.indices.filter { $0 % stride == 0 || $0 == a.buckets.count - 1 }
     }
-    private func calendarContent(_ a: UsageAnalysis) -> some View {
-        VStack(spacing: 8) {
-            UsageCalendarPlot(rows: a.calendarRows, maximum: a.calendarMaximum, truncated: a.daily.count > 366, reference: interval.start, onSelect: onSelectDay)
-            HStack(spacing: 8) {
-                Text("相对长尾强度").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                LinearGradient(colors: UsagePlotPalette.cacheColors, startPoint: .leading, endPoint: .trailing).frame(width: 70, height: 7).clipShape(Capsule())
-                Text("0 → \(UsageStats.formatTokens(a.calendarMaximum))").font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
-                Spacer()
-                Menu("选择日期") {
-                    ForEach(a.calendarRows) { row in Button("\(row.label) · \(UsageStats.formatTokens(row.total))") { onSelectDay(row.date) } }
-                }.menuStyle(.borderlessButton).fixedSize().font(Theme.Font.micro)
-            }
-        }
-    }
-
     private var sourceComposition: some View {
         let total = sourceRows.reduce(0) { $0 + $1.tokens }
-        let positive = sourceRows.filter { $0.tokens > 0 }
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack { heading("来源份额", "circle.hexagongrid"); Spacer(); caption("面积 ∝ Token") }
-            GeometryReader { geo in
-                let weights = positive.map { sqrt(Double($0.tokens) / Double(max(1, total))) }
-                let scale = min(110 / max(0.001, weights.max() ?? 1), max(1, geo.size.width - Double(max(0, positive.count - 1)) * 12) / max(1, weights.reduce(0, +)))
-                HStack(alignment: .center, spacing: 12) {
-                    ForEach(Array(positive.enumerated()), id: \.element.id) { index, row in
-                        let diameter = scale * weights[index]
-                        ZStack {
-                            Circle().fill(UsagePlotPalette.source(row.source).opacity(Theme.isDark ? 0.35 : 0.21))
-                            Circle().strokeBorder(UsagePlotPalette.source(row.source), lineWidth: 1.5)
-                            if diameter > 50 {
-                                Text(UsageAnalysis.share(row.tokens, of: total))
-                                    .font(.system(size: diameter > 90 ? 21 : 15, weight: .semibold, design: .rounded).monospacedDigit())
-                                    .foregroundColor(Theme.textPrimary)
-                            }
-                        }.frame(width: diameter, height: diameter)
-                    }
-                    if positive.isEmpty { emptyMessage("本周期暂无来源记录") }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            }.frame(height: 112).accessibilityHidden(true)
-            VStack(spacing: 10) {
-                ForEach(sourceRows) { row in compositionRow(row.source.label, tokens: row.tokens, total: total, color: UsagePlotPalette.source(row.source)) }
+        return VStack(spacing: 12) {
+            ForEach(sourceRows) { row in
+                compositionRow(row.source.label, tokens: row.tokens, total: total, color: row.source.color)
             }
-            Spacer(minLength: 0)
-            caption("来源总量 \(UsageStats.formatTokens(total)) · 不含 Cursor 官方账单")
-        }.padding(20).frame(height: 294, alignment: .topLeading).usageFigure()
+        }.help("来源总量 \(total.formatted()) Token，不含 Cursor 官方账单")
     }
 
-    private func tokenComposition(_ a: UsageAnalysis) -> some View {
-        let parts = [TokenPart(name: "输入", tokens: a.input, color: UsagePlotPalette.blue),
-                     TokenPart(name: "缓存读取", tokens: a.hit, color: UsagePlotPalette.teal),
-                     TokenPart(name: "缓存写入", tokens: a.write, color: UsagePlotPalette.purple),
-                     TokenPart(name: "输出", tokens: a.output, color: UsagePlotPalette.clay)]
-        return VStack(alignment: .leading, spacing: 18) {
-            HStack { heading("Token 构成", "circle.circle"); Spacer(); caption("分层环图") }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 22) {
-                    tokenRing(parts, a: a).frame(width: 148, height: 148)
-                    tokenLegend(parts, a: a).frame(minWidth: 175, maxWidth: .infinity)
-                }
-                HStack(spacing: 12) {
-                    tokenRing(parts, a: a).frame(width: 116, height: 116)
-                    tokenLegend(parts, a: a).frame(maxWidth: .infinity)
-                }
-            }.frame(maxHeight: .infinity)
-            HStack { caption("提示侧 \(UsageStats.formatTokens(a.prompt))"); Spacer(); caption("内环：提示 / 输出") }
-                .help("提示侧 = 输入 + 缓存读取 + 缓存写入；命中率不包含输出。")
-        }.padding(20).frame(height: 294, alignment: .topLeading).usageFigure()
-    }
-    private func tokenLegend(_ parts: [TokenPart], a: UsageAnalysis) -> some View {
-        VStack(spacing: 16) {
-            ForEach(parts) { part in compositionRow(part.name, tokens: part.tokens, total: a.total, color: part.color) }
-        }
-    }
-    private func tokenRing(_ parts: [TokenPart], a: UsageAnalysis) -> some View {
-        ZStack {
-            Canvas { context, size in
-                let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                let outer = min(size.width, size.height) / 2 - 2
-                func ring(_ slices: [(Int, Color)], outerRadius: CGFloat, innerRadius: CGFloat) {
-                    var start = -Double.pi / 2
-                    for (tokens, color) in slices where tokens > 0 {
-                        let end = start + Double(tokens) / Double(max(1, a.total)) * 2 * Double.pi
-                        var sector = Path()
-                        sector.addArc(center: center, radius: outerRadius, startAngle: .radians(start), endAngle: .radians(end), clockwise: false)
-                        sector.addArc(center: center, radius: innerRadius, startAngle: .radians(end), endAngle: .radians(start), clockwise: true)
-                        sector.closeSubpath()
-                        context.fill(sector, with: .color(color))
-                        start = end
-                    }
-                }
-                if a.total == 0 {
-                    context.stroke(Path(ellipseIn: CGRect(x: center.x - outer * 0.85, y: center.y - outer * 0.85, width: outer * 1.7, height: outer * 1.7)), with: .color(Theme.hairline), lineWidth: outer * 0.25)
-                }
-                ring(parts.map { ($0.tokens, $0.color) }, outerRadius: outer, innerRadius: outer * 0.78)
-                ring([(a.prompt, UsagePlotPalette.blue.opacity(0.4)), (a.output, UsagePlotPalette.clay)], outerRadius: outer * 0.67, innerRadius: outer * 0.52)
-
-            }.accessibilityHidden(true)
-            VStack(spacing: 4) {
-                Text(rateLabel(a.hitRate)).font(.system(size: 18, weight: .semibold, design: .rounded).monospacedDigit()).foregroundColor(Theme.textPrimary)
-                Text("命中率").font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-            }.accessibilityElement(children: .combine)
-        }
-    }
     private func compositionRow(_ title: String, tokens: Int, total: Int, color: Color) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 9, height: 9).accessibilityHidden(true)
-            Text(title).font(Theme.Font.caption).foregroundColor(Theme.textPrimary).lineLimit(1)
-            Spacer(minLength: 4)
-            Text(UsageStats.formatTokens(tokens)).font(.system(size: 13, weight: .medium, design: .rounded).monospacedDigit())
-                .foregroundColor(Theme.textPrimary).frame(minWidth: 65, alignment: .trailing)
-            Text(UsageAnalysis.share(tokens, of: total)).font(Theme.Font.caption.monospacedDigit())
-                .foregroundColor(Theme.textSecondary).frame(width: 48, alignment: .trailing)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text(title).font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(UsageStats.formatTokens(tokens)).font(Theme.Font.chromeEmph.monospacedDigit())
+                    .foregroundColor(Theme.textPrimary)
+                Text(UsageAnalysis.share(tokens, of: total)).font(Theme.Font.micro.monospacedDigit())
+                    .foregroundColor(Theme.textSecondary).frame(width: 44, alignment: .trailing)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.cardFill(0.06))
+                    Capsule().fill(color).frame(width: geo.size.width * CGFloat(tokens) / CGFloat(max(1, total)))
+                }
+            }.frame(height: 4).accessibilityHidden(true)
         }.accessibilityElement(children: .combine)
             .help("\(title)：\(tokens.formatted()) Token，\(UsageAnalysis.share(tokens, of: total))")
     }
 
-    private func structure(_ a: UsageAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { heading("模型与来源关系", "point.3.connected.trianglepath.dotted"); Spacer(); caption("Top \(matrix.count) / \(a.models.count) · 弦图") }
-            if matrix.isEmpty { emptyMessage("本周期暂无模型记录") }
-            else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 28) {
-                        relationshipPlot
-                        relationshipLegend(a).frame(minWidth: 330, maxWidth: .infinity)
-                    }
-                    VStack(alignment: .leading, spacing: 18) {
-                        relationshipPlot.frame(maxWidth: .infinity)
-                        relationshipLegend(a)
-                    }
-                }
-            }
-            HStack {
-                caption("连带两端角宽 ∝ 来源 Token · 模型份额以全部模型为分母")
-                Spacer()
-                caption("有效模型 \(String(format: "%.1f", a.effectiveModels))")
-            }.help("弦图仅连接 Top 模型实际匹配的来源记录；本地模型总量和来源记录范围可以不同。有效模型数 = 1 / 各模型份额平方和。")
-        }.padding(20).usageFigure()
-    }
-    private var relationshipPlot: some View {
-        UsageRelationshipPlot(rows: matrix.map { .init(name: $0.name, tokens: $0.tokens, cells: $0.cells) },
-                              sourceLabels: UsageSource.allCases.map(\.label),
-                              sourceColors: UsageSource.allCases.map { UsagePlotPalette.source($0) })
-    }
-    private func relationshipLegend(_ a: UsageAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(Array(matrix.enumerated()), id: \.element.id) { index, row in
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Text("\(index + 1)").font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary).frame(width: 18, alignment: .leading)
-                        Text(row.name).font(.system(size: 13, weight: .medium, design: .monospaced)).lineLimit(1).truncationMode(.middle).foregroundColor(Theme.textPrimary)
-                        Spacer(minLength: 8)
-                        Text(UsageStats.formatTokens(row.tokens)).font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit()).foregroundColor(Theme.textPrimary)
-                        caption(UsageAnalysis.share(row.tokens, of: a.total)).frame(width: 48, alignment: .trailing)
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) { modelSourceItems(row) }
-                        VStack(alignment: .leading, spacing: 5) { modelSourceItems(row) }
-                    }.padding(.leading, 27)
-                }.accessibilityElement(children: .combine)
-                    .help("\(row.name)：\(row.tokens.formatted()) Token；" + UsageSource.allCases.enumerated().map {
-                        "\($0.element.label) \(row.cells[$0.offset].formatted())"
-                    }.joined(separator: " · "))
-            }
-        }
-    }
-    @ViewBuilder private func modelSourceItems(_ row: MatrixRow) -> some View {
-        ForEach(Array(UsageSource.allCases.enumerated()), id: \.element.id) { index, source in
-            if row.cells[index] > 0 {
-                HStack(spacing: 4) {
-                    Circle().fill(UsagePlotPalette.source(source)).frame(width: 5, height: 5).accessibilityHidden(true)
-                    caption("\(source.label) \(UsageStats.formatTokens(row.cells[index]))")
-                }.fixedSize()
-            }
-        }
-        if row.cells.allSatisfy({ $0 == 0 }) { caption("暂无对应来源记录") }
-    }
-
-    private func statisticalDetails(_ a: UsageAnalysis) -> some View {
-        DisclosureGroup(isExpanded: $showStatistics) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 28) {
-                    distribution(a).frame(minWidth: 300, maxWidth: .infinity)
-                    concentration(a).frame(minWidth: 300, maxWidth: .infinity)
-                }
-                VStack(alignment: .leading, spacing: 24) { distribution(a); concentration(a) }
-            }.padding(.top, 18)
-        } label: {
-            HStack { heading("分布与集中度", "chart.xyaxis.line"); Spacer(); caption("观测分布 · 模型集中度") }
-        }.padding(20).usageFigure()
-    }
-    private func distribution(_ a: UsageAnalysis) -> some View {
-        UsageDistributionPlot(analysis: a)
-    }
-    private func concentration(_ a: UsageAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack { Text("模型集中度").font(Theme.Font.chromeEmph).foregroundColor(Theme.textPrimary); Spacer(); caption("Lorenz · \(a.models.count) 个模型") }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(String(format: "%.1f", a.effectiveModels)).font(Theme.Font.displayMetric).foregroundColor(Theme.textPrimary)
-                caption("有效模型 / \(a.models.count)")
-            }
-            if a.models.count < 2 {
-                caption(a.models.isEmpty ? "暂无模型记录" : "只有一个模型，暂无模型间集中度差异").frame(maxWidth: .infinity, minHeight: 95, alignment: .leading)
-            } else {
-                Canvas { context, size in
-                    let rect = CGRect(x: 32, y: 3, width: max(1, size.width - 42), height: size.height - 24)
-                    let points = a.lorenz.map { CGPoint(x: rect.minX + $0.x * rect.width, y: rect.maxY - $0.y * rect.height) }
-                    var curve = Path(); curve.move(to: points[0])
-                    for point in points.dropFirst() { curve.addLine(to: point) }
-                    var area = curve
-                    area.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY)); area.closeSubpath()
-                    context.fill(area, with: .color(UsagePlotPalette.purple.opacity(Theme.isDark ? 0.3 : 0.17)))
-                    var gap = curve; gap.addLine(to: CGPoint(x: rect.minX, y: rect.maxY)); gap.closeSubpath()
-                    context.fill(gap, with: .color(UsagePlotPalette.clay.opacity(Theme.isDark ? 0.18 : 0.09)))
-                    context.stroke(curve, with: .color(UsagePlotPalette.purple), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    var equal = Path(); equal.move(to: CGPoint(x: rect.minX, y: rect.maxY)); equal.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-                    context.stroke(equal, with: .color(Theme.textSecondary.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    for point in points {
-                        context.fill(Path(ellipseIn: CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)), with: .color(UsagePlotPalette.purple))
-                    }
-                    for value in [0.0, 0.5, 1.0] {
-                        context.draw(Text("\(Int(value * 100))%").font(Theme.Font.micro).foregroundColor(Theme.textSecondary), at: CGPoint(x: rect.minX - 5, y: rect.maxY - value * rect.height), anchor: .trailing)
-                        context.draw(Text("\(Int(value * 100))%").font(Theme.Font.micro).foregroundColor(Theme.textSecondary), at: CGPoint(x: rect.minX + value * rect.width, y: rect.maxY + 6), anchor: value == 1 ? .topTrailing : .topLeading)
-                    }
-                }.frame(height: 128)
-                    .accessibilityLabel("Lorenz 曲线：模型按 Token 升序排列；横轴累计模型比例，纵轴累计 Token 比例，虚线为完全均衡。")
-            }
-            caption("累计模型份额 → 累计 Token 份额 · 虚线为均衡参考")
-        }
-    }
     private func rateLabel(_ rate: Double?) -> String { rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }
-    private var emptyFigure: some View { emptyMessage("本周期无已到达日期") }
-    private func emptyMessage(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: "chart.xyaxis.line").font(.system(size: 26)).foregroundColor(Theme.textSecondary)
-            caption(message)
-        }.frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
-    }
     private func caption(_ text: String) -> some View { Text(text).font(Theme.Font.caption).foregroundColor(Theme.textSecondary) }
     private func heading(_ title: String, _ symbol: String) -> some View {
         HStack(spacing: 8) {
             AppGlyph(name: symbol, size: 14).foregroundColor(Theme.textSecondary).accessibilityHidden(true)
-            Text(title).font(.system(size: 15, weight: .semibold, design: .rounded))
+            Text(title).font(Theme.Font.chromeEmph)
         }.foregroundColor(Theme.textPrimary).accessibilityAddTraits(.isHeader)
     }
 }

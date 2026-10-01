@@ -5,7 +5,6 @@ struct UsageView: View {
     @ProviderState([.usage, .configuration]) var providerStore: ProviderStore
     @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showCustomDatePicker = false
-    @State private var showDetails = true
 
     var body: some View {
         // Derived once: the subtitle's caption read both of these, so the body
@@ -60,21 +59,11 @@ struct UsageView: View {
 
                     .id(interval)
 
-                    DisclosureGroup(isExpanded: $showDetails) {
-                        VStack(alignment: .leading, spacing: 24) {
-                            platformBreakdown
-                            providerBreakdown
-                            modelBreakdown
-                        }.padding(.top, 16)
-                    } label: {
-                        HStack(spacing: 8) {
-                            AppGlyph(name: "list.bullet.rectangle", size: 16).foregroundColor(Theme.Ink.claude)
-                            Text("记录明细").font(Theme.Font.body)
-                            Spacer()
-                            Text("平台 · 供应商 · 模型 · 官方账单").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                        }
-                    }
-                    .padding(12).usageFigure()
+                    VStack(alignment: .leading, spacing: 24) {
+                        platformBreakdown
+                        providerBreakdown
+                        modelBreakdown
+                    }.padding(.top, 16)
                 } else {
                     ProgressView("读取本周期记录…").frame(maxWidth: .infinity, minHeight: 240)
                 }
@@ -279,16 +268,13 @@ private struct UsageProviderGroup: Identifiable {
 private struct UsageProviderCard: View {
     let group: UsageProviderGroup
     let overallTokens: Int
-    @State private var open = false
     @State private var hovered = false
 
     var body: some View {
         let total = group.total
         let share = overallTokens > 0 ? Double(total.totalTokens) / Double(overallTokens) : 0
         let shareLabel = UsageAnalysis.share(total.totalTokens, of: overallTokens)
-        return Button {
-            withAnimation(Theme.Animation.smooth) { open.toggle() }
-        } label: {
+        return Group {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 6) {
                     Circle().fill(Theme.chartPurple).frame(width: 7, height: 7).padding(.top, 6)
@@ -300,8 +286,6 @@ private struct UsageProviderCard: View {
                     VStack(alignment: .trailing, spacing: 5) {
                         HStack(spacing: 5) {
                             RollingNumberText("\(total.calls) 次")
-                            Image(systemName: open ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
                         }
                         .font(Theme.Font.micro)
                         .foregroundColor(Theme.textTertiary())
@@ -335,7 +319,7 @@ private struct UsageProviderCard: View {
                 .frame(height: 28)
                 .help("装饰曲线，不代表逐日用量；真实趋势见上方用量图。")
 
-                if open {
+                Group {
                     VStack(alignment: .leading, spacing: 8) {
                         HairlineDivider()
                         Text("模型明细")
@@ -357,7 +341,6 @@ private struct UsageProviderCard: View {
                             .padding(.top, 4)
                         TokenMixStrip(stats: group.models, compact: true)
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 }
             }
             .padding(14)
@@ -366,10 +349,7 @@ private struct UsageProviderCard: View {
             .folderPeek(hovered)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
-        .buttonStyle(.plain)
         .hoverState($hovered)
-        .help(open ? "收起 \(group.name) 模型明细" : "查看 \(group.name) 模型明细")
-        .accessibilityHint(open ? "收起模型明细" : "展开模型明细")
     }
 }
 
@@ -379,18 +359,14 @@ private struct UsagePlatformCard: View {
     let stats: [ModelUsage]
     let days: [DayUsage]
     let overallTokens: Int
-    @State private var open = false
     @State private var hovered = false
 
     var body: some View {
         let total = stats.reduce(into: ModelUsage(model: source.label)) { $0.merge($1) }
-        let share = overallTokens > 0 ? Double(total.totalTokens) / Double(overallTokens) : 0
         let shareLabel = UsageAnalysis.share(total.totalTokens, of: overallTokens)
         let ranked = stats.sorted { $0.totalTokens > $1.totalTokens }
 
-        return Button {
-            withAnimation(Theme.Animation.smooth) { open.toggle() }
-        } label: {
+        return Group {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 6) {
                     Circle().fill(source.color).frame(width: 7, height: 7).padding(.top, 6)
@@ -402,8 +378,6 @@ private struct UsagePlatformCard: View {
                     VStack(alignment: .trailing, spacing: 5) {
                         HStack(spacing: 5) {
                             RollingNumberText("\(total.calls) 次")
-                            Image(systemName: open ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
                         }
                         .font(Theme.Font.micro)
                         .foregroundColor(Theme.textTertiary())
@@ -436,7 +410,7 @@ private struct UsagePlatformCard: View {
                 )
                 .frame(height: 28)
 
-                if open {
+                Group {
                     VStack(alignment: .leading, spacing: 8) {
                         HairlineDivider()
                         Text("模型明细")
@@ -446,7 +420,7 @@ private struct UsagePlatformCard: View {
                             StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
                                               tint: Theme.textSecondary)
                         } else {
-                            ForEach(Array(ranked.prefix(4))) { model in
+                            ForEach(ranked) { model in
                                 HStack(spacing: 8) {
                                     Text(model.model)
                                         .lineLimit(1)
@@ -458,12 +432,6 @@ private struct UsagePlatformCard: View {
                                 .font(Theme.Font.micro)
                                 .foregroundColor(Theme.textSecondary)
                             }
-                            if ranked.count > 4 {
-                                Text("另有 \(ranked.count - 4) 个模型")
-                                    .rollingNumber()
-                                    .font(Theme.Font.micro)
-                                    .foregroundColor(Theme.textTertiary())
-                            }
                             Text("Token 构成")
                                 .font(Theme.Font.microSemibold)
                                 .foregroundColor(Theme.textSecondary)
@@ -471,7 +439,6 @@ private struct UsagePlatformCard: View {
                             TokenMixStrip(stats: stats, compact: true)
                         }
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 }
             }
             .padding(14)
@@ -485,9 +452,6 @@ private struct UsagePlatformCard: View {
             .folderPeek(hovered)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
-        .buttonStyle(.plain)
         .hoverState($hovered)
-        .help(open ? "收起 \(source.label) 模型明细" : "查看 \(source.label) 模型明细")
-        .accessibilityHint(open ? "收起模型明细" : "展开模型明细")
     }
 }
