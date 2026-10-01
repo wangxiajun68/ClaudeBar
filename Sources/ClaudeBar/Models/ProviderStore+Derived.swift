@@ -194,15 +194,14 @@ extension ProviderStore {
     }
 
     /// Whether `usageSettlements` already covers `window`, so a tile can decide
-    /// whether to caption the money with a window. A day of slack, matching
-    /// `CursorLedgerStore.isStale`: a month view and a billing cycle start on
-    /// different days, and a one-day difference is not worth a warning.
+    /// whether to caption the money with a window. Boundaries must match;
+    /// yesterday's charge cannot be presented as today's.
     @MainActor
     func settlementCovers(_ window: DateInterval) -> Bool {
         let store = CursorLedgerStore.shared
         guard let covered = store.window else { return false }
-        return abs(covered.start.timeIntervalSince(window.start)) <= 86_400
-            && abs(covered.end.timeIntervalSince(window.end)) <= 86_400
+        return abs(covered.start.timeIntervalSince(window.start)) <= 1
+            && abs(covered.end.timeIntervalSince(window.end)) <= 1
     }
 
     /// The window the money on the tiles covers, formatted ("9月28日–10月28日"),

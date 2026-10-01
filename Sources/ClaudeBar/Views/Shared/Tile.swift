@@ -371,10 +371,11 @@ struct TileGrid<Content: View>: View {
 
     init(_ preset: Theme.GridLayout.Preset,
          spacing: CGFloat? = nil,
+         minColumnWidth: CGFloat? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         let spec = Theme.GridLayout.equalRow(preset)
         self.fixedColumns = spec.fixed
-        self.minColumnWidth = spec.minWidth
+        self.minColumnWidth = minColumnWidth ?? spec.minWidth
         switch preset {
         case .pageSession, .pageUsage: self.virtualized = true
         default: break

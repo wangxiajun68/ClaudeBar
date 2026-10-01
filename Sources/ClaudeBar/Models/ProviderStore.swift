@@ -36,7 +36,7 @@ class ProviderStore: ObservableObject {
     /// canonicalisation (two regex compilations per model) plus a scan of the
     /// price table — on every publish and on every frame of the period-change
     /// animation, defeating the point of `usageCostLines`.
-    private(set) var usageEstimate = ModelPricing.Estimate()
+    @Published private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
     @Published private(set) var usagePublishedInterval: DateInterval?
@@ -1095,8 +1095,10 @@ class ProviderStore: ObservableObject {
         }
         if !same(usageStats, stats) {
             usageStats = stats
-            publishPrices(dailyModels: dailyModels)
         }
+        // Prices can change without tokens changing; an equal period total
+        // can also have a different distribution across historical rate days.
+        publishPrices(dailyModels: dailyModels)
         let sourcesEqual = usageBySource.count == bySource.count
             && bySource.allSatisfy { key, value in usageBySource[key].map { same($0, value) } ?? false }
         if !sourcesEqual {
@@ -1130,8 +1132,8 @@ class ProviderStore: ObservableObject {
         let estimate = ModelPricing.estimate(days: dailyModels)
         var lines: [String: ModelPricing.Estimate.Line] = [:]
         for line in estimate.lines { lines[line.model] = line }
-        usageCostLines = lines
-        usageEstimate = estimate
+        if usageCostLines != lines { usageCostLines = lines }
+        if usageEstimate != estimate { usageEstimate = estimate }
     }
 
     /// Per-day, per-model aggregates for the interval — third-party rows
@@ -1233,13 +1235,14 @@ class ProviderStore: ObservableObject {
     private var persistenceObserver: NSObjectProtocol?
     private var settlementObserver: NSObjectProtocol?
     private var priceObserver: NSObjectProtocol?
+    private var proxyUsageObserver: NSObjectProtocol?
 
     private func startUsageWatcher() {
         guard !usageWatcherStarted else { return }
         usageWatcherStarted = true
         UsageFSWatcher.start(paths: [
             FilePaths.claudeDir.appendingPathComponent("projects").path,
-            FilePaths.codexDir.appendingPathComponent("sessions").path,
+            URL(fileURLWithPath: ExternalAgentKind.codex.rootDir).deletingLastPathComponent().path, // Includes archive moves.
         ]) { [weak self] in
             DispatchQueue.main.async { self?.refreshUsage(rescan: true) }
         }
@@ -1258,6 +1261,13 @@ class ProviderStore: ObservableObject {
         if settlementObserver == nil {
             settlementObserver = NotificationCenter.default.addObserver(
                 forName: .cursorLedgerDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.refreshUsage(rescan: false)
+            }
+        }
+        if proxyUsageObserver == nil {
+            proxyUsageObserver = NotificationCenter.default.addObserver(
+                forName: ProxyUsageStore.didChange, object: nil, queue: .main
             ) { [weak self] _ in
                 self?.refreshUsage(rescan: false)
             }

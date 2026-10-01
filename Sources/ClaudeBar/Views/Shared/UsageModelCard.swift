@@ -12,7 +12,6 @@ import SwiftUI
 struct UsageModelCard: View {
     let stat: ModelUsage
     let slices: [SourceRing.Slice]
-    var share: Double
     /// This model's estimated list-price cost, or the reason it has none.
     /// Nil only when the model has no recorded usage row at all.
     var costLine: ModelPricing.Estimate.Line? = nil
@@ -22,156 +21,155 @@ struct UsageModelCard: View {
     /// through the same `ModelPricing.present` path (分列 / 折算, and the
     /// exchange-rate fallback) as the estimate beside it.
     var settlement: ModelPricing.Cost? = nil
-    /// The window `settlement` covers, when it is not the period on screen —
-    /// already formatted by `CursorLedgerStore.windowLabel`. Nil when the two
-    /// agree, which is the common case.
+    /// The Cursor snapshot's actual window, labelled even when a local
+    /// record of the same model also exists.
     var settlementWindow: String? = nil
+    var cursorStat: ModelUsage? = nil
+    var cursorOnly = false
     /// The single preference this tile renders, subscribed individually.
     /// Observing `AppPreferences.shared` wholesale meant every unrelated write
     /// — a VPN port commit, a notch flag, the token-unit toggle — re-evaluated
     /// every usage tile on the page. `ExchangeRate` is narrow enough to keep.
     @State private var costDisplay = AppPreferences.shared.costDisplay
     @ObservedObject private var fx = ExchangeRate.shared
-    @State private var hovered = false
 
     var body: some View {
-        // Resolved once per render: `costLabel`, its second line and the help
-        // text each called `presented(_:)` again, so one pass ran the pricing
-        // presentation up to five times.
+        // Each presentation is shared by the visible rows and accessibility.
         let shown = costLine.map { presented($0.cost) }
-        return Group {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 6) {
-                    Text(stat.model)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    VStack(alignment: .trailing, spacing: 5) {
-                        HStack(spacing: 6) {
-                            if !slices.isEmpty {
-                                SourceStack(slices: slices, scan: hovered)
-                            }
-                            RollingNumberText("\(stat.calls) 次")
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textTertiary())
-                        }
-                        CacheHitBadge(stat: stat)
-                    }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    RollingNumberText(UsageStats.formatTokens(stat.totalTokens))
-                        .font(Theme.Font.displayMetricSmall)
-                        .monospacedDigit()
-                        .foregroundColor(Theme.textPrimary)
-                                .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    Spacer(minLength: 0)
-                    costLabel(shown)
-                }
-                AuroraSparkline(
-                    values: AuroraSparkline.accentCurve(peak: min(max(share, 0.08), 1)),
-                    tint: tint,
-                    live: hovered
-                )
-                .frame(height: 28)
-                .help("装饰曲线，不代表逐日用量；金额为刊例估算。")
-                Group {
-                    HStack(alignment: .center, spacing: 12) {
-                        SourceRing(
-                            slices: slices,
-                            size: 88,
-                            thickness: 11,
-                            centerValue: UsageStats.formatTokens(stat.totalTokens),
-                            centerCaption: "来源"
-                        )
-                        SourceRingLegend(slices: slices)
-                    }
-                }
+        let actual = settlement.map { presented($0) }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(stat.model)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(stat.model)
+            HStack(spacing: 8) {
+                Label(cursorOnly ? "Cursor 官方" : "\(stat.calls) 本地调用",
+                      systemImage: cursorOnly ? "cursorarrow" : "arrow.up.arrow.down")
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                CacheHitBadge(stat: stat, rolls: false)
+                    .fixedSize()
             }
-            .padding(14)
-            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
-            // The card takes the model's own hue, so a page of models reads as
-            // a colour-keyed set, and the corner lens carries the usage glyph —
-            // the card's subject, not decoration.
-            .tile(tint: tint, hovered: hovered,
-                  lens: DepthLensSpec(tint: tint, size: 124), lift: false)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(UsageStats.formatTokens(stat.totalTokens))
+                    .font(Theme.Font.displayMetricSmall)
+                    .monospacedDigit()
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Text(cursorOnly ? "Cursor Token" : "本地 Token")
+                    .font(Theme.Font.micro)
+                    .foregroundColor(Theme.textTertiary())
+            }
+            costLabel(shown, actual: actual)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let cursorStat {
+                HStack(spacing: 5) {
+                    Image(systemName: "cursorarrow")
+                    Text("Cursor Token")
+                    Spacer(minLength: 4)
+                    Text(UsageStats.formatTokens(cursorStat.totalTokens)).monospacedDigit().fixedSize()
+                }
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textSecondary)
+                .help("Cursor 账单窗口：\(settlementWindow ?? "未提供日期")，未加入本地 Token")
+            }
+            TokenMixStrip(stats: [stat], compact: true, rolls: false)
+            HStack(alignment: .center, spacing: 12) {
+                SourceRing(slices: slices, size: 64, thickness: 8,
+                           centerValue: "来源", centerCaption: cursorOnly ? "账单" : "本地", rolls: false)
+                sourceLegend
+            }
         }
-        .hoverState($hovered)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        // Static surface: no hover tracking, scanning, digit transitions or lens.
+        .tile(tint: tint, lift: false)
+        .transaction { $0.animation = nil; $0.disablesAnimations = true }
         .help(helpText(shown))
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }
 
-    /// The model's own accent, from `Theme`'s hash-stable per-model palette —
-    /// a *shape* hue, so it drives the sparkline, the corner rings and the
-    /// card's wash alike. A usage card that took the page's blue would say
-    /// nothing about *which* model it is.
-    ///
-    /// It used to be the dominant *source*'s hue (`.claude` / `.codex` /
-    /// 第三方), which is not a property of the model at all: on a relay that
-    /// mixes Codex and third-party traffic for one model, the card changed
-    /// colour as the mix moved — the opposite of the stable key the comments
-    /// here claim. `Theme.barColor`/`barInk` exist for exactly this and were
-    /// documented as this card's palette, with `barInk` left with no caller.
-    private var tint: Color {
-        Theme.barColor(for: stat.model)
-    }
-
-    /// Estimated list-price cost of this tile's tokens, plus Cursor's actual
-    /// charge beside it when the account spent on this model.
-    ///
-    /// A model with no money renders its *reason* rather than a blank: the
-    /// tokens above it are real, and a tile that shows nothing next to a
-    /// number invites reading it as "free". 订阅制 and 未公开价 are different
-    /// facts — one means you are not billed per token, the other means we
-    /// cannot know — so they get their own words.
-    ///
-    /// **The two figures are separate rows and are never combined.** They answer
-    /// different questions ("what would this have cost at list price" vs "what
-    /// did Cursor take"), come from different sources (a local price table vs
-    /// Cursor's ledger), and cover possibly different windows — so each carries
-    /// its own word and the estimate's row is left exactly as it was.
-    @ViewBuilder
-    private func costLabel(_ shown: ModelPricing.Presented?) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            estimateRow(shown)
-            settlementRow
+    /// Keep the name on one row, with share and quantity below it. The ring
+    /// never competes with three columns of text at narrow card widths.
+    private var sourceLegend: some View {
+        let total = slices.reduce(0) { $0 + $1.value }
+        return VStack(alignment: .leading, spacing: 5) {
+            ForEach(slices) { slice in
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Circle().fill(slice.color).frame(width: 5, height: 5)
+                        Text(slice.label)
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(total > 0 ? "\(Int((Double(slice.value) / Double(total) * 100).rounded()))%" : "—")
+                            .foregroundColor(Theme.textTertiary())
+                            .monospacedDigit()
+                            .fixedSize()
+                    }
+                    Text("\(UsageStats.formatTokens(slice.value)) Token")
+                        .foregroundColor(Theme.textTertiary())
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 10)
+                }
+            }
         }
-        .accessibilityLabel(accessibilityMoney(shown))
+        .font(Theme.Font.micro)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The estimated line, or the reason there is none. Unchanged from before
-    /// the Cursor ledger existed — a model Cursor never touched must render
-    /// byte-identically to how it always did.
+    /// Stable model colour, independent of the source mix.
+    private var tint: Color { Theme.barColor(for: stat.model) }
+
+    /// Estimates and actual charges remain separately labelled rows.
+    @ViewBuilder
+    private func costLabel(_ shown: ModelPricing.Presented?, actual: ModelPricing.Presented?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            estimateRow(shown)
+            settlementRow(actual)
+        }
+        .accessibilityLabel(accessibilityMoney(shown, actual: actual))
+    }
+
+    /// A full-width amount row leaves the main Token figure its own space.
     @ViewBuilder
     private func estimateRow(_ shown: ModelPricing.Presented?) -> some View {
         if let line = costLine, let shown, let primary = shown.primary {
-            VStack(alignment: .trailing, spacing: 1) {
-                RollingNumberText(ModelPricing.format(primary.amount, currency: primary.currency))
-                    .font(Theme.Font.tileValueSmall)
-                    .monospacedDigit()
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                // The second line is either the other currency (分列) or the
-                // unconverted figure (折算) — both are "the number this came
-                // from", which is what makes the headline checkable.
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Label(line.isPartial ? "本地部分估算" : "本地估算", systemImage: "calculator")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textTertiary())
+                    Spacer(minLength: 4)
+                    Text(ModelPricing.format(primary.amount, currency: primary.currency))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textPrimary)
+                        .fixedSize()
+                }
+                if line.isPartial {
+                    Text("\(UsageStats.formatTokens(line.unpricedTokens)) Token 未计价")
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let below = secondLine(line.cost, shown: shown) {
-                    RollingNumberText(below)
+                    Text(below)
                         .font(Theme.Font.micro)
                         .monospacedDigit()
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)
                 }
             }
-        } else if settlement == nil {
-            // The unpriced *reason* is only worth the space when there is no
-            // actual charge either. With a real figure below it, 「未计价」 for
-            // the same model reads as a contradiction rather than as an
-            // explanation of a missing estimate.
-            Text(costLine?.unpriced?.label ?? "未计价")
+        } else if !cursorOnly {
+            Text("本地\(costLine?.unpriced?.label ?? "未计价")")
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
                 .help(costLine?.unpriced?.explanation ?? "价目表未收录该模型，token 不计入花费合计")
@@ -184,25 +182,30 @@ struct UsageModelCard: View {
     /// one vendor's ledger, and naming the vendor is what tells the user which
     /// of the two rows on this tile is checkable against a statement.
     @ViewBuilder
-    private var settlementRow: some View {
-        if let settlement {
-            let shown = presented(settlement)
-            VStack(alignment: .trailing, spacing: 1) {
+    private func settlementRow(_ shown: ModelPricing.Presented?) -> some View {
+        if let shown {
+            let amount = shown.primary ?? (currency: ModelPricing.Currency.usd, amount: 0)
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text("Cursor 实扣")
+                    Label("Cursor 实扣", systemImage: "creditcard")
                         .font(Theme.Font.micro)
                         .foregroundColor(Theme.Ink.cursor)
-                    if let primary = shown.primary {
-                        RollingNumberText(ModelPricing.format(primary.amount, currency: primary.currency))
-                            .font(Theme.Font.micro)
-                            .monospacedDigit()
-                            .foregroundColor(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
+                    Spacer(minLength: 4)
+                    Text(ModelPricing.format(amount.amount, currency: amount.currency))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(Theme.textSecondary)
+                        .fixedSize()
                 }
-                // Only when the money covers a different span than the tokens:
-                // a caption on every tile would be noise, and on the common
-                // case (month view over the billing cycle) the two agree.
+                if let settlement, let below = secondLine(settlement, shown: shown) {
+                    Text(below)
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textTertiary())
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                // Always identify the Cursor window; its tokens and charge
+                // stay separate from the local period on the same card.
                 if let settlementWindow {
                     Text(settlementWindow)
                         .font(.system(size: 9, weight: .regular, design: .rounded))
@@ -216,12 +219,13 @@ struct UsageModelCard: View {
     /// One label covering both figures, spelled out — VoiceOver gets no benefit
     /// from the two-row layout, and 「估算」 on an actual charge (or the reverse)
     /// is the one thing this tile must never say.
-    private func accessibilityMoney(_ shown: ModelPricing.Presented?) -> String {
+    private func accessibilityMoney(_ shown: ModelPricing.Presented?, actual: ModelPricing.Presented?) -> String {
         var parts: [String] = []
         if costLine != nil, let shown, let primary = shown.primary {
             parts.append("估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
         }
-        if let settlement, let primary = presented(settlement).primary {
+        if let actual {
+            let primary = actual.primary ?? (currency: ModelPricing.Currency.usd, amount: 0)
             parts.append("Cursor 实扣 \(ModelPricing.format(primary.amount, currency: primary.currency))")
         }
         return parts.joined(separator: "，")
@@ -245,13 +249,19 @@ struct UsageModelCard: View {
     }
 
     private func helpText(_ shown: ModelPricing.Presented?) -> String {
-        var lines: [String] = ["Claude Code / Codex / 第三方用量"]
+        var lines: [String] = [cursorOnly ? "Cursor 官方账单窗口用量" : "Claude Code / Codex / 第三方本地用量"]
         if costLine != nil, let shown, let primary = shown.primary {
             lines.append("按官方刊例价估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
         } else if let unpriced = costLine?.unpriced {
             lines.append("\(unpriced.explanation)，不计入花费合计")
-        } else {
+        } else if !cursorOnly {
             lines.append("价目表未收录 \(stat.model)")
+        }
+        if let cursorStat {
+            lines.append("Cursor：\(cursorStat.totalTokens.formatted()) Token（\(settlementWindow ?? "账单窗口")），与本地用量分别统计")
+        }
+        if let line = costLine, line.isPartial {
+            lines.append("另有 \(UsageStats.formatTokens(line.unpricedTokens)) Token 未计价，金额仅覆盖有价格的日期")
         }
         return lines.joined(separator: "\n")
     }
@@ -261,6 +271,7 @@ struct UsageModelCard: View {
 /// platform usage cards. A missing prompt side is shown as unknown, not 0%.
 struct CacheHitBadge: View {
     let stat: ModelUsage
+    var rolls = true
 
     var body: some View {
         let hasPrompt = stat.totalInputTokens > 0
@@ -268,7 +279,7 @@ struct CacheHitBadge: View {
             Image(systemName: "memorychip")
                 .font(.system(size: 10, weight: .semibold))
             Text(hasPrompt ? "命中 \(stat.cacheHitPercent)%" : "命中 —")
-                .rollingNumber()
+                .rollingNumber(rolls: rolls)
         }
         .font(Theme.Font.microSemibold)
         .foregroundStyle(hasPrompt ? Theme.Ink.success : Theme.textTertiary())

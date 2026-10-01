@@ -110,7 +110,7 @@ struct CursorTokenUsageCard: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
+        .frame(maxWidth: .infinity).frame(height: 260, alignment: .topLeading)
         .tile(tint: Theme.cursor, hovered: hovered,
               lens: DepthLensSpec(tint: Theme.cursor, size: 124), lift: false)
         .hoverState($hovered)

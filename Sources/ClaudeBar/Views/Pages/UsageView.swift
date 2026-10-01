@@ -4,6 +4,7 @@ import SwiftUI
 struct UsageView: View {
     @ProviderState([.usage, .configuration]) var providerStore: ProviderStore
     @EnvironmentObject private var codexStore: CodexProviderStore
+    @ObservedObject private var ledger = CursorLedgerStore.shared
     @State private var showCustomDatePicker = false
     @State private var officialCodexUsage: [ModelUsage] = []
     @State private var attributionInterval: DateInterval?
@@ -91,12 +92,13 @@ struct UsageView: View {
     }
 
     private var platformBreakdown: some View {
-        let total = [UsageSource.claude, .codex].reduce(0) { $0 + (providerStore.usageBySource[$1] ?? []).reduce(0) { $0 + $1.totalTokens } }
+        let total = providerStore.usageStats.reduce(0) { $0 + $1.totalTokens }
+        let thirdParty = providerStore.usageBySource[.thirdParty] ?? []
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
             SectionHeader(icon: "square.grid.2x2", title: "按平台",
                           tint: Theme.claude, ink: Theme.Ink.claude,
-                          count: 3)
-            Text("Cursor 按官方账单单独统计；上方图表和其他平台占比仅包含本地记录。")
+                          count: thirdParty.isEmpty ? 3 : 4)
+            Text("Codex 包含官方和自定义模型、当前及归档会话；本地占比包含第三方代理记录。Cursor 按官方账单单独统计。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
             TileGrid(.pageUsage) {
@@ -106,38 +108,46 @@ struct UsageView: View {
                     for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
                 UsagePlatformCard(source: .codex, stats: providerStore.usageBySource[.codex] ?? [],
                                   days: providerStore.usageDaysBySource[.codex] ?? [], overallTokens: total)
+                if !thirdParty.isEmpty {
+                    UsagePlatformCard(source: .thirdParty, stats: thirdParty,
+                                      days: providerStore.usageDaysBySource[.thirdParty] ?? [], overallTokens: total)
+                }
             }
         }
     }
 
     private var modelBreakdown: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+        let cursorStats = ledger.rows.values.map {
+            ModelUsage(model: $0.model, inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
+                       cacheReadTokens: $0.cacheReadTokens, cacheCreationTokens: $0.cacheWriteTokens)
+        }
+        let rows = UsageModelInventory.rows(local: providerStore.usageStats,
+                                            sources: providerStore.usageBySource,
+                                            cursor: cursorStats, costs: providerStore.usageCostLines)
+        return VStack(alignment: .leading, spacing: Theme.Space.s12) {
             SectionHeader(icon: "cube", title: "按模型",
-                          tint: Theme.cursor, ink: Theme.Ink.cursor,
-                          count: providerStore.usageStats.count)
-            if providerStore.usageStats.isEmpty && !providerStore.usageLoading {
+                          tint: Theme.cursor, ink: Theme.Ink.cursor, count: rows.count)
+            Text("列出所选周期的全部本地模型及 Cursor 账单中的模型；同一模型的两种用量分别显示。")
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
+            if rows.isEmpty && !providerStore.usageLoading && !ledger.loading {
                 StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
                                   tint: Theme.textSecondary, block: true)
             } else {
-                TileGrid(.pageUsage) {
-                    let scale = max(providerStore.maxUsageTokens, 1)
-                    // Cursor's real charge is not per-period — the API answers
-                    // for a window — so a tile is captioned with the window it
-                    // does cover whenever that is not the period on screen.
-                    // Resolved once for the whole grid: every tile compares
-                    // against the same two windows.
-                    let periodWindow = UsageStats.interval(for: providerStore.usagePeriod,
-                                                           reference: providerStore.usageReferenceDate)
-                    let settlementCaption = providerStore.settlementCovers(periodWindow)
-                        ? nil : providerStore.settlementWindowLabel
-                    ForEach(providerStore.usageStats) { stat in
+                TileGrid(.pageUsage, minColumnWidth: 320) {
+                    ForEach(rows) { row in
+                        let slices = row.hasLocal ? UsageSource.allCases.map { source in
+                            SourceRing.Slice(label: source.label, value: row.sourceTokens[source] ?? 0,
+                                             color: source.color)
+                        } : [SourceRing.Slice(label: "Cursor", value: row.displayed.totalTokens, color: Theme.cursor)]
                         UsageModelCard(
-                            stat: stat,
-                            slices: providerStore.usageSourceSlices(for: stat),
-                            share: Double(stat.totalTokens) / Double(scale),
-                            costLine: providerStore.costLine(for: stat.model),
-                            settlement: providerStore.settlement(for: stat.model),
-                            settlementWindow: settlementCaption
+                            stat: row.displayed,
+                            slices: slices,
+                            costLine: row.costLine,
+                            settlement: ledger.rows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) },
+                            settlementWindow: row.cursor == nil ? nil : ledger.windowLabel,
+                            cursorStat: row.hasLocal ? row.cursor : nil,
+                            cursorOnly: !row.hasLocal
                         )
                     }
                 }
@@ -350,7 +360,7 @@ private struct UsageProviderCard: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
+            .frame(maxWidth: .infinity).frame(height: 260, alignment: .topLeading)
             .tile(hovered: hovered, lift: false)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
@@ -440,7 +450,7 @@ private struct UsagePlatformCard: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
+            .frame(maxWidth: .infinity).frame(height: 260, alignment: .topLeading)
             // One hue for the wash and the rings — the source's *shape* colour.
             // `source.ink` is the text mix (the title and the counts inside use
             // it); passing it as the wash made the surface darker than the

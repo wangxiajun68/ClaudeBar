@@ -4,6 +4,7 @@ import SwiftUI
 struct TokenMixStrip: View {
     let stats: [ModelUsage]
     var compact: Bool = false
+    var rolls = true
 
     /// The four sums, computed in one pass.
     ///
@@ -63,7 +64,7 @@ struct TokenMixStrip: View {
     private func cap(_ label: String, _ n: Int, _ color: Color) -> some View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
-            RollingNumberText(compact ? label : "\(label) \(UsageStats.formatTokens(n))")
+            RollingNumberText(compact ? label : "\(label) \(UsageStats.formatTokens(n))", rolls: rolls)
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
                 .lineLimit(1)

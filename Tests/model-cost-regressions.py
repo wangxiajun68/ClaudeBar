@@ -372,6 +372,18 @@ struct ModelUsage {
         precondition(both.converted(to: .usd, rate: 0) == nil)
         precondition(both.converted(to: .cny, rate: Double.nan) == nil)
 
+        let custom = ModelPricing.PriceOverride(slug: "audit-model", rate: .init(currency: .usd,
+            input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2), unpriced: nil,
+            effectiveFrom: "2026-10-02", source: .manual)
+        ModelPricing.replaceOverrides(["audit-model": [custom]])
+        let daily = ModelUsage(model: "audit-model", inputTokens: 1_000_000,
+            outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+        let partial = ModelPricing.estimate(days: ["2026-10-01": [daily], "2026-10-02": [daily]])
+        precondition(partial.cost.usd == 2 && partial.unpricedTokens == 1_000_000)
+        precondition(partial.pricedModels == 1 && partial.unpricedModels == 1)
+        precondition(partial.lines[0].isPartial && partial.lines[0].unpricedTokens == 1_000_000)
+        ModelPricing.replaceOverrides([:])
+
         print("PASS: slug canonicalization, longest-match, disjoint currency buckets, "
               + "\(ModelPriceTable.entries.count) rate cards + \(ModelPriceTable.unpriced.count) stated-unpriced, "
               + "grouped formatting, opt-in conversion with no silent rate")

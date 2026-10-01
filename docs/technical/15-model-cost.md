@@ -256,3 +256,27 @@ claude-opus-5-5        38.7M
 - **OpenRouter 的 credits↔USD 汇率**：文档从未给出。
 - **MiniMax Token Plan 国际版价格**：未获取。
 - **GLM Coding Plan 新订阅价**：当前积分制套餐的 CNY 页面是纯 JS，拿不到；表里没有 Coding Plan 相关行（它是订阅制）。
+
+
+### 2026-10-01 用量正确性排查
+
+- 总 Token、每日记录、来源明细、按日计价统一包含 Claude Code、Codex 和第三方代理记录；Cursor 官方账单仍独立显示，不加进本地总量。
+- Codex 同时扫描 `sessions` 和 `archived_sessions`。归档移动不再让历史用量消失，目录监听覆盖两者及归档目录的创建。缺失模型名的记录归入 `unknown` 并标记未计价，不能把已测量的 Token 丢弃。
+- `last_token_usage` 优先作为新增用量；缺少它的旧记录使用累计输入、输出和缓存读取字段的差值。重复累计事件不再次加总，跨追加保存累计基线，零 Token 的上下文事件不增加调用次数。
+- SQLite 索引升级到 v10 重建 Codex 派生记录；JSON 文件携带 `parserVersion`，旧版本同样重建。这只更新应用自己的缓存，不改写原始会话。
+- 费用在每次发布用量时按日重算，发布前比较结果；估算结果发布到 `.usage` 观察域，解决「价格修改或每日分布改变但 Token 总量不变」时的旧金额。
+- 同一模型部分日期未计价时保留已计价金额，同时显示未覆盖的 Token 数；不能因为某一天有价格就把所有日期标成完整估算。
+- Responses 路由转发 Anthropic 形状的 usage 时，首次缓存写入即便读取为零也计入；第三方请求入账后主动通知刷新。
+- 文件枚举保留返回的完整绝对路径，避免符号链接路径规范化后丢失子目录而漏读记录。
+
+`make test TEST="usage-index model-cost proxy-usage usage-analysis"` 执行生产解析、持久化、升级和发布函数，使用临时 SQLite/JSON 与模拟会话；覆盖重复追加、半行、归档移动、消息 ID 去重、来源/每日/模型总量守恒、仅改价刷新及部分计价。全回归清单由 Makefile 维护。
+
+只读抽查时，正式版 2026-10-01 索引里的 Claude Code **52,559,217** Token、未归档 Codex **11,469,321** Token 分别与原始 usage 去重加总一致；另外归档 Codex 中 UTC 日期为当天的记录合计 **47,056,983** Token，旧扫描入口完全遗漏。数值是排查时的快照，后续请求会继续增长；UTC 筛选值不代替本地日界线的正式查询。
+
+补充模型完整性：平台按客户端来源归属，Codex 自定义模型与官方模型都在 Codex 平台内。模型清单改为本地与 Cursor 窗口记录的集合，不设数量上限；本地别名合并，Cursor 数量与账单日期独立显示，避免遗漏 Cursor-only 模型或把不同窗口加总。缺失模型标识保留 `unknown` 用量。模型卡片改用真实 Token 分量条，并明确标注本地估算及 Cursor 实扣。
+
+验证边界：前一阶段全量 38 组回归及 dev/release 构建通过；模型清单、观察域和平台口径的最终补充按用户要求仅修改源码及回归用例，未再次编译、执行测试或启动应用。
+
+口径边界：Token 是每次请求处理的输入、缓存和输出累计量，同一段上下文被多次使用会多次计入，并非独立文本的字数。金额仍是按价目表/用户覆盖价估算；错峰、上下文阶梯、缓存 TTL、代理折扣与订阅实际扣费不由日级 rollup 还原。Cursor 的窗口、截断和官方聚合覆盖限制见本页既有说明。
+
+上游字段语义可核对 [OpenAI 的 Codex token accounting 文档](https://github.com/openai/symphony/blob/main/elixir/docs/token_accounting.md) 和 [Anthropic prompt caching 文档](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)。

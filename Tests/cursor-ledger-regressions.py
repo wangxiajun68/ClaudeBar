@@ -106,6 +106,19 @@ assert 'settlementWindow' in card_source, "the actual's row is where the window 
 assert card_source.count('ModelPricing.format(primary.amount') >= 2, \
     "both figures must go through the shared formatter"
 
+# Model cards must stay static and reserve independent space for long names
+# and source quantities. These checks do not render or benchmark SwiftUI.
+assert 'SourceStack(' not in card_source and '.hoverState(' not in card_source
+assert 'RollingNumberText(' not in card_source
+assert 'DepthLensSpec(' not in card_source
+assert 'CacheHitBadge(stat: stat, rolls: false)' in card_source
+assert 'TokenMixStrip(stats: [stat], compact: true, rolls: false)' in card_source
+assert '.lineLimit(2)' in card_source and '.help(stat.model)' in card_source
+assert '.frame(width: 46' not in card_source
+assert 'minHeight:' not in card_source, "model card height must follow its content"
+usage_view = (views.parent / 'Pages/UsageView.swift').read_text()
+assert 'TileGrid(.pageUsage, minColumnWidth: 320)' in usage_view
+
 with tempfile.TemporaryDirectory(prefix='claudebar-cursor-ledger-') as folder:
     path = Path(folder) / 'Regression.swift'
     path.write_text(SWIFT)

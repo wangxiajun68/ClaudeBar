@@ -28,7 +28,8 @@ let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_
 ///
 /// Codex note: per-turn usage is `last_token_usage` on `token_count`.
 /// The upstream model slug is on `turn_context` (carried across appends
-/// via `cx_model`). Cumulative `total_token_usage` is only a rewrite stamp.
+/// via `cx_model`). Cumulative snapshots dedupe events and provide deltas
+/// when an older log omits `last_token_usage`.
 struct UsageIndex {
 
     // MARK: - Schema / connection
@@ -103,7 +104,7 @@ struct UsageIndex {
     ///     into the rollup. Both need a rebuild, not a repair.
     /// v8: v7 shipped `parseCodex` with an ungated cumulative fallback that
     ///     inflated Codex day totals on live appends; rebuild Codex again.
-    /// Schema version is stamped at the latest step (currently 8).
+    /// Schema version is stamped at the latest step (currently 10).
     private static func migrateIfNeeded(_ db: OpaquePointer) {
         var stmt: OpaquePointer?
         var version: Int32 = 0
@@ -162,6 +163,12 @@ struct UsageIndex {
             // here. The version bump exists only so a future step that *does*
             // need one can tell this schema from v8.
             _ = exec(db, "PRAGMA user_version = 9")
+        }
+        if version < 10 {
+            // Rebuild cumulative-only Codex events with component deltas.
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'codex:%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'codex:%';")
+            _ = exec(db, "PRAGMA user_version = 10")
         }
     }
 
@@ -275,10 +282,12 @@ struct UsageIndex {
         // actually belongs to the period.
         let lastIncluded = interval.end.addingTimeInterval(-1)
         let endDay = dayString(lastIncluded)
+        let thirdParty = ProxyUsageStore.shared.fetch(startDay: startDay, endDay: endDay)
         if !DiskPersistence.useDatabase {
-            return UsageJSONStore.shared.fetch(startDay: startDay, endDay: endDay)
+            return ModelUsage.merged(UsageJSONStore.shared.fetch(startDay: startDay, endDay: endDay) + thirdParty)
+                .sorted { $0.totalTokens > $1.totalTokens }
         }
-        guard let db = connection() else { return [] }
+        guard let db = connection() else { return thirdParty }
         lock.lock(); defer { lock.unlock() }
 
         var stmt: OpaquePointer?
@@ -288,7 +297,7 @@ struct UsageIndex {
             WHERE day BETWEEN ?1 AND ?2 AND path NOT LIKE 'openclaw%'
             GROUP BY model
             """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return thirdParty }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, startDay, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, endDay, -1, SQLITE_TRANSIENT)
@@ -303,7 +312,7 @@ struct UsageIndex {
             usage.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 5))
             if usage.totalTokens > 0 { out.append(usage) }
         }
-        return out.sorted { $0.totalTokens > $1.totalTokens }
+        return ModelUsage.merged(out + thirdParty).sorted { $0.totalTokens > $1.totalTokens }
     }
 
     /// All-time tokens for one Claude or Codex transcript. A session may
@@ -518,10 +527,11 @@ struct UsageIndex {
         let startDay = dayString(interval.start)
         let lastIncluded = interval.end.addingTimeInterval(-1)
         let endDay = dayString(lastIncluded)
+        let thirdParty = ProxyUsageStore.shared.fetchDaily(startDay: startDay, endDay: endDay)
         if !DiskPersistence.useDatabase {
-            return UsageJSONStore.shared.fetchDaily(startDay: startDay, endDay: endDay)
+            return mergedDays(UsageJSONStore.shared.fetchDaily(startDay: startDay, endDay: endDay) + thirdParty)
         }
-        guard let db = connection() else { return [] }
+        guard let db = connection() else { return thirdParty }
         lock.lock(); defer { lock.unlock() }
         var stmt: OpaquePointer?
         let sql = """
@@ -530,7 +540,7 @@ struct UsageIndex {
             WHERE day BETWEEN ?1 AND ?2 AND path NOT LIKE 'openclaw%'
             GROUP BY day ORDER BY day
             """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return thirdParty }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, startDay, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, endDay, -1, SQLITE_TRANSIENT)
@@ -543,7 +553,20 @@ struct UsageIndex {
             day.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 4))
             if day.totalTokens > 0 { out.append(day) }
         }
-        return out
+        return mergedDays(out + thirdParty)
+    }
+
+    private static func mergedDays(_ rows: [DayUsage]) -> [DayUsage] {
+        var days: [String: DayUsage] = [:]
+        for row in rows {
+            var day = days[row.day] ?? DayUsage(day: row.day)
+            day.inputTokens += row.inputTokens
+            day.outputTokens += row.outputTokens
+            day.cacheReadTokens += row.cacheReadTokens
+            day.cacheCreationTokens += row.cacheCreationTokens
+            days[row.day] = day
+        }
+        return days.values.sorted { $0.day < $1.day }
     }
 
     // MARK: - Per-file sync
@@ -608,10 +631,12 @@ struct UsageIndex {
             // boundary so a re-emitted token_count straddling it is still
             // recognized as a duplicate.
             let parsed = parseCodex(lines, previousModel: prior.cxModel,
-                                    previousTotal: prior.cxTotal)
+                                    previousTotal: prior.cxTotal, previousInput: prior.cxIn,
+                                    previousOutput: prior.cxOut, previousCached: prior.cxCached)
             if parsed.entries.isEmpty {
                 upsertFile(backend, file, prior.offset + consumed,
-                           cxIn: prior.cxIn, cxOut: prior.cxOut, cxCached: prior.cxCached,
+                           cxIn: parsed.last?.input ?? prior.cxIn, cxOut: parsed.last?.output ?? prior.cxOut,
+                           cxCached: parsed.last?.cached ?? prior.cxCached,
                            cxTotal: parsed.last?.total ?? prior.cxTotal,
                            cxModel: parsed.model)
                 return
@@ -685,8 +710,10 @@ struct UsageIndex {
     /// Walk an external tool's directory tree. Codex nests year/month/day;
     /// files may also sit directly in upper levels.
     private static func collectExternal(kind: ExternalAgentKind) -> [Candidate] {
-        collectFromEnumerator(root: URL(fileURLWithPath: kind.rootDir),
-                              keyPrefix: "\(kind.rawValue):")
+        let sessions = URL(fileURLWithPath: kind.rootDir)
+        let archive = sessions.deletingLastPathComponent().appendingPathComponent("archived_sessions")
+        return collectFromEnumerator(root: sessions, keyPrefix: "\(kind.rawValue):")
+            + collectFromEnumerator(root: archive, keyPrefix: "\(kind.rawValue):")
     }
 
     /// Depth-limited recursive walk over `root`, reading mtime/size from the
@@ -703,14 +730,15 @@ struct UsageIndex {
             options: [.skipsPackageDescendants]
         ) else { return [] }
 
-        let rootPath = root.path
-        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         var out: [Candidate] = []
         while let url = en.nextObject() as? URL {
             guard url.pathExtension == "jsonl", !url.lastPathComponent.contains(".trajectory") else { continue }
             guard let meta = meta(of: url) else { continue }
-            let p = url.path.hasPrefix(prefix) ? url.path : rootPath + "/" + url.lastPathComponent
-            out.append(Candidate(key: keyPrefix + p, path: p, mtime: meta.mtime, size: meta.size))
+            // The enumerator returns absolute URLs, sometimes resolved through
+            // a symlink (/var → /private/var). Rebuilding from the basename
+            // discarded nested directories and made those files unreadable.
+            out.append(Candidate(key: keyPrefix + url.path, path: url.path,
+                                 mtime: meta.mtime, size: meta.size))
         }
         return out
     }
@@ -960,7 +988,8 @@ struct UsageIndex {
     /// across an append boundary we compare against the file's last cumulative
     /// (`previousTotal`), which `sync` persists and advances.
     private static func parseCodex(_ lines: [Data], previousModel: String,
-                                   previousTotal: Int = 0) -> (entries: [ParsedEntry], last: CodexTotal?, model: String) {
+                                   previousTotal: Int = 0, previousInput: Int = 0,
+                                   previousOutput: Int = 0, previousCached: Int = 0) -> (entries: [ParsedEntry], last: CodexTotal?, model: String) {
         var objects: [[String: Any]] = []
         objects.reserveCapacity(lines.count)
         var firstSlug: String?
@@ -971,10 +1000,15 @@ struct UsageIndex {
         }
         // Seed from this chunk when the file row has no slug yet, so
         // token_count lines that precede the first turn_context still count.
-        var model = previousModel.isEmpty ? (firstSlug ?? "") : previousModel
+        // Missing attribution must not erase measured tokens; retain an
+        // unknown model so the UI exposes them as unpriced usage.
+        var model = previousModel.isEmpty ? (firstSlug ?? "unknown") : previousModel
         var out: [ParsedEntry] = []
         var last: CodexTotal?
         var lastCumulative: Int? = previousTotal > 0 ? previousTotal : nil
+        var baselineInput = previousInput
+        var baselineOutput = previousOutput
+        var baselineCached = previousCached
         for obj in objects {
             if let next = codexModel(in: obj) { model = next }
             guard obj["type"] as? String == "event_msg",
@@ -982,6 +1016,7 @@ struct UsageIndex {
                   payload["type"] as? String == "token_count",
                   let info = payload["info"] as? [String: Any],
                   let date = isoDate(obj["timestamp"]) else { continue }
+            var cumulativeDelta: [String: Any]?
             if let total = info["total_token_usage"] as? [String: Any] {
                 let cumulative = JSONCoerce.intVal(total["total_tokens"])
                 last = CodexTotal(date: date,
@@ -992,10 +1027,23 @@ struct UsageIndex {
                 // Same cumulative as the record before it → the upstream
                 // re-stated the same usage, not a new turn.
                 if cumulative > 0, cumulative == lastCumulative { continue }
+                // Older logs may have only the cumulative snapshot. Fold the
+                // difference, including across appends, instead of dropping
+                // it or booking the whole thread again on its latest day.
+                if let last {
+                    let reset = last.input < baselineInput || last.output < baselineOutput
+                    cumulativeDelta = [
+                        "input_tokens": max(0, last.input - (reset ? 0 : baselineInput)),
+                        "output_tokens": max(0, last.output - (reset ? 0 : baselineOutput)),
+                        "cached_input_tokens": max(0, last.cached - (reset ? 0 : baselineCached))
+                    ]
+                    baselineInput = last.input
+                    baselineOutput = last.output
+                    baselineCached = last.cached
+                }
                 if cumulative > 0 { lastCumulative = cumulative }
             }
-            let turn = (info["last_token_usage"] as? [String: Any])
-                ?? (last == nil ? info["total_token_usage"] as? [String: Any] : nil)
+            let turn = (info["last_token_usage"] as? [String: Any]) ?? cumulativeDelta
             guard let turn, !model.isEmpty else { continue }
             let cached = JSONCoerce.intVal(turn["cached_input_tokens"])
             var e = record(dayString(date), model,
@@ -1003,25 +1051,7 @@ struct UsageIndex {
                            output: JSONCoerce.intVal(turn["output_tokens"]),
                            read: cached,
                            create: JSONCoerce.intVal(turn["cache_write_input_tokens"]))
-            e.calls = 1
-            out.append(e)
-        }
-        // Last-resort row for a file that reported usage *only* as a
-        // cumulative total (the pre-v3 shape: one `total_token_usage` dump at
-        // the end of the thread, no `last_token_usage` anywhere).
-        //
-        // Gated on having no cumulative baseline. Without that gate, any
-        // incremental chunk whose `token_count` lines are *all* duplicates of
-        // the total already on the file row empties `out`, and this would then
-        // book `last` — the whole thread's cumulative total — as this chunk's
-        // usage. Codex re-emits `token_count` around compaction, so that fires
-        // on live appends and multiplies the file's day totals (a real
-        // rollout read 4x too high on 2026-09-15). A chunk that adds nothing
-        // new must add nothing, not fall back to the thread total.
-        if out.isEmpty, previousTotal == 0, let last, !model.isEmpty {
-            var e = record(dayString(last.date), model,
-                           input: max(0, last.input - last.cached),
-                           output: last.output, read: last.cached)
+            guard e.input + e.output + e.cacheRead + e.cacheCreate > 0 else { continue }
             e.calls = 1
             out.append(e)
         }

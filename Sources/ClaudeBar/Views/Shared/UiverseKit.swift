@@ -343,9 +343,15 @@ struct SourceStack: View {
                     ZStack {
                         Circle().fill(Theme.base2)
                         Circle().fill(slice.color.opacity(0.16))
-                        Text(glyph(slice.label))
-                            .font(.system(size: s * 0.32, weight: .bold, design: .rounded))
-                            .foregroundColor(slice.color)
+                        Group {
+                            if slice.label == "Cursor" {
+                                Image(systemName: "cursorarrow")
+                            } else {
+                                Text(glyph(slice.label))
+                            }
+                        }
+                        .font(.system(size: s * 0.32, weight: .bold, design: .rounded))
+                        .foregroundColor(slice.color)
                     }
                     .frame(width: s, height: s)
                     .overlay(

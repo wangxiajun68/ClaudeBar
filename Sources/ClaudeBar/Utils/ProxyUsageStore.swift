@@ -15,6 +15,7 @@ import SQLite3
 /// otherwise. Never migrated between them.
 final class ProxyUsageStore {
     static let shared = ProxyUsageStore()
+    static let didChange = Notification.Name("ClaudeBar.proxyUsageDidChange")
 
     /// One (day, model) bucket. Disjoint by construction: `input` is fresh
     /// input only — `TokenTotals` folds the cache hit out of the upstream's
@@ -82,6 +83,11 @@ final class ProxyUsageStore {
             row.cacheWrite += cacheWrite
             rows[Self.key(day, name)] = row
             persistJSONLocked()
+        }
+        // Transcript watchers cannot see third-party requests. Refresh the
+        // cached usage snapshot when this independent rollup advances.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChange, object: nil)
         }
     }
 

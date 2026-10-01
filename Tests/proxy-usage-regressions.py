@@ -181,6 +181,12 @@ TOKENS
                                         "prompt_cache_hit_tokens": 9_000]])
         precondition(impossible.input == 0, "a negative bucket must clamp: \(impossible.input!)")
 
+        var writeOnly = TokenTotals()
+        writeOnly.applyResponses(["usage": ["input_tokens": 20, "output_tokens": 3,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 100]])
+        precondition(writeOnly.input == 20 && writeOnly.cacheWrite == 100 && writeOnly.total == 123,
+                     "A first cache write must count even with no cache hit")
+
         print("PASS: proxy token buckets are disjoint across Anthropic, Chat and Responses shapes")
     }
 }

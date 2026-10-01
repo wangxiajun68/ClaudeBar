@@ -25,6 +25,7 @@ final class UsageJSONStore {
         /// append boundary. Mirrors the SQLite `cx_total` column.
         var cxTotal: Int
         var cxModel: String
+        var parserVersion: Int = 10
 
         init(mtime: Double, size: Int, offset: Int, headHash: Int64,
              cxIn: Int, cxOut: Int, cxCached: Int, cxTotal: Int = 0, cxModel: String = "") {
@@ -44,10 +45,11 @@ final class UsageJSONStore {
             cxCached = try c.decode(Int.self, forKey: .cxCached)
             cxTotal = try c.decodeIfPresent(Int.self, forKey: .cxTotal) ?? 0
             cxModel = try c.decodeIfPresent(String.self, forKey: .cxModel) ?? ""
+            parserVersion = try c.decodeIfPresent(Int.self, forKey: .parserVersion) ?? 0
         }
 
         private enum CodingKeys: String, CodingKey {
-            case mtime, size, offset, headHash, cxIn, cxOut, cxCached, cxTotal, cxModel
+            case mtime, size, offset, headHash, cxIn, cxOut, cxCached, cxTotal, cxModel, parserVersion
         }
     }
 
@@ -246,7 +248,8 @@ final class UsageJSONStore {
             key.hasPrefix("codex:") && rec.cxTotal == 0
                 && (rec.cxIn + rec.cxOut + rec.cxCached) > 0
         }
-        if stale || unprefixed {
+        let oldParser = files.contains { $0.key.hasPrefix("codex:") && $0.value.parserVersion < 10 }
+        if stale || unprefixed || oldParser {
             files = files.filter { !$0.key.hasPrefix("codex:") }
             rollup = rollup.filter { !$0.value.path.hasPrefix("codex:") }
             persistLocked()

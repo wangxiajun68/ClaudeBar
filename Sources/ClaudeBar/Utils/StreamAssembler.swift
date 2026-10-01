@@ -146,6 +146,7 @@ struct TokenTotals: Equatable {
         // whole cache read, so this wins only when no subset-shaped hit is
         // present (otherwise the two agree and the subset is the safe read).
         let siblingRead = positive(usage["cache_read_input_tokens"])
+        let siblingWrite = positive(usage["cache_creation_input_tokens"])
         if let subsetHit {
             cacheRead = subsetHit
             if let written = positive(inputDetails?["cache_write_tokens"],
@@ -153,9 +154,9 @@ struct TokenTotals: Equatable {
                 cacheWrite = written
             }
             setPrompt(total: prompt, includesCacheRead: true)
-        } else if let siblingRead {
-            cacheRead = siblingRead
-            if let written = positive(usage["cache_creation_input_tokens"]) { cacheWrite = written }
+        } else if siblingRead != nil || siblingWrite != nil {
+            cacheRead = siblingRead ?? intValue(usage["cache_read_input_tokens"]) ?? cacheRead
+            if let siblingWrite { cacheWrite = siblingWrite }
             setPrompt(total: prompt, includesCacheRead: false)
         } else {
             setPrompt(total: prompt, includesCacheRead: true)

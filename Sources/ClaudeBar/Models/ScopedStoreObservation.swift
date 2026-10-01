@@ -123,6 +123,7 @@ extension ProviderStore {
             out += [changes($usageStats), changes($usageDays), changes($usageBySource),
                     changes($usageDaysBySource), changes($usagePeriod), changes($usageReferenceDate),
                     changes($usageLoading), changes($usagePublishedInterval), changes($todayUsage),
+                    changes($usageEstimate),
                     // The Cursor ledger's money map is `.usage` for the same
                     // reason `todayUsage` is: it rides a usage refresh and the
                     // usage surfaces are the only readers. Without it a ledger

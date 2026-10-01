@@ -20,6 +20,7 @@ struct SourceRing: View {
     /// Compact center figure ("12.3K").
     var centerValue: String
     var centerCaption: String
+    var rolls = true
 
     private var total: Int { slices.reduce(0) { $0 + $1.value } }
 
@@ -37,7 +38,7 @@ struct SourceRing: View {
                 }
             }
             VStack(spacing: 1) {
-                RollingNumberText(centerValue)
+                RollingNumberText(centerValue, rolls: rolls)
                     .font(Theme.Font.captionMono)
                     .monospacedDigit()
                     .foregroundColor(Theme.textPrimary)

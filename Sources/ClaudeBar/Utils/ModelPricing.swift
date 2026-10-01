@@ -274,21 +274,24 @@ enum ModelPricing {
         struct Line: Equatable {
             let model: String
             let cost: Cost
-            /// Why this line has no money, or nil when it is priced.
+            /// Why some or all of this line's usage cannot be priced.
             let unpriced: Unpriced?
+            let unpricedTokens: Int
 
-            var isPriced: Bool { unpriced == nil }
+            var isPriced: Bool { unpriced == nil || cost.cny > 0 || cost.usd > 0 }
+            var isPartial: Bool { isPriced && unpriced != nil }
 
-            init(model: String, cost: Cost, unpriced: Unpriced?) {
+            init(model: String, cost: Cost, unpriced: Unpriced?, unpricedTokens: Int = 0) {
                 self.model = model
                 self.cost = cost
                 self.unpriced = unpriced
+                self.unpricedTokens = unpricedTokens
             }
         }
 
         var lines: [Line] = []
         var cost = Cost()
-        /// Models the table recognized / did not.
+        /// Models with priced / unpriced usage; a partially priced model appears in both.
         var pricedModels = 0
         var unpricedModels = 0
         /// Tokens behind `unpricedModels` — surfaced in the tooltip so the
@@ -492,7 +495,8 @@ enum ModelPricing {
             guard !usage.isZero else { continue }
             guard let cost = cost(of: usage, on: date) else {
                 out.lines.append(Estimate.Line(model: usage.model, cost: Cost(),
-                                               unpriced: resolve(usage.model, on: date)?.reason ?? .unknownSlug))
+                                               unpriced: resolve(usage.model, on: date)?.reason ?? .unknownSlug,
+                                               unpricedTokens: usage.totalTokens))
                 out.unpricedModels += 1
                 out.unpricedTokens += usage.totalTokens
                 continue
@@ -523,8 +527,9 @@ enum ModelPricing {
         var costByModel: [String: Cost] = [:]
         var tokensByModel: [String: Int] = [:]
         var unpricedByModel: [String: Unpriced] = [:]
+        var unpricedTokensByModel: [String: Int] = [:]
 
-        for (day, usages) in days {
+        for (day, usages) in days.sorted(by: { $0.key < $1.key }) {
             for usage in usages where !usage.isZero {
                 tokensByModel[usage.model, default: 0] += usage.totalTokens
                 if let cost = cost(of: usage, on: day) {
@@ -533,6 +538,7 @@ enum ModelPricing {
                                                     usd: running.usd + cost.usd)
                 } else {
                     unpricedByModel[usage.model] = resolve(usage.model, on: day)?.reason ?? .unknownSlug
+                    unpricedTokensByModel[usage.model, default: 0] += usage.totalTokens
                 }
             }
         }
@@ -541,15 +547,19 @@ enum ModelPricing {
         // keep the same ranking whichever path produced them.
         for (model, tokens) in tokensByModel.sorted(by: { $0.value > $1.value }) {
             if let cost = costByModel[model] {
-                out.lines.append(Estimate.Line(model: model, cost: cost, unpriced: nil))
+                out.lines.append(Estimate.Line(model: model, cost: cost, unpriced: unpricedByModel[model],
+                                               unpricedTokens: unpricedTokensByModel[model] ?? 0))
                 out.cost.cny += cost.cny
                 out.cost.usd += cost.usd
                 out.pricedModels += 1
             } else {
                 out.lines.append(Estimate.Line(model: model, cost: Cost(),
-                                               unpriced: unpricedByModel[model] ?? .unknownSlug))
+                                               unpriced: unpricedByModel[model] ?? .unknownSlug,
+                                               unpricedTokens: tokens))
+            }
+            if let missing = unpricedTokensByModel[model] {
                 out.unpricedModels += 1
-                out.unpricedTokens += tokens
+                out.unpricedTokens += missing
             }
         }
         return out
