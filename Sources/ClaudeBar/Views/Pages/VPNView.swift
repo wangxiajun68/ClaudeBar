@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Stable VPN workspace: connection band, subscriptions, traffic, and an on-demand node drawer.
+/// VPN workspace: runtime and subscriptions on the left, full-height traffic on the right.
 struct VPNView: View {
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var store = VpnSubscriptionStore.shared
@@ -45,7 +45,6 @@ struct VPNView: View {
                             .frame(width: 640, height: 400)
                         }
                     }
-                    overview(inlineTraffic: geometry.size.width >= 1100)
                     let wide = geometry.size.width >= 900
                     let workspaceWidth = max(0, geometry.size.width - 32)
                     if !wide {
@@ -56,17 +55,25 @@ struct VPNView: View {
                         .pickerStyle(.segmented)
                         .labelsHidden()
                     }
-                    // Keep both view identities across breakpoints and workspace
-                    // switches, preserving search, selection and scroll positions.
+                    // Keep both workspaces alive when switching the compact page.
                     HStack(alignment: .top, spacing: wide ? Theme.Space.s12 : 0) {
-                        subscriptionPanel
-                            .frame(width: wide ? min(340, max(280, (workspaceWidth - Theme.Space.s12) * 0.28))
-                                   : (compactPage == 1 ? workspaceWidth : 0))
-                            .clipped()
-                            .opacity(wide || compactPage == 1 ? 1 : 0)
-                            .allowsHitTesting(wide || compactPage == 1)
-                            .disabled(!wide && compactPage != 1)
-                            .accessibilityHidden(!wide && compactPage != 1)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                                overview
+                                VpnSubscriptionSection(onBrowse: { nodesOpen = true })
+                                    .padding(Theme.Space.s12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .vpnSurface()
+                            }
+                        }
+                        .frame(maxHeight: .infinity)
+                        .frame(width: wide ? min(380, max(340, (workspaceWidth - Theme.Space.s12) * 0.28))
+                               : (compactPage == 1 ? workspaceWidth : 0))
+                        .clipped()
+                        .opacity(wide || compactPage == 1 ? 1 : 0)
+                        .allowsHitTesting(wide || compactPage == 1)
+                        .disabled(!wide && compactPage != 1)
+                        .accessibilityHidden(!wide && compactPage != 1)
                         trafficGroup(visible: wide || compactPage == 0)
                             .frame(width: wide ? nil : (compactPage == 0 ? workspaceWidth : 0))
                             .frame(maxWidth: wide ? .infinity : nil, maxHeight: .infinity)
@@ -156,38 +163,27 @@ struct VPNView: View {
 
     // MARK: Compact overview (status + access + probes + subscription)
 
-    private func overview(inlineTraffic: Bool) -> some View {
+    private var overview: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if inlineTraffic {
-                HStack(spacing: Theme.Space.s12) {
-                    overviewStatus
-                        .frame(width: 140)
-                    VPNTrafficStrip(compact: true)
-                        .frame(maxWidth: .infinity)
-                    overviewControls
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .padding(.horizontal, Theme.Space.s12)
-                .padding(.vertical, Theme.Space.s8)
-            } else {
-                overviewHeader
-                HairlineDivider()
-                VPNTrafficStrip()
-            }
+            overviewHeader
+            HairlineDivider()
+            VPNTrafficStrip(compact: true)
             HairlineDivider()
             Button { nodesOpen = true } label: {
-                HStack(spacing: 10) {
-                    AppGlyph(name: "square.grid.2x2", size: 15)
-                        .foregroundColor(Theme.Ink.claude)
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
                     activeNodeSummary
-                    Spacer(minLength: 8)
-                    Text("浏览节点")
-                        .font(Theme.Font.caption)
-                        .foregroundColor(Theme.textSecondary)
-                    AppGlyph(name: "chevron.right", size: 10)
-                        .foregroundColor(Theme.textSecondary)
+                    HStack(spacing: Theme.Space.s8) {
+                        AppGlyph(name: "square.grid.2x2", size: 15)
+                            .foregroundColor(Theme.Ink.claude)
+                        Text("浏览节点")
+                            .font(Theme.Font.caption)
+                            .foregroundColor(Theme.textSecondary)
+                        Spacer(minLength: 8)
+                        AppGlyph(name: "chevron.right", size: 10)
+                            .foregroundColor(Theme.textSecondary)
+                    }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Theme.Space.s12)
                 .padding(.vertical, Theme.Space.s8)
                 .contentShape(Rectangle())
             }
@@ -311,15 +307,6 @@ struct VPNView: View {
         .padding(20)
         .frame(width: 300)
         .onDisappear { commitPort() }
-    }
-
-    private var subscriptionPanel: some View {
-        ScrollView {
-            VpnSubscriptionSection(onBrowse: { nodesOpen = true })
-                .padding(16)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .vpnSurface()
     }
 
     /// Drives the port-conflict alert from `manager.portConflict`.
@@ -803,19 +790,38 @@ private struct VPNTrafficStrip: View {
     @ObservedObject private var rates = VpnLiveRates.shared
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.s12) {
-                liveRates
-                Spacer(minLength: Theme.Space.s12)
-                totals
-            }
-            VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                liveRates
-                totals
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                    VpnSpeedChart(history: rates.speedHistory)
+                        .frame(height: 24)
+                        .opacity(manager.isRunning ? 1 : 0.35)
+                    HStack(spacing: Theme.Space.s12) {
+                        compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: 80,
+                                    help: "内核 mixed-port 实时下行，不是订阅额度。")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: 80,
+                                    help: "内核 mixed-port 实时上行，不是订阅额度。")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    totals
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Theme.Space.s12) {
+                        liveRates
+                        Spacer(minLength: Theme.Space.s12)
+                        totals
+                    }
+                    VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                        liveRates
+                        totals
+                    }
+                }
             }
         }
-        .padding(.horizontal, compact ? 0 : Theme.Space.s12)
-        .padding(.vertical, compact ? 0 : Theme.Space.s8)
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s8)
         .opacity(manager.isRunning ? 1 : 0.45)
     }
 
@@ -824,18 +830,21 @@ private struct VPNTrafficStrip: View {
             VpnSpeedChart(history: rates.speedHistory)
                 .frame(width: compact ? 80 : 120, height: 32)
                 .opacity(manager.isRunning ? 1 : 0.35)
-            compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: compact ? 80 : 110,
+            compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: compact ? 72 : 110,
                         help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
-            compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: compact ? 80 : 110,
+            compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: compact ? 72 : 110,
                         help: "内核 mixed-port 实时上行，不是订阅额度。")
         }
     }
 
     private var totals: some View {
         HStack(spacing: Theme.Space.s12) {
-            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: compact ? 80 : 110)
-            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: compact ? 80 : 110)
+            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: compact ? 72 : 110)
+                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
+            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: compact ? 72 : 110)
+                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
             compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: compact ? 48 : 64)
+                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
 
         }
     }
@@ -896,12 +905,12 @@ private struct VPNProbeRow: View {
             }
             VStack(spacing: 8) {
                 HStack { exitIP; Spacer(); testAllButton }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
                     ForEach(probe.sites) { site in siteButton(site) }
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Theme.Space.s12)
         .padding(.vertical, 8)
     }
 
