@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Desktop usage tile: model name, totals, tap to expand a source ring
+/// Desktop usage tile: model name, totals and an always-visible source ring
 /// (Claude Code / Codex / 第三方).
 ///
 /// **Two money figures, never one.** `costLine` is the list-price *estimate*
@@ -32,7 +32,6 @@ struct UsageModelCard: View {
     /// every usage tile on the page. `ExchangeRate` is narrow enough to keep.
     @State private var costDisplay = AppPreferences.shared.costDisplay
     @ObservedObject private var fx = ExchangeRate.shared
-    @State private var open = false
     @State private var hovered = false
 
     var body: some View {
@@ -40,9 +39,7 @@ struct UsageModelCard: View {
         // text each called `presented(_:)` again, so one pass ran the pricing
         // presentation up to five times.
         let shown = costLine.map { presented($0.cost) }
-        return Button {
-            withAnimation(Theme.Animation.smooth) { open.toggle() }
-        } label: {
+        return Group {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 6) {
                     Text(stat.model)
@@ -80,7 +77,7 @@ struct UsageModelCard: View {
                 )
                 .frame(height: 28)
                 .help("装饰曲线，不代表逐日用量；金额为刊例估算。")
-                if open {
+                Group {
                     HStack(alignment: .center, spacing: 12) {
                         SourceRing(
                             slices: slices,
@@ -91,23 +88,19 @@ struct UsageModelCard: View {
                         )
                         SourceRingLegend(slices: slices)
                     }
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
             // The card takes the model's own hue, so a page of models reads as
             // a colour-keyed set, and the corner lens carries the usage glyph —
             // the card's subject, not decoration.
             .tile(tint: tint, hovered: hovered,
-                  lens: DepthLensSpec(tint: tint, size: 124))
-            .folderPeek(hovered)
+                  lens: DepthLensSpec(tint: tint, size: 124), lift: false)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
-        .buttonStyle(.plain)
         .hoverState($hovered)
         .help(helpText(shown))
-        .accessibilityHint(open ? "收起来源明细" : "展开来源明细")
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }
 
@@ -252,7 +245,7 @@ struct UsageModelCard: View {
     }
 
     private func helpText(_ shown: ModelPricing.Presented?) -> String {
-        var lines: [String] = [open ? "收起来源" : "查看 Claude Code / Codex / 第三方用量"]
+        var lines: [String] = ["Claude Code / Codex / 第三方用量"]
         if costLine != nil, let shown, let primary = shown.primary {
             lines.append("按官方刊例价估算 \(ModelPricing.format(primary.amount, currency: primary.currency))")
         } else if let unpriced = costLine?.unpriced {

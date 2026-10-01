@@ -26,7 +26,7 @@ struct VPNView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .trailing) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: Theme.Space.s12) {
                     HStack {
                         PageTitle(title: "VPN")
                         Spacer()
@@ -45,7 +45,7 @@ struct VPNView: View {
                             .frame(width: 640, height: 400)
                         }
                     }
-                    overview
+                    overview(inlineTraffic: geometry.size.width >= 1100)
                     let wide = geometry.size.width >= 900
                     let workspaceWidth = max(0, geometry.size.width - 32)
                     if !wide {
@@ -58,9 +58,9 @@ struct VPNView: View {
                     }
                     // Keep both view identities across breakpoints and workspace
                     // switches, preserving search, selection and scroll positions.
-                    HStack(alignment: .top, spacing: wide ? 16 : 0) {
+                    HStack(alignment: .top, spacing: wide ? Theme.Space.s12 : 0) {
                         subscriptionPanel
-                            .frame(width: wide ? min(400, max(300, (geometry.size.width - 48) * 0.34))
+                            .frame(width: wide ? min(340, max(280, (workspaceWidth - Theme.Space.s12) * 0.28))
                                    : (compactPage == 1 ? workspaceWidth : 0))
                             .clipped()
                             .opacity(wide || compactPage == 1 ? 1 : 0)
@@ -156,11 +156,24 @@ struct VPNView: View {
 
     // MARK: Compact overview (status + access + probes + subscription)
 
-    private var overview: some View {
+    private func overview(inlineTraffic: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            overviewHeader
-            HairlineDivider()
-            VPNTrafficStrip()
+            if inlineTraffic {
+                HStack(spacing: Theme.Space.s12) {
+                    overviewStatus
+                        .frame(width: 140)
+                    VPNTrafficStrip(compact: true)
+                        .frame(maxWidth: .infinity)
+                    overviewControls
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.horizontal, Theme.Space.s12)
+                .padding(.vertical, Theme.Space.s8)
+            } else {
+                overviewHeader
+                HairlineDivider()
+                VPNTrafficStrip()
+            }
             HairlineDivider()
             Button { nodesOpen = true } label: {
                 HStack(spacing: 10) {
@@ -175,7 +188,7 @@ struct VPNView: View {
                         .foregroundColor(Theme.textSecondary)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.vertical, Theme.Space.s8)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -785,14 +798,15 @@ struct VPNView: View {
 // MARK: - Isolated traffic strip (observes rates, not the mosaic)
 
 private struct VPNTrafficStrip: View {
+    var compact = false
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var rates = VpnLiveRates.shared
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.s16) {
+            HStack(spacing: Theme.Space.s12) {
                 liveRates
-                Spacer(minLength: 12)
+                Spacer(minLength: Theme.Space.s12)
                 totals
             }
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -800,28 +814,28 @@ private struct VPNTrafficStrip: View {
                 totals
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 16)
+        .padding(.horizontal, compact ? 0 : Theme.Space.s12)
+        .padding(.vertical, compact ? 0 : Theme.Space.s8)
         .opacity(manager.isRunning ? 1 : 0.45)
     }
 
     private var liveRates: some View {
-        HStack(spacing: Theme.Space.s16) {
+        HStack(spacing: Theme.Space.s12) {
             VpnSpeedChart(history: rates.speedHistory)
-                .frame(width: 120, height: 44)
+                .frame(width: compact ? 80 : 120, height: 32)
                 .opacity(manager.isRunning ? 1 : 0.35)
-            compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: 110,
+            compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: compact ? 80 : 110,
                         help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
-            compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: 110,
+            compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: compact ? 80 : 110,
                         help: "内核 mixed-port 实时上行，不是订阅额度。")
         }
     }
 
     private var totals: some View {
-        HStack(spacing: Theme.Space.s16) {
-            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: 110)
-            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: 110)
-            compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: 64)
+        HStack(spacing: Theme.Space.s12) {
+            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: compact ? 80 : 110)
+            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: compact ? 80 : 110)
+            compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: compact ? 48 : 64)
 
         }
     }
@@ -833,7 +847,7 @@ private struct VPNTrafficStrip: View {
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
             RollingNumberText(value)
-                .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                .font(.system(size: compact ? 15 : 17, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundColor(tint)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)

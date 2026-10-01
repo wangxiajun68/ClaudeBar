@@ -163,3 +163,36 @@ struct TodayUsage: Equatable {
 
     var isEmpty: Bool { tokens == 0 && calls == 0 && cost.isEmpty }
 }
+
+/// Attribute official Codex traffic only from the transcript's provider ID.
+/// A GPT model name alone is not evidence of an OpenAI endpoint.
+enum UsageProviderAttribution {
+    static func isOfficialCodex(metadata: Data) -> Bool {
+        for line in metadata.split(separator: 0x0A) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  object["type"] as? String == "session_meta",
+                  let payload = object["payload"] as? [String: Any],
+                  let provider = payload["model_provider"] as? String else { continue }
+            return provider == "openai" || provider == "openai_http"
+        }
+        return false
+    }
+
+    /// Clamp an asynchronous attribution query to the displayed snapshot.
+    /// The attributed and remaining buckets must sum to that snapshot exactly.
+    static func split(_ stat: ModelUsage, official: ModelUsage?) -> (official: ModelUsage, remaining: ModelUsage) {
+        var matched = ModelUsage(model: stat.model)
+        matched.calls = min(stat.calls, official?.calls ?? 0)
+        matched.inputTokens = min(stat.inputTokens, official?.inputTokens ?? 0)
+        matched.outputTokens = min(stat.outputTokens, official?.outputTokens ?? 0)
+        matched.cacheReadTokens = min(stat.cacheReadTokens, official?.cacheReadTokens ?? 0)
+        matched.cacheCreationTokens = min(stat.cacheCreationTokens, official?.cacheCreationTokens ?? 0)
+        var remaining = stat
+        remaining.calls -= matched.calls
+        remaining.inputTokens -= matched.inputTokens
+        remaining.outputTokens -= matched.outputTokens
+        remaining.cacheReadTokens -= matched.cacheReadTokens
+        remaining.cacheCreationTokens -= matched.cacheCreationTokens
+        return (matched, remaining)
+    }
+}

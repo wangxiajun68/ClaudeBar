@@ -62,54 +62,57 @@ struct CursorTokenUsageCard: View {
                     .foregroundColor(Theme.textTertiary())
             }
 
-            Text(ledger.window == nil ? "请先在本机登录 Cursor，再刷新用量。" : coverageLabel)
-                .font(Theme.Font.micro)
-                .foregroundColor(Theme.textSecondary)
-                .frame(minHeight: 28, alignment: .leading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(ledger.window == nil ? "请先在本机登录 Cursor，再刷新用量。" : coverageLabel)
+                        .font(Theme.Font.micro)
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(minHeight: 28, alignment: .leading)
 
-            HairlineDivider()
-            Text("模型明细")
-                .font(Theme.Font.microSemibold)
-                .foregroundColor(Theme.textSecondary)
-            if ranked.isEmpty {
-                StandbyEmptyState(label: ledger.loading ? "正在读取用量…" : "暂无用量",
-                                  symbol: "chart.bar", tint: Theme.textSecondary)
-            } else {
-                ForEach(ranked, id: \.model) { row in
-                    HStack(spacing: 8) {
-                        Text(row.model).lineLimit(1).truncationMode(.middle).help(row.model)
-                        Spacer(minLength: 4)
-                        RollingNumberText(UsageStats.formatTokens(row.totalTokens)).monospacedDigit()
-                    }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                }
-                Text("Token 构成")
-                    .font(Theme.Font.microSemibold)
-                    .foregroundColor(Theme.textSecondary)
-                    .padding(.top, 4)
-                TokenMixStrip(stats: stats, compact: true)
-                    .help("输入 \(total.inputTokens.formatted()) · 缓存读取 \(total.cacheReadTokens.formatted()) · 缓存写入 \(total.cacheCreationTokens.formatted()) · 输出 \(total.outputTokens.formatted()) Token")
-            }
+                    HairlineDivider()
+                    Text("模型明细")
+                        .font(Theme.Font.microSemibold)
+                        .foregroundColor(Theme.textSecondary)
+                    if ranked.isEmpty {
+                        StandbyEmptyState(label: ledger.loading ? "正在读取用量…" : "暂无用量",
+                                          symbol: "chart.bar", tint: Theme.textSecondary)
+                    } else {
+                        ForEach(ranked, id: \.model) { row in
+                            HStack(spacing: 8) {
+                                Text(row.model).lineLimit(1).truncationMode(.middle).help(row.model)
+                                Spacer(minLength: 4)
+                                RollingNumberText(UsageStats.formatTokens(row.totalTokens)).monospacedDigit()
+                            }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                        }
+                        Text("Token 构成")
+                            .font(Theme.Font.microSemibold)
+                            .foregroundColor(Theme.textSecondary)
+                            .padding(.top, 4)
+                        TokenMixStrip(stats: stats, compact: true)
+                            .help("输入 \(total.inputTokens.formatted()) · 缓存读取 \(total.cacheReadTokens.formatted()) · 缓存写入 \(total.cacheCreationTokens.formatted()) · 输出 \(total.outputTokens.formatted()) Token")
+                    }
 
-            if ledger.window != nil, ledger.isStale(for: window) {
-                Text(ledger.loading
-                     ? "正在读取所选周期，暂显示上次统计。"
-                     : "仅覆盖上述日期，未覆盖所选周期的完整用量。")
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.Ink.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let note = ledger.note {
-                Text(note + (ledger.window == nil ? "，请稍后重试。" : "，已保留上次统计。"))
-                    .font(Theme.Font.micro)
-                    .foregroundColor(Theme.Ink.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                    if ledger.window != nil, ledger.isStale(for: window) {
+                        Text(ledger.loading
+                             ? "正在读取所选周期，暂显示上次统计。"
+                             : "仅覆盖上述日期，未覆盖所选周期的完整用量。")
+                            .font(Theme.Font.micro)
+                            .foregroundColor(Theme.Ink.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let note = ledger.note {
+                        Text(note + (ledger.window == nil ? "，请稍后重试。" : "，已保留上次统计。"))
+                            .font(Theme.Font.micro)
+                            .foregroundColor(Theme.Ink.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
         .tile(tint: Theme.cursor, hovered: hovered,
-              lens: DepthLensSpec(tint: Theme.cursor, size: 124))
-        .folderPeek(hovered)
+              lens: DepthLensSpec(tint: Theme.cursor, size: 124), lift: false)
         .hoverState($hovered)
         .task(id: window) { refresh() }
     }

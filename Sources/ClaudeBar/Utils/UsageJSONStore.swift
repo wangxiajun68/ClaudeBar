@@ -145,6 +145,23 @@ final class UsageJSONStore {
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
 
+    /// Period rows retaining transcript identity for provider attribution.
+    func fetchByPath(startDay: String, endDay: String, pathPrefix: String) -> [String: [ModelUsage]] {
+        lock.lock(); defer { lock.unlock() }
+        loadLocked()
+        var grouped: [String: [String: ModelUsage]] = [:]
+        for row in rollup.values where row.day >= startDay && row.day <= endDay && row.path.hasPrefix(pathPrefix) {
+            var usage = grouped[row.path]?[row.model] ?? ModelUsage(model: row.model)
+            usage.calls += row.calls
+            usage.inputTokens += row.input
+            usage.outputTokens += row.output
+            usage.cacheReadTokens += row.cacheRead
+            usage.cacheCreationTokens += row.cacheCreate
+            grouped[row.path, default: [:]][row.model] = usage
+        }
+        return grouped.mapValues { Array($0.values) }
+    }
+
     /// All-time usage belonging to one transcript, identified by its file
     /// suffix. Claude and Codex use different filename forms.
     func fetchSession(pathPrefix: String, pathSuffix: String) -> [ModelUsage] {

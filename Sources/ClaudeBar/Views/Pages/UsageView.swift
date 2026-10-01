@@ -5,6 +5,12 @@ struct UsageView: View {
     @ProviderState([.usage, .configuration]) var providerStore: ProviderStore
     @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showCustomDatePicker = false
+    @State private var officialCodexUsage: [ModelUsage] = []
+    @State private var attributionInterval: DateInterval?
+    private struct AttributionRequest: Equatable {
+        let interval: DateInterval
+        let codex: [ModelUsage]
+    }
 
     var body: some View {
         // Derived once: the subtitle's caption read both of these, so the body
@@ -72,6 +78,12 @@ struct UsageView: View {
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)
+        .task(id: AttributionRequest(interval: interval, codex: providerStore.usageBySource[.codex] ?? [])) {
+            let rows = await Task.detached(priority: .utility) { UsageIndex.fetchOfficialCodex(in: interval) }.value
+            guard !Task.isCancelled else { return }
+            officialCodexUsage = rows
+            attributionInterval = interval
+        }
     }
 
     private var titleBar: some View {
@@ -79,25 +91,21 @@ struct UsageView: View {
     }
 
     private var platformBreakdown: some View {
-        let total = providerStore.usageTotalBySource.reduce(0) { $0 + $1.tokens }
+        let total = [UsageSource.claude, .codex].reduce(0) { $0 + (providerStore.usageBySource[$1] ?? []).reduce(0) { $0 + $1.totalTokens } }
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
             SectionHeader(icon: "square.grid.2x2", title: "按平台",
                           tint: Theme.claude, ink: Theme.Ink.claude,
-                          count: UsageSource.allCases.count + 1)
+                          count: 3)
             Text("Cursor 按官方账单单独统计；上方图表和其他平台占比仅包含本地记录。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
             TileGrid(.pageUsage) {
-                ForEach(UsageSource.allCases) { source in
-                    UsagePlatformCard(
-                        source: source,
-                        stats: providerStore.usageBySource[source] ?? [],
-                        days: providerStore.usageDaysBySource[source] ?? [],
-                        overallTokens: total
-                    )
-                }
+                UsagePlatformCard(source: .claude, stats: providerStore.usageBySource[.claude] ?? [],
+                                  days: providerStore.usageDaysBySource[.claude] ?? [], overallTokens: total)
                 CursorTokenUsageCard(window: UsageStats.interval(
                     for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
+                UsagePlatformCard(source: .codex, stats: providerStore.usageBySource[.codex] ?? [],
+                                  days: providerStore.usageDaysBySource[.codex] ?? [], overallTokens: total)
             }
         }
     }
@@ -144,9 +152,9 @@ struct UsageView: View {
             SectionHeader(icon: "building.2", title: "按供应商",
                           tint: Theme.statusSuccess, ink: Theme.Ink.success,
                           count: groups.count,
-                          note: "按当前模型配置归属",
+                          note: "会话来源优先 · 其余按配置归属",
                           noteTint: Theme.textTertiary())
-                .help("历史会话未记录请求时的供应商；同名模型涉及多个供应商时计入未归属")
+                .help("Codex 官方用量按会话供应商标识归属；其他记录按当前模型配置匹配，缺失或多重匹配计入未归属。Cursor 账单保持独立。")
             if total == 0 && !providerStore.usageLoading {
                 StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
                                   tint: Theme.textSecondary, block: true)
@@ -197,13 +205,20 @@ struct UsageView: View {
         for provider in codexStore.providers { register(.codex, provider.asDisplayProvider) }
 
         var grouped: [String: [String: ModelUsage]] = [:]
+        func add(_ stat: ModelUsage, to name: String) {
+            guard stat.totalTokens > 0 else { return }
+            var model = grouped[name]?[stat.model] ?? ModelUsage(model: stat.model)
+            model.merge(stat)
+            grouped[name, default: [:]][stat.model] = model
+        }
+        let interval = UsageStats.interval(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+        let official = Dictionary((attributionInterval == interval ? officialCodexUsage : []).map { ($0.model, $0) }, uniquingKeysWith: { first, _ in first })
         for source in UsageSource.allCases {
             for stat in providerStore.usageBySource[source] ?? [] {
+                let parts = UsageProviderAttribution.split(stat, official: source == .codex ? official[stat.model] : nil)
+                add(parts.official, to: "OpenAI 官方")
                 let owners = candidates(for: source, key: Self.normalized(stat.model))
-                let name = owners.count == 1 ? (owners.first ?? "未归属") : "未归属"
-                var model = grouped[name]?[stat.model] ?? ModelUsage(model: stat.model)
-                model.merge(stat)
-                grouped[name, default: [:]][stat.model] = model
+                add(parts.remaining, to: owners.count == 1 ? (owners.first ?? "未归属") : "未归属")
             }
         }
         return grouped.map { name, models in
@@ -272,7 +287,6 @@ private struct UsageProviderCard: View {
 
     var body: some View {
         let total = group.total
-        let share = overallTokens > 0 ? Double(total.totalTokens) / Double(overallTokens) : 0
         let shareLabel = UsageAnalysis.share(total.totalTokens, of: overallTokens)
         return Group {
             VStack(alignment: .leading, spacing: 10) {
@@ -311,15 +325,7 @@ private struct UsageProviderCard: View {
                     }
                 }
 
-                AuroraSparkline(
-                    values: AuroraSparkline.accentCurve(peak: min(max(share, 0.08), 1)),
-                    tint: Theme.chartPurple,
-                    live: hovered
-                )
-                .frame(height: 28)
-                .help("装饰曲线，不代表逐日用量；真实趋势见上方用量图。")
-
-                Group {
+                ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         HairlineDivider()
                         Text("模型明细")
@@ -344,9 +350,8 @@ private struct UsageProviderCard: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .tile(hovered: hovered)
-            .folderPeek(hovered)
+            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
+            .tile(hovered: hovered, lift: false)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
         .hoverState($hovered)
@@ -397,20 +402,13 @@ private struct UsagePlatformCard: View {
                         RollingNumberText(shareLabel)
                             .font(Theme.Font.tileValueSmall)
                             .foregroundColor(Theme.textPrimary)
-                        Text("平台占比")
+                        Text("本地占比")
                             .font(Theme.Font.micro)
                             .foregroundColor(Theme.textTertiary())
                     }
                 }
 
-                AuroraSparkline(
-                    values: days.isEmpty ? [0, 0] : days.map { Double($0.totalTokens) },
-                    tint: Theme.chartPurple,
-                    live: hovered
-                )
-                .frame(height: 28)
-
-                Group {
+                ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         HairlineDivider()
                         Text("模型明细")
@@ -442,14 +440,13 @@ private struct UsagePlatformCard: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity).frame(height: 360, alignment: .topLeading)
             // One hue for the wash and the rings — the source's *shape* colour.
             // `source.ink` is the text mix (the title and the counts inside use
             // it); passing it as the wash made the surface darker than the
             // glyphs it was supposed to sit behind.
             .tile(tint: source.color, hovered: hovered,
-                  lens: DepthLensSpec(tint: source.color, size: 124))
-            .folderPeek(hovered)
+                  lens: DepthLensSpec(tint: source.color, size: 124), lift: false)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         }
         .hoverState($hovered)

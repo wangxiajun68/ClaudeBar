@@ -352,6 +352,54 @@ struct UsageIndex {
         return out
     }
 
+    /// Read-only attribution from indexed period rows and each rollout header.
+    /// Called off the main actor; never reads auth/config files or infers from model names.
+    static func fetchOfficialCodex(in interval: DateInterval) -> [ModelUsage] {
+        let (startDay, endDay) = dayBounds(interval)
+        let byPath: [String: [ModelUsage]]
+        if !DiskPersistence.useDatabase {
+            byPath = UsageJSONStore.shared.fetchByPath(startDay: startDay, endDay: endDay, pathPrefix: "codex:")
+        } else {
+            guard let db = connection() else { return [] }
+            lock.lock()
+            var stmt: OpaquePointer?
+            let sql = """
+                SELECT path, model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
+                FROM rollup WHERE day BETWEEN ?1 AND ?2 AND path LIKE 'codex:%' GROUP BY path, model
+                """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { lock.unlock(); return [] }
+            sqlite3_bind_text(stmt, 1, startDay, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, endDay, -1, SQLITE_TRANSIENT)
+            var grouped: [String: [ModelUsage]] = [:]
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let path = String(cString: sqlite3_column_text(stmt, 0))
+                var usage = ModelUsage(model: String(cString: sqlite3_column_text(stmt, 1)))
+                usage.calls = Int(sqlite3_column_int64(stmt, 2))
+                usage.inputTokens = Int(sqlite3_column_int64(stmt, 3))
+                usage.outputTokens = Int(sqlite3_column_int64(stmt, 4))
+                usage.cacheReadTokens = Int(sqlite3_column_int64(stmt, 5))
+                usage.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 6))
+                grouped[path, default: []].append(usage)
+            }
+            sqlite3_finalize(stmt)
+            lock.unlock()
+            byPath = grouped
+        }
+        var models: [String: ModelUsage] = [:]
+        for (path, rows) in byPath {
+            guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: String(path.dropFirst("codex:".count)))) else { continue }
+            let header = try? handle.read(upToCount: 65_536)
+            try? handle.close()
+            guard let header, UsageProviderAttribution.isOfficialCodex(metadata: header) else { continue }
+            for row in rows {
+                var merged = models[row.model] ?? ModelUsage(model: row.model)
+                merged.merge(row)
+                models[row.model] = merged
+            }
+        }
+        return models.values.sorted { $0.totalTokens > $1.totalTokens }
+    }
+
     /// Per-day totals within `interval`, tagged by source (river chart).
     static func fetchDailyBySource(in interval: DateInterval) -> [UsageSource: [DayUsage]] {
         let (startDay, endDay) = dayBounds(interval)
