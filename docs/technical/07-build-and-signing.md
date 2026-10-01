@@ -20,7 +20,8 @@
 ```bash
 xattr -cr "$APP_BUNDLE"                        # 1. 清扩展属性（关键！）
 
-codesign ... --options runtime "$BATTERYCTL"    # 2. 电池辅助进程（Resources/claudebar-batteryctl）
+codesign ... --options runtime --identifier claudebar-batteryctl "$BATTERYCTL"    # 2. 电池辅助进程（Resources/claudebar-batteryctl）
+codesign ... --options runtime --identifier claudebar-fanctl     "$FANCTL"        # 2b. 风扇辅助进程
 codesign ... --entitlements widget.plist "$APPEX/.../ClaudeBarWidget"  # 3. appex 二进制
 codesign ... --entitlements widget.plist "$APPEX_DIR"                  # 4. appex bundle
 codesign ... --entitlements app.plist   "$MACOS_DIR/ClaudeBar"         # 5. 主二进制
@@ -50,6 +51,7 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 b
 2. **`xattr -cr` 两次**：签名前一次；`cp` 安装到 /Applications 后再一次（`cp` 会重新引入 `com.apple.FinderInfo` 等扩展属性，导致 `codesign --deep --strict` 失败、Widget 加载失败）。
 3. **Widget 直接编译进 appex**：不经过主 app MacOS/ 的中间产物，避免 codesign 签到多余二进制。
 4. **不签 `--deep`**：App Group 容器等不需深签；自底向上显式签名更可控。
+5. **辅助进程必须钉 `--identifier`**：不钉时 codesign 用**输出文件名**加上刚嵌入的 Mach-O uuid 推导标识符（`claudebar-batteryctl-<uuid>`）。uuid 每次编译都变，标识符跟着变，签出来的 CDHash 就永远和已安装的那份对不上——`BatteryHelperInstaller.isInstalled()` 因此每次重建都为假，重新弹管理员授权并把充电设置重设一遍。固定标识符后签名后的 CDHash 可复现（只由编译产物与标识符决定）。
 
 ## CI 与发行物
 

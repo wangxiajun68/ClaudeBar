@@ -488,8 +488,18 @@ AENT
 echo "=== Code-signing ==="
 xattr -cr "$APP_BUNDLE"
 
-codesign --force --sign "$SIGN_IDENTITY" --options runtime "$BATTERYCTL_OUT"
-if [ -f "${FANCTL_OUT:-}" ]; then codesign --force --sign "$SIGN_IDENTITY" --options runtime "$FANCTL_OUT"; fi
+# `--identifier` is pinned on both helpers: without it codesign derives the
+# identifier from the output **filename** plus the Mach-O uuid it just embedded
+# ("claudebar-batteryctl-<uuid>"). That uuid changes every compile and the
+# identifier therefore changed with it, so the helper's CDHash never matched the
+# installed copy and `BatteryHelperInstaller.isInstalled()` was false after every
+# rebuild — re-asking for the admin password and re-applying the charge limit.
+# A fixed identifier makes the signed CDHash reproducible across rebuilds.
+codesign --force --sign "$SIGN_IDENTITY" --options runtime \
+    --identifier claudebar-batteryctl "$BATTERYCTL_OUT"
+if [ -f "${FANCTL_OUT:-}" ]; then
+    codesign --force --sign "$SIGN_IDENTITY" --options runtime --identifier claudebar-fanctl "$FANCTL_OUT"
+fi
 
 # Sign bottom-up (no --deep): appex binary -> appex bundle -> main binary.
 # The main binary is signed explicitly so its entitlements are embedded
