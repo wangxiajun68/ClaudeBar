@@ -287,7 +287,7 @@ struct ConnectorsView: View {
                     .font(Theme.Font.microMedium)
                     .foregroundStyle(Theme.textSecondary)
                 if bulkAvailable {
-                    ChipButton("批量管理", symbol: "checklist", on: batchMode) {
+                    ActionButton(batchMode ? "完成管理" : "批量管理", symbol: "checklist") {
                         withAnimation(Theme.Motion.state) { toggleBatchMode() }
                     }
                     .help(batchMode ? "退出批量管理；已选内容会被清空" : "选中多张卡片，一次停用、启用或移除")
@@ -1030,12 +1030,10 @@ private struct ConnectorCard: View {
             Button(action: onDetails) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 10) {
-                        // Bulk mode puts the tick *before* the well, at the
-                        // card's leading edge: the header is where the eye
-                        // already is, and a checkbox in the action row would sit
-                        // beside the very buttons it replaces.
+                        // Reserve the leading slot for the independent selection
+                        // button overlaid below, outside the detail button.
                         if selecting {
-                            ConnectorTick(selected: selected) { onToggleSelection?() }
+                            Color.clear.frame(width: 24, height: 24)
                         }
                         // A connector that belongs to one client shows that
                         // client's mark; the kind (plugin / skill / MCP) is
@@ -1101,16 +1099,12 @@ private struct ConnectorCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
-        // The tick is *overlaid* at the card's corner rather than placed in the
-        // header row: it needs the same position on every card regardless of how
-        // long the name is or whether the card carries one platform pill or two,
-        // and a grid whose checkboxes wander is a grid you have to search. 24 /
-        // 26 centres it on the `GlyphWell` beside it (16pt card padding + half a
-        // 40pt well, and 16 + 10 in from the 16pt corner radius).
+        // One independent selection target, aligned with the reserved header
+        // slot. Keeping it outside the detail button avoids nested buttons.
         .overlay(alignment: .topLeading) {
             if selecting {
                 ConnectorTick(selected: selected) { onToggleSelection?() }
-                    .offset(x: 26, y: 24)
+                    .offset(x: 16, y: 24)
             }
         }
         .tile(tint: faceTint, hovered: hovered, lens: lens)
