@@ -284,7 +284,7 @@ source += '''
                     var weather = WeatherReading(place: "广州 · 天河区", temperatureC: 29, feelsLikeC: 32,
                         conditionCode: scene == "rain" ? 296 : scene == "heavy" ? 308 : scene == "thunder" ? 389 : scene == "fog" ? 248 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
                         windKph: 8, windDirection: "东南", isDay: scene != "night", sunrise: "06:18", sunset: "18:22",
-                        rainChance: ["heavy", "thunder"].contains(scene) ? 90 : 20, observedAt: Date(), latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
+                        rainChance: ["heavy", "thunder"].contains(scene) ? 90 : 20, observedAt: fixtureSkyDate, latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
                     var calendar = Calendar(identifier: .gregorian)
                     calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
                     let start = calendar.startOfDay(for: fixtureSkyDate)
@@ -310,7 +310,7 @@ source += '''
                             bonusSpendCents: nil, billingCycleEnd: Date().addingTimeInterval(9 * 86400)),
                         cursorLoading: false, cursorNote: empty ? "未读取到 Cursor 额度" : nil,
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
-                        weatherNote: nil, typeface: typeface, weatherRendering: fixtureWeatherRendering, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
+                        weatherNote: nil, typeface: typeface, language: typeface.supportsChinese ? .chinese : .english, weatherRendering: fixtureWeatherRendering, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})
                         .environment(\\.colorScheme, dark ? .dark : .light)
                         .frame(width: width).padding(24).background(Theme.bgPrimary)

@@ -289,12 +289,9 @@ enum GreetingTypesetter {
         CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 
-    /// The phrase is sized by the card's width (15 %, capped at 172pt), then
-    /// reduced until three things hold: the ascenders clear the corner
-    /// inscriptions (`topClear`), the descenders clear the bottom instruments
-    /// (`bottomClear`), and the line fits between the margins. The name rides
-    /// the baseline after the phrase when there is room, and drops under the
-    /// phrase's right end when there is not.
+    /// Maximize measured ink inside the free band. Short greetings grow until
+    /// height limits them; longer greetings shrink to fit the card width.
+    /// Compare inline and dropped signatures without sacrificing phrase size.
     /// `topClear` / `bottomClear` bound the free band between the instruments
     /// along the top and bottom edges; the ink (and a dropped name) is centred
     /// in it, a touch above true centre so it reads as sitting, not sinking.
@@ -336,6 +333,12 @@ enum GreetingTypesetter {
     }
     private static let layoutCache = LayoutCache()
 
+    static func invalidateLayouts() {
+        layoutCache.lock.lock()
+        layoutCache.entries.removeAll()
+        layoutCache.lock.unlock()
+    }
+
     private static func computeLayout(_ phrase: String, name: String, typeface: GreetingTypeface,
                                       cardWidth: CGFloat, skyHeight: CGFloat, margin: CGFloat,
                                       topClear: CGFloat?, bottomClear: CGFloat?) -> Layout {
@@ -350,51 +353,51 @@ enum GreetingTypesetter {
         let available = cardWidth - margin * 2
         let ascent = max(0, -line.bounds.minY), descent = max(0, line.bounds.maxY)
 
-        var size = min(172, cardWidth * 0.15, band / max(0.01, ascent + descent + weight * 2))
-        size = min(size, available / max(0.01, line.bounds.maxX - min(0, line.bounds.minX) + weight * 2))
-
+        var nameWidths: [CGFloat: CGFloat] = [:]
         func nameMetrics(for size: CGFloat) -> (size: CGFloat, width: CGFloat) {
             let nameSize = min(28, max(18, (size * 0.18).rounded()))
-            return (nameSize, caption.isEmpty ? 0 : measure(nameLine(caption, size: nameSize)))
+            if caption.isEmpty { return (nameSize, 0) }
+            if let width = nameWidths[nameSize] { return (nameSize, width) }
+            let width = measure(nameLine(caption, size: nameSize))
+            nameWidths[nameSize] = width
+            return (nameSize, width)
         }
-        // Inline if the name fits after the phrase at no less than 88 % of the
-        // width-driven size; otherwise the phrase keeps its size and the name
-        // drops a line.
-        var inline = false
-        var name = nameMetrics(for: size)
-        if !caption.isEmpty {
-            // Account for the phrase's negative left bearing as well as the
-            // gap. Script fonts can extend well before their pen origin.
-            let inlineSize = min(size, (available - name.width) / max(0.01, line.bounds.width + weight + 0.22))
-            if inlineSize >= size * 0.88 {
-                size = inlineSize
-                inline = true
-            } else {
-                // Reserve the larger signature's line below the lowest ink.
-                size = min(size, (band - name.size * 2) / max(0.01, ascent + descent + weight * 2))
+        func extents(size: CGFloat, inline: Bool) -> (head: CGFloat, hang: CGFloat, drop: CGFloat) {
+            let name = nameMetrics(for: size)
+            let head = (ascent + weight) * size
+            let tail = (descent + weight) * size
+            if caption.isEmpty { return (head, tail, 0) }
+            if inline { return (max(head, name.size * 0.78), max(tail, name.size * 0.24), 0) }
+            let drop = max(tail, name.size) + name.size * 1.6
+            return (head, max(tail, drop + name.size * 0.24), drop)
+        }
+        func largestSize(inline: Bool) -> CGFloat {
+            var low: CGFloat = 0
+            var high = min(band / max(0.01, ascent + descent + weight * 2),
+                           available / max(0.01, line.bounds.width + weight * 2))
+            // Name size varies with the phrase, so solve their combined bounds
+            // rather than subtracting a fixed line height or counting letters.
+            for _ in 0..<24 {
+                let candidate = (low + high) / 2
+                let name = nameMetrics(for: candidate)
+                let e = extents(size: candidate, inline: inline)
+                let width = (line.bounds.width + weight * 2) * candidate
+                let fitsWidth = caption.isEmpty || !inline
+                    ? max(width, name.width) <= available
+                    : width + candidate * 0.22 + name.width <= available
+                if fitsWidth && e.head + e.hang <= band { low = candidate } else { high = candidate }
             }
-            name = nameMetrics(for: size)
+            return low.rounded(.down)
         }
-        // A dropped name adds its own line under the descenders; the band has
-        // to hold it too.
-        if !inline, !caption.isEmpty {
-            // The drop clears whichever is taller: the script's descender or
-            // the signature itself. Both cases must fit inside the free band.
-            size = min(size,
-                       (band - name.size * 1.9) / max(0.01, ascent + descent + weight * 2),
-                       (band - name.size * 2.9) / max(0.01, ascent + weight))
-            name = nameMetrics(for: size)
-        }
-        // A 40pt floor overflowed tall faces such as Zapfino in narrow cards.
-        // Respect measured ink bounds rather than the nominal em size.
-        size = max(16, size.rounded(.down))
-
-        // A dropped name hangs under the phrase's right end, which is where the
-        // comma and the last descender are — so it clears the lowest ink.
-        let drop = max((descent + weight) * size, name.size) + name.size * 1.6
-        let hang = inline || caption.isEmpty ? (descent + weight) * size : max((descent + weight) * size, drop + name.size * 0.3)
-        let spare = max(0, band - (ascent + weight) * size - hang)
-        let baseline = (top + spare * 0.46 + (ascent + weight) * size).rounded()
+        let droppedSize = largestSize(inline: false)
+        let inlineSize = caption.isEmpty ? droppedSize : largestSize(inline: true)
+        let inline = !caption.isEmpty && inlineSize >= droppedSize
+        let size = max(1, inline ? inlineSize : droppedSize)
+        let name = nameMetrics(for: size)
+        let e = extents(size: size, inline: inline)
+        let drop = e.drop
+        let spare = max(0, band - e.head - e.hang)
+        let baseline = (top + spare * 0.46 + e.head).rounded()
         let origin = CGPoint(x: (margin + size * weight - line.bounds.minX * size).rounded(), y: baseline)
         let ink = CGRect(x: origin.x + line.bounds.minX * size, y: origin.y + line.bounds.minY * size,
                          width: line.bounds.width * size, height: line.bounds.height * size)

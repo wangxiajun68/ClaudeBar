@@ -65,6 +65,9 @@ enum FilePaths {
         return dir
     }
 
+    /// Mutable greeting fonts, isolated by build channel.
+    static var greetingFontsDir: URL { appSupportDir.appendingPathComponent("GreetingFonts", isDirectory: true) }
+
     /// JSON / JSONL logs used when the SQLite stores are turned off.
     static var logsDir: URL {
         let dir = appSupportDir.appendingPathComponent("logs", isDirectory: true)

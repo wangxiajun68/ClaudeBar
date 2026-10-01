@@ -30,6 +30,27 @@ source += r'''
         func require(_ condition: Bool, _ message: String = "Regression failed") {
             guard condition else { print("FAIL: " + message); exit(1) }
         }
+        // Picker deletion policy is pure production logic: no UserDefaults.
+        for chinese in [true, false] {
+            var removed: Set<String> = []
+            let original = GreetingTypeface.available(chinese: chinese, removed: removed)
+            require(original.count >= (chinese ? 14 : 39), "Creative font catalogue incomplete")
+            let preferred = original[0]
+            require(GreetingTypeface.canRemove(preferred, removed: removed), "First font can be removed")
+            removed.insert(preferred.rawValue)
+            let fallback = GreetingTypeface.resolved(preferred, chinese: chinese, removed: removed)
+            require(fallback != preferred && !removed.contains(fallback.rawValue), "Deleted current font must fall back")
+            require(fallback.supportsChinese == chinese, "Fallback must stay in the selected language")
+            for face in original where GreetingTypeface.canRemove(face, removed: removed) {
+                removed.insert(face.rawValue)
+            }
+            let survivor = GreetingTypeface.available(chinese: chinese, removed: removed)
+            require(survivor.count == (chinese ? 1 : 4), "Keep last Chinese face and all system faces")
+            require(survivor.allSatisfy { !GreetingTypeface.canRemove($0, removed: removed) }, "System fonts must not be deletable")
+            require(!GreetingTypeface.canRemove(survivor[0], removed: removed), "Last face cannot be deleted")
+            removed.subtract(original.map(\.rawValue))
+            require(GreetingTypeface.available(chinese: chinese, removed: removed) == original, "Restore must recover the catalogue")
+        }
         let solarISO = ISO8601DateFormatter()
         func date(_ value: String) -> Date { solarISO.date(from: value)! }
         let zone = TimeZone(identifier: "Asia/Shanghai")!
@@ -98,7 +119,8 @@ source += r'''
             let margin: CGFloat = width >= 900 ? 32 : 24
             let top = margin - 8 + 88 + 6, bottom = sky - 100
             for face in GreetingTypeface.allCases {
-                for phrase in ["good morning,", "good afternoon,", "good evening,", "happy new year,"] {
+                if face.supportsChinese { require(GreetingScript.isAvailable(face), "Bundled Chinese face missing: \(face)") }
+                for phrase in (face.supportsChinese ? ["早点休息呀，", "愿你自在绽放，", "新春快乐，", "雨天也温柔，"] : ["good morning,", "good afternoon,", "good evening,", "happy new year,"]) {
                     for name in ["wangxiajun", "Xiajun Wang", "王夏军", "Alexandra Montgomery-Williams", ""] {
                         let layout = GreetingTypesetter.layout(phrase, name: name, typeface: face,
                             cardWidth: width, skyHeight: sky, margin: margin, topClear: top, bottomClear: bottom)
@@ -126,6 +148,26 @@ source += r'''
                 }
             }
         }
+        let short = GreetingTypesetter.layout("晚安，", name: "", typeface: .chillRoundBold,
+            cardWidth: 1400, skyHeight: 600, margin: 32, topClear: 120, bottomClear: 500)
+        let long = GreetingTypesetter.layout("愿今天的你自在绽放，", name: "", typeface: .chillRoundBold,
+            cardWidth: 1400, skyHeight: 600, margin: 32, topClear: 120, bottomClear: 500)
+        require(short.fontSize > 172 && short.fontSize > long.fontSize, "Short greetings must grow beyond old cap")
+        require(long.phraseFrame.maxX <= 1369, "Long greeting must fit")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            try GreetingScript.prepareLocalFiles(directory: directory, removed: [])
+            let file = directory.appendingPathComponent("ChillRoundGothic-Bold.otf")
+            require(FileManager.default.fileExists(atPath: file.path), "Local font must be materialized")
+            try GreetingScript.prepareLocalFiles(directory: directory, removed: [GreetingTypeface.chillRoundBold.rawValue])
+            require(!FileManager.default.fileExists(atPath: file.path), "Deletion must remove the local file")
+            require(!GreetingScript.isAvailable(.chillRoundBold), "Deleted font descriptor must be evicted")
+            try GreetingScript.prepareLocalFiles(directory: directory, removed: [GreetingTypeface.chillRoundBold.rawValue])
+            require(!FileManager.default.fileExists(atPath: file.path), "Removed font must not reappear on launch")
+            try GreetingScript.prepareLocalFiles(directory: directory, removed: [])
+            require(FileManager.default.fileExists(atPath: file.path) && GreetingScript.isAvailable(.chillRoundBold), "Restore must recreate the local file")
+        } catch { fatalError("Local font regression: \(error)") }
         let iso = ISO8601DateFormatter()
         for sky: WeatherReading.Sky in [.clear, .partly, .cloudy, .rain, .drizzle, .thunder, .snow, .fog] {
             let day = SkyScene.make(sky: sky, rainChance: 90, windKph: 12, windDirection: "东南",

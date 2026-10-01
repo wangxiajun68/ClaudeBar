@@ -232,9 +232,65 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(greetingWeatherRendering, forKey: "greetingWeatherRendering") }
     }
 
-    /// 概览问候语的手写字体。存 `GreetingTypeface.rawValue`；认不出的值回到默认。
+    /// 问候语言以中文为默认，日期始终跟随用户当地时区。
+    @Published var greetingLanguage: GreetingPhrase.Language {
+        didSet { UserDefaults.standard.set(greetingLanguage.rawValue, forKey: "greetingLanguage") }
+    }
+
+    /// 问候艺术字体。保留旧字体的持久化标识，不安装系统字体。
     @Published var greetingTypeface: GreetingTypeface {
         didSet { UserDefaults.standard.set(greetingTypeface.rawValue, forKey: "greetingTypeface") }
+    }
+
+    /// Local library deletions; seed resources in the signed bundle remain available for restore.
+    @Published var removedGreetingTypefaces: Set<String> {
+        didSet { UserDefaults.standard.set(removedGreetingTypefaces.sorted(), forKey: "removedGreetingTypefaces") }
+    }
+
+    @Published private(set) var greetingFontsBusy = false
+    @Published private(set) var greetingFontError: String?
+    private var greetingFontsPrepared = false
+
+    @MainActor
+    func prepareGreetingFonts() async {
+        guard !greetingFontsPrepared, !greetingFontsBusy else { return }
+        await updateGreetingFonts(removed: removedGreetingTypefaces)
+    }
+
+    @MainActor
+    func removeGreetingTypeface(_ face: GreetingTypeface) async {
+        guard face.isBundled, !greetingFontsBusy,
+              GreetingTypeface.canRemove(face, removed: removedGreetingTypefaces) else { return }
+        var removed = removedGreetingTypefaces
+        removed.insert(face.rawValue)
+        await updateGreetingFonts(removed: removed)
+    }
+
+    @MainActor
+    func restoreGreetingTypefaces(chinese: Bool) async {
+        guard !greetingFontsBusy else { return }
+        var removed = removedGreetingTypefaces
+        removed.subtract(GreetingTypeface.allCases.filter { $0.supportsChinese == chinese }.map(\.rawValue))
+        await updateGreetingFonts(removed: removed)
+    }
+
+    @MainActor
+    private func updateGreetingFonts(removed: Set<String>) async {
+        greetingFontsBusy = true
+        greetingFontError = nil
+        defer { greetingFontsBusy = false }
+        do {
+            try await Task.detached(priority: .utility) {
+                try GreetingScript.prepareLocalFiles(directory: FilePaths.greetingFontsDir, removed: removed)
+            }.value
+            GreetingTypesetter.invalidateLayouts()
+            removedGreetingTypefaces = removed
+            greetingTypeface = GreetingTypeface.resolved(greetingTypeface, chinese: greetingLanguage == .chinese,
+                                                         removed: removed)
+            greetingFontsPrepared = true
+        } catch {
+            greetingFontError = "字体文件操作失败：\(error.localizedDescription)"
+        }
     }
 
     private var didSetReady = false
@@ -247,6 +303,8 @@ final class AppPreferences: ObservableObject {
         weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
         amapAPIKey = UserDefaults.standard.string(forKey: "amapAPIKey") ?? ""
         greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
+        greetingLanguage = GreetingPhrase.Language(rawValue: UserDefaults.standard.string(forKey: "greetingLanguage") ?? "") ?? .chinese
+        removedGreetingTypefaces = Set(UserDefaults.standard.stringArray(forKey: "removedGreetingTypefaces") ?? [])
         greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard
         greetingWeatherRendering = UserDefaults.standard.object(forKey: "greetingWeatherRendering") as? Bool ?? true
         // Read through a `Double` sentinel rather than `object(forKey:) as? Double`:

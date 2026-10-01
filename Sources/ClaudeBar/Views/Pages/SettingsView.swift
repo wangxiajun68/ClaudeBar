@@ -11,6 +11,8 @@ struct SettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @ObservedObject var state = SettingsState()
+    @State private var fontBrowserExpanded = false
+    @State private var fontSearch = ""
     @State private var installedTerminals: Set<ResumeTerminal> = []
     @FocusState private var codexPortFocused: Bool
     @FocusState private var weatherCityFocused: Bool
@@ -275,14 +277,122 @@ struct SettingsView: View {
                 .padding(.horizontal, 20).padding(.vertical, 14)
                 .disabled(!prefs.greetingWeatherRendering)
                 SettingsDivider()
-                SettingsRow(title: "问候字体") {
+                SettingsRow(title: "问候语言") {
                     Menu {
-                        ForEach(GreetingTypeface.allCases) { typeface in
-                            Button(typeface.label) { prefs.greetingTypeface = typeface }
+                        ForEach(GreetingPhrase.Language.allCases) { language in
+                            Button(language.label) { prefs.greetingLanguage = language }
                         }
-                    } label: { InstrumentMenuLabel(title: prefs.greetingTypeface.label) }
+                    } label: { InstrumentMenuLabel(title: prefs.greetingLanguage.label) }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                        .accessibilityLabel("问候字体")
+                        .accessibilityLabel("问候语言")
+                }
+                SettingsDivider()
+                greetingFontChoices
+            }
+        }
+    }
+
+    private var greetingFontChoices: some View {
+        let chinese = prefs.greetingLanguage == .chinese
+        let selected = GreetingTypeface.resolved(prefs.greetingTypeface, chinese: chinese,
+                                                 removed: prefs.removedGreetingTypefaces)
+        let faces = GreetingTypeface.available(chinese: chinese, removed: prefs.removedGreetingTypefaces)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("问候字体").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Menu {
+                    ForEach(faces) { face in
+                        Button(face.label) { prefs.greetingTypeface = face }
+                    }
+                } label: { InstrumentMenuLabel(title: selected.label) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .accessibilityLabel("当前问候字体")
+            }
+            DisclosureGroup(isExpanded: $fontBrowserExpanded) {
+                // Do not load font files or construct previews while collapsed.
+                if fontBrowserExpanded {
+                    greetingFontManager(faces: faces, selected: selected, chinese: chinese)
+                        .padding(.top, 10)
+                }
+            } label: {
+                Text("字体预览与管理 · \(faces.count) 款")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+        .onChange(of: prefs.greetingLanguage) { _, _ in fontSearch = "" }
+        .task { await prefs.prepareGreetingFonts() }
+    }
+
+    private func greetingFontManager(faces: [GreetingTypeface], selected: GreetingTypeface, chinese: Bool) -> some View {
+        let query = fontSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = faces.filter { query.isEmpty || $0.label.localizedCaseInsensitiveContains(query)
+            || $0.character.localizedCaseInsensitiveContains(query) }
+        let removedCount = GreetingTypeface.allCases.filter {
+            $0.supportsChinese == chinese && prefs.removedGreetingTypefaces.contains($0.rawValue)
+        }.count
+        return VStack(alignment: .leading, spacing: 12) {
+            TextField("搜索字体名称或风格，如圆润、手写、复古", text: $fontSearch)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索问候字体")
+            HStack {
+                Text("删除会清除本地字体文件；可从随包资源恢复。")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 4)
+                if removedCount > 0 {
+                    Button("恢复已删除 · \(removedCount)") { Task { await prefs.restoreGreetingTypefaces(chinese: chinese) } }
+                        .font(.system(size: 10))
+                        .disabled(prefs.greetingFontsBusy)
+                }
+            }
+            if let error = prefs.greetingFontError {
+                Text(error).font(.system(size: 11)).foregroundStyle(.red)
+            }
+            if matches.isEmpty {
+                Text("没有匹配的字体，试试其他名称或风格。")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(matches) { face in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 4) {
+                            Text(face.label).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                            Spacer(minLength: 0)
+                            if face == selected {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                            }
+                        }
+                        Button { prefs.greetingTypeface = face } label: {
+                            Text(chinese ? "今天也加油" : "hello, sunshine")
+                                .font(Font(GreetingScript.font(face, size: chinese ? 26 : 32)))
+                                .lineLimit(1).minimumScaleFactor(0.65)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("选择 \(face.label)")
+                        .accessibilityValue(face == selected ? "已选择" : "未选择")
+                        HStack(spacing: 4) {
+                            Text(face.character + (face.isBundled ? "" : " · 系统字体")).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            Spacer(minLength: 0)
+                            Button(role: .destructive) { Task { await prefs.removeGreetingTypeface(face) } } label: {
+                                Image(systemName: "trash").font(.system(size: 11))
+                                    .frame(width: 24, height: 24).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(prefs.greetingFontsBusy || !face.isBundled || !GreetingTypeface.canRemove(face, removed: prefs.removedGreetingTypefaces))
+                            .accessibilityLabel("删除 \(face.label)")
+                            .help(!face.isBundled ? "macOS 自带字体，不删除系统文件" : (faces.count > 1 ? "删除本地字体文件，之后可恢复" : "每种语言至少保留一款字体"))
+                        }
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.accent.opacity(face == selected ? 0.08 : 0.02),
+                                in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(face == selected ? Theme.accent.opacity(0.7) : Theme.hairline, lineWidth: 1))
                 }
             }
         }

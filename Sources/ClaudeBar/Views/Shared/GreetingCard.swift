@@ -13,6 +13,8 @@ struct GreetingCard: View {
     @State private var city = AppPreferences.shared.weatherCity
     @State private var costDisplay = AppPreferences.shared.costDisplay
     @State private var typeface = AppPreferences.shared.greetingTypeface
+    @State private var language = AppPreferences.shared.greetingLanguage
+    @State private var removedTypefaces = AppPreferences.shared.removedGreetingTypefaces
     /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画天气图层，这张卡也不再
     /// 联网取天气（见 `GreetingCard` 自己的 `.task`）。
     @State private var weatherRendering = AppPreferences.shared.greetingWeatherRendering
@@ -63,6 +65,8 @@ struct GreetingCard: View {
             // spin forever instead of falling back to the city.
             locating: BuildChannel.promptsForSystemPermissions && PermissionGate.allows(.currentLocation),
             typeface: typeface,
+            language: language,
+            removedTypefaces: removedTypefaces,
             weatherRendering: weatherRendering,
             refreshWeather: { weather.refresh() },
             refreshQuota: { codexStore.refreshQuota(manual: true) },
@@ -77,11 +81,14 @@ struct GreetingCard: View {
         }
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
         .onReceive(AppPreferences.shared.$greetingTypeface.removeDuplicates()) { typeface = $0 }
+        .onReceive(AppPreferences.shared.$greetingLanguage.removeDuplicates()) { language = $0 }
+        .onReceive(AppPreferences.shared.$removedGreetingTypefaces.removeDuplicates()) { removedTypefaces = $0 }
         .onReceive(AppPreferences.shared.$greetingWeatherRendering.removeDuplicates()) { weatherRendering = $0 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             codexStore.refreshConfiguredModel()
         }
         .onAppear { codexStore.refreshConfiguredModel(); cursor.refresh() }
+        .task { await AppPreferences.shared.prepareGreetingFonts() }
         .task(id: surfaceVisible) {
             guard surfaceVisible, AppPreferences.shared.greetingWeatherRendering else { return }
             while !Task.isCancelled {
@@ -131,6 +138,8 @@ struct GreetingStatusSheet: View {
     var locating: Bool = false
     /// The face the greeting is written in (设置 → 问候字体).
     var typeface: GreetingTypeface = .standard
+    var language: GreetingPhrase.Language = .chinese
+    var removedTypefaces: Set<String> = []
     /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画云、雨雪、雾、闪电与
     /// 玻璃雨滴；右上不再是实时天气，而是一张贴图说明。
     var weatherRendering = true
@@ -252,7 +261,24 @@ struct GreetingStatusSheet: View {
         case .fog: return (.fog, 0)
         }
     }
-    private var phrase: GreetingPhrase.Phrase { GreetingPhrase.forDate(skyDate) }
+    private var greetingTypeface: GreetingTypeface {
+        GreetingTypeface.resolved(typeface, chinese: language == .chinese, removed: removedTypefaces)
+    }
+
+    private var phrase: GreetingPhrase.Phrase {
+        var context = GreetingPhrase.Context()
+        // A simulated sky is not an observation about the user's actual day.
+        if liveWeather, let reading, abs(skyDate.timeIntervalSince(reading.observedAt)) < 7200 {
+            context.temperature = reading.temperatureC
+            switch reading.sky {
+            case .rain, .drizzle, .thunder: context.weather = .rain
+            case .snow, .sleet: context.weather = .snow
+            case .fog: context.weather = .fog
+            default: break
+            }
+        }
+        return GreetingPhrase.forDate(skyDate, language: language, context: context)
+    }
     private var previewTime: String {
         sceneDate.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone))
     }
@@ -345,7 +371,7 @@ struct GreetingStatusSheet: View {
     var body: some View {
         let m = Metrics(width: cardWidth)
         let scene = makeScene()
-        let layout = GreetingTypesetter.layout(phrase.script + ",", name: name, typeface: typeface, cardWidth: m.width,
+        let layout = GreetingTypesetter.layout(phrase.salutation, name: name, typeface: greetingTypeface, cardWidth: m.width,
                                                skyHeight: m.sky, margin: m.margin,
                                                topClear: m.topClear, bottomClear: m.bottomClear)
         // Each information region chooses ink against its own sky band.
@@ -907,25 +933,11 @@ struct GreetingStatusSheet: View {
         let caption: String?
         if timeOffset != 0 { caption = "预览 \(previewTime)" }
         else if skyHovered, liveWeather { caption = "拖动天空 · 漫游一天" }
-        else { caption = aside(scene: scene) }
+        else { caption = nil }
         return SunPath(sunrise: times.rise, sunset: times.set, now: sceneDate, zone: zone, ink: ink, vivid: vivid,
                        caption: caption, captionAccent: timeOffset != 0)
             .allowsHitTesting(false)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: caption)
-    }
-
-    /// The phrase's own aside (late night, festivals) wins; otherwise the sky
-    /// gets one line — an umbrella, a full moon, the golden hour.
-    private func aside(scene: SkyScene) -> String? {
-        if let aside = phrase.aside { return aside }
-        let night = scene.nightness > 0.5
-        if scene.rain > 0 { return night ? "listen to the rain" : "take an umbrella" }
-        if scene.snow > 0 { return "it's snowing" }
-        if scene.weather == .fog { return "soft light today" }
-        if night, abs(scene.moonPhase - 0.5) < 0.03, scene.moonVisibility > 0.2 { return "full moon tonight" }
-        if !night, scene.sunAltitude < 8, scene.sunAltitude > -2, scene.band == .sunset { return "golden hour" }
-        if let t = reading?.temperatureC, t >= 33, !night { return "stay in the shade" }
-        return nil
     }
 
     // MARK: - Manual sky

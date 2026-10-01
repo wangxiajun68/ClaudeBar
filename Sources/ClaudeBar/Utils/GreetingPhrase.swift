@@ -1,66 +1,22 @@
 import Foundation
 
-/// What the handwritten salutation says, and why.
-///
-/// The card used to print one word — `Hello` — at every hour of every day. That
-/// is a *stamp*, not a greeting: at 23:28 it says the same thing as at 06:00,
-/// and it says the same thing on Lunar New Year as on an ordinary Tuesday. This type is
-/// the whole decision, kept out of the view so it is testable without a clock
-/// or a screen and so the card only has to render the answer.
-///
-/// The order of precedence is deliberate and is the interesting part:
-///
-/// 1. **Festival** wins over everything. A holiday is the largest fact about a
-///    day, and a plain "Good morning" on Lunar New Year is a smaller greeting
-///    than the day deserves.
-/// 2. **Part of day** next, in six bands rather than three. A single
-///    "good morning" / "good evening" pair collapses four hours of the morning
-///    and four of the afternoon into one word each; the boundaries below (dawn
-///    / morning / noon / afternoon / evening / night) are where a person's *own*
-///    sense of the day changes, not where the clock's does.
-/// 3. **Late night is addressed as late night.** 23:28 is not "evening" — a
-///    person still awake at that hour is being kept up by work, and the honest
-///    greeting is not "Good evening" but a line that acknowledges the hour.
-///
-/// Nothing here is randomised. A greeting that changes on every re-render is a
-/// slot machine, and the card re-renders on every pointer move; a stable phrase
-/// per (time, date) is what lets the entrance animation be *the* event rather
-/// than one of several.
+/// Warm greetings follow the person's local day, not the sky preview's clock.
+/// A deterministic daily/hourly choice stays still through redraws and launches.
 enum GreetingPhrase {
-    /// The salutation and the small English hand that accompanies it.
-    ///
-    /// `script` is the word set in the script face — the big handwritten mark.
-    /// `aside` is the optional quiet line under it, used only where a second
-    /// sentence adds something the word cannot (a festival's name, an hour that
-    /// deserves acknowledging). It is deliberately `nil` most of the day: a
-    /// card that always says two things says neither well.
+    enum Language: String, CaseIterable, Identifiable {
+        case chinese, english
+        var id: String { rawValue }
+        var label: String { self == .chinese ? "中文" : "English" }
+    }
+
     struct Phrase: Equatable {
         var script: String
         var aside: String?
+        var salutation: String { script + (script.unicodeScalars.contains { !$0.isASCII } ? "，" : ",") }
     }
 
-    /// The six parts of a day, in the order they occur.
-    ///
-    /// Boundaries are clock hours in the *device's* timezone — this is a
-    /// greeting about the person's day, so unlike the star field it must follow
-    /// local time rather than UTC. `late` wraps midnight and is therefore
-    /// matched first rather than being a range inside the day.
     enum DayPart: String, CaseIterable {
-        case late      // 00:00–04:59  still up, or already up
-        case dawn      // 05:00–06:59  before the day starts
-        case morning   // 07:00–10:59
-        case noon      // 11:00–13:59
-        case afternoon // 14:00–17:59
-        case evening   // 18:00–21:59  the working evening
-        case night     // 22:00–23:59  bedtime, and the hour past it
-
-        /// Which band a clock hour falls in.
-        ///
-        /// The 22:00 line between `evening` and `night` is the one that had to
-        /// move during review: 23:28 is not an evening, it is the hour a person
-        /// is still at the desk *past* the evening, and "Good evening" at 23:28 was the
-        /// exact tone-deafness this whole change exists to fix. 22:00 is where
-        /// "the evening's work" turns into "you should be asleep".
+        case late, dawn, morning, noon, afternoon, evening, night
         static func of(hour: Int) -> DayPart {
             switch hour {
             case 0..<5: return .late
@@ -74,118 +30,161 @@ enum GreetingPhrase {
         }
     }
 
-    /// A holiday the card knows by name.
-    ///
-    /// A fixed list rather than a computed lunar calendar: the lunar festivals
-    /// below are the ones whose *date* moves each year, so each is stored as its
-    /// Gregorian day for the years this build knows. `holiday(_:on:)` falls back
-    /// to `nil` for a year that is not listed, which degrades to an ordinary
-    /// greeting — the right failure for a greeting card, and the reason this is
-    /// a table rather than a lunar conversion (a wrong Lunar New Year date would be worse
-    /// than no line at all).
+    struct Context {
+        enum Weather { case rain, snow, fog }
+        var weather: Weather? = nil
+        var temperature: Double? = nil
+    }
+
     struct Holiday: Equatable {
         var name: String
-        /// A shorter line for the aside, already phrased as a wish.
         var wish: String
+        var englishName: String
+        var englishWish: String
     }
 
-    /// The greeting for `date`, in `calendar`'s timezone.
-    static func forDate(_ date: Date, calendar: Calendar = .current) -> Phrase {
-        let hour = calendar.component(.hour, from: date)
-        let part = DayPart.of(hour: hour)
-        if let holiday = holiday(on: date, calendar: calendar) {
-            return festivalPhrase(holiday, part: part)
+    /// Festivals first; rest at late hours next; then weather, weekend and the
+    /// ordinary day. Presence is enough for a gentle wish — no activity tracking
+    /// or assumption that the person has been working all night.
+    static func forDate(_ date: Date, calendar: Calendar = .current,
+                        language: Language = .chinese, context: Context = Context()) -> Phrase {
+        let part = DayPart.of(hour: calendar.component(.hour, from: date))
+        let seed = (calendar.ordinality(of: .day, in: .era, for: date) ?? 0)
+            + calendar.component(.hour, from: date)
+        func choose(_ lines: [(String, String)]) -> Phrase {
+            let line = lines[abs(seed % lines.count)]
+            return Phrase(script: line.0, aside: line.1)
         }
-        return ordinaryPhrase(part)
-    }
-
-    // MARK: Ordinary days
-
-    private static func ordinaryPhrase(_ part: DayPart) -> Phrase {
+        if let holiday = holiday(on: date, calendar: calendar) {
+            let late = part == .late || part == .night
+            return Phrase(script: language == .chinese ? holiday.name : holiday.englishName,
+                          aside: language == .chinese
+                            ? (late ? "\(holiday.wish)；也记得早点休息" : holiday.wish)
+                            : (late ? "\(holiday.englishWish) · rest when you can" : holiday.englishWish))
+        }
+        if language == .english {
+            switch part {
+            case .late: return choose([("Still up", "let tomorrow take its turn"), ("Rest a little", "you have done enough for today"), ("Sleep well", "the world can wait a little")])
+            case .night: return choose([("Wind down", "leave a little time for yourself"), ("Good night", "rest when you can"), ("Sweet dreams", "tomorrow is a fresh start")])
+            case .dawn: return choose([("Hello, sunrise", "start gently, there is no rush"), ("A new day", "a little breakfast, a little sunshine")])
+            case .morning: return choose([("Good morning", "may today be kind to you"), ("Morning, sunshine", "one small step at a time"), ("Hello, today", "make room for something lovely")])
+            case .noon: return choose([("Time for lunch", "take a proper little break"), ("Good afternoon", "don't forget to eat"), ("Pause a little", "stretch, sip, breathe")])
+            case .afternoon: return choose([("Good afternoon", "slow progress is still progress"), ("Take a breath", "a little water, a little rest"), ("Keep it gentle", "you don't have to do it all today")])
+            case .evening: return choose([("Good evening", "save some of the evening for yourself"), ("Welcome back", "something warm, something peaceful"), ("Hello, evening", "let the day soften a little")])
+            }
+        }
         switch part {
         case .late:
-            // Not "Good evening": at 23:28 or 03:00 the honest reading is that
-            // the person is still working, and a bright greeting is tone-deaf.
-            return Phrase(script: "Still up", aside: "past midnight")
-        case .dawn:
-            return Phrase(script: "Morning", aside: "a new day")
-        case .morning:
-            return Phrase(script: "Good morning", aside: nil)
-        case .noon:
-            return Phrase(script: "Good afternoon", aside: "don't skip lunch")
-        case .afternoon:
-            return Phrase(script: "Good afternoon", aside: nil)
-        case .evening:
-            return Phrase(script: "Good evening", aside: nil)
+            return choose([
+                ("夜深了", "手头的事先放一放，早点休息吧"),
+                ("早点睡呀", "明天还有新的阳光，不急在这一晚"),
+                ("该歇一歇啦", "合上电脑，也给自己一个晚安"),
+                ("晚安好梦", "愿你睡得安稳，醒来轻松一些"),
+                ("别太晚睡", "留一点精力，给明天的自己"),
+                ("辛苦啦", "这一晚已经够长了，休息也很重要"),
+                ("让夜慢下来", "喝口水，放松肩膀，再好好睡一觉"),
+                ("明天再继续", "今天做到这里，也已经很好了")])
         case .night:
-            // 22:00 onward. The word stays "Good evening" — it is still the
-            // evening, and swapping it for "Still up" at 22:00 would be early —
-            // but the aside carries the hour's actual advice, which is the part
-            // that was missing when a bright "Hello" sat above a 23:28 clock.
-            return Phrase(script: "Good evening", aside: "rest when you can")
+            return choose([
+                ("早点休息呀", "忙了一天，给自己留一点安静的时间"),
+                ("晚安啦", "把今天轻轻放下，愿今晚有个好梦"),
+                ("慢慢收尾吧", "没做完的事，可以留给明天"),
+                ("今天辛苦了", "关掉一点忙碌，打开一点松弛"),
+                ("好好睡一觉", "愿明天醒来，又是轻盈的一天"),
+                ("给自己晚安", "记得放松眼睛，也放松心情"),
+                ("夜色温柔", "别忘了，你也值得被好好照顾"),
+                ("准备好梦吧", "今晚就让自己早一点休息")])
+        default: break
         }
-    }
-
-    // MARK: Festivals
-
-    /// The festival line for a holiday, phrased for the part of day.
-    ///
-    /// A festival changes the *aside* as well as the word: at 09:00 the wish is
-    /// the greeting, at 23:00 the same wish has to acknowledge that the person
-    /// is still at the desk on a holiday, which is a different sentence.
-    private static func festivalPhrase(_ holiday: Holiday, part: DayPart) -> Phrase {
+        switch context.weather {
+        case .rain:
+            return choose([("雨天也温柔", "出门记得带伞，路上慢一点"), ("听一听雨吧", "愿今天有热茶，也有好心情"), ("雨会停的", "给自己一点暖意，不必着急"), ("带上小伞呀", "照顾好自己，别让衣服淋湿")])
+        case .snow:
+            return choose([("下雪啦", "多穿一点，出门注意脚下"), ("愿你暖暖的", "窗外有雪，心里也留一点暖意"), ("雪天慢慢走", "围好围巾，把自己照顾暖和")])
+        case .fog:
+            return choose([("雾里慢慢走", "路上留心，愿你平安抵达"), ("今天轻柔些", "等一等，眼前的雾会慢慢散开")])
+        case nil: break
+        }
+        if let temperature = context.temperature, temperature.isFinite {
+            if temperature >= 33 {
+                return choose([("记得喝水呀", "天气有点热，给自己找一片阴凉"), ("清凉一点吧", "别一直晒着，休息时喝口水"), ("照顾好自己", "热天慢一点，也别忘了补水")])
+            }
+            if temperature <= 8 {
+                return choose([("暖和一点呀", "多添一件衣服，手边放杯热饮"), ("别着凉啦", "天冷也愿你，有暖意相伴"), ("愿你暖暖的", "出门裹好外套，照顾好自己")])
+            }
+        }
+        let weekday = calendar.component(.weekday, from: date)
+        if weekday == 1 || weekday == 7 {
+            return choose([("周末愉快", "愿今天有一点闲，也有一点喜欢"), ("慢一点也好", "留点时间，做一件让自己开心的事"), ("今天自在些", "不赶路的时候，也看看身边的风景"), ("给生活留白", "一顿好饭，一段散步，都很值得"), ("愿你轻松些", "忙里也记得，给自己一个小小的休息"), ("把日子过暖", "和喜欢的人，说说话，笑一笑")])
+        }
         switch part {
-        case .late, .night:
-            return Phrase(script: holiday.name, aside: "don't stay up for it")
-        case .dawn, .morning:
-            return Phrase(script: holiday.name, aside: holiday.wish)
+        case .dawn:
+            return choose([("早呀", "新的一天慢慢来，先照顾好自己"), ("你好晨光", "喝口温水，让今天有个柔软的开始"), ("清晨好呀", "愿第一缕光，带来一点好心情"), ("一天刚刚好", "吃点早餐，再开始今天的旅程"), ("迎接新一天", "不必急着出发，先伸个懒腰吧"), ("早起辛苦啦", "愿今天的努力，都有温柔的回响")])
+        case .morning:
+            return choose([("早上好呀", "愿今天顺顺利利，也有小小惊喜"), ("今天也加油", "一步一步来，慢慢也能走很远"), ("你好新一天", "吃好早餐，带着好心情出发"), ("愿你有好心情", "今天也别忘了，对自己温柔一点"), ("阳光正好", "愿你眼里有光，心里有盼望"), ("早安呀", "把今天过成，你喜欢的一小段时光"), ("好日子开始啦", "从一杯水、一个微笑开始吧"), ("新的一天啦", "愿你遇见好事，也遇见好的人")])
         case .noon:
-            return Phrase(script: holiday.name, aside: "\(holiday.wish), don't skip lunch")
-        case .afternoon, .evening:
-            return Phrase(script: holiday.name, aside: holiday.wish)
+            return choose([("记得吃饭呀", "再忙也先好好吃一顿，别饿着自己"), ("午安呀", "吃顿热乎的饭，再歇一小会儿"), ("该歇一歇啦", "让眼睛离开屏幕，也让肩膀放松一下"), ("午饭要吃好", "照顾好胃，也照顾好今天的心情"), ("休息一会吧", "喝口水，伸个懒腰，再慢慢继续"), ("给自己充充电", "午间留一点空白，下午会轻松些"), ("好好吃饭呀", "日子再忙，一餐一饭也值得认真"), ("午间小憩吧", "闭目休息一下，不必一直绷紧")])
+        case .afternoon:
+            return choose([("下午好呀", "喝口水，让接下来的时间轻松一点"), ("慢慢来就好", "不必一次做好所有事，先做好眼前这件"), ("休息一下吧", "看看远处，给眼睛和心情都放个小假"), ("愿你从容些", "一点一点推进，也是在向前走"), ("今天也不错", "别只盯着没做完的，也看看已经做到的"), ("给自己一点甜", "一杯喜欢的饮料，也能让下午亮起来"), ("伸个懒腰吧", "放松肩颈，再舒舒服服地继续"), ("保持好心情", "认真做事，也记得好好照顾自己")])
+        case .evening:
+            return choose([("晚上好呀", "把忙碌放缓一点，给自己留些时间"), ("今天辛苦了", "吃顿暖暖的晚饭，慢慢享受夜晚"), ("夜色正温柔", "愿今晚安静，也愿你心里轻松"), ("歇一歇吧", "这一天已经很努力了，也该照顾自己"), ("愿今晚轻松", "听首喜欢的歌，把心情慢慢放松"), ("让日子慢下来", "留一点夜晚，给自己和喜欢的人"), ("灯火可亲", "愿你有热饭，有陪伴，也有好心情"), ("今晚也温暖", "忙碌之外，别忘了生活的小小美好")])
+        case .late, .night: return Phrase(script: "晚安呀", aside: "早点休息，明天见")
         }
     }
 
-    /// The holiday on `date`, or `nil`.
+    /// Lunar festivals use Foundation's Chinese calendar, including leap-month
+    /// exclusion and New Year's Eve as the day before lunar 1/1. No year table.
     static func holiday(on date: Date, calendar: Calendar = .current) -> Holiday? {
-        let c = calendar.dateComponents([.year, .month, .day], from: date)
-        guard let year = c.year, let month = c.month, let day = c.day else { return nil }
-
-        // Fixed-date holidays: the same Gregorian day every year.
+        var solar = Calendar(identifier: .gregorian)
+        solar.timeZone = calendar.timeZone
+        let c = solar.dateComponents([.month, .day, .weekday], from: date)
+        guard let month = c.month, let day = c.day else { return nil }
+        func holiday(_ name: String, _ wish: String, _ englishName: String, _ englishWish: String) -> Holiday {
+            Holiday(name: name, wish: wish, englishName: englishName, englishWish: englishWish)
+        }
+        var lunar = Calendar(identifier: .chinese)
+        lunar.timeZone = calendar.timeZone
+        let l = lunar.dateComponents([.month, .day, .isLeapMonth], from: date)
+        if l.isLeapMonth != true {
+            switch (l.month ?? 0, l.day ?? 0) {
+            case (1, 1...5): return holiday("新春快乐", "愿新的一年，平安喜乐，万事顺意", "Happy New Year", "a warm and wonderful year ahead")
+            case (1, 15): return holiday("元宵快乐", "愿灯火可亲，月圆人也圆", "Lantern Festival", "warm lights and sweet moments")
+            case (5, 5): return holiday("端午安康", "愿粽香里的日子，平安又温暖", "Dragon Boat", "peace and good health to you")
+            case (7, 7): return holiday("七夕快乐", "愿你被爱，也记得好好爱自己", "Happy Qixi", "a little love in every day")
+            case (8, 15): return holiday("中秋快乐", "愿月圆人安，想念的人就在身边", "Mid-Autumn", "a full moon and a warm heart")
+            case (9, 9): return holiday("重阳安康", "愿岁岁平安，记得问候牵挂的人", "Double Ninth", "peace and warmth to those you love")
+            case (12, 8): return holiday("腊八快乐", "一碗热粥，愿你暖暖地迎接新年", "Laba Festival", "a warm bowl and a gentle day")
+            default: break
+            }
+        }
+        if let next = solar.date(byAdding: .day, value: 1, to: date) {
+            let n = lunar.dateComponents([.month, .day, .isLeapMonth], from: next)
+            if n.month == 1, n.day == 1, n.isLeapMonth != true {
+                return holiday("除夕快乐", "愿今夜团圆，明年也有满满的欢喜", "New Year's Eve", "togetherness tonight, joy tomorrow")
+            }
+        }
         switch (month, day) {
-        case (1, 1): return Holiday(name: "New Year", wish: "Happy New Year")
-        case (2, 14): return Holiday(name: "Valentine's", wish: "Happy Valentine's")
-        case (3, 8): return Holiday(name: "Women's Day", wish: "Happy Women's Day")
-        case (5, 1): return Holiday(name: "May Day", wish: "Happy May Day")
-        case (6, 1): return Holiday(name: "Children's Day", wish: "Happy Children's Day")
-        case (10, 1): return Holiday(name: "National Day", wish: "Happy National Day")
-        case (12, 24): return Holiday(name: "Christmas Eve", wish: "Peace and quiet")
-        case (12, 25): return Holiday(name: "Christmas", wish: "Merry Christmas")
-        case (12, 31): return Holiday(name: "New Year's Eve", wish: "see you next year")
+        case (1, 1): return holiday("新年快乐", "新的一年，愿你平安，也愿你如愿", "Happy New Year", "a fresh start and lovely things ahead")
+        case (2, 14): return holiday("情人节快乐", "愿你心有所爱，也一直被温柔以待", "Happy Valentine's", "love and kindness, today and always")
+        case (3, 8): return holiday("愿你自在绽放", "妇女节快乐，愿你自由、勇敢，也快乐", "Women's Day", "may you flourish in your own way")
+        case (5, 1): return holiday("劳动节快乐", "认真生活的你，值得一个好好的休息", "Happy May Day", "your efforts deserve a little rest")
+        case (6, 1): return holiday("童心快乐", "愿你长大，也不丢掉小小的快乐", "Children's Day", "keep a little wonder in your day")
+        case (9, 10): return holiday("教师节快乐", "谢谢每一份耐心，和每一盏引路的灯", "Teachers' Day", "thank you for every patient little lesson")
+        case (10, 1): return holiday("国庆快乐", "愿你与喜欢的人，共度一段好时光", "Happy National Day", "good company and beautiful moments")
+        case (10, 2...7): return holiday("金秋好时光", "愿这个十月，有风景，也有好心情", "Hello, October", "a little autumn beauty, a little joy")
+        case (12, 24): return holiday("平安夜快乐", "愿今晚平安，也愿每个明天温暖", "Christmas Eve", "peace tonight and warmth tomorrow")
+        case (12, 25): return holiday("圣诞快乐", "愿你有惊喜，有陪伴，也有暖意", "Merry Christmas", "small surprises and warm company")
+        case (12, 31): return holiday("一起迎新年", "谢谢这一年的自己，愿来年更加自在", "See you next year", "thank yourself for making it this far")
         default: break
         }
-
-        // Lunar festivals, stored as the Gregorian day they fall on. See
-        // `Holiday` for why this is a table and not a conversion.
-        switch (year, month, day) {
-        case (2026, 2, 17): return Holiday(name: "Lunar New Year", wish: "Happy New Year")
-        case (2026, 3, 3): return Holiday(name: "Lantern Festival", wish: "Happy Lantern Festival")
-        case (2026, 6, 19): return Holiday(name: "Dragon Boat", wish: "Happy Dragon Boat Festival")
-        case (2026, 9, 25): return Holiday(name: "Mid-Autumn", wish: "Happy Mid-Autumn")
-        case (2027, 2, 6): return Holiday(name: "Lunar New Year", wish: "Happy New Year")
-        case (2027, 2, 20): return Holiday(name: "Lantern Festival", wish: "Happy Lantern Festival")
-        case (2027, 6, 9): return Holiday(name: "Dragon Boat", wish: "Happy Dragon Boat Festival")
-        case (2027, 9, 15): return Holiday(name: "Mid-Autumn", wish: "Happy Mid-Autumn")
-        default: break
+        if c.weekday == 1 {
+            if month == 5, (8...14).contains(day) {
+                return holiday("母亲节快乐", "愿牵挂你的人，也被温柔照顾", "Mother's Day", "send a little love to those who care for you")
+            }
+            if month == 6, (15...21).contains(day) {
+                return holiday("父亲节快乐", "给关心你的人，留一句温暖的问候", "Father's Day", "a warm word for someone who cares")
+            }
         }
-
-        // Solar terms and the two days that carry a wish without being a day
-        // off. Kept after the festivals above so nothing here can shadow one.
-        switch (month, day) {
-        case (5, 12): return Holiday(name: "Mother's Day", wish: "call your mother")
-        case (6, 21): return Holiday(name: "Father's Day", wish: "call your father")
-        case (12, 22): return Holiday(name: "Solstice", wish: "the year turns today")
-        default: return nil
-        }
+        return nil
     }
 }

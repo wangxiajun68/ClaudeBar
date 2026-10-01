@@ -8,10 +8,39 @@ Final refinement prompt (built-in imagegen): Simplify the exact laptop-internals
 
 # Greeting typefaces
 
-The dashboard greeting can be written in any of the faces below (设置 → 问候字体; Borel is the default). Each font file is taken unmodified from the Google Fonts repository (https://github.com/google/fonts) and ships in `Fonts/` with its full licence beside it; copyright notices and reserved font names are in those files. The app draws the greeting from the glyph outlines, filled and, for monoline faces, evenly stroked for weight. The fonts are not installed system-wide and are not sold on their own.
+The dashboard greeting can be written in any of the faces below (设置 → 天气与问候 → 问候字体; 寒蝉圆黑 · 粗体 is the Chinese default, Borel the English fallback). The Google Fonts Latin scripts and Chinese calligraphy faces are taken unmodified from the Google Fonts repository (https://github.com/google/fonts). ChillRound, ChillRoundGothic, Smiley Sans, LXGW ZhenKai, Yozai and LXGW Marker Gothic come from their authors' repositories (see `Fonts/SOURCES.md`). Every bundled font is unmodified and ships in `Fonts/` with its full licence beside it; copyright notices and reserved font names are in those files. The app draws the greeting from the glyph outlines, filled and, for monoline faces, evenly stroked for weight. The fonts are not installed system-wide and are not sold on their own.
 
 | Face | File | Licence | Licence file |
 | --- | --- | --- | --- |
+| 寒蝉圆黑 · 粗体 | `Fonts/ChillRoundGothic-Bold.otf` | OFL 1.1 | `Fonts/chillroundgothic-OFL.txt` |
+| 寒蝉圆黑 · 特粗 | `Fonts/ChillRoundGothic-Heavy.otf` | OFL 1.1 | `Fonts/chillroundgothic-OFL.txt` |
+| 站酷快乐体 | `Fonts/ZCOOLKuaiLe-Regular.ttf` | OFL 1.1 | `Fonts/zcoolkuaile-OFL.txt` |
+| 站酷庆科黄油体 | `Fonts/ZCOOLQingKeHuangYou-Regular.ttf` | OFL 1.1 | `Fonts/zcoolqingkehuangyou-OFL.txt` |
+| 站酷小薇体 | `Fonts/ZCOOLXiaoWei-Regular.ttf` | OFL 1.1 | `Fonts/zcoolxiaowei-OFL.txt` |
+| 马善政毛笔体 | `Fonts/MaShanZheng-Regular.ttf` | OFL 1.1 | `Fonts/mashanzheng-OFL.txt` |
+| 得意黑 | `Fonts/SmileySans-Oblique.otf` | OFL 1.1 | `Fonts/smiley-sans-OFL.txt` |
+| 志莽行书 | `Fonts/ZhiMangXing-Regular.ttf` | OFL 1.1 | `Fonts/zhimangxing-OFL.txt` |
+| 龙藏体 | `Fonts/LongCang-Regular.ttf` | OFL 1.1 | `Fonts/longcang-OFL.txt` |
+| 刘建毛草 | `Fonts/LiuJianMaoCao-Regular.ttf` | OFL 1.1 | `Fonts/liujianmaocao-OFL.txt` |
+| Fredoka | `Fonts/Fredoka[wdth,wght].ttf` | OFL 1.1 | `Fonts/fredoka-OFL.txt` |
+| Baloo 2 | `Fonts/Baloo2[wght].ttf` | OFL 1.1 | `Fonts/baloo2-OFL.txt` |
+| Chewy | `Fonts/Chewy-Regular.ttf` | Apache 2.0 | `Fonts/chewy-LICENSE.txt` |
+| Shrikhand | `Fonts/Shrikhand-Regular.ttf` | OFL 1.1 | `Fonts/shrikhand-OFL.txt` |
+| Bungee | `Fonts/Bungee-Regular.ttf` | OFL 1.1 | `Fonts/bungee-OFL.txt` |
+| Bungee Shade | `Fonts/BungeeShade-Regular.ttf` | OFL 1.1 | `Fonts/bungeeshade-OFL.txt` |
+| Luckiest Guy | `Fonts/LuckiestGuy-Regular.ttf` | Apache 2.0 | `Fonts/luckiestguy-LICENSE.txt` |
+| Lilita One | `Fonts/LilitaOne-Regular.ttf` | OFL 1.1 | `Fonts/lilitaone-OFL.txt` |
+| Berkshire Swash | `Fonts/BerkshireSwash-Regular.ttf` | OFL 1.1 | `Fonts/berkshireswash-OFL.txt` |
+| Oleo Script Bold | `Fonts/OleoScript-Bold.ttf` | OFL 1.1 | `Fonts/oleoscript-OFL.txt` |
+| Righteous | `Fonts/Righteous-Regular.ttf` | OFL 1.1 | `Fonts/righteous-OFL.txt` |
+| Rampart One | `Fonts/RampartOne-Regular.ttf` | OFL 1.1 | `Fonts/rampartone-OFL.txt` |
+| Monoton | `Fonts/Monoton-Regular.ttf` | OFL 1.1 | `Fonts/monoton-OFL.txt` |
+| Rubik Bubbles | `Fonts/RubikBubbles-Regular.ttf` | OFL 1.1 | `Fonts/rubikbubbles-OFL.txt` |
+| Caveat Bold | `Fonts/Caveat[wght].ttf` | OFL 1.1 | `Fonts/caveat-OFL.txt` |
+| 寒蝉全圆体 | `Fonts/ChillRoundF.ttf` | OFL 1.1 | `Fonts/chillround-OFL.txt` |
+| 霞鹜臻楷 | `Fonts/LXGWZhenKaiGB-Regular.ttf` | OFL 1.1 | `Fonts/lxgwzhenkai-OFL.txt` |
+| 悠哉字体 | `Fonts/Yozai-Medium.ttf` | OFL 1.1 | `Fonts/yozai-OFL.txt` |
+| 霞鹜漫黑 | `Fonts/LXGWMarkerGothic-Regular.ttf` | OFL 1.1 | `Fonts/lxgwmarkergothic-OFL.txt` |
 | Borel | `Fonts/Borel-Regular.ttf` | OFL 1.1 | `Fonts/borel-OFL.txt` |
 | Pacifico | `Fonts/Pacifico-Regular.ttf` | OFL 1.1 | `Fonts/pacifico-OFL.txt` |
 | Playwrite US Modern | `Fonts/PlaywriteUSModern[wght].ttf` | OFL 1.1 | `Fonts/playwriteusmodern-OFL.txt` |
