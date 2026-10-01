@@ -51,6 +51,7 @@ enum WeatherForecastFetcher {
             url.queryItems = [
                 .init(name: "latitude", value: String(place.latitude)), .init(name: "longitude", value: String(place.longitude)),
                 .init(name: "current", value: "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m"),
+                .init(name: "hourly", value: "temperature_2m,precipitation,precipitation_probability,wind_speed_10m"),
                 .init(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max"),
                 .init(name: "timezone", value: "auto"), .init(name: "timeformat", value: "unixtime"),
                 .init(name: "forecast_days", value: "6")
@@ -96,8 +97,44 @@ enum WeatherForecastFetcher {
             rainChance: today?.rainChance ?? 0,
             observedAt: observed,
             latitude: lat, longitude: lon, timezone: timezone, forecast: days,
-            forecastNote: days.count < 6 ? "部分日期预报暂不可用" : nil, source: "Open-Meteo")
+            forecastNote: days.count < 6 ? "部分日期预报暂不可用" : nil, source: "Open-Meteo",
+            hourly: parseHours(root), hourlySource: "Open-Meteo")
     }
+    static func fetchHours(latitude: Double, longitude: Double) async -> [WeatherReading.Hour] {
+        guard (-90...90).contains(latitude), (-180...180).contains(longitude) else { return [] }
+        var url = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
+        url.queryItems = [
+            .init(name: "latitude", value: String(latitude)), .init(name: "longitude", value: String(longitude)),
+            .init(name: "hourly", value: "temperature_2m,precipitation,precipitation_probability,wind_speed_10m"),
+            .init(name: "forecast_hours", value: "12"), .init(name: "timeformat", value: "unixtime"),
+            .init(name: "timezone", value: "auto")
+        ]
+        do {
+            guard let root = try await json(url.url) else { return [] }
+            return parseHours(root)
+        } catch { return [] }
+    }
+
+    static func parseHours(_ root: [String: Any]) -> [WeatherReading.Hour] {
+        guard let hourly = root["hourly"] as? [String: Any], let times = hourly["time"] as? [Any] else { return [] }
+        func value(_ key: String, _ index: Int, bounds: ClosedRange<Double>) -> Double? {
+            guard let values = hourly[key] as? [Any], values.indices.contains(index),
+                  let value = number(values[index]), bounds.contains(value) else { return nil }
+            return value
+        }
+        var seen = Set<Date>()
+        return times.indices.prefix(144).compactMap { i in
+            guard let time = number(times[i]), time > 0 else { return nil }
+            let date = Date(timeIntervalSince1970: time)
+            guard seen.insert(date).inserted else { return nil }
+            return WeatherReading.Hour(date: date,
+                temperature: value("temperature_2m", i, bounds: -100...100),
+                precipitation: value("precipitation", i, bounds: 0...1000),
+                rainChance: value("precipitation_probability", i, bounds: 0...100).map { Int($0) },
+                wind: value("wind_speed_10m", i, bounds: 0...500))
+        }.sorted { $0.date < $1.date }
+    }
+
     private static func number(_ value: Any?) -> Double? {
         guard let n = value as? NSNumber, n.doubleValue.isFinite else { return nil }
         return n.doubleValue

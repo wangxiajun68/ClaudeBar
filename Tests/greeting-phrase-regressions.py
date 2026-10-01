@@ -72,6 +72,15 @@ source += r'''
         require(GreetingPhrase.DayPart.of(hour: 21) == .evening && GreetingPhrase.DayPart.of(hour: 22) == .night
                 && GreetingPhrase.DayPart.of(hour: 0) == .late && GreetingPhrase.DayPart.of(hour: 5) == .dawn,
                 "Bedtime and dawn boundaries")
+        let rainyEvening = GreetingPhrase.forDate(date("2026-09-28", 18), calendar: calendar, context: rainy)
+        require(rainyEvening.script.contains("回家") && rainyEvening.aside!.contains("慢"), "Evening rain should care about the journey home")
+        let storm = GreetingPhrase.Context(weather: .storm, temperature: 25)
+        let stormWork = GreetingPhrase.forDate(date("2026-09-28", 14), calendar: calendar, context: storm)
+        require(stormWork.aside!.contains("安心做事") && !stormWork.aside!.contains("回家"), "Workday rain must not assume a commute")
+        let rainyHoliday = GreetingPhrase.forDate(date("2026-10-01", 18), calendar: calendar, context: storm)
+        require(rainyHoliday.script == "国庆快乐" && rainyHoliday.aside!.contains("伞"), "Holiday title must retain a weather-aware aside")
+        let englishRain = GreetingPhrase.forDate(baseline, calendar: calendar, language: .english, context: rainy)
+        require(englishRain != english && englishRain.script.unicodeScalars.allSatisfy { $0.isASCII }, "English weather copy")
         print("PASS: local dates, lunar festivals beyond 2027, leap-month exclusion, moving parent holidays, warm variety, stable redraws, rest precedence and languages")
     }
 }

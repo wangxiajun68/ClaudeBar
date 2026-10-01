@@ -269,9 +269,13 @@ struct GreetingStatusSheet: View {
         var context = GreetingPhrase.Context()
         // A simulated sky is not an observation about the user's actual day.
         if liveWeather, let reading, abs(skyDate.timeIntervalSince(reading.observedAt)) < 7200 {
-            context.temperature = reading.temperatureC
+            context.temperature = reading.feelsLikeC
+            context.windKph = reading.windKph
             switch reading.sky {
-            case .rain, .drizzle, .thunder: context.weather = .rain
+            case .thunder, .hail: context.weather = .storm
+            case .rain, .drizzle:
+                context.weather = reading.conditionText.contains("大雨") || reading.conditionText.contains("暴雨")
+                    || [305, 308, 359, 65, 82].contains(reading.conditionCode) ? .storm : .rain
             case .snow, .sleet: context.weather = .snow
             case .fog: context.weather = .fog
             default: break
@@ -294,7 +298,7 @@ struct GreetingStatusSheet: View {
         var sill: CGFloat { 56 }
         var total: CGFloat { sky + sill }
         var top: CGFloat { margin - 8 }
-        var nowHeight: CGFloat { 88 }
+        var nowHeight: CGFloat { 144 }
         var chartWidth: CGFloat { narrow ? 236 : 300 }
         var chartHeight: CGFloat { 80 }
         var sunWidth: CGFloat { narrow ? 196 : 212 }
@@ -315,6 +319,7 @@ struct GreetingStatusSheet: View {
     /// through it instead of being rebuilt every frame. Each key must cover
     /// everything its part reads, or the part shows stale values.
     private struct NowKey: Equatable {
+        var date: Date
         var reading: WeatherReading?
         var hoveredDay: Date?
         var pinnedDay: Date?
@@ -373,7 +378,7 @@ struct GreetingStatusSheet: View {
         let scene = makeScene()
         let layout = GreetingTypesetter.layout(phrase.salutation, name: name, typeface: greetingTypeface, cardWidth: m.width,
                                                skyHeight: m.sky, margin: m.margin,
-                                               topClear: m.topClear, bottomClear: m.bottomClear)
+                                               topClear: m.topClear, bottomClear: m.bottomClear - 24)
         // Each information region chooses ink against its own sky band.
         let topLeftDark = scene.prefersDarkInk(at: SIMD2(0.12, Float((m.top + 30) / m.sky)), aspect: Float(m.width / m.sky))
         let topRightDark = scene.prefersDarkInk(at: SIMD2(0.85, Float((m.top + m.nowHeight / 2) / m.sky)), aspect: Float(m.width / m.sky))
@@ -403,7 +408,7 @@ struct GreetingStatusSheet: View {
             let nowNight = manual ? reading?.isDay == false : scene.nightness > 0.5
             let shownReading = liveWeather ? reading : nil
             let shownCity = liveWeather ? city : "贴图"
-            Unchanged(key: NowKey(reading: shownReading, hoveredDay: liveWeather ? hoveredDay : nil,
+            Unchanged(key: NowKey(date: skyDate, reading: shownReading, hoveredDay: liveWeather ? hoveredDay : nil,
                                   pinnedDay: pinnedDay, night: nowNight,
                                   darkInk: topRightDark, city: shownCity, weatherLoading: weatherLoading,
                                   weatherNote: liveWeather ? weatherNote : nil, locating: locating,
@@ -438,6 +443,17 @@ struct GreetingStatusSheet: View {
                 }
                 .equatable()
                 .transition(.opacity)
+            }
+            if let aside = phrase.aside {
+                Text(aside)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(topRightInk.opacity(0.9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(width: m.width - m.margin * 2, alignment: .trailing)
+                    .offset(x: m.margin, y: layout.nameFrame.maxY + 6)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
             Unchanged(key: SillKey(ccModel: ccModel, ccProvider: ccProvider, codexModel: codexModel,
                                    codexProvider: codexProvider, tokens: tokens,
@@ -619,7 +635,7 @@ struct GreetingStatusSheet: View {
             .offset(x: layout.phraseFrame.minX, y: layout.phraseFrame.minY)
             .allowsHitTesting(false)
             .accessibilityElement()
-            .accessibilityLabel("\(phrase.script)，\(name)")
+            .accessibilityLabel("\(phrase.script)，\(name)。\(phrase.aside ?? "")")
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -655,6 +671,10 @@ struct GreetingStatusSheet: View {
             locationRow(ink: ink, metrics: m)
             conditionRow(night: night, ink: ink, vivid: vivid)
             metricRow(ink: ink, vivid: vivid)
+            if liveWeather, focusedDay == nil, let reading {
+                HourlyWeatherInstrument(reading: reading, date: skyDate, ink: ink, darkInk: !vivid)
+                    .frame(width: m.narrow ? 216 : 270, height: 48)
+            }
         }
         .frame(height: m.nowHeight, alignment: .topTrailing)
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: focusedDay?.date)

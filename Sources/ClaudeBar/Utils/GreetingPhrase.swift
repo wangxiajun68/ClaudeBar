@@ -31,9 +31,10 @@ enum GreetingPhrase {
     }
 
     struct Context {
-        enum Weather { case rain, snow, fog }
+        enum Weather { case rain, storm, snow, fog }
         var weather: Weather? = nil
         var temperature: Double? = nil
+        var windKph: Double? = nil
     }
 
     struct Holiday: Equatable {
@@ -55,13 +56,16 @@ enum GreetingPhrase {
             let line = lines[abs(seed % lines.count)]
             return Phrase(script: line.0, aside: line.1)
         }
+        let weatherWish = weatherPhrase(part: part, hour: calendar.component(.hour, from: date), language: language, context: context)
         if let holiday = holiday(on: date, calendar: calendar) {
             let late = part == .late || part == .night
-            return Phrase(script: language == .chinese ? holiday.name : holiday.englishName,
-                          aside: language == .chinese
-                            ? (late ? "\(holiday.wish)；也记得早点休息" : holiday.wish)
-                            : (late ? "\(holiday.englishWish) · rest when you can" : holiday.englishWish))
+            let wish = language == .chinese ? holiday.wish : holiday.englishWish
+            let aside = late ? (language == .chinese ? "\(wish)；也记得早点休息" : "\(wish) · rest when you can")
+                : (weatherWish?.aside ?? wish)
+            return Phrase(script: language == .chinese ? holiday.name : holiday.englishName, aside: aside)
         }
+        if part != .late && part != .night, let weatherWish { return weatherWish }
+
         if language == .english {
             switch part {
             case .late: return choose([("Still up", "let tomorrow take its turn"), ("Rest a little", "you have done enough for today"), ("Sleep well", "the world can wait a little")])
@@ -96,23 +100,6 @@ enum GreetingPhrase {
                 ("准备好梦吧", "今晚就让自己早一点休息")])
         default: break
         }
-        switch context.weather {
-        case .rain:
-            return choose([("雨天也温柔", "出门记得带伞，路上慢一点"), ("听一听雨吧", "愿今天有热茶，也有好心情"), ("雨会停的", "给自己一点暖意，不必着急"), ("带上小伞呀", "照顾好自己，别让衣服淋湿")])
-        case .snow:
-            return choose([("下雪啦", "多穿一点，出门注意脚下"), ("愿你暖暖的", "窗外有雪，心里也留一点暖意"), ("雪天慢慢走", "围好围巾，把自己照顾暖和")])
-        case .fog:
-            return choose([("雾里慢慢走", "路上留心，愿你平安抵达"), ("今天轻柔些", "等一等，眼前的雾会慢慢散开")])
-        case nil: break
-        }
-        if let temperature = context.temperature, temperature.isFinite {
-            if temperature >= 33 {
-                return choose([("记得喝水呀", "天气有点热，给自己找一片阴凉"), ("清凉一点吧", "别一直晒着，休息时喝口水"), ("照顾好自己", "热天慢一点，也别忘了补水")])
-            }
-            if temperature <= 8 {
-                return choose([("暖和一点呀", "多添一件衣服，手边放杯热饮"), ("别着凉啦", "天冷也愿你，有暖意相伴"), ("愿你暖暖的", "出门裹好外套，照顾好自己")])
-            }
-        }
         let weekday = calendar.component(.weekday, from: date)
         if weekday == 1 || weekday == 7 {
             return choose([("周末愉快", "愿今天有一点闲，也有一点喜欢"), ("慢一点也好", "留点时间，做一件让自己开心的事"), ("今天自在些", "不赶路的时候，也看看身边的风景"), ("给生活留白", "一顿好饭，一段散步，都很值得"), ("愿你轻松些", "忙里也记得，给自己一个小小的休息"), ("把日子过暖", "和喜欢的人，说说话，笑一笑")])
@@ -130,6 +117,42 @@ enum GreetingPhrase {
             return choose([("晚上好呀", "把忙碌放缓一点，给自己留些时间"), ("今天辛苦了", "吃顿暖暖的晚饭，慢慢享受夜晚"), ("夜色正温柔", "愿今晚安静，也愿你心里轻松"), ("歇一歇吧", "这一天已经很努力了，也该照顾自己"), ("愿今晚轻松", "听首喜欢的歌，把心情慢慢放松"), ("让日子慢下来", "留一点夜晚，给自己和喜欢的人"), ("灯火可亲", "愿你有热饭，有陪伴，也有好心情"), ("今晚也温暖", "忙碌之外，别忘了生活的小小美好")])
         case .late, .night: return Phrase(script: "晚安呀", aside: "早点休息，明天见")
         }
+    }
+
+    private static func weatherPhrase(part: DayPart, hour: Int, language: Language, context: Context) -> Phrase? {
+        let headingHome = part == .evening || hour == 17
+        switch context.weather {
+        case .storm:
+            return language == .chinese
+                ? Phrase(script: "雨大，慢慢来", aside: headingHome ? "准备回家就带好伞，路上慢一点，到家吃顿热饭" : "窗外雨有点大，安心做事，出门时记得带伞")
+                : Phrase(script: "Stay cozy", aside: headingHome ? "take an umbrella home, and take your time" : "rain outside, a warm drink beside you")
+        case .rain:
+            return language == .chinese
+                ? Phrase(script: headingHome ? "带伞回家呀" : "雨天也温柔", aside: headingHome ? "收尾不用急，回家的路上慢一点，别淋湿了" : "手边放杯热茶，忙一会儿，也记得歇一歇")
+                : Phrase(script: headingHome ? "Take care going home" : "A rainy hello", aside: headingHome ? "umbrella ready, no need to rush" : "a warm cup, a little pause, one thing at a time")
+        case .snow:
+            return language == .chinese ? Phrase(script: "愿你暖暖的", aside: "窗外有雪，多添一件衣服，出门慢慢走")
+                : Phrase(script: "Keep warm", aside: "a little extra layer, and careful steps outside")
+        case .fog:
+            return language == .chinese ? Phrase(script: "雾里慢慢走", aside: "路上留心，愿你平安抵达；手头的事不用急")
+                : Phrase(script: "Take it gently", aside: "fog outside; take your time on the way")
+        case nil: break
+        }
+        if let wind = context.windKph, wind.isFinite, wind >= 39 {
+            return language == .chinese ? Phrase(script: "风大，照顾好自己", aside: "出门添件外套，走稳一点，忙里也记得歇一歇")
+                : Phrase(script: "A windy hello", aside: "bring a layer, and take it gently outside")
+        }
+        if let temperature = context.temperature, temperature.isFinite {
+            if temperature >= 33 {
+                return language == .chinese ? Phrase(script: "记得喝水呀", aside: "天气有点热，忙里喝口水，给自己找一点清凉")
+                    : Phrase(script: "Keep cool", aside: "a little water, a little shade, a little break")
+            }
+            if temperature <= 8 {
+                return language == .chinese ? Phrase(script: "暖和一点呀", aside: "手边放杯热饮，出门添件衣服，别着凉啦")
+                    : Phrase(script: "Keep warm", aside: "a warm drink nearby, an extra layer outside")
+            }
+        }
+        return nil
     }
 
     /// Lunar festivals use Foundation's Chinese calendar, including leap-month

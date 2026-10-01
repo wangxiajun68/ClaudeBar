@@ -38,6 +38,65 @@ struct WeatherReading: Equatable {
     /// in `sky(for:)` if folded in there.
     var skyHint: Sky? = nil
 
+    struct Hour: Equatable, Identifiable {
+        var date: Date
+        var temperature: Double?
+        /// Accumulated precipitation during the hour ending at `date`.
+        var precipitation: Double?
+        var rainChance: Int?
+        var wind: Double?
+        var id: Date { date }
+    }
+    var hourly: [Hour] = []
+    var hourlySource: String? = nil
+
+    enum HourMetric: String {
+        case precipitation, probability, temperature, wind
+        var title: String {
+            switch self {
+            case .precipitation: return "小时降水量"
+            case .probability: return "降水概率"
+            case .temperature: return "小时气温"
+            case .wind: return "小时风速"
+            }
+        }
+        var unit: String {
+            switch self {
+            case .precipitation: return "mm"
+            case .probability: return "%"
+            case .temperature: return "°C"
+            case .wind: return "km/h"
+            }
+        }
+        func value(_ hour: Hour) -> Double? {
+            switch self {
+            case .precipitation: return hour.precipitation
+            case .probability: return hour.rainChance.map(Double.init)
+            case .temperature: return hour.temperature
+            case .wind: return hour.wind
+            }
+        }
+    }
+
+    func upcomingHours(at date: Date) -> [Hour] {
+        // Never replay the morning's rain or bridge a missing bucket as zero.
+        Array(hourly.filter { $0.date > date && $0.date <= date.addingTimeInterval(6 * 3600) }
+            .sorted { $0.date < $1.date }.prefix(6))
+    }
+
+    func hourMetric(at date: Date) -> HourMetric? {
+        let hours = upcomingHours(at: date)
+        let wet = [.rain, .drizzle, .thunder, .sleet, .snow, .hail].contains(sky)
+            || hours.contains { ($0.precipitation ?? 0) > 0 || ($0.rainChance ?? 0) >= 50 }
+        if wet {
+            if hours.contains(where: { $0.precipitation != nil }) { return .precipitation }
+            if hours.contains(where: { $0.rainChance != nil }) { return .probability }
+            return nil
+        }
+        if hours.contains(where: { ($0.wind ?? 0) >= 28 }), hours.contains(where: { $0.wind != nil }) { return .wind }
+        return hours.contains(where: { $0.temperature != nil }) ? .temperature : nil
+    }
+
     func astronomy(at date: Date) -> SkyAstronomy.Snapshot? {
         guard let latitude, let longitude else { return nil }
         return SkyAstronomy.snapshot(date: date, latitude: latitude, longitude: longitude)
@@ -774,8 +833,8 @@ extension WeatherFetcher {
         guard !trimmed.isEmpty else { return nil }
         let isCoordinate = trimmed.split(separator: ",").count == 2
 
-        if let reading = await WeatherAmapFetcher.fetch(query: trimmed) { return reading }
-        if let reading = await WeatherCNFetcher.fetch(query: trimmed) { return reading }
+        if let reading = await WeatherAmapFetcher.fetch(query: trimmed) { return await withHourly(reading) }
+        if let reading = await WeatherCNFetcher.fetch(query: trimmed) { return await withHourly(reading) }
         // `withCoordinates` seeds the sky's latitude/longitude (and the app's
         // own non-Chinese-servers rule) onto a domestic reading. No network.
         if let reading = await WeatherForecastFetcher.fetch(query: trimmed) { return reading }
@@ -785,7 +844,18 @@ extension WeatherFetcher {
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   var reading = parse(data) else { return nil }
             reading.forecastNote = "预报暂不可用 · 点击刷新重试"
-            return reading
+            return await withHourly(reading)
         } catch { return nil }
+    }
+
+    private static func withHourly(_ reading: WeatherReading) async -> WeatherReading {
+        guard let lat = reading.latitude, let lon = reading.longitude else { return reading }
+        var copy = reading
+        copy.hourly = await WeatherForecastFetcher.fetchHours(latitude: lat, longitude: lon)
+        copy.hourlySource = copy.hourly.isEmpty ? nil : "Open-Meteo"
+        if let chance = copy.upcomingHours(at: Date()).compactMap(\.rainChance).max() {
+            copy.rainChance = chance
+        }
+        return copy
     }
 }

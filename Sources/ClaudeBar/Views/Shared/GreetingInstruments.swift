@@ -831,3 +831,106 @@ struct InstrumentPressStyle: ButtonStyle {
             .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
+
+/// Six source-provided hour buckets. Rain uses an honest zero baseline; gaps
+/// remain gaps, and unavailable precipitation never becomes a zero-height bar.
+struct HourlyWeatherInstrument: View {
+    var reading: WeatherReading
+    var date: Date
+    var ink: Color
+    var darkInk = false
+
+    var body: some View {
+        let hours = reading.upcomingHours(at: date)
+        if abs(date.timeIntervalSince(reading.observedAt)) < 7200,
+           let metric = reading.hourMetric(at: date), !hours.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(metric.title + " · " + metric.unit)
+                    Spacer(minLength: 4)
+                    Text(summary(hours: hours, metric: metric))
+                }
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(ink.opacity(0.9))
+                GeometryReader { geometry in
+                    let values = hours.compactMap { metric.value($0) }
+                    let low = metric == .temperature ? (values.min() ?? 0) - 1 : 0
+                    let high = metric == .probability ? 100 : max(low + 1, values.max() ?? 1)
+                    let span = max(3600, hours.last!.date.timeIntervalSince(hours.first!.date))
+                    let width = max(0, geometry.size.width - 20)
+                    let tint = metric == .precipitation || metric == .probability ? Color(hex: darkInk ? 0x175A80 : 0x77CFF3)
+                        : metric == .temperature ? Color(hex: darkInk ? 0x874416 : 0xFFD18A) : ink
+                    Canvas { context, size in
+                        let baseline: CGFloat = 20
+                        var axis = Path()
+                        axis.move(to: CGPoint(x: 0, y: baseline))
+                        axis.addLine(to: CGPoint(x: size.width, y: baseline))
+                        context.stroke(axis, with: .color(ink.opacity(0.25)), lineWidth: 0.5)
+                        var line = Path()
+                        var previous: Date?
+                        for hour in hours {
+                            let x = 10 + width * hour.date.timeIntervalSince(hours.first!.date) / span
+                            guard let value = metric.value(hour) else { previous = nil; continue }
+                            let y = baseline - 18 * (value - low) / (high - low)
+                            if metric == .precipitation || metric == .probability {
+                                if value > 0 {
+                                    let bar = CGRect(x: x - 5, y: y, width: 10, height: max(1, baseline - y))
+                                    context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(tint))
+                                } else {
+                                    context.fill(Path(ellipseIn: CGRect(x: x - 1, y: baseline - 1, width: 2, height: 2)), with: .color(ink.opacity(0.6)))
+                                }
+                            } else {
+                                if let previous, hour.date.timeIntervalSince(previous) <= 3600 {
+                                    line.addLine(to: CGPoint(x: x, y: y))
+                                } else { line.move(to: CGPoint(x: x, y: y)) }
+                                context.fill(Path(ellipseIn: CGRect(x: x - 1.5, y: y - 1.5, width: 3, height: 3)), with: .color(tint))
+                            }
+                            previous = hour.date
+                        }
+                        context.stroke(line, with: .color(tint), lineWidth: 1.5)
+                    }
+                    ForEach(hours) { hour in
+                        let x = 10 + width * hour.date.timeIntervalSince(hours.first!.date) / span
+                        Text(clock(hour.date) + "时")
+                            .font(.system(size: 8, weight: .medium).monospacedDigit())
+                            .foregroundStyle(ink.opacity(0.86))
+                            .position(x: x, y: 29)
+                        if metric.value(hour) == nil {
+                            Text("—").font(.system(size: 9)).foregroundStyle(ink.opacity(0.8))
+                                .position(x: x, y: 10)
+                        }
+                    }
+                }
+            }
+            .help(details(hours: hours, metric: metric))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(details(hours: hours, metric: metric))
+        } else {
+            Text("小时预报暂不可用")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(ink.opacity(0.86))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        }
+    }
+
+    private func clock(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: reading.timezone) ?? .current
+        return String(format: "%02d", calendar.component(.hour, from: date))
+    }
+
+    private func summary(hours: [WeatherReading.Hour], metric: WeatherReading.HourMetric) -> String {
+        let values = hours.compactMap { metric.value($0) }
+        guard let low = values.min(), let high = values.max() else { return "未来 6 小时" }
+        if metric == .temperature { return String(format: "%.0f–%.0f° · 6小时", low, high) }
+        return String(format: "峰值 %.1f %@ · 6小时", high, metric.unit)
+    }
+
+    private func details(hours: [WeatherReading.Hour], metric: WeatherReading.HourMetric) -> String {
+        let readings = hours.map { hour in
+            clock(hour.date) + "时 " + (metric.value(hour).map { String(format: "%.1f", $0) + " " + metric.unit } ?? "暂无数据")
+        }.joined(separator: "；")
+        let interval = metric == .precipitation ? " · 各时刻前一小时累计降水" : ""
+        return metric.title + interval + " · " + (reading.hourlySource ?? reading.source) + "\n" + readings
+    }
+}

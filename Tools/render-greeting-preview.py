@@ -285,6 +285,14 @@ source += '''
                         conditionCode: scene == "rain" ? 296 : scene == "heavy" ? 308 : scene == "thunder" ? 389 : scene == "fog" ? 248 : scene == "cloud" ? 119 : scene == "snow" ? 338 : 113, conditionText: "多云", highC: 32, lowC: 25, humidity: 68,
                         windKph: 8, windDirection: "东南", isDay: scene != "night", sunrise: "06:18", sunset: "18:22",
                         rainChance: ["heavy", "thunder"].contains(scene) ? 90 : 20, observedAt: fixtureSkyDate, latitude: 23.13, longitude: 113.26, timezone: "Asia/Shanghai", source: "Open-Meteo")
+                    weather.hourlySource = "Open-Meteo"
+                    weather.hourly = (1...6).map { i in
+                        WeatherReading.Hour(date: fixtureSkyDate.addingTimeInterval(Double(i) * 3600),
+                            temperature: Double(29 - i),
+                            precipitation: ["rain", "heavy", "thunder"].contains(scene) ? [1.2, 2.8, 4.1, 2.0, 0.5, 0][i-1] : 0,
+                            rainChance: ["rain", "heavy", "thunder"].contains(scene) ? 85 : 10,
+                            wind: 8)
+                    }
                     var calendar = Calendar(identifier: .gregorian)
                     calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
                     let start = calendar.startOfDay(for: fixtureSkyDate)

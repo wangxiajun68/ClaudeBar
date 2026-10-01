@@ -189,6 +189,32 @@ source += r'''
         precondition(shanghai.timezone == "Asia/Shanghai")
         precondition(shanghai.forecast.count == 2)
 
+        let now = date("2026-09-28T10:30:00Z")
+        let hourRoot: [String: Any] = ["hourly": [
+            "time": [now.addingTimeInterval(-1800).timeIntervalSince1970,
+                     now.addingTimeInterval(1800).timeIntervalSince1970,
+                     now.addingTimeInterval(5400).timeIntervalSince1970,
+                     now.addingTimeInterval(9000).timeIntervalSince1970],
+            "temperature_2m": [21, 22, NSNull(), 24],
+            "precipitation": [9, 1.2, NSNull(), -1],
+            "precipitation_probability": [90, 70, NSNull(), 200],
+            "wind_speed_10m": [3, 4, 5, 6]]]
+        let parsedHours = WeatherForecastFetcher.parseHours(hourRoot)
+        precondition(parsedHours.count == 4 && parsedHours[2].precipitation == nil && parsedHours[3].rainChance == nil)
+        precondition(parsedHours[3].precipitation == nil && parsedHours[2].temperature == nil)
+        var hourlyReading = reading
+        hourlyReading.hourly = parsedHours
+        precondition(hourlyReading.upcomingHours(at: now).count == 3)
+        precondition(hourlyReading.hourMetric(at: now) == .precipitation)
+        hourlyReading.skyHint = .clear
+        hourlyReading.hourly = parsedHours.map { WeatherReading.Hour(date: $0.date, temperature: $0.temperature, precipitation: 0, rainChance: 0, wind: 30) }
+        precondition(hourlyReading.hourMetric(at: now) == .wind)
+        hourlyReading.hourly = parsedHours.map { WeatherReading.Hour(date: $0.date, temperature: $0.temperature, precipitation: 0, rainChance: 0, wind: 3) }
+        precondition(hourlyReading.hourMetric(at: now) == .temperature)
+        hourlyReading.hourly = parsedHours.map { WeatherReading.Hour(date: $0.date, temperature: 24, precipitation: nil, rainChance: 80, wind: 3) }
+        precondition(hourlyReading.hourMetric(at: now) == .probability)
+        precondition(hourlyReading.hourMetric(at: now.addingTimeInterval(7 * 3600)) == nil)
+        precondition(WeatherForecastFetcher.parseHours([:]).isEmpty)
         print("PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data, domestic sources")
     }
 }
