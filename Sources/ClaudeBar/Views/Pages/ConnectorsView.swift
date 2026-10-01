@@ -76,6 +76,7 @@ struct ConnectorsView: View {
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)
+        .disabled(isBatching || !busyIDs.isEmpty)
         // The bar is an inset rather than another child of the scroll content:
         // the grid is a `LazyVGrid` directly under the `ScrollView` (that is what
         // lets it virtualise), so it cannot be wrapped in a stack to make room.
@@ -138,9 +139,10 @@ struct ConnectorsView: View {
         // keep describing an install that was just removed or disabled, and
         // read paths that no longer exist. Re-resolve it against the new list;
         // when the record is gone, close the sheet.
-        .onChange(of: manager.records.map(\.id)) { _, ids in
+        .onChange(of: manager.records) { _, records in
+            selection.formIntersection(Set(records.map(\.id)))
             guard let open = selectedRecord else { return }
-            guard let fresh = manager.records.first(where: { $0.id == open.id }) else {
+            guard let fresh = manager.records.first(where: { $0.id == open.id })?.scoped(to: platform) else {
                 selectedRecord = nil
                 return
             }
@@ -191,6 +193,7 @@ struct ConnectorsView: View {
                     } ?? false))
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        .map { $0.scoped(to: platform) }
     }
 
     private var visibleCLIs: [LocalCLIRecord] {
@@ -290,6 +293,16 @@ struct ConnectorsView: View {
                     .help(batchMode ? "退出批量管理；已选内容会被清空" : "选中多张卡片，一次停用、启用或移除")
                 }
             }
+            if focus == .skill {
+                Text(platform.map { "启停范围：\($0.title)。全局停用优先；同名安装会联动。" }
+                     ?? "启停范围：全部平台。同名独立 Skill 的所有已扫描安装会联动。")
+                    .font(Theme.Font.micro)
+                    .foregroundStyle(Theme.textSecondary)
+                if platform == .cursor {
+                    Text("共享 Skill 的独立启停请在 Cursor 管理；此处仅能启停 Cursor 专属目录。")
+                        .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                }
+            }
             InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
                 .frame(height: 38)
             if !projectPath.isEmpty {
@@ -317,8 +330,10 @@ struct ConnectorsView: View {
 
     private func setEnabled(_ enabled: Bool, for record: ConnectorRecord) {
         guard busyIDs.insert(record.id).inserted else { return }
+        let targets = ConnectorBatch.expandingSkills([record], in: manager.records, platform: platform)
+        let project = selectedProject
         Task {
-            await manager.setEnabled(enabled, for: record, projectPath: selectedProject)
+            _ = await manager.batch(enabled ? .enable : .disable, over: targets, projectPath: project)
             busyIDs.remove(record.id)
         }
     }
@@ -371,7 +386,10 @@ struct ConnectorsView: View {
     /// describe different sets.
     private func selectedRecords() -> [ConnectorRecord] {
         let kind = kind(of: focus)
-        return manager.records.filter { $0.kind == kind && selection.contains($0.id) }
+        return manager.records.filter { record in
+            record.kind == kind && selection.contains(record.id) &&
+                (platform.map { record.platforms.contains($0) } ?? true)
+        }
     }
 
     /// How many ticks an action would actually apply to — the number in the
@@ -383,7 +401,10 @@ struct ConnectorsView: View {
     /// The records an action would apply to, in the manager's order. One
     /// function for both the count and the run — see `ConnectorBatch.records`.
     private func batchRecords(_ action: ConnectorBatchAction) -> [ConnectorRecord] {
-        ConnectorBatch.records(selectedRecords(), for: action)
+        let selected = selectedRecords()
+        let records = action == .remove ? selected.map { $0.scoped(to: platform) }
+            : ConnectorBatch.expandingSkills(selected, in: manager.records, platform: platform)
+        return ConnectorBatch.records(records, for: action)
     }
 
 
@@ -398,9 +419,8 @@ struct ConnectorsView: View {
     private func askBatch(_ action: ConnectorBatchAction) {
         let count = actionableCount(action)
         guard count > 0 else { return }
-        let places = Set(selectionTargets
-            .filter { selection.contains($0.id) }
-            .flatMap(\.platforms).map(\.title))
+        let targets = batchRecords(action)
+        let places = Set(targets.flatMap(\.platforms).map(\.title))
         let where_ = places.isEmpty ? "" : "，涉及 " + places.sorted().joined(separator: "、")
         // Cursor's own state cannot be read, so a 停用 there is a *command*, not
         // a state change — the confirmation says so rather than promising an
@@ -412,11 +432,15 @@ struct ConnectorsView: View {
         switch action {
         case .disable:
             title = "停用选中的 \(count) 项？"
-            message = "独立 Skill 目录会整体移入 ClaudeBar 停用区；MCP 与插件只改对应配置的一行。"
+            message = (platform == nil
+                ? "同名独立 Skill 的所有已扫描安装会移入停用区，影响全部平台；恢复后保留平台开关。"
+                : "只停用当前平台的同名 Skill；共享目录保持原位。Cursor 专属目录会移入停用区。")
                 + where_ + cursorNote + "。"
         case .enable:
             title = "启用选中的 \(count) 项？"
-            message = "此前停用的 Skill 会还原到原位置；被占用的路径会跳过而不是覆盖。" + where_ + cursorNote + "。"
+            message = (platform == nil
+                ? "全局停用的 Skill 会还原；此前的平台停用设置仍然保留。被占用的路径会拒绝覆盖。"
+                : "只启用当前平台；全局停用的 Skill 需要先切到全部平台恢复。") + where_ + cursorNote + "。"
         case .remove:
             let split = removalSplit()
             title = "移除选中的 \(count) 项？"
@@ -424,15 +448,16 @@ struct ConnectorsView: View {
                 + (split.skills > 0 ? "其中 \(split.skills) 个 Skill 目录会连同内容一起进废纸篓。" : "")
                 + where_ + "。此操作不可撤销。"
         }
-        pendingBatch = BatchConfirm(action: action, title: title, message: message)
+        pendingBatch = BatchConfirm(action: action, title: title, message: message,
+                                    records: targets, projectPath: selectedProject)
     }
 
     private func run(_ request: BatchConfirm) {
-        let records = batchRecords(request.action)
+        let records = request.records
         guard !records.isEmpty else { return }
         isBatching = true
         Task {
-            _ = await manager.batch(request.action, over: records, projectPath: selectedProject)
+            _ = await manager.batch(request.action, over: records, projectPath: request.projectPath)
             selection.removeAll()
             isBatching = false
         }
@@ -451,7 +476,6 @@ struct ConnectorsView: View {
     /// resolves to, not by `selection.count`, so a tick that belongs to a kind
     /// the bar cannot act on can never be counted as something 停用 will do.
     @ViewBuilder private func batchBar() -> some View {
-        let records = selectedRecords()
         let all = batchTargets(records: visibleRecords)
         let targets = Set(all.map(\.id))
         let selected = all.filter { selection.contains($0.id) }
@@ -489,6 +513,7 @@ struct ConnectorsView: View {
                     Divider()
                     ForEach(ConnectorPlatform.allCases) { item in
                         Button("只选 \(item.title)（\(all.filter { $0.platforms.contains(item) }.count)）") {
+                            platform = item
                             selection = Set(all.filter { $0.platforms.contains(item) }.map(\.id))
                         }
                     }
@@ -539,7 +564,7 @@ struct ConnectorsView: View {
         if on > 0 { parts.append("可启用 \(on)") }
         if removable > 0 { parts.append("可移除 \(removable)") }
         if parts.isEmpty { return "这些项由客户端管理，本页只能查看" }
-        let inert = ConnectorBatch.inert(records)
+        let inert = ConnectorBatch.inert(records.map { $0.scoped(to: platform) })
         return parts.joined(separator: " · ") + (inert > 0 ? " · 其余 \(inert) 项由客户端管理" : "")
     }
 
@@ -552,6 +577,9 @@ struct ConnectorsView: View {
     /// menu narrows this to one client afterwards.
     private func selectKind(_ item: ConnectorFocus) {
         guard item != .local else { return }
+        focus = item
+        platform = nil
+        search = ""
         let kind = kind(of: item)
         selection = Set(manager.records.filter { $0.kind == kind }.map(\.id))
     }
@@ -920,6 +948,8 @@ private struct BatchConfirm: Identifiable {
     let action: ConnectorBatchAction
     let title: String
     let message: String
+    let records: [ConnectorRecord]
+    let projectPath: String?
 }
 
 /// The selection box. Drawn rather than a stock `Toggle`: a checkbox in this app
@@ -1040,7 +1070,8 @@ private struct ConnectorCard: View {
                             // so a platform chip and a status chip are one
                             // object. The wash takes the shape hue, the label
                             // the ink variant.
-                            StatusPill(label: item.title,
+                            StatusPill(label: record.kind == .skill && record.skillPlatformStates[item] == false
+                                       ? item.title + " · 停用" : item.title,
                                        tint: platformFaceTint(item),
                                        ink: platformTint(item))
                         }

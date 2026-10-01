@@ -187,3 +187,188 @@ with tempfile.TemporaryDirectory(prefix='claudebar-connector-batch-') as folder:
     binary = Path(folder) / 'regression'
     subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+# Exercise the production skill scan/mutations against an injected temporary
+# home, including relative links and the dev gate. No real CLI is invoked.
+import re
+
+def production_function(name):
+    start = re.search(r'^    (?:private )?static func ' + name + r'\(', manager, re.M).start()
+    end_match = re.search(r'^    (?:private )?static func ', manager[start + 1:], re.M)
+    return manager[start:start + 1 + end_match.start()].replace('private static func', 'static func')
+
+functions = '\n'.join(production_function(name) for name in [
+    'itemExists', 'scanSkills', 'skillRecord', 'skillMetadata', 'requiredCLI',
+    'setEnabled', 'setSkillPlatformEnabled', 'parkedSkills', 'saveParkedSkills',
+    'ensureVault', 'setSkillEnabled', 'secureReplace',
+])
+parked = manager[manager.index('    private struct ParkedSkill:'):manager.index('    /// fileExists follows links')].replace('private struct', 'struct')
+policy = (root / 'Sources/ClaudeBar/Utils/ConnectorSkillPolicy.swift').read_text()
+writer = (root / 'Sources/ClaudeBar/Utils/PrivateFileWriter.swift').read_text()
+harness = r'''
+import Foundation
+import Darwin
+import Combine
+
+enum ProductBrandMark { enum Brand { case claude, codex, cursor } }
+enum Theme { DJ2 }
+MODEL
+POLICY
+WRITER
+
+enum BuildChannel {
+    static var allowsSystemIntegration = true
+    static let restrictionMessage = "isolated"
+}
+enum LocalCLIInventory { static func owner(for name: String) -> String? { nil } }
+enum Harness {
+    static let fm = FileManager.default
+    static let home = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+    static let vault = home.appendingPathComponent("vault")
+    static let registry = vault.appendingPathComponent("registry.json")
+    PARKED
+    enum ConnectorError: Error { case changed, nativeOnly, isolatedBuild }
+    static func setTOMLEnabled(_ enabled: Bool, file: URL, sectionName: String) throws { throw ConnectorError.nativeOnly }
+    static func setClaudePluginEnabled(_ enabled: Bool, identifier: String) throws { throw ConnectorError.nativeOnly }
+    static func setCursorMCPEnabled(_ enabled: Bool, identifier: String, directory: URL) throws { throw ConnectorError.nativeOnly }
+    FUNCTIONS
+}
+
+@main struct SkillRegression {
+    static func main() throws {
+        let fm = FileManager.default
+        let base = Harness.home
+        let agents = base.appendingPathComponent(".agents/skills")
+        let claude = base.appendingPathComponent(".claude/skills")
+        let skill = agents.appendingPathComponent("deploy")
+        let link = claude.appendingPathComponent("deploy-link")
+        let codexConfig = base.appendingPathComponent(".codex/config.toml")
+        let claudeConfig = base.appendingPathComponent(".claude/settings.json")
+        for folder in [skill, claude, codexConfig.deletingLastPathComponent()] {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try Data("---\nname: deploy\ndescription: fixture\n---\nbody\n".utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "../../.agents/skills/deploy")
+        let before = "# keep bytes\nmodel = \"fixture\"\n[mcp_servers.fixture]\ncommand = \"fake\"\n"
+        try Data(before.utf8).write(to: codexConfig)
+        try Data(#"{"keep":{"nested":1},"skillOverrides":{"other":"name-only"}}"#.utf8).write(to: claudeConfig)
+        var records: [ConnectorRecord] = []
+        Harness.scanSkills(in: agents, platforms: [.codex, .cursor], scope: "个人", depth: 0, into: &records)
+        Harness.scanSkills(in: claude, platforms: [.claude, .cursor], scope: "个人", depth: 0, into: &records)
+        precondition(records.count == 2 && records.allSatisfy { $0.name == "deploy" })
+        precondition(records.contains { $0.skillIsLink })
+        let shared = records.first { !$0.skillIsLink }!
+        let cc = records.first { $0.skillIsLink }!
+        let codex = shared.scoped(to: .codex)
+        precondition(codex.platforms == [.codex] && codex.canToggle && !codex.canRemove)
+        precondition(shared.scoped(to: .cursor).batchCapability == .none)
+        precondition(ConnectorBatch.expandingSkills([shared], in: records, platform: nil).count == 2)
+        precondition(ConnectorBatch.expandingSkills([shared], in: records, platform: .codex).count == 1)
+        try Harness.setEnabled(false, record: codex)
+        let stopped = try String(contentsOf: codexConfig, encoding: .utf8)
+        precondition(stopped.hasPrefix(before))
+        precondition(try !ConnectorSkillPolicy.codexEnabled(stopped, original: skill))
+        precondition(fm.fileExists(atPath: skill.appendingPathComponent("SKILL.md").path))
+        precondition(try ConnectorSkillPolicy.claudeEnabled(Data(contentsOf: claudeConfig), name: "deploy"))
+        try Harness.setEnabled(false, record: cc.scoped(to: .claude))
+        let ccStopped = try Data(contentsOf: claudeConfig)
+        precondition(try !ConnectorSkillPolicy.claudeEnabled(ccStopped, name: "deploy"))
+        let ccObject = try JSONSerialization.jsonObject(with: ccStopped) as! [String: Any]
+        precondition(ccObject["keep"] != nil)
+        precondition((ccObject["skillOverrides"] as! [String: String])["other"] == "name-only")
+        // Global off: park the relative link first, then its target. Both remain
+        // discoverable in the registry even while the parked link is dangling.
+        try Harness.setEnabled(false, record: cc)
+        try Harness.setEnabled(false, record: shared)
+        let parked = try Harness.parkedSkills()
+        precondition(parked.count == 2 && parked.allSatisfy { $0.name == "deploy" })
+        for entry in parked {
+            precondition(Harness.itemExists(URL(fileURLWithPath: entry.stored)))
+            let record = Harness.skillRecord(at: URL(fileURLWithPath: entry.original),
+                contentsAt: URL(fileURLWithPath: entry.stored), platforms: [.codex, .cursor],
+                scope: "个人", enabled: false, parked: entry)
+            precondition(record.name == "deploy" && !record.scoped(to: .codex).canToggle)
+        }
+        precondition(!fm.fileExists(atPath: skill.path) && !fm.fileExists(atPath: link.path))
+        try Harness.setEnabled(true, record: shared)
+        try Harness.setEnabled(true, record: cc)
+        precondition(fm.fileExists(atPath: link.appendingPathComponent("SKILL.md").path))
+        precondition(try Harness.parkedSkills().isEmpty)
+        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == stopped)
+        precondition(try Data(contentsOf: claudeConfig) == ccStopped)
+        // An occupied restore path, including a dangling link, must never be overwritten.
+        try Harness.setEnabled(false, record: shared)
+        try fm.createSymbolicLink(atPath: skill.path, withDestinationPath: "/missing/fixture")
+        do { try Harness.setEnabled(true, record: shared); fatalError("overwrote link") } catch {}
+        let conflict = try Harness.parkedSkills().first!
+        let conflictRecord = Harness.skillRecord(at: skill,
+            contentsAt: URL(fileURLWithPath: conflict.stored), platforms: [.codex, .cursor],
+            scope: "个人", enabled: false, parked: conflict)
+        precondition(conflictRecord.id != shared.id && conflictRecord.summary.contains("占用"))
+        try fm.removeItem(at: skill)
+        try Harness.setEnabled(true, record: shared)
+        // Cursor-exclusive platform parking is distinct from global parking.
+        let cursorSkill = base.appendingPathComponent(".cursor/skills/deploy")
+        try fm.createDirectory(at: cursorSkill, withIntermediateDirectories: true)
+        try Data("---\nname: deploy\n---\n".utf8).write(to: cursorSkill.appendingPathComponent("SKILL.md"))
+        let cursorRecord = Harness.skillRecord(at: cursorSkill, contentsAt: cursorSkill,
+            platforms: [.cursor], scope: "个人", enabled: true)
+        try Harness.setEnabled(false, record: cursorRecord.scoped(to: .cursor))
+        let cursorEntry = try Harness.parkedSkills().first!
+        let cursorParked = Harness.skillRecord(at: cursorSkill,
+            contentsAt: URL(fileURLWithPath: cursorEntry.stored), platforms: [.cursor],
+            scope: "个人", enabled: false, parked: cursorEntry)
+        precondition(!cursorParked.canToggle && cursorParked.batchCapability == .none)
+        precondition(cursorParked.scoped(to: .cursor).canToggle)
+        precondition(ConnectorBatch.records([cursorParked], for: .enable).isEmpty)
+        do { try Harness.setEnabled(true, record: cursorParked); fatalError("global enabled platform parking") } catch {}
+        try Harness.setEnabled(true, record: cursorParked.scoped(to: .cursor))
+        precondition(fm.fileExists(atPath: cursorSkill.path))
+        // Old registry entries decode with optional metadata absent.
+        let legacy = Data(#"[{"original":"/fixture/original","stored":"/fixture/stored"}]"#.utf8)
+        precondition(try JSONDecoder().decode([Harness.ParkedSkill].self, from: legacy).first!.platform == nil)
+        // Unsupported native config is rejected before any bytes change.
+        try Data("[skills]\nconfig = []\n".utf8).write(to: codexConfig)
+        do { try Harness.setEnabled(false, record: codex); fatalError("wrote unsupported TOML") } catch {}
+        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == "[skills]\nconfig = []\n")
+        try Data(stopped.utf8).write(to: codexConfig)
+        // A broken registry blocks moves before any source is changed.
+        let savedRegistry = try Data(contentsOf: Harness.registry)
+        try fm.removeItem(at: Harness.registry)
+        try fm.createDirectory(at: Harness.registry, withIntermediateDirectories: true)
+        do { try Harness.setEnabled(false, record: shared); fatalError("accepted broken registry") } catch {}
+        precondition(fm.fileExists(atPath: skill.path))
+        try fm.removeItem(at: Harness.registry)
+        try savedRegistry.write(to: Harness.registry)
+        // Entry-point isolation: no config bytes or skill folders change.
+        BuildChannel.allowsSystemIntegration = false
+        do { try Harness.setEnabled(true, record: codex); fatalError("dev wrote config") } catch {}
+        do { try Harness.setEnabled(false, record: shared); fatalError("dev moved skill") } catch {}
+        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == stopped)
+        precondition(fm.fileExists(atPath: skill.path))
+        // Folder/SKILL.md aliases, duplicates, escaped paths and comments.
+        let quoted = String(decoding: try JSONSerialization.data(withJSONObject: skill.path, options: [.fragmentsAllowed]), as: UTF8.self)
+        let duplicates = "[[skills.config]] # first\npath = \(quoted)\nenabled = false # preserve\n[[skills.config]]\npath = \(quoted)\nenabled = true # false in comment\n[other]\nx = 1\n"
+        let updated = try ConnectorSkillPolicy.codexUpdating(duplicates, original: skill, enabled: true)
+        precondition(try ConnectorSkillPolicy.codexEnabled(updated, original: skill))
+        precondition(updated.contains("true # preserve") && updated.hasSuffix("[other]\nx = 1\n"))
+        precondition(try ConnectorSkillPolicy.codexUpdating(updated, original: skill, enabled: true) == updated)
+        for unsupported in ["[skills]\nconfig = []\n", "skills.config = []\n", "skills = { config = [] }\n", "[[ skills.config ]]\n", "[[skills.config]]\npath = 42\n"] {
+            do { _ = try ConnectorSkillPolicy.codexUpdating(unsupported, original: skill, enabled: false); fatalError("accepted unsupported config") } catch {}
+        }
+        print("PASS: platform overrides keep shared folders and other clients intact; global off/restore preserves overrides; relative symlink inventory and rollback conflicts; dev mutation gate; TOML aliases/duplicates/comments and unsupported forms")
+    }
+}
+'''
+for key, value in [('DJ2', djb2), ('MODEL', model), ('POLICY', policy), ('WRITER', writer), ('PARKED', parked), ('FUNCTIONS', functions)]:
+    harness = harness.replace(key, value)
+# Swift's precondition autoclosure does not throw; use a throwing wrapper so
+# every assertion above still evaluates the production expression directly.
+harness = harness.replace('precondition(try ', 'try require(')
+harness = harness.replace('@main struct SkillRegression', 'func require(_ value: Bool, file: StaticString = #file, line: UInt = #line) throws { precondition(value, file: file, line: line) }\n\n@main struct SkillRegression')
+with tempfile.TemporaryDirectory(prefix='claudebar-skill-policy-') as folder:
+    path = Path(folder) / 'Skills.swift'
+    path.write_text(harness)
+    binary = Path(folder) / 'skills'
+    subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
+    subprocess.run([str(binary), str(Path(folder) / 'home')], check=True)
