@@ -383,11 +383,11 @@ struct CapacityHardwareMark: View {
             HardwareIllustration(kind: disk ? .disk : .memory, load: load, tint: tint,
                                  wells: wells)
                 .frame(height: markHeight - 12)
-            Text(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
-                .rollingNumber(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
+            Text(ProcessSampler.Snapshot.byteLabel(bytes))
+                .rollingNumber(ProcessSampler.Snapshot.byteLabel(bytes))
                 .font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(Theme.textSecondary)
         }
-        .accessibilityLabel("\(disk ? "硬盘" : "内存")容量 \(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)")
+        .accessibilityLabel("\(disk ? "硬盘" : "内存")容量 \(ProcessSampler.Snapshot.byteLabel(bytes))")
     }
 }
 
@@ -399,7 +399,12 @@ struct CapacityHardwareMark: View {
 /// is this panel's 网络 section. The two surfaces must still measure one reading
 /// one way — the tile's mark uses the same −100…−40 dBm fraction — but only one
 /// of them draws the ruler, so only one of them declares it.
-/// 
+///
+/// There is no compact form: nothing in the app ever passed `compact: true`,
+/// so the 9pt row it gated — a second drawing with its own radius, height and
+/// padding — was unreachable; deleted rather than kept as a knob no caller can
+/// turn.
+///
 /// Only new measurements animate; no polling or decorative frame loop.
 struct ConnectionSignalScale: View {
     let rssi: Int?

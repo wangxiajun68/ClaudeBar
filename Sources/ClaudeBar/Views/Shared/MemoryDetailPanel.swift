@@ -27,7 +27,7 @@ struct MemoryDetailPanel: View {
                         HStack {
                             Text(row.name).lineLimit(1)
                             Spacer()
-                            RollingNumberText(ProcessSampler.Snapshot(memoryBytes: row.bytes).memoryLabel).monospacedDigit()
+                            RollingNumberText(ProcessSampler.Snapshot.byteLabel(row.bytes)).monospacedDigit()
                         }.font(Theme.Font.caption)
                         GeometryReader { proxy in
                             Capsule().fill(Theme.hairline)

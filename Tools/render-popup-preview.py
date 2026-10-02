@@ -162,6 +162,7 @@ source += file_from('Sources/ClaudeBar/Views/Shared/FeedbackToast.swift')
 source += file_from('Sources/ClaudeBar/Views/Shared/SessionCardView.swift')
 source += file_from('Sources/ClaudeBar/Views/Shared/CursorSessionCardView.swift')
 source += file_from('Sources/ClaudeBar/Views/Shared/ExternalSessionCardView.swift')
+source += file_from('Sources/ClaudeBar/Views/Shared/CodexCleanupDialog.swift')
 # `SessionLoadChip`/`HardwareSiliconMark` live in `ResourceStrip.swift`; the
 # strip's other readers need the sampler, so take the two pieces the cards use.
 _resource = (root / 'Sources/ClaudeBar/Views/Shared/ResourceStrip.swift').read_text()

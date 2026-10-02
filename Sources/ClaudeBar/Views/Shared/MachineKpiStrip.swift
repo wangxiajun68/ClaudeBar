@@ -165,7 +165,7 @@ struct MachineKpiStrip: View {
     }
 
     private var memShort: String {
-        ProcessSampler.Snapshot(memoryBytes: sampler.host.memoryUsed).memoryLabel
+        ProcessSampler.Snapshot.byteLabel(sampler.host.memoryUsed)
             .replacingOccurrences(of: " GB", with: "G")
             .replacingOccurrences(of: " MB", with: "M")
     }
@@ -199,14 +199,7 @@ struct MachineKpiStrip: View {
     }
 
     private func helpText() -> String {
-        var host = "本机  CPU \(Int(sampler.host.cpu.rounded()))%  GPU \(Int(sampler.host.gpu.rounded()))%  \(sampler.host.memoryLabel)"
-        if let cpuT = sampler.host.temperatureLabel(celsius: sampler.host.cpuTemperatureCelsius) {
-            host += "  CPU \(cpuT)"
-        }
-        if let gpuT = sampler.host.temperatureLabel(celsius: sampler.host.gpuTemperatureCelsius) {
-            host += "  GPU \(gpuT)"
-        }
-        return host
+        sampler.host.summaryLine
     }
 }
 

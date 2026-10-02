@@ -125,12 +125,8 @@ struct UsagePanel: View {
     }
 
     private func costDetail(_ estimate: ModelPricing.Estimate) -> String {
-        var details: [String] = []
-        if let secondary = estimate.cost.secondary {
-            details.append("另有 " + ModelPricing.format(secondary.amount, currency: secondary.currency))
-        }
-        if estimate.unpricedModels > 0 { details.append("\(estimate.unpricedModels) 个含未计价用量") }
-        return details.isEmpty ? (estimate.isEmpty ? "暂无用量" : "") : details.joined(separator: " · ")
+        let details = estimate.detailParts()
+        return details.isEmpty ? estimate.emptyCaption : details.joined(separator: " · ")
     }
 
     private var periodCaption: String {

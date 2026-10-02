@@ -45,7 +45,7 @@ struct DiskUsagePanel: View {
     private func metric(_ title: String, bytes: UInt64, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(Theme.Font.caption).foregroundColor(color)
-            RollingNumberText(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
+            RollingNumberText(ProcessSampler.Snapshot.byteLabel(bytes))
                 .font(Theme.Font.chromeEmph).monospacedDigit()
         }
     }

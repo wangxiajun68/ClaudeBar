@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Configuration and activation are separate facts; incomplete records are never ready.
 enum ProviderCardState: Equatable {
@@ -117,6 +118,71 @@ struct ProviderInputStyle: TextFieldStyle {
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 10)
         }
+    }
+}
+
+/// One labelled form row: the caption above the field the content draws.
+///
+/// It existed as a byte-identical private `field` helper in both provider
+/// sheets — same 8pt stack, same 12pt medium caption, same `ProviderInputStyle`
+/// on whatever went inside — so the two forms stayed in step only by hand. The
+/// shared definition lives here, beside the input style both sheets take.
+struct ProviderFormField<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ label: String, @ViewBuilder content: @escaping () -> Content) {
+        self.label = label
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            content().textFieldStyle(ProviderInputStyle()).font(Theme.Font.bodySmall)
+        }
+    }
+}
+
+/// Bundled brand assets: offline, light/dark variants, no remote image requests.
+///
+/// It sits here with the other shared provider controls rather than in the
+/// quick-setup sheet that first defined it: the directory and both editors
+/// draw the mark, so the sheet was never its owner.
+struct ProviderIdentityMark: View {
+    var entry: ProviderCatalogEntry?
+    let name: String
+    var size: CGFloat = 36
+    var body: some View {
+        Group {
+            if let entry, let image = ProviderBrandImages.image(entry.iconName, dark: Theme.isDark) {
+                Image(nsImage: image).resizable().scaledToFit().padding(size * 0.14)
+            } else {
+                // A custom or asset-less provider gets its own initial — the
+                // one thing that can tell two tiles without a bundled mark
+                // apart — instead of the single rack glyph they all used to
+                // share. Same idiom as the CLI avatars on the connectors page.
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}
+
+private enum ProviderBrandImages {
+    private static let cache = NSCache<NSString, NSImage>()
+    static func image(_ name: String, dark: Bool) -> NSImage? {
+        let key = "\(name)-\(dark ? "dark" : "light")"
+        if let cached = cache.object(forKey: key as NSString) { return cached }
+        guard let url = Bundle.main.url(forResource: key, withExtension: "png", subdirectory: "ProviderIcons")
+                ?? Bundle.main.url(forResource: name, withExtension: "ico", subdirectory: "ProviderIcons"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key as NSString)
+        return image
     }
 }
 

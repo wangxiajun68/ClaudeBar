@@ -60,13 +60,12 @@ final class PublicationFixture {
     var usageBySource: [UsageSource: [ModelUsage]] = [:]
     var usageTokensByModel: [UsageSource: [String: Int]] = [:]
     var usageDays: [DayUsage] = []
-    var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     var usagePublishedInterval: DateInterval?
     var usageLoading = false
     var usageCostLines: [String: ModelPricing.Estimate.Line] = [:]
     PRICE_PUBLICATION
     func apply(_ stats: [ModelUsage], daily: [String: [ModelUsage]], interval: DateInterval) {
-        publishUsage(stats, [:], [], [:], dailyModels: daily, interval: interval)
+        publishUsage(stats, [:], [], dailyModels: daily, interval: interval)
     }
 '''
 publication = next(line.strip() for line in provider.splitlines() if 'var usageEstimate = ' in line)

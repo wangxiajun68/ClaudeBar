@@ -205,7 +205,10 @@ private struct PowerFlowContent: View, Equatable {
             EnergySankey(flow: flow, style: compact ? .compact : .full)
                 .frame(height: compact ? 84 : 200)
             if !compact {
+                // The sentence carries the card's live watt figure, so its
+                // digits roll with the rest of the card's numbers.
                 Text(flow.summary)
+                    .rollingNumber(flow.summary)
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                 }
@@ -736,14 +739,10 @@ private final class SankeyWaveView: NSView {
         return band
     }
 
-    /// Retimes without a jump: freeze the current local time into
-    /// `timeOffset`, restart the clock now, then apply the new rate.
+    /// Retimes the shared clock in place; the freeze/restart itself lives in
+    /// `CALayer.retime(to:)` (see `Interaction.swift`), the one place every
+    /// rate-following layer keeps its phase.
     private func setSpeed(_ speed: Float) {
-        guard clock.speed != speed else { return }
-        let now = CACurrentMediaTime()
-        let local = clock.convertTime(now, from: nil)
-        clock.timeOffset = local
-        clock.beginTime = now
-        clock.speed = speed
+        clock.retime(to: speed)
     }
 }

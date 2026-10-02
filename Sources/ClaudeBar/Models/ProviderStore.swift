@@ -47,7 +47,6 @@ class ProviderStore: ObservableObject {
     /// price table — on every publish and on every frame of the period-change
     /// animation, defeating the point of `usageCostLines`.
     @Published private(set) var usageEstimate = ModelPricing.Estimate()
-    @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading: Bool = false
     @Published private(set) var usagePublishedInterval: DateInterval?
     /// Cursor's **actually charged** amount per canonical model id, for the
@@ -1050,13 +1049,12 @@ class ProviderStore: ObservableObject {
                     let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
                     let weekDays = Self.queryWeekDays(reference: weekReference)
-                    let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                     let dailyModels = Self.queryDailyModels(in: interval)
                     let today = Self.queryTodayUsage()
                     await MainActor.run { [weak self] in
                         guard let self, !self.usageRefreshQueued else { return }
                         self.publishTodayUsage(today)
-                        self.publishUsage(quick, quickSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
+                        self.publishUsage(quick, quickSources, days, dailyModels: dailyModels, interval: interval)
                         if self.usageWeekDays != weekDays { self.usageWeekDays = weekDays }
                     }
                 }
@@ -1068,7 +1066,6 @@ class ProviderStore: ObservableObject {
                 let finalSources = Self.queryUsageBySource(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
                 let weekDays = Self.queryWeekDays(reference: weekReference)
-                let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                 let dailyModels = Self.queryDailyModels(in: interval)
                 let today = Self.queryTodayUsage()
 
@@ -1082,7 +1079,7 @@ class ProviderStore: ObservableObject {
                     // Publish and release the gate in one main-actor transaction.
                     // A new refresh cannot start between these operations.
                     self.publishTodayUsage(today)
-                    self.publishUsage(final, finalSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
+                    self.publishUsage(final, finalSources, days, dailyModels: dailyModels, interval: interval)
                     if self.usageWeekDays != weekDays { self.usageWeekDays = weekDays }
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
@@ -1104,7 +1101,7 @@ class ProviderStore: ObservableObject {
     /// Arrays are compared as sets of rows because the SQL grouping gives no
     /// stable order.
     private func publishUsage(_ stats: [ModelUsage], _ bySource: [UsageSource: [ModelUsage]],
-                              _ days: [DayUsage], _ daysBySource: [UsageSource: [DayUsage]],
+                              _ days: [DayUsage],
                               dailyModels: [String: [ModelUsage]], interval: DateInterval) {
         func same(_ a: [ModelUsage], _ b: [ModelUsage]) -> Bool {
             a.count == b.count && Set(a) == Set(b)
@@ -1127,7 +1124,6 @@ class ProviderStore: ObservableObject {
             }
         }
         if usageDays != days { usageDays = days }
-        if usageDaysBySource != daysBySource { usageDaysBySource = daysBySource }
         if usagePublishedInterval != interval { usagePublishedInterval = interval }
         if usageLoading { usageLoading = false }
     }

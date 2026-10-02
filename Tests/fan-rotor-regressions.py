@@ -8,7 +8,16 @@ import shutil
 root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Views/Shared/LucideRotor.swift').read_text()
 layer = source[source.index('final class RotorLayerView'):]
-probe = 'import AppKit\nimport QuartzCore\n' + layer + r'''
+# `RotorLayerView.setSpeed` retimes through `CALayer.retime(to:)`, declared in
+# `Interaction.swift` — the one phase-preserving retime, shared by the rotor,
+# the power-flow clock and the reading sweep. The rotor slice alone names a
+# member the probe cannot see, so the declaration is spliced in beside it and
+# the probe exercises the production freeze/restart either way.
+interaction = (root / 'Sources/ClaudeBar/Views/Shared/Interaction.swift').read_text()
+assert '// MARK: - Phase-preserving retiming' in interaction, \
+    'Interaction.swift: CALayer.retime(to:) moved — the rotor probe no longer sees it'
+retime = interaction[interaction.index('// MARK: - Phase-preserving retiming'):interaction.index('// MARK: - Rolling figures')]
+probe = 'import AppKit\nimport QuartzCore\n' + layer + '\n' + retime + r'''
 final class FixtureWindow: NSWindow {
     var shown = true
     override var occlusionState: NSWindow.OcclusionState { shown ? [.visible] : [] }

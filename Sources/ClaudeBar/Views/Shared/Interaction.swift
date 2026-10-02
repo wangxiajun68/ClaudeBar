@@ -402,6 +402,24 @@ struct RollingNumberText: View {
     }
 }
 
+// MARK: - Phase-preserving retiming
+
+extension CALayer {
+    /// Retimes without a jump: freeze the layer's own local time into
+    /// `timeOffset`, restart the clock now, then apply the new rate — so a new
+    /// reading lands as a speed change instead of a jump back to the
+    /// animation's start. Shared by every rate-following decorative layer
+    /// (rotor blades, the power-flow clock, the reading sweep's sheens) so they
+    /// keep phase the same way.
+    func retime(to speed: Float) {
+        guard self.speed != speed else { return }
+        let now = CACurrentMediaTime()
+        timeOffset = convertTime(now, from: nil)
+        beginTime = now
+        self.speed = speed
+    }
+}
+
 // MARK: - Rolling figures
 
 /// The app's one digit-roll: `.numericText` carried by the value change itself,

@@ -81,21 +81,10 @@ struct SessionsPanelView: View {
             }
         }
         // Attached at the section, not the card: one presentation for the whole
-        // block, driven by the item the user actually acted on.
-        .confirmationDialog(pendingCleanup.map { "清理「\($0.displayName)」？" } ?? "清理卡住的会话",
-                            isPresented: Binding(
-                                get: { pendingCleanup != nil },
-                                set: { if !$0 { pendingCleanup = nil } }
-                            ),
-                            titleVisibility: .visible) {
-            Button("清理", role: .destructive) {
-                if let session = pendingCleanup { providerStore.cleanUpExternalSession(session) }
-                pendingCleanup = nil
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("这个会话的回合已经停止推进（多半是卡在审批上或写到一半就退出了）。\n"
-                 + "会先在 Codex 里删掉它的续写分支，再删除它本身；Codex 若拒绝删除，则改为归档。")
+        // block, driven by the item the user actually acted on. The dialog
+        // itself is shared with the sessions page (`CodexCleanupDialog`).
+        .codexCleanupDialog(pending: $pendingCleanup) { session in
+            providerStore.cleanUpExternalSession(session)
         }
     }
 

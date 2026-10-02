@@ -39,46 +39,9 @@ private struct SessionActionChips<Content: View>: View {
     }
 }
 
-/// Status dot: filled + haloed while `isOn`, muted gray otherwise.
+/// Status dot: filled + haloed while `isOn`, muted gray otherwise. Shared with
+/// the dashboard and the popup; see `SessionStatusViews.swift`.
 ///
-/// The halo is *static* (`BusyPulseRing` is a scaled, low-opacity ring, not an
-/// animation) — the name is a leftover from when it pulsed. See that type for
-/// why.
-private struct PulsingStatusDot: View {
-    let isOn: Bool
-    let color: Color
-    var big: Bool = false
-
-    var body: some View {
-        Circle()
-            .fill(isOn ? color : Theme.Ink.idle)
-            .frame(width: big ? 8 : 6, height: big ? 8 : 6)
-            .overlay {
-                if isOn {
-                    // The ring only exists while busy. It used to carry a
-                    // `repeatForever` pulse, which kept the render server
-                    // ticking for every live dot on the page whether or not it
-                    // was on screen. `BusyPulseRing` is now a static shape.
-                    BusyPulseRing(color: color, big: big)
-                }
-            }
-    }
-}
-
-/// Static halo for a busy session. Animated rings hitch scrolling.
-private struct BusyPulseRing: View {
-    let color: Color
-    var big: Bool = false
-    var compact: Bool = false
-
-    var body: some View {
-        Circle()
-            .strokeBorder(color.opacity(0.35), lineWidth: compact ? 1.5 : (big ? 2.5 : 2))
-            .scaleEffect(compact ? 1.8 : 1.7)
-            .opacity(0.45)
-    }
-}
-
 /// Full session page: one section per tool family — Claude Code, Cursor, then
 /// one per external kind (Codex …) — each an adaptive tile grid with
 /// double-click-to-resume, and the Codex tiles carrying their sub-agent swarm.
@@ -223,23 +186,11 @@ struct SessionsView: View {
                 }
             }
         }
-        // One dialog for the section, driven by whichever card asked. Same
-        // reasoning as the popup's: cleanup is a Codex-wide action, so it is
-        // described once instead of in every tile.
-        .confirmationDialog(pendingCleanup.map { "清理「\($0.displayName)」？" } ?? "清理卡住的会话",
-                            isPresented: Binding(
-                                get: { pendingCleanup != nil },
-                                set: { if !$0 { pendingCleanup = nil } }
-                            ),
-                            titleVisibility: .visible) {
-            Button("清理", role: .destructive) {
-                if let session = pendingCleanup { providerStore.cleanUpExternalSession(session) }
-                pendingCleanup = nil
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("这个会话的回合已经停止推进（多半是卡在审批上或写到一半就退出了）。\n"
-                 + "会先在 Codex 里删掉它的续写分支，再删除它本身；Codex 若拒绝删除，则改为归档。")
+        // One dialog for the section, driven by whichever card asked. See
+        // `CodexCleanupDialog` for why cleanup is described once instead of in
+        // every tile.
+        .codexCleanupDialog(pending: $pendingCleanup) { session in
+            providerStore.cleanUpExternalSession(session)
         }
     }
 
@@ -327,6 +278,11 @@ private struct SessionTileFull: View {
     let isExpanded: Bool
     private var isBusy: Bool { session.isBusy }
     private var isWaiting: Bool { session.isWaiting }
+    /// The tile's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: isWaiting, active: isBusy,
+                            accent: Theme.statusBusy, ink: Theme.Ink.claude)
+    }
     @State private var isHovered = false
 
     var body: some View {
@@ -336,9 +292,7 @@ private struct SessionTileFull: View {
                 SessionTitleLine(label: session.cardLabel,
                                  font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
-                StatusPill(label: isWaiting ? "等待确认" : (isBusy ? "运行中" : "空闲"),
-                           tint: isWaiting ? Theme.statusWarning : (isBusy ? Theme.statusBusy : Theme.statusIdle),
-                           ink: isWaiting ? Theme.Ink.warning : (isBusy ? Theme.Ink.claude : Theme.Ink.idle))
+                StatusPill(label: status.label, tint: status.tint, ink: status.ink)
             }
 
             // Context block and activity line are always rendered (dimmed
@@ -483,6 +437,11 @@ private struct CursorTileFull: View {
     let session: CursorSessionInfo
     private var isActive: Bool { session.isBusy }
     private var isWaiting: Bool { session.isWaiting }
+    /// The tile's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: isWaiting, active: isActive,
+                            accent: Theme.cursorAccent, ink: Theme.Ink.cursor)
+    }
     @State private var isHovered = false
 
     var body: some View {
@@ -492,9 +451,7 @@ private struct CursorTileFull: View {
                 SessionTitleLine(label: session.cardLabel,
                                  font: .system(size: 14, weight: .semibold, design: .rounded))
                 Spacer(minLength: 4)
-                StatusPill(label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
-                           tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.cursorAccent : Theme.statusIdle),
-                           ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.cursor : Theme.Ink.idle))
+                StatusPill(label: status.label, tint: status.tint, ink: status.ink)
             }
 
             // Space-reserved context + activity lines — see SessionTileFull.
@@ -588,9 +545,13 @@ private struct ExternalSessionTile: View {
     /// identical to the Claude and Cursor tiles, and a future signal lands in
     /// one place.
     private var isWaiting: Bool { session.isWaiting }
+    /// The tile's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: isWaiting, active: isActive,
+                            accent: Theme.external, ink: Theme.Ink.success)
+    }
 
-    /// Every agent below this node, in pre-order (sub-agents first, then their
-    /// own children).
+    /// Every agent below this node, in pre-order (sub-agents first, then their    /// own children).
     ///
     /// `node.children.flatMap(\.flattened)` allocates the whole descendant
     /// list per read, and `body` read it through `tileHeight` + the swarm
@@ -642,9 +603,7 @@ private struct ExternalSessionTile: View {
                     SessionTitleLine(label: session.cardLabel,
                                      font: .system(size: 14, weight: .semibold, design: .rounded))
                     Spacer(minLength: 4)
-                    StatusPill(label: isWaiting ? "等待确认" : (isActive ? "运行中" : "空闲"),
-                                tint: isWaiting ? Theme.statusWarning : (isActive ? Theme.external : Theme.statusIdle),
-                                ink: isWaiting ? Theme.Ink.warning : (isActive ? Theme.Ink.success : Theme.Ink.idle))
+                    StatusPill(label: status.label, tint: status.tint, ink: status.ink)
                     if let onCleanUp, session.hasStalledTurn {
                         ActionChip(systemImage: "bandage", tint: Theme.Ink.warning,
                                    help: "清理这个卡住的会话") { onCleanUp(session) }
@@ -692,7 +651,10 @@ private struct ExternalSessionTile: View {
             // Right: the swarm cluster, hanging under its header.
             VStack(alignment: .leading, spacing: Theme.Space.s4) {
                 swarmHeader(agents)
-                AgentSwarmView(root: session, children: agents, onOpen: { resume($0) })
+                AgentSwarmView(root: session, children: agents, onOpen: {
+                    TerminalLauncher.resumeCodexSession(cwd: $0.cwd, sessionId: $0.sessionId,
+                                                        pid: $0.holderPID, inDesktop: $0.inDesktop)
+                })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     // Small breathing room above the cluster so the parent
                     // badge does not crowd the "子 agent" header.
@@ -709,7 +671,10 @@ private struct ExternalSessionTile: View {
         // do on the readout-only tiles.
         .tile(tint: tint, hovered: isHovered)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { resume(session) }
+        .onTapGesture(count: 2) {
+            TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
+                                                pid: session.holderPID, inDesktop: session.inDesktop)
+        }
         .hoverState($isHovered)
         .help("\(session.cwd)\n双击以在 Codex 中继续")
     }
@@ -733,18 +698,15 @@ private struct ExternalSessionTile: View {
             }
             SessionActionChips(isHovered: isHovered) {
                 ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
-                    resume(session)
+                    TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
+                                                        pid: session.holderPID,
+                                                        inDesktop: session.inDesktop)
                 }
                 ActionChip(systemImage: "folder", tint: tint, help: "在 Finder 显示") {
                     revealCwd()
                 }
             }
         }
-    }
-
-    private func resume(_ target: ExternalSessionInfo) {
-        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId,
-                                            pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
     private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
@@ -774,6 +736,12 @@ private struct ExternalSessionGridCard: View {
     /// identical to the Claude and Cursor tiles, and a future signal lands in
     /// one place.
     private var isWaiting: Bool { session.isWaiting }
+
+    /// The card's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: isWaiting, active: isActive,
+                            accent: Theme.external, ink: Theme.Ink.success)
+    }
 
     /// Card width the strip is sized against — an estimate, not a measurement,
     /// so the grid row height does not reflow on every poll.
@@ -805,9 +773,7 @@ private struct ExternalSessionGridCard: View {
                     .buttonStyle(.plain)
                     .help("查看 \(agents.count) 个子 agent")
                 }
-                StatusPill(label: isActive ? "运行中" : "空闲",
-                                tint: isActive ? Theme.external : Theme.statusIdle,
-                                ink: isActive ? Theme.Ink.success : Theme.Ink.idle)
+                StatusPill(label: status.label, tint: status.tint, ink: status.ink)
                 if let onCleanUp, session.hasStalledTurn {
                     ActionChip(systemImage: "bandage", tint: Theme.Ink.warning,
                                help: "清理这个卡住的会话") { onCleanUp(session) }
@@ -857,7 +823,10 @@ private struct ExternalSessionGridCard: View {
                 Spacer(minLength: 0)
                 SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
-                        resume(session)
+                        TerminalLauncher.resumeCodexSession(cwd: session.cwd,
+                                                            sessionId: session.sessionId,
+                                                            pid: session.holderPID,
+                                                            inDesktop: session.inDesktop)
                     }
                     ActionChip(systemImage: "folder", tint: tint, help: "在 Finder 显示") {
                         revealCwd()
@@ -876,7 +845,10 @@ private struct ExternalSessionGridCard: View {
                 AgentSwarmView(root: session,
                                children: Array(agents.prefix(Self.strip.visible)),
                                compact: true,
-                               onOpen: { resume($0) })
+                               onOpen: {
+                                   TerminalLauncher.resumeCodexSession(cwd: $0.cwd, sessionId: $0.sessionId,
+                                                                       pid: $0.holderPID, inDesktop: $0.inDesktop)
+                               })
                     .frame(height: Self.strip.height)
             }
         }
@@ -886,7 +858,10 @@ private struct ExternalSessionGridCard: View {
         // card's lower half, so the ornament is the hue, not the rings.
         .tile(tint: tint, hovered: isHovered)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { resume(session) }
+        .onTapGesture(count: 2) {
+            TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
+                                                pid: session.holderPID, inDesktop: session.inDesktop)
+        }
         .hoverState($isHovered)
         .help("\(session.cwd)\n双击以在 Codex 中继续")
         .popover(isPresented: $showSwarm, arrowEdge: .bottom) {
@@ -895,16 +870,14 @@ private struct ExternalSessionGridCard: View {
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
-                AgentSwarmView(root: session, children: agents, onOpen: { resume($0) })
+                AgentSwarmView(root: session, children: agents, onOpen: {
+                    TerminalLauncher.resumeCodexSession(cwd: $0.cwd, sessionId: $0.sessionId,
+                                                        pid: $0.holderPID, inDesktop: $0.inDesktop)
+                })
                     .frame(width: 380, height: 300)
             }
             .padding(Theme.Space.s12)
         }
-    }
-
-    private func resume(_ target: ExternalSessionInfo) {
-        TerminalLauncher.resumeCodexSession(cwd: target.cwd, sessionId: target.sessionId,
-                                            pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
     private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }

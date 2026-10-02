@@ -36,6 +36,11 @@ geometry = (shared / 'LucideHardwareGeometry.swift').read_text()
 illustration = (shared / 'HardwareIllustration.swift').read_text()
 strip = (shared / 'ResourceStrip.swift').read_text()
 kpi = (shared / 'MachineKpiStrip.swift').read_text()
+# `ReadingSweepView.setSpeed` retimes its sheens through `CALayer.retime(to:)`,
+# declared in `Interaction.swift`; the probe compiles the mark without the rest
+# of that file, so the one shared retime is sliced in beside it.
+interaction = (shared / 'Interaction.swift').read_text()
+retime = interaction[interaction.index('// MARK: - Phase-preserving retiming'):interaction.index('// MARK: - Rolling figures')]
 
 
 def call_sites(text):
@@ -110,12 +115,14 @@ probe = (root / 'Tests/fixtures/machine-mark-probe.swift').read_text()
 for token, body in (('<<<LUCIDE_GEOMETRY>>>', geometry),
                     ('<<<LUCIDE_PATHS>>>', paths),
                     ('<<<INSTRUMENT_GLYPH>>>', glyph),
-                    ('<<<HARDWARE_ILLUSTRATION>>>', illustration)):
+                    ('<<<HARDWARE_ILLUSTRATION>>>', illustration),
+                    ('<<<RETIME>>>', retime)):
     assert token in probe, f'the probe template lost {token}'
 swift = probe.replace('<<<LUCIDE_GEOMETRY>>>', geometry) \
              .replace('<<<LUCIDE_PATHS>>>', paths) \
              .replace('<<<INSTRUMENT_GLYPH>>>', glyph) \
-             .replace('<<<HARDWARE_ILLUSTRATION>>>', illustration)
+             .replace('<<<HARDWARE_ILLUSTRATION>>>', illustration) \
+             .replace('<<<RETIME>>>', retime)
 
 with tempfile.TemporaryDirectory(prefix='claudebar-machine-mark-') as folder:
     folder = Path(folder)

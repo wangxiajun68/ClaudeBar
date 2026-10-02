@@ -26,6 +26,24 @@ struct FanInfo: Identifiable, Equatable {
     var mode: FanMode
 }
 
+/// Which side of the machine a fan sits on. `loadFans` reads it off the SMC
+/// `F{i}ID` name, and synthesises 左风扇 / 右风扇 when that key is unreadable
+/// on a two-fan machine — so those are the names this has to parse.
+enum FanSide {
+    case left, right
+}
+
+extension FanInfo {
+    /// The one place the left/right wording is parsed: the compact tile's
+    /// caption and the detail panel's heading used to test the same two
+    /// substrings and then disagree only in their suffix.
+    var side: FanSide? {
+        if name.localizedCaseInsensitiveContains("left") || name.contains("左") { return .left }
+        if name.localizedCaseInsensitiveContains("right") || name.contains("右") { return .right }
+        return nil
+    }
+}
+
 private enum SMCDataType {
     static let ui8  = FourCharCode("ui8 ").rawValue   // 0x75693820
     static let ui16 = FourCharCode("ui16").rawValue

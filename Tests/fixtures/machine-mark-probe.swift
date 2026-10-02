@@ -22,7 +22,9 @@ extension EnvironmentValues {
 
 // The tokens below are replaced by the Python suites with the production
 // source: the generated geometry, the hardware paths the badge draws, the tile
-// badge itself, and the mark.
+// badge itself, the mark, and the shared `CALayer.retime(to:)` its sweep calls.
+<<<RETIME>>>
+
 <<<LUCIDE_GEOMETRY>>>
 
 <<<LUCIDE_PATHS>>>

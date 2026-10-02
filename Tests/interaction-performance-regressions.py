@@ -13,6 +13,10 @@ root = Path(__file__).resolve().parents[1]
 shared = root / 'Sources/ClaudeBar/Views/Shared'
 interaction = (shared / 'Interaction.swift').read_text()
 gate = interaction[interaction.index('enum ScrollHoverGate {'):interaction.index('/// Tracks pointer-in')]
+# The phase-preserving retime both native layers below call lives in
+# `Interaction.swift` now (`CALayer.retime(to:)`); the `GATE` slice would drop
+# it, so it is spliced in with the sections that need it.
+retime = interaction[interaction.index('// MARK: - Phase-preserving retiming'):interaction.index('// MARK: - Rolling figures')]
 json_source = (shared / 'JSONTreeView.swift').read_text()
 json_parser = json_source[json_source.index('enum JSONDocument {'):json_source.index('// MARK: - View')]
 sse = (root / 'Sources/ClaudeBar/Utils/StreamAssembler.swift').read_text().split('/// Token usage')[0]
@@ -23,6 +27,7 @@ marks = marks.replace('<<<LUCIDE_GEOMETRY>>>', (shared / 'LucideHardwareGeometry
 marks = marks.replace('<<<LUCIDE_PATHS>>>', (shared / 'LucideHardwarePaths.swift').read_text())
 marks = marks.replace('<<<INSTRUMENT_GLYPH>>>', (shared / 'InstrumentGlyph.swift').read_text())
 marks = marks.replace('<<<HARDWARE_ILLUSTRATION>>>', (shared / 'HardwareIllustration.swift').read_text())
+marks = marks.replace('<<<RETIME>>>', retime)
 
 def method(source, signature):
     start = source.index(signature)

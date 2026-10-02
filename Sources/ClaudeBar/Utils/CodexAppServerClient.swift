@@ -123,7 +123,7 @@ enum CodexAppServerClient {
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
         let deadline = Date().addingTimeInterval(timeout)
-        let collector = LineCollector(deadline: deadline)
+        let collector = JSONLineCollector()
         output.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil; collector.finish() }
@@ -141,7 +141,7 @@ enum CodexAppServerClient {
             var data = try JSONSerialization.data(withJSONObject: message)
             data.append(0x0A)
             try input.fileHandleForWriting.write(contentsOf: data)
-        }, collector: collector)
+        }, collector: collector, deadline: deadline)
 
         _ = try server.call("initialize", params: ["clientInfo": [
             "name": "claudebar", "title": "ClaudeBar",
@@ -155,12 +155,15 @@ enum CodexAppServerClient {
     /// so an id counter and a matching loop are the whole protocol handling.
     private final class Server {
         private let send: ([String: Any]) throws -> Void
-        private let collector: LineCollector
+        private let collector: JSONLineCollector
+        private let deadline: Date
         private var nextID = 1
 
-        init(send: @escaping ([String: Any]) throws -> Void, collector: LineCollector) {
+        init(send: @escaping ([String: Any]) throws -> Void, collector: JSONLineCollector,
+             deadline: Date) {
             self.send = send
             self.collector = collector
+            self.deadline = deadline
         }
 
         func notify(_ method: String, params: [String: Any]) {
@@ -171,7 +174,10 @@ enum CodexAppServerClient {
             let id = nextID
             nextID += 1
             try send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
-            let message = try collector.response(id: id)
+            let message: [String: Any]
+            do { message = try collector.response(id: id, until: deadline) }
+            catch JSONLineCollector.Failure.timedOut { throw Failure.timedOut }
+            catch { throw Failure.server("Codex 服务已退出") }
             if let error = message["error"] as? [String: Any] {
                 let text = error["message"] as? String ?? "Codex 拒绝了该请求"
                 // The one refusal that has a documented cause and a documented
@@ -207,55 +213,6 @@ enum CodexAppServerClient {
                 }
             }
             return ids
-        }
-    }
-
-    /// Newline-delimited JSON-RPC responses keyed by request id, with the
-    /// deadline owned by the caller. Same shape as `MCPLineCollector`: the read
-    /// handler runs on a FileHandle queue, so every access is under the lock and
-    /// `response(id:)` waits on the semaphore rather than polling.
-    private final class LineCollector: @unchecked Sendable {
-        private let lock = NSLock()
-        private let signal = DispatchSemaphore(value: 0)
-        private let deadline: Date
-        private var buffer = Data()
-        private var messages: [Int: [String: Any]] = [:]
-        private var closed = false
-
-        init(deadline: Date) { self.deadline = deadline }
-
-        func finish() {
-            lock.lock(); closed = true; lock.unlock()
-            signal.signal()
-        }
-
-        func append(_ data: Data) {
-            lock.lock()
-            buffer.append(data)
-            if buffer.count > 1_048_576 { buffer.removeAll(); lock.unlock(); signal.signal(); return }
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                let line = Data(buffer[..<newline])
-                buffer.removeSubrange(...newline)
-                if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                   let id = json["id"] as? Int {
-                    messages[id] = json
-                    signal.signal()
-                }
-            }
-            lock.unlock()
-        }
-
-        func response(id: Int) throws -> [String: Any] {
-            while Date() < deadline {
-                lock.lock()
-                let value = messages.removeValue(forKey: id)
-                let isClosed = closed
-                lock.unlock()
-                if let value { return value }
-                if isClosed { throw Failure.server("Codex 服务已退出") }
-                _ = signal.wait(timeout: .now() + 0.2)
-            }
-            throw Failure.timedOut
         }
     }
 }

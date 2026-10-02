@@ -119,7 +119,7 @@ extension ProviderStore {
         }
         if fields.contains(.usage) {
             out += [changes($usageStats), changes($usageDays), changes($usageWeekDays), changes($usageBySource),
-                    changes($usageDaysBySource), changes($usagePeriod), changes($usageReferenceDate),
+                    changes($usagePeriod), changes($usageReferenceDate),
                     changes($usageLoading), changes($usagePublishedInterval), changes($todayUsage),
                     changes($usageEstimate)]
         }

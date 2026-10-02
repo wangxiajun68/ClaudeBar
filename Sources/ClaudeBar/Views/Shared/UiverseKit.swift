@@ -224,15 +224,25 @@ struct UsageSourceMark: View {
         .accessibilityLabel(source.label)
     }
 
-    /// Every source has artwork now, so this is total rather than optional.
-    ///
-    /// 第三方 used to return `nil` — it is not a client — and the legend drew it
-    /// as bare text beside three marks, which reads as a row that failed to
-    /// finish. It is not a *client* but it is still a subject the app is naming,
-    /// and the app already has a mark for itself; see
-    /// `ProductBrandMark.Brand.claudebar`.
+    /// The same mapping the view draws through; see `UsageSource.brandMark`.
     private static func brand(of source: UsageSource) -> ProductBrandMark.Brand {
-        switch source {
+        source.brandMark
+    }
+}
+
+/// The one source→brand mapping. Every surface that names a usage source with
+/// the client's own artwork — the popup's totals rows, the usage report's
+/// source tally, `UsageSourceMark` — asks here; each used to hand-roll the same
+/// switch and had to be kept total on its own.
+///
+/// **Every source takes a mark, 第三方 included.** It used to answer `nil` — it
+/// is not a client — and the legend drew it as bare text beside three marks,
+/// which reads as a row that failed to finish. It is not a *client* but it is
+/// still a subject the app is naming, and the app already has a mark for
+/// itself; see `ProductBrandMark.Brand.claudebar`.
+extension UsageSource {
+    var brandMark: ProductBrandMark.Brand {
+        switch self {
         case .claude: return .claude
         case .codex: return .codex
         case .thirdParty: return .claudebar

@@ -307,6 +307,44 @@ enum ModelPricing {
         func unpricedCount(of reason: Unpriced) -> Int {
             lines.reduce(0) { $0 + ($1.unpriced == reason ? 1 : 0) }
         }
+
+        /// The unpriced share, as one sentence. The popup's copy had drifted to
+        /// 「N 个含未计价用量」 while the island card and the session row said
+        /// 「N 个模型未计价」; the wording lives here so the three cannot
+        /// disagree again.
+        var unpricedCaption: String {
+            unpricedModels > 0 ? "\(unpricedModels) 个模型未计价" : ""
+        }
+
+        /// The parts of the detail line under a money headline, in the order
+        /// every surface shows them. Each surface lays the parts out its own
+        /// way — the session row and the popup join them with `" · "`, the
+        /// island card prints only the first — which is why this returns parts
+        /// rather than a finished sentence.
+        ///
+        /// `includeDominant` is the row's form: it repeats the headline figure
+        /// it prints beside the badge, so the second currency needs no 「另有」
+        /// lead. Without it the parts are the caveat alone, printed under a
+        /// headline the surface draws itself.
+        func detailParts(includeDominant: Bool = false) -> [String] {
+            var parts: [String] = []
+            if includeDominant, let dominant = cost.dominant {
+                parts.append(ModelPricing.format(dominant.amount, currency: dominant.currency))
+            }
+            if let secondary = cost.secondary {
+                let figure = ModelPricing.format(secondary.amount, currency: secondary.currency)
+                // The lead the second figure takes follows the role it plays:
+                // beside the headline it is a peer of it, under it an addition.
+                parts.append(includeDominant ? figure : "另有 " + figure)
+            }
+            if !unpricedCaption.isEmpty { parts.append(unpricedCaption) }
+            return parts
+        }
+
+        /// What a surface with nothing to caveat shows instead: a stated
+        /// 暂无用量 only when the period has no lines at all — an estimate
+        /// whose models all priced has a figure and needs no caption beside it.
+        var emptyCaption: String { isEmpty ? "暂无用量" : "" }
     }
 
     /// What the table knows about one slug.

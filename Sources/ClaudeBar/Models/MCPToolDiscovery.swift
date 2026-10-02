@@ -119,7 +119,7 @@ enum MCPToolDiscovery {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
-        let collector = MCPLineCollector()
+        let collector = JSONLineCollector()
         process.executableURL = executable
         process.arguments = connection.arguments
         process.environment = environment
@@ -143,7 +143,7 @@ enum MCPToolDiscovery {
             "protocolVersion": "2025-06-18", "capabilities": [:] as [String: String],
             "clientInfo": ["name": "ClaudeBar", "version": "1.0"]
         ]], to: input)
-        let initialized = try collector.response(id: 1, until: deadline)
+        let initialized = try response(collector, id: 1, until: deadline)
         guard initialized["error"] == nil else { throw DiscoveryError.serverError }
         guard initialized["result"] is [String: Any] else { throw DiscoveryError.invalidResponse }
         try send(["jsonrpc": "2.0", "method": "notifications/initialized"], to: input)
@@ -153,7 +153,7 @@ enum MCPToolDiscovery {
             let id = page + 2
             let params: [String: String] = cursor.map { ["cursor": $0] } ?? [:]
             try send(["jsonrpc": "2.0", "id": id, "method": "tools/list", "params": params], to: input)
-            let message = try collector.response(id: id, until: deadline)
+            let message = try response(collector, id: id, until: deadline)
             guard message["error"] == nil else { throw DiscoveryError.serverError }
             guard let result = message["result"] as? [String: Any],
                   let entries = result["tools"] as? [[String: Any]] else { throw DiscoveryError.invalidResponse }
@@ -168,6 +168,15 @@ enum MCPToolDiscovery {
         var data = try JSONSerialization.data(withJSONObject: message)
         data.append(0x0A)
         try pipe.fileHandleForWriting.write(contentsOf: data)
+    }
+
+    /// The collector reports transport failures generically; this is the one
+    /// place they take on the error enum the connector sheet presents.
+    private static func response(_ collector: JSONLineCollector, id: Int,
+                                 until deadline: Date) throws -> [String: Any] {
+        do { return try collector.response(id: id, until: deadline) }
+        catch JSONLineCollector.Failure.timedOut { throw DiscoveryError.timedOut }
+        catch { throw DiscoveryError.serverError }
     }
 
     private static func resolve(_ command: String, config: URL, environment: [String: String]) -> URL? {
@@ -185,49 +194,5 @@ enum MCPToolDiscovery {
             if fm.isExecutableFile(atPath: url.path) { return url }
         }
         return nil
-    }
-}
-
-private final class MCPLineCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private let signal = DispatchSemaphore(value: 0)
-    private var buffer = Data()
-    private var messages: [Int: [String: Any]] = [:]
-    private var closed = false
-
-    func finish() {
-        lock.lock()
-        closed = true
-        lock.unlock()
-        signal.signal()
-    }
-
-    func append(_ data: Data) {
-        lock.lock()
-        buffer.append(data)
-        if buffer.count > 1_048_576 { buffer.removeAll(); lock.unlock(); signal.signal(); return }
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = Data(buffer[..<newline])
-            buffer.removeSubrange(...newline)
-            if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-               let id = json["id"] as? Int {
-                messages[id] = json
-                signal.signal()
-            }
-        }
-        lock.unlock()
-    }
-
-    func response(id: Int, until deadline: Date) throws -> [String: Any] {
-        while Date() < deadline {
-            lock.lock()
-            let value = messages.removeValue(forKey: id)
-            let isClosed = closed
-            lock.unlock()
-            if let value { return value }
-            if isClosed { throw MCPToolDiscovery.DiscoveryError.serverError }
-            _ = signal.wait(timeout: .now() + 0.2)
-        }
-        throw MCPToolDiscovery.DiscoveryError.timedOut
     }
 }

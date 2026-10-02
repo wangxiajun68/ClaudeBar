@@ -275,35 +275,6 @@ struct DashboardView: View {
 
 // MARK: - Session overview tile
 
-/// Status dot for an overview tile: tinted + pulsing ring while busy, muted
-/// tint while idle.
-private struct OverviewStatusDot: View {
-    let tint: Color
-    let isBusy: Bool
-
-    var body: some View {
-        Circle()
-            .fill(isBusy ? tint : tint.opacity(0.35))
-            .frame(width: 6, height: 6)
-            .overlay {
-                if isBusy { BusyPulseRing(color: tint) }
-            }
-    }
-}
-
-/// Static halo for a busy session. A `repeatForever` pulse kept a display
-/// link running for every live tile and hitching scroll.
-private struct BusyPulseRing: View {
-    let color: Color
-
-    var body: some View {
-        Circle()
-            .strokeBorder(color.opacity(0.35), lineWidth: 2)
-            .scaleEffect(1.7)
-            .opacity(0.45)
-    }
-}
-
 /// One tile of the dashboard session overview: source dot + status header,
 /// full-width context bar with its label, activity line, and recency —
 /// everything readable without interaction.
@@ -311,6 +282,12 @@ private struct OverviewTile: View {
     let row: DashboardView.OverviewRow
     let action: () -> Void
     @State private var isHovered = false
+
+    /// The tile's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: row.waiting, active: row.busy,
+                            accent: row.tint, ink: row.pillInk)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -326,11 +303,7 @@ private struct OverviewTile: View {
                     StatusPill(label: row.platform, tint: row.tint, ink: row.pillInk, mark: row.mark)
                         .fixedSize()
                     Spacer()
-                    StatusPill(
-                        label: row.waiting ? "等待确认" : (row.busy ? "运行中" : "空闲"),
-                        tint: row.waiting ? Theme.statusWarning : (row.busy ? row.tint : Theme.statusIdle),
-                        ink: row.waiting ? Theme.Ink.warning : (row.busy ? row.pillInk : Theme.Ink.idle)
-                    )
+                    StatusPill(label: status.label, tint: status.tint, ink: status.ink)
                 }
                 Text(row.project)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -370,7 +343,7 @@ private struct OverviewTile: View {
         .buttonStyle(.plain)
         .hoverState($isHovered)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.platform)，\(row.project)，\(row.waiting ? "等待确认" : (row.busy ? "运行中" : "空闲"))，上下文 \(row.contextLabel)")
+        .accessibilityLabel("\(row.platform)，\(row.project)，\(status.label)，上下文 \(row.contextLabel)")
         .accessibilityHint("在会话页查看")
     }
 }

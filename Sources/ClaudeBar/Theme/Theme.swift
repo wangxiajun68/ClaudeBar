@@ -288,6 +288,22 @@ enum Theme {
         }
     }
 
+    // MARK: Session status readout
+
+    /// The three-state session capsule — 等待确认 / 运行中 / 空闲 — plus the
+    /// tint and ink a `StatusPill` wants.
+    ///
+    /// Every session surface used to re-derive this triple from its own flags
+    /// and re-spell the literals; the park state is the one a hand copy drops
+    /// (it read 运行中 on the surfaces that missed the waiting sweep). The
+    /// accent stays the caller's — Claude blue, Cursor violet, external green —
+    /// only the park and idle hues are the rule.
+    static func sessionStatus(waiting: Bool, active: Bool,
+                              accent: Color, ink: Color) -> (label: String, tint: Color, ink: Color) {
+        if waiting { return ("等待确认", statusWarning, Ink.warning) }
+        return active ? ("运行中", accent, ink) : ("空闲", statusIdle, Ink.idle)
+    }
+
     // MARK: Usage bar palette (hash-stable per model name)
     /// Muted cool tones — blue, violet, teal, amber, coral.
     static func barColor(for model: String) -> Color {

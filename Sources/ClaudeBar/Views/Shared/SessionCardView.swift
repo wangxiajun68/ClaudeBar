@@ -9,6 +9,11 @@ struct SessionCardView: View {
 
     private var isBusy: Bool { session.isBusy }
     private var isWaiting: Bool { session.isWaiting }
+    /// The card's three-state capsule; see `Theme.sessionStatus`.
+    private var status: (label: String, tint: Color, ink: Color) {
+        Theme.sessionStatus(waiting: isWaiting, active: isBusy,
+                            accent: Theme.statusBusy, ink: Theme.Ink.claude)
+    }
     private var ratio: Double { session.contextRatio }
     private var ctxColor: Color { Theme.contextInk(ratio) }
     @State private var isHovered = false
@@ -38,9 +43,9 @@ struct SessionCardView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 StatusPill(
-                    label: statusLabel,
-                    tint: statusTint,
-                    ink: statusInk
+                    label: status.label,
+                    tint: status.tint,
+                    ink: status.ink
                 )
             }
 
@@ -94,26 +99,9 @@ struct SessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label.accessibilityText)，\(statusLabel)，上下文 \(contextLabel)")
+        .accessibilityLabel("\(label.accessibilityText)，\(status.label)，上下文 \(contextLabel)")
         .accessibilityHint("连按在终端中恢复会话")
         .onTapGesture(count: 2) { onDoubleTap?() }
-    }
-
-    /// Three states, not two. "等待确认" is the one that used to read 运行中
-    /// while the session sat on a permission prompt doing nothing.
-    private var statusLabel: String {
-        if isWaiting { return "等待确认" }
-        return isBusy ? "运行中" : "空闲"
-    }
-
-    private var statusTint: Color {
-        if isWaiting { return Theme.statusWarning }
-        return isBusy ? Theme.statusBusy : Theme.statusIdle
-    }
-
-    private var statusInk: Color {
-        if isWaiting { return Theme.Ink.warning }
-        return isBusy ? Theme.Ink.claude : Theme.Ink.idle
     }
 
     /// The activity line doubles as the reason line while parked: what the

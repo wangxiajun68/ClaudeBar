@@ -49,9 +49,9 @@ struct FanInternalsPanel: View {
                 ZStack(alignment: .topLeading) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                     illustratedFan(at: 0, width: proxy.size.width)
-                        .position(x: proxy.size.width * 300 / 1536, y: proxy.size.height * 315 / 1024)
+                        .position(FanArtwork.rotorPosition(FanArtwork.leftRotorCenter, in: proxy.size))
                     illustratedFan(at: 1, width: proxy.size.width)
-                        .position(x: proxy.size.width * 1237 / 1536, y: proxy.size.height * 315 / 1024)
+                        .position(FanArtwork.rotorPosition(FanArtwork.rightRotorCenter, in: proxy.size))
                 }
             } else {
                 Image(systemName: "laptopcomputer")
@@ -68,7 +68,7 @@ struct FanInternalsPanel: View {
         let fan = fanMonitor.fans.indices.contains(index) ? fanMonitor.fans[index] : nil
         LucideRotor(rpm: fan?.rpm ?? 0, maxRPM: fan?.maxRPM ?? 1,
                     tint: Theme.textSecondary, forced: false,
-                    size: width * 216 / 1536, showsHousing: false,
+                    size: width * FanArtwork.rotorDiameterFraction, showsHousing: false,
                     artwork: index == 0 ? FanArtwork.leftRotor : FanArtwork.rightRotor)
     }
 
@@ -95,8 +95,7 @@ struct FanInternalsPanel: View {
                 .rollingNumber("上限 \(fan.maxRPM.formatted()) rpm")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             Button {
-                if fan.mode.isAutomatic { fanMonitor.setMaxSpeed(fan.id) }
-                else { fanMonitor.setAutomatic(fan.id) }
+                fanMonitor.toggleMode(of: fan)
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: fan.mode.isAutomatic ? "wind" : "arrow.uturn.backward")
@@ -115,8 +114,7 @@ struct FanInternalsPanel: View {
     }
 
     private func name(_ fan: FanInfo, index: Int) -> String {
-        if fan.name.localizedCaseInsensitiveContains("left") || fan.name.contains("左") { return "左侧风扇" }
-        if fan.name.localizedCaseInsensitiveContains("right") || fan.name.contains("右") { return "右侧风扇" }
+        if let side = fan.side { return side == .left ? "左侧风扇" : "右侧风扇" }
         return fanMonitor.fans.count == 1 ? "风扇" : "风扇 \(index + 1)"
     }
 }

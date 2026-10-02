@@ -148,7 +148,7 @@ struct UsageAnalyticsSection: View {
                 HStack(spacing: 16) {
                     ForEach(sourceRows) { row in
                         HStack(spacing: 5) {
-                            ProductBrandMark(brand: sourceBrand(row.source)).frame(width: 16, height: 16)
+                            ProductBrandMark(brand: row.source.brandMark).frame(width: 16, height: 16)
                                 .accessibilityHidden(true)
                             Circle().fill(UsageReportPalette.source(row.source)).frame(width: 5, height: 5)
                             Text(row.source.shortLabel)
@@ -306,7 +306,7 @@ struct UsageAnalyticsSection: View {
                     let color = UsageReportPalette.source(row.source)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
-                            ProductBrandMark(brand: sourceBrand(row.source)).frame(width: 18, height: 18)
+                            ProductBrandMark(brand: row.source.brandMark).frame(width: 18, height: 18)
                                 .accessibilityHidden(true)
                             Text(row.source.label).font(Theme.Font.microMedium)
                                 .foregroundColor(Theme.textSecondary).lineLimit(1)
@@ -331,10 +331,6 @@ struct UsageAnalyticsSection: View {
                 }
             }
         }.help("来源总量 \(total.formatted()) Token，不含 Cursor 官方账单")
-    }
-
-    private func sourceBrand(_ source: UsageSource) -> ProductBrandMark.Brand {
-        switch source { case .claude: return .claude; case .codex: return .codex; case .thirdParty: return .claudebar }
     }
 
     private func rateLabel(_ rate: Double?) -> String { rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }

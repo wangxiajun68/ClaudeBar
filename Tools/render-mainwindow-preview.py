@@ -741,6 +741,12 @@ final class FanMonitor {
     func setManual(_ fanID: Int, rpm: Int) {}
     func setMaxSpeed(_ fanID: Int) {}
     func resetAllToAutomatic() {}
+    /// Mirrors `FanMonitor.toggleMode(of:)` in the app, so the fixture's fan
+    /// tile drives the same shape the production one does.
+    func toggleMode(of fan: FanInfo) {
+        if fan.mode.isAutomatic { setMaxSpeed(fan.id) }
+        else { setAutomatic(fan.id) }
+    }
 }
 
 struct FanMode: Equatable {
@@ -755,6 +761,20 @@ struct FanInfo: Identifiable, Equatable {
     var minRPM: Int
     var maxRPM: Int
     var mode: FanMode
+}
+
+// The left/right parse the fan tile's caption reads now lives with its owner
+// (`FanInfo.side` in `SMCController.swift`); the stand-in below mirrors it.
+enum FanSide {
+    case left, right
+}
+
+extension FanInfo {
+    var side: FanSide? {
+        if name.localizedCaseInsensitiveContains("left") || name.contains("左") { return .left }
+        if name.localizedCaseInsensitiveContains("right") || name.contains("右") { return .right }
+        return nil
+    }
 }
 
 final class AudioAccessoryMonitor {
@@ -824,7 +844,6 @@ final class ProviderStore: ObservableObject {
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
     @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
-    @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
     @Published var usageLoading = false
     @Published var usagePeriod: UsagePeriod = .month
     @Published var usageReferenceDate: Date = Date()
@@ -1167,13 +1186,8 @@ _dashboard = page_without_scroll('Sources/ClaudeBar/Views/Pages/DashboardView.sw
 _dashboard = _dashboard.replace(
     'GreetingCard(onNavigate: onNavigate)', 'FixtureGreetingSheet()')
 assert 'FixtureGreetingSheet()' in _dashboard, 'DashboardView.swift: GreetingCard call moved'
-_dashboard = re.sub(r'/// Static halo for a busy session\..*?\nprivate struct BusyPulseRing: View \{.*?\n\}\n', '', _dashboard, count=1, flags=re.S)
-assert 'private struct BusyPulseRing' not in _dashboard, 'DashboardView BusyPulseRing moved — update the renderer'
 source += _dashboard
 _sessions = page_without_scroll('Sources/ClaudeBar/Views/Pages/SessionsView.swift', 'SessionsView')
-_sessions = _sessions.replace('/// Static halo for a busy session. Animated rings hitch scrolling.\nprivate struct BusyPulseRing: View {\n    let color: Color\n    var big: Bool = false\n    var compact: Bool = false\n\n    var body: some View {\n        Circle()\n            .strokeBorder(color.opacity(0.35), lineWidth: compact ? 1.5 : (big ? 2.5 : 2))\n            .scaleEffect(compact ? 1.8 : 1.7)\n            .opacity(0.45)\n    }\n}\n',
-    '// `BusyPulseRing` is drawn once in this fixture (the dashboard copy).\n')
-assert 'private struct BusyPulseRing' not in _sessions, 'SessionsView BusyPulseRing moved — update the renderer'
 source += _sessions
 source += page_without_scroll('Sources/ClaudeBar/Views/Pages/UsageView.swift', 'UsageView')
 _vpn = page_without_scroll('Sources/ClaudeBar/Views/Pages/VPNView.swift', 'VPNView')
@@ -1476,22 +1490,10 @@ assert _n == 1, f'InstrumentSearchField.swift: expected 1 TextField, rewrote {_n
 assert 'TextField(' not in _search, 'InstrumentSearchField.swift: a TextField survived the rewrite'
 source += _search
 source += require('Sources/ClaudeBar/Views/Shared/HeartbeatSparkline.swift', 'struct HeartbeatSparkline: View {')
-source += '''
-/// Both session pages declare their own `BusyPulseRing` (the same drawing at the
-/// same values). One declaration, taken from the sessions page's signature so
-/// both call sites compile.
-struct BusyPulseRing: View {
-    let color: Color
-    var big: Bool = false
-    var compact: Bool = false
-    var body: some View {
-        Circle()
-            .strokeBorder(color.opacity(0.35), lineWidth: compact ? 1.5 : (big ? 2.5 : 2))
-            .scaleEffect(compact ? 1.8 : 1.7)
-            .opacity(0.45)
-    }
-}
-'''
+source += require_file('Sources/ClaudeBar/Views/Shared/SessionStatusViews.swift')
+# The Codex 清理 dialog both session surfaces attach; the renderer owns neither
+# page's copy, so the shared modifier comes in with the cards.
+source += require_file('Sources/ClaudeBar/Views/Shared/CodexCleanupDialog.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/SessionCardView.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/AgentSwarmView.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/SourceRing.swift')
@@ -1826,11 +1828,6 @@ source += r'''
             .claude: models.filter { $0.model.hasPrefix("claude") },
             .codex: models.filter { $0.model.hasPrefix("gpt") },
             .thirdParty: models.filter { !$0.model.hasPrefix("claude") && !$0.model.hasPrefix("gpt") },
-        ]
-        store.usageDaysBySource = [
-            .claude: Fixture.usageDays(days: 30),
-            .codex: Fixture.usageDays(days: 30).map { DayUsage(day: $0.day, inputTokens: $0.inputTokens / 4, outputTokens: $0.outputTokens / 3, cacheReadTokens: $0.cacheReadTokens / 6, cacheCreationTokens: 0) },
-            .thirdParty: Fixture.usageDays(days: 30).map { DayUsage(day: $0.day, inputTokens: $0.inputTokens / 2, outputTokens: $0.outputTokens / 2, cacheReadTokens: $0.cacheReadTokens / 2, cacheCreationTokens: 0) },
         ]
         store.usageEstimate = ModelPricing.estimate(models)
         store.usageCostLines = Dictionary(uniqueKeysWithValues: store.usageEstimate.lines.map { ($0.model, $0) })

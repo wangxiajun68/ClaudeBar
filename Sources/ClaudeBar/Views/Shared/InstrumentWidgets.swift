@@ -63,9 +63,7 @@ struct CompactFanPair: View {
     }
 
     private func shortName(_ fan: FanInfo, index: Int) -> String {
-        let raw = fan.name.trimmingCharacters(in: .whitespaces)
-        if raw.localizedCaseInsensitiveContains("left") || raw.contains("左") { return "左" }
-        if raw.localizedCaseInsensitiveContains("right") || raw.contains("右") { return "右" }
+        if let side = fan.side { return side == .left ? "左" : "右" }
         return fans.count == 1 ? "风扇" : "\(index + 1)"
     }
 

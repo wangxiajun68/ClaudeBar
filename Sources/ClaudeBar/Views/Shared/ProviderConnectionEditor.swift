@@ -154,9 +154,9 @@ struct ProviderConnectionEditor: View {
                         .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
                 }
             }
-            field("配置名称") { TextField("供应商名称", text: $draft.name) }
-            field("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
-            field("接口地址") { TextField("https://…", text: $draft.baseURL) }
+            ProviderFormField("配置名称") { TextField("供应商名称", text: $draft.name) }
+            ProviderFormField("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
+            ProviderFormField("接口地址") { TextField("https://…", text: $draft.baseURL) }
             Toggle("记录请求报文", isOn: $draft.captureEnabled)
                 .toggleStyle(.instrument)
                 .font(Theme.Font.bodySmall)
@@ -258,13 +258,13 @@ struct ProviderConnectionEditor: View {
         let index = draft.models.firstIndex { $0.id == model.id }
         if let index {
             HStack(alignment: .top, spacing: 12) {
-                field("上下文窗口") {
+                ProviderFormField("上下文窗口") {
                     TextField(client == .codex ? "400000" : "1000000",
                               text: client == .codex
                                   ? $draft.models[index].contextWindow
                                   : $draft.models[index].contextTokens)
                 }
-                field("自动压缩阈值") {
+                ProviderFormField("自动压缩阈值") {
                     TextField(client == .codex ? "360000" : "1000000",
                               text: $draft.models[index].autoCompactTokenLimit)
                 }
@@ -301,10 +301,13 @@ struct ProviderConnectionEditor: View {
         }.padding(24).background(Theme.bgPrimary)
     }
 
-    /// `max` is deliberately absent: on load the store treats it as the
+    /// The picker's levels are the catalog's own table, so the two cannot
+    /// drift. `max` is filtered out: on load the store treats it as the
     /// retired default sentinel and rewrites it to `""`, so offering it here
     /// would silently undo the choice on the next app start.
-    private var reasoningOptions: [String] { ["", "none", "minimal", "low", "medium", "high", "xhigh", "ultra"] }
+    private var reasoningOptions: [String] {
+        [""] + CodexModelCatalog.reasoningLevels.compactMap { $0["effort"] }.filter { $0 != "max" }
+    }
     private var reasoningLabel: String {
         let effort = draft.models.first { $0.id == draft.activeModelID }?.reasoningEffort ?? ""
         return effort.isEmpty ? "推理 · 默认" : "推理 · " + effort
@@ -332,12 +335,5 @@ struct ProviderConnectionEditor: View {
             if draft.activeModelID == nil { draft.activeModelID = row.id }
         }
         error = nil
-    }
-
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-            content().textFieldStyle(ProviderInputStyle()).font(Theme.Font.bodySmall)
-        }
     }
 }

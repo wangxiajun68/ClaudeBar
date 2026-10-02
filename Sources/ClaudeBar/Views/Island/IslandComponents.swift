@@ -197,15 +197,7 @@ struct IslandSessionRow: View {
         guard let cost else {
             return session.agent == .cursor ? "Cursor 暂无独立会话 token 用量" : "该会话暂无可计价用量"
         }
-        var parts: [String] = []
-        if let dominant = cost.cost.dominant {
-            parts.append(ModelPricing.format(dominant.amount, currency: dominant.currency))
-        }
-        if let secondary = cost.cost.secondary {
-            parts.append(ModelPricing.format(secondary.amount, currency: secondary.currency))
-        }
-        if cost.unpricedModels > 0 { parts.append("\(cost.unpricedModels) 个模型未计价") }
-        return parts.joined(separator: " · ")
+        return cost.detailParts(includeDominant: true).joined(separator: " · ")
     }
 
     @ViewBuilder private var subtitle: some View {
@@ -226,11 +218,12 @@ struct IslandSessionRow: View {
                 .truncationMode(.middle)
         } else {
             // Coarse relative time; a 30 s tick is plenty and keeps the
-            // timeline from waking every second. It rolls: the "5m" in this
-            // line is a figure like every other one on the island.
+            // timeline from waking every second. It rolls on the rendered
+            // line, the ornament included: `.rollingNumber` is keyed on the
+            // figure it is handed, and a line whose figure moved is a figure
+            // like every other one on the island.
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                Text("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
-                    .rollingNumber("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
+                RollingNumberText("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(IslandStyle.textTertiary)
                     .lineLimit(1)
@@ -422,11 +415,10 @@ struct IslandUsageCard: View {
     }
 
     private func costCaption(_ estimate: ModelPricing.Estimate) -> String {
-        if let secondary = estimate.cost.secondary {
-            return "另有 " + ModelPricing.format(secondary.amount, currency: secondary.currency)
-        }
-        if estimate.unpricedModels > 0 { return "\(estimate.unpricedModels) 个模型未计价" }
-        return estimate.isEmpty ? "暂无用量" : ""
+        // The card headlines the dominant figure itself, so it prints only the
+        // first caveat under it — the secondary currency leads the list and is
+        // therefore the one that shows when the two are present.
+        estimate.detailParts().first ?? estimate.emptyCaption
     }
 
     private func heroCaption(_ day: IslandDay?) -> String {
@@ -473,8 +465,7 @@ struct IslandUsageCard: View {
             RollingNumberText(UsageStats.formatTokens(usage.month))
                 .foregroundStyle(IslandStyle.textPrimary)
             if let pace = IslandUsage.pace(usage.month, usage.lastMonthSameSpan) {
-                Text("上月同期 \(Int((pace * 100).rounded()))%")
-                    .rollingNumber("上月同期 \(Int((pace * 100).rounded()))%")
+                RollingNumberText("上月同期 \(Int((pace * 100).rounded()))%")
                     .foregroundStyle(pace >= 1 ? IslandStyle.amber : IslandStyle.textSecondary)
                     .fixedSize()
             }

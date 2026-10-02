@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// A short credential form; selecting a catalog entry alone never persists it.
 struct ProviderQuickSetup: View {
@@ -39,9 +38,9 @@ struct ProviderQuickSetup: View {
                             Label("获取 Key", systemImage: "arrow.up.right")
                         }.font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
                     }
-                    field("配置名称") { TextField("供应商名称", text: $draft.name) }
-                    field("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
-                    field("接口地址") { TextField("https://…", text: $draft.baseURL) }
+                    ProviderFormField("配置名称") { TextField("供应商名称", text: $draft.name) }
+                    ProviderFormField("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
+                    ProviderFormField("接口地址") { TextField("https://…", text: $draft.baseURL) }
                     if draft.client == .codex, let endpoint = draft.entry.codex {
                         HStack(spacing: 8) {
                             ForEach(endpoint.supportedWireAPIs, id: \.self) { wire in
@@ -68,7 +67,7 @@ struct ProviderQuickSetup: View {
                                 draft.additionalModels.append(contentsOf: names.sorted())
                             }.frame(maxWidth: 220, alignment: .trailing)
                     }
-                    field("默认模型 ID") { TextField("填写账号可用的模型 ID", text: $draft.model) }
+                    ProviderFormField("默认模型 ID") { TextField("填写账号可用的模型 ID", text: $draft.model) }
                     if let models = draft.entry.endpoint(for: draft.client)?.models, models.count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -115,50 +114,5 @@ struct ProviderQuickSetup: View {
         .onChange(of: draft.name) { _, _ in error = nil }
         .onChange(of: draft.apiKey) { _, _ in error = nil }
         .onChange(of: draft.baseURL) { _, _ in error = nil }
-    }
-
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-            content().textFieldStyle(ProviderInputStyle()).font(Theme.Font.bodySmall)
-        }
-    }
-}
-
-/// Bundled brand assets: offline, light/dark variants, no remote image requests.
-struct ProviderIdentityMark: View {
-    var entry: ProviderCatalogEntry?
-    let name: String
-    var size: CGFloat = 36
-    var body: some View {
-        Group {
-            if let entry, let image = ProviderBrandImages.image(entry.iconName, dark: Theme.isDark) {
-                Image(nsImage: image).resizable().scaledToFit().padding(size * 0.14)
-            } else {
-                // A custom or asset-less provider gets its own initial — the
-                // one thing that can tell two tiles without a bundled mark
-                // apart — instead of the single rack glyph they all used to
-                // share. Same idiom as the CLI avatars on the connectors page.
-                Text(String(name.prefix(1)).uppercased())
-                    .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .frame(width: size, height: size)
-        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-        .accessibilityHidden(true)
-    }
-}
-
-private enum ProviderBrandImages {
-    private static let cache = NSCache<NSString, NSImage>()
-    static func image(_ name: String, dark: Bool) -> NSImage? {
-        let key = "\(name)-\(dark ? "dark" : "light")"
-        if let cached = cache.object(forKey: key as NSString) { return cached }
-        guard let url = Bundle.main.url(forResource: key, withExtension: "png", subdirectory: "ProviderIcons")
-                ?? Bundle.main.url(forResource: name, withExtension: "ico", subdirectory: "ProviderIcons"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        cache.setObject(image, forKey: key as NSString)
-        return image
     }
 }

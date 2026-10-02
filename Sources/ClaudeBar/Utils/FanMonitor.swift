@@ -103,6 +103,13 @@ final class FanMonitor {
         setManual(fanID, rpm: fan.maxRPM)
     }
 
+    /// The per-fan toggle both the tile pair and the detail panel ask for, in
+    /// one place: hand the fan back to the system, or hold it at max.
+    func toggleMode(of fan: FanInfo) {
+        if fan.mode.isAutomatic { setMaxSpeed(fan.id) }
+        else { setAutomatic(fan.id) }
+    }
+
     func resetAllToAutomatic() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

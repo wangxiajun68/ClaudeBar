@@ -459,19 +459,17 @@ final class ReadingSweepView: NSView {
                        b: resolved.blueComponent, a: resolved.alphaComponent)
     }
 
-    /// Retimed in place. Freezing local time into `timeOffset` is what keeps
-    /// the highlight from jumping when the sampler publishes a new rate.
+    /// Retimed in place. The freeze/restart is `CALayer.retime(to:)` (see
+    /// `Interaction.swift`) — the one definition every rate-following layer
+    /// shares — so the sheens keep phase the same way the rotor blades do.
     private func setSpeed(_ rate: Float, hide: Bool) {
         let hidden = sheens.first.map { $0.opacity == 0 } ?? hide
         guard rate != speed || hide != hidden else { return }
-        let now = CACurrentMediaTime()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for sheen in sheens {
             if !hide, rate != speed {
-                let local = sheen.convertTime(now, from: nil)
-                sheen.timeOffset = local
-                sheen.beginTime = now
+                sheen.retime(to: rate)
             }
             sheen.speed = rate
             sheen.opacity = hide ? 0 : 1

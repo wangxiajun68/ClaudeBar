@@ -137,20 +137,36 @@ final class ProcessSampler {
         }
 
         var diskLabel: String {
-            let used = ProcessSampler.Snapshot(memoryBytes: diskUsed).memoryLabel
-            let total = ProcessSampler.Snapshot(memoryBytes: diskTotal).memoryLabel
+            let used = ProcessSampler.Snapshot.byteLabel(diskUsed)
+            let total = ProcessSampler.Snapshot.byteLabel(diskTotal)
             return "\(used) / \(total)"
         }
 
         var memoryLabel: String {
-            let used = ProcessSampler.Snapshot(memoryBytes: memoryUsed).memoryLabel
-            let total = ProcessSampler.Snapshot(memoryBytes: memoryTotal).memoryLabel
+            let used = ProcessSampler.Snapshot.byteLabel(memoryUsed)
+            let total = ProcessSampler.Snapshot.byteLabel(memoryTotal)
             return "\(used) / \(total)"
         }
 
         func temperatureLabel(celsius: Double?) -> String? {
             guard let celsius, celsius > 0 else { return nil }
             return String(format: "%.0f°C", celsius.rounded())
+        }
+
+        /// The one-line 本机 summary the host tooltips print: CPU, GPU, memory,
+        /// and the CPU / GPU temperatures when they have a reading. Shared
+        /// rather than rebuilt per surface — two hand-built copies of a
+        /// sentence carrying `String(format:)` suffixes drift the first time
+        /// one side gains a reading.
+        var summaryLine: String {
+            var host = "本机  CPU \(Int(cpu.rounded()))%  GPU \(Int(gpu.rounded()))%  \(memoryLabel)"
+            if let cpuT = temperatureLabel(celsius: cpuTemperatureCelsius) {
+                host += "  CPU \(cpuT)"
+            }
+            if let gpuT = temperatureLabel(celsius: gpuTemperatureCelsius) {
+                host += "  GPU \(gpuT)"
+            }
+            return host
         }
 
         /// The memory mark's own reading: the page categories the percentage is
@@ -813,12 +829,21 @@ final class ProcessSampler {
 }
 
 extension ProcessSampler.Snapshot {
-    var memoryLabel: String {
-        let mb = Double(memoryBytes) / (1024 * 1024)
+    /// Bytes → the label the byte-shaped panes print. Static rather than an
+    /// instance property alone: a caller holding raw bytes (a disk total, a
+    /// session's RSS, a share) used to fabricate a `Snapshot` around the number
+    /// just to borrow this formatting, which is a fake value carrying a real
+    /// one's name. The snapshots' own `memoryLabel` keeps this as its only
+    /// definition, so a label the strip prints and a label the disk panel prints
+    /// cannot disagree.
+    static func byteLabel(_ bytes: UInt64) -> String {
+        let mb = Double(bytes) / (1024 * 1024)
         if mb >= 1024 { return String(format: "%.1f GB", mb / 1024) }
         if mb >= 10 { return String(format: "%.0f MB", mb) }
         return String(format: "%.1f MB", mb)
     }
+
+    var memoryLabel: String { Self.byteLabel(memoryBytes) }
 
     var cpuLabel: String { String(format: "%.0f%%", cpu) }
 

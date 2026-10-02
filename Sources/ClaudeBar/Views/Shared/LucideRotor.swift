@@ -216,24 +216,6 @@ final class RotorLayerView: NSView {
     }
 }
 
-// MARK: - Phase-preserving retiming
-
-extension CALayer {
-    /// Retimes without a jump: freeze the layer's own local time into
-    /// `timeOffset`, restart the clock now, then apply the new rate — so a new
-    /// reading lands as a speed change instead of a jump back to the
-    /// animation's start. Shared by every rate-following decorative layer
-    /// (rotor blades, the power-flow clock) so they keep phase the same way.
-    func retime(to speed: Float) {
-        guard self.speed != speed else { return }
-        let now = CACurrentMediaTime()
-        timeOffset = convertTime(now, from: nil)
-        beginTime = now
-        self.speed = speed
-    }
-}
-
-
 /// One decoded illustration and two circular blade crops, shared by every surface.
 /// Coordinates are measured in the bundled 1536 × 1024 artwork, not host hardware.
 /// The panel that overlays rotors on the same illustration derives its placement
@@ -243,6 +225,18 @@ enum FanArtwork {
     static let rotorDiameter: CGFloat = 216
     static let leftRotorCenter = CGPoint(x: 300, y: 315)
     static let rightRotorCenter = CGPoint(x: 1237, y: 315)
+    /// The rotor's diameter against the canvas *width* — the fraction the panel
+    /// scales by, because it gives its rotors the drawn image's own width.
+    static let rotorDiameterFraction = rotorDiameter / canvasSize.width
+
+    /// Where one rotor centre lands in a drawn copy of the artwork, for a
+    /// surface that overlays its own animated blade on it. The two axes scale
+    /// by different denominators (1536 and 1024), so a single fraction of the
+    /// width would put a blade off its crop on any frame that is not 1.5:1.
+    static func rotorPosition(_ center: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: center.x / canvasSize.width * size.width,
+                y: center.y / canvasSize.height * size.height)
+    }
 
     static let image: NSImage? = Bundle.main.url(forResource: "macbook-internals-illustration", withExtension: "png")
         .flatMap { NSImage(contentsOf: $0) }

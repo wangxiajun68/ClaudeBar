@@ -69,28 +69,13 @@ struct CursorTokenUsageCard: View {
                         .foregroundColor(Theme.textSecondary)
                         .frame(minHeight: 28, alignment: .leading)
 
-                    HairlineDivider()
-                    Text("模型明细")
-                        .font(Theme.Font.microSemibold)
-                        .foregroundColor(Theme.textSecondary)
-                    if ranked.isEmpty {
-                        StandbyEmptyState(label: ledger.loading ? "正在读取用量…" : "暂无用量",
-                                          symbol: "chart.bar", tint: Theme.textSecondary)
-                    } else {
-                        ForEach(ranked, id: \.model) { row in
-                            HStack(spacing: 8) {
-                                Text(row.model).lineLimit(1).truncationMode(.middle).help(row.model)
-                                Spacer(minLength: 4)
-                                RollingNumberText(UsageStats.formatTokens(row.totalTokens)).monospacedDigit()
-                            }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                        }
-                        Text("Token 构成")
-                            .font(Theme.Font.microSemibold)
-                            .foregroundColor(Theme.textSecondary)
-                            .padding(.top, 4)
-                        TokenMixStrip(stats: stats, compact: true)
-                            .help("输入 \(total.inputTokens.formatted()) · 缓存读取 \(total.cacheReadTokens.formatted()) · 缓存写入 \(total.cacheCreationTokens.formatted()) · 输出 \(total.outputTokens.formatted()) Token")
-                    }
+                    // Only this card spells the four totals out on hover: its
+                    // scope is Cursor's bill, and the platform cards read the
+                    // same strip as the rows right above it.
+                    UsageModelBreakdown(
+                        stats: stats,
+                        emptyLabel: ledger.loading ? "正在读取用量…" : "暂无用量",
+                        stripHelp: "输入 \(total.inputTokens.formatted()) · 缓存读取 \(total.cacheReadTokens.formatted()) · 缓存写入 \(total.cacheCreationTokens.formatted()) · 输出 \(total.outputTokens.formatted()) Token")
 
                     if ledger.window != nil, ledger.isStale(for: window) {
                         Text(ledger.loading

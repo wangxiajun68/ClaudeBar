@@ -286,6 +286,54 @@ private struct UsageProviderGroup: Identifiable {
     var total: ModelUsage { models.reduce(into: ModelUsage(model: name)) { $0.merge($1) } }
 }
 
+/// The 模型明细 rows and Token 构成 bar shared by the platform, provider and
+/// Cursor cards.
+///
+/// Extracted because the three copies had already drifted — only the Cursor
+/// card's rows revealed their full name on hover, and only it and the platform
+/// card had an empty state — so the block is drawn once here: every row shows
+/// the name behind its middle truncation, and a card that can be empty hands in
+/// its own label (a provider group is built from recorded rows, so it never
+/// passes one).
+///
+/// A transparent `Group`-shaped body: the three call sites keep their own
+/// `VStack` and spacing, since the Cursor card shares its stack with the window
+/// caption and the coverage notes.
+struct UsageModelBreakdown: View {
+    let stats: [ModelUsage]
+    var emptyLabel: String? = nil
+    /// Hover text for the bar. Only the Cursor card spells the four totals out;
+    /// the others leave it empty and the strip speaks for itself.
+    var stripHelp: String = ""
+
+    var body: some View {
+        HairlineDivider()
+        Text("模型明细")
+            .font(Theme.Font.microSemibold)
+            .foregroundColor(Theme.textSecondary)
+        if let emptyLabel, stats.isEmpty {
+            StandbyEmptyState(label: emptyLabel, symbol: "chart.bar", tint: Theme.textSecondary)
+        } else {
+            ForEach(stats) { model in
+                HStack(spacing: 8) {
+                    Text(model.model).lineLimit(1).truncationMode(.middle).help(model.model)
+                    Spacer(minLength: 4)
+                    RollingNumberText(UsageStats.formatTokens(model.totalTokens))
+                        .monospacedDigit()
+                }
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textSecondary)
+            }
+            Text("Token 构成")
+                .font(Theme.Font.microSemibold)
+                .foregroundColor(Theme.textSecondary)
+                .padding(.top, 4)
+            TokenMixStrip(stats: stats, compact: true)
+                .help(stripHelp)
+        }
+    }
+}
+
 private struct UsageProviderCard: View {
     let group: UsageProviderGroup
     let overallTokens: Int
@@ -333,25 +381,7 @@ private struct UsageProviderCard: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        HairlineDivider()
-                        Text("模型明细")
-                            .font(Theme.Font.microSemibold)
-                            .foregroundColor(Theme.textSecondary)
-                        ForEach(group.models) { model in
-                            HStack(spacing: 8) {
-                                Text(model.model).lineLimit(1).truncationMode(.middle)
-                                Spacer(minLength: 4)
-                                RollingNumberText(UsageStats.formatTokens(model.totalTokens))
-                                    .monospacedDigit()
-                            }
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textSecondary)
-                        }
-                        Text("Token 构成")
-                            .font(Theme.Font.microSemibold)
-                            .foregroundColor(Theme.textSecondary)
-                            .padding(.top, 4)
-                        TokenMixStrip(stats: group.models, compact: true)
+                        UsageModelBreakdown(stats: group.models)
                     }
                 }
             }
@@ -415,32 +445,10 @@ private struct UsagePlatformCard: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        HairlineDivider()
-                        Text("模型明细")
-                            .font(Theme.Font.microSemibold)
-                            .foregroundColor(Theme.textSecondary)
-                        if ranked.isEmpty {
-                            StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
-                                              tint: Theme.textSecondary)
-                        } else {
-                            ForEach(ranked) { model in
-                                HStack(spacing: 8) {
-                                    Text(model.model)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    Spacer(minLength: 4)
-                                    RollingNumberText(UsageStats.formatTokens(model.totalTokens))
-                                        .monospacedDigit()
-                                }
-                                .font(Theme.Font.micro)
-                                .foregroundColor(Theme.textSecondary)
-                            }
-                            Text("Token 构成")
-                                .font(Theme.Font.microSemibold)
-                                .foregroundColor(Theme.textSecondary)
-                                .padding(.top, 4)
-                            TokenMixStrip(stats: stats, compact: true)
-                        }
+                        // `ranked`, not `stats`: the SQL grouping gives no
+                        // stable row order, so the rows are sorted by size for
+                        // display. The strip only sums, so it reads the same.
+                        UsageModelBreakdown(stats: ranked, emptyLabel: "暂无用量")
                     }
                 }
             }

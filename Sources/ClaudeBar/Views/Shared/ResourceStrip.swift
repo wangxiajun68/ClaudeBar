@@ -419,8 +419,7 @@ struct ResourceStrip: View {
     static let capacityMarkHeight: CGFloat = 120
 
     private func toggleFan(_ fan: FanInfo) {
-        if fan.mode.isAutomatic { fanMonitor.setMaxSpeed(fan.id) }
-        else { fanMonitor.setAutomatic(fan.id) }
+        fanMonitor.toggleMode(of: fan)
     }
 
     private func cpuAttributionCaption() -> String {

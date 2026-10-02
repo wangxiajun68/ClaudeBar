@@ -118,18 +118,13 @@ enum ProviderProfileSync {
         for model in claude.models {
             let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
             guard slugs.insert(slug.lowercased()).inserted else { continue }
-            codex.models.append(CodexModelConfig(
-                name: slug, contextWindow: model.contextTokens,
-                autoCompactTokenLimit: model.disableCompact ? "" : model.autoCompactWindow))
+            codex.models.append(ProviderBridge.codexModel(from: model))
         }
         var claudeSlugs = Set(claude.models.map { ProviderBridge.stripClaudeModelSuffix($0.name).lowercased() })
         for model in codex.models {
             let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
             guard claudeSlugs.insert(slug.lowercased()).inserted else { continue }
-            claude.models.append(ModelConfig(
-                name: ProviderBridge.claudeModelName(fromCodex: model.name, contextWindow: model.contextWindow),
-                contextTokens: model.contextWindow, disableCompact: false, disableExperimentalBetas: false,
-                autoCompactWindow: model.autoCompactTokenLimit))
+            claude.models.append(ProviderBridge.claudeModel(from: model))
         }
     }
 
@@ -262,15 +257,8 @@ enum ProviderProfileSync {
         }
         let models = source.models.map { model -> CodexModelConfig in
             let slug = ProviderBridge.stripClaudeModelSuffix(model.name)
-            if let old = twin.models.first(where: { $0.name.caseInsensitiveCompare(slug) == .orderedSame }) {
-                var copy = old
-                copy.name = slug
-                copy.contextWindow = model.contextTokens
-                copy.autoCompactTokenLimit = model.disableCompact ? "" : model.autoCompactWindow
-                return copy
-            }
-            return CodexModelConfig(name: slug, contextWindow: model.contextTokens,
-                                    autoCompactTokenLimit: model.disableCompact ? "" : model.autoCompactWindow)
+            let old = twin.models.first { $0.name.caseInsensitiveCompare(slug) == .orderedSame }
+            return ProviderBridge.codexModel(from: model, preserving: old)
         }
         twin.models = models
         let slug = ProviderBridge.stripClaudeModelSuffix(source.activeModel?.name ?? "")
@@ -291,19 +279,10 @@ enum ProviderProfileSync {
             twin.baseURL = source.baseURL
         }
         let models = source.models.map { model -> ModelConfig in
-            let name = ProviderBridge.claudeModelName(fromCodex: model.name, contextWindow: model.contextWindow)
-            if let old = twin.models.first(where: {
+            let old = twin.models.first {
                 ProviderBridge.stripClaudeModelSuffix($0.name).caseInsensitiveCompare(model.name) == .orderedSame
-            }) {
-                var copy = old
-                copy.name = name
-                copy.contextTokens = model.contextWindow
-                copy.autoCompactWindow = model.autoCompactTokenLimit
-                return copy
             }
-            return ModelConfig(name: name, contextTokens: model.contextWindow,
-                               disableCompact: false, disableExperimentalBetas: false,
-                               autoCompactWindow: model.autoCompactTokenLimit)
+            return ProviderBridge.claudeModel(from: model, preserving: old)
         }
         twin.models = models
         let slug = source.activeModel?.name ?? ""

@@ -48,14 +48,7 @@ enum ProviderBridge {
 
     static func toCodex(_ source: Provider) -> CodexProvider {
         let url = openaiCompatibleURL(source.baseURL)
-        let models = source.models.map { model -> CodexModelConfig in
-            CodexModelConfig(
-                id: UUID(),
-                name: stripClaudeModelSuffix(model.name),
-                reasoningEffort: "",
-                contextWindow: model.contextTokens,
-                autoCompactTokenLimit: model.disableCompact ? "" : model.autoCompactWindow)
-        }
+        let models = source.models.map { codexModel(from: $0) }
         let activeSlug = source.activeModel.map { stripClaudeModelSuffix($0.name) }
         let activeID = models.first {
             $0.name.caseInsensitiveCompare(activeSlug ?? "") == .orderedSame
@@ -79,15 +72,7 @@ enum ProviderBridge {
 
     static func toClaude(_ source: CodexProvider) -> Provider {
         let url = anthropicCompatibleURL(source.baseURL)
-        let models = source.models.map { model -> ModelConfig in
-            ModelConfig(
-                id: UUID(),
-                name: claudeModelName(fromCodex: model.name, contextWindow: model.contextWindow),
-                contextTokens: model.contextWindow,
-                disableCompact: false,
-                disableExperimentalBetas: false,
-                autoCompactWindow: model.autoCompactTokenLimit)
-        }
+        let models = source.models.map { claudeModel(from: $0) }
         let activeSlug = source.activeModel?.name ?? ""
         let activeID = models.first {
             stripClaudeModelSuffix($0.name).caseInsensitiveCompare(activeSlug) == .orderedSame
@@ -108,6 +93,30 @@ enum ProviderBridge {
         if claude.name.caseInsensitiveCompare(codex.name) == .orderedSame { return true }
         return normalizeURL(claude.baseURL) == normalizeURL(codex.baseURL)
             && !claude.baseURL.isEmpty && !codex.baseURL.isEmpty
+    }
+
+    // MARK: - Model records
+
+    /// The one Claude → Codex model mapping. `preserving` keeps the id and
+    /// reasoning effort of the row already on the Codex side; passing none
+    /// mints a fresh record.
+    static func codexModel(from model: ModelConfig, preserving old: CodexModelConfig? = nil) -> CodexModelConfig {
+        var out = old ?? CodexModelConfig(name: "")
+        out.name = stripClaudeModelSuffix(model.name)
+        out.contextWindow = model.contextTokens
+        out.autoCompactTokenLimit = model.disableCompact ? "" : model.autoCompactWindow
+        return out
+    }
+
+    /// Reverse mapping. `disableCompact` / `disableExperimentalBetas` have no
+    /// Codex counterpart: a new record takes the editor's `false` defaults, a
+    /// preserved one keeps whatever it already had.
+    static func claudeModel(from model: CodexModelConfig, preserving old: ModelConfig? = nil) -> ModelConfig {
+        var out = old ?? ModelConfig(name: "", disableCompact: false, disableExperimentalBetas: false)
+        out.name = claudeModelName(fromCodex: model.name, contextWindow: model.contextWindow)
+        out.contextTokens = model.contextWindow
+        out.autoCompactWindow = model.autoCompactTokenLimit
+        return out
     }
 
     // MARK: - Merge
