@@ -34,7 +34,7 @@ struct ModelImportSheet: View {
                 .foregroundColor(Theme.textPrimary)
 
             Text("共 \(candidates.count) 个可用 · 已选 \(selection.count) 个")
-                .rollingNumber()
+                .rollingNumber("共 \(candidates.count) 个可用 · 已选 \(selection.count) 个")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
 
@@ -93,7 +93,7 @@ struct ModelImportSheet: View {
                 // what lets the number roll like every other figure in the app
                 // (this one changes on every checkbox).
                 ActionButton(tone: .accent, perform: { onImport(selection) }) {
-                    Text("导入选中 (\(selection.count))").rollingNumber()
+                    Text("导入选中 (\(selection.count))").rollingNumber("导入选中 (\(selection.count))")
                 }
                 .disabled(selection.isEmpty)
                 .keyboardShortcut(.defaultAction)

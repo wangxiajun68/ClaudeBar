@@ -33,7 +33,12 @@ struct SectionHeader: View {
     /// wider population (sessions plus their sub-agents, say) reads as a
     /// negative idle figure.
     var activeCount: Int? = nil
-    var activeSymbol: String = "B"
+    /// The letter between the busy and idle figures in the pill: "1B · 2I".
+    /// A computed constant rather than a stored one, so the memberwise
+    /// initialiser stays internal (`private` *stored* properties would make it
+    /// private) — and no call site ever set it anyway: a second word for the
+    /// same state is not a knob.
+    private var activeSymbol: String { "B" }
     /// Muted text laid out immediately before the count pill — for a tally that
     /// belongs to the same section but is not the count itself (the sub-agents
     /// beside the sessions that spawned them).
@@ -43,8 +48,6 @@ struct SectionHeader: View {
     /// fixed trailing inset was correct only for one session count.
     var note: String? = nil
     var noteTint: Color = Theme.textTertiary()
-    /// Shown instead of a count when `count` is zero.
-    var emptyLabel: String = "无"
     /// Place the count immediately after the title.
     ///
     /// The default pins it to the trailing edge, which is right when the
@@ -81,7 +84,7 @@ struct SectionHeader: View {
     @ViewBuilder private var trailingView: some View {
         if let count {
             if count == 0 {
-                Text(emptyLabel)
+                Text("无")
                     .font(Theme.Font.micro)
                     .foregroundColor(Theme.textTertiary())
             } else if let activeCount {

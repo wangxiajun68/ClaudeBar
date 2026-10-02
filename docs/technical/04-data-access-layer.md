@@ -51,7 +51,7 @@
 - 从最后一条 `tool_use` 提取活动描述（`describeActivity`：`Bash · build.sh`、`Read · File.swift`、`Agent · Explore` 等）。
 - `toolPending`：若最后 `tool_use` 的行号 > 最后 `tool_result` 的行号 → 该工具调用尚未返回 → busy。
 
-**transcript 路径编码**：`/Users/wangxiajun/Project/ClaudeBar` → `projects/-Users-wangxiajun-Project-ClaudeBar`（去前导 `/` 后换 `-`，并加前导 `-`，与 Cursor 编码不同）。
+**transcript 路径编码**：`/Users/wangxiajun/Project/ClaudeBar` → `projects/-Users-wangxiajun-Project-ClaudeBar`。规则是 Claude Code 自己的 `cwd.replace(/[^a-zA-Z0-9]/g, "-")`：**除 `[A-Za-z0-9]` 外的每个字符**都换成 `-`（不只是 `/`），前导 `/` 变成前导 `-`——含点号的路径（`…/helix/.helix/agents/…` → `…-helix--helix-…`）靠这条才对得上，与 Cursor 编码不同。超过 200 字符的 slug 客户端会再缀一段哈希，本应用无法镜像，`SessionMonitor.locateTranscript` 按 `<sessionId>.jsonl` 全树兜底（每个 session 只扫一次并缓存）。
 
 **标题 `firstHumanPrompt`**：读 transcript **头部 16KB** 找第一条人类 prompt（Claude Code 没有标题字段）。`user` 流里绝大多数记录不是人打的字，必须按顺序排除：
 

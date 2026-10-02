@@ -21,10 +21,11 @@ import Foundation
 /// domestic list price, and quietly importing one would turn "we could not
 /// check 阿里" into "阿里 got 4.8× cheaper" with nothing on screen saying so.
 ///
-/// Pure functions over text, on purpose: `Tests/model-cost-regressions.py` feeds
-/// them saved page snapshots from `Tests/fixtures/price-pages/` and asserts the
-/// extracted numbers, so a vendor redesign is a red test rather than a wrong
-/// number in a month's total.
+/// Pure functions over text, on purpose: `Tests/model-price-source-regressions.py`
+/// feeds them saved page snapshots from `Tests/fixtures/price-pages/` and
+/// asserts the extracted numbers — against the bundled table's own rows, so the
+/// page and the table cannot drift apart — and a vendor redesign is a red test
+/// rather than a wrong number in a month's total.
 enum ModelPriceSources {
 
     // MARK: - Vendors
@@ -275,14 +276,20 @@ enum ModelPriceSources {
 
     /// Strip tags, unescape the handful of entities these pages use, collapse
     /// whitespace. The number is what matters and it is never inside a tag.
+    ///
+    /// **Tags come off before entities are decoded.** The other order turns a
+    /// page's own prose into markup: 阿里 writes the band as `0&lt;Token≤1M`,
+    /// and decoding `&lt;` first hands the tag stripper a `<` that then eats
+    /// everything up to the next `>` — including the two prices `parseAliyun`
+    /// is looking for. Decoded text is text, not markup.
     static func flatten(_ html: String) -> String {
         var text = html
+        text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         for (entity, replacement) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
                                       ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"),
                                       ("&yen;", "¥")] {
             text = text.replacingOccurrences(of: entity, with: replacement)
         }
-        text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
         return text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -347,7 +354,7 @@ enum ModelPriceSources {
     /// name; the bundled table's rule 3 takes the base band, so the **first**
     /// row for a name wins. Cache storage is billed per M-token-hour and is
     /// currently 限时免费, so a write bills as input (rule 1).
-    static func parseGLM(_ html: String) -> [ParsedRow] {
+    @Sendable static func parseGLM(_ html: String) -> [ParsedRow] {
         var byName: [String: ParsedRow] = [:]
         for rows in tables(in: html) {
             guard let header = rows.first else { continue }
@@ -379,7 +386,7 @@ enum ModelPriceSources {
     /// 阶跃星辰. Real tables, header
     /// `模型 | 计费单位 | 输入价格（缓存未命中）| 输入价格（缓存命中）| 输出价格`.
     /// No write bucket: the cache-miss price 已包含写入新内容的费用, so rule 1.
-    static func parseStepFun(_ html: String) -> [ParsedRow] {
+    @Sendable static func parseStepFun(_ html: String) -> [ParsedRow] {
         var out: [ParsedRow] = []
         for rows in tables(in: html) {
             guard let header = rows.first,
@@ -408,12 +415,16 @@ enum ModelPriceSources {
     /// `> 512k`) take the ≤512k row (rule 3, base band), and each cell prints the
     /// list price with the discounted one after it — the page's 永久五折 is a
     /// permanent cut, so the **last** number is what is charged.
-    static func parseMiniMax(_ html: String) -> [ParsedRow] {
+    @Sendable static func parseMiniMax(_ html: String) -> [ParsedRow] {
         var byName: [String: ParsedRow] = [:]
         for rows in tables(in: html) {
             guard let header = rows.first, header.contains(where: { $0.contains("输入价格") }),
                   let outputIndex = header.firstIndex(where: { $0.contains("输出价格") }),
                   let readIndex = header.firstIndex(where: { $0.contains("缓存读取") }) else { continue }
+            // The write bucket is published for the M2.x tables and absent from
+            // M3's; when it is there, it is read rather than forcing the write
+            // to equal the input.
+            let writeIndex = header.firstIndex(where: { $0.contains("缓存写入") })
             for row in rows.dropFirst() {
                 let label = row.first ?? ""
                 // Only the base band; the `> 512k` row is a different, higher
@@ -424,11 +435,12 @@ enum ModelPriceSources {
                       let output = lastNumber(row[safe: outputIndex] ?? ""),
                       input > 0, output > 0 else { continue }
                 let read = lastNumber(row[safe: readIndex] ?? "") ?? input * 0.2
-                guard read > 0, byName[name.lowercased()] == nil else { continue }
+                let write = writeIndex.flatMap { lastNumber(row[safe: $0] ?? "") } ?? input
+                guard read > 0, write > 0, byName[name.lowercased()] == nil else { continue }
                 byName[name.lowercased()] = ParsedRow(
                     slug: name.lowercased(),
                     rate: ModelPricing.Rate(currency: .cny, input: input, output: output,
-                                            cacheRead: read, cacheWrite: input),
+                                            cacheRead: read, cacheWrite: write),
                     note: "官方页按上下文分档且带划线原价，取 ≤512K 的折后价")
             }
         }
@@ -449,14 +461,20 @@ enum ModelPriceSources {
     /// `deepseek-flash` then `deepseek-v4-pro`, and the page states that the
     /// legacy `deepseek-v4-flash` ids bill at the Flash price, so those two
     /// slugs share the flash column rather than needing their own row.
-    static func parseDeepSeek(_ html: String) -> [ParsedRow] {
+    @Sendable static func parseDeepSeek(_ html: String) -> [ParsedRow] {
         let text = flatten(html)
         // The three price lines, in page order: cache hit, cache miss (= input),
         // output. Each one's peak pair is `(flash, pro)`.
         func peak(_ bucket: String) -> (Double, Double)? {
             let pattern = "百万tokens" + bucket + "[\\s\\S]{0,80}?高峰时段\\s*(\\d+(?:\\.\\d+)?)元\\s*(\\d+(?:\\.\\d+)?)元"
-            guard let match = allMatches(of: pattern, in: text).first else { return nil }
-            let numbers = allMatches(of: "\\d+(?:\\.\\d+)?", in: match).compactMap { Double($0) }
+            guard let match = allMatches(of: pattern, in: text).first,
+                  let tail = match.range(of: "高峰时段") else { return nil }
+            // Only the numbers *after* 高峰时段: the same line prints the 空闲
+            // pair first, and taking the first two digits of the whole match
+            // reads the off-peak price — which halves every DeepSeek row, the
+            // exact error this parser exists to avoid.
+            let numbers = allMatches(of: "\\d+(?:\\.\\d+)?", in: String(match[tail.upperBound...]))
+                .compactMap { Double($0) }
             guard numbers.count >= 2 else { return nil }
             return (numbers[0], numbers[1])
         }
@@ -485,11 +503,16 @@ enum ModelPriceSources {
     }
 
     /// Kimi / Moonshot. The prices are in the page's MDX source as
-    /// `rows:[[`kimi-k2.7-code`,`1M tokens`,`¥1.30`,`¥6.50`,`¥27.00`,`262,144 tokens`],…]`
-    /// — column order is `模型 | 计费单位 | 缓存命中 | 缓存未命中 | 输出 | 上下文`.
-    static func parseKimi(_ html: String) -> [ParsedRow] {
+    /// `rows:[[`kimi-k2.7-code`,`1M tokens`,`¥1.30`,`¥6.50`,`¥27.00`,`262,144 tokens`],…]`.
+    ///
+    /// Two column layouts are shipped: the K2 rows carry five cells
+    /// (`计费单位 | 缓存命中 | 缓存未命中 | 输出 | 上下文`), while the K3 row
+    /// inserts **two** write buckets after the unit
+    /// (`缓存写入（TTL 5min） | 缓存写入（TTL 1h） | 缓存命中 | 缓存未命中 | 输出 | 上下文`).
+    /// Fixing the indices at 2/3/4 would read the K3 write bucket as its
+    /// cache-hit price; the leading column sheet is located per row instead.
+    @Sendable static func parseKimi(_ html: String) -> [ParsedRow] {
         var out: [ParsedRow] = []
-        // Longest-first so `kimi-k3-256k` is not read as `kimi-k3`.
         let pattern = "\\[(`[^`]+`)((?:,`[^`]*`)+)\\]"
         for match in allMatches(of: pattern, in: html) {
             let parts = allMatches(of: "`([^`]*)`", in: match).map {
@@ -498,8 +521,12 @@ enum ModelPriceSources {
             guard parts.count >= 5 else { continue }
             let slug = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
             guard slug.hasPrefix("kimi-") else { continue }
-            // `¥1.30` (hit) `¥6.50` (miss) `¥27.00` (out).
-            let hit = number(parts[2]), miss = number(parts[3]), output = number(parts[4])
+            // The three priced cells are always the *last* three before the
+            // trailing context window, whatever write columns the row carries.
+            let priced = Array(parts.dropFirst(2).suffix(4))
+            guard priced.count == 4 else { continue }
+            // `¥1.30` (hit) `¥6.50` (miss) `¥27.00` (out), write = miss (rule 1).
+            let hit = number(priced[0]), miss = number(priced[1]), output = number(priced[2])
             guard let hit, let miss, let output, hit > 0, miss > 0, output > 0 else { continue }
             out.append(ParsedRow(
                 slug: slug,
@@ -513,31 +540,53 @@ enum ModelPriceSources {
     /// 阿里百炼. The pricing page is prose, not a table: `qwen3.7-max … 0<Token≤1M
     /// 12 元 36 元 100 万 Token`. The model name sits in one element and the
     /// prices after a `<td>`, and this takes **only the first `元` pair after a
-    /// bare id** — a dated snapshot (`qwen3.7-max-2026-06-08`) carries the same
-    /// numbers and is a different row, and the `Batch 调用 半价` note that
-    /// follows a name must not be mistaken for the list price.
+    /// bare id** — a dated snapshot (`qwen3.7-max-2026-06-08`) is a separate
+    /// move with the same price, not a second model, and the `Batch 调用 半价`
+    /// note that follows a name must not be mistaken for the list price.
     ///
     /// The page does not print cache prices at all, so the documented ratio is
     /// applied (显式命中 ≈10%, 写入 ≈125%) — and the reduction is stated in the
     /// row's note rather than left implicit.
-    static func parseAliyun(_ html: String) -> [ParsedRow] {
+    @Sendable static func parseAliyun(_ html: String) -> [ParsedRow] {
         let text = flatten(html)
         var out: [ParsedRow] = []
         var seen = Set<String>()
         // The name is followed, within a short window, by `Batch 调用 半价` on
         // some rows and by nothing on others, and then by the band and the two
         // prices. Anything longer than that window is the *next* model's price.
+        //
+        // The two numbers are the pattern's own capture groups, not a re-scan
+        // of the whole match: the slug (`qwen3.7-max-2026-06-08`) and the band
+        // (`0<Token≤1M`) both contain digits, and reading the match's first two
+        // numbers picks up `3.7` from the name instead of the 元 prices.
         let pattern = "(qwen[a-z0-9.\\-]*)[\\s\\S]{0,80}?0<Token[^元]{0,30}?(\\d+(?:\\.\\d+)?)\\s*元\\s*(\\d+(?:\\.\\d+)?)\\s*元"
         for match in allMatches(of: pattern, in: text) {
-            let slug = allMatches(of: "qwen[a-z0-9.\\-]*", in: match).first?.lowercased() ?? ""
-            let numbers = allMatches(of: "\\d+(?:\\.\\d+)?", in: match).compactMap { Double($0) }
+            guard let qwenRange = match.range(of: "qwen[a-z0-9.\\-]*",
+                                              options: .regularExpression) else { continue }
+            let afterSlug = qwenRange.upperBound..<match.endIndex
+            guard let firstPrice = match.range(of: "\\d+(?:\\.\\d+)?\\s*元",
+                                               options: .regularExpression,
+                                               range: afterSlug) else { continue }
+            guard let secondPrice = match.range(of: "\\d+(?:\\.\\d+)?\\s*元",
+                                                options: .regularExpression,
+                                                range: firstPrice.upperBound..<match.endIndex) else { continue }
+            // Snapshots (`-2026-06-08`) and preview builds belong to the same
+            // model as their bare id; without this the list would carry two
+            // rows per model that always agree.
+            var slug = String(match[qwenRange]).lowercased()
+            slug = slug.replacingOccurrences(of: "-[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                                             with: "", options: .regularExpression)
+            slug = slug.replacingOccurrences(of: "-preview$", with: "", options: .regularExpression)
+            slug = slug.replacingOccurrences(of: "-latest$", with: "", options: .regularExpression)
             guard !slug.isEmpty, !seen.contains(slug),
-                  numbers.count >= 2, numbers[0] > 0, numbers[1] > 0 else { continue }
+                  let input = number(String(match[firstPrice])),
+                  let output = number(String(match[secondPrice])),
+                  input > 0, output > 0 else { continue }
             seen.insert(slug)
             out.append(ParsedRow(
                 slug: slug,
-                rate: ModelPricing.Rate(currency: .cny, input: numbers[0], output: numbers[1],
-                                        cacheRead: numbers[0] * 0.1, cacheWrite: numbers[0] * 1.25),
+                rate: ModelPricing.Rate(currency: .cny, input: input, output: output,
+                                        cacheRead: input * 0.1, cacheWrite: input * 1.25),
                 note: "官方页未列缓存单价，按文档的 命中10% / 写入125% 推定"))
         }
         return out.sorted { $0.slug < $1.slug }

@@ -112,6 +112,13 @@ func runTests() throws {
     check(busy("missing-transcript"), "checkpoint evidence must work without a transcript")
     try add("waiting-first-token", headAge: 180, transcript: user, transcriptAge: 180, locationActive: false)
     check(busy("waiting-first-token"), "a recent user message starts a turn before the first assistant block")
+    // Cursor reports the composer "active" the moment a turn is submitted,
+    // while its JSONL has not been written yet. For the first two minutes that
+    // location is the only evidence a run exists, and without it a just-sent
+    // prompt showed as idle. No transcript and no checkpoint here: the grace
+    // period is what the check isolates.
+    try add("startup-grace", headAge: 30, locationActive: true)
+    check(busy("startup-grace"), "a just-submitted turn is busy before any write")
     try add("fresh-stream", headAge: 3600, transcript: user + assistant, transcriptAge: 5)
     check(busy("fresh-stream"), "a recent assistant write must keep an old header live")
     try add("quiet-tool", headAge: 3600, transcript: user + assistant, transcriptAge: 480)

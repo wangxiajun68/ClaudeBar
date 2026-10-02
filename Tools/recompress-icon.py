@@ -14,12 +14,14 @@ a member that does not come back identical aborts the whole file, so this can
 never trade a disk byte for a pixel. It is the same check the regression test
 runs, which is why `--check` can be trusted to say "already minimal".
 
-    python3 Tools/recompress-icon.py            # rewrite in place
-    python3 Tools/recompress-icon.py --check    # fail if it is not minimal
+    python3 Tools/recompress-icon.py [ICON]            # rewrite in place
+    python3 Tools/recompress-icon.py --check [ICON]    # fail if it is not minimal
 
-Run it after replacing the icon with `iconutil` (or with any tool that does not
-compress well); the build calls `--check` only in the test suite, not on every
-build, because re-encoding is deterministic and there is nothing to recompute.
+`ICON` defaults to the release icon; the dev icon is passed explicitly by the
+suite below. Run it after replacing the icon with `iconutil` (or with any tool
+that does not compress well); the test suite calls `--check` on every build's
+icon, not on every build, because re-encoding is deterministic and there is
+nothing to recompute.
 """
 import argparse
 import io
@@ -31,7 +33,7 @@ from PIL import Image
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-ICNS = ROOT / 'Sources/AppIcon.icns'
+DEFAULT_ICON = ROOT / 'Sources/AppIcon.icns'
 
 
 def members(data: bytes):
@@ -87,13 +89,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true',
                         help='report whether the committed icon is already minimal')
+    parser.add_argument('icon', nargs='?', type=Path, default=DEFAULT_ICON,
+                        help='the `.icns` to inspect (default: Sources/AppIcon.icns)')
     args = parser.parse_args()
+    icns = args.icon if args.icon.is_absolute() else ROOT / args.icon
+    label = icns.relative_to(ROOT) if icns.is_relative_to(ROOT) else icns
 
-    if not ICNS.is_file():
-        print(f'missing {ICNS.relative_to(ROOT)}', file=sys.stderr)
+    if not icns.is_file():
+        print(f'missing {label}', file=sys.stderr)
         return 1
 
-    source = ICNS.read_bytes()
+    source = icns.read_bytes()
     elements = bytearray()
     saved = 0
     changed = []
@@ -112,18 +118,18 @@ def main() -> int:
     out = container(bytes(elements))
 
     if not changed:
-        print(f'PASS: {ICNS.relative_to(ROOT)} is minimal ({len(source):,} B)')
+        print(f'PASS: {label} is minimal ({len(source):,} B)')
         return 0
     if args.check:
-        print(f'{ICNS.relative_to(ROOT)} is not minimal — run '
+        print(f'{label} is not minimal — run '
               'Tools/recompress-icon.py to save '
               f'{saved:,} B:\n  ' +
               '\n  '.join(f'{name}: {before:,} -> {after:,}'
                           for name, before, after in changed), file=sys.stderr)
         return 1
 
-    ICNS.write_bytes(bytes(out))
-    print(f'{ICNS.relative_to(ROOT)}: {len(source):,} -> {len(out):,} B '
+    icns.write_bytes(bytes(out))
+    print(f'{label}: {len(source):,} -> {len(out):,} B '
           f'(saved {saved:,}); ' +
           ', '.join(f'{name} {before:,}->{after:,}'
                     for name, before, after in changed))

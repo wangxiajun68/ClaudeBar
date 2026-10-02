@@ -250,16 +250,18 @@ struct GreetingStatusSheet: View {
 
     /// A reading that `SkyScene.make` turns into exactly `weather`.
     private static func sample(_ weather: SkyScene.Weather) -> (sky: WeatherReading.Sky, rain: Int) {
+        let rain: Int
         switch weather {
-        case .clear: return (.clear, 0)
-        case .cloudy: return (.partly, 0)
-        case .overcast: return (.cloudy, 0)
-        case .lightRain: return (.drizzle, 40)
-        case .heavyRain: return (.rain, 85)
-        case .thunder: return (.thunder, 90)
-        case .snow: return (.snow, 60)
-        case .fog: return (.fog, 0)
+        case .clear, .cloudy, .overcast, .fog: rain = 0
+        case .lightRain: rain = 40
+        case .heavyRain: rain = 85
+        case .thunder: rain = 90
+        case .snow: rain = 60
         }
+        // The weather→sky pairing itself lives in `PinnedSky` — the one bridge
+        // between `SkyScene.Weather` and `WeatherReading.Sky`; this function
+        // only adds the rain figure the scene needs.
+        return (PinnedSky.sky(for: weather), rain)
     }
     private var greetingTypeface: GreetingTypeface {
         GreetingTypeface.resolved(typeface, chinese: language == .chinese, removed: removedTypefaces)
@@ -771,17 +773,13 @@ struct GreetingStatusSheet: View {
     }
 
     /// 固定天空时的天气图标：挑过的一层用它的 SVG 图标，没挑过就是一片晴空。
+    ///
+    /// Through `PinnedSky` so there is **one** weather→glyph table: this switch
+    /// used to restate `WeatherReading.Sky.symbol(night:)`, and the console's
+    /// table restated it a third time — heavy rain came out `cloud.rain.fill`
+    /// here and `cloud.heavyrain.fill` there.
     private func pinnedSkySymbol(night: Bool) -> String {
-        switch pinnedWeather {
-        case .none, .clear: return night ? "moon.stars.fill" : "sun.max.fill"
-        case .cloudy: return night ? "cloud.moon.fill" : "cloud.sun.fill"
-        case .overcast: return "cloud.fill"
-        case .lightRain: return "cloud.drizzle.fill"
-        case .heavyRain: return "cloud.rain.fill"
-        case .thunder: return "cloud.bolt.rain.fill"
-        case .snow: return "cloud.snow.fill"
-        case .fog: return "cloud.fog.fill"
-        }
+        PinnedSky.sky(for: pinnedWeather).symbol(night: night)
     }
 
     private func bigTemperature(_ value: Double, ink: Color) -> some View {
@@ -886,7 +884,10 @@ struct GreetingStatusSheet: View {
 
     private func windHelp(_ reading: WeatherReading, level: Int) -> String {
         guard level > 0 else { return "无风" }
-        let direction = reading.windDirection.isEmpty ? "" : WindDial.name(reading.windDirection) + "风 "
+        // 风 only when the source's string resolved to one of the eight points:
+        // 中国天气网 already sends "北风", and appending again read "北风风".
+        let point = WindDial.name(reading.windDirection)
+        let direction = point.map { $0 + "风 " } ?? (reading.windDirection.isEmpty ? "" : reading.windDirection + " ")
         return "\(direction)\(level) 级 · \(Int(reading.windKph.rounded())) km/h"
     }
 
@@ -1145,7 +1146,7 @@ struct GreetingStatusSheet: View {
                 }
                 Text(UsageStats.formatTokens(tokens))
                     .font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
-                    .rollingNumber(valueKey: String(tokens))
+                    .rollingNumber(String(tokens))
                     .fixedSize()
                 if yesterdayTokens > 0 {
                     Text(changeText).font(.system(size: 10, weight: .semibold)).monospacedDigit()

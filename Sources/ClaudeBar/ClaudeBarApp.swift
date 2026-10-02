@@ -117,13 +117,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Posted from the notification-center delegate, which may run off main.
+    ///
+    /// The payload names the agent (`agent` / `sessionId` / `cwd` / `pid` /
+    /// `inDesktop`) rather than only a pid, because a Cursor or Codex banner
+    /// has no Claude pid to give — routing those through the Claude store was
+    /// what left their 在终端继续 / 去确认 actions inert. A pid still wins
+    /// when present: it points at the window already holding a *live* session,
+    /// and the store only knows it through the pid.
     @objc private func resumeSession(_ note: Notification) {
-        guard let pid = note.userInfo?["pid"] as? Int else { return }
+        let info = note.userInfo ?? [:]
+        guard let agent = info["agent"] as? String,
+              let sessionId = info["sessionId"] as? String, !sessionId.isEmpty else { return }
+        let cwd = info["cwd"] as? String ?? ""
+        let pid = info["pid"] as? Int
+        let inDesktop = info["inDesktop"] as? Bool ?? false
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let session = self?.providerStore?.sessions.first(where: { $0.pid == pid }) else { return }
-                TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId,
-                                                     pid: session.isAlive ? session.pid : nil)
+                switch agent {
+                case "cursor":
+                    TerminalLauncher.openInCursor(cwd: cwd)
+                case "codex":
+                    TerminalLauncher.resumeCodexSession(cwd: cwd, sessionId: sessionId,
+                                                        pid: pid, inDesktop: inDesktop)
+                default:
+                    let live = pid.flatMap { wanted in
+                        self?.providerStore?.sessions.first { $0.pid == wanted }
+                    }
+                    TerminalLauncher.resumeClaudeSession(cwd: live?.cwd ?? cwd,
+                                                         sessionId: live?.sessionId ?? sessionId,
+                                                         pid: live.flatMap { $0.isAlive ? $0.pid : nil })
+                }
             }
         }
     }
@@ -181,6 +204,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if AppPreferences.shared.vpnEnabled {
             VpnManager.shared.stopCore()
         }
+        // The core is being stopped, so any service still pointing at its
+        // port is pointing at nothing: this is the quit that has to unset the
+        // proxy, and `clearSystemProxy()` is synchronous exactly for it. The
+        // async variant (everywhere else) would be racing the process exit,
+        // and the launch-time branch above only recovers a *crashed* session,
+        // not this clean one. It also restores the TUN DNS override and
+        // removes its marker — those lived on too, until the next launch.
+        VpnSystemProxyController.clearSystemProxy()
         ScreenshotHotKey.shared.stop()
     }
 }

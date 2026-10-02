@@ -831,7 +831,6 @@ extension WeatherFetcher {
     static func fetch(city: String) async -> WeatherReading? {
         let trimmed = city.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let isCoordinate = trimmed.split(separator: ",").count == 2
 
         if let reading = await WeatherAmapFetcher.fetch(query: trimmed) { return await withHourly(reading) }
         if let reading = await WeatherCNFetcher.fetch(query: trimmed) { return await withHourly(reading) }

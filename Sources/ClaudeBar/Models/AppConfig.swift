@@ -83,14 +83,16 @@ enum AppConfig {
     // MARK: - Widget snapshot
 
     /// UserDefaults key (in the shared App Group suite) under which the
-    /// widget snapshot payload is published. The widget extension reads the
-    /// same key — keep in sync with `WidgetProvider`.
-    static let widgetSnapshotDefaultsKey = "widgetSnapshot"
+    /// widget snapshot payload is published. Defined in `BuildChannel`
+    /// because the widget target reads the same key and does not compile
+    /// this file.
+    static let widgetSnapshotDefaultsKey = BuildChannel.widgetSnapshotDefaultsKey
 
     /// Bundle identifier of the widget extension. Its sandbox container is
     /// one of the snapshot write targets (see `WidgetSnapshotWriter`).
     static let widgetBundleID = BuildChannel.widgetBundleID
 
-    /// File name of the snapshot JSON in every write target.
-    static let widgetSnapshotFileName = "claude-bar-widget-data.json"
+    /// File name of the snapshot JSON in every write target. Same owner as
+    /// the defaults key above — one definition for both processes.
+    static let widgetSnapshotFileName = BuildChannel.widgetSnapshotFileName
 }

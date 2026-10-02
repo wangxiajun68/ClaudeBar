@@ -120,17 +120,10 @@ extension ProviderStore {
                     changes($balanceText), changes($collapsedProviderIDs)]
         }
         if fields.contains(.usage) {
-            out += [changes($usageStats), changes($usageDays), changes($usageBySource),
+            out += [changes($usageStats), changes($usageDays), changes($usageWeekDays), changes($usageBySource),
                     changes($usageDaysBySource), changes($usagePeriod), changes($usageReferenceDate),
                     changes($usageLoading), changes($usagePublishedInterval), changes($todayUsage),
-                    changes($usageEstimate),
-                    // The Cursor ledger's money map is `.usage` for the same
-                    // reason `todayUsage` is: it rides a usage refresh and the
-                    // usage surfaces are the only readers. Without it a ledger
-                    // read that lands mid-session would not repaint the page it
-                    // exists for. The ledger's window and truncation flag live
-                    // on `CursorLedgerStore`, which observes them itself.
-                    changes($usageSettlements)]
+                    changes($usageEstimate)]
         }
         if fields.contains(.sessions) {
             out += [changes($sessions), changes($cursorSessions), changes($externalSessions)]

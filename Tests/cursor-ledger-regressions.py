@@ -34,6 +34,7 @@ from the live endpoints. No network, no app launch, no credentials.
 """
 
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -77,6 +78,10 @@ pricing_enum = pricing[pricing.index('enum ModelPricing {'):pricing.rindex('\n}\
 # that names the three modes comes along.
 cost_display = slice_between(pricing, 'enum CostDisplay', '\n}\n') + '\n}'
 table_enum = slice_between(table, 'enum ModelPriceTable {', '\n}\n') + '\n}'
+# The production `ModelUsage`, compiled in so the money-field guard protects the
+# real type. `enum ModelUsage` is a top-level declaration ending at the next
+# doc-commented top-level type; a new declaration appended right after it would
+# need this marker updated, same as any other slice anchor.
 usage_source = slice_between(usage_model, 'struct ModelUsage', '\n/// Today')
 card_source = card
 
@@ -101,10 +106,15 @@ SWIFT = (SWIFT
 assert 'Cursor 实扣' in card_source, "the tile must name Cursor's figure as an actual charge"
 assert '估算 ' in card_source, "the estimate keeps its own word"
 assert 'settlementWindow' in card_source, "the actual's row is where the window caption lives"
-# Each figure is formatted through the same presenter, so a converted / 分列
-# setting cannot make one of them a raw number.
-assert card_source.count('ModelPricing.format(primary.amount') >= 2, \
-    "both figures must go through the shared formatter"
+# Slice the row itself, not the file: the card already mentions
+# `ModelPricing.format(primary.amount` in the estimate and accessibility paths,
+# so a whole-file count stays green even if the rendered settlement figure is
+# swapped for a raw `String(amount.amount)`. The slice runs from the row that
+# draws Cursor's actual to the accessibility helper below it.
+settlement_row = card_source[card_source.index('private func settlementRow'):
+                             card_source.index('private func accessibilityMoney')]
+assert 'ModelPricing.format(amount.amount' in settlement_row, \
+    "the rendered actual must go through the shared formatter, not a raw number"
 
 # Model cards must stay static and reserve independent space for long names
 # and source quantities. These checks do not render or benchmark SwiftUI.
@@ -118,6 +128,21 @@ assert '.frame(width: 46' not in card_source
 assert 'minHeight:' not in card_source, "model card height must follow its content"
 usage_view = (views.parent / 'Pages/UsageView.swift').read_text()
 assert 'TileGrid(.pageUsage, minColumnWidth: 320)' in usage_view
+
+# --- ModelUsage must carry no money ----------------------------------------
+# `estimate` is fed `ModelUsage` everywhere, so a money field on it would let
+# actual charges and list prices be added together silently — the exact mix the
+# tile above goes out of its way to keep apart. The text scanned is the same
+# slice the harness compiles, so the guard covers the production type rather
+# than a fixture copy of it. The name pattern is a family, not a fixed list:
+# `costCents` / `spendUSD` / `cnyAmount` are the same mistake, and an
+# enumeration of spellings only ever covers the ones already seen. `cache` is
+# the one carve-out — `cacheHitPercent` is a ratio, not money.
+money_field = re.compile(r'\bvar\s+(?!cache)\w*(cent|usd|cny|cost|amount|price|money|dollar|spend)\w*',
+                          re.IGNORECASE)
+found = money_field.search(usage_source)
+assert found is None, \
+    f'ModelUsage gained a money field ({found.group() if found else ""}); estimates and actuals can now be mixed'
 
 with tempfile.TemporaryDirectory(prefix='claudebar-cursor-ledger-') as folder:
     path = Path(folder) / 'Regression.swift'

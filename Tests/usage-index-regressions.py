@@ -106,8 +106,9 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
                 return line(["type": "event_msg", "timestamp": day + "T12:00:00Z",
                     "payload": ["type": "token_count", "info": info]])
             }
-            func append(_ text: String) throws {
-                let handle = try FileHandle(forWritingTo: rollout)
+            func append(_ text: String) throws { try append(text, to: rollout) }
+            func append(_ text: String, to url: URL) throws {
+                let handle = try FileHandle(forWritingTo: url)
                 try handle.seekToEnd(); try handle.write(contentsOf: Data(text.utf8)); try handle.close()
             }
             let header = line(["type": "turn_context", "payload": ["model": "audit-model"]])
@@ -138,6 +139,37 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             // Archive moves preserve all historical rows; repeated rescans are idempotent.
             try fm.moveItem(at: rollout, to: archive.appendingPathComponent(rollout.lastPathComponent))
             UsageIndex.updateIndex(); UsageIndex.updateIndex(); require(total() == 190)
+            // A shrink/rewrite replaces the path's rollup rows, so a rollout
+            // whose body is rewritten down to its header must lose every token
+            // it used to account for — under both backends. This is the only
+            // shape that reaches the full-reparse path's empty branch; the
+            // archive move above re-parses under a new key and would pass even
+            // if a shrunk file kept its stale rows forever. Claude's transcript
+            // is rewritten to empty in the same pass, so one call covers both
+            // parsers.
+            let archivedRollout = archive.appendingPathComponent(rollout.lastPathComponent)
+            let fullBody = try Data(contentsOf: archivedRollout)
+            try Data(header.utf8).write(to: archivedRollout)
+            try Data().write(to: claude.appendingPathComponent("session.jsonl"))
+            UsageIndex.reloadPersistence(); ProxyUsageStore.shared.reset()
+            UsageIndex.updateIndex()
+            let shrunk = UsageIndex.fetchBySource(in: interval)
+            require(shrunk.values.flatMap { $0 }.reduce(0) { $0 + $1.totalTokens } == 0,
+                    "a shrunk rewrite must not keep stale rows on backend \(sqlite): \(shrunk)")
+            // …and the next append is counted as its own delta, not as a
+            // rebuild of everything the rewritten file used to hold.
+            try append(event(100, 10, 60), to: archivedRollout)
+            UsageIndex.updateIndex()
+            require(total() == 110, "backend \(sqlite) post-rewrite append \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
+            // Put the original transcript back so the rest of the scenario
+            // keeps its baseline. It returns as a *new* path (vanished files
+            // are pruned with their rows), which is how a restored transcript
+            // re-indexes in full.
+            try fm.removeItem(at: archivedRollout)
+            UsageIndex.updateIndex()
+            try fullBody.write(to: archivedRollout)
+            UsageIndex.updateIndex()
+            require(total() == 190, "backend \(sqlite) restored transcript \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
             func assistant(_ output: Int) -> String {
                 line(["type": "assistant", "timestamp": "2026-10-01T12:00:00Z",
                     "message": ["id": "message-id", "model": "audit-model",

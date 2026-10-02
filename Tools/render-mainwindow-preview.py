@@ -59,7 +59,6 @@ rather than silently drifting the PNGs.
 from pathlib import Path
 import re
 import subprocess
-import sys
 
 root = Path(__file__).resolve().parents[1]
 out = root / '.build/mainwindow-preview'
@@ -88,7 +87,11 @@ sources_are_read_only()
 
 
 def declaration(path, start):
-    """The balanced-brace declaration beginning at `start` in `path`."""
+    """The balanced-brace declaration beginning at `start` in `path`.
+
+    Same shape as the sibling renderers': `require()` in front of every call
+    site is what makes a moved declaration fail loudly, so this stays bare.
+    """
     text = (root / path).read_text()
     pos = text.index(start)
     opening = text.index('{', pos)
@@ -104,11 +107,6 @@ def whole(path):
     return (root / path).read_text() + '\n'
 
 
-def upto(path, marker):
-    text = (root / path).read_text()
-    return text[: text.index(marker)]
-
-
 def after(path, marker):
     text = (root / path).read_text()
     return text[text.index(marker):]
@@ -119,10 +117,6 @@ def require(path, start):
     assert start in (root / path).read_text(), \
         f'{path}: required declaration {start!r} is missing — the renderer would drift'
     return declaration(path, start)
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +226,20 @@ def unwrap_scroll_readers(text, path):
         inner = text[brace + 1:stop - 1]
         assert ' in' in inner, f'{path}: ScrollViewReader no longer takes a proxy'
         _, _, body = inner.partition(' in')
-        body = re.sub(r'\n\s*(?:try\? )?proxy\.scrollTo\([^;]*?\)', '', body)
+        # The calls appear in two shapes: a statement of their own, and inlined
+        # in a one-line closure (`if let id = … { proxy.scrollTo(…) }`). Both
+        # carry their own balanced braces, so the whole line goes; a dropped
+        # line whose braces did *not* balance would silently unbalance the view
+        # body, so that case is a failure here rather than a compile error
+        # inside the generated probe.
+        kept = []
+        for line in body.split('\n'):
+            if 'proxy.' not in line:
+                kept.append(line)
+                continue
+            assert line.count('{') == line.count('}'), \
+                f'{path}: a proxy call spans lines — the fixture cannot drop it safely'
+        body = '\n'.join(kept)
         assert 'proxy.' not in body, f'{path}: a ScrollViewReader proxy use survived'
         text = text[:index] + 'Group {' + body + '}' + text[stop:]
         count += 1
@@ -294,12 +301,16 @@ def page_without_scroll(path, struct_name, marker='    var body: some View {\n')
     proposes an unbounded height to its child and then clips to a scroll
     viewport a one-shot render never sizes. So the fixture keeps the page
     *type* — its stored properties and every member the body reads — and
-    substitutes only the container: `ScrollView { … }` becomes
-    `Group { … }`, with the body's own stack left exactly as it is.
+    substitutes the container only: `ScrollView { … }` becomes `Group { … }`,
+    with the body's own stack left exactly as it is. `Dashboard` / `Sessions` /
+    `Usage` are this shape.
 
-    `Dashboard` / `Sessions` / `Usage` build `ScrollView { LazyVStack { … } }`
-    (plus their own trailing modifiers); `disabledScrolling()` is added by the
-    fixture host, not here, so nothing in the production file moves.
+    `VPNView` is not: its body opens on a `GeometryReader` whose `geometry.size`
+    *is* the sizing input, so a still with no reader has nothing to measure.
+    That branch therefore goes further — it removes the reader, rewrites every
+    `geometry.size` to the fixed `fixturePageSize`, and swaps the `ScrollView`
+    inside it for a `Group` too — which is a materially larger substitution than
+    the container swap above, and the reason this docstring names it.
     """
     text = (root / path).read_text()
     # Anchor on the *page* type, not the first `var body` in the file: these
@@ -398,7 +409,7 @@ source += 'let fanArtworkPath = "' + str(root / 'Sources/ClaudeBar/Resources/mac
 # `VPNView` measures its content width off a `GeometryReader`. A still has one
 # size and no reader, so `page_without_scroll` swaps the reader for a fixed
 # page box and every `geometry.size` in that body reads this instead. 1120pt is
-# the app's default window width (`fixtureWindowWidth`); the page then subtracts
+# the app's default window width (`Fixture.pageWidth`); the page then subtracts
 # its own 16pt padding, exactly as it does live.
 source += 'let fixturePageSize = CGSize(width: 1120, height: 1180)\n'
 # `GreetingCard` and the terminal launchers are referenced by pages above the
@@ -452,9 +463,7 @@ struct JSONTreeView: View {
     var body: some View { EmptyView() }
 }
 struct PlainDumpView: View { var text: String; var body: some View { EmptyView() } }
-extension UInt64 { var cookieBytes: UInt64 { self } }
 enum JSONTree { static func pretty(_ raw: String) -> String { raw } }
-enum VPNJSONTreeShim { static let unused = 0 }
 final class ProxyInflight {
     static let shared = ProxyInflight()
     func cancel(captureID: Int64) {}
@@ -526,7 +535,7 @@ for _atmosphere in ('SkyScene', 'AtmosphereShader', 'AtmosphereRenderer', 'Atmos
     source += (root / f'Sources/ClaudeBar/Views/Shared/Atmosphere/{_atmosphere}.swift').read_text() + '\n'
 source += require_file('Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift')
 source += require('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
-source += require_file('Sources/ClaudeBar/Views/Shared/WeatherExplorer.swift')
+source += require_file('Sources/ClaudeBar/Views/Shared/WeatherReadingSky.swift')
 source += require_file('Sources/ClaudeBar/Utils/GreetingPhrase.swift')
 source += require('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 # `SkyAstronomy` comes in with the rest of the value types below; it is only
@@ -818,6 +827,11 @@ final class ProviderStore: ObservableObject {
     @Published var usageLoading = false
     @Published var usagePeriod: UsagePeriod = .month
     @Published var usageReferenceDate: Date = Date()
+    /// The interval the store has finished publishing. `UsageView` gates its
+    /// analytics section on it (`if usagePublishedInterval == interval`), and
+    /// the fixture host seeds it in `populate()` — a still has no computation
+    /// to wait for, so gating on a nil here would draw the placeholder.
+    var usagePublishedInterval: DateInterval?
     @Published var providers: [Provider] = []
     @Published var todayUsage = TodayUsage()
     @Published var usageEstimate = ModelPricing.Estimate()
@@ -833,23 +847,20 @@ final class ProviderStore: ObservableObject {
     var usageTotalBySource: [(source: UsageSource, tokens: Int)] {
         UsageSource.allCases.map { ($0, (usageBySource[$0] ?? []).reduce(0) { $0 + $1.totalTokens }) }
     }
+    /// The estimate's per-model lines, keyed as the local inventory reads them
+    /// (`UsageModelInventory.rows(costs:)`). Seeded from the fixture estimate so
+    /// a rendered cost column cannot disagree with the totals beside it.
+    var usageCostLines: [String: ModelPricing.Estimate.Line] = [:]
+    /// The session cards' 清理 action. This still never presses it; the member
+    /// has to exist for `SessionsPanel` to compile against the stand-in.
+    func cleanUpExternalSession(_ session: ExternalSessionInfo) {}
     var totalUsageTokens: Int { usageStats.reduce(0) { $0 + $1.totalTokens } }
     var totalUsageLabel: String { UsageStats.formatTokens(totalUsageTokens) }
     var maxUsageTokens: Int { max(usageStats.first?.totalTokens ?? 1, 1) }
     func externalSessionTree(kind: ExternalAgentKind) -> [ExternalSessionNode] { externalTree[kind] ?? [] }
-    var settlementWindowLabel: String? { nil }
-    func settlementCovers(_ window: DateInterval) -> Bool { true }
-    func usageSourceSlices(for stat: ModelUsage) -> [SourceRing.Slice] {
-        UsageSource.allCases.map {
-            SourceRing.Slice(label: $0.label,
-                             value: (usageBySource[$0] ?? []).first { $0.model == stat.model }?.totalTokens ?? 0,
-                             color: $0.color)
-        }
-    }
     func costLine(for model: String) -> ModelPricing.Estimate.Line? {
         usageEstimate.lines.first { $0.model == model }
     }
-    func settlement(for model: String) -> ModelPricing.Cost? { nil }
     func requestNavigation(_ request: NavigationRequest) {}
     func clearNavigation(_ request: NavigationRequest) {}
     func refresh() {}
@@ -1052,14 +1063,23 @@ final class VpnLogStore: ObservableObject {
 
 final class VpnDomainLog: ObservableObject {
     @MainActor static let shared = VpnDomainLog()
+    /// The real ring's bound, quoted so the retention caption on the log page
+    /// reads the same number the app writes.
+    static let limit = 10_000
     @Published var connections: [VpnDomainConnection] = []
     @Published var entries: [VpnDomainEntry] = []
     @Published var received = 0
     @Published var revision = 0
     func clear() {}
-    static func stat(entries: [VpnDomainEntry]) -> [VpnDomainLogStat] { [] }
 }
 '''.lstrip('\n')
+# The per-domain rollup the log page's summary lists. Static and pure in the app
+# too — which is why the regression suite drives it without a main actor — so
+# the real body is grafted onto this stand-in rather than stubbed: the summary
+# rows the still draws cannot drift from the ones the app computes.
+_domain_stat = require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'nonisolated static func stat(')
+source += 'extension VpnDomainLog {\n' \
+    + _domain_stat.replace('nonisolated static func', 'static func', 1) + '}\n'
 
 source += r'''
 // MARK: - Session title helpers used by the tiles
@@ -1156,13 +1176,11 @@ _vpn = page_without_scroll('Sources/ClaudeBar/Views/Pages/VPNView.swift', 'VPNVi
 _vpn, _n = rewrite_text_fields(_vpn, 'VPNView.swift')
 assert _n == 1, f'VPNView.swift: expected 1 TextField, rewrote {_n}'
 assert 'TextField(' not in _vpn, 'VPNView.swift: a TextField survived the rewrite'
-# Four scroll views live *inside* the page (the page-level one is already gone
-# above): the preview-group tabs, the live group tabs, the site-probe strip and
-# the log list. Every one is unwrapped for the same reason: a still gives a
-# scroll view no viewport. Three of them are horizontal strips whose content is
-# the whole point — the tab names and the site delays — so they are kept, not
-# dropped.
-_vpn = unwrap_scroll_views(_vpn, 'VPNView.swift', 4)
+# Two scroll views live *inside* the page (the page-level one is already gone
+# above): the compact-page picker's owns and the log console's. The horizontal
+# strips that used to sit here moved into `VpnDomainLogSection` with the traffic
+# workspace; this count is what catches a container being added back.
+_vpn = unwrap_scroll_views(_vpn, 'VPNView.swift', 2)
 # `ScrollViewReader { proxy in … }` unwraps to the same content minus the
 # reader: the proxy only ever drove `.scrollTo` (which a still never needs) and
 # any remaining call to it is dropped with the reader.
@@ -1187,7 +1205,7 @@ _vpn = inject_member(_vpn, 'VPNView', '    var body: some View {',
 # normally against that width. Same helper as the pages above; see its docstring.
 source += _vpn
 _domainlog = require_file('Sources/ClaudeBar/Views/Pages/VpnDomainLogSection.swift')
-_domainlog = unwrap_scroll_views(_domainlog, 'VpnDomainLogSection.swift', 3)
+_domainlog = unwrap_scroll_views(_domainlog, 'VpnDomainLogSection.swift', 4)
 _domainlog = unwrap_scroll_readers(_domainlog, 'VpnDomainLogSection.swift')
 source += _domainlog
 _sub, _n = rewrite_text_fields(require_file('Sources/ClaudeBar/Views/Pages/VPNSubscriptionSection.swift'),
@@ -1258,12 +1276,34 @@ source += after('Sources/ClaudeBar/Theme/Theme.swift', 'struct PanelCardModifier
 
 source += require_file('Sources/ClaudeBar/Utils/SessionTitle.swift')
 source += require_file('Sources/ClaudeBar/Utils/UsageStats.swift')
+# The build's own identity (`FilePaths` reads `BuildChannel.appName` and
+# `allowsSystemIntegration`). It is compiled into the probe as the dev channel,
+# exactly as in the greeting fixture: `-D CLAUDEBAR_DEV`, no `CLAUDEBAR_RELEASE`.
+source += require_file('Sources/Shared/BuildChannel.swift')
+source += require_file('Sources/ClaudeBar/Views/Shared/VPNSurface.swift')
 source += require('Sources/ClaudeBar/Utils/FilePaths.swift', 'enum FilePaths {')
 source += require_file('Sources/ClaudeBar/Utils/ModelPricing.swift')
 source += require_file('Sources/ClaudeBar/Utils/ModelPriceTable.swift')
 source += require('Sources/ClaudeBar/Utils/SkyAstronomy.swift', 'enum SkyAstronomy {') \
     if 'enum SkyAstronomy {' in (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text() else ''
 source += require_file('Sources/ClaudeBar/Models/ModelUsage.swift')
+# The usage report: the analysis is pure arithmetic over the seeded days, and
+# the section is the page's own drawing — both are sliced whole. The report's
+# cross-source attribution reads `UsageIndex`, whose real body opens the
+# rollup database; the stand-in below answers with the fixture's own codex rows.
+source += require_file('Sources/ClaudeBar/Utils/UsageAnalysis.swift')
+source += require_file('Sources/ClaudeBar/Utils/UsageModelInventory.swift')
+source += require_file('Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift')
+source += '''
+/// Stand-in for the rollup reader. The real `fetchOfficialCodex` opens the
+/// store database; the preview's attribution card only needs the same rows the
+/// fixture already seeded, so it returns those instead of querying disk.
+enum UsageIndex {
+    static func fetchOfficialCodex(in interval: DateInterval) -> [ModelUsage] {
+        Fixture.store.usageBySource[.codex] ?? []
+    }
+}
+'''
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'struct SessionInfo: Identifiable, Equatable {')
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SessionStatus: String {')
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SubagentStatus: String {')
@@ -1282,6 +1322,7 @@ source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'enum VpnDomainR
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainEntry: Identifiable, Equatable {')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainConnection: Identifiable, Equatable {')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'struct VpnDomainLogStat: Identifiable, Equatable {')
+source += require_file('Sources/ClaudeBar/Utils/VpnDomainQuery.swift')
 source += require('Sources/ClaudeBar/Utils/VpnDomainLog.swift', 'enum VpnWatchlist {')
 source += require_file('Sources/ClaudeBar/Utils/CaptureTranscript.swift')
 # The capture store's own value types, sliced whole (the store itself is a
@@ -1399,14 +1440,31 @@ source += require_file('Sources/ClaudeBar/Views/Shared/ContextBar.swift')
 _controls = require_file('Sources/ClaudeBar/Views/Shared/InstrumentControls.swift')
 # Destructive buttons have the same AppKit shadow bridge as TileSurface.
 # Keep the actual control plate and label, omit only its animated shadow.
-_shadow = """LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
-                                    y: pressed ? 0 : (hovered ? 3 : 1.5),
-                                    opacity: hovered ? 0.20 : 0.13,
-                                    cornerRadius: metrics.height / 2,
-                                    surface: .clear,
-                                    color: .black)"""
-assert _shadow in _controls, 'ActionButton shadow moved — update renderer'
-_controls = _controls.replace(_shadow, 'Color.clear')
+# The destructive plate's shadow is one shared view now
+# (`DestructivePlateShadow`), so a still render empties that one type instead of
+# rewriting a copy of its six literals — the literals live in exactly one place
+# in the app, and the renderer no longer has to track them.
+_shadow_struct = '''struct DestructivePlateShadow: View {
+    var hovered: Bool
+    var pressed: Bool
+    var height: CGFloat
+
+    var body: some View {
+        LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                    y: pressed ? 0 : (hovered ? 3 : 1.5),
+                    opacity: hovered ? 0.20 : 0.13,
+                    cornerRadius: height / 2,
+                    surface: .clear,
+                    color: .black)
+    }
+}'''
+assert _shadow_struct in _controls, 'ActionButton shadow moved — update renderer'
+_controls = _controls.replace(_shadow_struct, '''struct DestructivePlateShadow: View {
+    var hovered: Bool
+    var pressed: Bool
+    var height: CGFloat
+    var body: some View { Color.clear }
+}''')
 source += _controls
 _search = require_file('Sources/ClaudeBar/Views/Shared/InstrumentSearchField.swift')
 _search, _n = rewrite_text_fields(_search, 'InstrumentSearchField.swift')
@@ -1436,7 +1494,6 @@ source += require_file('Sources/ClaudeBar/Views/Shared/SourceRing.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/UsageModelCard.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/UsageViz.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/UsageHeatmap.swift')
-source += require_file('Sources/ClaudeBar/Views/Shared/UsageRiver.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/ConnectionCard.swift')
 source += require_file('Sources/ClaudeBar/Views/Shared/StandbyEmptyState.swift')
 
@@ -1732,7 +1789,7 @@ source += r'''
                     .environment(\.rendersHardwareSweep, false)
                     .environment(\.providerSource, Fixture.store)
                     .environmentObject(Fixture.codexStore)
-                    .frame(width: pageWidth(name), alignment: .topLeading)
+                    .frame(width: pageWidth, alignment: .topLeading)
                     .background(Theme.bgPrimary)
                 let renderer = ImageRenderer(content: content)
                 renderer.scale = 2
@@ -1768,6 +1825,9 @@ source += r'''
             .thirdParty: Fixture.usageDays(days: 30).map { DayUsage(day: $0.day, inputTokens: $0.inputTokens / 2, outputTokens: $0.outputTokens / 2, cacheReadTokens: $0.cacheReadTokens / 2, cacheCreationTokens: 0) },
         ]
         store.usageEstimate = ModelPricing.estimate(models)
+        store.usageCostLines = Dictionary(uniqueKeysWithValues: store.usageEstimate.lines.map { ($0.model, $0) })
+        store.usagePublishedInterval = UsageStats.interval(for: store.usagePeriod,
+                                                          reference: store.usageReferenceDate)
         store.providers = [
             Provider(name: "Aibox", models: [ModelInfo(name: "claude-opus-5-5"), ModelInfo(name: "glm-5.3-flash")], profileID: "aibox"),
             Provider(name: "OpenAI", models: [ModelInfo(name: "gpt-6-astra")], profileID: "openai"),
@@ -1850,10 +1910,10 @@ source += r'''
         ProxyCaptureStore.shared.catalog.records = Fixture.trafficRecords()
     }
 
-    /// The page width: the default 1120pt window less its 24pt padding.
-    @MainActor static func pageWidth(_ name: String) -> CGFloat {
-        name == "overview" ? 1120 : 1120
-    }
+    /// The page width: the default 1120pt window less its 24pt padding. One
+    /// value for every page — `fixturePageSize.width` is the same box, and the
+    /// name parameter the pages used to pass no longer selected anything.
+    @MainActor static let pageWidth: CGFloat = 1120
 
     @MainActor static let trafficState: TrafficPageState = {
         let state = TrafficPageState()
@@ -1895,6 +1955,7 @@ path = out / 'Probe.swift'
 path.write_text(source)
 
 swiftc = '/usr/bin/swiftc'
-subprocess.run([swiftc, '-O', '-parse-as-library', '-target', 'arm64-apple-macos15.0',
+subprocess.run([swiftc, '-O', '-parse-as-library', '-D', 'CLAUDEBAR_DEV',
+                '-target', 'arm64-apple-macos15.0',
                 str(path), '-o', str(out / 'probe')], check=True)
 subprocess.run([str(out / 'probe'), str(out)], check=True)

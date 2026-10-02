@@ -2,29 +2,13 @@ import Foundation
 
 COSTDISPLAY
 
-struct ModelUsage {
-    let model: String
-    var calls: Int = 0
-    var inputTokens: Int = 0
-    var outputTokens: Int = 0
-    var cacheReadTokens: Int = 0
-    var cacheCreationTokens: Int = 0
-    var totalInputTokens: Int { inputTokens + cacheReadTokens + cacheCreationTokens }
-    var totalTokens: Int { totalInputTokens + outputTokens }
-    var cacheHitRate: Double { 0 }
-    var cacheHitPercent: Int { 0 }
-    var isZero: Bool { calls == 0 && totalTokens == 0 }
-    mutating func merge(_ other: ModelUsage) {
-        calls += other.calls
-        inputTokens += other.inputTokens
-        outputTokens += other.outputTokens
-        cacheReadTokens += other.cacheReadTokens
-        cacheCreationTokens += other.cacheCreationTokens
-    }
-    static func merged(_ list: [ModelUsage]) -> [ModelUsage] { list }
-}
-
-
+// The production `ModelUsage` slice, compiled at top level rather than
+// re-declared here. The money-field guard in `cursor-ledger-regressions.py`
+// *is* about this type, and a fixture stub would keep compiling — and keep the
+// guard passing — even after the real model grew a money field. It needs no
+// stubbing: the slice is Foundation-only (`ModelPricing.cost(of:)` reads its
+// token buckets).
+USAGE_SOURCE
 
 enum CursorUsageFetcher {
 NUMBER
@@ -106,8 +90,8 @@ PRICING
            "kind":"USAGE_EVENT_KIND_INCLUDED_IN_PRO","chargedCents":10.0,
            "isTokenBasedCall":true,"tokenUsage":{"inputTokens":100,"outputTokens":50,"totalCents":10.0}},
           {"timestamp":"1790644018079","model":"grok-bot-automation",
-           "kind":"USAGE_EVENT_KIND_INCLUDED_IN_PRO","chargedCents":0,
-           "isTokenBasedCall":false,"isChargeable":false,"usageBasedCosts":"$0.00"}]}
+           "kind":"USAGE_EVENT_KIND_INCLUDED_IN_PRO","chargedCents":12.5,
+           "isTokenBasedCall":false,"isChargeable":false,"usageBasedCosts":"$0.13"}]}
         """
         guard let foldedByModel = CursorLedger.parseEvents(Data(events.utf8)) else {
             preconditionFailure("the event page must decode")
@@ -118,11 +102,15 @@ PRICING
         precondition(grok?.outputTokens == 618)
         precondition(grok?.cacheReadTokens == 649_728)
         precondition(abs((grok?.costCents ?? 0) - 43.0906) < 0.0001, "money sums across events")
-        // The non-token dispatch: no `tokenUsage`, `chargedCents: 0` — it is a
-        // real row, and it must not have aborted the page.
+        // The non-token dispatch: no `tokenUsage` key at all — still a real
+        // row, and still carrying a charge. That charge only exists at the
+        // event's top level, so a parser that reads `tokenUsage.totalCents` and
+        // stops would book this row at $0.00 while the vendor bills it.
         let bot = foldedByModel.first { $0.model == "grok-bot-automation" }
         precondition(bot != nil, "a non-token call is still a row, not a dropped page")
-        precondition(bot?.totalTokens == 0 && bot?.costCents == 0)
+        precondition(bot?.totalTokens == 0, "a dispatch with no tokenUsage has no tokens")
+        precondition(abs((bot?.costCents ?? 0) - 12.5) < 0.0001,
+                     "a non-token call's top-level chargedCents is its cost: \(bot?.costCents ?? -1)")
         // Cursor caps `pageSize` at 1000 and answers 2000+ with a body carrying
         // neither count nor rows — which must read as nil, not as "no usage".
         precondition(CursorLedger.parseEvents(Data("{}".utf8)) == nil,
@@ -204,14 +192,10 @@ PRICING
 
         // `ModelUsage` must carry no money. If it ever does, `estimate` — which
         // is fed `usageStats` everywhere — would start adding real money to list
-        // prices silently.
-        let usageSource = """
-            USAGE_SOURCE
-            """
-        for banned in ["cents", "Cost", "usd", "cny", "amount"] {
-            precondition(!usageSource.contains("var \(banned)"),
-                         "ModelUsage gained a money field (\(banned)); estimates and actuals can now be mixed")
-        }
+        // prices silently. The type above *is* the production slice, and the
+        // name-pattern scan over it lives in `cursor-ledger-regressions.py`;
+        // both the type and the scan would have to be replaced for a money
+        // field to slip through.
 
         print("PASS: Cursor's aggregation decodes with string token counts, an absent "
               + "tokenUsage is a zero row rather than a dropped page, an error envelope is "

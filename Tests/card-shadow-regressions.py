@@ -90,12 +90,14 @@ if not re.search(r'func hitTest\([^)]*\)\s*->\s*NSView\?\s*\{\s*nil\s*\}', host)
         'Tile.swift: ShadowHostView.hitTest no longer returns nil. The shadow host '
         'is laid out behind the card as a `background`, so a hit-testable host '
         'swallows the tile\'s clicks.')
-if 'isFlipped' not in host:
+if not re.search(r'\bisFlipped\s*:\s*Bool\s*\{\s*true\s*\}', host):
     failures.append(
         'Tile.swift: ShadowHostView is no longer flipped. Its comment documents '
         'that this is what makes the layer\'s `shadowOffset.height` mean what the '
         '`y:` argument meant in the modifier it replaces (positive = below the '
-        'card); unflipped, the shadow jumps above it.')
+        'card); unflipped, the shadow jumps above it. The check is on the *value* '
+        '— the declaration alone would also pass for `{ false }`, which is the '
+        'regression, not a different spelling of it.')
 
 # The counter-case, pinned so a later "let's do the panels too" pass is stopped
 # by a test rather than by a frame measurement nobody runs.
@@ -128,6 +130,12 @@ if 'LayerShadow(' in panel:
 # two halves of one control — both draw `ControlPlate` — so both must keep the
 # shadow on a layer.
 controls = (root / 'Sources/ClaudeBar/Views/Shared/InstrumentControls.swift').read_text()
+# The shared destructive-plate shadow must itself stay on a layer.
+shadow_body = without_comments(body_of(controls, 'struct DestructivePlateShadow: View {'))
+if 'LayerShadow(' not in shadow_body:
+    failures.append(
+        'InstrumentControls.swift: DestructivePlateShadow no longer draws '
+        '`LayerShadow` — the destructive button lost its drop shadow.')
 for signature in ['struct ActionButton<Label: View>: View {',
                   'struct ActionPlateButtonStyle: ButtonStyle {']:
     body = without_comments(body_of(controls, signature))
@@ -143,11 +151,20 @@ for signature in ['struct ActionButton<Label: View>: View {',
             'directory (deep scroll, 19 s) that costs 759 frames — 66.6 fps vs '
             '108.6 fps — because the button is the most-repeated component in the '
             'app. Keep it on `LayerShadow`.')
-    if 'LayerShadow(' not in body:
+    # The destructive plate's shadow is one shared view (`DestructivePlateShadow`)
+    # since the two bodies had it copy-pasted verbatim. Either shape is fine *as
+    # long as the layer is still what draws it*: the direct call, or the shared
+    # wrapper — whose own body is checked below.
+    if 'LayerShadow(' not in body and 'DestructivePlateShadow(' not in body:
         failures.append(
             f'InstrumentControls.swift: {signature} no longer applies '
             '`LayerShadow`. The filled plate keeps its drop shadow — deleting it '
             'is not the fix.')
+    if 'DestructivePlateShadow(' in body and 'DestructivePlateShadow(' not in without_comments(controls):
+        failures.append(
+            f'InstrumentControls.swift: {signature} mounts `DestructivePlateShadow`, '
+            'but that type is not declared in this file — the shadow moved out '
+            'from under the check that keeps it a layer.')
     # The plate used to pair a black shadow with a tinted one underneath
     # (`tint.opacity(0.18)`) — the Uiverse `:before`/`:after` pair. The unified
     # control is deliberately *flat* and drops the tinted half: a 12 % wash

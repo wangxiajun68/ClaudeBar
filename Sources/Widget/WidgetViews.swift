@@ -76,9 +76,16 @@ private enum WidgetBars {
     static func color(for model: String) -> Color {
         // djb2 — stable across launches/processes so Widget matches the main
         // app's tint for the same model (String.hashValue is NOT stable).
+        //
+        // The `% Int.max` step is `Theme.djb2`'s, and dropping it is a real
+        // divergence rather than a rounding detail: `2^63-1 ≡ 2 (mod 5)`, so
+        // the two indices differ by two for every hash at or above `Int.max`.
+        // Of the 56 slugs in the bundled price table, 19 came out a different
+        // colour in the widget than in the popup — e.g. `gpt-5-codex` was
+        // violet in the app and amber here.
         var h: UInt64 = 5_381
         for b in model.utf8 { h = (h &* 33) &+ UInt64(b) }
-        return palette[Int(h % UInt64(palette.count))]
+        return palette[Int(h % UInt64(Int.max)) % palette.count]
     }
 
     static func gradient(for model: String) -> LinearGradient {
@@ -280,8 +287,13 @@ struct WidgetEntryView: View {
     @ViewBuilder
     private func sessionSection(_ s: WidgetSnapshot, _ p: WidgetPalette) -> some View {
         if !s.sessions.isEmpty {
+            // The carried totals, not the payload's row count: the host caps
+            // `sessions` at five rows, so counting them reported "5 个" on a
+            // machine with more — and a busy count drawn only from the first
+            // five. `totalSessionCount` / `busySessionCount` exist on the
+            // snapshot for exactly this.
             sectionHeader(title: "活跃会话",
-                          detail: "\(s.sessions.count) 个 · \(s.sessions.filter { $0.status == "busy" }.count) 运行中"
+                          detail: "\(s.totalSessionCount) 个 · \(s.busySessionCount) 运行中"
                               + waitingSuffix(s.sessions.filter { $0.status == "waiting" }.count),
                           icon: nil,
                           p: p,

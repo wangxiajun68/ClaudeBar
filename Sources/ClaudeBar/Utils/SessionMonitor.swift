@@ -570,19 +570,96 @@ struct SessionMonitor {
 
     // MARK: - Path helpers
 
-    /// The project directory under ~/.claude/projects/, e.g.
-    /// `projects/-Users-wangxiajun-Project-ClaudeBar`.
+    /// Claude Code's own project-directory encoding, mirrored exactly.
+    ///
+    /// The client's rule is `cwd.replace(/[^a-zA-Z0-9]/g, "-")` — **every**
+    /// character outside `[A-Za-z0-9]`, not just `/` — with the leading slash
+    /// becoming the leading dash. Replacing only `/` is right for
+    /// `/Users/me/Project/foo` and wrong for every path holding anything else;
+    /// a dot is the common case. `…/Project/helix/.helix/agents/…` is stored
+    /// as `-Users-…-helix--helix-…` on this machine, while the old code
+    /// computed a directory that never exists — so that session showed no
+    /// context, no title, and no sub-agents at all.
+    ///
+    /// Runs longer than 200 characters get a hash suffix from the client
+    /// (its own base-36 function of the full string), which cannot be mirrored
+    /// without copying that function; `locateTranscript` is the fallback that
+    /// covers it rather than guessing.
+    static func projectDirName(for cwd: String) -> String {
+        var slug = "-"
+        slug.reserveCapacity(cwd.count + 1)
+        for byte in cwd.utf8 {
+            let alphanumeric = (byte >= 0x30 && byte <= 0x39)
+                || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+            slug.append(alphanumeric ? Character(UnicodeScalar(byte)) : "-")
+        }
+        return slug
+    }
+
+    /// The directory the session's project lives in: the mirrored name when it
+    /// exists, else whatever `locateTranscript` resolves.
     static func projectDir(for session: SessionInfo) -> URL {
+        if let slashed = transcriptCache.dir(for: session.sessionId) {
+            return URL(fileURLWithPath: slashed)
+        }
         let projects = FilePaths.claudeDir.appendingPathComponent("projects")
-        let encoded = session.cwd.hasPrefix("/")
-            ? String(session.cwd.dropFirst()).replacingOccurrences(of: "/", with: "-")
-            : session.cwd.replacingOccurrences(of: "/", with: "-")
-        return projects.appendingPathComponent("-" + encoded)
+        let mirrored = projects.appendingPathComponent(projectDirName(for: session.cwd))
+        if directoryExists(mirrored) { return mirrored }
+        if let transcript = locateTranscript(sessionId: session.sessionId, projects: projects) {
+            let dir = transcript.deletingLastPathComponent()
+            transcriptCache.store(dir.path, for: session.sessionId)
+            return dir
+        }
+        return mirrored
     }
 
     /// The session's main transcript: projects/<encoded-cwd>/<sessionId>.jsonl
     static func transcriptURL(for session: SessionInfo) -> URL {
         projectDir(for: session).appendingPathComponent("\(session.sessionId).jsonl")
+    }
+
+    private static func directoryExists(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    /// Robustness net under the mirrored encoding: find `<sessionId>.jsonl`
+    /// inside the projects tree. The session id is a UUID, unique across the
+    /// tree, so a single match is the session — this covers a slug this app's
+    /// mirror cannot compute (the client's >200-character hash suffix) and any
+    /// future change to the client's rule. Runs at most once per session id per
+    /// process: the answer is cached, and only a miss reaches it.
+    private static func locateTranscript(sessionId: String, projects: URL) -> URL? {
+        guard !sessionId.isEmpty,
+              let children = try? FileManager.default.contentsOfDirectory(
+                at: projects, includingPropertiesForKeys: [.isDirectoryKey]) else { return nil }
+        for child in children {
+            guard (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+            let candidate = child.appendingPathComponent("\(sessionId).jsonl")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }
+
+    /// sessionId → project directory, filled only by `locateTranscript` hits.
+    /// Bounded by the number of sessions this process ever sees, and dropped
+    /// with the process, which is the same lifetime as the monitor's data.
+    private static let transcriptCache = TranscriptPathCache()
+
+    private final class TranscriptPathCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var directories: [String: String] = [:]
+
+        func dir(for sessionId: String) -> String? {
+            lock.lock(); defer { lock.unlock() }
+            return directories[sessionId]
+        }
+
+        func store(_ path: String, for sessionId: String) {
+            lock.lock(); defer { lock.unlock() }
+            directories[sessionId] = path
+        }
     }
 
     static func transcriptSize(for session: SessionInfo) -> UInt64 {

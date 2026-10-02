@@ -16,6 +16,16 @@ class ProviderStore: ObservableObject {
     @Published var collapsedProviderIDs: Set<UUID> = []
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
+    /// The week containing `usageReferenceDate`, always.
+    ///
+    /// The popup always draws a **week** strip (日 period), but `usageDays`
+    /// holds only the selected period — one day when 日 is selected, a month
+    /// otherwise. The strip painted six of its seven cells from an array that
+    /// never contained them and reported 无用量 for days the app had never
+    /// asked about. Fetched in the same detached pass as everything else, from
+    /// the same index, so this is one more range scan rather than a second
+    /// scan path.
+    @Published var usageWeekDays: [DayUsage] = []
     /// The same two aggregates split by origin (Claude Code / Codex /
     /// third-party). Feeds the per-model source ring and the source-tinted
     /// river; `usageStats`/`usageDays` stay the flat totals everything else
@@ -51,15 +61,6 @@ class ProviderStore: ObservableObject {
     /// number that mixed them would be neither an estimate nor a bill, and
     /// `docs/technical/15-model-cost.md` is built on that distinction holding.
     ///
-    /// Keyed by `ModelPricing.canonical(model)` so Cursor's
-    /// `claude-opus-5-5-medium` lands on the same row as Claude Code's
-    /// `claude-opus-5-5`. Read with `settlement(for:)`.
-    ///
-    /// Only the model id → amount map is published for the UI; the window and
-    /// the truncation flag are carried by `CursorLedgerStore` itself, which is
-    /// an observable in its own right — copying them here as well would be two
-    /// sources of truth for the same fact.
-    @Published private(set) var usageSettlements: [String: ModelPricing.Cost] = [:]
     /// Today's totals, independent of `usagePeriod`.
     ///
     /// The dashboard's 今日花费 / 今日 Token cards are a fixed window while
@@ -446,9 +447,11 @@ class ProviderStore: ObservableObject {
             result[i].completionID = ctx.completionID
             // The counter is read from a sliding transcript window, so letting
             // it fall would put the key back to a value that was already
-            // announced and re-fire a completion. Clamped, not replaced: a
-            // window shift can only repeat a key, never regress one.
-            result[i].turnCount = max(result[i].turnCount, ctx.turnCount)
+            // announced and re-fire a completion. Clamped, not replaced: the
+            // previous poll's published value is the floor, so a window shift
+            // can only repeat a key, never regress one.
+            let priorCount = prior[result[i].pid]?.turnCount ?? ctx.turnCount
+            result[i].turnCount = max(priorCount, ctx.turnCount)
             result[i].firstPrompt = ctx.title
             result[i].transcriptSize = size
             Self.applyTranscriptBusyFallback(&result[i])
@@ -1022,14 +1025,16 @@ class ProviderStore: ObservableObject {
             var wantRescan = rescan
             while true {
                 guard let self else { return }
-                let interval = await MainActor.run {
-                    UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate)
+                let (interval, weekReference) = await MainActor.run {
+                    (UsageStats.interval(for: self.usagePeriod, reference: self.usageReferenceDate),
+                     self.usageReferenceDate)
                 }
 
                 if wantRescan && UsageIndex.hasCachedData {
                     let quick = Self.queryUsage(in: interval)
                     let quickSources = Self.queryUsageBySource(in: interval)
                     let days = UsageIndex.fetchDaily(in: interval)
+                    let weekDays = Self.queryWeekDays(reference: weekReference)
                     let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                     let dailyModels = Self.queryDailyModels(in: interval)
                     let today = Self.queryTodayUsage()
@@ -1037,12 +1042,7 @@ class ProviderStore: ObservableObject {
                         guard let self, !self.usageRefreshQueued else { return }
                         self.publishTodayUsage(today)
                         self.publishUsage(quick, quickSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
-                        // Read here rather than out on the detached task: the
-                        // ledger store is a `@MainActor` observable, so the
-                        // money map can only be read where it is published —
-                        // and this hop already exists for the other two
-                        // publishes.
-                        self.publishSettlement(Self.querySettlement())
+                        if self.usageWeekDays != weekDays { self.usageWeekDays = weekDays }
                     }
                 }
 
@@ -1052,6 +1052,7 @@ class ProviderStore: ObservableObject {
                 let final = Self.queryUsage(in: interval)
                 let finalSources = Self.queryUsageBySource(in: interval)
                 let days = UsageIndex.fetchDaily(in: interval)
+                let weekDays = Self.queryWeekDays(reference: weekReference)
                 let daysBySource = UsageIndex.fetchDailyBySource(in: interval)
                 let dailyModels = Self.queryDailyModels(in: interval)
                 let today = Self.queryTodayUsage()
@@ -1067,7 +1068,7 @@ class ProviderStore: ObservableObject {
                     // A new refresh cannot start between these operations.
                     self.publishTodayUsage(today)
                     self.publishUsage(final, finalSources, days, daysBySource, dailyModels: dailyModels, interval: interval)
-                    self.publishSettlement(Self.querySettlement())
+                    if self.usageWeekDays != weekDays { self.usageWeekDays = weekDays }
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false
                     return (false, false)
@@ -1151,22 +1152,20 @@ class ProviderStore: ObservableObject {
         UsageIndex.fetchBySource(in: interval)
     }
 
+    /// The seven days of the week holding `reference`. The popup's strip is a
+    /// week even when the selected period is a day, and a day-scoped
+    /// `usageDays` cannot fill it.
+    private static func queryWeekDays(reference: Date) -> [DayUsage] {
+        guard let week = Calendar.current.dateInterval(of: .weekOfYear, for: reference) else { return [] }
+        return UsageIndex.fetchDaily(in: week)
+    }
+
     /// Cursor's actual charges for whatever window that store currently has,
     /// plus the window and truncation flag. Read from memory (the ledger store
     /// keeps its reading and rehydrates it from disk at launch) — **no network
     /// here.** The usage page must render from cache instantly; the ledger
     /// store does its own reading behind it and publishes when it lands.
     @MainActor
-    private static func querySettlement() -> [String: ModelPricing.Cost] {
-        let store = CursorLedgerStore.shared
-        var out: [String: ModelPricing.Cost] = [:]
-        out.reserveCapacity(store.rows.count)
-        for (model, row) in store.rows {
-            if let cost = CursorLedger.cost(cents: row.costCents) { out[model] = cost }
-        }
-        return out
-    }
-
     /// Ask the ledger for the window the period chips currently describe.
     ///
     /// **Fire-and-forget and not awaited** — the page renders from whatever
@@ -1188,14 +1187,6 @@ class ProviderStore: ObservableObject {
             let cycle = CursorUsageFetcher.billingCycle()
             CursorLedgerStore.shared.refresh(window: window, billingCycle: cycle, force: force)
         }
-    }
-
-    /// Same assign-only-what-changed rule as the other publishes. The money map
-    /// is rebuilt on every usage refresh while it only changes when a Cursor
-    /// read lands, so an unconditional assignment would re-render the densest
-    /// page in the app on every FSEvents tick.
-    private func publishSettlement(_ fresh: [String: ModelPricing.Cost]) {
-        if usageSettlements != fresh { usageSettlements = fresh }
     }
 
     /// Today's fixed-window totals, read where the period aggregates are read.

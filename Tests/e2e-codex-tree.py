@@ -15,6 +15,10 @@ Two modes:
   * `CLAUDEBAR_E2E_REAL_INDEX=1` — additionally runs the monitor against the
     real index and asserts the live numbers (main threads exist, no helper is
     classified as main, every returned helper's parent is in the same scan).
+    The tree's own count is asserted against the *active* helpers, because
+    `externalSessionTree` attaches only those (an idle helper is deliberately
+    not a card) — asserting on the raw subagent count would read a finished
+    fan-out as a broken tree.
 
 Compiles the whole app target except `ClaudeBarApp.swift` (only that file has
 its own `@main`), so this is a slow script by the standards of the others —
@@ -48,6 +52,8 @@ import AppKit
             row("parent", parent: nil, active: true, updated: now, sub: false),
             row("kid-a", parent: "parent", active: true, updated: now, sub: true),
             row("kid-b", parent: "parent", active: true, updated: now - 2_000, sub: true),
+            // An idle helper: returned by the scan, deliberately not a node.
+            row("kid-c", parent: "parent", active: false, updated: now - 1_000, sub: true),
             row("idle-main", parent: nil, active: false, updated: now - 9_000, sub: false),
         ]
         let tree = store.externalSessionTree(kind: .codex)
@@ -56,7 +62,8 @@ import AppKit
         let parent = tree.first { $0.session.sessionId == "parent" }!
         precondition(parent.children.map(\.session.sessionId) == ["kid-a", "kid-b"],
                      "helpers attach to their parent, newest first")
-        precondition(parent.descendantCount == 2 && parent.activeDescendantCount == 2)
+        precondition(parent.descendantCount == 2 && parent.activeDescendantCount == 2,
+                     "a finished helper is neither attached nor counted")
         precondition(store.aliveExternalSessions.map(\.sessionId).sorted() == ["idle-main", "parent"],
                      "the session list is threads, not helpers")
         precondition(store.activeExternalCount == 1,
@@ -82,8 +89,16 @@ import AppKit
         live.externalSessions = scan.main + scan.subagents
         let liveTree = live.externalSessionTree(kind: .codex)
         precondition(liveTree.count == scan.main.count, "every main thread is a root")
-        precondition(liveTree.reduce(0) { $0 + $1.descendantCount } == scan.subagents.count,
-                     "every returned helper is attached under some root")
+        // The tree attaches helpers that are *active*; the scan returns every
+        // helper the index lists. Comparing against the raw subagent count
+        // would read a finished fan-out as a broken tree — the idle ones are
+        // deliberately left out of the tree, and the counters below are the
+        // place that population is asserted.
+        let activeHelpers = scan.subagents.filter(\.isActive)
+        precondition(liveTree.reduce(0) { $0 + $1.descendantCount } == activeHelpers.count,
+                     "every active helper is attached under some root")
+        precondition(liveTree.reduce(0) { $0 + $1.activeDescendantCount } == activeHelpers.count,
+                     "the attached helpers all count as active")
         print("PASS: synthetic tree wiring + live index → scan → store → tree")
     }
 }
@@ -93,11 +108,19 @@ with tempfile.TemporaryDirectory(prefix='claudebar-e2e-') as folder:
     main = Path(folder) / 'Main.swift'
     main.write_text(harness)
     binary = Path(folder) / 'e2e'
-    sources = sorted(p for p in source_dir.rglob('*.swift') if p.name != 'ClaudeBarApp.swift')
+    # `BuildChannel` lives in `Sources/Shared` (the app and the widget both
+    # compile it), so it is not under `source_dir` — a build that omits it
+    # cannot link against `FilePaths`.
+    sources = [root / 'Sources/Shared/BuildChannel.swift'] \
+        + sorted(p for p in source_dir.rglob('*.swift') if p.name != 'ClaudeBarApp.swift')
     sdk = subprocess.run(['xcrun', '--sdk', 'macosx', '--show-sdk-path'],
                          capture_output=True, text=True, check=True).stdout.strip()
     subprocess.run([
         'swiftc', '-O', '-whole-module-optimization', '-parse-as-library',
+        # The dev channel, as `make dev` compiles it: the assertions below are
+        # about the tree's wiring, and the dev identity is what a session on
+        # this machine runs besides.
+        '-D', 'CLAUDEBAR_DEV',
         '-o', str(binary), '-sdk', sdk, '-target', 'arm64-apple-macos15.0',
         '-framework', 'Metal', '-framework', 'SwiftUI', '-framework', 'AppKit',
         '-framework', 'WidgetKit', '-framework', 'CryptoKit', '-framework', 'CoreServices',

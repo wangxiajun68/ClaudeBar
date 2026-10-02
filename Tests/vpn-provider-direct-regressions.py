@@ -39,9 +39,13 @@ root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Utils/VpnProviderDirect.swift').read_text()
 
 # --- slice the production source ---------------------------------------------
-# Models (ProvidersFile/CodexProvidersFile) are later in the same module; the
-# slice below reaches VpnSubscriptionStore's trailing brace, which closes the
-# file, so a stub is prepended instead of the real decodables.
+# `VpnProviderDirect.swift` holds nothing but the enum, so the slice runs from
+# its opening brace to EOF. The stubs below exist because the types the enum
+# reads from disk — `ProvidersFile` / `CodexProvidersFile` (Provider.swift,
+# CodexProvider.swift) and `FilePaths` — live in other files of the module and
+# are not compiled into this fixture. Appending any declaration after the enum
+# in that file would silently draft it into the fixture; add it to one of the
+# other module files instead.
 #
 # The whole enum, minus nothing: `hosts()` reads from disk, and the suite drives
 # `eligibleHosts(from:)` / `inject(into:)`, so the file's own defaults are never

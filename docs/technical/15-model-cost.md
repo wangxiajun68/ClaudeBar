@@ -21,7 +21,7 @@
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：双源查询、TTL 缓存、手动覆盖；默认模式下不发请求 |
 | `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行：估算一行、`Cursor 实扣` 一行，各自成句、永不相加 |
 | `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示） |
-| `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个估算入口；实扣走平行的 `usageSettlements` / `settlement(for:)` / `settlementCovers(_:)` |
+| `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个估算入口；实扣不进 store，`UsageView` 直接读 `CursorLedgerStore`（`rows` / `windowLabel`） |
 | `Tests/model-cost-regressions.py` | 锁定 slug 匹配（含 effort 档归一）、币种隔离、无价分类与格式化 |
 | `Tests/cursor-ledger-regressions.py` | 锁定实扣解码、窗口退化、以及「实扣到不了估算那条路」（`ModelUsage` 不带钱） |
 

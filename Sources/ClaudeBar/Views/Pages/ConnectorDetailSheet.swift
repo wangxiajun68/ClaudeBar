@@ -98,7 +98,7 @@ struct ConnectorDetailSheet: View {
                     .foregroundStyle(Theme.textPrimary)
                 if !toolsLoading && toolsError == nil {
                     Text("\(tools.count)")
-                        .rollingNumber()
+                        .rollingNumber("\(tools.count)")
                         .font(Theme.Font.microMedium)
                         .foregroundStyle(Theme.textSecondary)
                 }

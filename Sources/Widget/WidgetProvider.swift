@@ -14,7 +14,7 @@ private enum WidgetFilePaths {
         guard let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
             return nil
         }
-        return group.appendingPathComponent("claude-bar-widget-data.json")
+        return group.appendingPathComponent(BuildChannel.widgetSnapshotFileName)
     }
 }
 
@@ -68,7 +68,7 @@ struct WidgetProvider: TimelineProvider {
 
         // 1. Try shared UserDefaults
         if let shared = UserDefaults(suiteName: WidgetFilePaths.appGroupID) {
-            data = shared.data(forKey: "widgetSnapshot")
+            data = shared.data(forKey: BuildChannel.widgetSnapshotDefaultsKey)
         }
 
         // 2. Fall back to file in App Group container
@@ -79,7 +79,7 @@ struct WidgetProvider: TimelineProvider {
         // 3. Fall back to ~/.claude/
         if data == nil && BuildChannel.allowsSystemIntegration {
             let home = FileManager.default.homeDirectoryForCurrentUser
-            let claudePath = home.appendingPathComponent(".claude/claude-bar-widget-data.json")
+            let claudePath = home.appendingPathComponent(".claude/" + BuildChannel.widgetSnapshotFileName)
             data = try? Data(contentsOf: claudePath)
         }
 
@@ -87,7 +87,7 @@ struct WidgetProvider: TimelineProvider {
         if data == nil {
             let home = FileManager.default.homeDirectoryForCurrentUser
             // homeDirectory already ends with /Data for sandboxed processes
-            let sandboxPath = home.appendingPathComponent("claude-bar-widget-data.json")
+            let sandboxPath = home.appendingPathComponent(BuildChannel.widgetSnapshotFileName)
             data = try? Data(contentsOf: sandboxPath)
         }
 

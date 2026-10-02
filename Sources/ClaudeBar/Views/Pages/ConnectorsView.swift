@@ -283,7 +283,7 @@ struct ConnectorsView: View {
                 })
                 Spacer(minLength: Theme.Space.s8)
                 Text("\(count) 项")
-                    .rollingNumber()
+                    .rollingNumber("\(count) 项")
                     .font(Theme.Font.microMedium)
                     .foregroundStyle(Theme.textSecondary)
                 if bulkAvailable {
@@ -482,7 +482,7 @@ struct ConnectorsView: View {
         VStack(alignment: .leading, spacing: Theme.Space.s10) {
             HStack(spacing: Theme.Space.s8) {
                 Text("已选 \(selected.count) 项")
-                    .rollingNumber()
+                    .rollingNumber("已选 \(selected.count) 项")
                     .font(Theme.Font.chromeEmph)
                     .foregroundStyle(Theme.textPrimary)
                 ForEach(selectedPlatforms(selected), id: \.self) { item in
@@ -846,7 +846,7 @@ private struct ConnectorInventoryHeader: View {
                             .font(Theme.Font.micro)
                             .foregroundStyle(Theme.textSecondary)
                         Text("\(part.count)")
-                            .rollingNumber()
+                            .rollingNumber("\(part.count)")
                             .font(Theme.Font.microSemibold)
                             .foregroundStyle(part.ink)
                     }
@@ -860,7 +860,7 @@ private struct ConnectorInventoryHeader: View {
                         .font(Theme.Font.micro)
                         .foregroundStyle(Theme.textSecondary)
                     Text("\(localCount)")
-                        .rollingNumber()
+                        .rollingNumber("\(localCount)")
                         .font(Theme.Font.microSemibold)
                         .foregroundStyle(Theme.textPrimary)
                 }
@@ -1169,14 +1169,11 @@ private struct ConnectorCard: View {
                     .frame(height: 28)
             } else if let enabled = record.enabled, record.canToggle {
                 Button(enabled ? "停用" : "启用") { onSetEnabled(!enabled) }
-                    .buttonStyle(.uiversePress)
                     .connectorUtilityButton(accented: !enabled)
             } else if case .cursorMCP = record.method {
                 Button("启用") { onSetEnabled(true) }
-                    .buttonStyle(.uiversePress)
                     .connectorUtilityButton(accented: true)
                 Button("停用") { onSetEnabled(false) }
-                    .buttonStyle(.uiversePress)
                     .connectorUtilityButton()
             } else {
                 Text("在客户端中管理")
@@ -1186,7 +1183,6 @@ private struct ConnectorCard: View {
             Spacer(minLength: 4)
             if record.canRemove && !isBusy {
                 Button("移除", action: onRemove)
-                    .buttonStyle(.uiversePress)
                     .connectorUtilityButton()
             }
         }
@@ -1301,14 +1297,13 @@ private struct LocalCLICard: View {
             Spacer(minLength: 0)
             HStack {
                 Text(relatedCount > 0 ? "\(relatedCount) 项关联能力" : "本机命令")
-                    .rollingNumber()
+                    .rollingNumber(relatedCount > 0 ? "\(relatedCount) 项关联能力" : "本机命令")
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button("定位") {
                     NSWorkspace.shared.activateFileViewerSelecting([cli.source])
                 }
-                .buttonStyle(.uiversePress)
                 .connectorUtilityButton()
             }
             .frame(height: 30)
@@ -1330,7 +1325,7 @@ private struct LocalCLICard: View {
 /// instead of the well tone. The inverted white fill on hover is kept because it
 /// is this card's own gesture — a dense card of small controls needs one thing
 /// that visibly takes over when the pointer arrives — but the body, the rim, the
-/// lit top edge and the press all come from `InstrumentButtonStyle`, so a
+/// lit top edge and the press all come from `ActionPlateButtonStyle`, so a
 /// connector button and a page-band button are finally the same object.
 private struct ConnectorUtilityButtonModifier: ViewModifier {
     let accented: Bool
@@ -1349,15 +1344,13 @@ private struct ConnectorUtilityButtonStyle: ButtonStyle {
     @Binding var hovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        // No `.environment(\.isEnabled, true)` here, though it read like a
-        // safety net. Both styles in the chain draw their own disabled
-        // treatment — `ActionPlateButtonStyle` desaturates at 0.34 opacity, and
-        // the `.uiversePress` the call sites also apply dims through
-        // `ControlPressModifier` — so forcing the flag only ever *suppresses* a
-        // disabled look a caller asked for. Nothing depends on it today (the
-        // page's single `.disabled(loading)` is on the refresh button, which
-        // takes `.headerControl()` and never reaches this style), which is
-        // exactly why it is safe to drop rather than leave as a trap.
+        // One style, not two: SwiftUI hands `makeBody` to the style *closest*
+        // to the `Button` and discards the rest, so the `.uiversePress` the
+        // call sites used to chain here never ran — it shadowed this one
+        // rather than compositing with it, and every connector action drew as a
+        // bare label with no plate and no disabled treatment. The plate owns
+        // both by itself (`ActionPlateButtonStyle`: `scaleEffect(0.97)` on
+        // press, 0.34 opacity + desaturation when disabled).
         ActionPlateButtonStyle(tone: accented || hovered ? .accent : .neutral,
                                tint: Theme.claude, ink: nil, metrics: .regular)
             .makeBody(configuration: configuration)

@@ -7,13 +7,21 @@ transport and sensor dependencies are replaced; request/reply/lifecycle logic is
 from pathlib import Path
 import subprocess
 import tempfile
+import uuid
 
 root = Path(__file__).resolve().parents[1]
+# One suite per process, so a concurrent or previous run cannot share state — but
+# UserDefaults writes a real `.plist` under `~/Library/Preferences` and neither
+# `removePersistentDomain` nor `defaults delete` removes the file, so the name is
+# generated here (not in Swift) and the file is unlinked once the child exits.
+# Without this the suite leaks one plist per run forever.
+suite_name = 'claudebar.battery.tests.' + uuid.uuid4().hex.upper()
+suite_plist = Path.home() / 'Library/Preferences' / (suite_name + '.plist')
 source = (root / 'Sources/Shared/BuildChannel.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Models/BatteryChargeController.swift').read_text()
 source = source.replace('private(set) ', '').replace('private ', '')
 source = source.replace('UserDefaults.standard', 'testDefaults')
-source = source.replace('import Observation', '''import Observation
-let testDefaults = UserDefaults(suiteName: "claudebar.battery.tests." + UUID().uuidString)!''')
+source = source.replace('import Observation', f'''import Observation
+let testDefaults = UserDefaults(suiteName: "{suite_name}")!''')
 a = source.index('    func start() throws {')
 b = source.index('    func disconnect(', a)
 source = source[:a] + '''    func start() throws {
@@ -229,9 +237,15 @@ with tempfile.TemporaryDirectory(prefix='claudebar-charge-tests-') as folder:
     path = Path(folder) / 'Regression.swift'
     path.write_text(source)
     binary = Path(folder) / 'regression'
-    subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
-    c_binary = Path(folder) / 'battery-control'
-    subprocess.run(['clang', '-Wall', '-Wextra', '-Werror', str(root / 'Tests/battery-control.c'),
-                    '-framework', 'IOKit', '-framework', 'CoreFoundation', '-o', str(c_binary)], check=True)
-    subprocess.run([str(c_binary)], check=True)
+    try:
+        subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+        c_binary = Path(folder) / 'battery-control'
+        subprocess.run(['clang', '-Wall', '-Wextra', '-Werror', str(root / 'Tests/battery-control.c'),
+                        '-framework', 'IOKit', '-framework', 'CoreFoundation', '-o', str(c_binary)], check=True)
+        subprocess.run([str(c_binary)], check=True)
+    finally:
+        # The suite's own plist outlives the process that wrote it. `cfprefsd`
+        # may rewrite it a beat after exit, so unlink after the child is done;
+        # a missing file is fine (a compile failure never wrote one).
+        suite_plist.unlink(missing_ok=True)

@@ -68,7 +68,8 @@ ClaudeBar/
 ├── Makefile                              ← 薄封装，调用 Sources/build.sh（`make test` 跑 Tests/）
 ├── Tests/                                ← 源码切片回归（Python + 临时 swiftc）
 └── .build/                               ← 本地构建产物（gitignore）
-    ├── ClaudeBar.app                     ← 编译输出
+    ├── dev/ClaudeBar Dev.app             ← dev 通道输出（默认；`make install-dev` 才安装）
+    ├── release/ClaudeBar.app             ← release 通道输出（`make install-release` 才安装）
     └── dist/                             ← 发版产物（仅 CLAUDEBAR_PACKAGE=1）
         ├── ClaudeBar-x.y.z-macOS-arm64.dmg
         ├── ClaudeBar-x.y.z-macOS-arm64.zip
@@ -81,21 +82,26 @@ ClaudeBar/
 
 | 命令 / 环境变量 | 行为 |
 |-----------------|------|
-| `bash Sources/build.sh` | 编译 → ad-hoc 签名 → 安装到 `/Applications/ClaudeBar.app` |
-| `CLAUDEBAR_SKIP_INSTALL=1` | 仅编译，产出 `.build/ClaudeBar.app`（CI 默认） |
-| `CLAUDEBAR_PACKAGE=1` | 额外打包 `.build/dist/*.dmg`、`.zip` 及 `.sha256` 校验和 |
+| `bash Sources/build.sh` | 编译 → ad-hoc 签名；身份为 dev（`ClaudeBar Dev.app`），**不安装**（`CLAUDEBAR_SKIP_INSTALL` 默认 1） |
+| `CLAUDEBAR_CHANNEL=release bash Sources/build.sh` | release 身份（`ClaudeBar.app`）；日常经 `make release` / `make package` 使用 |
+| `CLAUDEBAR_SKIP_INSTALL=0` | 编译后安装到 `$INSTALL_DIR`（dev → `~/Applications`，release → `/Applications`）；`make install-dev` / `make install-release` 已封装 |
+| `CLAUDEBAR_PACKAGE=1` | 额外打包 `.build/dist/*.dmg`、`.zip` 及 `.sha256` 校验和；要求 release 且 skip-install=1 |
 | `MACOS_MIN` | 部署目标，默认 `15.0` → `arm64-apple-macos15.0` |
-| `MIHOMO_SKIP_DOWNLOAD=1` | 不下载 mihomo，使用 `vendor/mihomo/mihomo`（若存在） |
+| `MIHOMO_UPDATE=1` | 显式更新内核：访问 GitHub 取最新版并重写 `vendor/mihomo/` 与 `Resources/mihomo-core.xz`（显式维护操作，需提交） |
+| `MIHOMO_SKIP_DOWNLOAD=1` | 仅在 `MIHOMO_UPDATE=1` 时生效：跳过下载，改用已 vendored 的内核 |
+
+默认路径（未设 `MIHOMO_UPDATE=1`）不解压、不下载，直接把随提交的 `Resources/mihomo-core.xz` 复制进包，构建因此离线且可复现。安装脚本发现同版本正在运行会拒绝替换，不杀进程。
 
 脚本通过 `find … -name "*.swift"` 自动发现源文件，用 `swiftc` 编译主 app 与 Widget 扩展，无 Xcode 工程依赖。
 
-因为编译靠 glob，脚本在签名前会**断言关键源文件存在**（`Models/WidgetSnapshot.swift`、`Theme/Theme.swift`、Widget 侧同名的符号链接指向同一 inode 等）：漏一个文件只会静默少编译一个功能，不会报错。
+因为编译靠 glob，脚本在签名前会**断言关键源文件存在**（`Models/WidgetSnapshot.swift`、`Theme/Theme.swift`、Widget 侧同名的符号链接指向同一 inode 等）：漏一个文件只会静默少编译一个功能，不会报错。每个通道的输出与缓存标记各自独立（`.build/<channel>/`），身份由 `Sources/build-config.sh` 集中定义。
 
 ## 构建产物
 
 | 路径 | 何时生成 | 用途 |
 |------|----------|------|
-| `.build/ClaudeBar.app` | 每次构建 | 本地开发与 CI 冒烟 |
+| `.build/dev/ClaudeBar Dev.app` | 每次 dev 构建（默认通道） | 本地开发与 CI 冒烟 |
+| `.build/release/ClaudeBar.app` | 每次 release 构建 | 发版前验证与打包输入 |
 | `.build/dist/ClaudeBar-*-macOS-arm64.dmg` | `CLAUDEBAR_PACKAGE=1` | GitHub Release 分发（拖放到 Applications） |
 | `.build/dist/ClaudeBar-*-macOS-arm64.zip` | `CLAUDEBAR_PACKAGE=1` | 备用压缩包分发 |
 | `.build/dist/*.sha256` | `CLAUDEBAR_PACKAGE=1` | 产物校验和 |

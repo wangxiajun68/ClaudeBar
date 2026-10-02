@@ -416,7 +416,7 @@ struct TrafficView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("将删除 \(catalog.records.count) 条记录及其请求 / 响应正文，无法恢复。")
-                .rollingNumber()
+                .rollingNumber("将删除 \(catalog.records.count) 条记录及其请求 / 响应正文，无法恢复。")
         }
     }
 
@@ -713,7 +713,7 @@ struct TrafficView: View {
                             .font(Theme.Font.microSemibold)
                             .foregroundColor(Theme.textSecondary)
                         Text(subtitle)
-                            .rollingNumber()
+                            .rollingNumber(subtitle)
                             .font(Theme.Font.caption)
                             .foregroundColor(Theme.textTertiary())
                             .lineLimit(1)
@@ -1131,7 +1131,7 @@ private struct TrafficRow: View, Equatable {
                 Text(rec.kind.label)
                 Text(rec.isStream ? "stream" : "json")
                 if let p = rec.promptTokens, let c = rec.completionTokens {
-                    Text("\(p)/\(c)").rollingNumber()
+                    Text("\(p)/\(c)").rollingNumber("\(p)/\(c)")
                 }
             }
             .font(Theme.Font.captionMono)

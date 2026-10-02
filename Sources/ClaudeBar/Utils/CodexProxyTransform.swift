@@ -575,7 +575,7 @@ enum CodexProxyTransform {
 
         func appendText(_ raw: String) {
             guard !raw.isEmpty || parts.isEmpty else { return }
-            var part: [String: Any] = ["type": textType, "text": raw]
+            let part: [String: Any] = ["type": textType, "text": raw]
             parts.append(part)
         }
 
@@ -621,7 +621,7 @@ enum CodexProxyTransform {
             appendText("")
         }
 
-        var out: [String: Any] = [
+        let out: [String: Any] = [
             "type": "message",
             "id": (d["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))",

@@ -66,7 +66,7 @@ Metal 将低频天空与高频交互分离：渐变、天体、卷云、体积�
 - `make test TEST=greeting-layout`：编译生产布局与太阳事件解析；覆盖 1,920 个字体/宽度/问候/姓名组合，以及季节、经度、日期、预报优先级、缺失/坏时钟、极昼极夜和夏令时。
 - `make test TEST=weather-astronomy`：来源数据解析、时区、部分预报、太阳方位、月相与恒星位置。
 - `python3 Tools/render-greeting-preview.py --weather-review`：合成天气数据与临时偏好，生成宽/窄卡片、自动/手动场景；不读取真实账号或发天气请求。
-- `python3 Tools/bench-atmosphere.py --frames 120 --contrast`：生产着色器 GPU 成本、字形栅格化与信息区域对比度。对比度按实际 sRGB 背景与 86% 白字取样，门槛为 4.5:1；取样结果不代表全部字形边缘或所有过渡帧。
+- `python3 Tools/bench-atmosphere.py --frames 120 --contrast`：生产着色器 GPU 成本、字形栅格化与信息区域对比度。对比度按实际 sRGB 背景与 `SkyScene.prefersDarkInk` 选中的墨色（86% 覆盖）取样，四个信息区各自取**中位数**门槛 3:1（该处是 22–28pt 大字号），并打印每场景最差单像素；取样结果不代表全部字形边缘或所有过渡帧。
 - 交付运行 `make test` 和 `make build`；发布构建用 `make release`，不会自动安装或启动正式版。
 
 工具产物位于 `.build`，历史机器读数保存在 [测量证据](../reviews/weather-card-measurements-2026-09-30.md)。GPU 微基准不能证明整窗口的显示帧率或整机能耗，需按 [性能模块的测量契约](08-performance.md#验证入口与测量契约) 单独验收。

@@ -69,7 +69,7 @@ struct DashboardView: View {
     private func figure(_ label: String, _ value: Int, _ face: Color, _ ink: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("\(value)")
-                .rollingNumber()
+                .rollingNumber("\(value)")
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(ink)
             HStack(spacing: 4) {
@@ -148,7 +148,7 @@ struct DashboardView: View {
                 if all.count > cap {
                     Button(action: { onNavigate(.sessions) }) {
                         Label("查看全部 \(all.count) 个会话", systemImage: "arrow.right")
-                            .rollingNumber()
+                            .rollingNumber("查看全部 \(all.count) 个会话")
                             .font(Theme.Font.bodySmall)
                     }
                     .buttonStyle(.plain)
@@ -351,7 +351,7 @@ private struct OverviewTile: View {
                         .truncationMode(.tail)
                     Spacer()
                     Text(row.updated)
-                        .rollingNumber()
+                        .rollingNumber(row.updated)
                         .font(Theme.Font.caption)
                         .foregroundColor(Theme.textTertiary())
                         .lineLimit(1)

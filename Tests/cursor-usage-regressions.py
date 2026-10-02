@@ -31,7 +31,6 @@ Extracts the real parsing functions from `CursorUsageFetcher` and drives them
 with payloads captured from the live endpoints. No network, no app launch.
 """
 from pathlib import Path
-import json
 import subprocess
 import tempfile
 
@@ -40,7 +39,7 @@ source = (root / 'Sources/ClaudeBar/Utils/CursorUsageFetcher.swift').read_text()
 
 def slice_between(start_marker, end_marker):
     a = source.index(start_marker)
-    b = source.index(end_marker)
+    b = source.index(end_marker, a)
     return source[a:b]
 
 # The popup chip's gauge labels, straight from the header source. Cursor's two
@@ -67,15 +66,41 @@ assert 'subMetric("Cursor Models"' in panel and 'subMetric("Other Models"' in pa
 # probes (they need a URLSession and would hit the account API for real).
 types_and_helpers = slice_between('    struct PlanUsage: Equatable, Codable {',
                                  '    /// How long a reading is served without re-asking.')
+snapshot = slice_between('    struct Snapshot: Equatable {',
+                         '    /// The monthly plan allowance')
 cookie = slice_between('    static func cookieValue(subject: String, token: String) -> String {',
                        '    static func parseGrok(_ data: Data) -> GrokUsage? {')
 parse_plan = slice_between('    static func parsePlan(_ data: Data) -> PlanUsage? {',
                            '    // MARK: - Grok Bot weekly window')
-# Only the *type*: `lastKnown()`/`remember()` reach for `FilePaths` and the
-# network `Snapshot`, neither of which belongs in a parse-only harness. The
-# round-trip case is about the shape surviving JSON, and the type is the shape.
+# Only the *type* and the two persistence helpers: `fetch()` reaches for
+# URLSession and the live account API, so it stays out. The file constant and
+# `remember`/`lastKnown` are the launch path the popup opens on, and they are
+# exactly what the shape-only round-trip below cannot cover.
 known = slice_between('    struct LastKnown: Codable, Equatable {',
-                      '    private static let lastKnownFile = FilePaths')
+                      '    /// Read Cursor\'s allowance.')
+# The file URL is rewritten to the fixture home so the suite cannot read or
+# truncate a real user's `~/Library/Application Support/ClaudeBar`. The splice
+# keeps the production path composition (`FilePaths.appSupportDir`), which the
+# FilePaths source injected below then redirects.
+known = known.replace(
+    'private static let lastKnownFile = FilePaths.appSupportDir\n'
+    '        .appendingPathComponent("cursor-allowance.json")',
+    'static var lastKnownFileForTesting: URL {\n'
+    '        FilePaths.appSupportDir.appendingPathComponent("cursor-allowance.json")\n'
+    '    }')
+# Production declares `lastKnownFile` as a stored `let`; the harness replaces it
+# with a computed URL, so every other use must go through that name too.
+known = known.replace('Data(contentsOf: lastKnownFile)', 'Data(contentsOf: lastKnownFileForTesting)')
+known = known.replace('data.write(to: lastKnownFile,', 'data.write(to: lastKnownFileForTesting,')
+# Production's `remember` is private; the harness renames it and wraps it so the
+# scenario can call it, and adds the reset the scenario needs.
+known = known.replace('private static func remember(', 'static func rememberSnapshot(')
+persisted_helpers = r'''
+    static func remember(_ snapshot: Snapshot) { Self.rememberSnapshot(snapshot) }
+    static func resetLastKnownForTesting() {
+        try? FileManager.default.removeItem(at: lastKnownFileForTesting)
+    }
+'''
 decode_helpers = slice_between('    private static func clampPercent(_ value: Double) -> Double',
                                '    /// Cents → dollars')
 parse_grok = slice_between('    static func parseGrok(_ data: Data) -> GrokUsage? {',
@@ -88,6 +113,7 @@ import Foundation
 
 enum CursorUsageFetcher {
 TYPES
+SNAPSHOT
 LASTKNOWN
 COOKIE
 PARSEPLAN
@@ -149,6 +175,23 @@ MONEY
         precondition(abs(fresh.usedFraction - 0.25) < 0.0001,
                      "included/limit must be 0.25, was \(fresh.usedFraction)")
 
+        // --- 2b. Bonus spend without a hit-limit flag ------------------------
+        //    The live payload above carries `displayMessage`, so `hitLimit`
+        //    short-circuits `usedFraction` to 1 before the money fields are
+        //    ever read — a regression that billed `totalSpend` (included +
+        //    promotional bonus) as the numerator would pass section 1
+        //    unnoticed. This payload has no message, so the branch under test
+        //    is the real one; 4000 total against a 2000 limit is 200%, and the
+        //    answer must be the included 500, not the capped total.
+        let bonusJSON = """
+        {"planUsage":{"totalSpend":4000,"includedSpend":500,"bonusSpend":3500,"limit":2000}}
+        """
+        guard let bonus = CursorUsageFetcher.parsePlan(Data(bonusJSON.utf8)) else {
+            preconditionFailure("a bonus-spend payload must decode")
+        }
+        precondition(abs(bonus.usedFraction - 0.25) < 0.0001,
+                     "included spend must be the numerator, was \(bonus.usedFraction)")
+
         // --- 3. A response shape with no percentage at all is refused --------
         //    (a zero would read as "0% used", which is a worse lie than nil)
         precondition(CursorUsageFetcher.parsePlan(Data("{\"planUsage\":{}}".utf8)) == nil,
@@ -167,6 +210,10 @@ MONEY
         precondition(noPools?.cursorModelsFraction == nil && noPools?.otherModelsFraction == nil,
                      "a total-only payload must report no named pools")
         precondition(noPools?.hasNamedPools == false, "hasNamedPools must be false")
+        // With no money fields the reported percentage *is* the answer; the
+        // fallback must not return a zero that reads as "nothing used".
+        precondition(abs((noPools?.usedFraction ?? -1) - 0.25) < 0.0001,
+                     "a total-only payload must fall back to the percentage, was \(String(describing: noPools?.usedFraction))")
         // ...and a payload with just one pool still reports it (legacy/team
         // shapes omit `autoPercentUsed`), so a lone pool is not silently lost.
         let onePool = CursorUsageFetcher.parsePlan(
@@ -230,6 +277,34 @@ MONEY
         precondition(roundTrip.plan?.billingCycleEnd == known.plan?.billingCycleEnd,
                      "the reset instant must survive (the date strategy must not shift it)")
 
+        // --- 7. The disk round-trip drives the production file --------------
+        // The block above proves the *shape* survives JSON; it never touches
+        // `remember` / `lastKnown`, so a failure to write (or a read of the
+        // wrong path) would still pass. Re-run them against a fixture home:
+        // an empty snapshot must not erase a seeded reading, and a real one
+        // must come back with its fields intact.
+        try! FileManager.default.createDirectory(at: FilePaths.appSupportDir,
+                                                 withIntermediateDirectories: true)
+        CursorUsageFetcher.resetLastKnownForTesting()
+        precondition(CursorUsageFetcher.lastKnown() == nil, "a fresh install has no last-known reading")
+        CursorUsageFetcher.remember(CursorUsageFetcher.Snapshot())
+        precondition(CursorUsageFetcher.lastKnown() == nil,
+                     "an empty snapshot must not write a blank reading")
+        CursorUsageFetcher.remember(CursorUsageFetcher.Snapshot(plan: planForDisk, grok: grokForDisk))
+        guard let persisted = CursorUsageFetcher.lastKnown() else {
+            preconditionFailure("a good reading must survive a relaunch: remember() wrote nothing, "
+                + "or lastKnown() could not read what it wrote")
+        }
+        precondition(persisted.plan?.spendText == "$492.45 / $20",
+                     "the persisted money line must survive the disk round-trip")
+        precondition(persisted.plan?.hitLimit == true, "hitLimit must survive the disk round-trip")
+        precondition(persisted.grok?.planName == "Pro", "the Grok half must survive too")
+        // And an empty snapshot after a seeded one must leave the old reading
+        // in place rather than truncating it.
+        CursorUsageFetcher.remember(CursorUsageFetcher.Snapshot())
+        precondition(CursorUsageFetcher.lastKnown()?.plan != nil,
+                     "an empty snapshot must not erase the seeded file")
+
         print("PASS: Cursor allowance decodes the live plan + Grok payloads; totalSpend's "
               + "bonus spend never leaks into the used fraction; both reset formats parse; "
               + "the cookie spelling percent-encodes the sub and the :: separator; the two "
@@ -241,24 +316,49 @@ MONEY
 }
 '''
 
-# `.replacing` guard helper the assertion above references, defined here rather
-# than in production (which has no such member).
+# The Swift template spells the cookie's percent-encoding helper differently:
+# `percentEncodedLikeCookie` is not a member production ever had (it was a
+# Tests-side spelling), so the harness rewrites that one fragment to the real
+# call before compiling. The substitution below is load-bearing — without it the
+# template does not compile — and the template's call site is the only place the
+# wrong spelling appears.
 swift = swift.replace(
     'value.hasSuffix(token.percentEncodedLikeCookie) || value.contains("%2E"),\n                     "the JWT must be carried through")',
     'value.contains("eyJhbGciOiJIUzI1NiJ9"),\n                     "the JWT must be carried through")')
 
 swift = (swift
          .replace('TYPES', types_and_helpers)
+         .replace('SNAPSHOT', snapshot)
          .replace('COOKIE', cookie)
          .replace('PARSEPLAN', parse_plan)
          .replace('PARSEGROK', parse_grok)
-         .replace('LASTKNOWN', known)
+         .replace('LASTKNOWN', known + '\n' + persisted_helpers)
          .replace('HELPERS', decode_helpers)
          .replace('MONEY', money))
 
+# The last-known persistence path is driven against a fixture home, so the real
+# `~/Library/Application Support` is never touched: FilePaths is spliced the same
+# way `cursor-turn-regressions.py` does it, and the file URL and the two helpers
+# that read/write it are pulled in with the rest of the type. The harness-only
+# shims above expose production's `private remember` and add a reset; the
+# production path composition (`FilePaths.appSupportDir`) is unchanged.
+paths = (root / 'Sources/ClaudeBar/Utils/FilePaths.swift').read_text()
+paths = paths.replace('FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
+paths = paths.replace('FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]',
+                      'fixtureSupport')
+build_channel = (root / 'Sources/Shared/BuildChannel.swift').read_text()
+
 with tempfile.TemporaryDirectory(prefix='claudebar-cursor-usage-') as folder:
-    path = Path(folder) / 'Regression.swift'
+    folder = Path(folder)
+    support = folder / 'support'
+    support.mkdir()
+    header = ('import Foundation\n'
+              'let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])\n'
+              'let fixtureSupport = URL(fileURLWithPath: CommandLine.arguments[2])\n'
+              + build_channel + '\n' + paths + '\n')
+    swift = header + swift.replace('import Foundation\n', '', 1)
+    path = folder / 'Regression.swift'
     path.write_text(swift)
-    binary = Path(folder) / 'regression'
+    binary = folder / 'regression'
     subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
+    subprocess.run([str(binary), str(folder / 'home'), str(support)], check=True)

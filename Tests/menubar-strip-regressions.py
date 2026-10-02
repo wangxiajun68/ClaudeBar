@@ -88,7 +88,7 @@ BODY
             let painted = [view.iconFrameMaxX, view.downArrowFrameMaxX, view.upArrowFrameMaxX,
                            view.downLabelFrameMaxX, view.upLabelFrameMaxX,
                            view.batteryDividerFrameMaxX, view.batteryIconFrameMaxX,
-                           view.batteryLabelFrameMaxX, view.batteryDetailFrameMaxX].max() ?? 0
+                           view.batteryLabelFrameMaxX].max() ?? 0
             precondition(painted <= width + 0.5,
                          "\(hasBattery ? "with" : "without") a battery the strip paints to "
                          + "\(painted) inside a declared \(width)pt — the capsule would clip it")
@@ -99,9 +99,18 @@ BODY
 
             // Hidden views must not contribute: a desktop has no battery cell.
             if !hasBattery {
-                precondition(view.batteryIconIsHidden && view.batteryLabelIsHidden
-                             && view.batteryDetailIsHidden,
+                precondition(view.batteryIconIsHidden && view.batteryLabelIsHidden,
                              "a Mac without a battery must hide the whole cell")
+            } else {
+                // The capsule fills the strip's height: `layout()` frames it at
+                // `bounds.height`, not at the 21pt design number the width's
+                // ratio is defined against. Read the frame back (the width
+                // checks are arithmetic on the constants and cannot see this):
+                // a gauge drawn at the design height would either overflow the
+                // 20pt accessory or float inside it.
+                precondition(abs(view.batteryIconFrameHeight - h) < 0.01,
+                             "the drawn capsule is \(view.batteryIconFrameHeight)pt tall "
+                             + "in a \(h)pt strip — it must run the strip's full height")
             }
 
             // The tunnel state must not change the strip's shape. The rates are
@@ -140,20 +149,35 @@ BODY
         // that reads as a *cell*: below it the shape is a dot, above it a bar,
         // and with the liquid inset it is the liquid's whole runway.
         let golden = 1.618
-        let ratio = VpnMenuBarRateView.batteryGlyphWidth
-            / VpnMenuBarRateView.batteryGlyphHeight
+        // `batteryGlyphHeight` is the height the *design* measured the golden
+        // rectangle at, and `batteryGlyphWidth` is derived from it, so those
+        // two numbers must keep the exact φ² : 1 ratio. The drawn capsule is
+        // the width over the *strip's* own height (`layout()` frames the gauge
+        // at `bounds.height`, not at this design number), and the strip height
+        // is the 20pt the accessory is installed at — a value pinned two
+        // blocks up by `let h`. Asserting the design constant against a
+        // literal is not enough: a layout() that stopped drawing at the strip
+        // height (the pre-a195764 behaviour) would leave the ratio intact and
+        // still fail here, which is the point of reading the frame back.
         precondition(abs(VpnMenuBarRateView.batteryGlyphHeight - 21) < 0.01,
-                     "the gauge height is the capsule's short side and must stay 21pt")
-        precondition(abs(ratio - golden) < 0.002,
-                     "the capsule must stay the golden rectangle (1.618:1), got "
-                     + "\(VpnMenuBarRateView.batteryGlyphWidth)"
-                     + ":\(VpnMenuBarRateView.batteryGlyphHeight) = \(ratio)")
-        precondition(ratio < 2.2,
-                     "past 2.2:1 a capsule reads as a bar, not a cell — got \(ratio)")
+                     "the design height of the gauge is the capsule's short side "
+                     + "and must stay 21pt")
+        precondition(abs(VpnMenuBarRateView.batteryGlyphWidth
+                         / VpnMenuBarRateView.batteryGlyphHeight - golden) < 0.002,
+                     "the declared width must stay φ² × the design height, got "
+                     + "\(VpnMenuBarRateView.batteryGlyphWidth) : "
+                     + "\(VpnMenuBarRateView.batteryGlyphHeight)")
+        // The rectangle actually drawn is that width over the strip's own
+        // height, which is 1pt shorter — still the same reading, and still
+        // inside the dot↔bar band that makes it a cell rather than a bar.
+        let drawn = VpnMenuBarRateView.batteryGlyphWidth / h
+        precondition(drawn > 1.3 && drawn < 2.2,
+                     "the drawn capsule is \(drawn):1 — outside the range that reads "
+                     + "as a cell (1.3–2.2:1) at a \(h)pt strip height")
         // The liquid's runway is the slot minus the wall inset on both sides.
         // It has to stay positive, or the capsule is all container.
         let runway = VpnMenuBarRateView.batteryGlyphWidth - 2 * (0.5 + 1.7)
-        precondition(runway > VpnMenuBarRateView.batteryGlyphHeight * 0.5,
+        precondition(runway > h * 0.5,
                      "only \(runway)pt of liquid runway: the cell is wider than it "
                      + "is a cell — a terminal post may have been put back on, or "
                      + "the capsule widened without re-deriving the slot")
@@ -174,7 +198,7 @@ BODY
         print("PASS: menu-bar strip fits its declared width with and without a battery; "
               + "the rates are green through the tunnel and resting white outside it, "
               + "without changing the strip's shape; "
-              + "the gauge is a 21pt-tall 1.618:1 capsule with no terminal post; "
+              + "the gauge is a strip-height 1.618:1 capsule with no terminal post; "
               + "charging, discharging, and holding have distinct labels")
     }
 }

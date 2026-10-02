@@ -100,7 +100,7 @@ status item 上三种读数都**不依赖隧道**：电池是这台机器的电�
 
 见 `Sources/build.sh`：`vendor/mihomo/` 拉取 darwin-arm64，打成 `.xz` 拷进包内。压缩档同时**提交在仓库里**
 （`Sources/ClaudeBar/Resources/mihomo-core.xz` 与同目录的 `.version`），发布构建直接复用、不再跑一遍 LZMA；
-版本对不上时自动重打（打出来的一定是当前 vendored 的内核），打完会提示提交。没有 `xz` 且没有归档时退化为内置原始二进制。
+版本对不上时自动重打（打出来的一定是当前 vendored 的内核），打完会提示提交。没有 `xz` 且没有归档时退化为内置原始二进制（文件名不带 `.xz`，`VpnManager` 会按扩展名走直接复制那条路径）。
 
 | 变量 | 行为 |
 |------|------|

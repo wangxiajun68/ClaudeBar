@@ -51,7 +51,7 @@ struct ExchangeRateTile: View {
                 draft = fx.effectiveRate.map { String(format: "%.4f", $0) } ?? ""
                 editing = true
                 Task { @MainActor in rateFocused = true }
-            }) { Text(buttonLabel).rollingNumber() }
+            }) { Text(buttonLabel).rollingNumber(buttonLabel) }
             .help(fx.isManual ? "改为使用实时汇率；点击可编辑手动值" : "手动指定汇率；设定后不再联网查询")
         }
     }

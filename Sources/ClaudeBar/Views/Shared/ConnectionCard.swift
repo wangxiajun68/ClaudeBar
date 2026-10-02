@@ -41,7 +41,7 @@ struct LinkCard: View {
                     // splitting them (grade on the hero's line, dBm below) is how
                     // the old layout spent its height to say one thing.
                     Text(caption)
-                        .rollingNumber()
+                        .rollingNumber(caption)
                         .font(Theme.Font.tileLabel)
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(2)

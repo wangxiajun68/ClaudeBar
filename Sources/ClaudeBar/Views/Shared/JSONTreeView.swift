@@ -206,7 +206,7 @@ struct JSONTreeView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         if truncated > 0 {
                             Text("共 \(events.count + truncated) 个事件，显示最后 \(events.count) 个")
-                                .rollingNumber()
+                                .rollingNumber("共 \(events.count + truncated) 个事件，显示最后 \(events.count) 个")
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.Ink.warning)
                                 .padding(.bottom, 4)
@@ -350,7 +350,8 @@ private struct JSONNodeRow: View {
                 }
 
                 Text(open && node.isContainer ? opener : inlineValue)
-                    .rollingNumber(node.kind == .number || (!open && node.isContainer))
+                    .rollingNumber(open && node.isContainer ? opener : inlineValue,
+                                   enabled: node.kind == .number || (!open && node.isContainer))
                     .font(Theme.Font.microMono)
                     .foregroundColor(valueColor)
                     .lineLimit(open && node.kind == .string ? 20 : 1)

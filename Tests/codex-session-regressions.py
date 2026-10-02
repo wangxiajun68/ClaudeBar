@@ -102,7 +102,24 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
             precondition(outcomes == [expected.joined(separator: ",")],
                          "concurrent scans disagreed: \\(outcomes)")
 
-            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state means a *recently written* open turn, so a stalled one is listed but idle and offered for cleanup; titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks")
+            // The file cache re-reads a rollout only when mtime or size moved,
+            // and every scan so far saw identical bytes — so a cache that never
+            // invalidated would look perfect. Append the turn's terminal event
+            // and re-scan: the cached head/tail fields must be dropped, and the
+            // thread must now read idle.
+            let runningPath = ProcessInfo.processInfo.environment["CODEX_HOME"]! + "/sessions/running.jsonl"
+            if let handle = FileHandle(forWritingAtPath: runningPath) {
+                handle.seekToEndOfFile()
+                handle.write(Data("{\\"type\\":\\"event_msg\\",\\"payload\\":{\\"type\\":\\"task_complete\\"}}\\n".utf8))
+                handle.closeFile()
+            } else {
+                preconditionFailure("the running fixture must be writable")
+            }
+            let advanced = ExternalSessionMonitor.scan()
+            precondition(advanced.main.first { $0.sessionId == "running" }?.isActive == false,
+                         "a terminal event appended after a scan must invalidate the file cache")
+
+            print("PASS: idle, stale-open, missing and malformed rollouts retained; archived, exec and mcp threads excluded; running state means a *recently written* open turn, so a stalled one is listed but idle and offered for cleanup; titles; recent sub-agent returned and stale sub-agent dropped; no thread reports a park; 16 overlapping scans agree under the caches' locks; an appended terminal event is seen through the file cache")
         }
     }''')
     binary = work / 'regression'
@@ -116,6 +133,48 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
                     str(root/'Sources/ClaudeBar/Utils/SessionTitle.swift'),
                     str(harness),'-o',str(binary)], check=True)
     subprocess.run([str(binary)], env={**os.environ, 'CODEX_HOME':folder}, check=True)
+
+# The legacy no-index walk is a *separate module of the monitor* and, crucially,
+# a separate process: `indexReadAt` memoizes the index for ten seconds, so a
+# second scan in the harness above would keep serving the first home's index and
+# never reach the fallback (measured: home B with no sqlite still returned home
+# A's rows). One rollout tree and no `state_*.sqlite` is all it takes to make
+# `readThreadIndex()` return nil.
+with tempfile.TemporaryDirectory(prefix='claudebar-codex-legacy-') as legacy_folder:
+    legacy = Path(legacy_folder)
+    day = legacy / 'sessions' / '2026' / '10' / '02'
+    day.mkdir(parents=True)
+    (day / 'open-fresh.jsonl').write_text(
+        json.dumps({'type': 'session_meta', 'payload': {'cwd': '/tmp/project', 'source': 'vscode'}}) + '\n'
+        + json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started'}}) + '\n')
+    sub = day / 'sub-fresh.jsonl'
+    sub.write_text(
+        json.dumps({'type': 'session_meta', 'payload': {'cwd': '/tmp/project',
+                     'source': {'subagent': {'thread_spawn': {'parent_thread_id': 'open-fresh', 'depth': 1}}}}}) + '\n'
+        + json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started'}}) + '\n')
+    harness = legacy / 'Main.swift'
+    harness.write_text('''import Foundation
+    enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }
+    @main struct Regression {
+        static func main() {
+            let scan = ExternalSessionMonitor.scan()
+            precondition(scan.main.map(\\.sessionId) == ["open-fresh"],
+                         "the legacy walk must surface a rollout with no thread index: \\(scan.main.map(\\.sessionId))")
+            precondition(scan.main.allSatisfy { $0.isActive }, "an open legacy turn reads as running")
+            precondition(scan.subagents.map(\\.sessionId) == ["sub-fresh"],
+                         "the legacy walk must return sub-agents too: \\(scan.subagents.map(\\.sessionId))")
+            precondition(scan.subagents.first?.parentThreadId == "open-fresh",
+                         "the legacy child carries its parent id")
+            print("PASS: with no thread index, the rollout walk still lists open main threads and sub-agents")
+        }
+    }''')
+    binary = legacy / 'regression'
+    subprocess.run(['swiftc','-parse-as-library',
+                    str(root/'Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/JSONCoerce.swift'),
+                    str(root/'Sources/ClaudeBar/Utils/SessionTitle.swift'),
+                    str(harness),'-o',str(binary)], check=True)
+    subprocess.run([str(binary)], env={**os.environ, 'CODEX_HOME':legacy_folder}, check=True)
 
 # A second, tiny harness for the holder rule itself.
 #

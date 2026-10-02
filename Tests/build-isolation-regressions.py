@@ -86,11 +86,17 @@ let fixtureSupport = fixtureHome.appendingPathComponent("Library/Application Sup
 # Throwing reads cannot be evaluated inside precondition's nonthrowing autoclosure.
 stubs = stubs.replace('precondition(try String(contentsOf: VpnTunDnsHelper.dnsMarker, encoding: .utf8) == "sentinel")', 'let marker = try String(contentsOf: VpnTunDnsHelper.dnsMarker, encoding: .utf8)\n            precondition(marker == "sentinel")')
 identities = []
+executables = []
+installs = []
+names = []
 for channel, flag in [('dev', 'CLAUDEBAR_DEV'), ('release', 'CLAUDEBAR_RELEASE')]:
     env = dict(os.environ, CLAUDEBAR_CHANNEL=channel, CLAUDEBAR_SKIP_INSTALL='1', CLAUDEBAR_PACKAGE='0')
-    result = subprocess.run(['bash', '-c', 'PROJECT_DIR="$PWD"; source Sources/build-config.sh; printf "%s\\n" "$APP_NAME" "$BUNDLE_ID" "$WIDGET_ID" "$APP_BUNDLE" "$APP_EXECUTABLE" "${SWIFT_FLAGS[*]}"'], cwd=root, env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(['bash', '-c', 'PROJECT_DIR="$PWD"; source Sources/build-config.sh; printf "%s\\n" "$APP_NAME" "$BUNDLE_ID" "$WIDGET_ID" "$APP_BUNDLE" "$APP_EXECUTABLE" "${SWIFT_FLAGS[*]}" "$INSTALL_DIR"'], cwd=root, env=env, check=True, capture_output=True, text=True)
     config = result.stdout.splitlines()
     identities.append(config[1])
+    executables.append(config[4])
+    installs.append(config[6])
+    names.append(config[0])
     assert flag in config[5]
     assert f'.build/{channel}/' in config[3]
     assert config[2] == config[1] + '.widget'
@@ -106,7 +112,25 @@ for channel, flag in [('dev', 'CLAUDEBAR_DEV'), ('release', 'CLAUDEBAR_RELEASE')
         if channel != 'release':
             assert not (tmp / 'home/.claude/settings.json').exists()
             assert not (tmp / 'home/.codex/config.toml').exists()
-assert len(set(identities)) == 2
+# Channel identity is not only the bundle id: `Tools/check-bundle.py` pins
+# CFBundleExecutable per channel at package time, but the installer path and the
+# app name have no other check anywhere, and a dev build that shares any of
+# these with the release is exactly the "two versions cannot coexist / installing
+# dev replaces the shipped app" failure this suite exists to prevent. Each is
+# compared explicitly rather than via `len(set(...)) == 2`, which would pass
+# again if the *same* collision were made on both channels.
+assert len(set(identities)) == 2, f'dev and release share a bundle id: {identities}'
+assert len(set(names)) == 2, (
+    f'dev and release share the app name "{names[0]}": the Finder/Dock identity would match and '
+    'a user would not be able to tell which build is running')
+assert len(set(executables)) == 2, (
+    f'dev and release share the executable name "{executables[0]}": the two apps would '
+    'overwrite each other in the same process namespace and a dev build would replace the '
+    'shipped binary')
+assert installs[0] == os.path.expanduser('~/Applications'), (
+    f'dev installs to {installs[0]} — it must stay under the user\'s Applications so `make install` '
+    'can never overwrite /Applications/ClaudeBar.app')
+assert installs[1] == '/Applications', f'release installs to {installs[1]}, not /Applications'
 for channel, package in [('invalid', '0'), ('dev', '1'), ('test', '0')]:
     env = dict(os.environ, CLAUDEBAR_CHANNEL=channel, CLAUDEBAR_PACKAGE=package)
     result = subprocess.run(['bash', '-c', 'PROJECT_DIR="$PWD"; source Sources/build-config.sh'], cwd=root, env=env, capture_output=True)

@@ -36,8 +36,13 @@ struct ProxyLogView: View {
         }
     }
 
-    /// Identity + the four searchable fields; a status/duration/token patch
-    /// leaves it unchanged.
+    /// Everything a cached row derives from: the four searchable fields, plus
+    /// the ones a *seal* patches in place. `ProxyAccessLog.finish` rewrites the
+    /// row — `endedAt`, `status`, the four token buckets — and the console
+    /// renders all of them (`consoleBody`'s status / duration, `LogTokenColumn`,
+    /// `isPending`'s highlight, and 复制's `consoleLine`). Stamping only the
+    /// searchable fields would skip exactly the pass that turns a pending grey
+    /// `…` row into its finished reading.
     private static func stamp(_ rows: [ProxyLogEntry]) -> Int {
         var hasher = Hasher()
         for row in rows {
@@ -47,6 +52,12 @@ struct ProxyLogView: View {
             hasher.combine(row.model)
             hasher.combine(row.provider)
             hasher.combine(row.error)
+            hasher.combine(row.endedAt)
+            hasher.combine(row.status)
+            hasher.combine(row.promptTokens)
+            hasher.combine(row.completionTokens)
+            hasher.combine(row.cacheReadTokens)
+            hasher.combine(row.cacheWriteTokens)
         }
         return hasher.finalize()
     }
@@ -144,7 +155,11 @@ struct ProxyLogView: View {
                     ? "代理已启用。每次转发会在此留下一行（方法、路径、状态、耗时、令牌用量），不记录请求体或响应体。"
                     : "启用本地代理或供应商上的流量记录后，转发请求会显示在这里。")
                  : "共 \(log.entries.count) 行，没有一行同时满足当前的类型筛选与搜索词。")
-                .rollingNumber()
+                .rollingNumber(log.entries.isEmpty
+                 ? (codexStore.proxyRunning
+                    ? "代理已启用。每次转发会在此留下一行（方法、路径、状态、耗时、令牌用量），不记录请求体或响应体。"
+                    : "启用本地代理或供应商上的流量记录后，转发请求会显示在这里。")
+                 : "共 \(log.entries.count) 行，没有一行同时满足当前的类型筛选与搜索词。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textTertiary())
                 .fixedSize(horizontal: false, vertical: true)

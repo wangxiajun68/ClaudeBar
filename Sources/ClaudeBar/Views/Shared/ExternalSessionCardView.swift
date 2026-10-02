@@ -13,6 +13,13 @@ struct ExternalSessionCardView: View {
     /// sub-agents and on sessions that spawned nothing.
     var childAgents: [ExternalSessionInfo] = []
     var onDoubleTap: (() -> Void)? = nil
+    /// Open one of the session's sub-agents — double-clicking a tile in the
+    /// swarm popover. The popover is the *only* place these children are
+    /// reachable in the popup, so without this every tile resumed the parent:
+    /// `AgentSwarmView` hands the tapped child out and the closure dropped it.
+    /// The grid page wires the same thing it always did (`resume($0)`). When
+    /// nil, a tapped child falls back to `onDoubleTap` (open the parent).
+    var onOpenAgent: ((ExternalSessionInfo) -> Void)? = nil
     /// Offered only for a session whose open turn stopped advancing (see
     /// `ExternalSessionInfo.hasStalledTurn`). The card never deletes anything
     /// itself — the owner runs the confirmation and the cleanup.
@@ -88,7 +95,8 @@ struct ExternalSessionCardView: View {
                     .font(Theme.Font.rowTitle)
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
-                AgentSwarmView(root: session, children: childAgents, onOpen: { _ in onDoubleTap?() })
+                AgentSwarmView(root: session, children: childAgents,
+                               onOpen: { onOpenAgent?($0) ?? onDoubleTap?() })
                     .frame(width: 360, height: 260)
             }
             .padding(Theme.Space.s12)

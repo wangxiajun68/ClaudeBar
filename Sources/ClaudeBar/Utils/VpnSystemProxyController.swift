@@ -282,7 +282,10 @@ extension Process {
         } catch {
             return RunResult(status: -1, output: "")
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        // Read before waiting: `readToEnd()` drains the child's stdout, so it
+        // only returns once the child closed it — at which point a wait adds
+        // nothing but a second syscall.
+        let data = (try? pipe.fileHandleForReading.readToEnd()) ?? Data()
         proc.waitUntilExit()
         return RunResult(
             status: proc.terminationStatus,

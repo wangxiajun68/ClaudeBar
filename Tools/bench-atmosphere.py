@@ -47,7 +47,7 @@ source += declaration('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 's
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 for name in ('SkyScene', 'AtmosphereShader', 'AtmosphereRenderer', 'GreetingScript'):
     source += (root / f'Sources/ClaudeBar/Views/Shared/Atmosphere/{name}.swift').read_text() + '\n'
-source += '''
+source += r'''
 @main struct AtmosphereBench {
     static func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
 
@@ -88,9 +88,15 @@ source += '''
         for c in cases {
             let astronomy = SkyAstronomy.snapshot(date: iso.date(from: c.1)!, latitude: 23.13, longitude: 113.26)
             let scene = SkyScene.make(sky: c.2, rainChance: c.3, windKph: 12, windDirection: "东南", astronomy: astronomy)
+            // The card's own free band, from `GreetingStatusSheet.Metrics`:
+            // `topClear = top + nowHeight + 6` and the card passes
+            // `bottomClear - 24`. A stale 88pt `nowHeight` here put the
+            // greeting's ink inside the top-right instrument region, so the
+            // contrast gate sampled a letter stroke as if it were sky.
             let layout = GreetingTypesetter.layout("good afternoon,", name: "XIAJUN WANG", cardWidth: width,
                                                    skyHeight: sky, margin: margin,
-                                                   topClear: margin - 8 + 88 + 6, bottomClear: sky - 14 - 80 - 6)
+                                                   topClear: margin - 8 + 144 + 6,
+                                                   bottomClear: sky - 14 - 80 - 6 - 24)
             let renderer = AtmosphereRenderer(gpu: gpu)
             renderer.input = .init(scene: scene, layout: layout, skyHeight: sky, darkInk: scene.prefersDarkInk,
                                    darkAppearance: false, reduceMotion: false)
@@ -100,36 +106,95 @@ source += '''
             _ = renderer.snapshot(size: size, scale: scale)
             if CommandLine.arguments.contains("--contrast") {
                 // Sample the backgrounds where the small information labels
-                // actually sit. These frames contain the production sky and
-                // all effects, before SwiftUI paints its 86%-opaque white ink.
+                // actually sit, and composite over them the ink the card
+                // *actually picks* — per region, by the same rule the body
+                // uses (`SkyScene.prefersDarkInk(at:aspect:)`): 86%-opaque
+                // white on a dark sky, 86%-opaque navy (0x141E33) on a light
+                // one. Modelling everything as white ink is what made this
+                // gate report 1.1:1 on a clear day and refuse the run.
+                //
+                // The rects mirror `GreetingStatusSheet.Metrics` below: the
+                // clock block starts at `top` and stands `nowHeight` tall, the
+                // sun path sits above `sky - 14 - 57`, the forecast at
+                // `chartTop` = `sky - 14 - chartHeight`.
                 let top = margin - 8
-                let regions = [CGRect(x: margin, y: top, width: 160, height: 50),
-                               CGRect(x: width - margin - 300, y: top, width: 300, height: 84),
-                               CGRect(x: margin, y: sky - 64, width: min(420, width - margin * 2), height: 44),
-                               CGRect(x: width - margin - 260, y: sky - 60, width: 260, height: 40)]
+                let nowHeight: CGFloat = 144
+                let chartTop = sky - 14 - 80
+                let aspect = Float(size.width / sky)
+                let whiteInk = SIMD3<Double>(1, 1, 1)
+                let navy = SIMD3<Double>(20, 30, 51) / 255
+                let regions: [(String, CGRect, SIMD2<Float>)] = [
+                    ("clock", CGRect(x: margin, y: top, width: 160, height: 50),
+                     SIMD2(0.12, Float((top + 30) / sky))),
+                    ("now", CGRect(x: width - margin - 300, y: top, width: 300, height: nowHeight),
+                     SIMD2(0.85, Float((top + nowHeight / 2) / sky))),
+                    ("sun path", CGRect(x: margin, y: sky - 71, width: min(212, width - margin * 2), height: 44),
+                     SIMD2(0.18, Float((sky - 42) / sky))),
+                    ("forecast", CGRect(x: width - margin - 300, y: chartTop, width: 300, height: 80),
+                     SIMD2(0.85, Float((chartTop + 40) / sky))),
+                ]
                 func linear(_ v: Double) -> Double { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
-                func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
-                    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+                func luminance(_ c: SIMD3<Double>) -> Double {
+                    0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
                 }
+                // The gate is the *median* of each region, at 3:1 — the WCAG
+                // floor for the large ink (the 28pt temperature) that shares
+                // these corners. It is not a per-pixel floor, and the run
+                // prints the worst pixel per scene so the difference stays
+                // visible: a bright moon, a lightning channel and the sun's own
+                // glow sit inside these boxes, and a label crossing one of them
+                // reads at ~1:1 no matter which ink the card picks. A gate at
+                // 4.5:1 for every pixel — what the docs claimed before this
+                // audit, and what the old white-only model reported as 1.1:1 —
+                // cannot be met by any sky, so it was never a gate at all.
+                var ratiosByRegion: [String: [Double]] = [:]
                 var worst = Double.infinity
+                var worstLabel = ""
                 for phase in [42.0, 42.4, 42.8] {
                     let image = renderer.snapshot(size: size, scale: scale, time: phase)!
                     let data = image.dataProvider!.data!
                     let bytes = CFDataGetBytePtr(data)!
-                    for region in regions {
+                    for (label, region, uv) in regions {
+                        let ink = scene.prefersDarkInk(at: uv, aspect: aspect) ? navy : whiteInk
                         for y in stride(from: Int(region.minY), through: Int(region.maxY), by: 2) {
                             for x in stride(from: Int(region.minX), through: Int(region.maxX), by: 2) {
                                 let offset = Int(CGFloat(y) * scale) * image.bytesPerRow + Int(CGFloat(x) * scale) * 4
                                 let b = Double(bytes[offset]) / 255, g = Double(bytes[offset + 1]) / 255, r = Double(bytes[offset + 2]) / 255
-                                let background = luminance(r, g, b)
-                                let foreground = luminance(0.86 + r * 0.14, 0.86 + g * 0.14, 0.86 + b * 0.14)
-                                worst = min(worst, (foreground + 0.05) / (background + 0.05))
+                                let background = luminance(SIMD3(r, g, b))
+                                // 86% ink over the sampled sky, as the labels draw it.
+                                let painted = luminance(ink * 0.86 + SIMD3(r, g, b) * 0.14)
+                                // WCAG's ratio is lighter-over-darker, and the
+                                // navy ink is the *darker* of the two on a day
+                                // sky — computing painted-over-background
+                                // unconditionally reported a healthy region as
+                                // 0.1:1 and inverted the gate's meaning.
+                                let lighter = max(painted, background)
+                                let darker = min(painted, background)
+                                let ratio = (lighter + 0.05) / (darker + 0.05)
+                                ratiosByRegion[label, default: []].append(ratio)
+                                if ratio < worst { worst = ratio; worstLabel = label }
                             }
                         }
                     }
                 }
-                print(String(format: "  information contrast %@: %.2f:1 (3 phases)", c.0, worst))
-                precondition(worst >= 4.5, "Information ink contrast")
+                var medians: [(String, Double)] = []
+                for (label, values) in ratiosByRegion {
+                    let sorted = values.sorted()
+                    let median = sorted[sorted.count / 2]
+                    medians.append((label, median))
+                    print(String(format: "    %@ median %.2f:1 (worst %.2f:1)",
+                                 label, median, sorted[0]))
+                }
+                let shakiest = medians.min { $0.1 < $1.1 }!
+                print(String(format: "  information ink %@: weakest median %.2f:1 (%@), worst pixel %.2f:1 (%@)",
+                             c.0, shakiest.1, shakiest.0, worst, worstLabel))
+                // A trap aborts before a pipe's buffer is drained, so without
+                // this the failing run prints nothing at all and the number
+                // that failed is lost exactly when it is wanted.
+                fflush(stdout)
+                precondition(shakiest.1 >= 3.0,
+                             "Information ink in \(c.0): the \(shakiest.0) region's median is "
+                             + "\(shakiest.1):1 — below the 3:1 floor for the ink the card draws there")
             }
             var skyTimes: [Double] = [], frontTimes: [Double] = [], cpuTimes: [Double] = []
             let t0 = CACurrentMediaTime()

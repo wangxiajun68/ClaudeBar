@@ -30,22 +30,19 @@ import urllib.request
 from pathlib import Path
 
 # Lucide ships these four; the names are Lucide's own file names.
+#
+# Four, not six: the fan card's popover used to draw a Lucide `laptop-minimal`
+# chassis with a `fan` rotor inside it, but it now draws the bundled
+# `Resources/macbook-internals-illustration.png` (cropped by `FanArtwork` for
+# the rotors and with an SF-symbol fallback), so nothing constructs those two
+# kinds any more. A mark no view can reach is only a second silhouette to keep
+# in sync, so the generator emits exactly the marks `HardwareIllustration`
+# bridges (`mark(for:)`: cpu / gpu / memory / disk) and nothing else.
 ICONS = {
     "cpu": "cpu",
     "gpu": "gpu",
     "memory": "memory-stick",
     "disk": "hard-drive",
-    # The fan card's popover draws a laptop with the fans inside it; the chassis
-    # outline is Lucide's `laptop-minimal` for the same reason the four marks are
-    # Lucide's: invented geometry does not look designed.
-    "laptop": "laptop-minimal",
-    # The blade silhouette inside each of the popover's two fan bays. A rotor
-    # blade is the one shape this repo must not invent: the tile's `RotorBlade`
-    # was already a hand-fit Bézier, and a second hand-fit blade in the popover
-    # would be a second guess at the same curve — so both now come from Lucide's
-    # `fan`, which is four 6.08-radius arcs and so is exactly a rotor seen face
-    # on. `Resources/fan-blade.tsv` carries it in SwiftUI's unit space.
-    "fan": "fan",
 }
 RAW = "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/{}.svg"
 ROOT = Path(__file__).resolve().parents[1]
@@ -327,7 +324,27 @@ enum LucideHardwareGeometry {{
     static let grid: CGFloat = 24
 
     /// The outline of one hardware mark, in Lucide's coordinate space.
+    ///
+    /// Cached: the geometry is a pure function of `kind` (the file is generated
+    /// from Lucide's SVGs and never varies at runtime), and the hot reader is a
+    /// `Canvas` that runs once per display cycle while a machine mark animates.
+    /// Rebuilding the CPU outline is 30-plus path commands — allocation and
+    /// hashing in Core Graphics' path storage — per call, and the mark is drawn
+    /// on four tiles of the dashboard strip.
+    ///
+    /// `@MainActor` because every caller is a SwiftUI body; the cache is filled
+    /// on first use and never invalidated, so no lock is needed.
+    @MainActor private static var cache: [Kind: Path] = [:]
+
+    @MainActor
     static func path(for kind: Kind) -> Path {{
+        if let hit = cache[kind] {{ return hit }}
+        let built = buildPath(for: kind)
+        cache[kind] = built
+        return built
+    }}
+
+    private static func buildPath(for kind: Kind) -> Path {{
         var p = Path()
         switch kind {{
 {chr(10).join(blocks)}
@@ -335,7 +352,7 @@ enum LucideHardwareGeometry {{
         return p
     }}
 
-    enum Kind {{ case cpu, gpu, memory, disk, laptop, fan }}
+    enum Kind {{ case {", ".join(ICONS)} }}
 }}
 '''
     OUT.write_text(out)

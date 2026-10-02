@@ -896,7 +896,16 @@ final class AtmosphereRenderer {
 
         var u = AtmosphereUniforms()
         u.resolution = SIMD2(Float(pixelSize.width), Float(pixelSize.height))
-        u.time = Float(t.truncatingRemainder(dividingBy: 3600))
+        // Straight `t`: every shader use of it is a linear phase offset
+        // (wind/cirrus/fog drift, the rain and snow plates, drop life, the
+        // dither), none branches on its magnitude, and wrapping it at 3600 s
+        // re-phased the entire sky — deck, fog, precipitation and dither — in
+        // a single frame once an hour, measured as a ~10× step in frame-to-frame
+        // luma against the neighbouring seconds. Float keeps ~7.8 ms of
+        // resolution at a day's uptime, far past anything this needs; if a
+        // rebase ever is wanted for precision it must happen while the view is
+        // paused or hidden, never on a live frame.
+        u.time = Float(t)
         u.scale = Float(scale)
         u.zenith = SIMD4(scene.zenith, Float(input.skyHeight))
         u.mid = SIMD4(scene.mid, 1)

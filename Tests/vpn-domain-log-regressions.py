@@ -265,6 +265,25 @@ FILTER_HARNESS
                      "last seen is the newest arrival: \(stats[0].lastTimeText)")
         precondition(stats[1].host == "www.apple.com" && stats[1].direct == 1)
 
+        // 10b. "Last" is the last *arrival*, not the lexicographic max of the
+        //      clock strings. Every clock above ascends with its arrival, so a
+        //      `max(by: timeText)` implementation would pass section 10 — the
+        //      discriminating pair is one whose string order and arrival order
+        //      disagree, exactly the midnight case the `sliceClock` comment
+        //      names ("a run spanning midnight cannot make yesterday's lines
+        //      sort after today's"). Rows are appended 23:59:59 then 00:00:01
+        //      for the same host; the fold must report the later arrival.
+        let midnight = feedAll([
+            "time=\"2026-09-30T23:59:59.000000000+08:00\" level=info "
+                + "msg=\"[TCP] 127.0.0.1:5 --> span.example.com:443 match Match using 🐟 漏网之鱼[node]\"",
+            "time=\"2026-10-01T00:00:01.000000000+08:00\" level=info "
+                + "msg=\"[TCP] 127.0.0.1:6 --> span.example.com:443 match Match using 🐟 漏网之鱼[node]\"",
+        ])
+        let midnightStat = DomainStat.stat(entries: midnight).first { $0.host == "span.example.com" }
+        precondition(midnightStat?.lastTimeText == "00:00:01",
+                     "last seen must be the newest arrival across midnight, not the max clock string: "
+                     + "\(midnightStat?.lastTimeText ?? "nil")")
+
         // 11. The one piece of analysis: a watchlist service sent 直连.
         precondition(VpnWatchlist.matches(host: "api2.cursor.sh") == ["Cursor"])
         precondition(VpnWatchlist.matches(host: "chatgpt.com") == ["OpenAI"])

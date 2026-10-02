@@ -3,8 +3,9 @@
 > **Superseded.** This is the record of the Canvas-era greeting band. The card
 > has since been rebuilt around a Metal atmosphere, and `SkyVeil` / `SkyGrain`
 > and the `WeatherBackdrop` sky itself are gone — `WeatherBackdrop.swift` now
-> holds only `SkyPalette`, the palette the Metal view falls back to when no GPU
-> is available. The current specification is
+> holds only `WeatherBackdrop` and its `SkyPalette` — the Canvas sky the card
+> falls back to when the Metal atmosphere is unavailable — plus the palette
+> table the Metal path's colours were authored from. The current specification is
 > [Greeting atmosphere](greeting-atmosphere.md); the parts below that still hold
 > (Open-Meteo and wttr.in, `SkyAstronomy`, the inline forecast strip) are
 > described there too. Kept because it carries the earlier rounds' verification
@@ -133,12 +134,13 @@ regenerates `Tools/greeting-preview-support.swift`. It does not establish live
 service availability or replace pointer, keyboard and visibility checks in
 the running app.
 
-Visual fixtures in `.build/greeting-preview/`:
+Visual fixtures in `.build/greeting-preview/` (all names carry the render mode:
+`auto-` for the automatic sky, `manual-` / `pinned-` / `bare-` for the others;
+`face-*` variants drop it):
 
-- `light-1100-cloud.png`: wide band with compact rail.
-- `dark-620-rain.png`: narrow stacked band.
-- `detail-light-current.png` / `detail-dark-day5.png`: the inline forecast zone
-  captured on its own, in light and night palettes.
+- `auto-light-1100-cloud.png`: wide band with compact rail.
+- `auto-dark-620-rain.png`: narrow stacked band.
+- `auto-light-1100-sun.png` / `auto-dark-1100-sun.png`: the day sky in both themes.
 
 ## Design references
 

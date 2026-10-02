@@ -3,6 +3,7 @@
 Uses temporary files only; does not launch ClaudeBar or contact any service.
 """
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 
@@ -29,6 +30,20 @@ parsers = '\n'.join(method(monitor, name) for name in
 # found out the method had grown a dependency).
 constants = '\n'.join(
     line for line in monitor.split('\n') if 'static let codexTail' in line)
+if 'CLAUDEBAR_CORE_OLD_TAIL' in os.environ:
+    # A/B knob for the fixture above: recompile the reader as the 48 KB
+    # `size - min(48_000, size)` read it replaced, to prove the fixture still
+    # fails on the shape it was written for.
+    constants = ''
+    anchor = 'static func readCodexContext'
+    parsers = parsers[:parsers.index(anchor)] + parsers[parsers.index(anchor):].replace(
+        'var start = size > UInt64(Self.codexTailWindow) ? size - UInt64(Self.codexTailWindow) : 0',
+        'var start = size - min(48_000, size)', 1).replace(
+        'let probeStart = start > UInt64(Self.codexTailLineSlack) ? start - UInt64(Self.codexTailLineSlack) : 0',
+        'let probeStart = start', 1)
+    # The trimmed read below still names the two constants.
+    parsers = parsers.replace('Self.codexTailLineSlack)', '48_000)').replace(
+        'Self.codexTailWindow + Int(size - start)', 'Int(size - start)')
 swift = '\n'.join([
     env,
     read('Utils/JSONCoerce.swift'),
@@ -124,8 +139,15 @@ enum FilePaths {
         // One local rollout carries a single 11 MB `function_call_output`, and
         // a window that lands inside it sees no lifecycle event at all — which
         // reads as `hasOpenTask == nil`, i.e. "this thread was never started",
-        // and silently loses the completion. The window must clear a large
-        // record and still find the completion behind it.
+        // and silently loses the completion. The window must clear a record
+        // larger than itself and still reach the completion behind it.
+        //
+        // The 60 KB record trailing the completion is what makes this fixture
+        // discriminate: it keeps the whole turn more than one old 48 KB read
+        // away from EOF, so a reader that only looks at the last window reads
+        // that record's tail and nothing else — which is exactly the failure
+        // mode. Without it the message and the completion sit inside the tail
+        // of the huge record and even the old reader passes.
         let big = FilePaths.claudeDir.appendingPathComponent("big-rollout.jsonl")
         var bigData = Data()
         bigData.append(Data("{\"type\": \"turn_context\", \"payload\": {\"model\": \"m\"}}\n".utf8))
@@ -133,7 +155,13 @@ enum FilePaths {
         let filler = String(repeating: "x", count: 900_000)
         bigData.append(Data("{\"type\": \"response_item\", \"payload\": {\"type\": \"function_call_output\", \"output\": \"\(filler)\"}}\n".utf8))
         bigData.append(Data("{\"type\": \"response_item\", \"payload\": {\"type\": \"message\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"done\"}]}}\n".utf8))
-        bigData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"t1\", \"last_agent_message\": \"done\"}}\n".utf8))
+        // No `last_agent_message`, so confirming the turn depends on the walk
+        // actually having seen the assistant message, not on Codex's summary
+        // field — the field would confirm the turn from any window that
+        // reached the completion alone.
+        bigData.append(Data("{\"type\": \"event_msg\", \"payload\": {\"type\": \"task_complete\", \"turn_id\": \"t1\"}}\n".utf8))
+        let trailer = String(repeating: "y", count: 60_000)
+        bigData.append(Data("{\"type\": \"response_item\", \"payload\": {\"type\": \"function_call_output\", \"output\": \"\(trailer)\"}}\n".utf8))
         try bigData.write(to: big)
         let bigTail = ParserFixture.readCodexContext(path: big.path)
         precondition(bigTail.hasOpenTask == false, "a turn behind a huge record must still be read")
@@ -156,23 +184,28 @@ enum FilePaths {
         // other, which is the only place that can catch "the build packed a
         // different file" or "the decoder stopped matching the packer" before
         // a user meets it as 未找到 mihomo 内核.
-        let archive = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
+        //
+        // The repo root arrives as argv[2]: this file is copied into a temp
+        // directory before it is compiled, so `#filePath` pointed at the temp
+        // copy and the whole block silently skipped itself for every run. The
+        // size is the *recorded* one, not a guessed ratio — LZMA on a 56 MB
+        // binary is about 4×, and the old `20 × packed` bound could never hold.
+        let archive = URL(fileURLWithPath: CommandLine.arguments[2])
             .appendingPathComponent("Sources/ClaudeBar/Resources/mihomo-core.xz")
-        if FileManager.default.fileExists(atPath: archive.path) {
-            let restored = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mihomo-core-restored")
-            try? FileManager.default.removeItem(at: restored)
-            try XZArchive.extract(archive, to: restored)
-            let packed = (try FileManager.default
-                .attributesOfItem(atPath: archive.path))[.size] as? UInt64 ?? 0
-            let unpacked = (try FileManager.default
-                .attributesOfItem(atPath: restored.path))[.size] as? UInt64 ?? 0
-            precondition(packed > 1_000_000, "the shipped core archive is suspiciously small")
-            precondition(unpacked > 20 * packed,
-                         "the core must expand far beyond its archive — packed \(packed), unpacked \(unpacked)")
-            try? FileManager.default.removeItem(at: restored)
-        }
+        precondition(FileManager.default.fileExists(atPath: archive.path),
+                     "the committed core archive must exist — it is what ships in the bundle")
+        let restored = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mihomo-core-restored")
+        try? FileManager.default.removeItem(at: restored)
+        try XZArchive.extract(archive, to: restored)
+        let packed = (try FileManager.default
+            .attributesOfItem(atPath: archive.path))[.size] as? UInt64 ?? 0
+        let unpacked = (try FileManager.default
+            .attributesOfItem(atPath: restored.path))[.size] as? UInt64 ?? 0
+        precondition(packed == 13_980_460, "the shipped core archive changed size — record it here if that was deliberate")
+        precondition(unpacked == 56_588_610,
+                     "the core must decode to the recorded binary — packed \(packed), unpacked \(unpacked)")
+        try? FileManager.default.removeItem(at: restored)
 
         // Swift has no adjacent-literal concatenation, so this stays one line.
         print("PASS: numeric bounds, private atomic writes, configuration preservation, Codex metadata, the shipped xz core, and completion behind a huge record")
@@ -186,4 +219,4 @@ with tempfile.TemporaryDirectory(prefix='claudebar-core-tests-') as folder:
     source.write_text(swift)
     binary = temporary / 'regression'
     subprocess.run(['swiftc', '-parse-as-library', str(source), '-o', str(binary)], check=True)
-    subprocess.run([str(binary), folder], check=True)
+    subprocess.run([str(binary), folder, str(root)], check=True)

@@ -12,7 +12,7 @@ struct UsagePanel: View {
                 .overlay(alignment: .bottomLeading) { datePickerAnchor }
             usageSummary
             UsageHeatmap(
-                days: providerStore.usageDays,
+                days: providerStore.usageWeekDays,
                 period: providerStore.usagePeriod,
                 reference: providerStore.usageReferenceDate,
                 compact: true,
@@ -116,7 +116,7 @@ struct UsagePanel: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(detail.isEmpty ? " " : detail)
-                .rollingNumber()
+                .rollingNumber(detail.isEmpty ? " " : detail)
                 .font(Theme.Font.micro)
                 .foregroundStyle(Theme.textTertiary())
                 .lineLimit(1)

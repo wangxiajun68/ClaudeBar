@@ -325,19 +325,24 @@ final class ModelPriceCatalog: ObservableObject {
         report.failures.append(contentsOf: ModelPriceSources.uncheckable.map {
             Failure(vendor: $0.vendor, reason: $0.reason)
         })
-        report.unparsableVendors = report.failures.map(\.vendor)
         report.unchanged = found.filter(\.isUnchanged).count
 
         if autoApply {
+            var refused: [Candidate] = []
             for row in found where !row.isUnchanged {
-                apply(row)
-                switch row.source {
-                case .fetchedUSD: report.appliedUSD += 1
-                case .fetchedCNY: report.appliedCNY += 1
-                default: break
+                if apply(row) {
+                    switch row.source {
+                    case .fetchedUSD: report.appliedUSD += 1
+                    case .fetchedCNY: report.appliedCNY += 1
+                    default: break
+                    }
+                } else {
+                    refused.append(row)
                 }
             }
-            candidates = []
+            // A refused row is left on the card as 待确认 rather than dropped —
+            // see `apply(_:)` — so the list is exactly what the write declined.
+            candidates = refused
             // `apply` already wrote each row; only the report and the timestamp
             // are left.
             self.report = report
@@ -387,10 +392,12 @@ final class ModelPriceCatalog: ObservableObject {
 
     // MARK: - Check queue
     func applyAllCandidates() {
+        // Swift arrays are values, so the loop walks a snapshot while `apply`
+        // shortens the published list — each applied row removes itself, and a
+        // row the catalog refuses stays for the user to see.
         for candidate in candidates where !candidate.isUnchanged {
             apply(candidate)
         }
-        candidates = []
     }
 
     func dismissAllCandidates() {
@@ -401,30 +408,46 @@ final class ModelPriceCatalog: ObservableObject {
         saveMeta()
     }
 
-    func apply(_ candidate: Candidate) {
+    @discardableResult
+    func apply(_ candidate: Candidate) -> Bool {
         // A fetch always starts today. Backdating it would rewrite usage already
         // recorded under the old price, which is the one thing a fetch must
         // never do silently; the editor is where a user can pick an earlier
         // date knowingly.
-        try? record(slug: candidate.slug,
-                    rate: candidate.rate,
-                    unpriced: candidate.unpriced,
-                    effectiveFrom: ModelPricing.dayKey(Date()),
-                    source: candidate.source,
-                    sourceURL: candidate.sourceURL,
-                    note: candidate.note)
+        //
+        // A row the catalog refuses — the same rules the editor enforces
+        // (non-canonical slug, impossible date, a cache-read above input) — is
+        // left *pending* rather than dropped: the fetch proposed it and the
+        // write declined it, so the honest state is a 待确认 row the user can
+        // still see, not a silent no-op behind a button they pressed.
+        let stored = (try? record(slug: candidate.slug,
+                                  rate: candidate.rate,
+                                  unpriced: candidate.unpriced,
+                                  effectiveFrom: ModelPricing.dayKey(Date()),
+                                  source: candidate.source,
+                                  sourceURL: candidate.sourceURL,
+                                  note: candidate.note)) != nil
+        if !stored { return false }
         candidates.removeAll { $0.slug == candidate.slug }
+        return true
     }
 
     func dismiss(_ candidate: Candidate) {
         candidates.removeAll { $0.slug == candidate.slug }
     }
 
-    /// Drop any candidate whose slug the live table already agrees on — called
-    /// after an edit so a stale proposal does not sit next to the fresh row.
+    /// Drop any candidate the live table already agrees with — called after an
+    /// edit so a stale proposal does not sit next to the fresh row.
+    ///
+    /// The comparison is against the proposal, not the `current` snapshot the
+    /// fetch captured: a candidate is only ever stored when it *differed* from
+    /// live at check time, so `current` is the value the edit just replaced and
+    /// comparing it drops nothing.
     func pruneCandidates() {
         candidates.removeAll { candidate in
-            candidate.current == resolution(for: candidate.slug)
+            let proposed: ModelPricing.Resolution? =
+                candidate.rate.map { .priced($0) } ?? candidate.unpriced.map { .unpriced($0) }
+            return proposed == resolution(for: candidate.slug)
         }
     }
 

@@ -115,6 +115,13 @@ enum CodexAppServerClient {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
 
+        // A write to a child that already exited raises SIGPIPE, whose default
+        // disposition terminates the whole app — and app-server *does* exit on
+        // its own (a crash, a version mismatch), so this is the ordinary
+        // failure the caller's `catch` already handles, not a signal to die on.
+        // Same call `BatteryChargeController` makes on its helper pipe.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
         let deadline = Date().addingTimeInterval(timeout)
         let collector = LineCollector(deadline: deadline)
         output.fileHandleForReading.readabilityHandler = { handle in

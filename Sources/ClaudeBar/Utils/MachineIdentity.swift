@@ -71,13 +71,19 @@ enum MachineIdentity {
 
         for marker in possessive + hostMarkers {
             guard let range = name.range(of: marker, options: .caseInsensitive) else { continue }
-            var prefix = String(name[..<range.lowerBound])
-                .trimmingCharacters(in: CharacterSet(charactersIn: "-_ \u{2019}'"))
-            // Only a host-name marker leaves a joining character behind:
-            // `wangxiajuns-MacBook-Pro` keeps the `s` that joined it. A
-            // possessive never does, which is what keeps `Chris’s iMac` → `Chris`.
-            if hostMarkers.contains(where: { $0.caseInsensitiveCompare(marker) == .orderedSame }) {
-                prefix = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "s"))
+            let raw = String(name[..<range.lowerBound])
+            // Only a *host-name* marker can leave a joining character behind,
+            // and only when no space separates the name from the model:
+            // `wangxiajuns-MacBook-Pro` keeps the `s` that joined it (the `-`
+            // after it falls to the separator trim), while `Chris MacBook` has
+            // a space the user typed — stripping there would eat the last
+            // letter of a perfectly ordinary name. A possessive (`Chris’s iMac`)
+            // never leaves a joiner, which is what keeps that `s`.
+            let stripJoiner = hostMarkers.contains { $0.caseInsensitiveCompare(marker) == .orderedSame }
+                && raw.last != " "
+            var prefix = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-_ \u{2019}'"))
+            if stripJoiner, prefix.last == "s", prefix.count >= 2 {
+                prefix = String(prefix.dropLast())
             }
             if prefix.count >= 2 { return prefix }
         }

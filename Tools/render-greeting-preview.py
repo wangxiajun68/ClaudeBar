@@ -134,7 +134,7 @@ source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'struct VerticalHai
 # exercises the production drawing rather than a stand-in.
 # `Interaction.swift` is mostly controls the fixture does not build, so take the
 # two pieces it uses — the hover observer and the digit roll — rather than the
-# whole file, which would drag `InstrumentButtonStyle` and `AppGlyph` in behind
+# whole file, which would drag the control plate and `AppGlyph` in behind
 # it. Regenerated on every run, from the production file, so the fixture cannot
 # quietly keep using a copy the app has moved on from.
 source += (root / 'Tools/greeting-preview-support.swift').read_text() + '\n'
@@ -247,7 +247,10 @@ source += (sheet[sheet.index('struct GreetingStatusSheet: View {'):]
     .replace('else if #available(macOS 26.0, *) {', 'else if #available(macOS 26.0, *), false {')
     .replace('        return skyDate.addingTimeInterval(timeOffset)',
              '        return skyDate.addingTimeInterval(timeOffset + fixtureBenchOffset())'))
-source += '''
+# A raw literal so the Swift string interpolations below stay single-backslash
+# Swift (`\(x)`), which is what the production text wants; a plain `'''…'''`
+# would read them as Python escapes and warn on every run.
+source += r'''
 @main struct Probe {
     @MainActor static func main() throws {
         _ = NSApplication.shared
@@ -320,7 +323,7 @@ source += '''
                         reading: empty ? nil : weather, city: "广州", weatherLoading: false,
                         weatherNote: nil, typeface: typeface, language: typeface.supportsChinese ? .chinese : .english, weatherRendering: fixtureWeatherRendering, refreshWeather: {}, refreshQuota: {}, refreshCursor: {},
                         showModels: {}, showUsage: {})
-                        .environment(\\.colorScheme, dark ? .dark : .light)
+                        .environment(\.colorScheme, dark ? .dark : .light)
                         .frame(width: width).padding(24).background(Theme.bgPrimary)
                     if scene == "sun" && mode == "auto" {
                         // The forecast ribbon with a day focused, as hover or a
@@ -334,7 +337,7 @@ source += '''
                         let render = ImageRenderer(content: ribbon)
                         render.scale = 2
                         if let image = render.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
-                            try png.write(to: out.appendingPathComponent("ribbon-\\(dark ? "dark" : "light")-\\(Int(width)).png"))
+                            try png.write(to: out.appendingPathComponent("ribbon-\(dark ? "dark" : "light")-\(Int(width)).png"))
                         }
                     }
                     let renderer = ImageRenderer(content: card)

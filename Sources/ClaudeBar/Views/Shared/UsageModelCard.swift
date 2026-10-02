@@ -279,7 +279,7 @@ struct CacheHitBadge: View {
             Image(systemName: "memorychip")
                 .font(.system(size: 10, weight: .semibold))
             Text(hasPrompt ? "命中 \(stat.cacheHitPercent)%" : "命中 —")
-                .rollingNumber(rolls: rolls)
+                .rollingNumber(hasPrompt ? "命中 \(stat.cacheHitPercent)%" : "命中 —", rolls: rolls)
         }
         .font(Theme.Font.microSemibold)
         .foregroundStyle(hasPrompt ? Theme.Ink.success : Theme.textTertiary())

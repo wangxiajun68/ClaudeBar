@@ -34,19 +34,24 @@ final class ProxyInflight {
         /// Drop the loopback connection with no terminal frame, so the client
         /// sees the turn cut mid-stream rather than a finished response.
         func attachAbort(_ abort: @escaping () -> Void) {
-            runOrStore(cancelled ? abort : nil) { self.abortClient = abort }
+            runOrStore(abort) { self.abortClient = abort }
         }
 
         /// Kill the upstream request feeding this call.
         func attachUpstream(_ cancel: @escaping () -> Void) {
-            runOrStore(cancelled ? cancel : nil) { self.upstreamCancel = cancel }
+            runOrStore(cancel) { self.upstreamCancel = cancel }
         }
 
-        /// Closures run outside the lock, so a cancel racing an attach cannot
+        /// Run `immediate` on the spot when a cancel already landed, else store
+        /// `store` for `cancel()` to pick up. The cancelled check happens
+        /// *inside* the lock — read outside it, an attach that lost the race by
+        /// nanoseconds would store a hook on a handle whose `cancel()` already
+        /// copied the two hooks and unlocked, leaving the abort client alive.
+        /// Closures run after the unlock so a cancel racing an attach cannot
         /// deadlock.
-        private func runOrStore(_ immediate: (() -> Void)?, store: () -> Void) {
+        private func runOrStore(_ immediate: @escaping () -> Void, store: () -> Void) {
             lock.lock()
-            if let immediate {
+            if cancelled {
                 lock.unlock()
                 immediate()
                 return

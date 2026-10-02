@@ -203,7 +203,7 @@ private struct PowerFlowContent: View, Equatable {
                 .frame(height: compact ? 84 : 200)
             if !compact {
                 Text(flow.summary)
-                    .rollingNumber()
+                    .rollingNumber(flow.summary)
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                 }
@@ -363,7 +363,7 @@ private struct EnergySankey: View {
             }
             if !compact, box.node == .adapter, let rated = flow.adapterRated, box.span.height >= 84 {
                 Text("\(rated) W 适配器")
-                    .rollingNumber()
+                    .rollingNumber("\(rated) W 适配器")
                     .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)

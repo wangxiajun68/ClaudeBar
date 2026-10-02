@@ -398,7 +398,7 @@ struct RollingNumberText: View {
         Text(value)
             // The figure itself is the transition's key, so the roll runs when
             // this number changed — not when anything else in the view did.
-            .rollingNumber(valueKey: value, rolls: rolls)
+            .rollingNumber(value, rolls: rolls)
     }
 }
 
@@ -413,24 +413,23 @@ struct RollingNumberText: View {
 /// every `Text`-only modifier (`lineLimit`, `minimumScaleFactor`, …) chained
 /// after `.rollingNumber()`, and a styled label rolled in place needs no
 /// restructure. It is the common method the whole app routes through; the
-/// `Text`-returning form (`Text(_:).rollingNumber()` still being a `Text`)
+/// `Text`-returning form (`Text(_:).rollingNumber(_:)` still being a `Text`)
 /// would have forced every call site to reorder its modifiers.
 struct RollingNumberModifier: ViewModifier {
     var enabled: Bool = true
-    /// The rendered figure, when the caller has it as a string. This is what the
-    /// roll's transition is keyed on: the transition should run because *this*
-    /// number changed, not because some value in the view happened to tick.
-    var valueKey: String? = nil
-    /// Whether the change this render is drawing is already stage.
+    /// The rendered figure, and the roll's transition key: the transaction opens
+    /// because *this* number changed, not because some value in the view
+    /// happened to tick.
     ///
-    /// The caller sets this only when it *knows* the figures move as part of an
-    /// animation it opened itself — the island's "plane a day" pass, where the
-    /// 30-day scrub sweeps every bar and the figures together. Everywhere else
-    /// the modifier opens the transition itself (see below), because a
-    /// `withAnimation` at the call site is usually not available: see the note
-    /// under `rollingNumber(_:)`.
-    var animated: Bool = false
-
+    /// **Not optional, and not defaulted.** A modifier is handed an opaque
+    /// `_ViewModifier_Content`, not the `Text` it wraps — the erasure cannot be
+    /// cast back or reflected, and `String(describing:)` of it is identical for
+    /// every wrapping — so the modifier cannot read the number out of its own
+    /// content and the caller has to state it. The previous shape (`String? = nil`
+    /// with a `String(describing: Self.self)` fallback) was worse than a
+    /// compile error: the fallback is constant, so no transaction closure was
+    /// ever entered and every site that passed nothing rolled in silence.
+    var figure: String
     /// Whether this figure rolls at all.
     ///
     /// The digit roll is a transition, so it runs on its own display cycle every
@@ -487,9 +486,6 @@ struct RollingNumberModifier: ViewModifier {
         /// Reduce Motion makes the roll an identity transition: the value still
         /// updates, it just stops sliding.
         var reduceMotion: Bool
-        /// Upstream already animates this change; leave that transaction alone
-        /// instead of nesting one inside it (see `rollingNumber(_:)`).
-        var delegated: Bool
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -503,7 +499,14 @@ struct RollingNumberModifier: ViewModifier {
                 .contentTransition(reduceMotion || !rolls || !surfaceIsVisible
                                    ? .identity : .numericText(countsDown: true))
                 .transaction(value: transition) { transaction in
-                    guard !reduceMotion, !animated, transaction.animation == nil else { return }
+                    // The whole gate, not just the environment half: `rolls:
+                    // false` and an invisible surface must not install an
+                    // animation either — the key still changes on every
+                    // reading, so a guard that read only `reduceMotion` would
+                    // keep an animated transaction alive per tick for exactly
+                    // the figures that opted out of rolling.
+                    guard !reduceMotion, rolls, surfaceIsVisible,
+                          transaction.animation == nil else { return }
                     transaction.animation = Theme.Animation.roll
                 }
         } else {
@@ -512,13 +515,10 @@ struct RollingNumberModifier: ViewModifier {
     }
 
     /// Keyed on the rendered value, so it is `Equatable` without the modifier
-    /// having to know the figure's type — a `String(describing:)` of the styled
-    /// `Content` collapses to the same per-value key for a leaf whose value
-    /// changed and stays stable for one that did not.
+    /// having to know the figure's type.
     private var transition: Transition {
-        Transition(value: valueKey ?? String(describing: Self.self),
-                   reduceMotion: reduceMotion || !rolls || !surfaceIsVisible,
-                   delegated: animated)
+        Transition(value: figure,
+                   reduceMotion: reduceMotion || !rolls || !surfaceIsVisible)
     }
 }
 
@@ -531,8 +531,26 @@ extension View {
     /// Do **not** put it on a container: the roll belongs to the leaf that
     /// draws the digits, the same way the island's own figures are leaves.
     ///
-    /// Pass `false` when the same `Text` sometimes shows a figure and sometimes
-    /// a label (a JSON value that is a number only in one kind).
+    /// `figure` is the rendered value and is what the roll is keyed on, so the
+    /// transaction opens only when the figure moves. It is the first parameter
+    /// and it has **no default** on purpose: a `ViewModifier` is handed an
+    /// opaque `_ViewModifier_Content`, not the `Text` it wraps — that erasure
+    /// cannot be cast back, cannot be reflected, and `String(describing:)` of it
+    /// is the same for every wrapping — so this modifier cannot read the number
+    /// out of its own content. A site that says nothing would silently roll
+    /// nothing at all: the transaction's key would be the type name, which never
+    /// changes, so the closure that installs `Theme.Animation.roll` would never
+    /// be entered and `.numericText` would have no animation to run in. Pass the
+    /// same expression the label renders:
+    ///
+    ///     Text("已选 \(n) 项").rollingNumber("已选 \(n) 项")
+    ///     Text(open ? opener : inlineValue).rollingNumber(open ? opener : inlineValue)
+    ///
+    /// (Both forms are what the app uses; `RollingNumberText` is the same thing
+    /// pre-composed and remains the house style for a figure that is a value.)
+    ///
+    /// Pass `enabled: false` when the same `Text` sometimes shows a figure and
+    /// sometimes a label (a JSON value that is a number only in one kind).
     ///
     /// Reduce Motion turns the roll into an identity transition; the value
     /// still updates, it just stops sliding.
@@ -542,15 +560,12 @@ extension View {
     /// strip's 1 Hz sensors) or for a surface no one is looking at. See
     /// `RollingNumberModifier.rolls`.
     ///
-    /// `animated: true` means "the change I am handing you is already inside a
-    /// transaction I opened" — the island's day scrub, where the bars and the
-    /// figures move as one spring. Leave it alone for every ordinary figure: the
-    /// modifier opens the roll's own transition, and a `withAnimation` at the
-    /// call site usually is not available anyway (the value is a computed string,
-    /// so there is no data source for `withAnimation` to write to).
-    func rollingNumber(_ enabled: Bool = true, valueKey: String? = nil,
-                       rolls: Bool = true, animated: Bool = false) -> some View {
-        modifier(RollingNumberModifier(enabled: enabled, valueKey: valueKey,
-                                       animated: animated, rolls: rolls))
+    /// A call site that *is* already inside its own animation leaves this
+    /// alone: the transform checks `transaction.animation == nil` before it
+    /// installs the roll, so an upstream spring owns the change instead of
+    /// nesting a second animation inside it.
+    func rollingNumber(_ figure: String, enabled: Bool = true,
+                       rolls: Bool = true) -> some View {
+        modifier(RollingNumberModifier(enabled: enabled, figure: figure, rolls: rolls))
     }
 }

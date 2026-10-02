@@ -88,36 +88,3 @@ struct SourceRing: View {
     }
 }
 
-/// Legend under a source ring: one dot + label + share per source.
-struct SourceRingLegend: View {
-    let slices: [SourceRing.Slice]
-
-    private var total: Int { slices.reduce(0) { $0 + $1.value } }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(slices) { slice in
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(slice.color)
-                        .frame(width: 5, height: 5)
-                        .opacity(slice.value > 0 ? 1 : 0.3)
-                    Text(slice.label)
-                        .font(Theme.Font.tileDetail)
-                        .foregroundColor(slice.value > 0 ? Theme.textSecondary : Theme.textTertiary(0.6))
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    RollingNumberText(total > 0 ? "\(Int((Double(slice.value) / Double(total) * 100).rounded()))%" : "—")
-                        .font(Theme.Font.tileDetail)
-                        .monospacedDigit()
-                        .foregroundColor(Theme.textTertiary())
-                    RollingNumberText(UsageStats.formatTokens(slice.value))
-                        .font(Theme.Font.tileDetail)
-                        .monospacedDigit()
-                        .foregroundColor(Theme.textTertiary())
-                        .frame(width: 46, alignment: .trailing)
-                }
-            }
-        }
-    }
-}

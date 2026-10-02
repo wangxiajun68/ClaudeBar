@@ -6,6 +6,11 @@ import Combine
 /// the SwiftUI menu. The panel is centered horizontally on the screen (its
 /// vertical center axis) just below the menu bar, instead of being anchored
 /// to the status-item icon's corner.
+/// `@MainActor` because every member is reached from the app delegate,
+/// the panels it owns and observers it registers on `.main` — the annotation
+/// states the existing contract and lets the `@Sendable` observer closures
+/// (the ones Swift 6 rejects) capture `self` legally.
+@MainActor
 final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private var panel: NSPanel?
@@ -60,12 +65,14 @@ final class MenuBarController: NSObject {
         appearanceObs = NotificationCenter.default.addObserver(
             forName: .appearanceDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.applyPanelAppearance()
+            MainActor.assumeIsolated { self?.applyPanelAppearance() }
         }
     }
 
-    /// ClashX-style: a 22pt-tall two-line accessory, not NSStatusBarButton's
+    /// ClashX-style: a 20pt-tall two-line accessory, not NSStatusBarButton's
     /// attributedTitle (which cannot wrap, so ↓/↑ never updated visibly).
+    /// The unflipped AppKit coordinates put ↓ on the upper row (y≈10) and ↑
+    /// below it (y≈1).
     ///
     /// Event-driven, not a 1 Hz timer: the old loop re-rasterized the icon and
     /// rebuilt two `NSImage`s every second even with the VPN stopped. Rate
@@ -484,10 +491,11 @@ private final class KeyablePanel: NSPanel {
 /// 16pt tri-blade, transparent, template — the PNG has an opaque mint
 /// square, so `isTemplate` painted a solid block in the menu bar.
 enum MenuBarMark {
-    /// The mark is a pure function of `side` and only two sizes are ever
-    /// asked for, but `NSImage(size:flipped:)` re-runs the whole bezier
-    /// rasterization on each call (and the menu-bar update path calls it
-    /// every second while the VPN is up).
+    /// The mark is a pure function of `side` and only two sizes are ever asked
+    /// for (18 for the status button, 16 for the rate accessory's icon), each
+    /// once per install. The cache is here because `NSImage(size:flipped:)`
+    /// re-runs the whole bezier rasterization on every call, and a teardown /
+    /// reinstall cycle (a new status item) would pay for both again.
     private static var cache: [CGFloat: NSImage] = [:]
     private static let cacheLock = NSLock()
 
@@ -572,15 +580,15 @@ private final class VpnMenuBarRateView: NSView {
     /// **The proportion is the reading, not a decoration.** A capsule *is* its
     /// ratio: at 1 ∶ 1 it is a dot, past ~2.2 ∶ 1 it is a bar, and a battery
     /// glyph has to sit between those to read as a cell. This one is
-    /// **φ² ∶ 1 ≈ 1.618 ∶ 1** — 34 × 21 — the golden rectangle itself, so the
-    /// width is a *function* of the height and the two can never disagree.
-    /// That is what the previous proportions got wrong: 23.4×13.4 was 1.75 ∶ 1
-    /// (the ratio of a business card, arbitrary next to an 11pt rounded
-    /// reading), and the first pass after dropping the nub overshot to 45×18,
-    /// i.e. 2.5 ∶ 1, which is a *bar* — three and a half millimetres of empty
-    /// ellipse either side of a short liquid column. A cell that is most empty
-    /// space reads as a container with nothing in it, which is the opposite of
-    /// what a gauge is for.
+    /// **φ² ∶ 1 ≈ 1.618 ∶ 1** — 34 × 21, the golden rectangle itself, sized for
+    /// the strip's 20pt height plus its accent rounding. That is what the
+    /// previous proportions got wrong: 23.4×13.4 was 1.75 ∶ 1 (the ratio of a
+    /// business card, arbitrary next to an 11pt rounded reading), and the first
+    /// pass after dropping the nub overshot to 45×18, i.e. 2.5 ∶ 1, which is a
+    /// *bar* — three and a half millimetres of empty ellipse either side of a
+    /// short liquid column. A cell that is most empty space reads as a
+    /// container with nothing in it, which is the opposite of what a gauge is
+    /// for.
     ///
     /// At this ratio the corner arcs take exactly a quarter of the width each,
     /// so the liquid gets the middle half: real travel for the surface, a
@@ -588,10 +596,14 @@ private final class VpnMenuBarRateView: NSView {
     /// overshoot. When the liquid is full the whole capsule is ink and the
     /// same 1.618 : 1 is what makes a *solid* rectangle look intentional.
     static let batteryGap: CGFloat = 8
+    /// How much taller than the 20pt strip the gauge is allowed to be — the
+    /// cell's short side. The gauge itself is laid out at the instance's
+    /// `bounds.height`; this is the height the *ratio* is defined against, so
+    /// the width and the runway can be derived from one number.
     static let batteryGlyphHeight: CGFloat = 21
     /// The golden rectangle: `φ² · height`. See the note above — a ratio, so it
     /// is written as one instead of as a measured length.
-    static let batteryGlyphWidth: CGFloat = 21 * 1.618
+    static let batteryGlyphWidth: CGFloat = batteryGlyphHeight * 1.618
     static let batteryTextGap: CGFloat = 4
     static let batteryTextWidth: CGFloat = 36
 
@@ -719,7 +731,6 @@ private final class VpnMenuBarRateView: NSView {
     private let batteryDivider = NSView()
     private let batteryIcon = BatteryMenuBarGlyph()
     private let batteryLabel = VpnMenuBarRateView.makeLabel()
-    private let batteryDetail = VpnMenuBarRateView.makeLabel()
     private var batteryInstalled = false
 
     override init(frame frameRect: NSRect) {
@@ -737,7 +748,6 @@ private final class VpnMenuBarRateView: NSView {
         batteryDivider.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.16).cgColor
         batteryLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         batteryLabel.alignment = .left
-        batteryDetail.isHidden = true
         addSubview(iconView)
         addSubview(downArrow)
         addSubview(upArrow)
@@ -746,7 +756,6 @@ private final class VpnMenuBarRateView: NSView {
         addSubview(batteryDivider)
         addSubview(batteryIcon)
         addSubview(batteryLabel)
-        addSubview(batteryDetail)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -768,7 +777,6 @@ private final class VpnMenuBarRateView: NSView {
         batteryDivider.isHidden = !battery.installed
         batteryIcon.isHidden = !battery.installed
         batteryLabel.isHidden = !battery.installed
-        batteryDetail.isHidden = true
         // All labels use white over the fixed dark capsule, independent of the
         // menu bar's appearance and whatever wallpaper sits underneath it.
         let downColor = Self.rateColor(down, tunneled: tunneled)
@@ -827,14 +835,11 @@ private final class VpnMenuBarRateView: NSView {
     var upLabelFrameMaxX: CGFloat { paintedMaxX(upLabel) }
     var batteryDividerFrameMaxX: CGFloat { paintedMaxX(batteryDivider) }
     var batteryIconFrameMaxX: CGFloat { paintedMaxX(batteryIcon) }
+    var batteryIconFrameHeight: CGFloat { batteryIcon.isHidden ? 0 : batteryIcon.frame.height }
     var batteryLabelFrameMaxX: CGFloat { paintedMaxX(batteryLabel) }
-    var batteryDetailFrameMaxX: CGFloat { paintedMaxX(batteryDetail) }
     var batteryIconIsHidden: Bool { batteryIcon.isHidden }
     var batteryLabelIsHidden: Bool { batteryLabel.isHidden }
-    var batteryDetailIsHidden: Bool { batteryDetail.isHidden }
     var downLabelTextColor: NSColor { downLabel.textColor ?? .white }
-    override var intrinsicContentSize: NSSize { NSSize(width: Self.fullWidth, height: 20) }
-    override var fittingSize: NSSize { intrinsicContentSize }
 
     override func layout() {
         super.layout()
@@ -858,7 +863,6 @@ private final class VpnMenuBarRateView: NSView {
                                    width: Self.batteryGlyphWidth, height: h)
         let tx = bx + Self.batteryGlyphWidth + Self.batteryTextGap
         batteryLabel.frame = NSRect(x: tx, y: (h - 14) / 2, width: Self.batteryTextWidth, height: 14)
-        batteryDetail.frame = .zero
     }
 
     private static func makeLabel() -> NSTextField {

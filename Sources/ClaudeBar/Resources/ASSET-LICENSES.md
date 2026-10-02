@@ -66,4 +66,3 @@ SignPainter, Snell Roundhand, Savoye LET and Zapfino are the Mac's own fonts. Th
 
 # Scientific color map
 
-The usage calendar samples the viridis color map by Nathaniel J. Smith, Stefan van der Walt and Eric Firing. Its color data is released under CC0 / public-domain dedication. Palette source: https://github.com/BIDS/colormap/blob/master/colormaps.py. CC0: https://creativecommons.org/publicdomain/zero/1.0/. The app uses 64 uniformly sampled colors; no Matplotlib runtime is bundled.

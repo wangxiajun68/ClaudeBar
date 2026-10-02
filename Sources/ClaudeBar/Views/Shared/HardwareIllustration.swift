@@ -293,7 +293,14 @@ final class ReadingSweepView: NSView {
 
     private var bars: [HardwareIllustration.LaneBar] = []
     private var paintedTint: TintKey?
+    /// The clip that masks each sheen, tracked right alongside it: the clip is
+    /// what is handed to `layer` (so it is the clip, not the sheen, that has to
+    /// be removed), and one is created per busy bar on **every** rebuild — a
+    /// reading change, a tint change, a live resize. Removing only the sheens
+    /// left the orphan clips behind, each still holding its gradient child and
+    /// its animated `sweep`, all composited every frame.
     private var sheens: [CALayer] = []
+    private var clips: [CALayer] = []
     private var speed: Float = -1
     private var running = false
     private var observer: NSObjectProtocol?
@@ -386,7 +393,8 @@ final class ReadingSweepView: NSView {
     private func rebuild(_ bars: [HardwareIllustration.LaneBar]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        sheens.forEach { $0.removeFromSuperlayer() }
+        clips.forEach { $0.removeFromSuperlayer() }
+        clips.removeAll()
         sheens.removeAll()
         let peak = tint.withAlphaComponent(0.5)
         let clear = peak.withAlphaComponent(0)
@@ -421,6 +429,7 @@ final class ReadingSweepView: NSView {
             sheen.add(move, forKey: "sweep")
             clip.addSublayer(sheen)
             layer?.addSublayer(clip)
+            clips.append(clip)
             sheens.append(sheen)
         }
         CATransaction.commit()

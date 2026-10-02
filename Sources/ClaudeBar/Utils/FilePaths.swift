@@ -50,9 +50,9 @@ enum FilePaths {
         // widget extension). Fall back to ~/.claude if the container can't be
         // resolved (e.g. running outside a signed bundle).
         if let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
-            return group.appendingPathComponent("claude-bar-widget-data.json")
+            return group.appendingPathComponent(BuildChannel.widgetSnapshotFileName)
         }
-        return claudeDir.appendingPathComponent("claude-bar-widget-data.json")
+        return claudeDir.appendingPathComponent(BuildChannel.widgetSnapshotFileName)
     }
 
     // MARK: - App Support / logs

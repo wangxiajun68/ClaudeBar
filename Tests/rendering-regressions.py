@@ -89,12 +89,22 @@ final class FixtureWindow: NSWindow {
         let window = FixtureWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
                                    styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        // The matrix renders each kind into one canvas slot per effect, so the
+        // canvas width is the matrix's own stride: it exists purely for the
+        // `render(in:)` smoke pass inside the loop below, not as an artefact.
         let preview = CGContext(data: nil, width: 1152, height: 144, bitsPerComponent: 8,
                                 bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         preview.setFillColor(NSColor.black.cgColor)
         preview.fill(CGRect(x: 0, y: 0, width: 1152, height: 144))
-        for (index, kind) in [DecorativeMotion.Kind.sparkles, .sweep, .orbit, .pulse, .scan, .conveyor].enumerated() {
+        // Every kind the enum declares is exercised, and the count in the PASS
+        // line is read off this list rather than written beside it: the line
+        // claimed 7 effects while the matrix ran 6, so a kind could (and `.arc`
+        // did) have no lifecycle coverage at all. A list literal that drifts
+        // from `Kind` is still possible, but the count and the loop can no
+        // longer disagree with each other.
+        let kinds: [DecorativeMotion.Kind] = [.sparkles, .sweep, .orbit, .pulse, .scan, .conveyor, .arc]
+        for (index, kind) in kinds.enumerated() {
             // The belt is a *strip*, not a box: it only means anything at a
             // width several tick pitches across, and a 44pt frame would crop it
             // to two ticks and still pass every lifecycle assertion below.
@@ -142,11 +152,6 @@ final class FixtureWindow: NSWindow {
             view.removeFromSuperview()
             precondition(animationCount(view.layer!) == 0, "Detached views must release repeating animations")
         }
-
-        if CommandLine.arguments.count > 1 {
-            let image = NSBitmapImageRep(cgImage: preview.makeImage()!)
-            try! image.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
-        }
         let history = (0..<10_000).map { CaptureTranscript.Turn(role: $0 % 2 == 0 ? "user" : "assistant", text: "message \($0)") }
         func input(_ id: Int64, query: String = "") -> ConversationInput {
             ConversationInput(id: id, history: history, live: CaptureLive(content: "latest"),
@@ -167,7 +172,7 @@ final class FixtureWindow: NSWindow {
         fixture.clearConversation()
         try? await Task.sleep(for: .milliseconds(100))
         precondition(fixture.displayBlocks.isEmpty, "A departed page must reject its pending result")
-        print("PASS: scoped/coalesced subscriptions; 7 native effects × 1000 stable updates; hide/detach stops animations; 10000-turn filtering and stale-result rejection (\(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - started))s including waits)")
+        print("PASS: scoped/coalesced subscriptions; \(kinds.count) native effects × 1000 stable updates; hide/detach stops animations; 10000-turn filtering and stale-result rejection (\(String(format: "%.3f", CFAbsoluteTimeGetCurrent() - started))s including waits)")
     }
 }
 '''
@@ -179,6 +184,4 @@ with tempfile.TemporaryDirectory(prefix='claudebar-rendering-') as folder:
     source.write_text(swift)
     binary = Path(folder) / 'regression'
     subprocess.run(['swiftc', '-O', '-parse-as-library', str(source), '-o', str(binary)], check=True)
-    preview = root / '.build/performance-motion-preview.png'
-    preview.parent.mkdir(exist_ok=True)
-    subprocess.run([str(binary), str(preview)], check=True)
+    subprocess.run([str(binary)], check=True)

@@ -230,7 +230,7 @@ struct IslandSessionRow: View {
             // line is a figure like every other one on the island.
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 Text("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
-                    .rollingNumber()
+                    .rollingNumber("等待输入 · " + IslandFormat.ago(session.updatedAt, now: context.date))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(IslandStyle.textTertiary)
                     .lineLimit(1)
@@ -479,7 +479,7 @@ struct IslandUsageCard: View {
                 .foregroundStyle(IslandStyle.textPrimary)
             if let pace = IslandUsage.pace(usage.month, usage.lastMonthSameSpan) {
                 Text("上月同期 \(Int((pace * 100).rounded()))%")
-                    .rollingNumber()
+                    .rollingNumber("上月同期 \(Int((pace * 100).rounded()))%")
                     .foregroundStyle(pace >= 1 ? IslandStyle.amber : IslandStyle.textSecondary)
                     .fixedSize()
             }

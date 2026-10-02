@@ -30,15 +30,11 @@ struct TileModifier: ViewModifier {
     var wash: Double? = nil
     /// Whether the card rises 2pt under the pointer. See `TileSurface.lift`.
     var lift: Bool = true
-    /// A ground **view** drawn over the opaque base fill, under the accent
-    /// wash. See `TileSurface.ground` — only the weather band passes one.
-    var ground: AnyView? = nil
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, wash: wash, lift: lift, ground: ground,
+                    framed: framed, wash: wash, lift: lift,
                     reduceMotion: reduceMotion) {
             content
         }
@@ -72,27 +68,6 @@ struct TileSurface<Content: View>: View {
     /// it is easy to hit and the lift means nothing (there is one band per page,
     /// not a field of them to scan). `PageHeaderCard` passes `false`, so the
     /// band answers the pointer with its edge and wash instead.
-    /// A ground **view** drawn over the opaque base fill and under the accent
-    /// wash. `nil` — every card in the app but one.
-    ///
-    /// The weather band passes its sky here: it is the one surface whose *ground*
-    /// carries a reading (which sky, and whether the sun is up), and painting
-    /// that as an accent wash over white would have made it a tint of a white
-    /// card rather than a sky. Everything else about the surface — the depth
-    /// lens, the inner frame ring, the hover edge, the Core Animation layer
-    /// shadow — is unchanged, so the weather band is still the same object as
-    /// every other card.
-    ///
-    /// **A view, not a `ShapeStyle`.** The obvious spelling is
-    /// `base: AnyShapeStyle?` fed to `.fill(_:)`, and it silently draws nothing:
-    /// a custom `ShapeStyle` whose `resolve(in:)` returns a `View` satisfies the
-    /// compiler but renders as a no-op fill, so the card falls back to
-    /// `Theme.cardSurface` and every figure on it lands on white. Measured —
-    /// `RoundedRectangle.fill(<view-backed style>)` leaves the pixels untouched
-    /// while `.fill(LinearGradient(...))` paints — which is why the ground is a
-    /// view stacked in the background, and why the base stays an opaque
-    /// `Color` fill under it.
-    var ground: AnyView?
     var lift: Bool
     var reduceMotion: Bool
     let content: Content
@@ -102,7 +77,7 @@ struct TileSurface<Content: View>: View {
     /// `content: { … }` instead of trailing-closure syntax.
     init(tint: Color? = nil, hovered: Bool, dense: Bool = false,
          lens: DepthLensSpec? = nil, framed: Bool = true,
-         wash: Double? = nil, lift: Bool = true, ground: AnyView? = nil,
+         wash: Double? = nil, lift: Bool = true,
          reduceMotion: Bool = false,
          @ViewBuilder content: () -> Content) {
         self.tint = tint
@@ -112,7 +87,6 @@ struct TileSurface<Content: View>: View {
         self.framed = framed
         self.wash = wash
         self.lift = lift
-        self.ground = ground
         self.reduceMotion = reduceMotion
         self.content = content()
     }
@@ -134,13 +108,6 @@ struct TileSurface<Content: View>: View {
                 ZStack(alignment: lens?.align ?? .topTrailing) {
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .fill(Theme.cardSurface)
-                    // The card's own ground, over the opaque base and under the
-                    // accent wash — so a ground that forgets a pixel still lands
-                    // on a real surface rather than on nothing.
-                    if let ground {
-                        ground
-                            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                    }
                     if tint != nil {
                         RoundedRectangle(cornerRadius: radius, style: .continuous)
                             .fill(accent.opacity(restWash))
@@ -222,27 +189,19 @@ struct LayerShadow: NSViewRepresentable {
     /// own fill covers it. Without it the layer is transparent and the shadow
     /// has no silhouette to come from.
     var surface: Color
-    /// Shadow hue. Every card surface wants a black drop shadow, but the
-    /// instrument buttons pair one with a **tinted** one underneath
-    /// (`tint.opacity(0.18)`), and that pair is what makes a filled plate read
-    /// as lit from above. Passing the hue in keeps that effect on the same
-    /// rasterisation path instead of leaving it in the view graph.
+    /// Shadow hue. Every card surface wants a black drop shadow; the
+    /// instrument buttons pass a tinted hue instead (`tint.opacity(0.18)`),
+    /// which is what makes a filled plate read as lit from above. Passing the
+    /// hue in keeps that effect on the same rasterisation path instead of
+    /// leaving it in the view graph.
     var color: Color = .black
-    /// The second, fuller shadow's radius/offset — the reference's `:before`
-    /// layer sitting under the `:after` one.
-    var underRadius: CGFloat = 0
-    var underY: CGFloat = 0
-    var underOpacity: Double = 0
-    var underColor: Color = .black
 
     func makeNSView(context: Context) -> ShadowHostView { ShadowHostView() }
 
     func updateNSView(_ view: ShadowHostView, context: Context) {
         view.apply(radius: radius, y: y, opacity: opacity,
                    cornerRadius: cornerRadius, surface: NSColor(surface),
-                   color: NSColor(color),
-                   underRadius: underRadius, underY: underY,
-                   underOpacity: underOpacity, underColor: NSColor(underColor))
+                   color: NSColor(color))
     }
 
     static func dismantleNSView(_ view: ShadowHostView, coordinator: ()) { view.clear() }
@@ -256,10 +215,13 @@ final class ShadowHostView: NSView {
     /// it sits behind.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// One layer carries one shadow, and every surface in the app wants
+    /// exactly one: the card's drop, or a button's tinted glow. (A second,
+    /// fuller layer once sat under this one for the instrument plate's
+    /// `:before` pair; that call site is gone, and with it the whole `under*`
+    /// parameter set — a second shadow that is *always* at opacity 0 still
+    /// costs a composited layer.)
     private let box = CALayer()
-    /// The fuller shadow underneath. A layer can only carry one shadow, and the
-    /// button's gloss wants two, so the lower one is a sibling layer.
-    private let under = CALayer()
     /// What was last written, so a redundant `updateNSView` (SwiftUI calls it
     /// whenever any input compares unequal, and a hover flip re-issues the
     /// whole tuple) does not rebuild the same `CGPath` and re-set every layer
@@ -270,7 +232,6 @@ final class ShadowHostView: NSView {
         var size: CGSize
         var radius: CGFloat, y: CGFloat, opacity: Double, cornerRadius: CGFloat
         var surface: CGColor, color: CGColor
-        var underRadius: CGFloat, underY: CGFloat, underOpacity: Double, underColor: CGColor
     }
 
     override init(frame: NSRect) {
@@ -278,20 +239,15 @@ final class ShadowHostView: NSView {
         wantsLayer = true
         layer = CALayer()
         box.masksToBounds = false
-        under.masksToBounds = false
-        layer?.addSublayer(under)
         layer?.addSublayer(box)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func apply(radius: CGFloat, y: CGFloat, opacity: Double,
-               cornerRadius: CGFloat, surface: NSColor, color: NSColor,
-               underRadius: CGFloat, underY: CGFloat,
-               underOpacity: Double, underColor: NSColor) {
+               cornerRadius: CGFloat, surface: NSColor, color: NSColor) {
         let next = Applied(size: bounds.size, radius: radius, y: y, opacity: opacity,
                            cornerRadius: cornerRadius, surface: surface.cgColor,
-                           color: color.cgColor, underRadius: underRadius, underY: underY,
-                           underOpacity: underOpacity, underColor: underColor.cgColor)
+                           color: color.cgColor)
         if applied == next { return }
         applied = next
         CATransaction.begin()
@@ -299,26 +255,22 @@ final class ShadowHostView: NSView {
         defer { CATransaction.commit() }
         let path = CGPath(roundedRect: bounds, cornerWidth: cornerRadius,
                           cornerHeight: cornerRadius, transform: nil)
-        let specs = [(box, radius, y, opacity, color),
-                     (under, underRadius, underY, underOpacity, underColor)]
-        for (layer, r, dy, o, hue) in specs {
-            layer.frame = bounds
-            layer.cornerRadius = cornerRadius
-            // The explicit `shadowPath` *is* the silhouette, so the layer
-            // itself may stay transparent — which is what a button wants, since
-            // its own `plateFill` already draws the capsule and a second
-            // painted one would show at the antialiased edge. Card call sites
-            // pass their fill anyway; it is harmless there and helps when the
-            // path is briefly stale during a resize.
-            layer.backgroundColor = surface.cgColor
-            layer.shadowPath = path
-            layer.shadowColor = hue.cgColor
-            layer.shadowOpacity = Float(o)
-            layer.shadowRadius = r
-            // The layer tree's y grows downward in a flipped host, so a positive
-            // `y` means "below the card", matching the modifier it replaces.
-            layer.shadowOffset = CGSize(width: 0, height: dy)
-        }
+        box.frame = bounds
+        box.cornerRadius = cornerRadius
+        // The explicit `shadowPath` *is* the silhouette, so the layer itself
+        // may stay transparent — which is what a button wants, since its own
+        // `plateFill` already draws the capsule and a second painted one would
+        // show at the antialiased edge. Card call sites pass their fill anyway;
+        // it is harmless there and helps when the path is briefly stale during
+        // a resize.
+        box.backgroundColor = surface.cgColor
+        box.shadowPath = path
+        box.shadowColor = color.cgColor
+        box.shadowOpacity = Float(opacity)
+        box.shadowRadius = radius
+        // The layer tree's y grows downward in a flipped host, so a positive
+        // `y` means "below the card", matching the modifier it replaces.
+        box.shadowOffset = CGSize(width: 0, height: y)
     }
 
     override func layout() {
@@ -326,15 +278,12 @@ final class ShadowHostView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        let path = CGPath(roundedRect: bounds, cornerWidth: box.cornerRadius,
-                          cornerHeight: box.cornerRadius, transform: nil)
-        for layer in [box, under] {
-            layer.frame = bounds
-            layer.shadowPath = path
-        }
+        box.frame = bounds
+        box.shadowPath = CGPath(roundedRect: bounds, cornerWidth: box.cornerRadius,
+                                cornerHeight: box.cornerRadius, transform: nil)
     }
 
-    func clear() { box.shadowOpacity = 0; under.shadowOpacity = 0; applied = nil }
+    func clear() { box.shadowOpacity = 0; applied = nil }
 }
 
 extension View {
@@ -349,11 +298,9 @@ extension View {
     /// keep its own accessible name, so the lens is hue and depth only.
     func tile(tint: Color? = nil, hovered: Bool = false, dense: Bool = false,
               lens: DepthLensSpec? = nil, framed: Bool = true,
-              wash: Double? = nil, lift: Bool = true,
-              ground: AnyView? = nil) -> some View {
+              wash: Double? = nil, lift: Bool = true) -> some View {
         modifier(TileModifier(tint: tint, hovered: hovered, dense: dense,
-                              lens: lens, framed: framed, wash: wash, lift: lift,
-                              ground: ground))
+                              lens: lens, framed: framed, wash: wash, lift: lift))
     }
 }
 

@@ -583,7 +583,7 @@ struct StatusPill: View {
                     .accessibilityHidden(true)
             }
             Text(label)
-                .rollingNumber()
+                .rollingNumber(label)
                 .font(Theme.Font.pill)
                 .foregroundColor(ink ?? tint)
                 .lineLimit(1)

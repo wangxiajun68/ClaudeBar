@@ -522,28 +522,29 @@ struct WeatherBackdrop: View {
 /// white type is what stays legible on every condition. The lightest stop of
 /// each sky is held dark enough that the soft ink still clears 4.5:1.
 ///
-/// No reading yet is the other case. `neutral` is the ice canvas, dark type,
-/// and it claims no weather.
+/// **What is actually read is `highlight`** — a soft pool of light travelling
+/// the band (`drawLight`). The other fields are the palette's own record of a
+/// sky and are written by every case below but read by nothing since the Metal
+/// atmosphere took over the band; they are kept because the Canvas fallback
+/// still draws from this table and the values are the reference for it. (The
+/// earlier `neutral` palette, its `gradient`, and the `isLightGround` flag went
+/// with that rework: no reading means `WeatherBackdrop` is not mounted at all.)
 struct SkyPalette {
     var top: Color
     var bottom: Color
     var ink: Color
     var inkSoft: Color
     var accent: Color
-    /// Dark type on a light ground. The ice fallback only — every real sky is
-    /// a dark ground with light type.
-    var isLightGround: Bool
     /// The pool of light that travels the band, and the sheen on HELLO.
     var highlight: Color
 
     init(top: Color, bottom: Color, ink: Color, inkSoft: Color, accent: Color,
-         isLightGround: Bool, highlight: Color) {
+         highlight: Color) {
         self.top = top
         self.bottom = bottom
         self.ink = ink
         self.inkSoft = inkSoft
         self.accent = accent
-        self.isLightGround = isLightGround
         self.highlight = highlight
     }
 
@@ -555,84 +556,67 @@ struct SkyPalette {
             if night {
                 self.init(top: Color(hex: 0x101735), bottom: Color(hex: 0x1C2A58),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xC9D6FF),
-                          isLightGround: false, highlight: Color(hex: 0xD5E2FF))
+                          highlight: Color(hex: 0xD5E2FF))
             } else {
                 self.init(top: Color(hex: 0x2869BA), bottom: Color(hex: 0x83B9E8),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFE3A3),
-                          isLightGround: false, highlight: Color(hex: 0xFFF6D8))
+                          highlight: Color(hex: 0xFFF6D8))
             }
         case .partly:
             if night {
                 self.init(top: Color(hex: 0x141B38), bottom: Color(hex: 0x243056),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xC9D6FF),
-                          isLightGround: false, highlight: Color(hex: 0xC5D4F8))
+                          highlight: Color(hex: 0xC5D4F8))
             } else {
                 self.init(top: Color(hex: 0x326CA9), bottom: Color(hex: 0x8AB3D4),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFE3A3),
-                          isLightGround: false, highlight: Color(hex: 0xFFF4D4))
+                          highlight: Color(hex: 0xFFF4D4))
             }
         case .cloudy:
             if night {
                 self.init(top: Color(hex: 0x1A2233), bottom: Color(hex: 0x2A3548),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xD5DEEA),
-                          isLightGround: false, highlight: Color(hex: 0xC5D0DE))
+                          highlight: Color(hex: 0xC5D0DE))
             } else {
                 self.init(top: Color(hex: 0x3E5168), bottom: Color(hex: 0x243444),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xE7EEF6),
-                          isLightGround: false, highlight: Color(hex: 0xF4F7FB))
+                          highlight: Color(hex: 0xF4F7FB))
             }
         case .fog:
             if night {
                 self.init(top: Color(hex: 0x222833), bottom: Color(hex: 0x343C48),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xE4E8EE),
-                          isLightGround: false, highlight: Color(hex: 0xF2F4F7))
+                          highlight: Color(hex: 0xF2F4F7))
             } else {
                 self.init(top: Color(hex: 0x546274), bottom: Color(hex: 0x323C4A),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xF2F5F8),
-                          isLightGround: false, highlight: Color(hex: 0xFFFFFF))
+                          highlight: Color(hex: 0xFFFFFF))
             }
         case .rain, .drizzle, .sleet:
             if night {
                 self.init(top: Color(hex: 0x152033), bottom: Color(hex: 0x101820),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xB9D7FF),
-                          isLightGround: false, highlight: Color(hex: 0xD6E6FF))
+                          highlight: Color(hex: 0xD6E6FF))
             } else {
                 self.init(top: Color(hex: 0x2C4E74), bottom: Color(hex: 0x163044),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xD6E8FF),
-                          isLightGround: false, highlight: Color(hex: 0xEAF3FF))
+                          highlight: Color(hex: 0xEAF3FF))
             }
         case .snow:
             if night {
                 self.init(top: Color(hex: 0x1A2436), bottom: Color(hex: 0x2A384C),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xE7F1FF),
-                          isLightGround: false, highlight: Color(hex: 0xF7FBFF))
+                          highlight: Color(hex: 0xF7FBFF))
             } else {
                 self.init(top: Color(hex: 0x4E6278), bottom: Color(hex: 0x2C3E52),
                           ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xF4FBFF),
-                          isLightGround: false, highlight: Color(hex: 0xFFFFFF))
+                          highlight: Color(hex: 0xFFFFFF))
             }
         case .thunder, .hail:
             self.init(top: Color(hex: 0x12161F), bottom: Color(hex: 0x243044),
                       ink: ink, inkSoft: inkSoft, accent: Color(hex: 0xFFD772),
-                      isLightGround: false, highlight: Color(hex: 0xFFC24D))
+                      highlight: Color(hex: 0xFFC24D))
         }
-    }
-    /// No reading: the page's own ice, dark type. It must not announce a sky.
-    static var neutral: SkyPalette {
-        if Theme.isDark {
-            return SkyPalette(top: Color(hex: 0x293747), bottom: Color(hex: 0x17222E),
-                              ink: Color(hex: 0xF7FAFF), inkSoft: Color(hex: 0xD8E2F0),
-                              accent: Color(hex: 0xCBDFFF), isLightGround: false,
-                              highlight: .white)
-        }
-        return SkyPalette(top: Color(hex: 0xE7EEF6), bottom: Color(hex: 0xD5DEEA),
-                   ink: Color(hex: 0x1B2331), inkSoft: Color(hex: 0x5A6675),
-                   accent: Color(hex: 0x1D4FB8), isLightGround: true,
-                   highlight: Color(hex: 0xFFFFFF))
-    }
-
-    var gradient: LinearGradient {
-        LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
     }
 
     static let sun = Color(hex: 0xFFC24D)

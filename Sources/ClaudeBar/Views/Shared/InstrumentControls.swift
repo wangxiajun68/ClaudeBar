@@ -49,7 +49,8 @@ enum ControlTone {
     /// A light fill, a hairline, and the primary ink — the control that is
     /// visible without being loud.
     ///
-    /// No longer `ActionButton`'s default (that is `.sparkle`), but still the
+    /// `ActionButton`'s default tone, and what every call site that does not
+    /// name one gets.
     /// default for `ActionIcon` and `ActionPlateButtonStyle`, and the right
     /// answer for a call site that wants a quiet plate on the ice canvas — a
     /// dense row of icon actions, or a button drawn inside a card where a dark
@@ -338,22 +339,21 @@ struct SparklePlate: View {
 /// *style* alone would not have fixed anything — what was missing was the rule
 /// that says which setting a given button should be, and that rule is `tone`.
 ///
-/// As of the sparkle brief that default is `.sparkle`: a call site that says
-/// nothing about its tone gets the dark pill. `.destructive` and a page's single
-/// `.accent` primary still override it, so the two meanings that the plate cannot
-/// express are the only ones that have to be asked for.
+/// A call site that says nothing about its tone gets `.neutral`; the dark
+/// `.sparkle` pill is opt-in. `.destructive` and a page's single `.accent`
+/// primary are the other two meanings a call site has to name.
 struct ActionButton<Label: View>: View {
-    /// The default is `.sparkle` — the reference `.btn` plate — by explicit
-    /// brief: *every* ordinary (non-switch) button in the app takes that style.
-    /// Only `.destructive` and the one `.accent` primary per page override it,
-    /// because those two carry meaning the sparkle plate cannot: "this destroys
-    /// something" and "this is the action the page is about".
-    ///
-    /// `.neutral` has not gone away — it is still what `ActionPlateButtonStyle`
-    /// and `ActionIcon` default to, and it is the fallback for any call site that
-    /// asks for it by name. What changed is only which tone a call site gets
-    /// when it says nothing.
-    var tone: ControlTone = .sparkle
+    /// The memberwise default, and the tone the two title convenience inits
+    /// below carry too — so a call site that says nothing about its tone gets
+    /// the milled `neutral` well, which is what every one of the ~19 bare
+    /// `ActionButton("刷新")` sites in the app renders. `.sparkle` is the dark
+    /// reference plate, reached only by asking for it by name (`tone: .sparkle`),
+    /// and `.destructive` / the one `.accent` primary per page carry the two
+    /// meanings the plate cannot: "this destroys something" and "this is the
+    /// action the page is about". The three defaults were out of step once —
+    /// this one said `.sparkle` while the inits said `.neutral`, which made the
+    /// documented default unreachable; they are kept equal on purpose.
+    var tone: ControlTone = .neutral
     var tint: Color = Theme.claude
     var metrics: ControlMetrics = .regular
     /// The page's default action. A primary control fills solid; every other one
@@ -402,12 +402,8 @@ struct ActionButton<Label: View>: View {
                     // `NSView` and two `CALayer`s per button. Not mounted at all
                     // is the same picture.
                     if tone == .destructive {
-                        LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
-                                    y: pressed ? 0 : (hovered ? 3 : 1.5),
-                                    opacity: hovered ? 0.20 : 0.13,
-                                    cornerRadius: metrics.height / 2,
-                                    surface: .clear,
-                                    color: .black)
+                        DestructivePlateShadow(hovered: hovered, pressed: pressed,
+                                               height: metrics.height)
                     }
                 }
                 .contentShape(Capsule())
@@ -610,60 +606,38 @@ struct ActionIcon: View {
     }
 }
 
-/// The app's push button. The machined pill that used to live here is now
-/// `ActionButton` — one plate, drawn once, instead of this style plus the
-/// `adaptiveGlassButton` alias plus `ProviderActionStyle` plus a connector
-/// recipe all reaching for the same material.
+/// The one drop shadow the app's push button draws, shared by the two bodies
+/// that can be destructive (`ActionButton` and `ActionPlateButtonStyle`).
 ///
-/// The name survives as a **shim** because four call sites still construct it
-/// directly (`ProviderActionStyle`, `ConnectorUtilityButtonStyle`,
-/// `ConnectorDetailSheet`) and because `Interaction.swift`'s
-/// `adaptiveGlassButton` reaches it. It forwards to `ActionButton`'s plate, so
-/// those call sites and a native `ActionButton` are the same object, and this
-/// type can be deleted with the last of them.
-///
-/// What it deliberately does **not** keep: `tall`. The old style's hero
-/// proportions are `ActionButton(tone:…, size: .large)`, and a shim that also
-/// re-derives them would be a second geometry to keep in sync — the exact drift
-/// this file exists to end.
-struct InstrumentButtonStyle: ButtonStyle {
-    var prominent = false
-    /// Rim and, with `filled`, the body. A shape hue, not ink.
-    var tint: Color = Theme.claude
-    /// Overrides the label where the label itself is the signal — a destructive
-    /// action wants white ink on the filled plate.
-    var ink: Color? = nil
-    /// Fills the body with `tint` instead of the well tone. `prominent` is the
-    /// page's primary action; a destructive button is normally this too, because
-    /// "filled with the danger hue" is the loudest thing it can be without
-    /// inventing a second shape.
-    var filled: Bool? = nil
+/// It used to be six identical lines in each, which is how a pair of twins
+/// drifts; `Tools/render-mainwindow-preview.py` also has to find and neutralise
+/// this exact layer for a still render, and it only has to know one shape now.
+/// Only a destructive tone mounts it — every other tone's shadow was drawn at
+/// opacity 0, which still cost a hosted `NSView` and two `CALayer`s per button.
+struct DestructivePlateShadow: View {
+    var hovered: Bool
+    var pressed: Bool
+    var height: CGFloat
 
-    private var isFilled: Bool { filled ?? prominent }
-
-    func makeBody(configuration: Configuration) -> some View {
-        // The tone comes from the *intent*, the tint from the caller; a
-        // destructive hue is the one tint that also changes which tone the plate
-        // is drawn in, because `ActionButton` reserves the solid fill for that
-        // case.
-        let tone: ControlTone = isFilled
-            ? (tint == Theme.statusError ? .destructive : .accent)
-            : .neutral
-        return ActionPlateButtonStyle(tone: tone, tint: tint, ink: ink,
-                                      metrics: .regular,
-                                      emphasis: isFilled ? .primary : .standard)
-            .makeBody(configuration: configuration)
+    var body: some View {
+        LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
+                    y: pressed ? 0 : (hovered ? 3 : 1.5),
+                    opacity: hovered ? 0.20 : 0.13,
+                    cornerRadius: height / 2,
+                    surface: .clear,
+                    color: .black)
     }
 }
 
-/// The alias's drawing: `ActionButton`'s plate, sized and toned from the
-/// historical arguments.
+/// `ActionButton`'s plate, as a `ButtonStyle`.
 ///
-/// Kept as a `ButtonStyle` (rather than folded into `ActionButton`) because a
-/// call site whose label it does not own — a `ProgressView`, a rolling figure —
-/// still needs the plate applied to a `Button` it built itself. It is a
-/// `ButtonStyle` and not a `ViewModifier` because the press state lives in the
-/// configuration, and the plate has to answer it.
+/// Kept as a style (rather than folded into `ActionButton`) because a call site
+/// whose label it does not own — a `ProgressView`, a rolling figure — still
+/// needs the plate applied to a `Button` it built itself, and because the two
+/// historical names `ProviderActionStyle` / `ConnectorUtilityButtonStyle`
+/// forward here with positional arguments. It is a `ButtonStyle` and not a
+/// `ViewModifier` because the press state lives in the configuration, and the
+/// plate has to answer it.
 struct ActionPlateButtonStyle: ButtonStyle {
     var tone: ControlTone
     var tint: Color
@@ -688,11 +662,8 @@ struct ActionPlateButtonStyle: ButtonStyle {
             .background {
                 // Destructive only: any other tone drew this at opacity 0.
                 if tone == .destructive {
-                    LayerShadow(radius: pressed ? 1 : (hovered ? 6 : 3),
-                                y: pressed ? 0 : (hovered ? 3 : 1.5),
-                                opacity: hovered ? 0.20 : 0.13,
-                                cornerRadius: metrics.height / 2,
-                                surface: .clear, color: .black)
+                    DestructivePlateShadow(hovered: hovered, pressed: pressed,
+                                           height: metrics.height)
                 }
             }
             .contentShape(Capsule())
@@ -724,10 +695,7 @@ struct ActionPlateButtonStyle: ButtonStyle {
     }
 }
 
-extension View {
-}
-
-import SwiftUI
+// MARK: - Controls borrowed from Uiverse.io
 
 // Native translations of the *control* language in the Uiverse.io pieces this
 // product borrows from — the half the surface file (`UiverseSurfaces.swift`)
@@ -870,16 +838,11 @@ extension View {
 struct InstrumentToggleStyle: ToggleStyle {
     /// Ink for the label and the hover rim.
     var tint: Color = Theme.Ink.claude
-    /// Kept for call-site compatibility. The reference paints its track from its
-    /// own surface ramp rather than a hue wash, so this tint is no longer used
-    /// for the track — see the type note above.
-    var faceTint: Color = Theme.claude
+    /// `false` drops the label column, for a bare switch in a tile cell.
     var showsLabel = true
     /// Overall width. The reference artwork is 216 wide; this default is about a
     /// third of that, because most call sites here sit in a caption row.
     var width: CGFloat = 62
-    /// `false` drops the label column, for a bare switch in a tile cell.
-    var label: ((Configuration.Label) -> AnyView)? = nil
 
     /// The reference's proportions, as ratios of `width`.
     ///
@@ -975,10 +938,8 @@ extension ToggleStyle where Self == InstrumentToggleStyle {
 
 extension Toggle {
     func instrumentToggle(tint: Color = Theme.Ink.claude,
-                          faceTint: Color = Theme.claude,
                           showsLabel: Bool = true) -> some View {
-        toggleStyle(InstrumentToggleStyle(tint: tint, faceTint: faceTint,
-                                          showsLabel: showsLabel))
+        toggleStyle(InstrumentToggleStyle(tint: tint, showsLabel: showsLabel))
     }
 }
 

@@ -54,14 +54,26 @@ struct StandbyEmptyState: View {
         } else {
             HStack(spacing: Theme.Space.s10) {
                 mark(size: 30)
-                Text(label)
-                    .font(Theme.Font.bodySmall)
-                    .foregroundStyle(Theme.textSecondary)
+                // The caption is *not* block-only state: the one inline call
+                // site that passes one (the filtered traffic log) is explaining
+                // why the filter matched nothing, which belongs right under the
+                // row it is about. It used to be dropped in silence.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.textSecondary)
+                    if let caption {
+                        Text(caption)
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textTertiary())
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Spacer(minLength: 0)
             }
             .padding(.vertical, Theme.Space.s8)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(label)
+            .accessibilityLabel(caption.map { "\(label)。\($0)" } ?? label)
         }
     }
 

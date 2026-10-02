@@ -4,8 +4,7 @@
 Four things are locked in, each of them one edit away from silently regressing:
 
 1. **The outlines are Lucide's.** `LucideHardwareGeometry.swift` is generated
-   from Lucide's own `cpu` / `gpu` / `memory-stick` / `hard-drive` SVGs (plus
-   `laptop-minimal` and `fan`, which the fan popover and the rotor draw). The
+   from Lucide's own `cpu` / `gpu` / `memory-stick` / `hard-drive` SVGs. The
    check re-runs the generator's expectations: every mark is authored on the
    24pt grid, inside it, and the file still says it is generated. An earlier
    version hand-authored four silhouettes on a Canvas, and the result was
@@ -17,9 +16,13 @@ Four things are locked in, each of them one edit away from silently regressing:
 3. **The lane and the icon are separate.** The measurement is a *rasterisation*:
    the reading is read off the pixels of its own lane, which is what a
    screenshot would show.
-4. **No `LoadRing`.** The view, its `DecorativeMotion` kind and the rate
-   machinery are gone — a ~96° arc at 22–28pt read as a spinner ("waiting") and
-   duplicated the figure printed below it.
+4. **No ring behind the header glyph.** `LoadRing` and the `InstrumentRing`
+   that replaced it are gone — a ~96° arc at 22–28pt read as a spinner
+   ("waiting") and duplicated the figure printed below it, and a ring drawn
+   around the glyph read the same whichever way its ink was laid out. The
+   check scans the call sites *and* renders the tile badge at the 26pt frame
+   `ResourceStrip.meter` hands it, so an ornament that reappears as drawing
+   rather than as a call site still fails.
 """
 from pathlib import Path
 import re
@@ -44,13 +47,13 @@ assert 'generated' in geometry.lower(), \
     'LucideHardwareGeometry must keep saying it is generated'
 assert 'Tools/gen-lucide-hardware.py' in geometry, \
     'the generated file must name its generator'
-for name in ('cpu', 'gpu', 'memory-stick', 'hard-drive', 'laptop-minimal', 'fan'):
+for name in ('cpu', 'gpu', 'memory-stick', 'hard-drive'):
     assert f'Lucide `{name}`' in geometry, f'{name} geometry missing from the generated file'
 # Authored on the 24pt grid, and nothing may stray outside it.
 coords = [float(v) for v in re.findall(r'(?:x|y): (-?\d+(?:\.\d+)?)', geometry)]
 assert coords and min(coords) >= -0.001 and max(coords) <= 24.001, \
     f'every Lucide coordinate must lie on the 24pt grid, got {min(coords)}…{max(coords)}'
-for kind in ('cpu', 'gpu', 'memory', 'disk', 'laptop', 'fan'):
+for kind in ('cpu', 'gpu', 'memory', 'disk'):
     assert f'case .{kind}:' in geometry, f'the generated file must define {kind}'
 # The generator itself must exist and be re-runnable.
 assert (root / 'Tools/gen-lucide-hardware.py').is_file(), 'the generator is missing'
@@ -95,11 +98,23 @@ for needle in ['SiliconCells(gpu: true',
     assert needle in strip, f'ResourceStrip must pass {needle!r} to the mark'
 
 # --- Render, then measure ---------------------------------------------------
+# `InstrumentGlyph` is sliced too: the header check below measures the badge the
+# meter actually draws, and the mark's bridge names its `Kind`. A stub of the
+# glyph would be a stub of the thing under test — the old fixture drew an SF
+# Symbol here and no probe could ever touch it. `LucideHardwarePaths` is what
+# that badge draws for gpu / vpn.
+paths = (shared / 'LucideHardwarePaths.swift').read_text()
+glyph = (shared / 'InstrumentGlyph.swift').read_text()
+
 probe = (root / 'Tests/fixtures/machine-mark-probe.swift').read_text()
 for token, body in (('<<<LUCIDE_GEOMETRY>>>', geometry),
+                    ('<<<LUCIDE_PATHS>>>', paths),
+                    ('<<<INSTRUMENT_GLYPH>>>', glyph),
                     ('<<<HARDWARE_ILLUSTRATION>>>', illustration)):
     assert token in probe, f'the probe template lost {token}'
 swift = probe.replace('<<<LUCIDE_GEOMETRY>>>', geometry) \
+             .replace('<<<LUCIDE_PATHS>>>', paths) \
+             .replace('<<<INSTRUMENT_GLYPH>>>', glyph) \
              .replace('<<<HARDWARE_ILLUSTRATION>>>', illustration)
 
 with tempfile.TemporaryDirectory(prefix='claudebar-machine-mark-') as folder:
@@ -109,27 +124,39 @@ with tempfile.TemporaryDirectory(prefix='claudebar-machine-mark-') as folder:
     binary = folder / 'probe'
     subprocess.run(['swiftc', '-O', '-parse-as-library', str(source), '-o', str(binary)], check=True)
     shots = folder / 'shots'
-    subprocess.run([str(binary), str(shots)], check=True)
+    rendered = subprocess.run([str(binary), str(shots)], check=True,
+                              capture_output=True, text=True)
 
     from PIL import Image
     import numpy as np
 
     SCALE = 8.0
-    FRAME_W, FRAME_H = 128.0, 104.0
+    FRAME_H = 104.0
+    BADGE = 26.0
 
-    # Mirror the layout the mark uses: icon lane on top, reading lane beneath.
-    lane_h = max(13.0, FRAME_H * 0.22)
-    icon_h = FRAME_H - lane_h - 7
-    side = min(FRAME_W, icon_h)
-    lane_x = (FRAME_W - side) / 2
-    lane_y = side + 7
-    LANE = (lane_x, lane_y, side, lane_h)
-
-    # Each bar's own rect inside the lane, mirrored from `drawReading`.
-    def bar_rects(count):
-        gap = 1.0 if count > 10 else (1.4 if count > 6 else 2.2)
-        w = (LANE[2] - gap * (count - 1)) / count
-        return [(LANE[0] + i * (w + gap), LANE[1], w, LANE[3]) for i in range(count)]
+    # The lane and bar rects come from the probe's own run of
+    # `HardwareIllustration.placement(in:)` / `laneBars(...)`, not from a second
+    # implementation here. The Python copy of the layout went stale when the
+    # lane split changed (aa9ea5a) and the reads stopped landing on the drawing
+    # they claimed to measure.
+    lane = None
+    bars = {}
+    for line in rendered.stdout.splitlines():
+        parts = line.split()
+        if parts[:1] == ['LANE'] and len(parts) == 5:
+            lane = tuple(float(v) for v in parts[1:])
+        elif parts[:1] == ['BAR'] and len(parts) == 7:
+            bars.setdefault(parts[1], []).append(tuple(float(v) for v in parts[3:]))
+    assert lane, f'the probe must print the lane it renders, got:\n{rendered.stdout}'
+    assert bars, 'the probe must print the bar rects it renders'
+    # The lane is a gauge strip under the icon, not a second panel. The layout
+    # doc's own complaint about the old split is the proportion to keep: at the
+    # tile size it left "the icon a hair under half the slot and the bars a lane
+    # thicker than the gap between two DIMM pads" (~0.30 of the icon's side).
+    # The numbers are production's (printed above), so the assertion survives a
+    # deliberate layout change but fails if the lane stops being a strip.
+    assert lane[3] <= lane[2] * 0.30, \
+        f'the reading lane must stay a strip under the icon, got {lane[3]:.1f}pt for a {lane[2]:.1f}pt side'
 
     def load(name):
         return np.array(Image.open(shots / f'{name}.png').convert('L')).astype(float)
@@ -148,83 +175,136 @@ with tempfile.TemporaryDirectory(prefix='claudebar-machine-mark-') as folder:
         assert sub.size, f'rect {rect} fell outside the raster'
         return float(np.median(sub))
 
-    def bar_ink(name, count):
+    def bar_ink(name):
         """Median luminance per bar, measured at the bar's own baseline."""
         image = load(name)
-        out = []
-        for x, y, w, h in bar_rects(count):
-            out.append(ink(image, (x, y + h * 0.55, w, h * 0.45), inset=0.25))
-        return out
+        return [ink(image, (x, y + h * 0.55, w, h * 0.45), inset=0.25)
+                for x, y, w, h in bars[name]]
 
     # 1. One bar per core, and the count is the *mark's*, not the call's.
-    assert len(bar_ink('cpu-12', 12)) == 12
+    assert len(bars['cpu-12']) == 12, f'twelve cores must lay out twelve bars, got {len(bars["cpu-12"])}'
     for count in (12, 10, 8):
-        bars = bar_ink(f'cpu-{count}', count)
+        values = bar_ink(f'cpu-{count}')
         # A busy bar is ink (< 170); an idle one is a pale stub (> 200).
-        lit = sum(1 for v in bars if v < 170)
-        assert lit == count, f'{count} busy cores must fill {count} bars, got {lit} ({[int(v) for v in bars]})'
+        lit = sum(1 for v in values if v < 170)
+        assert lit == count, f'{count} busy cores must fill {count} bars, got {lit} ({[int(v) for v in values]})'
 
     # 2. Idle cores keep their stubs but must not glow.
-    idle = bar_ink('cpu-idle', 12)
+    idle = bar_ink('cpu-idle')
     assert all(v > 200 for v in idle), f'an idle core must be a pale stub: {[int(v) for v in idle]}'
 
     # 3. Half busy is half the lane, in core order.
-    half = bar_ink('cpu-half', 12)
+    half = bar_ink('cpu-half')
     assert all(v < 170 for v in half[:6]) and all(v > 200 for v in half[6:]), \
         f'the filled bars must be the busy cores, in order: {[int(v) for v in half]}'
 
     # 4. Bar height tracks the reading: a 30 % core stands visibly shorter than a
     #    95 % one, measured as the row of fill heights down each bar's centre.
-    def fill_height(name, count, index):
+    def fill_height(name, index):
         image = load(name)
-        x, y, w, h = bar_rects(count)[index]
+        x, y, w, h = bars[name][index]
         column = image[int(y * SCALE):int((y + h) * SCALE), int((x + w / 2) * SCALE)]
         rows = np.where(column < 190)[0]
         return float(rows.size) / SCALE if rows.size else 0.0
 
-    tall = fill_height('cpu-12', 12, 0)
-    short = fill_height('cpu-30', 12, 0)
+    tall = fill_height('cpu-12', 0)
+    short = fill_height('cpu-30', 0)
     assert tall > short + 2, \
         f'a 95 % bar must stand taller than a 30 % one ({tall:.1f}pt vs {short:.1f}pt)'
 
-    # 5. No per-core reading → exactly one bar at the aggregate.
-    aggregate = bar_ink('cpu-aggregate', 12)
-    first = aggregate[0]
-    assert first < 190, f'the aggregate fallback must fill a bar, got {first:.0f}'
-    # ...and it spans the whole lane rather than pretending to be twelve cores.
-    span = load('cpu-aggregate')
-    filled = sum(1 for x in range(int(LANE[0] * SCALE), int((LANE[0] + LANE[2]) * SCALE))
-                 if np.median(span[int((LANE[1] + LANE[3] * 0.7) * SCALE):int((LANE[1] + LANE[3]) * SCALE), x]) < 190)
-    assert filled > LANE[2] * SCALE * 0.85, \
-        'the aggregate bar must span the lane, not leave eleven empty slots'
+    # 5. No per-core reading → exactly one bar at the aggregate, and it is the
+    #    bar the layout computes — not the icon ink a mis-aimed probe happens to
+    #    read. The count is asserted off the layout, and the raster is compared
+    #    against the same pixels of `cpu-idle`, so a fallback that draws twelve
+    #    pale stubs (the regression this item names) changes the count and a
+    #    fallback that draws a pale lane-wide stub changes the raster.
+    aggregate_bars = bars['cpu-aggregate']
+    assert len(aggregate_bars) == 1, \
+        f'the aggregate fallback must lay out one bar, got {len(aggregate_bars)}'
+    ax, ay, aw, ah = aggregate_bars[0]
+    assert abs(aw - lane[2]) < 0.01, \
+        f'the aggregate bar must span the lane ({aw:.1f} vs lane {lane[2]:.1f})'
+    assert ah < lane[3] and ah >= lane[3] * 0.3, \
+        f'the aggregate bar must be a readable fill of the lane, got {ah:.1f}pt of {lane[3]:.1f}pt'
+    aggregate = ink(load('cpu-aggregate'), (ax, ay + ah * 0.25, aw, ah * 0.6), inset=0.0)
+    idle_rail = ink(load('cpu-idle'), (ax, ay + ah * 0.25, aw, ah * 0.6), inset=0.0)
+    assert aggregate < 190, f'the aggregate fallback must fill a bar, got {aggregate:.0f}'
+    assert idle_rail > 200, f'the same rail pixels with no reading must read pale, got {idle_rail:.0f}'
+    assert aggregate < idle_rail - 20, \
+        f'the aggregate bar must be visibly darker than the empty rail ({aggregate:.0f} vs {idle_rail:.0f})'
+    # 5b. ...and it is one lit block, not twelve pale stubs: the *darkest* pixel
+    #     in the bar's own rect belongs to the fallback's filled shading, where a
+    #     twelve-stub render (or any per-unit breakdown) only reaches the pale
+    #     stub tone. The bar rects come from `laneBars`, so this reads the mark's
+    #     own geometry, not a Python copy of it.
+    aggregate_rect = load('cpu-aggregate')[int(ay * SCALE):int((ay + ah) * SCALE),
+                                            int(ax * SCALE):int((ax + aw) * SCALE)]
+    stub_rect = load('cpu-idle')[int(ay * SCALE):int((ay + ah) * SCALE),
+                                 int(ax * SCALE):int((ax + aw) * SCALE)]
+    assert aggregate_rect.min() < 180, \
+        f'the aggregate fallback must fill its bar, darkest pixel {aggregate_rect.min():.0f}'
+    assert stub_rect.min() > 200, \
+        f'a per-unit stub must stay pale, darkest pixel {stub_rect.min():.0f}'
 
     # 6. GPU: one bar per published sub-unit, and each bar's *height* is its own
     #    reading — a 100 %, 50 % and 10 % sub-unit must stand at three heights.
     #    (All three are filled, so the shading is checked as height, not tint: a
     #    10 % bar is a short bar, not a dark one.)
-    heights = [fill_height('gpu-mixed', 3, i) for i in range(3)]
+    heights = [fill_height('gpu-mixed', i) for i in range(3)]
     assert heights[0] > heights[1] > heights[2], \
         f'GPU bars must scale with their own readings, got {[round(h, 1) for h in heights]}'
     assert heights[1] < heights[0] * 0.80, \
         f'a 50 % sub-unit must be visibly shorter than a 100 % one: {[round(h, 1) for h in heights]}'
-    full = [fill_height('gpu-full', 3, i) for i in range(3)]
+    full = [fill_height('gpu-full', i) for i in range(3)]
     assert all(h > heights[1] for h in full), \
         'an all-busy GPU must fill all three bars to the same full height'
 
+    # 6b. The GPU's no-sub-unit fallback is the same branch as the CPU's, so its
+    #     aggregate gets the same shape of assertion rather than being rendered
+    #     and thrown away.
+    assert len(bars['gpu-aggregate']) == 1, \
+        f'the GPU aggregate fallback must lay out one bar, got {len(bars["gpu-aggregate"])}'
+    gax, gay, gaw, gah = bars['gpu-aggregate'][0]
+    assert abs(gaw - lane[2]) < 0.01, 'the GPU aggregate bar must span the lane'
+    gpu_aggregate = ink(load('gpu-aggregate'), (gax, gay + gah * 0.25, gaw, gah * 0.6), inset=0.0)
+    assert gpu_aggregate < 190, f'the GPU aggregate fallback must fill a bar, got {gpu_aggregate:.0f}'
+    gpu_rect = load('gpu-aggregate')[int(gay * SCALE):int((gay + gah) * SCALE),
+                                      int(gax * SCALE):int((gax + gaw) * SCALE)]
+    assert gpu_rect.min() < 180, \
+        f'the GPU aggregate fallback must fill its bar, darkest pixel {gpu_rect.min():.0f}'
+
     # 7. 内存 / 硬盘 carry their own capacity readings.
     for name, count in (('mem', 3), ('disk', 1)):
-        bars = bar_ink(name, count)
-        assert any(v < 190 for v in bars), f'{name} must fill at least one capacity bar'
+        assert len(bars[name]) == count, f'{name} must lay out {count} capacity bar(s)'
+        values = bar_ink(name)
+        assert any(v < 190 for v in values), f'{name} must fill at least one capacity bar'
 
-    # 8. The header glyph box must be free of ring ink.
-    header = load('header')
-    inked = 0
-    for ox, oy in ((14, 14), (41, 14), (14, 41), (41, 41)):
-        patch = header[int(oy * SCALE):int((oy + 3) * SCALE), int(ox * SCALE):int((ox + 3) * SCALE)]
-        if (patch < 150).mean() > 0.6:
-            inked += 1
-    assert inked == 0, f'the header glyph box must be free of ring ink; found {inked} inked corners'
+    # 8. The tile badge must draw its glyph and nothing else. `ResourceStrip.meter`
+    #    hands `InstrumentBadge` a 26pt frame, and the glyph is authored on a 24pt
+    #    grid centred in it, so its own ink stops ~3pt in from every edge: an
+    #    ornament drawn around or behind it (the deleted `LoadRing` /
+    #    `InstrumentRing` shape, a plate, an arc) is ink in the frame's own
+    #    margin, which the glyph itself never reaches. The margin band is
+    #    measured on the badge raster itself — the earlier version probed four
+    #    points inside an SF Symbol stand-in's padded box, where no ornament
+    #    could ever land.
+    margin = int(1.5 * SCALE)
+    for kind in ('cpu', 'gpu', 'memory', 'disk'):
+        image = load(f'badge-{kind}')
+        edge = int(BADGE * SCALE)
+        assert image.shape >= (edge, edge), f'badge-{kind} must rasterise the 26pt frame'
+        image = image[:edge, :edge]
+        band = np.zeros_like(image, dtype=bool)
+        band[:margin, :] = band[-margin:, :] = band[:, :margin] = band[:, -margin:] = True
+        darkest = image[band].min()
+        assert darkest > 250, (
+            f'the {kind} tile badge carries ink in its own margin (darkest {darkest:.0f}): '
+            'the glyph must stand alone, with no ring or plate around it')
+        inner = image[margin:-margin, margin:-margin]
+        assert (inner < 200).mean() > 0.05, \
+            f'the {kind} tile badge draws no glyph, so the margin check proves nothing'
 
 print('PASS: marks draw Lucide geometry on its 24pt grid in a generated file; the reading is a live '
       'lane (12/10/8 countable bars, 6-of-12 in order, idle stubs pale, taller bar = higher reading, '
-      'aggregate spans the lane, GPU per sub-unit, 内存/硬盘 capacities); no ring behind any tile glyph')
+      'aggregate bars laid out by the mark itself and visibly filled, GPU per sub-unit, 内存/硬盘 '
+      'capacities); the tile badge draws its glyph with an empty margin, so no ring can sit behind it')

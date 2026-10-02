@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Production greeting geometry and ink selection. No app, preferences or GPU."""
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
+# `GreetingStatusSheet.Metrics` is the single source of truth for the clearances
+# the greeting layout must respect. The card is a SwiftUI view, so it cannot be
+# compiled into this harness; its source is scraped instead, and injected with
+# `json.dumps` so the embedding survives the backslashes and quotes in the file.
+card_source = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
 
 def declaration(path, anchor):
     raw = (root / path).read_text()
@@ -23,6 +29,11 @@ source += (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text()
 for name in ['SkyScene', 'GreetingScript', 'AtmosphereShader', 'AtmosphereRenderer']:
     source += '\n' + (root / f'Sources/ClaudeBar/Views/Shared/Atmosphere/{name}.swift').read_text()
 source += '\nenum SolarTimesFixture {\n' + declaration('Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift', '    static func times(on date: Date,') + '}\n'
+# `WindDial.bearing` / `.name` are static and touch no view state, so the real
+# functions compile into the harness as-is (the `View` conformance needs
+# AppKit/SwiftUI, which the harness already imports).
+source += declaration('Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift', 'struct WindDial: View {')
+source += '\nlet cardSource = ' + json.dumps(card_source, ensure_ascii=False) + '\n'
 source += r'''
 @main struct Regression {
     @MainActor static func main() {
@@ -30,6 +41,39 @@ source += r'''
         func require(_ condition: Bool, _ message: String = "Regression failed") {
             guard condition else { print("FAIL: " + message); exit(1) }
         }
+        // Geometry the card owns is read out of the card source instead of
+        // being copied: a number typed twice drifts silently, and a clearance
+        // band that is *wider* than production turns the overlap checks below
+        // into green lines that can never fire. The old literals here were
+        // 80pt looser than the shipping card after `nowHeight` grew from 88.
+        func metric(_ name: String) -> CGFloat {
+            let pattern = "var " + name + ": CGFloat { "
+            guard let start = cardSource.range(of: pattern) else {
+                fatalError("GreetingStatusSheet.Metrics no longer declares \(name)")
+            }
+            let tail = cardSource[start.upperBound...].prefix(while: { $0 != "}" })
+            guard let value = Double(tail.split(separator: " ").first ?? "") else {
+                fatalError("Metrics.\(name) is not a literal any more: \(tail)")
+            }
+            return CGFloat(value)
+        }
+        // The card's call site, so a changed clearance composition (an extra
+        // inset, a different constant) fails loudly here rather than silently
+        // loosening the band this fixture derives.
+        func cardCallSite() -> String {
+            let marker = "topClear: m.topClear"
+            guard let start = cardSource.range(of: marker) else { return "" }
+            return String(cardSource[start.lowerBound...].prefix(120))
+        }
+        // The *restore* policy itself (`AppPreferences.restoreGreetingTypefaces`)
+        // is deliberately not re-tested here. Its only meaningful failure is the
+        // removal store forgetting to un-remove the language's rawValues, and
+        // that store lives in `AppPreferences` (UserDefaults + the font updater),
+        // which this fixture does not compile. Re-deriving it in the harness
+        // would just filter an already-clean set with the same predicate and
+        // pass unconditionally — the tautology this replaces. The restore
+        // coverage that *is* real runs a few lines below: the local font file
+        // is deleted and re-materialized through `prepareLocalFiles`.
         // Picker deletion policy is pure production logic: no UserDefaults.
         for chinese in [true, false] {
             var removed: Set<String> = []
@@ -48,8 +92,6 @@ source += r'''
             require(survivor.count == (chinese ? 1 : 4), "Keep last Chinese face and all system faces")
             require(survivor.allSatisfy { !GreetingTypeface.canRemove($0, removed: removed) }, "System fonts must not be deletable")
             require(!GreetingTypeface.canRemove(survivor[0], removed: removed), "Last face cannot be deleted")
-            removed.subtract(original.map(\.rawValue))
-            require(GreetingTypeface.available(chinese: chinese, removed: removed) == original, "Restore must recover the catalogue")
         }
         let solarISO = ISO8601DateFormatter()
         func date(_ value: String) -> Date { solarISO.date(from: value)! }
@@ -112,12 +154,40 @@ source += r'''
         reading.forecast = [WeatherDay(date: today, code: 113, high: 32, low: 25, rainChance: 0, wind: 10,
                                       sunrise: forecastRise, sunset: forecastSet)]
         let authoritative = SolarTimesFixture.times(on: today, reading: reading, zone: zone)
+
+        // Wind directions: 中国天气网 sends the wind as a word with 风 already
+        // in it (`WD: "北风"`), which is the spelling the app gets whenever
+        // AMap has no key. The bearing has to resolve, and the word it comes
+        // back as must not carry a second 风.
+        require(WindDial.bearing("北风") == 0, "北风 must resolve to due north")
+        require(WindDial.bearing("东风") == 90, "东风 must resolve to due east")
+        require(WindDial.bearing("西南风") == 225, "西南风 must resolve to south-west")
+        require(WindDial.bearing("北") == 0, "Open-Meteo's bare point must resolve")
+        require(WindDial.bearing("NNE") == 22.5, "wttr.in's English point must resolve")
+        require(WindDial.bearing("西北偏北") == nil, "an unknown word must not invent a bearing")
+        require(WindDial.name("北风") == "北", "the word drops the source's own 风")
+        require(WindDial.name("北风").map { $0 + "风" } == "北风",
+                "name() + 风 must read as the source spelled it, not 北风风")
+        require(WindDial.name("W") == "西", "an English point names the same direction in Chinese")
+        require(WindDial.name("旋风") == nil, "a string naming no point must stay unresolved")
         require(authoritative.rise == forecastRise && authoritative.set == forecastSet, "Forecast precedence")
+        // The clearances are the real card's own: `GreetingStatusSheet.Metrics`
+        // passes `topClear: m.topClear` = margin - 8 + nowHeight + 6 and
+        // `bottomClear: m.bottomClear - 24` = sky - 14 - chartHeight - 6 - 24.
+        // Scraping the numbers keeps a stale literal from widening the band
+        // until the overlap check can never fire — the literals that used to be
+        // here were 80pt looser than the shipping card after `nowHeight` grew.
+        let nowHeight = metric("nowHeight")
+        let chartHeight = metric("chartHeight")
+        let topClearCall = cardCallSite()
+        require(topClearCall.contains("topClear: m.topClear")
+                && topClearCall.contains("bottomClear: m.bottomClear - 24"),
+                "the card's clearance call site moved; this fixture's band no longer matches it")
         var count = 0
         for width: CGFloat in [620, 900, 1100, 1400] {
             let sky = min(430, max(330, width * 0.38)).rounded()
             let margin: CGFloat = width >= 900 ? 32 : 24
-            let top = margin - 8 + 88 + 6, bottom = sky - 100
+            let top = margin - 8 + nowHeight + 6, bottom = sky - 14 - chartHeight - 6 - 24
             for face in GreetingTypeface.allCases {
                 if face.supportsChinese { require(GreetingScript.isAvailable(face), "Bundled Chinese face missing: \(face)") }
                 for phrase in (face.supportsChinese ? ["早点休息呀，", "愿你自在绽放，", "新春快乐，", "雨天也温柔，"] : ["good morning,", "good afternoon,", "good evening,", "happy new year,"]) {
@@ -209,7 +279,7 @@ source += r'''
         let texture = GreetingTypesetter.rasterize(layout, scale: 2)!
         require(texture.texels.count == texture.width * texture.height * 2)
         require(texture.texels.enumerated().contains { $0.offset % 2 == 0 && $0.element > 0 })
-        print("PASS: \(count) greeting/name layouts, original casing, readable name size, instrument clearance, cache and texture; day/night ink; dated solar events, source precedence, polar/DST and missing data")
+        print("PASS: \(count) greeting/name layouts, original casing, readable name size, instrument clearance, cache and texture; day/night ink; dated solar events, source precedence, polar/DST and missing data; wind directions in Chinese, 风-suffixed and English spellings")
     }
 }
 '''

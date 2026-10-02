@@ -91,7 +91,6 @@ func run() throws {
                             updatedAt: nowMs, isAlive: true, waitingFor: waitingFor)
         s.toolPending = toolPending
         s.pendingTool = pendingTool
-        s.projectFolderIsStubbed = true
         return s
     }
 
@@ -184,16 +183,16 @@ with tempfile.TemporaryDirectory(prefix='claudebar-island-') as folder:
     source.write_text('\n'.join([
         'import Foundation',
         # Minimal stand-ins for what the island's snapshot reads but this slice
-        # does not exercise.
-        'enum IslandAgentProbe {}',
+        # does not exercise. Only keep a stub that the sliced code *names*: a
+        # declaration nothing in the compile reaches is dead weight that makes
+        # the fixture look broader than the slice is.
+        #
         # `IslandAgent.markKind` names the app's glyph family; the flatten path
         # never reads it, so a stub stands in for the real instrument kit.
         'enum InstrumentGlyph { enum Kind { case sessions, config, overview } }',
-        'enum UsageSource { case claude }',
         # `ExternalSessionInfo.contextLabel` reaches for `UsageStats`; the
         # instance is only used for its flags, so a stub is enough.
         'enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }',
-        'extension SessionInfo { var projectFolderIsStubbed: Bool { get { false } set {} } }',
         island_agent,
         island_session,
         'struct IslandLiveModelProbe {',

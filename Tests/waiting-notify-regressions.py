@@ -20,6 +20,11 @@ production notification builder:
      old code silently dropped (expanded strip, island off);
   3. the banner's own text: a waiting title, the reason as the body, and a
      subtitle keyed on the session so a re-park replaces rather than stacks.
+
+The banner message is *sliced from the production builder* and executed against
+a stub `post`, not restated: an earlier version of this harness retyped the
+title/body/subtitle by hand, so the suite stayed green while the shipped wording
+could drift away from it.
 """
 from pathlib import Path
 import subprocess, tempfile
@@ -84,15 +89,31 @@ func run() {
     check(!stripCarries(island: true, alerts: false, expanded: false), "alerts off → banner fallback")
     check(!stripCarries(island: false, alerts: false, expanded: true), "all off → banner fallback")
 
-    // 3. The banner text, from the production builder's own arguments.
-    let waiting = BannerProbe.waiting(projectFolder: "ClaudeBar", reason: "等待你确认 · Bash", pid: 42)
-    check(waiting.title == "Claude 需要你确认", "the park banner leads with the agent + ask")
-    check(waiting.body == "ClaudeBar · 等待你确认 · Bash", "the body is project · reason; got \(waiting.body)")
-    check(waiting.subtitle == "waiting-42", "the subtitle is keyed on the session for replace-not-stack")
-    let bare = BannerProbe.waiting(projectFolder: "p", reason: "", pid: 7)
-    check(bare.body == "p · 等待你确认", "an empty reason falls back to the generic ask")
-    let plan = BannerProbe.waiting(projectFolder: "p", reason: "等待确认计划", pid: 9)
-    check(plan.body == "p · 等待确认计划", "a plan approval carries its own reason")
+    // 3. The banner text, from the production builder itself: the method below
+    //    is spliced verbatim out of `NotificationService`, and `post` is the
+    //    only member replaced.
+    let probe = BannerProbe()
+    probe.notifyNeedsInput(session: SessionInfo(projectFolder: "ClaudeBar",
+                                                waitingReason: "等待你确认 · Bash", pid: 42,
+                                                sessionId: "6f2a-session", cwd: "/Users/me/ClaudeBar"))
+    let waiting = probe.posted
+    check(waiting?.title == "Claude 需要你确认", "the park banner leads with the agent + ask")
+    check(waiting?.body == "ClaudeBar · 等待你确认 · Bash",
+          "the body is project · reason; got \(waiting?.body ?? "nil")")
+    check(waiting?.subtitle == "waiting-42", "the subtitle is keyed on the session for replace-not-stack")
+    check(waiting?.categoryID == BannerProbe.waitingCategoryID,
+          "the banner carries the parked-on-you category, so its 去确认 action is offered")
+    check(waiting?.route.agent == "claude", "the route names the agent, so the tap knows where to go")
+    check(waiting?.route.sessionId == "6f2a-session",
+          "the route carries the session key — every agent can be resumed by key, not only by pid")
+    check(waiting?.route.cwd == "/Users/me/ClaudeBar", "the route carries the project directory")
+    check(waiting?.route.pid == 42, "the pid rides along as the shortcut to a live window")
+    probe.notifyNeedsInput(session: SessionInfo(projectFolder: "p", waitingReason: "", pid: 7,
+                                                sessionId: "s7", cwd: "/tmp/p"))
+    check(probe.posted?.body == "p · 等待你确认", "an empty reason falls back to the generic ask")
+    probe.notifyNeedsInput(session: SessionInfo(projectFolder: "p", waitingReason: "等待确认计划", pid: 9,
+                                                sessionId: "s9", cwd: "/tmp/p"))
+    check(probe.posted?.body == "p · 等待确认计划", "a plan approval carries its own reason")
 
     print("\(checks - failures.count)/\(checks) waiting-notify checks passed")
     if !failures.isEmpty { exit(1) }
@@ -104,21 +125,48 @@ run()
 predicate_body = predicate[predicate.index('{') + 1:predicate.rindex('}')].strip()
 harness = harness.replace('PREDICATE_BODY', predicate_body)
 
+# The Claude park banner, verbatim from `NotificationService`. Only `post` is
+# replaced (it is the method that reaches `UNUserNotificationCenter`); the
+# wording, the category and the pid all come from the shipped function, so this
+# suite moves the day the banner does.
+banner_method = slice_method(
+    service, 'func notifyNeedsInput(session: SessionInfo)',
+)
+
 with tempfile.TemporaryDirectory(prefix='claudebar-waiting-notify-') as folder:
     folder = Path(folder)
     source = folder / 'Regression.swift'
     source.write_text('\n'.join([
         'import Foundation',
-        # The banner's message composition, restated exactly as the shipped
-        # `notifyNeedsInput(session:)` builds it (title/body/subtitle), so a
-        # change to the wording there is a change here.
-        'struct Banner { let title: String; let body: String; let subtitle: String }',
-        'enum BannerProbe {',
-        '    static func waiting(projectFolder: String, reason: String, pid: Int) -> Banner {',
-        '        Banner(title: "Claude 需要你确认",',
-        '               body: "\\(projectFolder) · \\(reason.isEmpty ? "等待你确认" : reason)",',
-        '               subtitle: "waiting-\\(pid)")',
+        '/// The fields the builder reads, plus an identity for the message.',
+        'struct SessionInfo: Equatable {',
+        '    let projectFolder: String',
+        '    let waitingReason: String',
+        '    let pid: Int',
+        '    let sessionId: String',
+        '    let cwd: String',
+        '}',
+        '/// The route the production builder hands `post` — the same shape, so a',
+        '/// field renamed in `NotificationService` fails to compile here too.',
+        'struct ResumeRoute: Equatable {',
+        '    var agent: String; var sessionId: String; var cwd: String',
+        '    var pid: Int?; var inDesktop: Bool',
+        '}',
+        '/// The production builder with a stub sink: every argument the shipped',
+        '/// `notifyNeedsInput` passes is captured instead of posted.',
+        'final class BannerProbe {',
+        '    struct Banner: Equatable {',
+        '        let title: String; let body: String; let subtitle: String',
+        '        let categoryID: String; let route: ResumeRoute',
         '    }',
+        '    static let waitingCategoryID = "NEEDS_INPUT"',
+        '    private(set) var posted: Banner?',
+        '    func post(title: String, body: String, subtitle: String,',
+        '              categoryID: String, route: ResumeRoute) {',
+        '        posted = Banner(title: title, body: body, subtitle: subtitle,',
+        '                        categoryID: categoryID, route: route)',
+        '    }',
+        banner_method,
         '}',
         harness,
     ]))

@@ -15,7 +15,7 @@ struct FanInternalsPanel: View {
                 }
                 Spacer()
                 Label("\(fanMonitor.fans.count) 个风扇", systemImage: "fanblades")
-                    .rollingNumber()
+                    .rollingNumber("\(fanMonitor.fans.count) 个风扇")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -87,12 +87,12 @@ struct FanInternalsPanel: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("\(fan.rpm)")
-                    .rollingNumber()
+                    .rollingNumber("\(fan.rpm)")
                     .font(.system(size: 25, weight: .medium, design: .rounded))
                 Text("RPM").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
             }
             Text("上限 \(fan.maxRPM.formatted()) rpm")
-                .rollingNumber()
+                .rollingNumber("上限 \(fan.maxRPM.formatted()) rpm")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             Button {
                 if fan.mode.isAutomatic { fanMonitor.setMaxSpeed(fan.id) }

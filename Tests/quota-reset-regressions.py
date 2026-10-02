@@ -23,6 +23,7 @@ Two things live here, both driven through the production source:
 Extracts both types from the production source, no app launch.
 """
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -30,6 +31,30 @@ root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Models/IdleTransitionDetector.swift').read_text()
 start = source.index('struct QuotaResetDetector {')
 body = source[start:]
+
+# The scheduler's tuning is wired from `AppConfig` in `CodexProviderStore`; the
+# detector/scheduler slice above carries the *code* but not the *values*, so the
+# cross-constant property that keeps a reset from falling between two heartbeats
+# is asserted on the shipped constants themselves. That is the point of doing it
+# here rather than inside the compiled fixture: a scheduler built from test
+# literals asserts `900 >= 900` and cannot fail, while a retune of AppConfig must.
+# (`AppConfig.quotaResetHorizon`'s own doc comment makes this promise about
+# `Tests/quota-reset-regressions.py`.)
+config = (root / 'Sources/ClaudeBar/Models/AppConfig.swift').read_text()
+
+
+def config_constant(name):
+    match = re.search(rf'static let {name}: TimeInterval = ([0-9_]+)', config)
+    assert match, f'AppConfig.{name} is no longer a static let TimeInterval — wire the assertion to its new shape'
+    return float(match.group(1).replace('_', ''))
+
+
+fallback = config_constant('quotaPollInterval')
+horizon = config_constant('quotaResetHorizon')
+assert horizon >= fallback, (
+    f'AppConfig.quotaResetHorizon ({horizon}s) is below quotaPollInterval ({fallback}s): a reset '
+    'can come inside the aim window and pass between two heartbeats without one landing in it, '
+    'so the alert arrives up to a heartbeat late — the latency the scheduler exists to remove')
 
 swift = r'''
 import Foundation
@@ -195,7 +220,13 @@ DETECTOR
         //     detector that ignores it is the silent regression.
         let rollAt = t0.addingTimeInterval(40)
         plan = s.nextInterval(now: t0, windows: [window(97, resets: rollAt)], previous: [:])
-        precondition(plan == 45 || plan == 40,
+        // Aim at the instant *plus grace*, exactly: `grace` is the clock-skew
+        // slack (the server rounds to the minute, the device clock drifts), so
+        // a poll at the bare instant reads the old percentage and spends the
+        // look on nothing. Tolerating `40` here would accept precisely the
+        // regression the constant exists to prevent, and it is unreachable in
+        // the formula besides — only dropping the `+ grace` slack yields it.
+        precondition(plan == rollAt.timeIntervalSince(t0) + s.grace,
                      "the confirming poll lands at the instant plus grace; got \(plan)")
         var rd = QuotaResetDetector()
         _ = rd.record([window(97, resets: rollAt)])

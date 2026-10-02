@@ -251,13 +251,19 @@ if '.transaction(value:' not in roll_body:
         'run in, and a figure fed by the sampler arrives in a plain one, so '
         'without this the digits swap instantly and the roll is invisible in the '
         'running app — which is exactly the regression this guards.')
-elif not re.search(r'\.transaction\(value:\s*transition', roll_body):
+elif not re.search(r'\.transaction\(value:\s*transition\s*\)', roll_body):
     failures.append(
         'Interaction.swift: RollingNumberModifier opens a transaction keyed on '
         'something other than the rendered value. A key that does not change with '
         'the figure is a fresh transaction per poll (the cost this file exists '
         'to prevent); one keyed on the value animates only the change being '
         'drawn.')
+elif not re.search(r'value:\s*figure\b', roll_body):
+    failures.append(
+        'Interaction.swift: the transaction is keyed on `transition`, but that '
+        'value no longer comes from the required `figure`. The rendered figure is '
+        'the only key that moves exactly when the digits do — key the `Transition` '
+        'on `figure` again.')
 
 # --- The fan gauge may animate, but not on the raw reading -------------------
 #
@@ -271,6 +277,11 @@ elif not re.search(r'\.transaction\(value:\s*transition', roll_body):
 # "the file mentions it" passes even when the animated write reads `rpm`
 # straight (confirmed with a negative control — that reintroduction first
 # slipped past a check written that way).
+#
+# Both halves matter: the write has to route through `gaugeValue` **and**
+# `gaugeValue` has to quantise. A `gaugeValue` that returned the raw fraction
+# satisfies the first check and reopens the per-poll transaction the note above
+# describes, so the quantisation step is asserted too.
 rotor_source = without_comments(
     (root / 'Sources/ClaudeBar/Views/Shared/LucideRotor.swift').read_text())
 rotor_body = body_of(rotor_source, ROTOR_BODY[1])
@@ -282,6 +293,16 @@ if 'withAnimation' in rotor_body and not re.search(
         'fan poll — SMC wobbles the RPM most ticks — for a change too small to '
         'see. Route the write through `gaugeValue`, which quantises to the '
         'smallest step worth interpolating.')
+rotor_gauge = body_of(rotor_source, 'private var gaugeValue: Double')
+# Only the *return* has to carry the snap; the comment above it may quote any
+# expression, and a `step` pinned to 0 is the identity the note warns about.
+if not re.search(r'let\s+step\s*=\s*0\.0[0-9]+', rotor_gauge) \
+        or not re.search(r'\(raw\s*/\s*step\)\.rounded\(\)\s*\*\s*step', rotor_gauge):
+    failures.append(
+        'LucideRotor.swift: `gaugeValue` no longer snaps to a step. Returning '
+        'the raw fraction makes the gauge key change on every SMC wobble, which '
+        'is the per-poll transaction this guard exists to prevent — keep the '
+        '`(raw / step).rounded() * step` round-trip.')
 
 # --- The page band must not lift -------------------------------------------
 #

@@ -291,7 +291,7 @@ struct ResourceStrip: View {
                     // height. Wrapping is the honest trade; the hero above keeps
                     // its own single line.
                     Text(caption)
-                        .rollingNumber()
+                        .rollingNumber(caption)
                         .font(Theme.Font.tileLabel)
                         .foregroundColor(tempColor ?? Theme.textTertiary())
                         .lineLimit(2)

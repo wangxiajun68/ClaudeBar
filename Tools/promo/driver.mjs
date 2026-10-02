@@ -75,8 +75,11 @@ const SURFACE_FILES = [
     `window-${page}-light`, `.build/mainwindow-preview/${page}-light.png`,
   ]),
   ['window-traffic-dark', '.build/mainwindow-preview/traffic-dark.png'],
+  // The greeting filenames carry the render mode (`auto-` for the automatic
+  // sky; the `face-*` variants drop it), so the film's four skies must name the
+  // `auto-` renders rather than a bare `light-1100-*` the tool never writes.
   ...['sun', 'cloud', 'rain', 'night'].map(sky => [
-    `greeting-light-${sky}`, `.build/greeting-preview/light-1100-${sky}.png`,
+    `greeting-light-${sky}`, `.build/greeting-preview/auto-light-1100-${sky}.png`,
   ]),
 ];
 

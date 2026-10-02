@@ -349,12 +349,6 @@ struct SegmentedCapsule<Item: Hashable>: View {
     /// selects the Codex lockup, `false` the Claude one, `nil` means the item
     /// has no brand mark and falls back to `symbol`.
     var brand: ((Item) -> Bool?)? = nil
-    /// A live marker on an item: the VPN page uses it for the group the core is
-    /// actually exiting through, which is a *different fact* from the group the
-    /// user is browsing — and the previous shape expressed both at once by
-    /// tinting the same label two ways, so "where the traffic goes" and "what I
-    /// am looking at" were the same colour.
-    var dotted: ((Item) -> Bool)? = nil
     /// Stretch each item to share the width equally. Off for a filter that
     /// should hug its labels (a page toolbar); on for a row that has to span
     /// the surface it filters.
@@ -373,7 +367,6 @@ struct SegmentedCapsule<Item: Hashable>: View {
                               brand: brand.flatMap { $0(item) },
                               count: count?(item),
                               active: on,
-                              dotted: dotted?(item) ?? false,
                               tint: itemTint?(item) ?? tint,
                               fillsWidth: fillsWidth) {
                     guard !on else { return }
@@ -440,8 +433,6 @@ private struct SegmentedItem: View {
     let brand: Bool?
     let count: Int?
     let active: Bool
-    /// Draw the live marker: the traffic is actually going through this item.
-    var dotted: Bool = false
     let tint: Color
     var fillsWidth: Bool = false
     let action: () -> Void
@@ -452,13 +443,6 @@ private struct SegmentedItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Theme.Space.s6) {
-                if dotted {
-                    Circle()
-                        .fill(tint)
-                        .frame(width: 5, height: 5)
-                        .overlay { if active { BusyDotHalo(tint: tint) } }
-                        .accessibilityHidden(true)
-                }
                 if let brand {
                     ProductBrandMark(codex: brand)
                         .frame(width: 15, height: 15)
@@ -475,7 +459,7 @@ private struct SegmentedItem: View {
                     .fixedSize()
                 if let count {
                     Text("\(count)")
-                        .rollingNumber()
+                        .rollingNumber("\(count)")
                         .font(Theme.Font.microMono)
                         .foregroundStyle(active ? tint : Theme.textTertiary())
                     if fillsWidth { Spacer(minLength: 0) }
@@ -499,20 +483,6 @@ private struct SegmentedItem: View {
         .help("\(title)\(count.map { " · \($0) 项" } ?? "")")
         .accessibilityLabel("\(title)\(count.map { "，\($0) 项" } ?? "")")
         .accessibilityAddTraits(active ? .isSelected : [])
-    }
-}
-
-/// The halo around a live dot: a static ring, not a pulse. A repeating ring on
-/// every live item is a per-frame animation on chrome that is almost always on
-/// screen — the same reason the session tiles use a static halo.
-private struct BusyDotHalo: View {
-    let tint: Color
-
-    var body: some View {
-        Circle()
-            .strokeBorder(tint.opacity(0.35), lineWidth: 1.5)
-            .scaleEffect(1.9)
-            .accessibilityHidden(true)
     }
 }
 

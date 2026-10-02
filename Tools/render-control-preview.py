@@ -23,28 +23,6 @@ def declaration(path, start):
         end += 1
     return text[pos:end] + "\n"
 
-def interaction_slices():
-    """Rebuild the fixture's copy of the two `Interaction.swift` pieces."""
-    text = (root / 'Sources/ClaudeBar/Views/Shared/Interaction.swift').read_text()
-
-    def braces(start):
-        opening = text.index('{', start)
-        depth, index = 1, opening + 1
-        while depth:
-            depth += (text[index] == '{') - (text[index] == '}')
-            index += 1
-        return text[start:index]
-
-    starts = [i for i in range(len(text)) if text.startswith('extension View {', i)]
-    hover_extension = next(i for i in starts if 'func hoverState' in braces(i))
-    roll_extension = next(i for i in starts if 'func rollingNumber' in braces(i))
-    parts = [braces(text.index('struct HoverState: ViewModifier {')),
-             '\n',
-             braces(hover_extension),
-             braces(text.index('struct RollingNumberModifier: ViewModifier {')),
-             braces(roll_extension)]
-    return "\n".join(parts)
-
 source = ''
 
 source += '''
@@ -61,16 +39,11 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/InstrumentGlyph.swift').read_t
 
 source += (root / 'Sources/ClaudeBar/Views/Shared/SignatureGlyph.swift').read_text() + '\n'
 source += (root / 'Tools/control-preview-sheet.swift').read_text() + '\n'
-source += (root / 'Sources/ClaudeBar/Views/Shared/ProductBrandMark.swift').read_text().replace(
-    '    init(brand: Brand) { self.brand = brand }',
-    '    init(brand: Brand) { self.brand = brand; self.well = true; self.page = nil }\n'
-    '    init(brand: Brand, well: Bool, page: Bool? = nil) {\n'
-    '        self.brand = brand; self.well = well; self.page = page\n'
-    '    }') + '\n'
+source += (root / 'Sources/ClaudeBar/Views/Shared/ProductBrandMark.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/UiverseSurfaces.swift').read_text().replace('private struct SegmentedItem', 'struct SegmentedItem') + '\n'
 source += (root / 'Sources/ClaudeBar/Views/Shared/DecorativeMotion.swift').read_text() + '\n'
 _tile = (root / 'Sources/ClaudeBar/Views/Shared/Tile.swift').read_text()
-source += _tile[: _tile.index('// MARK: - Metric tile')] + '\n'
+source += _tile[: _tile.index('// MARK: - Tile grid')] + '\n'
 
 
 

@@ -61,8 +61,11 @@ def check(check_only: bool = False) -> None:
 
     chrome = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     if not chrome.exists():
-        sys.exit('Google Chrome is required for frame capture — install it, or '
-                 'point the driver at another Chromium with --browser.')
+        # The driver launches Playwright's `channel: 'chrome'`, which resolves
+        # this same install; there is no browser-path argument to point at a
+        # different Chromium, so do not offer one.
+        sys.exit('Google Chrome (the stable channel) is required for frame capture — '
+                 'install it from google.com/chrome.')
 
     for module in ('film.mjs', 'scenes.mjs', 'page.mjs', 'driver.mjs'):
         if not (FILM / module).is_file():

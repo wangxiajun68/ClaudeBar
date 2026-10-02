@@ -157,6 +157,12 @@ struct ProviderConnectionEditor: View {
             field("配置名称") { TextField("供应商名称", text: $draft.name) }
             field("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
             field("接口地址") { TextField("https://…", text: $draft.baseURL) }
+            Toggle("记录请求报文", isOn: $draft.captureEnabled)
+                .toggleStyle(.instrument)
+                .font(Theme.Font.bodySmall)
+                .help("打开后这个供应商的请求会写进「流量」页的抓包；正文只留在本机")
+            Text("开启抓包后，\(client.title) 经这个供应商的请求会带着完整对话写进「流量」页——按供应商分开记，换供应商不影响另一家的记录。")
+                .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
         }
     }
 
@@ -200,7 +206,7 @@ struct ProviderConnectionEditor: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("模型", systemImage: "square.stack.3d.up").font(.system(size: 15, weight: .semibold))
                     Text("已选 \(draft.modelNames.count) 个 · 带勾的是默认模型")
-                        .rollingNumber()
+                        .rollingNumber("已选 \(draft.modelNames.count) 个 · 带勾的是默认模型")
                         .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

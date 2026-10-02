@@ -76,6 +76,7 @@ struct SessionsPanelView: View {
                                         descendantCount: node.descendantCount,
                                         childAgents: node.children.flatMap(\.flattened),
                                         onDoubleTap: { resumeCodex(node.session) },
+                                        onOpenAgent: { resumeCodex($0) },
                                         onCleanUp: { cleanUpCodex(node.session) })
             }
         }

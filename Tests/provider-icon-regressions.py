@@ -7,11 +7,19 @@ white (Kimi's `-color` variant is pure white on 23% of its canvas) therefore
 renders as a blank tile in light mode with no error anywhere: the file exists,
 decodes, and draws. Contrast is the only thing that catches it, so measure it.
 
-Parses the PNGs directly (palette + alpha) so no bundle or app launch is needed.
+Parses the PNGs directly (palette + alpha — the one ICO is read through Pillow)
+so no bundle or app launch is needed.
 """
 from pathlib import Path
 import struct
 import zlib
+
+# Pillow (pinned in Tests/requirements.txt) is used only for the ICO frame — an
+# ICO is a container of BMP/PNG frames behind somewhat involved directory
+# entries, and hand-rolling that reader the way `_read_png` does is a parser
+# this suite would then own. Everything else stays in `_read_png` so the PNG
+# path keeps needing nothing but the stdlib.
+from PIL import Image
 
 root = Path(__file__).resolve().parents[1]
 icons = root / 'Sources/ProviderIcons'
@@ -128,12 +136,61 @@ def _ink_mean(path):
     return tuple(v / opaque for v in tally), opaque / (width * height)
 
 
+def _ink_mean_ico(path):
+    """Mean opaque-pixel colour of an ICO, using its largest frame. An ICO has
+    no `-light`/`-dark` variants and no fixed frame size, so the rule is "the
+    biggest frame the asset carries" — the one `NSImage` picks when the mark is
+    drawn at 14–36pt. Returns (ink, coverage), the same shape `_ink_mean` has."""
+    image = Image.open(path)
+    width, height = max(image.ico.sizes(), key=lambda size: size[0] * size[1])
+    frame = image.ico.getimage((width, height)).convert('RGBA')
+    tally = [0.0, 0.0, 0.0]
+    opaque = 0
+    for r, g, b, a in frame.getdata():
+        if a > 128:
+            tally[0] += r
+            tally[1] += g
+            tally[2] += b
+            opaque += 1
+    if opaque == 0:
+        raise AssertionError(f'{path.name} has no opaque pixels')
+    return tuple(v / opaque for v in tally), opaque / (width * height)
+
+
 def main():
-    # Only icons tied to a catalog entry that actually ships both variants.
-    marks = sorted({p.name.rsplit('-', 1)[0] for p in icons.glob('*-light.png')})
-    assert marks, 'no -light assets found'
+    # Every bundled mark, keyed by the stem a catalog entry names. The suffix
+    # split keeps `foo-light.png` and `foo-dark.png` as one mark (the pair is
+    # checked below); an `.ico` is its own mark with no variants, which is the
+    # one the old `*-light.png` glob missed entirely — LiteLLM's asset ships
+    # only as an ICO and is drawn in the same well as the PNGs.
+    #
+    # The one recorded exception is LiteLLM: the mark is the vendor's own
+    # favicon and its mid-grey ink measures 2.86–2.97:1 across the frames
+    # (marginally under the floor), so redrawing or inverting it would stop it
+    # being the brand. It is accepted only down to `ACCEPTED_BELOW_FLOOR` —
+    # a replacement that measured white-on-light (1.00:1) is a blank tile and
+    # must still fail, or "accepted exception" would just mean "unmeasured".
+    # The assets' README carries the same note, so widening this band is a
+    # deliberate, visible edit rather than something a looser threshold grants.
+    ACCEPTED_BELOW_FLOOR = {'litellm': 2.8}
+    marks = sorted({p.stem.rsplit('-', 1)[0] if p.suffix == '.png' else p.stem
+                    for p in icons.iterdir() if p.suffix in ('.png', '.ico')})
+    assert marks, 'no bundled marks found'
+
+    def floor_for(icon):
+        return ACCEPTED_BELOW_FLOOR.get(icon, MIN_CONTRAST)
+
     results, failures = [], []
     for icon in marks:
+        ico = icons / f'{icon}.ico'
+        if ico.exists():
+            ink, coverage = _ink_mean_ico(ico)
+            ratio = _contrast(ink, WELLS['light'])
+            results.append((ratio, icon, 'ico', coverage))
+            if ratio < floor_for(icon):
+                failures.append(f'{icon}.ico: contrast {ratio:.2f}:1 '
+                                f'(ink rgb{tuple(round(v) for v in ink)}, coverage {coverage:.1%})')
+            continue
         for variant, well in WELLS.items():
             path = icons / f'{icon}-{variant}.png'
             if not path.exists():
@@ -142,14 +199,20 @@ def main():
             ink, coverage = _ink_mean(path)
             ratio = _contrast(ink, well)
             results.append((ratio, icon, variant, coverage))
-            if ratio < MIN_CONTRAST:
+            if ratio < floor_for(icon):
                 failures.append(f'{icon}-{variant}: contrast {ratio:.2f}:1 '
                                 f'(ink rgb{tuple(round(v) for v in ink)}, coverage {coverage:.1%})')
     assert not failures, (
         'these marks would read as blank tiles on Theme.bgSecondary:\n  ' + '\n  '.join(failures))
     results.sort()
+    accepted = sorted(name for name in ACCEPTED_BELOW_FLOOR
+                      if (icons / f'{name}.ico').exists()
+                      or any((icons / f'{name}-{variant}.png').exists() for variant in WELLS))
+    exception_note = (f' ({", ".join(accepted)} accepted down to '
+                      + ', '.join(f'{ACCEPTED_BELOW_FLOOR[name]:g}:1' for name in accepted) + ')'
+                      ) if accepted else ''
     print(f'PASS: {len(results)} marks clear {MIN_CONTRAST}:1 on their themed icon well; '
-          f'lowest {results[0][1]}-{results[0][2]} at {results[0][0]:.2f}:1')
+          f'lowest {results[0][1]}-{results[0][2]} at {results[0][0]:.2f}:1{exception_note}')
 
 
 if __name__ == '__main__':

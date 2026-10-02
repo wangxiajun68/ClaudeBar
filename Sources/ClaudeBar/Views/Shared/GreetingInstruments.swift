@@ -84,19 +84,28 @@ struct WindDial: View {
         .accessibilityHidden(true)
     }
 
-    /// Both spellings the sources use: Open-Meteo's eight Chinese points and
-    /// wttr.in's sixteen English ones.
+    /// All three spellings the sources use: Open-Meteo's eight bare Chinese
+    /// points, wttr.in's sixteen English ones, and 中国天气网's `"北风"` —
+    /// which is the form the app actually receives whenever AMap has no key
+    /// (the default), so it is the common case, not an edge case. The trailing
+    /// 风 is part of the *word*, not of the direction, and leaving it on made
+    /// the bearing unresolvable (dial fell back to a dot) and the tooltip read
+    /// "北风风 3 级".
     static func bearing(_ direction: String) -> Double? {
+        var text = direction.trimmingCharacters(in: .whitespaces)
+        if text.hasSuffix("风") { text.removeLast() }
         let chinese: [String: Double] = ["北": 0, "东北": 45, "东": 90, "东南": 135,
                                          "南": 180, "西南": 225, "西": 270, "西北": 315]
-        if let degrees = chinese[direction] { return degrees }
+        if let degrees = chinese[text] { return degrees }
         let points = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
                       "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
-        return points.firstIndex(of: direction.uppercased()).map { Double($0) * 22.5 }
+        return points.firstIndex(of: text.uppercased()).map { Double($0) * 22.5 }
     }
 
-    static func name(_ direction: String) -> String {
-        guard let bearing = bearing(direction) else { return direction }
+    /// The direction as a word, or `nil` when the source's string names no
+    /// point — the caller must not append 风 to a string it did not resolve.
+    static func name(_ direction: String) -> String? {
+        guard let bearing = bearing(direction) else { return nil }
         let names = ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
         return names[(Int(bearing / 45 + 0.5) % 8 + 8) % 8]
     }
@@ -532,6 +541,12 @@ struct SillGauge: View {
 /// 天气渲染关掉后，天空停在一种天气上；这一层天气在天空里叫 `SkyScene.Weather`，
 /// 在卡片右上、控制台和日轨里则要用 `WeatherReading.Sky` 的说法（图标 / 名称）。
 /// 两张表本来各自成立，这里只是搭一座桥——不是第三张口径。
+///
+/// **The bridge is the only copy.** `WeatherReading.Sky.symbol(night:)` owns the
+/// glyphs; the card's pinned-sky icon and the manual console's weather table
+/// both go through here, so a weather cannot end up with one name on the header
+/// and another in the picker (it did: pinned heavy rain drew `cloud.rain.fill`
+/// on the header and `cloud.heavyrain.fill` in the console).
 enum PinnedSky {
     static func sky(for weather: SkyScene.Weather?) -> WeatherReading.Sky {
         switch weather {
@@ -550,8 +565,9 @@ enum PinnedSky {
 /// 实时 / 手动 / 贴图：天空跟着实时天气与钟点、跟着自选的天气与时刻，还是关掉
 /// 天气、只留一张天空贴图。一个胶囊，选中项在两三格之间滑动。
 ///
-/// 只有实时天气关掉（`rendering == false`）之后第三格才出现——那之后天空停在
-/// 一种天气上，"贴图"这一格本身就是把它重新打开的开关。
+/// 第三格是「预演」：天气渲染开着时它替换掉「贴图」那一格的位置，选中它
+/// 只换天气图层、时刻留在原地。实时天气关掉（`rendering == false`）之后
+/// 天空停在一种天气上，"贴图"这一格才是把它重新打开的开关。
 struct SkyModeToggle: View {
     /// "auto" / "manual" / "preview"
     var skyMode: String
@@ -582,6 +598,10 @@ struct SkyModeToggle: View {
             } else {
                 segment(0, title: "自动", symbol: "sparkles", help: "天空跟随实时天气与时间")
                 segment(1, title: "手动", symbol: "slider.horizontal.3", help: "自选天气与时段，拖动时间轴预览")
+                if rendering {
+                    segment(2, title: "预演", symbol: "wand.and.stars",
+                            help: "只换这一层天气，时刻留在此刻")
+                }
             }
         }
         .padding(2)
@@ -621,7 +641,19 @@ struct SkyModeToggle: View {
             if none { setRendering(true) } else { setManual(false) }
         case 1:
             // 手动换自动，或预演换手动；同一个动作——真正的手动。
-            setPreview(false)
+            //
+            // Re-tapping 手动 while already manual must be a no-op: the pair
+            // below leaves manual by the *other* door first (`setPreview(false)`
+            // writes `skyMode = "auto"` unconditionally), which makes
+            // `setManual`'s own `on != manual` guard pass and re-seeds the hour
+            // from now — silently throwing away the time the user just scrubbed
+            // and persisting it. Case 0 does not have the problem because
+            // `setManual(false)` finds `manual == false` and returns.
+            if previewing {
+                setPreview(false)
+            } else if manual {
+                return
+            }
             setManual(true)
         default:
             setPreview(!previewing)
@@ -659,15 +691,14 @@ struct SkyConsole: View {
     /// a part of the day and the console reads as a grid.
     static let cell: CGFloat = 34
 
-    static let weathers: [(weather: SkyScene.Weather, title: String, day: String, night: String)] = [
-        (.clear, "晴", "sun.max.fill", "moon.stars.fill"),
-        (.cloudy, "少云", "cloud.sun.fill", "cloud.moon.fill"),
-        (.overcast, "阴", "cloud.fill", "cloud.fill"),
-        (.lightRain, "小雨", "cloud.drizzle.fill", "cloud.drizzle.fill"),
-        (.heavyRain, "大雨", "cloud.heavyrain.fill", "cloud.heavyrain.fill"),
-        (.thunder, "雷雨", "cloud.bolt.rain.fill", "cloud.bolt.rain.fill"),
-        (.snow, "雪", "cloud.snow.fill", "cloud.snow.fill"),
-        (.fog, "雾", "cloud.fog.fill", "cloud.fog.fill"),
+    /// The eight weathers, with the console's own short titles. The **glyphs
+    /// come from `WeatherReading.Sky.symbol(night:)` through `PinnedSky`** —
+    /// spelling them out here made this a third weather→icon table, and it had
+    /// already drifted: 大雨 drew `cloud.heavyrain.fill` in this row while the
+    /// card header drew `cloud.rain.fill` for the same weather.
+    static let weathers: [(weather: SkyScene.Weather, title: String)] = [
+        (.clear, "晴"), (.cloudy, "少云"), (.overcast, "阴"), (.lightRain, "小雨"),
+        (.heavyRain, "大雨"), (.thunder, "雷雨"), (.snow, "雪"), (.fog, "雾"),
     ]
 
     static let bands: [(band: SkyScene.Band, title: String)] = [
@@ -684,7 +715,8 @@ struct SkyConsole: View {
                     let selected = item.weather == weather
                     Button { pickWeather(item.weather) } label: {
                         VStack(spacing: 2) {
-                            WeatherGlyph(symbol: night ? item.night : item.day, size: 12, ink: ink, vivid: vivid)
+                            WeatherGlyph(symbol: PinnedSky.sky(for: item.weather).symbol(night: night),
+                                         size: 12, ink: ink, vivid: vivid)
                                 .frame(height: 14)
                             Text(item.title)
                                 .font(.system(size: 9, weight: selected ? .semibold : .medium))

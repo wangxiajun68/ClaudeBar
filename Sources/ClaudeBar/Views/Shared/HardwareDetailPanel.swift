@@ -101,7 +101,7 @@ struct HardwareDetailPanel: View {
                     .frame(width: 104)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name).font(Theme.Font.chromeEmph)
-                    Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").rollingNumber().font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                    Text(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").rollingNumber(gpu ? "图形处理器 · 整体负载" : "\(sampler.host.coreCount) 个逻辑核心 · 整体负载").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     RollingNumberText(String(format: "%.1f%%", load)).font(Theme.Font.displayMetric).monospacedDigit()
                 }
                 Spacer()
@@ -110,7 +110,7 @@ struct HardwareDetailPanel: View {
             HStack {
                 Label(sampler.host.temperatureLabel(celsius: gpu ? sampler.host.gpuTemperatureCelsius : sampler.host.cpuTemperatureCelsius) ?? "温度暂无读数", systemImage: "thermometer.medium")
                 Spacer()
-                Text("峰值 \(Int((values.max() ?? 0) * 100))%").rollingNumber()
+                Text("峰值 \(Int((values.max() ?? 0) * 100))%").rollingNumber("峰值 \(Int((values.max() ?? 0) * 100))%")
             }.font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
             Text(caption)
                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
@@ -384,7 +384,7 @@ struct CapacityHardwareMark: View {
                                  wells: wells)
                 .frame(height: markHeight - 12)
             Text(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
-                .rollingNumber()
+                .rollingNumber(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)
                 .font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(Theme.textSecondary)
         }
         .accessibilityLabel("\(disk ? "硬盘" : "内存")容量 \(ProcessSampler.Snapshot(memoryBytes: bytes).memoryLabel)")

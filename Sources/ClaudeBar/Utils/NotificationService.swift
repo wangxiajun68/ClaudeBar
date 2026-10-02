@@ -4,7 +4,17 @@ import AppKit
 
 extension Notification.Name {
     /// Posted when the user taps an idle notification (or its Resume action).
-    /// userInfo["pid"] = Int — the session to resume in a terminal.
+    /// The payload names the agent and the session, not a pid: a pid only
+    /// exists for a live Claude process, and Cursor / Codex banners have none
+    /// — the key is what the terminal resumes (`claude --resume <id>` already
+    /// works for an ended session), while `pid` is only the *shortcut* to a
+    /// window that is still holding the session open.
+    ///
+    /// - `agent`: "claude" | "codex" | "cursor"
+    /// - `sessionId`: Claude session uuid / Codex thread id / Cursor composer id
+    /// - `cwd`: the project directory (absent only when the source had none)
+    /// - `pid`: Int, Claude (and a live Codex CLI) only
+    /// - `inDesktop`: Bool, Codex only
     static let resumeSession = Notification.Name("com.claudebar.resumeSession")
 
     /// SQLite vs JSON/JSONL persistence flipped in Settings.
@@ -28,7 +38,6 @@ extension Notification.Name {
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationService()
 
-    private var authorized = false
     private static let categoryID = "IDLE_SESSION"
     /// The parked-on-you category. Separate from `IDLE_SESSION` because the
     /// action is different — a parked prompt is answered in place ("去确认"),
@@ -43,18 +52,22 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Authorization
 
     /// Ask for notification permission on first use. Silent no-op if denied.
+    ///
+    /// This is the one function in the file that reaches the prompting API, so
+    /// the build-channel gate lives here rather than at every caller — a dev
+    /// build must not leave a notification grant in the user's TCC database
+    /// (see `BuildChannel.promptsForSystemPermissions`). The status read itself
+    /// is non-prompting and stays ungated, which is what lets
+    /// `PermissionCenter` still answer "已授权 / 未授权" off a dev build.
     func requestAuthorizationIfNeeded() {
+        guard BuildChannel.promptsForSystemPermissions else { return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                    self.authorized = granted
-                }
-            case .authorized, .provisional:
-                self.authorized = true
+                center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
             default:
-                self.authorized = false
+                break
             }
         }
     }
@@ -95,7 +108,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             body: "\(session.projectFolder) · \(session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)",
             subtitle: "waiting-\(session.pid)",
             categoryID: Self.waitingCategoryID,
-            pid: session.pid
+            route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
+                               pid: session.pid, inDesktop: false)
         )
     }
 
@@ -106,7 +120,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             body: "\(session.projectFolder) · 等待你确认计划",
             subtitle: "waiting-cursor-\(session.composerId)",
             categoryID: Self.waitingCategoryID,
-            pid: nil
+            route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
+                               pid: nil, inDesktop: false)
         )
     }
 
@@ -117,7 +132,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: "session-\(session.pid)",
             categoryID: Self.categoryID,
-            pid: session.pid
+            route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
+                               pid: session.pid, inDesktop: false)
         )
     }
 
@@ -128,7 +144,8 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: "cursor-\(session.composerId)",
             categoryID: Self.categoryID,
-            pid: nil
+            route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
+                               pid: nil, inDesktop: false)
         )
     }
 
@@ -140,12 +157,24 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             body: "\(session.projectFolder) · 最终答复已就绪",
             subtitle: session.id,
             categoryID: Self.categoryID,
-            pid: nil
+            route: ResumeRoute(agent: "codex", sessionId: session.sessionId, cwd: session.cwd,
+                               pid: session.holderPID,
+                               inDesktop: session.inDesktop)
         )
     }
 
+    /// What a banner's tap should open, in a form `UNNotificationContent`
+    /// can carry (property-list values only, so no enum and no URL).
+    struct ResumeRoute {
+        var agent: String
+        var sessionId: String
+        var cwd: String
+        var pid: Int?
+        var inDesktop: Bool
+    }
+
     private func post(title: String, body: String, subtitle: String,
-                      categoryID: String, pid: Int?) {
+                      categoryID: String, route: ResumeRoute) {
         guard AppPreferences.shared.idleNotifyEnabled else { return }
         ensureCategory()
         requestAuthorizationIfNeeded()
@@ -155,9 +184,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.body = body
         content.sound = .default
         content.categoryIdentifier = categoryID
-        if let pid {
-            content.userInfo = ["pid": pid]
-        }
+        content.userInfo = Self.userInfo(for: route)
 
         let request = UNNotificationRequest(
             identifier: subtitle, content: content, trigger: nil)
@@ -174,11 +201,32 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         return [.banner, .sound]
     }
 
-    /// Tap on the banner or the Resume action → resume that session.
+    /// The plist-safe payload a banner carries. Keys stay flat strings so a
+    /// future read never has to know which agent wrote them.
+    private static func userInfo(for route: ResumeRoute) -> [String: Any] {
+        var info: [String: Any] = ["agent": route.agent, "sessionId": route.sessionId]
+        if !route.cwd.isEmpty { info["cwd"] = route.cwd }
+        if let pid = route.pid { info["pid"] = pid }
+        if route.inDesktop { info["inDesktop"] = true }
+        return info
+    }
+
+    /// Tap on the banner or the "在终端继续" action → resume that session in
+    /// the app that owns it (`resumeSession(_:)` switches on `agent`).
+    ///
+    /// The route always carries the session key; only Claude (and a live Codex
+    /// CLI) also carries a pid, which is the shortcut to a window already
+    /// holding it. A Cursor or Codex banner used to post nothing but a pid —
+    /// which it did not have — so its 在终端继续 / 去确认 action was inert.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse) async {
-        let pid = response.notification.request.content.userInfo["pid"] as? Int
-        NotificationCenter.default.post(
-            name: .resumeSession, object: nil, userInfo: pid.map { ["pid": $0] })
+        let info = response.notification.request.content.userInfo
+        guard let agent = info["agent"] as? String,
+              let sessionId = info["sessionId"] as? String, !sessionId.isEmpty else { return }
+        var payload: [String: Any] = ["agent": agent, "sessionId": sessionId]
+        if let cwd = info["cwd"] as? String { payload["cwd"] = cwd }
+        if let pid = info["pid"] as? Int { payload["pid"] = pid }
+        if let inDesktop = info["inDesktop"] as? Bool { payload["inDesktop"] = inDesktop }
+        NotificationCenter.default.post(name: .resumeSession, object: nil, userInfo: payload)
     }
 }

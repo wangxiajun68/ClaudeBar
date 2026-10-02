@@ -84,7 +84,7 @@ struct ProviderStatusBadge: View {
 /// Return, disabled — with **no** authored chrome.
 ///
 /// Every state this used to draw (a faded fill, a rim, the one-shot perimeter
-/// sweep, a press offset) now belongs to `InstrumentButtonStyle`, and this app
+/// sweep, a press offset) now belongs to `ActionPlateButtonStyle`, and this app
 /// has exactly one push-button language. Two hand-rolled copies of it is how the
 /// same page ended up with a rounded *rectangle* button beside a capsule one.
 ///

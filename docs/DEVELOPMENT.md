@@ -67,4 +67,4 @@ make package            # 正式版 DMG / zip / SHA-256 → .build/dist/
 
 脚本默认 `CLAUDEBAR_CHANNEL=dev`，只接受 `dev` / `release`；不再提供独立 test 应用或 `build-test` / `run-test` 命令。`CLAUDEBAR_SKIP_INSTALL=0` 显式安装；打包要求 release 且 skip-install=1。两个版本使用独立构建锁；遗留锁需先确认构建已结束再删除。
 
-CI 只编译两个版本，在 dev job 运行全部回归；发布前运行相同门禁。每次构建或复用时都会检查主应用／Widget 的身份、版本、URL scheme、App Group、DEV 图标与签名，不启动应用。
+CI 只编译两个版本，在 dev job 运行全部回归；发布前运行相同门禁。每次构建或复用时都会检查主应用／Widget 的身份、版本、URL scheme、App Group 与签名，不启动应用；DEV 图标的逐字节比对只在 dev 构建执行（release 图标位仍会随包校验签名，但没有「必须等于某个源文件」的断言）。

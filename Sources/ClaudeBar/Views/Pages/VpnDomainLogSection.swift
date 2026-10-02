@@ -105,7 +105,8 @@ struct VpnDomainLogSection: View {
         } message: {
             Text("将清空当前保留的 \(log.entries.count) 条记录与汇总，无法恢复。"
                  + "磁盘上的 core.log 不受影响。")
-                .rollingNumber()
+                .rollingNumber("将清空当前保留的 \(log.entries.count) 条记录与汇总，无法恢复。"
+                 + "磁盘上的 core.log 不受影响。")
         }
     }
 

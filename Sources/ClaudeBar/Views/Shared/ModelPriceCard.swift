@@ -23,6 +23,13 @@ struct ModelPriceCard: View {
 
     @State private var filter = ""
     @State private var editing: String?
+    /// A slug the user is adding that the catalog does not know yet. `editing`
+    /// alone cannot express it: the editor mounts *inside a row*
+    /// (`ForEach(rows) → PriceRow → if editing == slug`), and a brand-new slug
+    /// is by definition in no row, so 编辑价格 used to set state that nothing
+    /// drew. The draft is rendered as its own row above the table until the
+    /// first save puts it into the catalog.
+    @State private var draftSlug: String?
     @State private var showReport = false
     @State private var addSlug = ""
     @State private var adding = false
@@ -231,6 +238,10 @@ struct ModelPriceCard: View {
         let name = addSlug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !name.isEmpty else { return }
         editing = name
+        // Every slug the catalog can list gets its editor in place; anything
+        // else is the draft row, which lives outside the filter so a search
+        // word cannot hide the editor that was just opened.
+        draftSlug = catalog.allSlugs.contains(name) ? nil : name
         adding = false
         addSlug = ""
     }
@@ -246,7 +257,21 @@ struct ModelPriceCard: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                if rows.isEmpty {
+                if let draftSlug {
+                    // The not-yet-in-the-table row, with its editor already
+                    // open. Saving writes an override, which puts the slug into
+                    // `catalog.allSlugs`; cancelling clears the draft, so a
+                    // cancelled add leaves no phantom row behind.
+                    PriceRow(slug: draftSlug,
+                             editing: $editing,
+                             sourceURL: sourceURL(for: draftSlug),
+                             onDraftEnded: {
+                                 if !catalog.allSlugs.contains(draftSlug) { self.draftSlug = nil }
+                             })
+                        .padding(.horizontal, 20)
+                    SettingsDivider()
+                }
+                if rows.isEmpty && draftSlug == nil {
                     StandbyEmptyState(label: "没有匹配的模型", symbol: "magnifyingglass")
                         .padding(.vertical, 20)
                 }
@@ -301,6 +326,9 @@ private struct PriceRow: View {
     let slug: String
     @Binding var editing: String?
     let sourceURL: String?
+    /// Called when this row's editor closes, so the card can retire the draft
+    /// row of a slug that never made it into the catalog. Nil for table rows.
+    var onDraftEnded: (() -> Void)? = nil
 
     @ObservedObject private var catalog = ModelPriceCatalog.shared
 
@@ -320,7 +348,7 @@ private struct PriceRow: View {
 
             if editing == slug {
                 PriceEditor(slug: slug, existing: catalog.activeOverride(for: slug),
-                            onDone: { editing = nil })
+                            onDone: { editing = nil; onDraftEnded?() })
             } else if let override = catalog.activeOverride(for: slug), let note = override.note {
                 Text(note)
                     .font(Theme.Font.micro)

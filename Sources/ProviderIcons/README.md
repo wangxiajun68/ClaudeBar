@@ -12,6 +12,11 @@ Swapped `-color` for the monochrome mark on 2026-09-24 for five brands whose col
 failed that check on its own themed well — Kimi (pure white, 1.06:1 light), NVIDIA (2.35:1),
 OpenRouter (acid yellow, 1.13:1 light), 硅基流动 (2.52:1 dark), 火山方舟 (2.77:1 light).
 `Tests/provider-icon-regressions.py` now enforces the 3:1 floor on every bundled mark.
+LiteLLM's `litellm.ico` is the one recorded exception: the vendor's own favicon measures
+2.86–2.97:1 on the light well across its frames, and redrawing or inverting it would stop it
+being the brand. It is measured by the suite (ICO frames via Pillow) and listed in
+`ACCEPTED_BELOW_FLOOR` there at 2.8:1, so it cannot be forgotten, and a replacement whose ink
+is genuinely illegible (white-on-light) still fails.
 
 | Local asset | Source |
 | --- | --- |

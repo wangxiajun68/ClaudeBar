@@ -12,7 +12,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | 层级 | 实现 | 说明 |
 |------|------|------|
 | 内容卡 / 瓦片 | `panelCard()`、`.tile()` | 扁平半透明填充 + 发丝线描边，**非** `glassEffect`；避免主窗口全幅 live blur 的 GPU 纹理开销（约 100 MB 量级） |
-| 工具栏按钮 | `ActionButton` | 按**用途**命名而不是按长相：`tone:` 说这是什么控件（`.sparkle` 深色板，默认 / `.neutral` / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。`.sparkle` 是一块近黑的板（`SparklePlate`，来自一个参考 CSS 药丸：hover 渐变 + 紫色辉光，450ms ease-in-out，即 `Theme.Animation.sparkle`）；`.neutral` 仍是铣削凹槽，用在不能让卡片破一个黑洞的地方。`InstrumentButtonStyle` / `ProviderActionStyle` 是同一块板的历史名字，`adaptiveGlassButton()` 已删除 |
+| 工具栏按钮 | `ActionButton` | 按**用途**命名而不是按长相：`tone:` 说这是什么控件（`.neutral` 铣削凹槽，默认 / `.sparkle` 深色板 / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。`.sparkle` 是一块近黑的板（`SparklePlate`，来自一个参考 CSS 药丸：hover 渐变 + 紫色辉光，450ms ease-in-out，即 `Theme.Animation.sparkle`）；`.neutral` 是铣削凹槽，也是不说 tone 时的默认（约 19 处裸调用点都是它）；`.sparkle` 要按名字要。`ProviderActionStyle` 是同一块板的历史名字，`adaptiveGlassButton()` 与 `InstrumentButtonStyle` 都已删除 |
 | 页头带控件 | `headerControl()` | 页头带里自己的控件：就是 `ActionPlateButtonStyle` 按这条带的尺寸画一遍，安静调。连接器与模型共用，两条带子读作同一个物件 |
 | 命令面板 | `GlassEffectContainer` | **仅 macOS 26+** 且**仅**用于 ⌘K `CommandPalette` 结果列表的玻璃容器；其余表面不使用 |
 
@@ -57,7 +57,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、`rollingNumber()`。下压按钮曾在这里（`adaptiveGlassButton()`），现已移到 `InstrumentControls.swift` 的 `ActionButton`。
-- `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`InstrumentButtonStyle` / `ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
+- `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
 - `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
 - `ProxyCurlExample`：第三方接入中的一行，按需查看并复制 curl 示例；连通性检测保留在供应商相关界面。

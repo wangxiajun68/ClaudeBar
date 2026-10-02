@@ -20,11 +20,18 @@ reached without touching `Sources/` and without live hardware:
     (adapter/system/battery watts) plus the Core Animation `SankeyWaveLayer`;
     omitted entirely.
 
+`CompactBatteryChargeControl` (conditional in the production action bar on
+`ProcessSampler.shared.host.batteryInstalled`) is not drawn either: the stub
+sampler cannot read the SMC, so the bar sits in its no-battery shape.
+
 Everything else (`PanelHeader` with its status row and three switcher chips,
 `SessionsPanelView` with real session cards, `UsagePanel`, the `IconChipRow`
 action bar) is the production view code.
 
-`--check` fails loudly when a required production declaration is missing.
+`--check` reads every production slice and compiles the generated probe, then
+stops before the launch: it catches a declaration that moved and a slice set that
+no longer forms a program, which is the work a maintainer would otherwise do by
+eye after touching `Sources/`.
 """
 from pathlib import Path
 import subprocess
@@ -57,7 +64,10 @@ def indent(text, prefix='    '):
 
 
 def file_from(path, start=None, end=None):
-    text = (root / path).read_text()
+    try:
+        text = (root / path).read_text()
+    except OSError:
+        raise SystemExit(f"render-popup-preview: {path} is missing — the slice list is stale")
     if start is None:
         return text + "\n"
     pos = text.find(start)
@@ -74,10 +84,6 @@ for mark in ('anthropic', 'openai', 'cursor'):
     for variant in ('light', 'dark'):
         assert (brand_marks / f'{mark}-{variant}.png').is_file(), \
             f'{mark}-{variant}.png missing — ProductBrandMark would draw its fallback'
-
-if CHECK:
-    print("render-popup-preview: --check: production declarations are present")
-    sys.exit(0)
 
 source = "import SwiftUI\nimport AppKit\nimport Combine\n"
 source += 'let brandMarkRoot = URL(fileURLWithPath: "' + str(brand_marks) + '")\n'
@@ -192,15 +198,10 @@ final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
     @Published var isDark = false
     @Published var appearance: AppearanceMode = .light
-    @Published var idleNotifyEnabled = true
     @Published var tokenUnitStyle: TokenUnitStyle = .chinese
     @Published var codexProxyPort: Int = 15721
     @Published var codexRoutingEnabled = true
     @Published var vpnMixedPort: Int = 7890
-    @Published var vpnEnabled = true
-    @Published var costDisplay: CostDisplay = .split
-    @Published var notchIslandEnabled = true
-    @Published var notchIslandShowsWings = true
 }
 
 /// `@ProviderState` in the app reads `\\.providerSource` off the environment and
@@ -252,22 +253,16 @@ final class ProviderStore: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
-    @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
-    @Published var usageDaysBySource: [UsageSource: [DayUsage]] = [:]
+    /// The popup's week strip reads this (a day-scoped `usageDays` cannot fill
+    /// a seven-cell week), so the fixture has to publish it too.
+    @Published var usageWeekDays: [DayUsage] = []
     @Published var usageLoading = false
     @Published var usagePeriod: UsagePeriod = .month
     @Published var usageReferenceDate = Date()
-    @Published var usageSettlements: [String: ModelPricing.Cost] = [:]
     @Published var sessions: [SessionInfo] = []
     @Published var cursorSessions: [CursorSessionInfo] = []
     @Published var externalSessions: [ExternalSessionInfo] = []
     @Published var heartbeats: [Int: [Bool]] = [:]
-    @Published var collapsedProviderIDs: Set<UUID> = []
-    @Published var balanceAmounts: [UUID: String] = [:]
-    @Published var balanceText: String? = nil
-    @Published var balanceLoading = false
-    @Published var importSummary: String? = nil
-    var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
 
     var usageEstimate = ModelPricing.Estimate()
     var usageCostLines: [String: ModelPricing.Estimate.Line] = [:]
@@ -276,7 +271,6 @@ final class ProviderStore: ObservableObject {
     var busySessionCount: Int { aliveSessions.filter { $0.status == .busy }.count }
     var aliveCursorSessions: [CursorSessionInfo] { cursorSessions }
     var activeCursorCount: Int { cursorSessions.filter { $0.status == .active }.count }
-    var aliveExternalSessions: [ExternalSessionInfo] { externalSessions.filter { $0.isAlive && !$0.isSubagent } }
     var activeExternalCount: Int { externalSessions.filter { $0.isAlive && !$0.isSubagent && $0.isActive }.count }
     var totalUsageTokens: Int { usageStats.reduce(0) { $0 + $1.totalTokens } }
     var totalUsageLabel: String { UsageStats.formatTokens(totalUsageTokens, style: .chinese) }
@@ -299,6 +293,9 @@ final class ProviderStore: ObservableObject {
     func refreshUsage(rescan: Bool = true) {}
     func restoreOfficial() {}
     func activateModel(providerID: UUID, modelID: UUID) {}
+    /// The session cards' 清理 action. The preview never presses it; it only has
+    /// to exist for `SessionsPanel` to compile against this stub.
+    func cleanUpExternalSession(_ session: ExternalSessionInfo) {}
     func viewChanges(_ fields: ProviderFields) -> [AnyPublisher<Void, Never>] { [] }
 }
 
@@ -392,9 +389,6 @@ enum TerminalLauncher {
 source += '''
 // MARK: - Synthetic data
 
-let fixtureClaudeID = UUID()
-let fixtureCodexID = UUID()
-
 @MainActor func fixtureProviderStore() -> ProviderStore {
     let store = ProviderStore()
     let flash = ModelConfig(name: "deepseek-v4.1-flash", contextTokens: "128000")
@@ -453,6 +447,14 @@ let fixtureCodexID = UUID()
         let base = [1_600_000_000, 2_900_000_000, 4_100_000_000, 900_000_000][offset % 4]
         return DayUsage(day: key, inputTokens: base / 3, outputTokens: base / 8,
                         cacheReadTokens: base / 2, cacheCreationTokens: base / 20)
+    }
+    if let week = calendar.dateInterval(of: .weekOfYear, for: today) {
+        let keys = Set((0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: week.start) }
+            .map { date in
+                String(format: "%04d-%02d-%02d", calendar.component(.year, from: date),
+                       calendar.component(.month, from: date), calendar.component(.day, from: date))
+            })
+        store.usageWeekDays = store.usageDays.filter { keys.contains($0.day) }
     }
     return store
 }
@@ -576,8 +578,10 @@ struct FixtureKpiStrip: View {
 }
 
 /// The popup's action bar: the same `IconChipRow` the production `MenuBarView`
-/// builds, with the same ten items. Only `CompactBatteryChargeControl` is left
-/// out (it reads live battery state), and it is conditional in the app anyway.
+/// builds, and the same nine items production shows when no battery is
+/// installed. Production prepends the conditional `CompactBatteryChargeControl`
+/// when `ProcessSampler.shared.host.batteryInstalled` — a still cannot read
+/// that, so the fixture draws the no-battery set.
 struct FixtureActionBar: View {
     var body: some View {
         IconChipRow(spacing: Theme.Space.s2) {
@@ -650,4 +654,13 @@ path.write_text(source)
 binary = out / 'probe'
 subprocess.run(['/usr/bin/swiftc', '-O', '-parse-as-library', '-target', 'arm64-apple-macos15.0',
                 str(path), '-o', str(binary)], check=True)
-subprocess.run([str(binary), str(out)], check=True)
+if CHECK:
+    # `--check` has to be the flag a maintainer can trust after touching
+    # `Sources/`: the declaration lookups above raise when a name has moved, and
+    # this compile proves the slices still form the program. What it skips is
+    # the *launch*, the only part that needs a window server. The old shape
+    # returned before any source was read at all, so it passed on a tree where
+    # the probe could not compile.
+    print('render-popup-preview: --check: declarations present and the probe compiles')
+else:
+    subprocess.run([str(binary), str(out)], check=True)

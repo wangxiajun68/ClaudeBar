@@ -115,13 +115,13 @@ struct PanelHeader: View {
                 .fill(runningCount > 0 ? Theme.chartGreen : Theme.Ink.idle)
                 .frame(width: 6, height: 6)
             Text(runningCount > 0 ? "\(runningCount) 会话" : "空闲")
-                .rollingNumber()
+                .rollingNumber(runningCount > 0 ? "\(runningCount) 会话" : "空闲")
                 .font(Theme.Font.section)
                 .foregroundColor(Theme.textPrimary)
                 .fixedSize()
             statusDot
             Text(proxyFact)
-                .rollingNumber()
+                .rollingNumber(proxyFact)
                 .font(.system(size: 11, design: .rounded))
                 .foregroundColor(codexStore.proxyRunning ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
@@ -535,7 +535,7 @@ private struct HeaderSwitchChip<Popover: View>: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.clockwise").font(.system(size: 10))
                 Text(subtitle)
-                    .rollingNumber()
+                    .rollingNumber(subtitle)
                     .font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
                     .lineLimit(1).truncationMode(.middle)
             }

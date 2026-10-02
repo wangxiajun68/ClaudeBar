@@ -156,7 +156,7 @@ struct ProviderCatalogBrowser: View {
                             // opens with a glyph well and a count.
                             SectionHeader(icon: "bolt.fill", title: "当前激活",
                                           tint: Theme.statusSuccess, ink: Theme.Ink.success,
-                                          count: 1, emptyLabel: "无", countBesideTitle: true)
+                                          count: 1, countBesideTitle: true)
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
                                 pinnedCard(pinned, layout: layout)
                             }

@@ -354,7 +354,14 @@ final class VpnManager: ObservableObject {
     /// own pid so a live `process` handle is always the one that stops it.
     nonisolated private static func reapOrphanCore() {
         let me = getpid()
-        var pids = [pid_t](repeating: 0, count: 256)
+        // `proc_listpids` answers a byte count when asked with a nil buffer, so
+        // the list is sized from that rather than a guessed 256 — a full process
+        // table on this machine is already over 600, and a truncated list means
+        // the reap silently misses the orphan it exists to find.
+        let needed = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard needed > 0 else { return }
+        let capacity = Int(needed) / MemoryLayout<pid_t>.size + 64
+        var pids = [pid_t](repeating: 0, count: capacity)
         let written = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
         guard written > 0 else { return }
         let mine = Self.corePath
@@ -469,25 +476,26 @@ final class VpnManager: ObservableObject {
         // spawning is guaranteed to produce a core that boots, fails to bind,
         // and then sits there until the readiness poll gives up — so check
         // first and report it instead of starting a doomed process.
-        if let conflict = Self.portConflict(mixedPort: prefs.vpnMixedPort, controllerPort: controllerPort) {
-            portConflict = conflict
-            let owner = conflict.owner.map { "（\($0)）" } ?? ""
-            log("端口被占用：\(conflict.port)\(owner)，未启动内核")
-            // The module stays *enabled*: the user asked for it and the reason
-            // it is not running is external. Flipping `vpnEnabled` off here
-            // would silently rewrite their preference on the next launch.
-            state = .failed(Self.conflictMessage(conflict))
-            return
-        }
-        // The previous core's pipes are gone by now, so the half-line the domain
-        // log is still carrying can never be completed. Only the carry goes —
-        // the parsed table survives a port / TUN / subscription restart.
-        VpnDomainLog.shared.resetCarry()
-        portConflict = nil
+        //
+        // The probe spawns `lsof`, so it runs off the main actor with the rest
+        // of the launch and comes back to publish the verdict; two `lsof`
+        // spawns on the main thread (one per port) is a visible hitch on a
+        // menu-bar click.
         state = .starting
         let profileURL = subscriptions.activeID.map { subscriptions.profileURL($0) }
         let dest = FilePaths.vpnCoreBin
+        // The published conflict is what the popover draws; it is written on
+        // the main actor below, so a probe that runs long cannot race a second
+        // `startCore` into a stale value.
+        portConflict = nil
+        // The shipped core is the committed `.xz`. The second lookup is the
+        // build's raw fallback (see the `MIHOMO_UPDATE` block in `build.sh`):
+        // when neither the archive nor an `xz` to rebuild it exists, the binary
+        // is copied in raw so the app still has a kernel — and a lookup that
+        // only asked for `withExtension: "xz"` would not see it, turning that
+        // shipped fallback into 未找到内核 at launch.
         let bundled = Bundle.main.url(forResource: "mihomo-core", withExtension: "xz")
+            ?? Bundle.main.url(forResource: "mihomo-core", withExtension: nil)
         let configURL = FilePaths.vpnConfigFile
         let vpnDir = FilePaths.vpnDir.path
         let tun = prefs.vpnTunEnabled
@@ -495,8 +503,33 @@ final class VpnManager: ObservableObject {
         let controller = controllerPort
         AppPreferences.ensureVpnControllerSecret()
 
+        let mixedPort = prefs.vpnMixedPort
         launchTask = Task.detached(priority: .userInitiated) { [weak self] in
             Self.extractBundledCoreIfNeeded(bundled: bundled, dest: dest)
+            guard !Task.isCancelled else {
+                await MainActor.run { [weak self] in self?.launchTask = nil }
+                return
+            }
+            if let conflict = Self.portConflict(mixedPort: mixedPort, controllerPort: controller) {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.portConflict = conflict
+                    let owner = conflict.owner.map { "（\($0)）" } ?? ""
+                    self.log("端口被占用：\(conflict.port)\(owner)，未启动内核")
+                    // The module stays *enabled*: the user asked for it and the
+                    // reason it is not running is external. Flipping
+                    // `vpnEnabled` off here would silently rewrite their
+                    // preference on the next launch.
+                    self.state = .failed(Self.conflictMessage(conflict))
+                    self.launchTask = nil
+                }
+                return
+            }
+            // The previous core's pipes are gone by now, so the half-line the
+            // domain log is still carrying can never be completed. Only the
+            // carry goes — the parsed table survives a port / TUN /
+            // subscription restart.
+            await MainActor.run { VpnDomainLog.shared.resetCarry() }
             guard FileManager.default.fileExists(atPath: dest.path) else {
                 await MainActor.run { [weak self] in
                     self?.fail(.coreMissing)
@@ -514,6 +547,13 @@ final class VpnManager: ObservableObject {
             }
             let profile = profileURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
             let geoNote = await VpnGeodata.ensureGeoSite(profileText: profile)
+            // `stopCore()` cancels this task; without the check the spawn below
+            // happens anyway and the app ends up running a core the user
+            // already stopped.
+            guard !Task.isCancelled else {
+                await MainActor.run { [weak self] in self?.launchTask = nil }
+                return
+            }
             let t0 = Date()
             let text = VpnConfigBuilder.build(profileText: profile, prefs: AppPreferences.shared)
             do {
@@ -527,11 +567,20 @@ final class VpnManager: ObservableObject {
             }
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             await MainActor.run { [weak self] in
-                if let geoNote { self?.log(geoNote) }
-                self?.log("配置已写入 \(ms)ms · \(text.utf8.count / 1024) KB")
-                self?.log("启动内核：\(dest.path) (controller:\(controller), tun:\(tun), sysproxy:\(sysproxy))")
-                self?.spawnProcess(bin: dest, dir: vpnDir, config: configURL)
-                self?.launchTask = nil
+                guard let self else { return }
+                // `stopCore()` runs on this actor and cancels the task; a
+                // cancellation that lands while this hop was queued would
+                // otherwise be invisible here and the core would spawn anyway —
+                // a stopped VPN with a running kernel behind it.
+                guard !Task.isCancelled else {
+                    self.launchTask = nil
+                    return
+                }
+                if let geoNote { self.log(geoNote) }
+                self.log("配置已写入 \(ms)ms · \(text.utf8.count / 1024) KB")
+                self.log("启动内核：\(dest.path) (controller:\(controller), tun:\(tun), sysproxy:\(sysproxy))")
+                self.spawnProcess(bin: dest, dir: vpnDir, config: configURL)
+                self.launchTask = nil
             }
         }
     }
@@ -553,14 +602,19 @@ final class VpnManager: ObservableObject {
         // reason is the whole point: mihomo reports a port conflict at
         // *error* level and keeps running with no API, which our readiness
         // poll then reports as a bare "启动超时".
-        Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)
         // The core writes connection failures, retries and DNS errors at
         // whatever `log-level` the profile sets, for the whole time it runs.
         // Nothing reads this file except the tail in `extractFatal` and the
         // failover offset, so an unbounded append is pure disk growth — 86 MB
         // on this machine before this landmine was defused. Rotate at 8 MB,
         // keep the tail, never block the reader.
+        //
+        // Rotation comes *first*: it rewrites the file from its tail, so an
+        // offset taken before it can point past the end of the rotated file
+        // and `extractFatal` reads nothing at exactly the moment a core
+        // already died on startup.
         coreLogFD.rotateIfNeeded()
+        Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)
         let coreLog = coreLogFD
         for pipe in [outPipe, errPipe] {
             pipe.fileHandleForReading.readabilityHandler = { fh in
@@ -691,9 +745,13 @@ final class VpnManager: ObservableObject {
         if let proc = old {
             proc.terminationHandler = nil
             proc.terminate()
-            // Give it a moment, then force kill (mihomo handles SIGTERM).
+            // Give it a moment, then escalate. A second SIGTERM after two
+            // seconds accomplishes nothing — a core that ignored the first will
+            // ignore this one too — so the escalation is the signal that cannot
+            // be ignored. mihomo removes its own routes on SIGTERM; only a core
+            // already stuck (spinning on a bad config) reaches this.
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak proc] in
-                if proc?.isRunning == true { proc?.terminate() }
+                if let proc, proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
             }
         }
         process = nil

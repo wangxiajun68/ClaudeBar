@@ -28,6 +28,18 @@ enum BuildChannel {
 #endif
     static let widgetBundleID = bundleID + ".widget"
     static let appGroupID = widgetBundleID
+
+    /// The snapshot contract between the app and its widget extension.
+    ///
+    /// Both sides have to agree on these two strings, and they are the one
+    /// part of the contract no compiler checks: the app writes the payload
+    /// under this key and file name, and the widget's four readers fall back to
+    /// a placeholder if either is renamed on one side only. They live here —
+    /// the file both targets compile — rather than in the app's `AppConfig`
+    /// with a "keep in sync" comment, which is what they used to be.
+    static let widgetSnapshotDefaultsKey = "widgetSnapshot"
+    static let widgetSnapshotFileName = "claude-bar-widget-data.json"
+
     static let restrictionMessage = "开发／测试版本不接管系统 VPN、代理、DNS、硬件控制或外部客户端配置。请使用正式版本验证这些功能。"
 
     /// Whether this build may ask macOS for permissions that prompt.

@@ -98,6 +98,22 @@ DETECTOR
         let answered = d6.record([snap("a", key: "2|uuid-9")])
         precondition(answered == ["a"], "the answer after a busy stretch fires")
 
+        // 6b. The busy guard is load-bearing on its own: a busy snapshot whose
+        //     key *did* move (the session is somehow mid-turn again) must not
+        //     announce. The key, freshness and seed checks all pass here, so
+        //     this is the only clause that can keep it silent — without it the
+        //     busy flag only ever appeared alongside `key: nil`, which the
+        //     no-key path already rejects.
+        var d6b = ConfirmedCompletionDetector<String>()
+        _ = d6b.record([snap("a", key: "3|uuid-1")])              // seed
+        let busyMoved = d6b.record([snap("a", busy: true, key: "4|uuid-2")])
+        precondition(busyMoved.isEmpty,
+                     "a new key on a busy session is not a completion; got \(busyMoved)")
+        // And the guard does not poison the id: once the turn really ends, the
+        // key is announced normally.
+        let settled = d6b.record([snap("a", key: "4|uuid-2")])
+        precondition(settled == ["a"], "the same key fires once the session is idle; got \(settled)")
+
         // 7. Launch seeds silently, at any state the session is found in.
         var d7 = ConfirmedCompletionDetector<String>()
         precondition(d7.record([snap("a", key: "9|uuid")]).isEmpty, "the first poll seeds")

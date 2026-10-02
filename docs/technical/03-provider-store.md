@@ -21,14 +21,13 @@
 | `cursorSessions` / `cursorExpanded` | `[CursorSessionInfo]` / `Set<String>` | Cursor 活跃会话 / 展开的会话 |
 | `usageStats` / `usageLoading` | `[ModelUsage]` / `Bool` | token 用量 |
 | `usagePeriod` / `usageReferenceDate` | `UsagePeriod` / `Date` | 用量周期，变化即重算 |
-| `usageSettlements` | `[String: ModelPricing.Cost]` | Cursor 的**实际扣费**，按 canonical 模型名。与 `usageStats` 平行、**永不并入**；`settlement(for:)` 按归一后的名字取。窗口与截断标记在 `CursorLedgerStore` 上（同一个事实只留一个出处） |
 | `collapsedProviderIDs` | `Set<UUID>` | 折叠的 Provider |
 
 ## 派生量（`ProviderStore+Derived.swift`）
 
 视图不再各自 reduce，统一读派生属性：`aliveSessions`、`busySessionCount`、`aliveCursorSessions`、`activeCursorCount`、`anyClaudeBusy`、`totalUsageTokens`、`totalUsageLabel`、`maxUsageTokens`、`activeProvider`、`activeModel`。
 
-用量页新增三个：`settlement(for:)`（某模型的实际扣费）、`settlementCovers(_:)`（该金额是否已覆盖给定窗口）、`settlementWindowLabel`（金额覆盖的窗口文案，供瓦片标注）。
+用量页的实扣只有一个出处：`CursorLedgerStore`（`rows` / `windowLabel`），由 `UsageView` 直接读取。它一度在 store 上还有一份 `usageSettlements` 平行副本与 `settlement(for:)` / `settlementCovers(_:)` / `settlementWindowLabel` 三个访问器，但没有任何视图读过——同一个事实的两个出处。
 
 ## 非路径配置（`AppConfig.swift`）
 

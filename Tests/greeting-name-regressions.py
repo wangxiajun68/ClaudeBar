@@ -52,6 +52,11 @@ IDENTITY
             ("wangxiajundeMacBook-Pro-8", "wangxiajun"),
             ("wangxiajuns-MacBook-Pro", "wangxiajun"),
             ("Sams-MacBook-Pro", "Sam"),
+            // A given name that merely ends in 's' must survive: the joiner is
+            // the character the OS appended *to* the model name, so the strip
+            // only applies when nothing separates the name from the marker.
+            ("Chris MacBook Pro", "Chris"),
+            ("James MacBook", "James"),
             // Nothing to take: keep the whole string rather than inventing a
             // fragment or returning empty.
             ("MacBook Pro", "MacBook Pro"),
@@ -65,7 +70,10 @@ IDENTITY
         for c in cases {
             let got = MachineIdentity.person(in: c.input)
             if got != c.want {
-                print("FAIL: \\(c.input) -> \\(got), want \\(c.want)", to: &failures)
+                if let data = "FAIL: \(c.input) -> \(got), want \(c.want)\n".data(using: .utf8) {
+                    FileHandle.standardError.write(data)
+                }
+                failures += 1
             }
         }
 
@@ -85,11 +93,6 @@ IDENTITY
         guard failures == 0 else { fatalError("\(failures) greeting-name case(s) failed") }
         print("PASS: possessive and host-name shapes resolve to the person; a model-only or address-like name is kept whole, never fragmented; a Han name draws as pinyin, given name first; live name \(live)")
     }
-}
-
-private func print(_ message: String, to failures: inout Int) {
-    Swift.print(message)
-    failures += 1
 }
 '''
 with tempfile.TemporaryDirectory(prefix='greeting-name-') as tmp:

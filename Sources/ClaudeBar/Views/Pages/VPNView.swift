@@ -620,7 +620,7 @@ struct VPNView: View {
                         .foregroundColor(Theme.Ink.error)
                 } else if let delay {
                     Text("\(min(delay, 9999))")
-                        .rollingNumber()
+                        .rollingNumber("\(min(delay, 9999))")
                         .foregroundColor(delayColor(delay))
                 } else {
                     Text("测")

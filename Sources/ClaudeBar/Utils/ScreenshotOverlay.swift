@@ -843,7 +843,7 @@ private final class SnipCanvas: NSView {
 
     override func mouseUp(with event: NSEvent) {
         cursor = convert(event.locationInWindow, from: nil)
-        if markTool != nil, var draft = markDraft {
+        if markTool != nil, let draft = markDraft {
             // Ignore tiny accidental marks (a click without a drag).
             let moved = hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y)
             if draft.tool == .pen ? draft.stroke.count > 2 : moved > 4 {

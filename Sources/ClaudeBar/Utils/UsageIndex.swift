@@ -55,6 +55,13 @@ struct UsageIndex {
         if let db { return db }
         if openFailed { return nil }
         guard sqlite3_open_v2(dbURL.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+            // A failed `open_v2` may still have handed back a handle, and it
+            // holds a file lock until it is closed — leaving it here keeps
+            // `usage-index.db` locked for the life of the process even though
+            // every later call short-circuits on `openFailed`. `CursorDB`
+            // closes on the same branch.
+            sqlite3_close(db)
+            db = nil
             openFailed = true
             return nil
         }
@@ -659,7 +666,12 @@ struct UsageIndex {
 
         if isCodex {
             let parsed = parseCodex(lines, previousModel: "")
-            if !parsed.entries.isEmpty { replaceRollup(backend, file.key, parsed.entries) }
+            // Replace even when nothing was parsed: `deleteRollup` above is a
+            // no-op for the JSON backend, so an unconditional `replaceRollup`
+            // is what makes a rewrite-to-empty — or a shrink to a header-only
+            // body — drop the path's stale rows there too. SQLite has already
+            // deleted them and `bindAndRun` over an empty array adds nothing.
+            replaceRollup(backend, file.key, parsed.entries)
             let last = parsed.last
             upsertFile(backend, file, consumed,
                        cxIn: last?.input ?? 0, cxOut: last?.output ?? 0, cxCached: last?.cached ?? 0,

@@ -19,6 +19,7 @@ Costs the same token vectors the app records, against the production table.
 No app launch, no network.
 """
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -27,13 +28,39 @@ source_root = root / 'Sources/ClaudeBar/Utils'
 pricing = (source_root / 'ModelPricing.swift').read_text()
 table = (source_root / 'ModelPriceTable.swift').read_text()
 
+# Both whole files are injected into the harness below, doc comments included —
+# `ModelPricing` and `ModelPriceTable` are plain source files with no app
+# dependencies, and slicing out only the type declarations would let a helper
+# that lives above the type silently drop out of the compiled probe.
+PRICING_PLACEHOLDER = '__MODEL_PRICING_SOURCE__'
+TABLE_PLACEHOLDER = '__MODEL_PRICE_TABLE_SOURCE__'
+
+# The concrete model ids this app's preset catalogue ships. Read out of the
+# production catalogue rather than hand-copied: the earlier literal had already
+# drifted (it listed two ids no preset ships and missed ten that were), and a
+# copied list is exactly what lets a renamed preset reach a user with neither a
+# rate card nor a stated reason. Each raw id is fed to `ModelPricing` verbatim
+# below, so vendor slugs like `anthropic/claude-sonnet-5` exercise the
+# namespace/case handling too.
+catalog = (root / 'Sources/ClaudeBar/Models/ProviderCatalog.swift').read_text()
+preset_ids = sorted({model
+                     for group in re.findall(r'models:\s*\[([^\]]*)\]', catalog)
+                     for model in re.findall(r'"([^"]+)"', group)})
+# A regex that stops matching must not silently shrink this guard to nothing.
+assert len(preset_ids) >= 15, f'only {len(preset_ids)} preset ids parsed from ProviderCatalog'
+shipped_literal = ',\n                       '.join(f'"{model}"' for model in preset_ids)
+
 swift = r'''
 import Foundation
 
-/// The table file carries its own doc comment above the type; keep only the
-/// declaration so this compiles standalone.
-PRICING
-TABLE
+/// `ModelPricing.swift` and `ModelPriceTable.swift` are injected here whole —
+/// both file bodies, doc comments included — because the two files are plain,
+/// app-independent source and any declaration above either type is part of the
+/// arithmetic under test. The placeholders are deliberately unguessable: each
+/// must occur exactly once (asserted below), so a word appearing inside the
+/// injected text can never expand into the other file.
+__MODEL_PRICING_SOURCE__
+__MODEL_PRICE_TABLE_SOURCE__
 
 /// Minimal stand-in for the app's aggregate — only the fields `ModelPricing`
 /// reads.
@@ -299,10 +326,21 @@ struct ModelUsage {
         //     resolve to *something* — a rate card or a stated reason. A model
         //     the user can select but that has neither would render as a bare
         //     未计价 with no explanation.
-        let shipped = ["claude-sonnet-4-6", "deepseek-v4-pro", "deepseek-v4.1-flash",
-                       "kimi-k3", "kimi-for-coding", "glm-5.2", "glm-5.3-flash",
-                       "qwen3.7-plus", "minimax-m3", "ark-code-latest",
-                       "step-5-preview", "step-3.7-flash"]
+        //
+        //     The list is generated from `ProviderCatalog` at test time, not
+        //     hand-copied: a preset added or renamed without a table entry
+        //     fails here instead of reaching a user as an unexplained dash.
+        let shipped = [__SHIPPED_IDS__]
+        for slug in shipped {
+            let known = ModelPricing.rate(for: slug) != nil
+                || ModelPricing.unpricedReason(slug) != nil
+            precondition(known, "\(slug) is shipped as a preset but the table says nothing about it")
+            // The raw id is fed in above, so an id that needs canonicalisation
+            // to resolve is exercised through the production path rather than
+            // through a pre-lowered copy.
+            precondition(!ModelPricing.canonical(slug).isEmpty,
+                         "\(slug) canonicalises to nothing; the lookup could never reach it")
+        }
         for slug in shipped {
             let known = ModelPricing.rate(for: slug) != nil
                 || ModelPricing.unpricedReason(slug) != nil
@@ -389,7 +427,20 @@ struct ModelUsage {
               + "grouped formatting, opt-in conversion with no silent rate")
     }
 }
-'''.replace('PRICING', pricing).replace('TABLE', table)
+'''
+
+# Each placeholder must occur exactly once before substitution. The two files
+# are injected whole, so a literal placeholder word appearing anywhere inside
+# production source would otherwise expand into the other file's entire text
+# and surface as an inscrutable swiftc error.
+for placeholder in (PRICING_PLACEHOLDER, TABLE_PLACEHOLDER):
+    assert swift.count(placeholder) == 1, \
+        f'{placeholder} must appear exactly once in the template'
+
+swift = (swift
+         .replace(PRICING_PLACEHOLDER, pricing)
+         .replace(TABLE_PLACEHOLDER, table)
+         .replace('__SHIPPED_IDS__', shipped_literal))
 
 with tempfile.TemporaryDirectory(prefix='claudebar-cost-tests-') as folder:
     path = Path(folder) / 'Regression.swift'

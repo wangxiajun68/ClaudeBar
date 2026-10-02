@@ -51,10 +51,24 @@ BODY
             "https://ollama.com",
             "https://localhost.evil.com",
             "https://127.0.0.2.example.com",
+            // ...and the IPv6 look-alikes. These stay remote on the current
+            // parser: none of them matches the bracketed arm's `::1` spellings,
+            // and the dotted form fails the "bare IPv4 literal" test. They are
+            // here as the measured boundary, not as an endorsement — if the arm
+            // is ever taught a v4-mapped loopback in any spelling, move that
+            // spelling to the `local` list rather than loosening the parser.
+            "http://[::ffff:127.0.0.1]",
+            "http://[::ffff:0:7f00:1]",
+            "http://[0:0:0:0:0:0:0:1]",
             "http://172.15.1.1:4000",     // one below the 172.16/12 block
             "http://172.32.1.1:4000",     // one above it
             "http://192.169.1.1:4000",    // adjacent to 192.168/16
             "http://11.0.0.1:4000",       // adjacent to 10/8
+            // Bracketed IPv6 literals on the remote side are the branch's real
+            // falsifier: without one, the whole `host.hasPrefix("[")` arm can be
+            // replaced with `return true` and every other case still passes.
+            "http://[::2]:11434",
+            "http://[2001:db8::1]",
             "ftp://localhost:21",         // not an API scheme
             "",
             "not a url",
@@ -70,7 +84,7 @@ BODY
         precondition(failures.isEmpty, failures.joined(separator: "\n"))
         print("PASS: \(local.count) loopback/private hosts classified local, "
               + "\(remote.count) public hosts remote (172.15/172.32, 192.169, 11.x, "
-              + "localhost.evil.com and ftp:// all correctly remote)")
+              + "non-loopback bracketed IPv6, localhost.evil.com and ftp:// all correctly remote)")
     }
 }
 '''.replace('BODY', body)

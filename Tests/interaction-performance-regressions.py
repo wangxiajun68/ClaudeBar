@@ -20,6 +20,8 @@ power = (shared / 'PowerFlowCard.swift').read_text()
 power_layer = power[power.index('private struct SankeyWave:'):]
 marks = (root / 'Tests/fixtures/machine-mark-probe.swift').read_text().split('@main struct Probe')[0]
 marks = marks.replace('<<<LUCIDE_GEOMETRY>>>', (shared / 'LucideHardwareGeometry.swift').read_text())
+marks = marks.replace('<<<LUCIDE_PATHS>>>', (shared / 'LucideHardwarePaths.swift').read_text())
+marks = marks.replace('<<<INSTRUMENT_GLYPH>>>', (shared / 'InstrumentGlyph.swift').read_text())
 marks = marks.replace('<<<HARDWARE_ILLUSTRATION>>>', (shared / 'HardwareIllustration.swift').read_text())
 
 def method(source, signature):

@@ -60,8 +60,4 @@ Token 构成的分母是全部本地模型记录，提示侧为输入、缓存�
 
 [Nature 图形规范](https://research-figure-guide.nature.com/figures/preparing-figures-our-specifications/) 提供清晰轴线与刻度、可读标签、颜色图例及减少重叠和多余装饰的参考。[Observable Plot Dot](https://observablehq.com/plot/marks/dot) 展示以面积编码数量的圆点语法，其半径通道默认使用平方根尺度；[D3 Arc](https://d3js.org/d3-shape/arc) 说明以起止角度、内外半径构造环形分段。本实现借鉴这些数据表达方法，并按原生应用的可读性与交互调整，不宣称已符合期刊发表或导出规范。
 
-[Matplotlib 官方 Choosing Colormaps](https://matplotlib.org/stable/users/explain/colors/colormaps.html) 说明顺序色阶适合有序值，并将 viridis 列为感知均匀色阶。[Matplotlib AsinhScale 文档](https://matplotlib.org/stable/api/scale_api.html#matplotlib.scale.AsinhScale) 提供零附近近似线性、较大数量渐近对数的尺度依据；本实现使用明确的 `asinh(Token / c)` 公式和逆变换标签。应用不引入图表研究工具的运行时依赖。
-
-viridis 作者 Nathaniel J. Smith、Stefan van der Walt、Eric Firing 的 64 个采样颜色数据采用 CC0／公有领域奉献，署名及 BIDS 色表来源记录在 `Sources/ClaudeBar/Resources/ASSET-LICENSES.md`。应用不打包 Matplotlib 运行时。
-
-实现依据为 `Sources/ClaudeBar/Utils/UsageAnalysis.swift`、`Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift`、`Sources/ClaudeBar/Views/Shared/UsageDistributionPlot.swift`、`Sources/ClaudeBar/Views/Shared/UsageRelationshipPlot.swift`、`Sources/ClaudeBar/Views/Pages/UsageView.swift`。本文记录当前源码的布局和数据口径；数量来自记录，不补造小时趋势、缺失日期记录、账单或节省金额。本轮离线合成记录静态预览位于 `.build/usage-chart-preview`，覆盖浅色、深色、窄窗口、多周期、全零与无已到达日期场景，用于检查布局、图形比例与主题。预览只覆盖所渲染的记录与窗口尺寸，不执行应用生命周期、原生菜单或悬停交互，不能视为实际运行验证。本轮最终构建、回归与预览结果以交付说明为准；未启动应用或执行 VPN、系统代理、DNS、TUN、硬件及其他系统集成验证。
+实现依据为 `Sources/ClaudeBar/Utils/UsageAnalysis.swift`、`Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift`、`Sources/ClaudeBar/Views/Pages/UsageView.swift`。本文记录当前源码的布局和数据口径；数量来自记录，不补造小时趋势、缺失日期记录、账单或节省金额。本轮离线合成记录静态预览位于 `.build/usage-chart-preview`，覆盖浅色、深色、窄窗口、多周期、全零与无已到达日期场景，用于检查布局、图形比例与主题。预览只覆盖所渲染的记录与窗口尺寸，不执行应用生命周期、原生菜单或悬停交互，不能视为实际运行验证。本轮最终构建、回归与预览结果以交付说明为准；未启动应用或执行 VPN、系统代理、DNS、TUN、硬件及其他系统集成验证。

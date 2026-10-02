@@ -1,24 +1,20 @@
 import Foundation
 import IOKit
 
-// Fan control adapted from Stats (exelban/stats) SMC module — in-process reads/writes.
+// Fan monitoring adapted from Stats (exelban/stats) SMC module — in-process reads.
+// Every *write* goes through the setuid `claudebar-fanctl` helper instead
+// (`FanHelperInstaller`), so this file stays read-only and needs no privilege;
+// the kernel returns `kIOReturnNotPermitted` to anything but root anyway.
 // Protocol note (macOS 26 / Darwin 25): the classic 54-byte struct is gone. The user client
 // now takes an 80-byte struct: key@0 (UInt32 LE fourcc), vers@4, pLimitData@12, keyInfo@28
 // (dataSize@28, dataType@32, attr@36), result@40, status@41, data8@42, data32@44, bytes@48.
 
-enum FanMode: Int, Codable, CaseIterable {
+enum FanMode: Int {
     case automatic = 0
     case forced = 1
     case auto3 = 3
 
     var isAutomatic: Bool { self == .automatic || self == .auto3 }
-
-    var label: String {
-        switch self {
-        case .automatic, .auto3: return "自动"
-        case .forced: return "手动"
-        }
-    }
 }
 
 struct FanInfo: Identifiable, Equatable {
@@ -44,7 +40,6 @@ private enum SMCDataType {
 private enum SMCKeys: UInt8 {
     case kernelIndex = 2
     case readBytes = 5
-    case writeBytes = 6
     case readKeyInfo = 9
 }
 
@@ -92,8 +87,6 @@ private extension Float {
         guard bytes.count >= MemoryLayout<Float>.size else { return nil }
         self = bytes.withUnsafeBytes { $0.loadUnaligned(as: Float.self) }
     }
-
-    var smcBytes: [UInt8] { withUnsafeBytes(of: self, Array.init) }
 }
 
 final class SMCController {
@@ -101,7 +94,9 @@ final class SMCController {
 
     private var conn: io_connect_t = 0
     private var fanModeKeyIsLower: Bool?
-    /// Read by the sampler queue and the fan queue.
+    /// Read by `cpuTemperatureCelsius`, which the sampler calls from
+    /// `ProcessSampler`'s queue — the fan queue only reads `isConnected` and
+    /// `loadFans`.
     private var temperatureKeys: [String]?
     private let cacheLock = NSLock()
     /// Serializes user-client calls: the sampler (temperatures) and the fan
@@ -242,125 +237,6 @@ final class SMCController {
         return list
     }
 
-    // MARK: - Fan control
-
-    func setFanMode(_ id: Int, mode: FanMode) {
-        #if arch(arm64)
-        if mode == .forced {
-            guard unlockFanControl(fanId: id) else { return }
-        } else {
-            let modeKey = fanModeKey(id)
-            let targetKey = "F\(id)Tg"
-            if getValue(modeKey) != nil {
-                var bytes = [UInt8](repeating: 0, count: 32)
-                var dataSize: UInt32 = 0
-                var dataType: UInt32 = 0
-                guard read(modeKey, into: &bytes, size: &dataSize, type: &dataType) == KERN_SUCCESS else { return }
-                if bytes[0] != 0 {
-                    bytes[0] = 0
-                    guard writeWithRetry(modeKey, dataType: dataType, dataSize: Int(dataSize), bytes: bytes) else { return }
-                }
-            }
-            var targetBytes = [UInt8](repeating: 0, count: 32)
-            var targetSize: UInt32 = 0
-            var targetType: UInt32 = 0
-            guard read(targetKey, into: &targetBytes, size: &targetSize, type: &targetType) == KERN_SUCCESS else { return }
-            let newBytes = Float(0).smcBytes
-            for i in 0..<4 { targetBytes[i] = newBytes[i] }
-            guard writeWithRetry(targetKey, dataType: targetType, dataSize: Int(targetSize), bytes: targetBytes) else { return }
-        }
-        #else
-        if getValue("F\(id)Md") != nil {
-            var bytes = [UInt8](repeating: 0, count: 32)
-            var dataSize: UInt32 = 0
-            var dataType: UInt32 = 0
-            guard read("F\(id)Md", into: &bytes, size: &dataSize, type: &dataType) == KERN_SUCCESS else { return }
-            bytes[0] = UInt8(mode.rawValue)
-            guard write("F\(id)Md", dataType: dataType, dataSize: Int(dataSize), bytes: bytes) == KERN_SUCCESS else { return }
-        }
-        let fansMode = Int(getValue("FS! ") ?? 0)
-        var newMode: UInt8 = 0
-        switch (fansMode, id, mode) {
-        case (0, 0, .forced): newMode = 1
-        case (0, 1, .forced): newMode = 2
-        case (1, 0, .automatic): newMode = 0
-        case (1, 1, .forced): newMode = 3
-        case (2, 1, .automatic): newMode = 0
-        case (2, 0, .forced): newMode = 3
-        case (3, 0, .automatic): newMode = 2
-        case (3, 1, .automatic): newMode = 1
-        default: break
-        }
-        guard fansMode != Int(newMode) else { return }
-        var value = [UInt8](repeating: 0, count: 32)
-        var dataSize: UInt32 = 0
-        var dataType: UInt32 = 0
-        guard read("FS! ", into: &value, size: &dataSize, type: &dataType) == KERN_SUCCESS else { return }
-        value[1] = newMode
-        _ = write("FS! ", dataType: dataType, dataSize: Int(dataSize), bytes: value)
-        #endif
-    }
-
-    func setFanSpeed(_ id: Int, speed: Int) {
-        if let maxSpeed = getValue("F\(id)Mx"), speed > Int(maxSpeed) {
-            setFanSpeed(id, speed: Int(maxSpeed))
-            return
-        }
-        #if arch(arm64)
-        var modeBytes = [UInt8](repeating: 0, count: 32)
-        var modeSize: UInt32 = 0
-        var modeType: UInt32 = 0
-        guard read(fanModeKey(id), into: &modeBytes, size: &modeSize, type: &modeType) == KERN_SUCCESS else { return }
-        if modeBytes[0] != 1 {
-            guard unlockFanControl(fanId: id) else { return }
-        }
-        #endif
-        var bytes = [UInt8](repeating: 0, count: 32)
-        var dataSize: UInt32 = 0
-        var dataType: UInt32 = 0
-        guard read("F\(id)Tg", into: &bytes, size: &dataSize, type: &dataType) == KERN_SUCCESS else { return }
-        if dataType == SMCDataType.flt {
-            let newBytes = Float(speed).smcBytes
-            for i in 0..<4 { bytes[i] = newBytes[i] }
-        } else if dataType == SMCDataType.fpe2 {
-            bytes[0] = UInt8(speed >> 6)
-            bytes[1] = UInt8((speed << 2) ^ ((speed >> 6) << 8))
-        }
-        #if arch(arm64)
-        _ = writeWithRetry("F\(id)Tg", dataType: dataType, dataSize: Int(dataSize), bytes: bytes)
-        #else
-        _ = write("F\(id)Tg", dataType: dataType, dataSize: Int(dataSize), bytes: bytes)
-        #endif
-    }
-
-    #if arch(arm64)
-    @discardableResult
-    func resetFanControl() -> Bool {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        var dataSize: UInt32 = 0
-        var dataType: UInt32 = 0
-        let result = read("Ftst", into: &bytes, size: &dataSize, type: &dataType)
-        if result == KERN_SUCCESS, dataSize > 0 {
-            if bytes[0] == 0 { return true }
-            bytes[0] = 0
-            return writeWithRetry("Ftst", dataType: dataType, dataSize: Int(dataSize), bytes: bytes)
-        }
-        guard let count = getValue("FNum") else { return false }
-        var success = true
-        for i in 0..<Int(count) {
-            let modeKey = fanModeKey(i)
-            var modeBytes = [UInt8](repeating: 0, count: 32)
-            var modeSize: UInt32 = 0
-            var modeType: UInt32 = 0
-            guard read(modeKey, into: &modeBytes, size: &modeSize, type: &modeType) == KERN_SUCCESS else { continue }
-            if modeBytes[0] == 0 { continue }
-            modeBytes[0] = 0
-            if !writeWithRetry(modeKey, dataType: modeType, dataSize: Int(modeSize), bytes: modeBytes) { success = false }
-        }
-        return success
-    }
-    #endif
-
     // MARK: - Private
 
     private func fanMode(for id: Int) -> FanMode {
@@ -419,26 +295,6 @@ final class SMCController {
         return KERN_SUCCESS
     }
 
-    static let notPrivileged = kern_return_t(bitPattern: UInt32(0xe00002c1)) // kIOReturnNotPrivileged
-
-    private func write(_ key: String, dataType: UInt32, dataSize: Int, bytes: [UInt8]) -> kern_return_t {
-        guard BuildChannel.allowsSystemIntegration else { return kIOReturnNotPermitted }
-        var input = SMCKeyData()
-        var output = SMCKeyData()
-        input.key = FourCharCode(key).rawValue
-        input.keyInfo.dataSize = UInt32(dataSize)
-        input.keyInfo.dataType = dataType
-        input.data8 = SMCKeys.writeBytes.rawValue
-        var tupleBytes = input.bytes
-        withUnsafeMutableBytes(of: &tupleBytes) { buffer in
-            for i in 0..<min(dataSize, 32) { buffer[i] = bytes[i] }
-        }
-        input.bytes = tupleBytes
-        let result = call(input: &input, output: &output)
-        if result != KERN_SUCCESS { return result }
-        return output.result == 0 ? KERN_SUCCESS : KERN_FAILURE
-    }
-
     private func call(input: inout SMCKeyData, output: inout SMCKeyData) -> kern_return_t {
         let inputSize = MemoryLayout<SMCKeyData>.stride
         var outputSize = MemoryLayout<SMCKeyData>.stride
@@ -469,49 +325,4 @@ final class SMCController {
             return nil
         }
     }
-
-    #if arch(arm64)
-    private func writeWithRetry(_ key: String, dataType: UInt32, dataSize: Int, bytes: [UInt8], maxAttempts: Int = 10, delayMicros: UInt32 = 50_000) -> Bool {
-        var lastResult: kern_return_t = KERN_SUCCESS
-        for attempt in 0..<maxAttempts {
-            lastResult = write(key, dataType: dataType, dataSize: dataSize, bytes: bytes)
-            if lastResult == KERN_SUCCESS { return true }
-            if lastResult == Self.notPrivileged { return false } // 无 root，重试无意义
-            if attempt < maxAttempts - 1 { usleep(delayMicros) }
-        }
-        return false
-    }
-
-    private func unlockFanControl(fanId: Int) -> Bool {
-        let modeKey = fanModeKey(fanId)
-        var modeBytes = [UInt8](repeating: 0, count: 32)
-        var modeSize: UInt32 = 0
-        var modeType: UInt32 = 0
-        guard read(modeKey, into: &modeBytes, size: &modeSize, type: &modeType) == KERN_SUCCESS else { return false }
-        modeBytes[0] = 1
-        let first = write(modeKey, dataType: modeType, dataSize: Int(modeSize), bytes: modeBytes)
-        if first == KERN_SUCCESS { return true }
-        if first == Self.notPrivileged { return false } // 无 root，直接放弃，不进入 unlock 长流程
-
-        var ftstBytes = [UInt8](repeating: 0, count: 32)
-        var ftstSize: UInt32 = 0
-        var ftstType: UInt32 = 0
-        guard read("Ftst", into: &ftstBytes, size: &ftstSize, type: &ftstType) == KERN_SUCCESS, ftstSize > 0 else { return false }
-        if ftstBytes[0] == 1 { return retryModeWrite(fanId: fanId, maxAttempts: 20) }
-        ftstBytes[0] = 1
-        guard writeWithRetry("Ftst", dataType: ftstType, dataSize: Int(ftstSize), bytes: ftstBytes, maxAttempts: 100) else { return false }
-        usleep(3_000_000)
-        return retryModeWrite(fanId: fanId, maxAttempts: 300)
-    }
-
-    private func retryModeWrite(fanId: Int, maxAttempts: Int) -> Bool {
-        let modeKey = fanModeKey(fanId)
-        var modeBytes = [UInt8](repeating: 0, count: 32)
-        var modeSize: UInt32 = 0
-        var modeType: UInt32 = 0
-        guard read(modeKey, into: &modeBytes, size: &modeSize, type: &modeType) == KERN_SUCCESS else { return false }
-        modeBytes[0] = 1
-        return writeWithRetry(modeKey, dataType: modeType, dataSize: Int(modeSize), bytes: modeBytes, maxAttempts: maxAttempts, delayMicros: 100_000)
-    }
-    #endif
 }

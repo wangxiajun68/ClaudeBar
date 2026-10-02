@@ -12,6 +12,11 @@ struct ProvidersView: View {
     @State private var selectedID: UUID?
     @State private var connectionEdit: ProviderConnectionRoute?
     @State private var setupEntry: ProviderCatalogEntry?
+    /// What the last 导入 said. The store's `importSummary` is the same string,
+    /// but the page cannot read it: the band is redrawn from `Facts`, which
+    /// deliberately does not observe it, so a one-off outcome is local state
+    /// that clears on the next import.
+    @State private var importNote: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Set by the window when another surface asked for the provider editor
     /// (the popup's 「管理模型」, a ⌘K provider result). Cleared once the sheet
@@ -108,19 +113,16 @@ struct ProvidersView: View {
             if let error = f.error {
                 // A raw red `Label` was the one error in the app with no band
                 // behind it; every other page states a failure on a surface.
-                HStack(spacing: Theme.Space.s10) {
-                    GlyphWell(name: "exclamationmark.circle", tint: Theme.Ink.error, size: 26)
-                    Text(error)
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(2)
-                    Spacer(minLength: Theme.Space.s8)
-                }
-                .padding(.horizontal, Theme.Space.s12)
-                .padding(.vertical, Theme.Space.s10)
-                .panelCard(radius: Theme.Radius.md, tint: Theme.statusError)
-                .padding(.horizontal, Theme.Space.s24)
-                .padding(.bottom, Theme.Space.s12)
+                // Dismissal clears whichever store phrased this one — the
+                // same "clear on dismiss" the connectors page uses.
+                messageBanner(error, symbol: "exclamationmark.circle.fill",
+                              tint: Theme.Ink.error) { clearError() }
+            }
+            if let importNote {
+                // An import that found nothing is not a failure, but it still
+                // has to say so or the button reads as broken.
+                messageBanner(importNote, symbol: "arrow.left.arrow.right",
+                              tint: Theme.Ink.success) { self.importNote = nil }
             }
             directoryToolbar
             connectionStrip(f)
@@ -186,6 +188,26 @@ struct ProvidersView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: Theme.Space.s12)
+                // The other runtime's providers, converted: name, key, models
+                // and auto-compact come across, the Base URL stays each
+                // client's own. `ProviderBridge` has carried the conversion all
+                // along; until now nothing on screen could start it, because
+                // the button lived in the editor that `ProviderConnectionEditor`
+                // replaced.
+                Button {
+                    let result = client == .claude
+                        ? providerStore.importFromCodex()
+                        : codexStore.importFromClaude()
+                    importNote = result.summary
+                } label: {
+                    Label(client == .claude ? "导入 Codex" : "导入 Claude",
+                          systemImage: "arrow.left.arrow.right")
+                }
+                .buttonStyle(.plain)
+                .headerControl()
+                .help(client == .claude
+                      ? "把 Codex 侧的供应商配置转换过来（Base URL 仍是本客户端自己的）"
+                      : "把 Claude 侧的供应商配置转换过来（Base URL 仍是本客户端自己的）")
                 Button { connectionEdit = ProviderConnectionRoute(id: UUID(), isNew: true) } label: {
                     Label("自定义", systemImage: "plus")
                 }
@@ -197,6 +219,37 @@ struct ProvidersView: View {
         .padding(.horizontal, Theme.Space.s24)
         .padding(.top, Theme.Space.s8)
         .padding(.bottom, Theme.Space.s16)
+    }
+
+    /// Dismiss the error the current client's store is showing.
+    private func clearError() {
+        if client == .claude { providerStore.errorMessage = nil } else { codexStore.errorMessage = nil }
+    }
+
+    /// The band both the failure and the import outcome are stated on.
+    /// Same anatomy as `ConnectorsView`'s local helper — a page that reports an
+    /// action's result on a bare `Text` is the shape this page's error band was
+    /// introduced to end.
+    private func messageBanner(_ message: String, symbol: String, tint: Color,
+                               onDismiss: @escaping () -> Void) -> some View {
+        HStack(spacing: Theme.Space.s10) {
+            GlyphWell(name: symbol, tint: tint, size: 26)
+            Text(message)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: Theme.Space.s8)
+            Button("关闭", action: onDismiss)
+                .buttonStyle(.plain)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .contentShape(Rectangle())
+        }
+        .padding(.horizontal, Theme.Space.s12)
+        .padding(.vertical, Theme.Space.s10)
+        .panelCard(radius: Theme.Radius.md, tint: tint)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.bottom, Theme.Space.s12)
     }
 
     private var clientSwitcher: some View {
@@ -252,7 +305,7 @@ struct ProvidersView: View {
             StatusPill(label: live ? "使用中" : "未选择",
                        tint: face,
                        ink: live ? Theme.Ink.success : Theme.textSecondary)
-            Text("\(f.providers.count) 个已保存配置").rollingNumber().foregroundStyle(Theme.textSecondary).fixedSize()
+            Text("\(f.providers.count) 个已保存配置").rollingNumber("\(f.providers.count) 个已保存配置").foregroundStyle(Theme.textSecondary).fixedSize()
             if let provider = active, let model = currentModel(provider, activeID: f.activeID) {
                 Text(model).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
                     .layoutPriority(-1)

@@ -12,11 +12,22 @@ struct PreviewSheet: View {
         VStack(alignment: .leading, spacing: 26) {
             section("动作按钮 · ActionButton") {
                 HStack(alignment: .top, spacing: 22) {
-                    group("neutral") {
+                    // The label states the *tone the code yields*, not the
+                    // tone a reader might assume: the title-only convenience
+                    // inits default to `.neutral`, so a bare `ActionButton("刷新")`
+                    // is the milled well shown here, and `.sparkle` has to be
+                    // asked for by name.
+                    group("neutral (bare ActionButton)") {
                         VStack(alignment: .leading, spacing: 8) {
                             ActionButton("刷新") {}
                             ActionButton("打开") {}
                             ActionButton("刷新", symbol: "arrow.clockwise") {}
+                        }
+                    }
+                    group("sparkle") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ActionButton("刷新", tone: .sparkle) {}
+                            ActionButton("打开", tone: .sparkle) {}
                         }
                     }
                     group("accent · standard") {

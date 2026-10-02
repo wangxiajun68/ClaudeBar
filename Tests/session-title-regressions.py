@@ -95,8 +95,17 @@ SOURCE_EOF
         let emoji = SessionTitle.shorten(String(repeating: "🐳", count: 40))
         precondition(emoji.allSatisfy { $0 == "🐳" || $0 == "…" }, "a grapheme must never be split")
         precondition(emoji.hasSuffix("…"), "an over-long emoji title must still be shortened")
-        let punct = SessionTitle.shorten(String(repeating: "字", count: 40) + "，后面还有")
+        // The cut has to land *on* the punctuation for the dangling-comma rule
+        // to be exercised. 13 字 plus the comma still fit under the 180pt
+        // budget (the next character, 后, overflows), so the comma is the last
+        // character kept and a shorten() that stopped trimming would emit
+        // "字×13，…". With a longer run the comma sits past the cut, where no
+        // truncation behaviour can reach it — that fixture passes even with
+        // the trim loop deleted.
+        let punct = SessionTitle.shorten(String(repeating: "字", count: 13) + "，后面还有")
         precondition(!punct.hasSuffix("，…"), "a dangling comma before the ellipsis reads as a typo; got \(punct)")
+        precondition(punct == String(repeating: "字", count: 13) + "…",
+                     "the comma at the cut must be dropped, not carried; got \(punct)")
         precondition(SessionTitle.shorten("短标题") == "短标题", "short titles pass through untouched")
         precondition(SessionTitle.shorten("Fix the login flicker") == "Fix the login flicker",
                      "a short Latin title must never gain an ellipsis")

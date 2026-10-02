@@ -20,7 +20,7 @@ struct MachineKpiStrip: View {
             MachineKpiButton(kind: .gpu, value: String(format: "%.0f%%", sampler.host.gpu),
                              load: sampler.host.gpu / 100, help: help)
             MachineKpiButton(kind: .memory, value: memShort,
-                             load: memPercent / 100, help: help)
+                             load: memPercent, help: help)
             // The headphone cell exists only while a headset is actually in
             // use. Nearby / charging-in-the-case readings stay in the 连接
             // tooltip, they do not steal a column here.

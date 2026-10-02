@@ -86,14 +86,16 @@ VARIANTS = ('light', 'dark')
 #:   `KEEP` — a portrait mark is allowed to use more of the tile vertically than
 #:   the width budget would give it, because the alternative (scaling by the
 #:   height, i.e. the old shared-side rule) made Cursor's cube 12 % narrower than
-#:   the CC mark beside it. At 1.0 — the tile itself — Cursor's 0.877 aspect
-#:   lands the ink 0.90 wide and *1.00 tall*, i.e. the full canvas on its own
-#:   axis, and the row reads as one size.
+#:   the CC mark beside it.
 #:
 #: Only a mark past `KEEP / MAX_HEIGHT` in aspect (0.90 — a tall wordmark, say)
 #: reaches the clamp, and it trades a little width for the room to be drawn at
-#: all. Measured on the three shipped marks, none reaches it and all three stand
-#: `KEEP` wide.
+#: all. Measured on the four shipped marks, `cursor` does reach it: its 0.878
+#: aspect puts the unclamped height at 1.03 of the canvas, so the clamp fires and
+#: the ink stands 0.878 wide against 0.900 for the other three — a 2.4 % deficit
+#: the tile's 4 % row tolerance absorbs. The invariant the clamp preserves is the
+#: *apparent size* the row comparison relies on, not "every mark stands `KEEP`
+#: wide".
 KEEP = 0.90
 #: The tallest ink, as a fraction of the canvas. See the note above.
 MAX_HEIGHT = 1.0

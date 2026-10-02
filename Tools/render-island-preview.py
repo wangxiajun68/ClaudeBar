@@ -13,11 +13,12 @@ never reads that preference for anything the picture shows.
 
 The island is *black in both themes* — it sits on the hardware notch — so the
 two output files differ only in the panel the island is pasted onto and the ink
-`ProductBrandMark` picks, not in the island itself. `--check` fails loudly when
-a required production declaration is missing instead of rendering a stand-in,
-and the render itself uses a hosting-view snapshot rather than `ImageRenderer`
-because the expanded session grid is a real `ScrollView`, whose content
-`ImageRenderer` does not lay out.
+`ProductBrandMark` picks, not in the island itself. `--check` reads every
+production slice and compiles the generated probe, then stops before the launch:
+it fails loudly on a declaration that moved and on a slice set that no longer
+forms a program. The render itself uses a hosting-view snapshot rather than
+`ImageRenderer` because the expanded session grid is a real `ScrollView`, whose
+content `ImageRenderer` does not lay out.
 """
 from pathlib import Path
 import subprocess
@@ -54,7 +55,10 @@ def declaration(path, start):
 
 def file_from(path, start=None, end=None):
     """A whole file, or a `[start, end)` slice of one, with existence checks."""
-    text = (root / path).read_text()
+    try:
+        text = (root / path).read_text()
+    except OSError:
+        raise SystemExit(f'render-island-preview: {path} is missing — the slice list is stale')
     if start is None:
         return text + "\n"
     pos = text.find(start)
@@ -73,12 +77,6 @@ for mark in ('anthropic', 'openai', 'cursor'):
     for variant in ('light', 'dark'):
         assert (brand_marks / f'{mark}-{variant}.png').is_file(), \
             f'{mark}-{variant}.png missing — ProductBrandMark would draw its fallback'
-
-if CHECK:
-    # Only the declaration lookup matters for the drift check; compiling the
-    # sources is what proves they still form a program.
-    print("render-island-preview: --check: production declarations are present")
-    sys.exit(0)
 
 source = "import SwiftUI\nimport AppKit\n"
 source += 'let brandMarkRoot = URL(fileURLWithPath: "' + str(brand_marks) + '")\n'
@@ -171,12 +169,11 @@ source += '''
 // MARK: - Fixture stand-ins (synthetic; no store, no disk, no network).
 
 /// `AppPreferences` is `@Observable` in the app and reads/writes real defaults.
-/// The island only ever asks it for three values, so the fixture answers those
+/// The island only ever asks it for two values, so the fixture answers those
 /// and nothing else. `isDark` is set per render by the probe.
 final class AppPreferences: @unchecked Sendable {
     static let shared = AppPreferences()
     var isDark = false
-    var greetingWeatherRendering = true
     var tokenUnitStyle: TokenUnitStyle = .chinese
     var vpnEnabled = true
 }
@@ -374,4 +371,11 @@ path.write_text(source)
 binary = out / 'probe'
 subprocess.run(['/usr/bin/swiftc', '-O', '-parse-as-library', '-target', 'arm64-apple-macos15.0',
                 str(path), '-o', str(binary)], check=True)
-subprocess.run([str(binary), str(out)], check=True)
+if CHECK:
+    # `--check` runs every declaration lookup and the compile, and stops before
+    # the launch — the only step that needs a window server. Returning before
+    # the sources were read (the old shape) passed on a tree whose probe could
+    # not compile at all.
+    print('render-island-preview: --check: declarations present and the probe compiles')
+else:
+    subprocess.run([str(binary), str(out)], check=True)

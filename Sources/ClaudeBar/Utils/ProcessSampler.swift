@@ -907,10 +907,15 @@ private struct ProcessIndex {
         return pid_t(UInt32(buf[16]) | UInt32(buf[17]) << 8 | UInt32(buf[18]) << 16 | UInt32(buf[19]) << 24)
     }
 
-    private static func allPIDs(scratch: inout ProcessScanScratch) -> [pid_t] {
-        let neededBytes = proc_listallpids(nil, 0)
-        guard neededBytes > 0 else { return [] }
-        let count = Int(neededBytes) / MemoryLayout<pid_t>.stride + 32
+    /// `proc_listallpids` returns an *entry count* on both calls (verified on
+    /// this machine: 625 with a nil buffer, 605 with room for 4096 — the
+    /// byte-count reading would make the second call overflow its buffer's
+    /// return and, before that, left the scan with `filled / stride` entries,
+    /// i.e. a quarter of the process table). One pid list for the whole app.
+    static func allPIDs(scratch: inout ProcessScanScratch) -> [pid_t] {
+        let needed = proc_listallpids(nil, 0)
+        guard needed > 0 else { return [] }
+        let count = Int(needed) + 32
         if scratch.pids.count < count {
             scratch.pids = [pid_t](repeating: 0, count: count)
         }
@@ -918,7 +923,7 @@ private struct ProcessIndex {
             proc_listallpids(buf.baseAddress, Int32(buf.count * MemoryLayout<pid_t>.stride))
         }
         guard filled > 0 else { return [] }
-        let n = min(scratch.pids.count, Int(filled) / MemoryLayout<pid_t>.stride)
+        let n = min(scratch.pids.count, Int(filled))
         return Array(scratch.pids.prefix(n).filter { $0 > 0 })
     }
 
