@@ -3,7 +3,7 @@
 
 PYTHON := $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 export TEST
-export TEST_SUITES := build-isolation ui core performance interaction-performance rendering local-endpoint provider-icon product-mark session-title quota-reset cursor-usage cursor-ledger completion-notify session-waiting island-session-alert waiting-notify greeting-data greeting-phrase greeting-layout greeting-name weather-astronomy menubar-strip connection-panel charge-limit model-cost proxy-usage proxy-upstream cc-concurrency codex-session inflight-animation cursor-turn card-shadow machine-mark fan-rotor vpn-domain-log vpn-provider-direct usage-analysis usage-index model-price-source promo-key icon-minimal connector-batch widget-tint
+export TEST_SUITES := build-isolation ui core performance interaction-performance rendering local-endpoint provider-icon product-mark session-title quota-reset cursor-usage cursor-ledger completion-notify session-waiting workflow-session island-session-alert waiting-notify greeting-data greeting-phrase greeting-layout greeting-name weather-astronomy menubar-strip connection-panel charge-limit model-cost proxy-usage proxy-upstream cc-concurrency codex-session inflight-animation cursor-turn card-shadow machine-mark fan-rotor vpn-domain-log vpn-provider-direct usage-analysis usage-index model-price-source promo-key icon-minimal connector-batch feishu-documents widget-tint
 
 build: dev
 

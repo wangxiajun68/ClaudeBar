@@ -16,7 +16,10 @@ private enum MarkdownBlock: Sendable {
 /// bounded and runs off the main actor; no HTML or script is evaluated.
 struct SkillMarkdownPreview: View {
     private enum PreviewError: Error { case tooLarge }
-    let file: URL
+    private let file: URL?
+    private let content: String?
+    init(file: URL) { self.file = file; content = nil }
+    init(content: String) { file = nil; self.content = content }
     @State private var blocks: [MarkdownBlock] = []
     @State private var message: String?
     @State private var loading = true
@@ -24,7 +27,7 @@ struct SkillMarkdownPreview: View {
     var body: some View {
         Group {
             if loading {
-                ProgressView("正在读取 Skill 文档")
+                ProgressView(content == nil ? "正在读取 Skill 文档" : "正在排版文档")
                     .frame(maxWidth: .infinity, minHeight: 180)
             } else if let message {
                 StandbyEmptyState(label: message, symbol: "doc.text",
@@ -39,12 +42,17 @@ struct SkillMarkdownPreview: View {
                 .textSelection(.enabled)
             }
         }
-        .task(id: file.path) {
+        .task(id: content ?? file?.path ?? "") {
             loading = true
             message = nil
             do {
                 let worker = Task.detached(priority: .utility) {
                     try Task.checkCancellation()
+                    if let content {
+                        guard content.utf8.count <= 512_000 else { throw PreviewError.tooLarge }
+                        return try Self.parse(content)
+                    }
+                    guard let file else { return [MarkdownBlock]() }
                     let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                     guard size <= 512_000 else { throw PreviewError.tooLarge }
                     let data = try Data(contentsOf: file, options: .mappedIfSafe)

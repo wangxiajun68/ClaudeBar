@@ -6,6 +6,7 @@ import SwiftUI
 struct ConnectorsView: View {
     @ObservedObject private var manager = ConnectorManager.shared
     @AppStorage("connectorProjectPath") private var projectPath = ""
+    @State private var showFeishu = false
     @State private var focus: ConnectorFocus = .plugin
     @State private var platform: ConnectorPlatform?
     @State private var search = ""
@@ -24,6 +25,21 @@ struct ConnectorsView: View {
     private var selectedProject: String? { projectPath.isEmpty ? nil : projectPath }
 
     var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                SegmentedCapsule(items: [false, true], selection: showFeishu,
+                                 title: { $0 ? "飞书文档" : "连接器" },
+                                 symbol: { $0 ? "doc.text.image" : "puzzlepiece.extension" },
+                                 tint: Theme.Ink.claude, onSelect: { showFeishu = $0 })
+                Spacer()
+            }
+            .padding(.horizontal, Theme.Space.s24).padding(.top, Theme.Space.s12)
+            if showFeishu { FeishuDocumentsView() } else { inventory }
+        }
+        .background(Theme.bgPrimary)
+    }
+
+    private var inventory: some View {
         let shown = visibleRecords
         let clis = visibleCLIs
         let count = focus == .local ? clis.count : shown.count
