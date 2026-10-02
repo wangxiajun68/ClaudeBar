@@ -9,6 +9,54 @@ enum GreetingPhrase {
         var label: String { self == .chinese ? "中文" : "English" }
     }
 
+    enum Selection: String, CaseIterable, Identifiable {
+        case automatic, hello, morning, afternoon, evening, night, welcome, gentle, monthly, custom
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .automatic: return "自动"
+            case .hello: return "你好呀"
+            case .morning: return "早上好呀"
+            case .afternoon: return "下午好呀"
+            case .evening: return "晚上好呀"
+            case .night: return "晚安好梦"
+            case .welcome: return "欢迎回来"
+            case .gentle: return "慢慢来就好"
+            case .monthly: return "你好，本月"
+            case .custom: return "自定义"
+            }
+        }
+    }
+
+    static func resolve(_ selection: Selection, custom: String = "", date: Date,
+                        calendar: Calendar = .current, language: Language = .chinese,
+                        context: Context = Context()) -> Phrase {
+        let chinese = language == .chinese
+        let script: String
+        switch selection {
+        case .automatic: return forDate(date, calendar: calendar, language: language, context: context)
+        case .hello: script = chinese ? "你好呀" : "Hello"
+        case .morning: script = chinese ? "早上好呀" : "Good morning"
+        case .afternoon: script = chinese ? "下午好呀" : "Good afternoon"
+        case .evening: script = chinese ? "晚上好呀" : "Good evening"
+        case .night: script = chinese ? "晚安好梦" : "Sweet dreams"
+        case .welcome: script = chinese ? "欢迎回来" : "Welcome back"
+        case .gentle: script = chinese ? "慢慢来就好" : "Keep it gentle"
+        case .monthly:
+            if chinese { script = "你好，\(calendar.component(.month, from: date))月" }
+            else {
+                let style = Date.FormatStyle(locale: Locale(identifier: "en_US"),
+                                             calendar: calendar, timeZone: calendar.timeZone).month(.wide)
+                script = "Hello, " + date.formatted(style)
+            }
+        case .custom:
+            script = String(custom.split(whereSeparator: { $0.isNewline }).joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+            if script.isEmpty { return forDate(date, calendar: calendar, language: language, context: context) }
+        }
+        return Phrase(script: script, aside: nil)
+    }
+
     struct Phrase: Equatable {
         var script: String
         var aside: String?

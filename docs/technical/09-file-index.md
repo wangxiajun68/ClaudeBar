@@ -95,11 +95,12 @@
 | `Utils/ModelPricing.swift` | 模型花费估算：slug 归一化与匹配、分币种累加、金额格式化（`Tests/model-cost-regressions.py` 锁定） |
 | `Utils/ModelPriceTable.swift` | 内置官方刊例价表（每行标注来源，见 [§15](15-model-cost.md)）；更新只需改这一个文件 |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：用户要求折算时才联网（两个无 Key 日更源），也可手动钉住一个值 |
-| `Models/ConnectorManager.swift` | 连接器扫描：三家客户端的本机 Skills / MCP / 插件，及其启停方式；只读元数据，不启动服务。`shared` 是全应用一份（每次进页面新建会让清单从空起步），重扫只发布变化 |
+| `Models/ConnectorManager.swift` | 连接器扫描：三家客户端的本机 Skills / MCP / 插件，及其启停方式；只读元数据，不启动服务。Skill 的启停对三家都是同一套可逆移库（`DisabledSkills/` + `registry.json`），平台筛选只收窄联动的同名安装集合，不改写法。`shared` 是全应用一份（每次进页面新建会让清单从空起步），重扫只发布变化 |
 | `Models/MCPToolDiscovery.swift` | MCP `initialize` + `tools/list`（不发 `tools/call`），HTTP 与 stdio 两种传输，带超时与上限 |
 | `Views/Pages/ConnectorsView.swift` | 连接器页：客户端筛选 + 「本机共享」+ 类型筛选 + 搜索 + 等高卡片网格 |
 | `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
 | `Views/Shared/SkillMarkdownPreview.swift` | SKILL.md 的原生 SwiftUI 渲染（标题 / 列表 / 引用 / 代码块 / 表格） |
+| `Models/DocumentMarkup.swift` | 上面那套 Markdown 的**解析**：块模型与 `parse` 从视图文件里提出来，供渲染、飞书文档预览与两条回归共用一份实现（`interaction-performance-regressions.py` 直接切这个文件，不再从视图里抠切片） |
 | `Views/Shared/ExchangeRateTile.swift` | 设置 → 通用 → 用量与花费 → 美元兑人民币：显示当前汇率与日期、手动钉值（清空恢复自动查询） |
 | `Views/Shared/VpnTopChrome.swift` | `VpnStatusPill`（popup 状态行的节点 / 延迟药丸）+ `CursorUsagePanel`（Cursor chip 的面板）+ `VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除 |
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：只保留第三方 OpenAI / Anthropic 两个选择（默认跟随 Codex / Claude Code 当前供应商，不写 `config.toml` / `settings.json`）；CC / Codex 的只读卡已删——它们的选择在「模型」页 |

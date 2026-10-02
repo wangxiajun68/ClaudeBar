@@ -199,11 +199,10 @@ def production_function(name):
 
 functions = '\n'.join(production_function(name) for name in [
     'itemExists', 'scanSkills', 'skillRecord', 'skillMetadata', 'requiredCLI',
-    'setEnabled', 'setSkillPlatformEnabled', 'parkedSkills', 'saveParkedSkills',
-    'ensureVault', 'setSkillEnabled', 'secureReplace',
+    'setEnabled', 'parkedSkills', 'saveParkedSkills', 'ensureVault',
+    'setSkillEnabled', 'secureReplace',
 ])
 parked = manager[manager.index('    private struct ParkedSkill:'):manager.index('    /// fileExists follows links')].replace('private struct', 'struct')
-policy = (root / 'Sources/ClaudeBar/Utils/ConnectorSkillPolicy.swift').read_text()
 writer = (root / 'Sources/ClaudeBar/Utils/PrivateFileWriter.swift').read_text()
 harness = r'''
 import Foundation
@@ -213,7 +212,6 @@ import Combine
 enum ProductBrandMark { enum Brand { case claude, codex, cursor } }
 enum Theme { DJ2 }
 MODEL
-POLICY
 WRITER
 
 enum BuildChannel {
@@ -240,62 +238,79 @@ enum Harness {
         let base = Harness.home
         let agents = base.appendingPathComponent(".agents/skills")
         let claude = base.appendingPathComponent(".claude/skills")
+        let cursor = base.appendingPathComponent(".cursor/skills")
         let skill = agents.appendingPathComponent("deploy")
         let link = claude.appendingPathComponent("deploy-link")
         let codexConfig = base.appendingPathComponent(".codex/config.toml")
         let claudeConfig = base.appendingPathComponent(".claude/settings.json")
-        for folder in [skill, claude, codexConfig.deletingLastPathComponent()] {
+        for folder in [skill, claude, cursor, codexConfig.deletingLastPathComponent(), claudeConfig.deletingLastPathComponent()] {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         }
         try Data("---\nname: deploy\ndescription: fixture\n---\nbody\n".utf8).write(to: skill.appendingPathComponent("SKILL.md"))
         try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "../../.agents/skills/deploy")
-        let before = "# keep bytes\nmodel = \"fixture\"\n[mcp_servers.fixture]\ncommand = \"fake\"\n"
-        try Data(before.utf8).write(to: codexConfig)
-        try Data(#"{"keep":{"nested":1},"skillOverrides":{"other":"name-only"}}"#.utf8).write(to: claudeConfig)
+        // A Claude-exclusive install, with its own name, so the *platform*
+        // narrowing can be told apart from the same-name association.
+        let claudeOnly = claude.appendingPathComponent("claude-only")
+        try fm.createDirectory(at: claudeOnly, withIntermediateDirectories: true)
+        try Data("---\nname: claude-only\ndescription: only here\n---\n".utf8).write(to: claudeOnly.appendingPathComponent("SKILL.md"))
+        // Both native configs carry bytes a move must never touch. 启停 is a
+        // directory move now, so "the app wrote a skill setting here" is the
+        // regression this pins — the files must come out byte-identical.
+        let codexBefore = "# keep bytes\nmodel = \"fixture\"\n[mcp_servers.fixture]\ncommand = \"fake\"\n[[skills.config]]\npath = \"/stale\"\nenabled = false\n"
+        let claudeBefore = #"{"keep":{"nested":1},"skillOverrides":{"other":"name-only"}}"#
+        try Data(codexBefore.utf8).write(to: codexConfig)
+        try Data(claudeBefore.utf8).write(to: claudeConfig)
         var records: [ConnectorRecord] = []
-        Harness.scanSkills(in: agents, platforms: [.codex, .cursor], scope: "个人", depth: 0, into: &records)
+        Harness.scanSkills(in: agents, platforms: [.codex, .cursor], scope: "个人 · 共享", depth: 0, into: &records)
         Harness.scanSkills(in: claude, platforms: [.claude, .cursor], scope: "个人", depth: 0, into: &records)
-        precondition(records.count == 2 && records.allSatisfy { $0.name == "deploy" })
+        precondition(records.count == 3)
         precondition(records.contains { $0.skillIsLink })
-        let shared = records.first { !$0.skillIsLink }!
-        let cc = records.first { $0.skillIsLink }!
-        let codex = shared.scoped(to: .codex)
-        precondition(codex.platforms == [.codex] && codex.canToggle && !codex.canRemove)
-        precondition(shared.scoped(to: .cursor).batchCapability == .none)
+        let shared = records.first { $0.name == "deploy" && !$0.skillIsLink }!
+        let cc = records.first { $0.name == "deploy" && $0.skillIsLink }!
+        let solo = records.first { $0.name == "claude-only" }!
+        // Every scanned skill is a directory move, so every card can act on it.
+        precondition(records.allSatisfy { $0.canToggle && $0.canRemove && $0.batchCapability == .state(true) })
+        // Same-name installs travel together across platforms — that is the
+        // association the page has always had.
         precondition(ConnectorBatch.expandingSkills([shared], in: records, platform: nil).count == 2)
         precondition(ConnectorBatch.expandingSkills([shared], in: records, platform: .codex).count == 1)
-        try Harness.setEnabled(false, record: codex)
-        let stopped = try String(contentsOf: codexConfig, encoding: .utf8)
-        precondition(stopped.hasPrefix(before))
-        precondition(try !ConnectorSkillPolicy.codexEnabled(stopped, original: skill))
-        precondition(fm.fileExists(atPath: skill.appendingPathComponent("SKILL.md").path))
-        precondition(try ConnectorSkillPolicy.claudeEnabled(Data(contentsOf: claudeConfig), name: "deploy"))
-        try Harness.setEnabled(false, record: cc.scoped(to: .claude))
-        let ccStopped = try Data(contentsOf: claudeConfig)
-        precondition(try !ConnectorSkillPolicy.claudeEnabled(ccStopped, name: "deploy"))
-        let ccObject = try JSONSerialization.jsonObject(with: ccStopped) as! [String: Any]
-        precondition(ccObject["keep"] != nil)
-        precondition((ccObject["skillOverrides"] as! [String: String])["other"] == "name-only")
-        // Global off: park the relative link first, then its target. Both remain
-        // discoverable in the registry even while the parked link is dangling.
-        try Harness.setEnabled(false, record: cc)
+        // …and the platform filter narrows it to the view the user is standing
+        // in, so a Claude-only install is never part of a Codex 停用.
+        precondition(Set(ConnectorBatch.expandingSkills([solo], in: records, platform: nil).map(\.name)) == ["claude-only"])
+        precondition(ConnectorBatch.expandingSkills([solo], in: records, platform: .codex).isEmpty)
+        precondition(ConnectorBatch.expandingSkills([solo], in: records, platform: .claude).count == 1)
+        precondition(Set(ConnectorBatch.expandingSkills([shared], in: records, platform: .claude).map(\.name)) == ["deploy"])
+        // Stopping one install (the folder) while leaving Codex's config alone.
         try Harness.setEnabled(false, record: shared)
+        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == codexBefore)
+        precondition(try Data(contentsOf: claudeConfig) == Data(claudeBefore.utf8))
+        precondition(!fm.fileExists(atPath: skill.path))
         let parked = try Harness.parkedSkills()
-        precondition(parked.count == 2 && parked.allSatisfy { $0.name == "deploy" })
-        for entry in parked {
+        precondition(parked.count == 1 && parked[0].name == "deploy" && parked[0].summary == "fixture")
+        // The parked folder is still discoverable and shows as disabled.
+        let parkedRecord = Harness.skillRecord(at: skill, contentsAt: URL(fileURLWithPath: parked[0].stored),
+            platforms: [.codex, .cursor], scope: "个人 · 共享", enabled: false, parked: parked[0])
+        // A parked install is a stopped one: 启用 reaches it and 停用 does not,
+        // with no vault special-case anywhere in the policy.
+        precondition(parkedRecord.name == "deploy" && parkedRecord.enabled == false && parkedRecord.canToggle)
+        precondition(parkedRecord.batchCapability == .state(false))
+        precondition(ConnectorBatch.records([parkedRecord], for: .disable).isEmpty)
+        precondition(ConnectorBatch.records([parkedRecord], for: .enable).count == 1)
+        // A parked *relative symlink* stays in the registry even while dangling.
+        try Harness.setEnabled(false, record: cc)
+        let both = try Harness.parkedSkills()
+        precondition(both.count == 2)
+        precondition(!fm.fileExists(atPath: link.path))
+        for entry in both {
             precondition(Harness.itemExists(URL(fileURLWithPath: entry.stored)))
-            let record = Harness.skillRecord(at: URL(fileURLWithPath: entry.original),
-                contentsAt: URL(fileURLWithPath: entry.stored), platforms: [.codex, .cursor],
-                scope: "个人", enabled: false, parked: entry)
-            precondition(record.name == "deploy" && !record.scoped(to: .codex).canToggle)
         }
-        precondition(!fm.fileExists(atPath: skill.path) && !fm.fileExists(atPath: link.path))
+        // Restore, in either order, leaving both configs untouched.
         try Harness.setEnabled(true, record: shared)
         try Harness.setEnabled(true, record: cc)
         precondition(fm.fileExists(atPath: link.appendingPathComponent("SKILL.md").path))
         precondition(try Harness.parkedSkills().isEmpty)
-        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == stopped)
-        precondition(try Data(contentsOf: claudeConfig) == ccStopped)
+        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == codexBefore)
+        precondition(try Data(contentsOf: claudeConfig) == Data(claudeBefore.utf8))
         // An occupied restore path, including a dangling link, must never be overwritten.
         try Harness.setEnabled(false, record: shared)
         try fm.createSymbolicLink(atPath: skill.path, withDestinationPath: "/missing/fixture")
@@ -303,36 +318,25 @@ enum Harness {
         let conflict = try Harness.parkedSkills().first!
         let conflictRecord = Harness.skillRecord(at: skill,
             contentsAt: URL(fileURLWithPath: conflict.stored), platforms: [.codex, .cursor],
-            scope: "个人", enabled: false, parked: conflict)
+            scope: "个人 · 共享", enabled: false, parked: conflict)
         precondition(conflictRecord.id != shared.id && conflictRecord.summary.contains("占用"))
+        precondition(conflictRecord.enabled == false && conflictRecord.canToggle)
         try fm.removeItem(at: skill)
         try Harness.setEnabled(true, record: shared)
-        // Cursor-exclusive platform parking is distinct from global parking.
-        let cursorSkill = base.appendingPathComponent(".cursor/skills/deploy")
+        // A Cursor-exclusive install parks exactly like every other one.
+        let cursorSkill = cursor.appendingPathComponent("deploy")
         try fm.createDirectory(at: cursorSkill, withIntermediateDirectories: true)
         try Data("---\nname: deploy\n---\n".utf8).write(to: cursorSkill.appendingPathComponent("SKILL.md"))
         let cursorRecord = Harness.skillRecord(at: cursorSkill, contentsAt: cursorSkill,
             platforms: [.cursor], scope: "个人", enabled: true)
-        try Harness.setEnabled(false, record: cursorRecord.scoped(to: .cursor))
-        let cursorEntry = try Harness.parkedSkills().first!
-        let cursorParked = Harness.skillRecord(at: cursorSkill,
-            contentsAt: URL(fileURLWithPath: cursorEntry.stored), platforms: [.cursor],
-            scope: "个人", enabled: false, parked: cursorEntry)
-        precondition(!cursorParked.canToggle && cursorParked.batchCapability == .none)
-        precondition(cursorParked.scoped(to: .cursor).canToggle)
-        precondition(ConnectorBatch.records([cursorParked], for: .enable).isEmpty)
-        do { try Harness.setEnabled(true, record: cursorParked); fatalError("global enabled platform parking") } catch {}
-        try Harness.setEnabled(true, record: cursorParked.scoped(to: .cursor))
+        try Harness.setEnabled(false, record: cursorRecord)
+        precondition(!fm.fileExists(atPath: cursorSkill.path))
+        try Harness.setEnabled(true, record: cursorRecord)
         precondition(fm.fileExists(atPath: cursorSkill.path))
         // Old registry entries decode with optional metadata absent.
         let legacy = Data(#"[{"original":"/fixture/original","stored":"/fixture/stored"}]"#.utf8)
-        precondition(try JSONDecoder().decode([Harness.ParkedSkill].self, from: legacy).first!.platform == nil)
-        // Unsupported native config is rejected before any bytes change.
-        try Data("[skills]\nconfig = []\n".utf8).write(to: codexConfig)
-        do { try Harness.setEnabled(false, record: codex); fatalError("wrote unsupported TOML") } catch {}
-        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == "[skills]\nconfig = []\n")
-        try Data(stopped.utf8).write(to: codexConfig)
-        // A broken registry blocks moves before any source is changed.
+        precondition(try JSONDecoder().decode([Harness.ParkedSkill].self, from: legacy).first!.name == nil)
+        // A broken registry blocks the move before any source is changed.
         let savedRegistry = try Data(contentsOf: Harness.registry)
         try fm.removeItem(at: Harness.registry)
         try fm.createDirectory(at: Harness.registry, withIntermediateDirectories: true)
@@ -340,27 +344,18 @@ enum Harness {
         precondition(fm.fileExists(atPath: skill.path))
         try fm.removeItem(at: Harness.registry)
         try savedRegistry.write(to: Harness.registry)
-        // Entry-point isolation: no config bytes or skill folders change.
+        // Entry-point isolation: dev moves nothing.
+        let saved = try Data(contentsOf: Harness.registry)
         BuildChannel.allowsSystemIntegration = false
-        do { try Harness.setEnabled(true, record: codex); fatalError("dev wrote config") } catch {}
         do { try Harness.setEnabled(false, record: shared); fatalError("dev moved skill") } catch {}
-        precondition(try String(contentsOf: codexConfig, encoding: .utf8) == stopped)
         precondition(fm.fileExists(atPath: skill.path))
-        // Folder/SKILL.md aliases, duplicates, escaped paths and comments.
-        let quoted = String(decoding: try JSONSerialization.data(withJSONObject: skill.path, options: [.fragmentsAllowed]), as: UTF8.self)
-        let duplicates = "[[skills.config]] # first\npath = \(quoted)\nenabled = false # preserve\n[[skills.config]]\npath = \(quoted)\nenabled = true # false in comment\n[other]\nx = 1\n"
-        let updated = try ConnectorSkillPolicy.codexUpdating(duplicates, original: skill, enabled: true)
-        precondition(try ConnectorSkillPolicy.codexEnabled(updated, original: skill))
-        precondition(updated.contains("true # preserve") && updated.hasSuffix("[other]\nx = 1\n"))
-        precondition(try ConnectorSkillPolicy.codexUpdating(updated, original: skill, enabled: true) == updated)
-        for unsupported in ["[skills]\nconfig = []\n", "skills.config = []\n", "skills = { config = [] }\n", "[[ skills.config ]]\n", "[[skills.config]]\npath = 42\n"] {
-            do { _ = try ConnectorSkillPolicy.codexUpdating(unsupported, original: skill, enabled: false); fatalError("accepted unsupported config") } catch {}
-        }
-        print("PASS: platform overrides keep shared folders and other clients intact; global off/restore preserves overrides; relative symlink inventory and rollback conflicts; dev mutation gate; TOML aliases/duplicates/comments and unsupported forms")
+        precondition(try Data(contentsOf: Harness.registry) == saved)
+        BuildChannel.allowsSystemIntegration = true
+        print("PASS: platform view narrows the same-name association; 启停 is a directory move that never writes client config; parked symlinks, occupied restore paths and broken registries refuse safely; dev gate moves nothing")
     }
 }
 '''
-for key, value in [('DJ2', djb2), ('MODEL', model), ('POLICY', policy), ('WRITER', writer), ('PARKED', parked), ('FUNCTIONS', functions)]:
+for key, value in [('DJ2', djb2), ('MODEL', model), ('WRITER', writer), ('PARKED', parked), ('FUNCTIONS', functions)]:
     harness = harness.replace(key, value)
 # Swift's precondition autoclosure does not throw; use a throwing wrapper so
 # every assertion above still evaluates the production expression directly.

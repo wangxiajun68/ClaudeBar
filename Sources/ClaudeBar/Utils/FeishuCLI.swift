@@ -100,7 +100,7 @@ enum FeishuCLI {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    static func run(_ arguments: [String], input: String? = nil) async throws -> FeishuJSON {
+    static func run(_ arguments: [String], input: String? = nil, timeout: TimeInterval = 90) async throws -> FeishuJSON {
         // Even reads may refresh the CLI's shared credentials. Dev must not touch them.
         guard BuildChannel.allowsSystemIntegration else {
             throw FeishuCLIError.failed("开发版仅预览飞书界面，不读取或修改真实 CLI 凭据及云端文档。")
@@ -137,7 +137,7 @@ enum FeishuCLI {
                             try? stdin.fileHandleForWriting.close()
                             group.leave()
                         }
-                        let deadline = Date().addingTimeInterval(90)
+                        let deadline = Date().addingTimeInterval(min(600, max(1, timeout)))
                         while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.025) }
                         if process.isRunning {
                             child.cancel()

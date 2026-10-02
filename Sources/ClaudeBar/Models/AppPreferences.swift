@@ -221,6 +221,14 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(greetingLanguage.rawValue, forKey: "greetingLanguage") }
     }
 
+    @Published var greetingSelection: GreetingPhrase.Selection {
+        didSet { UserDefaults.standard.set(greetingSelection.rawValue, forKey: "greetingSelection") }
+    }
+
+    @Published var greetingCustomText: String {
+        didSet { UserDefaults.standard.set(greetingCustomText, forKey: "greetingCustomText") }
+    }
+
     /// 问候艺术字体。保留旧字体的持久化标识，不安装系统字体。
     @Published var greetingTypeface: GreetingTypeface {
         didSet { UserDefaults.standard.set(greetingTypeface.rawValue, forKey: "greetingTypeface") }
@@ -286,6 +294,8 @@ final class AppPreferences: ObservableObject {
         costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
         weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
         amapAPIKey = UserDefaults.standard.string(forKey: "amapAPIKey") ?? ""
+        greetingSelection = GreetingPhrase.Selection(rawValue: UserDefaults.standard.string(forKey: "greetingSelection") ?? "") ?? .automatic
+        greetingCustomText = UserDefaults.standard.string(forKey: "greetingCustomText") ?? "你好呀"
         greetingLanguage = GreetingPhrase.Language(rawValue: UserDefaults.standard.string(forKey: "greetingLanguage") ?? "") ?? .chinese
         removedGreetingTypefaces = Set(UserDefaults.standard.stringArray(forKey: "removedGreetingTypefaces") ?? [])
         greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard

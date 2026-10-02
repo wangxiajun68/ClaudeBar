@@ -14,6 +14,7 @@ struct UsageHeatmap: View {
     var onSelectDay: ((Date) -> Void)? = nil
     var onSelectMonth: ((Date) -> Void)? = nil
 
+    @State private var hoveredDate: Date?
     private let cal = Calendar.current
 
     static func height(for period: UsagePeriod, compact: Bool) -> CGFloat {
@@ -111,6 +112,14 @@ struct UsageHeatmap: View {
                 }
             }
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let point): hoveredDate = layout.date(at: point, cal: cal)
+                case .ended: hoveredDate = nil
+                }
+            }
+            .help(hoveredDate.map { helpText(date: $0, tokens: by[Self.dayKey($0)]) }
+                  ?? "悬停查看每日用量 · 点击日期下钻")
             .onTapGesture { location in
                 guard let date = layout.date(at: location, cal: cal) else { return }
                 // In the year grid a cell is one day of one month, and drilling
@@ -151,7 +160,7 @@ struct UsageHeatmap: View {
     // MARK: Color
 
     private func fill(_ intensity: Double?) -> Color {
-        guard let v = intensity else { return Theme.cardFill(0.06) }
+        guard let v = intensity, v > 0 else { return Theme.cardFill(0.06) }
         return Theme.chartPurple.opacity(0.16 + 0.84 * v)
     }
 
@@ -166,7 +175,7 @@ struct UsageHeatmap: View {
     }
 
     private var byDay: [String: Int] {
-        Dictionary(uniqueKeysWithValues: days.map { ($0.day, $0.totalTokens) })
+        Dictionary(days.map { ($0.day, $0.totalTokens) }, uniquingKeysWith: +)
     }
 
     private func weekItems(by: [String: Int], peak: Double) -> [Cell] {
@@ -247,7 +256,8 @@ private struct HeatLayout {
     func date(at p: CGPoint, cal: Calendar) -> Date? {
         let col = Int(floor(p.x / (cellW + gap)))
         let row = Int(floor(p.y / (cellH + gap)))
-        guard col >= 0, col < cols, row >= 0, row < 7 else { return nil }
+        guard col >= 0, col < cols, row >= 0, row < 7,
+              rect(col: col, row: row).contains(p) else { return nil }
         let i = col * 7 + row - leading
         guard i >= 0, i < dayCount else { return nil }
         return cal.date(byAdding: .day, value: i, to: start)

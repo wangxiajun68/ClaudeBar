@@ -274,6 +274,27 @@ struct SettingsView: View {
                 .padding(.horizontal, 20).padding(.vertical, 14)
                 .disabled(!prefs.greetingWeatherRendering)
                 SettingsDivider()
+                SettingsRow(title: "问候语", caption: prefs.greetingSelection == .automatic ? "随时间、节日和天气自动选择" : "文字随窗口和字体自动缩放") {
+                    Menu {
+                        ForEach(GreetingPhrase.Selection.allCases) { selection in
+                            Button(selection.label) { prefs.greetingSelection = selection }
+                        }
+                    } label: { InstrumentMenuLabel(title: prefs.greetingSelection.label) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                        .accessibilityLabel("问候语")
+                }
+                if prefs.greetingSelection == .custom {
+                    SettingsRow(title: "自定义内容", caption: "最多 80 字；留空时自动选择") {
+                        TextField("输入问候语", text: $prefs.greetingCustomText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 220)
+                            .onChange(of: prefs.greetingCustomText) { _, text in
+                                if text.count > 80 { prefs.greetingCustomText = String(text.prefix(80)) }
+                            }
+                            .accessibilityLabel("自定义问候语")
+                    }
+                }
+                SettingsDivider()
                 SettingsRow(title: "问候语言") {
                     Menu {
                         ForEach(GreetingPhrase.Language.allCases) { language in

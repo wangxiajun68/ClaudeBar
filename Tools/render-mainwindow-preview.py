@@ -1096,7 +1096,8 @@ final class VpnDomainLog: ObservableObject {
     @MainActor static let shared = VpnDomainLog()
     /// The real ring's bound, quoted so the retention caption on the log page
     /// reads the same number the app writes.
-    static let limit = 10_000
+    static let limit = 2_000
+    @Published var connectionRevision = 0
     @Published var connections: [VpnDomainConnection] = []
     @Published var entries: [VpnDomainEntry] = []
     @Published var received = 0

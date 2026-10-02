@@ -14,6 +14,8 @@ struct GreetingCard: View {
     @State private var costDisplay = AppPreferences.shared.costDisplay
     @State private var typeface = AppPreferences.shared.greetingTypeface
     @State private var language = AppPreferences.shared.greetingLanguage
+    @State private var greetingSelection = AppPreferences.shared.greetingSelection
+    @State private var greetingCustomText = AppPreferences.shared.greetingCustomText
     @State private var removedTypefaces = AppPreferences.shared.removedGreetingTypefaces
     /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画天气图层，这张卡也不再
     /// 联网取天气（见 `GreetingCard` 自己的 `.task`）。
@@ -66,6 +68,8 @@ struct GreetingCard: View {
             locating: BuildChannel.promptsForSystemPermissions && PermissionGate.allows(.currentLocation),
             typeface: typeface,
             language: language,
+            greetingSelection: greetingSelection,
+            greetingCustomText: greetingCustomText,
             removedTypefaces: removedTypefaces,
             weatherRendering: weatherRendering,
             refreshWeather: { weather.refresh() },
@@ -82,6 +86,8 @@ struct GreetingCard: View {
         .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
         .onReceive(AppPreferences.shared.$greetingTypeface.removeDuplicates()) { typeface = $0 }
         .onReceive(AppPreferences.shared.$greetingLanguage.removeDuplicates()) { language = $0 }
+        .onReceive(AppPreferences.shared.$greetingSelection.removeDuplicates()) { greetingSelection = $0 }
+        .onReceive(AppPreferences.shared.$greetingCustomText.removeDuplicates()) { greetingCustomText = $0 }
         .onReceive(AppPreferences.shared.$removedGreetingTypefaces.removeDuplicates()) { removedTypefaces = $0 }
         .onReceive(AppPreferences.shared.$greetingWeatherRendering.removeDuplicates()) { weatherRendering = $0 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -143,6 +149,8 @@ struct GreetingStatusSheet: View {
     /// The face the greeting is written in (设置 → 问候字体).
     var typeface: GreetingTypeface = .standard
     var language: GreetingPhrase.Language = .chinese
+    var greetingSelection: GreetingPhrase.Selection = .automatic
+    var greetingCustomText = ""
     var removedTypefaces: Set<String> = []
     /// 设置 → 天气与问候 → 天气渲染。关掉之后天空不再画云、雨雪、雾、闪电与
     /// 玻璃雨滴；右上不再是实时天气，而是一张贴图说明。
@@ -267,7 +275,8 @@ struct GreetingStatusSheet: View {
             default: break
             }
         }
-        return GreetingPhrase.forDate(skyDate, language: language, context: context)
+        return GreetingPhrase.resolve(greetingSelection, custom: greetingCustomText,
+                                      date: skyDate, language: language, context: context)
     }
     private var previewTime: String {
         sceneDate.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: zone))
@@ -284,16 +293,22 @@ struct GreetingStatusSheet: View {
         var sill: CGFloat { 56 }
         var total: CGFloat { sky + sill }
         var top: CGFloat { margin - 8 }
-        var nowHeight: CGFloat { 156 }
+        var nowHeight: CGFloat { 88 }
         var chartWidth: CGFloat { narrow ? 236 : 300 }
         var chartHeight: CGFloat { 80 }
         var sunWidth: CGFloat { narrow ? 196 : 212 }
         var chartTop: CGFloat { sky - 14 - chartHeight }
+        var hourlyWidth: CGFloat { narrow ? 216 : 270 }
+        var hourlyHeight: CGFloat { width >= 900 ? chartHeight : 60 }
+        // Wide cards place the hourly chart just left of the daily forecast.
+        // Compact cards retain the upper weather lane to avoid the sun path.
+        var hourlyX: CGFloat { width - margin - hourlyWidth - (width >= 900 ? chartWidth + 24 : 0) }
+        var hourlyTop: CGFloat { width >= 900 ? chartTop : top + 96 }
         /// The manual console takes the sun path's corner and, when the card
         /// is too narrow for both, the forecast's too.
         var consoleWidth: CGFloat { narrow ? width - margin * 2 : min(440, width - margin * 2 - chartWidth - 32) }
         var skyToggleWidth: CGFloat { 116 }
-        var topClear: CGFloat { top + nowHeight + 6 }
+        var topClear: CGFloat { top + (width >= 900 ? nowHeight : 156) + 6 }
         var bottomClear: CGFloat { chartTop - 6 }
     }
 
@@ -319,6 +334,13 @@ struct GreetingStatusSheet: View {
         var sky: SkyScene.Weather
         var visible: Bool
         var reduceMotion: Bool
+        var width: CGFloat
+    }
+
+    private struct HourlyKey: Equatable {
+        var reading: WeatherReading
+        var date: Date
+        var darkInk: Bool
         var width: CGFloat
     }
 
@@ -363,12 +385,16 @@ struct GreetingStatusSheet: View {
         let scene = makeScene()
         let layout = GreetingTypesetter.layout(phrase.salutation, name: name, typeface: greetingTypeface, cardWidth: m.width,
                                                skyHeight: m.sky, margin: m.margin,
-                                               topClear: m.topClear, bottomClear: m.bottomClear - 24)
+                                               topClear: m.topClear, bottomClear: m.bottomClear)
         // Each information region chooses ink against its own sky band.
         let topLeftDark = scene.prefersDarkInk(at: SIMD2(0.12, Float((m.top + 30) / m.sky)), aspect: Float(m.width / m.sky))
         let topRightDark = scene.prefersDarkInk(at: SIMD2(0.85, Float((m.top + m.nowHeight / 2) / m.sky)), aspect: Float(m.width / m.sky))
         let bottomLeftDark = scene.prefersDarkInk(at: SIMD2(0.18, Float((m.sky - 42) / m.sky)), aspect: Float(m.width / m.sky))
         let bottomRightDark = scene.prefersDarkInk(at: SIMD2(0.85, Float((m.chartTop + m.chartHeight / 2) / m.sky)), aspect: Float(m.width / m.sky))
+        let hourlyDark = scene.prefersDarkInk(at: SIMD2(Float((m.hourlyX + m.hourlyWidth / 2) / m.width),
+                                                        Float((m.hourlyTop + m.hourlyHeight / 2) / m.sky)),
+                                              aspect: Float(m.width / m.sky))
+        let hourlyInk = hourlyDark ? Color(hex: 0x141E33) : Color.white
         let topLeftInk = topLeftDark ? Color(hex: 0x141E33) : Color.white
         let topRightInk = topRightDark ? Color(hex: 0x141E33) : Color.white
         let bottomLeftInk = bottomLeftDark ? Color(hex: 0x141E33) : Color.white
@@ -427,6 +453,16 @@ struct GreetingStatusSheet: View {
                 }
                 .equatable()
                 .transition(.opacity)
+            }
+            if liveWeather, focusedDay == nil, let reading {
+                Unchanged(key: HourlyKey(reading: reading, date: skyDate, darkInk: hourlyDark, width: m.width)) {
+                    HourlyWeatherInstrument(reading: reading, date: skyDate, ink: hourlyInk, darkInk: hourlyDark,
+                                            alignsWithForecast: m.width >= 900)
+                        .frame(width: m.hourlyWidth, height: m.hourlyHeight)
+                }
+                .equatable()
+                .offset(x: m.hourlyX, y: m.hourlyTop)
+                .modifier(StatusArrival(arrived: arrived, delay: 1.35, reduceMotion: reduceMotion))
             }
             Unchanged(key: SillKey(ccModel: ccModel, ccProvider: ccProvider, codexModel: codexModel,
                                    codexProvider: codexProvider, tokens: tokens,
@@ -644,10 +680,6 @@ struct GreetingStatusSheet: View {
             locationRow(ink: ink, metrics: m)
             conditionRow(night: night, ink: ink, vivid: vivid)
             metricRow(ink: ink, vivid: vivid)
-            if liveWeather, focusedDay == nil, let reading {
-                HourlyWeatherInstrument(reading: reading, date: skyDate, ink: ink, darkInk: !vivid)
-                    .frame(width: m.narrow ? 216 : 270, height: 60)
-            }
         }
         .frame(height: m.nowHeight, alignment: .topTrailing)
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: focusedDay?.date)

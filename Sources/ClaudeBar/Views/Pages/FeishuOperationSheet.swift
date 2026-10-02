@@ -15,6 +15,7 @@ struct FeishuOperation: Identifiable {
     var content = ""
     var revision = ""
     var member: FeishuJSON = .null
+    var format = "pdf"
 }
 
 struct FeishuOperationSheet: View {
@@ -77,6 +78,7 @@ struct FeishuOperationSheet: View {
         .onAppear {
             title = request.kind == .copy ? (request.document?.title ?? "") + " · 副本" : request.document?.title ?? ""
             destination = request.location.folder
+            exportFormat = request.format
         }
         .task {
             guard request.kind == .history, let doc = request.document else { return }

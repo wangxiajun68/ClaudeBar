@@ -34,7 +34,7 @@ struct FeishuDocument: Identifiable, Equatable, Sendable {
             (item["doc_meta"] != .null ? item["doc_meta"] : item["wiki_meta"])
         let url = item.first("url", "doc_url").isEmpty ? meta.first("url", "doc_url") : item.first("url", "doc_url")
         let link = URL(string: url)
-        let token = item.first("node_token", "token", "doc_token", "file_token")
+        let token = item.first("node_token", "token", "doc_token", "file_token", "document_id")
         let metaToken = meta.first("doc_token", "node_token", "token")
         let resolved = !token.isEmpty ? token : (!metaToken.isEmpty ? metaToken : link?.lastPathComponent ?? "")
         guard !resolved.isEmpty else { return nil }
@@ -79,7 +79,19 @@ struct FeishuLocation: Identifiable, Equatable, Sendable {
     let title: String
     let folder: String
     var space = ""
-    var id: String { space + ":" + folder }
+    var recentDays = 0
+    var openedSince = ""
+    var openedUntil = ""
+    var isRecent: Bool { recentDays > 0 }
+    var id: String { isRecent ? "recent:\(openedSince):\(openedUntil)" : space + ":" + folder }
+    static let recent = recentlyOpened()
+    static func recentlyOpened(days: Int = 30, now: Date = Date()) -> FeishuLocation {
+        let duration = min(90, max(1, days))
+        let formatter = ISO8601DateFormatter()
+        return FeishuLocation(title: "最近访问", folder: "", recentDays: duration,
+                              openedSince: formatter.string(from: now.addingTimeInterval(-Double(duration) * 86_400)),
+                              openedUntil: formatter.string(from: now))
+    }
     static let root = FeishuLocation(title: "云空间", folder: "")
     static let library = FeishuLocation(title: "个人文档库", folder: "", space: "my_library")
 }
@@ -87,7 +99,13 @@ struct FeishuLocation: Identifiable, Equatable, Sendable {
 enum FeishuDocumentCommand {
     static func list(_ location: FeishuLocation, query: String, cursor: String = "") -> [String] {
         var args: [String]
-        if !query.isEmpty {
+        if location.isRecent {
+            // Absolute bounds stay identical across pages; relative time would
+            // drift and invalidate the upstream search cursor.
+            args = ["drive", "+search", "--query", query, "--page-size", "20",
+                    "--opened-since", location.openedSince, "--opened-until", location.openedUntil,
+                    "--sort", "open_time", "--doc-types", "doc,docx,wiki,sheet,bitable,slides"]
+        } else if !query.isEmpty {
             args = ["docs", "+search", "--query", query, "--page-size", "20"]
         } else if !location.space.isEmpty {
             args = ["wiki", "+node-list", "--space-id", location.space, "--page-size", "50"]
@@ -102,14 +120,91 @@ enum FeishuDocumentCommand {
     static func target(_ doc: FeishuDocument) -> [String] { ["--token", doc.token, "--type", doc.type] }
 }
 
+struct FeishuIdentity: Equatable {
+    let account: String
+    let name: String
+    let available: Bool
+    static func parse(_ data: FeishuJSON) -> FeishuIdentity {
+        let user = data["identities"]["user"]
+        let app = data["appId"].text
+        let userID = user["openId"].text
+        return FeishuIdentity(account: app + ":" + userID, name: user["userName"].text,
+                              available: user["available"].flag && user["verified"] != .bool(false) && !userID.isEmpty)
+    }
+}
+
+enum FeishuConnection: Equatable {
+    case unchecked, checking, missingCLI, needsLogin, waiting, connected(String), failed
+    var title: String {
+        switch self {
+        case .unchecked: return "连接飞书"
+        case .checking: return "检查连接…"
+        case .missingCLI: return "安装 CLI"
+        case .needsLogin: return "登录飞书"
+        case .waiting: return "等待授权…"
+        case .connected(let name): return name.isEmpty ? "已连接" : name
+        case .failed: return "连接需检查"
+        }
+    }
+    var ready: Bool { if case .connected = self { return true }; return false }
+}
+
+/// Small in-memory LRU. Reads do not extend freshness; eviction removes one entry.
+struct FeishuCache<Value> {
+    struct Entry { let value: Value; let stored: Date; var access: UInt64 }
+    let capacity: Int
+    private var entries: [String: Entry] = [:]
+    private var clock: UInt64 = 0
+    init(capacity: Int) { self.capacity = max(1, capacity) }
+    var count: Int { entries.count }
+    mutating func read(_ key: String) -> Entry? {
+        guard var entry = entries[key] else { return nil }
+        clock &+= 1; entry.access = clock; entries[key] = entry
+        return entry
+    }
+    mutating func insert(_ value: Value, for key: String, now: Date = Date()) {
+        clock &+= 1
+        entries[key] = Entry(value: value, stored: now, access: clock)
+        if entries.count > capacity, let oldest = entries.min(by: { $0.value.access < $1.value.access })?.key { entries.removeValue(forKey: oldest) }
+    }
+    mutating func removeAll() { entries.removeAll() }
+    mutating func remove(_ key: String) { entries.removeValue(forKey: key) }
+    static func fresh(_ entry: Entry, now: Date = Date()) -> Bool { now.timeIntervalSince(entry.stored) < 60 }
+}
+
+struct FeishuDraft: Identifiable, Equatable {
+    let id: String
+    let document: FeishuDocument?
+    let location: FeishuLocation
+    let revision: String
+    var title: String
+    var text: String
+    let original: String
+    var account = ""
+    var isNew: Bool { document == nil }
+    var changed: Bool { isNew || text != original }
+    var canSave: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (isNew || (!revision.isEmpty && changed)) }
+    func arguments() -> [String] {
+        if let document {
+            return ["docs", "+update", "--doc", document.documentReference, "--command", "overwrite", "--doc-format", "markdown", "--content", "-", "--revision-id", revision]
+        }
+        return ["docs", "+create", "--title", title.trimmingCharacters(in: .whitespacesAndNewlines), "--doc-format", "markdown", "--content", "-"] + (location.folder.isEmpty ? [] : ["--parent-token", location.folder])
+    }
+}
+
 @MainActor final class FeishuDocumentStore: ObservableObject {
     static let shared = FeishuDocumentStore()
     @Published private(set) var documents: [FeishuDocument] = []
-    @Published private(set) var locations: [FeishuLocation] = [.root]
+    @Published private(set) var locations: [FeishuLocation] = [.recent]
     @Published private(set) var spaces: [FeishuLocation] = []
     @Published private(set) var cursor = ""
     @Published private(set) var loading = false
     @Published private(set) var working = false
+    @Published private(set) var connection: FeishuConnection = .unchecked
+    @Published private(set) var authorizationURL: URL?
+    private var account = ""
+    private var authTask: Task<Void, Never>?
+    private var authGeneration = UUID()
     @Published var error: String?
     @Published var notice: String?
     @Published private(set) var content = ""
@@ -126,30 +221,92 @@ enum FeishuDocumentCommand {
     private var generation = UUID()
     private var detailGeneration = UUID()
     private var auxiliaryGeneration = UUID()
-    private var cache: [String: (FeishuPage, Date)] = [:]
-    private var contentCache: [String: (String, String, Date)] = [:]
+    private var cache = FeishuCache<(FeishuPage, FeishuLocation)>(capacity: 12)
+    private var contentCache = FeishuCache<(String, String, String)>(capacity: 8)
+    private var visibleListKey = ""
+    @Published private(set) var contentIsStale = false
+    @Published private(set) var drafts: [String: FeishuDraft] = [:]
+    @Published var activeDraftID: String?
+    var activeDraft: FeishuDraft? { activeDraftID.flatMap { drafts[$0] } }
     private(set) var initialized = false
+    private var lastConnectionCheck = Date.distantPast
     var location: FeishuLocation { locations.last ?? .root }
     var preview: Bool { !BuildChannel.allowsSystemIntegration }
 
     func start() {
-        guard !initialized else { return }
+        if preview { if !initialized { initialized = true; refresh() }; return }
+        guard !initialized else {
+            if connection.ready {
+                if Date().timeIntervalSince(lastConnectionCheck) >= 60 { checkConnection() }
+                else { refresh(); if activeDraft == nil, let selected { select(selected) } }
+            }
+            return
+        }
         initialized = true
-        refresh()
-        if !preview {
-            Task {
-                do {
-                    let data = try await FeishuCLI.run(["wiki", "+space-list", "--as", "user", "--page-all", "--page-limit", "3"])
-                    spaces = data["items"].items.compactMap { item in
-                        let id = item["space_id"].text
-                        return id.isEmpty ? nil : FeishuLocation(title: item["name"].text, folder: "", space: id)
-                    }
-                } catch { /* Drive remains usable when Wiki scope is unavailable. */ }
+        checkConnection()
+    }
+    func checkConnection() {
+        guard !preview, !working, connection != .waiting else { return }
+        authTask?.cancel()
+        let ticket = UUID(); authGeneration = ticket
+        connection = .checking
+        authTask = Task {
+            guard FeishuCLI.executable() != nil else { connection = .missingCLI; return }
+            do {
+                let data = try await FeishuCLI.run(["auth", "status", "--json"])
+                try Task.checkCancellation()
+                guard authGeneration == ticket else { return }
+                let identity = FeishuIdentity.parse(data)
+                if identity.account != account || !identity.available {
+                    suspend(); cache.removeAll(); contentCache.removeAll()
+                    documents = []; spaces = []; cursor = ""; select(nil)
+                    visibleListKey = ""
+                }
+                guard identity.available else { connection = .needsLogin; return }
+                account = identity.account
+                connection = .connected(identity.name)
+                lastConnectionCheck = Date()
+                refresh()
+                if activeDraft == nil, let selected { select(selected) }
+                let spacesData = try? await FeishuCLI.run(["wiki", "+space-list", "--as", "user", "--page-all", "--page-limit", "3"])
+                guard authGeneration == ticket, !Task.isCancelled else { return }
+                spaces = (spacesData?["items"].items ?? []).compactMap { item in
+                    let id = item["space_id"].text
+                    return id.isEmpty ? nil : FeishuLocation(title: item["name"].text, folder: "", space: id)
+                }
+            } catch { if authGeneration == ticket && !Task.isCancelled { connection = .failed; self.error = error.localizedDescription } }
+        }
+    }
+    func beginLogin() {
+        guard !preview, !working, connection != .waiting else { return }
+        authTask?.cancel(); suspend()
+        let ticket = UUID(); authGeneration = ticket
+        authorizationURL = nil; connection = .waiting; error = nil
+        authTask = Task {
+            do {
+                let data = try await FeishuCLI.run(["auth", "login", "--domain", "docs,drive,wiki,sheets,base,slides", "--no-wait", "--json"])
+                try Task.checkCancellation()
+                guard authGeneration == ticket else { return }
+                let reference = FeishuDocument(token: "", title: "", type: "", url: data["verification_url"].text, modified: "")
+                guard let url = reference.webURL, !data["device_code"].text.isEmpty else { throw FeishuCLIError.failed("CLI 未返回有效授权链接，请检查 CLI 配置。") }
+                authorizationURL = url
+                _ = try await FeishuCLI.run(["auth", "login", "--device-code", data["device_code"].text, "--json"], timeout: 600)
+                try Task.checkCancellation()
+                guard authGeneration == ticket else { return }
+                authorizationURL = nil; connection = .unchecked
+                notice = "授权完成，正在加载文档。"
+                checkConnection()
+            } catch {
+                if authGeneration == ticket && !Task.isCancelled { authorizationURL = nil; connection = .failed; self.error = "授权未完成，可重新登录。请先确认 CLI 已配置飞书应用。" }
             }
         }
     }
+    func cancelLogin() {
+        guard connection == .waiting else { return }
+        authTask?.cancel(); authGeneration = UUID(); authorizationURL = nil; connection = .needsLogin
+    }
     func navigate(_ destination: FeishuLocation) {
-        locations = [destination]; query = ""; select(nil); refresh()
+        locations = [destination]; query = ""; activeDraftID = nil; select(nil); refresh()
     }
     func enter(_ doc: FeishuDocument) {
         guard doc.isFolder || (doc.type == "wiki" && doc.hasChildren && !location.space.isEmpty) else { return }
@@ -162,17 +319,29 @@ enum FeishuDocumentCommand {
     func search(_ value: String) {
         let next = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard next != query else { return }
-        query = next; select(nil); refresh()
+        query = next; refresh()
     }
     func refresh(more: Bool = false, force: Bool = false) {
+        guard preview || connection.ready else { return }
+        guard !more || !cursor.isEmpty else { return }
         listTask?.cancel()
         let ticket = UUID(); generation = ticket
-        let location = self.location, query = self.query, pageToken = more ? cursor : ""
-        let key = location.id + ":" + query
+        error = nil
+        let key = (location.isRecent ? "recent:\(location.recentDays)" : location.id) + ":" + query
         if !more {
-            if let cached = cache[key], !force, Date().timeIntervalSince(cached.1) < 60 { documents = cached.0.documents; cursor = cached.0.cursor; loading = false; return }
-            documents = []; cursor = ""
+            if let cached = cache.read(key), !force {
+                documents = cached.value.0.documents; cursor = cached.value.0.cursor
+                if location.isRecent { locations = [cached.value.1] }
+                visibleListKey = key
+                if FeishuCache<(FeishuPage, FeishuLocation)>.fresh(cached) { loading = false; return }
+            } else if visibleListKey != key {
+                documents = []; cursor = ""
+            }
+            if location.isRecent { locations = [.recentlyOpened(days: location.recentDays)] }
+            cursor = "" // Old cursors belong to the old absolute search window.
         }
+        visibleListKey = key
+        let location = self.location, query = self.query, pageToken = more ? cursor : ""
         if preview {
             documents = Self.examples.filter { query.isEmpty || $0.title.localizedStandardContains(query) }
             loading = false; return
@@ -189,8 +358,7 @@ enum FeishuDocumentCommand {
                 var seen = Set<String>()
                 documents = combined.filter { seen.insert($0.id).inserted }
                 cursor = page.cursor == pageToken ? "" : page.cursor
-                if cache.count >= 12 { cache.removeAll(keepingCapacity: true) }
-                cache[key] = (FeishuPage(documents: documents, cursor: cursor), Date())
+                cache.insert((FeishuPage(documents: documents, cursor: cursor), location), for: key)
                 if let selected, let fresh = documents.first(where: { $0.id == selected.id }), fresh != selected { self.selected = fresh }
             } catch is CancellationError { } catch {
                 if generation == ticket && !Task.isCancelled { self.error = error.localizedDescription }
@@ -198,13 +366,20 @@ enum FeishuDocumentCommand {
         }
     }
     func select(_ doc: FeishuDocument?, force: Bool = false) {
+        let sameDocument = selected?.id == doc?.id
         detailTask?.cancel(); auxiliaryTask?.cancel()
         detailGeneration = UUID(); auxiliaryGeneration = UUID()
+        if selected?.id != doc?.id { activeDraftID = nil }
         selected = doc; auxiliary = []; auxiliaryCursor = ""; auxiliaryLoading = false
-        content = ""; revision = ""; detailLoading = false
-        guard let doc, doc.isDocument else { return }
+        let previousContent = content, previousRevision = revision
+        content = ""; revision = ""; detailLoading = false; contentIsStale = false
+        guard let doc, doc.isDocument, preview || connection.ready else { return }
         if preview { content = "# \(doc.title)\n\n这是开发版示例内容。\n\n## 工作区\n\n快速浏览、分页搜索与原生文档阅读。\n\n真实凭据和云端文档仅在正式版中访问。"; return }
-        if let cached = contentCache[doc.id], !force, Date().timeIntervalSince(cached.2) < 60 { content = cached.0; revision = cached.1; return }
+        if let cached = contentCache.read(doc.id) {
+            content = cached.value.0; revision = cached.value.1
+            if !force && cached.value.2 == doc.modified && FeishuCache<(String, String, String)>.fresh(cached) { return }
+            contentIsStale = true
+        } else if force && sameDocument { content = previousContent; revision = previousRevision; contentIsStale = true }
         let ticket = detailGeneration
         detailLoading = true
         detailTask = Task {
@@ -215,8 +390,8 @@ enum FeishuDocumentCommand {
                 guard detailGeneration == ticket else { return }
                 content = data["document"]["content"].text
                 revision = data["document"]["revision_id"].text
-                if contentCache.count >= 8 { contentCache.removeAll(keepingCapacity: true) }
-                contentCache[doc.id] = (content, revision, Date())
+                contentIsStale = false
+                contentCache.insert((content, revision, doc.modified), for: doc.id)
             } catch is CancellationError { } catch {
                 if detailGeneration == ticket && !Task.isCancelled { self.error = error.localizedDescription }
             }
@@ -226,7 +401,7 @@ enum FeishuDocumentCommand {
         auxiliaryTask?.cancel()
         let ticket = UUID(); auxiliaryGeneration = ticket
         if !more { auxiliary = []; auxiliaryCursor = "" }
-        guard let doc = selected, !preview else { return }
+        guard let doc = selected, !preview, connection.ready else { return }
         var args: [String]
         switch tab {
         case "评论": args = ["drive", "+list-comments"] + FeishuDocumentCommand.target(doc) + ["--solved-status", "all"]
@@ -254,6 +429,12 @@ enum FeishuDocumentCommand {
     func perform(_ args: [String], input: String? = nil, refreshList: Bool = true) async -> Bool {
         guard !working else { return false }
         guard !preview else { error = "开发版仅提供示例预览；请在正式版管理真实文档。"; return false }
+        guard connection.ready else { error = "请先连接飞书再保存。"; return false }
+        let selectionAtStart = selected?.id, draftAtStart = activeDraftID
+        if refreshList {
+            suspend(); cache.removeAll()
+            if let selected { contentCache.remove(selected.id) }
+        }
         working = true; error = nil; notice = nil
         defer { working = false }
         do {
@@ -262,10 +443,73 @@ enum FeishuDocumentCommand {
                 // Async Drive tasks are not proof that a move/delete completed.
                 notice = "飞书已受理任务，请刷新列表核对结果。"
             } else { notice = "操作已完成。" }
-            cache.removeAll(); contentCache.removeAll()
+            if (args.contains("+create") || args.contains("+copy") || args.contains("+import")),
+               selected?.id == selectionAtStart, activeDraftID == draftAtStart {
+                let result = data["document"] == .null ? data : data["document"]
+                if let created = FeishuDocument.parse(result) {
+                    let titleIndex = args.firstIndex(of: "--title")
+                    let fallbackTitle = titleIndex.map { args[$0 + 1] } ?? created.title
+                    let normalized = FeishuDocument(token: created.token, title: created.title.isEmpty ? fallbackTitle : created.title,
+                                                    type: args.contains("+create") || args.contains("+import") ? "docx" : created.type,
+                                                    url: created.url, modified: created.modified)
+                    select(normalized, force: true)
+                }
+            }
             if refreshList { refresh(force: true) }
             return true
         } catch { self.error = error.localizedDescription; return false }
+    }
+    func beginEditing() {
+        guard let doc = selected, doc.isDocument, !detailLoading else { return }
+        if drafts[doc.id] == nil {
+            guard reserveDraft() else { return }
+            let existingBytes = drafts.values.reduce(0) { $0 + $1.text.utf8.count }
+            guard existingBytes + content.utf8.count <= 8 * 1024 * 1024 else {
+                error = "正文超过可编辑草稿容量，请在飞书中编辑或先保存其他草稿。"; return
+            }
+            drafts[doc.id] = FeishuDraft(id: doc.id, document: doc, location: location, revision: revision,
+                                        title: doc.title, text: content, original: content, account: account)
+        }
+        activeDraftID = doc.id
+    }
+    func newDocument() {
+        guard reserveDraft() else { return }
+        let id = UUID().uuidString
+        drafts[id] = FeishuDraft(id: id, document: nil, location: location.isRecent ? .root : location,
+                                revision: "", title: "", text: "", original: "", account: account)
+        activeDraftID = id
+    }
+    private func reserveDraft() -> Bool {
+        guard drafts.count < 8 else { error = "已有 8 份草稿，请保存或丢弃一份后继续。"; return false }
+        return true
+    }
+    func updateDraft(text: String? = nil, title: String? = nil) {
+        guard let id = activeDraftID, var draft = drafts[id], !working else { return }
+        if let text {
+            let otherBytes = drafts.values.filter { $0.id != id }.reduce(0) { $0 + $1.text.utf8.count }
+            guard otherBytes + text.utf8.count <= 8 * 1024 * 1024 else { error = "草稿总量已达 8 MB，请保存或导出后继续。"; return }
+            draft.text = text
+        }
+        if let title { draft.title = title }
+        drafts[id] = draft
+    }
+    func discardDraft() {
+        guard !working, let id = activeDraftID else { return }
+        drafts.removeValue(forKey: id); activeDraftID = nil
+    }
+    func saveDraft() async -> Bool {
+        guard let draft = activeDraft, draft.canSave else { return false }
+        guard draft.account == account else { error = "当前登录账号已改变。请切回原账号保存，或复制草稿内容。"; return false }
+        if await perform(draft.arguments(), input: draft.text) {
+            drafts.removeValue(forKey: draft.id)
+            if activeDraftID == draft.id {
+                activeDraftID = nil
+                if let doc = draft.document { select(doc, force: true) }
+            }
+            return true
+        }
+        // Revision conflicts and offline failures leave the exact submitted draft intact.
+        return false
     }
     func suspend() {
         listTask?.cancel(); detailTask?.cancel(); auxiliaryTask?.cancel()

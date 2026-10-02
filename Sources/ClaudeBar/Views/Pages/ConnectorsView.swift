@@ -26,17 +26,21 @@ struct ConnectorsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                SegmentedCapsule(items: [false, true], selection: showFeishu,
-                                 title: { $0 ? "飞书文档" : "连接器" },
-                                 symbol: { $0 ? "doc.text.image" : "puzzlepiece.extension" },
-                                 tint: Theme.Ink.claude, onSelect: { showFeishu = $0 })
-                Spacer()
+            if showFeishu { FeishuDocumentsView(navigation: AnyView(connectorTabs)) }
+            else {
+                HStack { connectorTabs; Spacer() }
+                    .padding(.horizontal, Theme.Space.s24).padding(.top, Theme.Space.s12)
+                inventory
             }
-            .padding(.horizontal, Theme.Space.s24).padding(.top, Theme.Space.s12)
-            if showFeishu { FeishuDocumentsView() } else { inventory }
         }
         .background(Theme.bgPrimary)
+    }
+
+    private var connectorTabs: some View {
+        SegmentedCapsule(items: [false, true], selection: showFeishu,
+                         title: { $0 ? "飞书文档" : "连接器" },
+                         symbol: { $0 ? "doc.text.image" : "puzzlepiece.extension" },
+                         tint: Theme.Ink.claude, onSelect: { showFeishu = $0 })
     }
 
     private var inventory: some View {
@@ -158,7 +162,7 @@ struct ConnectorsView: View {
         .onChange(of: manager.records) { _, records in
             selection.formIntersection(Set(records.map(\.id)))
             guard let open = selectedRecord else { return }
-            guard let fresh = manager.records.first(where: { $0.id == open.id })?.scoped(to: platform) else {
+            guard let fresh = manager.records.first(where: { $0.id == open.id }) else {
                 selectedRecord = nil
                 return
             }
@@ -209,7 +213,6 @@ struct ConnectorsView: View {
                     } ?? false))
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        .map { $0.scoped(to: platform) }
     }
 
     private var visibleCLIs: [LocalCLIRecord] {
@@ -310,14 +313,10 @@ struct ConnectorsView: View {
                 }
             }
             if focus == .skill {
-                Text(platform.map { "启停范围：\($0.title)。全局停用优先；同名安装会联动。" }
+                Text(platform.map { "启停范围：\($0.title)。同名 Skill 的各个已扫描安装会一起移入或移出停用区。" }
                      ?? "启停范围：全部平台。同名独立 Skill 的所有已扫描安装会联动。")
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textSecondary)
-                if platform == .cursor {
-                    Text("共享 Skill 的独立启停请在 Cursor 管理；此处仅能启停 Cursor 专属目录。")
-                        .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
-                }
             }
             InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
                 .frame(height: 38)
@@ -418,7 +417,7 @@ struct ConnectorsView: View {
     /// function for both the count and the run — see `ConnectorBatch.records`.
     private func batchRecords(_ action: ConnectorBatchAction) -> [ConnectorRecord] {
         let selected = selectedRecords()
-        let records = action == .remove ? selected.map { $0.scoped(to: platform) }
+        let records = action == .remove ? selected
             : ConnectorBatch.expandingSkills(selected, in: manager.records, platform: platform)
         return ConnectorBatch.records(records, for: action)
     }
@@ -448,14 +447,14 @@ struct ConnectorsView: View {
         case .disable:
             title = "停用选中的 \(count) 项？"
             message = (platform == nil
-                ? "同名独立 Skill 的所有已扫描安装会移入停用区，影响全部平台；恢复后保留平台开关。"
-                : "只停用当前平台的同名 Skill；共享目录保持原位。Cursor 专属目录会移入停用区。")
+                ? "同名独立 Skill 的所有已扫描安装会移入停用区，影响全部平台。"
+                : "同名 Skill 在当前平台已扫描到的安装会移入停用区，其他平台不受影响。")
                 + where_ + cursorNote + "。"
         case .enable:
             title = "启用选中的 \(count) 项？"
             message = (platform == nil
-                ? "全局停用的 Skill 会还原；此前的平台停用设置仍然保留。被占用的路径会拒绝覆盖。"
-                : "只启用当前平台；全局停用的 Skill 需要先切到全部平台恢复。") + where_ + cursorNote + "。"
+                ? "停用的 Skill 目录会还原；被占用的路径会拒绝覆盖。"
+                : "当前平台已扫描到的同名安装会还原；被占用的路径会拒绝覆盖。") + where_ + cursorNote + "。"
         case .remove:
             let skills = removalSplit(targets)
             title = "移除选中的 \(count) 项？"
@@ -580,7 +579,7 @@ struct ConnectorsView: View {
         if on > 0 { parts.append("可启用 \(on)") }
         if removable > 0 { parts.append("可移除 \(removable)") }
         if parts.isEmpty { return "这些项由客户端管理，本页只能查看" }
-        let inert = ConnectorBatch.inert(records.map { $0.scoped(to: platform) })
+        let inert = ConnectorBatch.inert(records)
         return parts.joined(separator: " · ") + (inert > 0 ? " · 其余 \(inert) 项由客户端管理" : "")
     }
 
@@ -1049,8 +1048,7 @@ private struct ConnectorCard: View {
                             // so a platform chip and a status chip are one
                             // object. The wash takes the shape hue, the label
                             // the ink variant.
-                            StatusPill(label: record.kind == .skill && record.skillPlatformStates[item] == false
-                                       ? item.title + " · 停用" : item.title,
+                            StatusPill(label: item.title,
                                        tint: item.face,
                                        ink: item.ink)
                         }

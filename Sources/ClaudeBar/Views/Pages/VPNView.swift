@@ -461,7 +461,8 @@ struct VPNView: View {
         let nodes = browserNodes.enumerated().filter {
             nodeQuery.isEmpty || $0.element.localizedCaseInsensitiveContains(nodeQuery)
         }
-        let proxies = Dictionary(manager.proxies.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let group = viewingLive ? currentGroup : nil
+        let proxies = Dictionary((group == nil ? [] : manager.proxies).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         let live = Set(manager.livePath)
         return ScrollView {
             LazyVStack(spacing: 0) {
@@ -471,7 +472,7 @@ struct VPNView: View {
                         .padding(.vertical, 40)
                 }
                 ForEach(nodes, id: \.offset) { _, name in
-                    if viewingLive, let group = currentGroup {
+                    if let group {
                         nodeCell(group: group, nodeName: name, proxy: proxies[name],
                                  live: live.contains(name), testing: manager.testingNodes.contains(name))
                     } else {

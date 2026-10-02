@@ -85,6 +85,11 @@ enum ConnectorBatch {
         }
     }
 
+    /// The same-name association the page has always had: a Skill is identified
+    /// by the name in its `SKILL.md` front matter, so ticking one install ticks
+    /// every install of that name. The platform filter narrows it to the client
+    /// whose view the user is standing in — a Skill discovered under `.claude`
+    /// is not part of what a 停用 in the Codex view should touch.
     static func expandingSkills(_ selected: [ConnectorRecord], in inventory: [ConnectorRecord],
                                 platform: ConnectorPlatform?) -> [ConnectorRecord] {
         let names = Set(selected.filter { $0.kind == .skill }.map(\.name))
@@ -92,7 +97,7 @@ enum ConnectorBatch {
         return inventory.filter { record in
             (ids.contains(record.id) || (record.kind == .skill && names.contains(record.name))) &&
                 (platform.map { record.platforms.contains($0) } ?? true)
-        }.map { $0.scoped(to: platform) }
+        }
     }
 
     /// How many of `records` a batch would have to skip — no action reaches
@@ -155,7 +160,6 @@ struct MCPConnection: Sendable, Equatable {
 
 enum ConnectorMethod: Sendable, Equatable {
     case skillMove(original: URL)
-    case skillPlatform(original: URL, platform: ConnectorPlatform, config: URL, name: String)
     case codexSetting(section: String)
     case claudePlugin(identifier: String)
     case cursorMCP(identifier: String, directory: URL)
@@ -181,51 +185,23 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
     let enabled: Bool?
     let method: ConnectorMethod
     var skillIsLink = false
-    var skillParkedPlatform: ConnectorPlatform? = nil
-    var skillPlatformStates: [ConnectorPlatform: Bool] = [:]
-    var skillPlatformConfigs: [ConnectorPlatform: URL] = [:]
     var sharedOwner: String? = nil
     var mcpConnection: MCPConnection? = nil
     var detailDirectory: URL? = nil
 
-    /// A platform filter changes the action target as well as the displayed state.
-    func scoped(to platform: ConnectorPlatform?) -> ConnectorRecord {
-        guard kind == .skill, let platform, case .skillMove(let original) = method else { return self }
-        let movable = platform == .cursor && platforms == [.cursor]
-        let config = skillPlatformConfigs[platform]
-        let supported = movable || config != nil
-        return ConnectorRecord(id: id, name: name,
-            summary: enabled == false && skillParkedPlatform == nil
-                ? "全局已停用，请切到全部平台恢复；此前的平台开关保留。"
-                : (!supported ? (platform == .cursor
-                    ? "共享 Skill 无法在 Cursor 独立启停，请在客户端管理。"
-                    : "无法读取此平台的 Skill 配置，请在客户端管理后刷新。") : summary),
-            kind: kind, platforms: [platform], scope: scope, source: source,
-            enabled: enabled == false ? false : skillPlatformStates[platform],
-            method: (enabled == false && skillParkedPlatform == nil) || !supported ? .native :
-                .skillPlatform(original: original, platform: platform, config: config ?? original, name: name),
-            skillIsLink: skillIsLink, skillParkedPlatform: skillParkedPlatform, skillPlatformStates: skillPlatformStates, skillPlatformConfigs: skillPlatformConfigs,
-            sharedOwner: sharedOwner)
-    }
-
     var canToggle: Bool {
-        if case .skillMove = method, skillParkedPlatform != nil { return false }
         return enabled != nil && !isNative
     }
 
     var movesSkillDirectory: Bool {
-        switch method {
-        case .skillMove: return true
-        case .skillPlatform(_, .cursor, _, _): return true
-        default: return false
-        }
+        if case .skillMove = method { return true }
+        return false
     }
 
     /// What a batch is allowed to do with this record. See
     /// `ConnectorBatchCapability` — derived here, once, so the card's own
     /// buttons and the batch bar cannot drift apart.
     var batchCapability: ConnectorBatchCapability {
-        if case .skillMove = method, skillParkedPlatform != nil { return .none }
         switch method {
         case .cursorMCP: return .command
         // A native record's only batchable write is the MCP config file it
@@ -252,7 +228,6 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
     var canRemove: Bool {
         switch method {
         case .skillMove, .codexSetting, .claudePlugin, .cursorMCP: return true
-        case .skillPlatform: return false
         case .native:
             let file = source.lastPathComponent
             return file == "mcp.json" || file == ".mcp.json"
@@ -527,7 +502,6 @@ private enum ConnectorInventory {
         var name: String? = nil
         var summary: String? = nil
         var owner: String? = nil
-        var platform: String? = nil
     }
 
     /// fileExists follows links and misses a parked relative/broken symlink.
@@ -569,18 +543,8 @@ private enum ConnectorInventory {
             (p.appendingPathComponent(".codex/skills"), [.codex, .cursor], "项目"),
             (p.appendingPathComponent(".cursor/skills"), [.cursor], "项目"),
         ] } ?? [])
-        // Read each native config once for this scan, not once per Skill.
-        let configFiles = [home.appendingPathComponent(".codex/config.toml"),
-                           home.appendingPathComponent(".claude/settings.json")]
-            + (project.map { [$0.appendingPathComponent(".claude/settings.json")] } ?? [])
-        var nativeConfigs: [URL: Data] = [:]
-        for file in configFiles {
-            if !fm.fileExists(atPath: file.path) { nativeConfigs[file] = Data() }
-            else if let data = try? Data(contentsOf: file) { nativeConfigs[file] = data }
-        }
         for (root, platforms, scope) in roots {
-            scanSkills(in: root, platforms: platforms, scope: scope, depth: 0, into: &result,
-                       nativeConfigs: nativeConfigs)
+            scanSkills(in: root, platforms: platforms, scope: scope, depth: 0, into: &result)
         }
         for parked in (try? parkedSkills()) ?? [] {
             let original = URL(fileURLWithPath: parked.original)
@@ -588,8 +552,7 @@ private enum ConnectorInventory {
                   itemExists(URL(fileURLWithPath: parked.stored)) else { continue }
             let stored = URL(fileURLWithPath: parked.stored)
             result.append(skillRecord(at: original, contentsAt: stored,
-                                      platforms: match.1, scope: match.2, enabled: false, parked: parked,
-                                      nativeConfigs: nativeConfigs))
+                                      platforms: match.1, scope: match.2, enabled: false, parked: parked))
         }
 
         scanCodexConfig(home.appendingPathComponent(".codex/config.toml"), scope: "个人", into: &result)
@@ -609,58 +572,24 @@ private enum ConnectorInventory {
     }
 
     private static func scanSkills(in root: URL, platforms: [ConnectorPlatform], scope: String,
-                                   depth: Int, into records: inout [ConnectorRecord],
-                                   nativeConfigs: [URL: Data]? = nil) {
+                                   depth: Int, into records: inout [ConnectorRecord]) {
         guard depth < 4, let children = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) else { return }
         for child in children {
             let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             guard values?.isDirectory == true || values?.isSymbolicLink == true else { continue }
             if fm.fileExists(atPath: child.appendingPathComponent("SKILL.md").path) {
-                records.append(skillRecord(at: child, contentsAt: child, platforms: platforms, scope: scope, enabled: true,
-                                           nativeConfigs: nativeConfigs))
+                records.append(skillRecord(at: child, contentsAt: child, platforms: platforms, scope: scope, enabled: true))
             } else if values?.isSymbolicLink != true {
-                scanSkills(in: child, platforms: platforms, scope: scope, depth: depth + 1, into: &records,
-                           nativeConfigs: nativeConfigs)
+                scanSkills(in: child, platforms: platforms, scope: scope, depth: depth + 1, into: &records)
             }
         }
     }
 
     private static func skillRecord(at original: URL, contentsAt location: URL,
                                     platforms: [ConnectorPlatform], scope: String, enabled: Bool,
-                                    parked: ParkedSkill? = nil, nativeConfigs: [URL: Data]? = nil) -> ConnectorRecord {
+                                    parked: ParkedSkill? = nil) -> ConnectorRecord {
         let read = skillMetadata(location.appendingPathComponent("SKILL.md"))
         let metadata = (parked?.name ?? read.0, parked?.summary ?? read.1, parked?.owner ?? read.2)
-        let name = metadata.0 ?? original.lastPathComponent
-        var states: [ConnectorPlatform: Bool] = [:]
-        var configs: [ConnectorPlatform: URL] = [:]
-        // Locate the discovery root, preserving personal/project scope.
-        var root = original.deletingLastPathComponent()
-        while root.path != "/" && !(root.lastPathComponent == "skills" &&
-            [".claude", ".agents", ".codex", ".cursor"].contains(root.deletingLastPathComponent().lastPathComponent)) {
-            root = root.deletingLastPathComponent()
-        }
-        let base = root.deletingLastPathComponent().deletingLastPathComponent()
-        for platform in platforms {
-            switch platform {
-            case .codex:
-                // Codex documents per-skill overrides in the user config.
-                let config = home.appendingPathComponent(".codex/config.toml")
-                let data = nativeConfigs != nil ? nativeConfigs?[config]
-                    : (fm.fileExists(atPath: config.path) ? (try? Data(contentsOf: config)) : Data())
-                let text = data.flatMap { String(data: $0, encoding: .utf8) }
-                if let text, let state = try? ConnectorSkillPolicy.codexEnabled(text, original: original) {
-                    states[platform] = state; configs[platform] = config
-                }
-            case .claude:
-                let config = base.appendingPathComponent(".claude/settings.json")
-                let data = nativeConfigs != nil ? nativeConfigs?[config]
-                    : (fm.fileExists(atPath: config.path) ? (try? Data(contentsOf: config)) : Data())
-                if let data, let state = try? ConnectorSkillPolicy.claudeEnabled(data, name: name) {
-                    states[platform] = state; configs[platform] = config
-                }
-            case .cursor: states[platform] = enabled
-            }
-        }
         let occupied = parked != nil && itemExists(original)
         return ConnectorRecord(id: "skill:" + original.path + (occupied ? ":parked" : ""),
                                name: metadata.0 ?? original.lastPathComponent,
@@ -668,8 +597,6 @@ private enum ConnectorInventory {
                                platforms: platforms, scope: scope, source: location,
                                enabled: enabled, method: .skillMove(original: original),
                                skillIsLink: (try? location.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true,
-                               skillParkedPlatform: parked?.platform.flatMap(ConnectorPlatform.init(rawValue:)),
-                               skillPlatformStates: states, skillPlatformConfigs: configs,
                                sharedOwner: metadata.2)
     }
 
@@ -981,7 +908,6 @@ private enum ConnectorInventory {
         guard BuildChannel.allowsSystemIntegration else { throw ConnectorError.isolatedBuild }
         switch record.method {
         case .skillMove(let original): try removeSkill(original: original)
-        case .skillPlatform: throw ConnectorError.nativeOnly
         case .codexSetting(let section): try removeTOMLSections(file: record.source, rootedAt: section)
         case .claudePlugin(let identifier): try runClaude(["plugin", "uninstall", identifier])
         case .cursorMCP(let identifier, _): try removeJSONServer(file: record.source, name: identifier)
@@ -995,40 +921,11 @@ private enum ConnectorInventory {
         guard BuildChannel.allowsSystemIntegration else { throw ConnectorError.isolatedBuild }
         switch record.method {
         case .skillMove(let original): try setSkillEnabled(enabled, original: original)
-        case .skillPlatform(let original, let platform, let config, let name):
-            try setSkillPlatformEnabled(enabled, original: original, platform: platform, config: config, name: name)
         case .codexSetting(let section): try setTOMLEnabled(enabled, file: record.source, sectionName: section)
         case .claudePlugin(let identifier): try setClaudePluginEnabled(enabled, identifier: identifier)
         case .cursorMCP(let identifier, let directory): try setCursorMCPEnabled(enabled, identifier: identifier, directory: directory)
         case .native: throw ConnectorError.nativeOnly
         }
-    }
-
-    private static func setSkillPlatformEnabled(_ enabled: Bool, original: URL,
-                                                platform: ConnectorPlatform, config: URL, name: String) throws {
-        if platform == .cursor {
-            // Only Cursor-exclusive roots use directory moves in a platform view.
-            guard original.path.contains("/.cursor/skills/") else { throw ConnectorError.nativeOnly }
-            try setSkillEnabled(enabled, original: original, platform: .cursor)
-            return
-        }
-        guard fm.fileExists(atPath: original.appendingPathComponent("SKILL.md").path),
-              !(try parkedSkills()).contains(where: { $0.original == original.path }) else { throw ConnectorError.changed }
-        // Resolve a config symlink so replacing it does not sever the user's link.
-        let file = config.resolvingSymlinksInPath()
-        let before = fm.fileExists(atPath: file.path) ? try Data(contentsOf: file) : nil
-        let replacement: Data
-        switch platform {
-        case .codex:
-            let text = String(decoding: before ?? Data(), as: UTF8.self)
-            replacement = Data(try ConnectorSkillPolicy.codexUpdating(text, original: original, enabled: enabled).utf8)
-        case .claude:
-            replacement = try ConnectorSkillPolicy.claudeUpdating(before ?? Data(), name: name, enabled: enabled)
-        case .cursor: throw ConnectorError.nativeOnly
-        }
-        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard (try? Data(contentsOf: file)) == before else { throw ConnectorError.changed }
-        try PrivateFileWriter.write(replacement, to: file)
     }
 
     private static func parkedSkills() throws -> [ParkedSkill] {
@@ -1048,14 +945,16 @@ private enum ConnectorInventory {
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: vault.path)
     }
 
-    private static func setSkillEnabled(_ enabled: Bool, original: URL,
-                                        platform: ConnectorPlatform? = nil) throws {
+    private static func setSkillEnabled(_ enabled: Bool, original: URL) throws {
         var entries = try parkedSkills()
         if enabled {
-            guard let index = entries.firstIndex(where: { $0.original == original.path }),
-                  entries[index].platform == platform?.rawValue else { throw ConnectorError.changed }
+            guard let index = entries.firstIndex(where: { $0.original == original.path }) else { throw ConnectorError.changed }
             let stored = URL(fileURLWithPath: entries[index].stored)
-            guard stored.standardizedFileURL.deletingLastPathComponent().path == vault.standardizedFileURL.path,
+            // Resolve the *directory*, never the entry itself: parking a symlink
+            // stores the link, and resolving the whole path would follow it out
+            // of the vault to whatever it points at — the app then refused to
+            // restore the one kind of record it had just parked.
+            guard stored.deletingLastPathComponent().resolvingSymlinksInPath().path == vault.resolvingSymlinksInPath().path,
                   !itemExists(original),
                   itemExists(stored) else { throw ConnectorError.changed }
             try fm.createDirectory(at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1064,15 +963,20 @@ private enum ConnectorInventory {
             do { try saveParkedSkills(entries) }
             catch { try? fm.moveItem(at: original, to: stored); throw error }
         } else {
+            // `itemExists` (lstat), not `fileExists`: a Skill install is often a
+            // symlink into a shared root, and once that root is parked the link
+            // dangles — `fileExists` would report "nothing here" and refuse to
+            // move an entry that is plainly still on disk. `removeSkill` already
+            // reads it the same way.
             guard !entries.contains(where: { $0.original == original.path }),
-                  fm.fileExists(atPath: original.path) else { throw ConnectorError.changed }
+                  itemExists(original) else { throw ConnectorError.changed }
             try ensureVault()
             let stored = vault.appendingPathComponent(UUID().uuidString, isDirectory: true)
             let metadata = skillMetadata(original.appendingPathComponent("SKILL.md"))
             try fm.moveItem(at: original, to: stored)
             entries.append(ParkedSkill(original: original.path, stored: stored.path,
                                        name: metadata.0 ?? original.lastPathComponent,
-                                       summary: metadata.1, owner: metadata.2, platform: platform?.rawValue))
+                                       summary: metadata.1, owner: metadata.2))
             do { try saveParkedSkills(entries) }
             catch { try? fm.moveItem(at: stored, to: original); throw error }
         }
@@ -1132,7 +1036,10 @@ private enum ConnectorInventory {
         var entries = try parkedSkills()
         if let index = entries.firstIndex(where: { $0.original == original.path }) {
             let stored = URL(fileURLWithPath: entries[index].stored)
-            guard stored.standardizedFileURL.deletingLastPathComponent().path == vault.standardizedFileURL.path else { throw ConnectorError.changed }
+            // Same resolution rule as the restore path in `setSkillEnabled`: the
+            // final component may be a symlink into a shared root, and resolving
+            // it would land outside the vault.
+            guard stored.resolvingSymlinksInPath().deletingLastPathComponent().path == vault.resolvingSymlinksInPath().path else { throw ConnectorError.changed }
             if fm.fileExists(atPath: stored.path) {
                 try fm.trashItem(at: stored, resultingItemURL: nil)
             }

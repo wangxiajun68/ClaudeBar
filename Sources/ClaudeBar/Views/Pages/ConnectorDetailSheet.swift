@@ -223,11 +223,7 @@ struct ConnectorDetailSheet: View {
     private var methodDescription: String {
         switch record.method {
         case .skillMove:
-            if let platform = record.skillParkedPlatform { return "已在 \(platform.title) 停用；请切到该平台恢复。" }
             return record.enabled == false ? "已移入 ClaudeBar 停用区；启用会还原到原位置。" : "停用会将整个 Skill 目录移入 ClaudeBar 停用区。"
-        case .skillPlatform(_, let platform, _, _):
-            if platform == .cursor { return "只移动 Cursor 专属 Skill 目录；平台停用会在全局恢复后保留。" }
-            return "只更改 \(platform.title) 的 Skill 配置，共享目录保持原位；请重新启动客户端或新建会话。"
         case .codexSetting: return "启停由 Codex 配置文件控制；新会话会读取更新后的设置。"
         case .claudePlugin: return "启停通过 Claude Code 官方命令执行；已有会话可能需要重新加载。"
         case .cursorMCP: return "Cursor 未提供可靠的本机状态读取；启停命令已直接显示在卡片上，执行后请在 Customize 核对。"

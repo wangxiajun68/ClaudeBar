@@ -84,7 +84,7 @@ for token, body in [('FAN_START', method(fan, '    func start()')),
     low_load = low_load.replace(token, body)
 
 markdown = (shared / 'SkillMarkdownPreview.swift').read_text()
-markdown_slice = markdown[:markdown.index('/// A native')].replace('private enum MarkdownBlock', 'enum MarkdownBlock')
+markdown_slice = (root / 'Sources/ClaudeBar/Models/DocumentMarkup.swift').read_text()
 markdown_slice += 'enum MarkdownFixture {\n' + method(markdown, '    nonisolated private static func parse(').replace('private static func', 'static func') + '\n}\n'
 
 benchmark = r'''

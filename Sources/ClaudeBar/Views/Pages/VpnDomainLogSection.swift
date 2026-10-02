@@ -7,7 +7,11 @@ import SwiftUI
 /// 重排。工作区高度由窗口决定，日志在独立视口内部滚动。
 struct VpnDomainLogSection: View {
     var isVisible = true
-    @ObservedObject private var log = VpnDomainLog.shared
+    private let log = VpnDomainLog.shared
+    @State private var historyRevision = 0
+    @State private var connectionRevision = 0
+    @State private var page = 0
+    @State private var visibleConnections: [VpnDomainConnection] = []
     /// Mirrored, not observed wholesale: `VpnManager` also publishes
     /// `proxies`/`groups`/`testingNodes`, which delay tests rewrite on every
     /// tick, and `VPNView` keeps this section mounted while hidden. Only the
@@ -32,6 +36,7 @@ struct VpnDomainLogSection: View {
     /// Immutable results from the background query; body does no historical folds.
     @State private var visibleRows: [VpnDomainEntry] = []
     @State private var visibleStats: [VpnDomainLogStat] = []
+    @State private var visibleLeaks: [(service: String, hosts: [String])] = []
     @State private var tallyProxied = 0
     @State private var tallyDirect = 0
     @State private var tallyReject = 0
@@ -77,12 +82,25 @@ struct VpnDomainLogSection: View {
             content
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            pageControls
         }
         .padding(Theme.Space.s16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .vpnSurface()
         .foregroundColor(Theme.textPrimary)
         .task(id: requestKey) { await recompute() }
+        // Subscribe to the active stream only. Connection counters must not
+        // invalidate history, and hidden workspaces must not render either.
+        .onReceive(log.$revision) { value in
+            if isVisible && mode != .connections { historyRevision = value }
+        }
+        .onReceive(log.$connectionRevision) { value in
+            if isVisible && mode == .connections { connectionRevision = value }
+        }
+        .onChange(of: isVisible) { _, visible in
+            if visible { syncRevision() }
+        }
+        .onChange(of: mode) { _, _ in syncRevision() }
         .onReceive(VpnManager.shared.$state.removeDuplicates()) { isRunning = ($0 == .running) }
         .onChange(of: routeFilter) { _, _ in resetFollow() }
         .onChange(of: query) { _, _ in resetFollow() }
@@ -164,9 +182,7 @@ struct VpnDomainLogSection: View {
         HStack(spacing: 8) {
             Picker("路由", selection: $routeFilter) {
                 ForEach(RouteFilter.allCases) { filter in
-                    let count = mode == .connections
-                        ? searchedConnections.filter { filter.route == nil || $0.route == filter.route }.count
-                        : (filter.route.map { routeCounts[$0, default: 0] } ?? matchedCount)
+                    let count = filter.route.map { routeCounts[$0, default: 0] } ?? matchedCount
                     Text("\(filter.label) · \(count)").tag(filter)
                 }
             }
@@ -186,7 +202,7 @@ struct VpnDomainLogSection: View {
             if mode == .detail {
                 Button {
                     followTail.toggle()
-                    if followTail { pendingRows = 0 }
+                    if followTail { pendingRows = 0; page = 0 }
                 } label: {
                     AppGlyph(name: followTail ? "arrow.down.to.line" : "pause", size: 14)
                         .frame(width: 28, height: 32)
@@ -249,15 +265,31 @@ struct VpnDomainLogSection: View {
         }
     }
 
-    private var searchedConnections: [VpnDomainConnection] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return log.connections.filter {
-            q.isEmpty || "\($0.endpoint) \($0.process) \($0.outbound) \($0.rule)".localizedCaseInsensitiveContains(q)
-        }
+    private var pageRange: Range<Int> {
+        VpnDomainQuery.pageRange(count: visibleCount, page: page, newestFirst: mode == .detail)
     }
 
-    private var visibleConnections: [VpnDomainConnection] {
-        searchedConnections.filter { routeFilter.route == nil || $0.route == routeFilter.route }
+    private var detailPage: ArraySlice<VpnDomainEntry> { visibleRows[pageRange] }
+
+    private var pageControls: some View {
+        HStack(spacing: 12) {
+            Text("\(visibleCount) 条 · 每页最多 \(VpnDomainQuery.pageSize) 条")
+                .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+            Spacer()
+            Button(mode == .detail ? "更早" : "上一页") {
+                if mode == .detail { followTail = false; page += 1 }
+                else { page -= 1 }
+            }
+            .disabled(mode == .detail ? pageRange.lowerBound == 0 : page == 0)
+            Text("\(min(page, max(0, (visibleCount - 1) / VpnDomainQuery.pageSize)) + 1) / \(max(1, (visibleCount + VpnDomainQuery.pageSize - 1) / VpnDomainQuery.pageSize))")
+                .font(Theme.Font.captionMono)
+            Button(mode == .detail ? "更新" : "下一页") {
+                if mode == .detail { page = max(0, page - 1) }
+                else { page += 1 }
+            }
+            .disabled(mode == .detail ? page == 0 : pageRange.upperBound == visibleCount)
+        }
+        .controlSize(.small)
     }
 
     private var connectionList: some View {
@@ -267,7 +299,7 @@ struct VpnDomainLogSection: View {
                     Text(isRunning ? "暂无匹配的活动连接" : "启动代理后显示活动连接")
                         .foregroundColor(Theme.textSecondary)
                 }
-                ForEach(visibleConnections) { connection in
+                ForEach(visibleConnections[pageRange]) { connection in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(connection.endpoint)
                             .font(Theme.Font.console)
@@ -306,7 +338,7 @@ struct VpnDomainLogSection: View {
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(spacing: 0) {
-                                ForEach(visibleRows) { row in
+                                ForEach(detailPage) { row in
                                     detailRow(row).id(row.id)
                                 }
                             }
@@ -317,26 +349,26 @@ struct VpnDomainLogSection: View {
                                 - (geo.contentOffset.y + geo.containerSize.height) <= Self.tailTolerance
                         } action: { _, atTail in
                             detailAtTail = atTail
-                            if scrollingDetail { followTail = atTail }
+                            if scrollingDetail && !atTail { followTail = false }
                         }
                         .onScrollPhaseChange { _, phase in
                             switch phase {
                             case .tracking, .interacting, .decelerating:
                                 scrollingDetail = true
-                                followTail = detailAtTail
                             case .idle:
-                                if scrollingDetail { followTail = detailAtTail }
+                                if scrollingDetail && detailAtTail && page == 0 { followTail = true }
                                 scrollingDetail = false
                             default: break
                             }
                         }
                         .onDisappear { scrollingDetail = false }
-                        .onChange(of: visibleRows.last?.id) { _, id in
+                        .onChange(of: detailPage.last?.id) { _, id in
                             guard followTail, !scrollingDetail, let id else { return }
                             proxy.scrollTo(id, anchor: .bottom)
                         }
                         .onChange(of: followTail) { _, follow in
                             if follow, let id = visibleRows.last?.id {
+                                page = 0
                                 pendingRows = 0
                                 proxy.scrollTo(id, anchor: .bottom)
                             }
@@ -344,9 +376,9 @@ struct VpnDomainLogSection: View {
                         .overlay(alignment: .bottomTrailing) {
                             if !followTail {
                                 ActionButton(pendingRows > 0 ? "\(pendingRows) 条新记录 · 回到最新" : "回到最新", tone: .neutral) {
+                                    page = 0
                                     followTail = true
                                     pendingRows = 0
-                                    if let id = visibleRows.last?.id { proxy.scrollTo(id, anchor: .bottom) }
                                 }
                                 .padding(8)
                             }
@@ -437,16 +469,15 @@ struct VpnDomainLogSection: View {
             }
             .font(Theme.Font.caption)
 
-            let leaks = directLeaks(visibleStats)
-            if !leaks.isEmpty {
-                directLeakLine(leaks)
+            if !visibleLeaks.isEmpty {
+                directLeakLine(visibleLeaks)
             }
 
             HairlineDivider()
 
             LazyVStack(alignment: .leading, spacing: 1, pinnedViews: [.sectionHeaders]) {
                 Section {
-                    ForEach(visibleStats) { stat in
+                    ForEach(visibleStats[pageRange]) { stat in
                         summaryRow(stat)
                     }
                 } header: {
@@ -573,22 +604,6 @@ struct VpnDomainLogSection: View {
         }
     }
 
-    /// The one piece of actual analysis: a service this app knows about (an LLM
-    /// or a client vendor) that the core sent out **direct**. Everything else on
-    /// this page reports what happened; this line reports something the user
-    /// probably did not intend.
-    private func directLeaks(_ stats: [VpnDomainLogStat]) -> [(service: String, hosts: [String])] {
-        var byService: [String: [String]] = [:]
-        var order: [String] = []
-        for stat in stats where stat.direct > 0 && stat.proxied == 0 {
-            for service in VpnWatchlist.matches(host: stat.host) {
-                if byService[service] == nil { order.append(service) }
-                byService[service, default: []].append(stat.host)
-            }
-        }
-        return order.map { ($0, byService[$0] ?? []) }
-    }
-
     private func directLeakLine(_ leaks: [(service: String, hosts: [String])]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             AppGlyph(name: "exclamationmark.triangle.fill", size: 10)
@@ -611,14 +626,21 @@ struct VpnDomainLogSection: View {
         let route: RouteFilter
         let query: String
         let failedOnly: Bool
+        let followTail: Bool
     }
 
     private var requestKey: RequestKey {
-        RequestKey(revision: mode == .connections ? 0 : log.revision,
-                   isVisible: isVisible, mode: mode, route: routeFilter, query: query, failedOnly: failedOnly)
+        RequestKey(revision: mode == .connections ? connectionRevision : historyRevision,
+                   isVisible: isVisible, mode: mode, route: routeFilter, query: query, failedOnly: failedOnly, followTail: followTail)
+    }
+
+    private func syncRevision() {
+        historyRevision = log.revision
+        connectionRevision = log.connectionRevision
     }
 
     private func resetFollow() {
+        page = 0
         followTail = true
         pendingRows = 0
         lastSeenID = nil
@@ -626,8 +648,7 @@ struct VpnDomainLogSection: View {
     }
 
     private func recompute() async {
-        guard isVisible, mode != .connections else { return }
-        let entries = log.entries
+        guard isVisible else { return }
         let key = requestKey
         // Debounce typing; task identity cancels obsolete searches and page work.
         if !key.query.isEmpty {
@@ -635,6 +656,22 @@ struct VpnDomainLogSection: View {
             catch { return }
         }
         guard !Task.isCancelled else { return }
+        if key.mode == .connections {
+            let snapshot = log.connections
+            let worker = Task.detached(priority: .userInitiated) {
+                VpnDomainQuery.connections(snapshot, query: key.query, route: key.route.route)
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, requestKey == key else { return }
+            visibleConnections = result.rows
+            routeCounts = result.counts
+            matchedCount = result.matched
+            page = min(page, max(0, (result.rows.count - 1) / VpnDomainQuery.pageSize))
+            return
+        }
+        let entries = log.entries
         let worker = Task.detached(priority: .userInitiated) {
             VpnDomainQuery.run(entries: entries, query: key.query,
                                route: key.route.route, failedOnly: key.failedOnly,
@@ -647,9 +684,15 @@ struct VpnDomainLogSection: View {
         if !followTail, let lastSeenID {
             pendingRows += result.rows.reduce(0) { $0 + ($1.id > lastSeenID ? 1 : 0) }
         }
+        // Freeze the reading snapshot while paused, including at ring eviction.
+        // Filters/clear reset lastSeenID, so they still replace the snapshot.
+        if key.mode != .detail || followTail || lastSeenID == nil || entries.isEmpty {
+            visibleRows = result.rows
+        }
         lastSeenID = entries.last?.id
-        visibleRows = result.rows
         visibleStats = result.stats
+        visibleLeaks = result.leaks
+        page = min(page, max(0, (visibleCount - 1) / VpnDomainQuery.pageSize))
         routeCounts = result.counts
         matchedCount = result.matched
         tallyProxied = key.route == .all || key.route == .proxied ? result.counts[.proxied, default: 0] : 0

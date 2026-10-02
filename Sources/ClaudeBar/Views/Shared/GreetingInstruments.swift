@@ -846,6 +846,7 @@ struct HourlyWeatherInstrument: View {
     var date: Date
     var ink: Color
     var darkInk = false
+    var alignsWithForecast = false
 
     var body: some View {
         let hours = reading.upcomingHours(at: date)
@@ -854,12 +855,13 @@ struct HourlyWeatherInstrument: View {
         if abs(date.timeIntervalSince(reading.observedAt)) < 7200,
            let metric = reading.hourMetric(at: date) {
             let help = details(hours: hours, metric: metric)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: alignsWithForecast ? 0 : 3) {
                 HStack {
                     Text(metric.title + " · " + metric.unit)
                     Spacer(minLength: 4)
                     Text(summary(hours: hours, metric: metric))
                 }
+                .frame(height: alignsWithForecast ? 16 : 11)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(ink.opacity(0.9))
                 GeometryReader { geometry in
@@ -870,8 +872,10 @@ struct HourlyWeatherInstrument: View {
                     let width = max(0, geometry.size.width - 32)
                     let tint = metric == .precipitation || metric == .probability ? Color(hex: darkInk ? 0x175A80 : 0x77CFF3)
                         : metric == .temperature ? Color(hex: darkInk ? 0x874416 : 0xFFD18A) : ink
+                    // Wide layout shares the forecast’s 28–58pt plot and 72pt label row.
+                    let plotTop: CGFloat = alignsWithForecast ? 12 : 14
+                    let baseline: CGFloat = alignsWithForecast ? 42 : 34
                     Canvas { context, size in
-                        let baseline: CGFloat = 34
                         var axis = Path()
                         axis.move(to: CGPoint(x: 0, y: baseline))
                         axis.addLine(to: CGPoint(x: size.width, y: baseline))
@@ -890,15 +894,15 @@ struct HourlyWeatherInstrument: View {
                                 if !points.isEmpty { segments.append(points); points = [] }
                             }
                             let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
-                            let y = baseline - 20 * (value - low) / (high - low)
+                            let y = baseline - (baseline - plotTop) * (value - low) / (high - low)
                             points.append(CGPoint(x: x, y: y))
                             previous = hour.date
                         }
                         if !points.isEmpty { segments.append(points) }
                         if watery {
                             var guide = Path()
-                            guide.move(to: CGPoint(x: 16, y: 14))
-                            guide.addLine(to: CGPoint(x: size.width - 16, y: 14))
+                            guide.move(to: CGPoint(x: 16, y: plotTop))
+                            guide.addLine(to: CGPoint(x: size.width - 16, y: plotTop))
                             context.stroke(guide, with: .color(ink.opacity(0.1)),
                                            style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
                         }
@@ -920,7 +924,7 @@ struct HourlyWeatherInstrument: View {
                                 water.closeSubpath()
                                 context.fill(water, with: .linearGradient(
                                     Gradient(colors: [tint.opacity(0.3), tint.opacity(0.03)]),
-                                    startPoint: CGPoint(x: 0, y: 14), endPoint: CGPoint(x: 0, y: baseline)))
+                                    startPoint: CGPoint(x: 0, y: plotTop), endPoint: CGPoint(x: 0, y: baseline)))
                             }
                             context.stroke(line, with: .color(tint.opacity(0.9)),
                                            style: StrokeStyle(lineWidth: watery ? 1.2 : 1.5, lineCap: .round))
@@ -935,7 +939,7 @@ struct HourlyWeatherInstrument: View {
                         Text(clock(hour.date) + "时")
                             .font(.system(size: 8, weight: .medium).monospacedDigit())
                             .foregroundStyle(ink.opacity(0.86))
-                            .position(x: x, y: 43)
+                            .position(x: x, y: alignsWithForecast ? 56 : 43)
                         if metric == .precipitation || metric == .probability {
                             Text(metric.value(hour).map { value in
                                 metric == .probability ? String(format: "%.0f", value)
@@ -943,7 +947,7 @@ struct HourlyWeatherInstrument: View {
                             } ?? "—")
                                 .font(.system(size: 8, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(ink.opacity(0.9))
-                                .position(x: x, y: 6)
+                                .position(x: x, y: alignsWithForecast ? 4 : 6)
                         } else if metric.value(hour) == nil {
                             Text("—").font(.system(size: 9)).foregroundStyle(ink.opacity(0.8))
                                 .position(x: x, y: 12)

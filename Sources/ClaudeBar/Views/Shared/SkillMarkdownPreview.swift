@@ -1,46 +1,45 @@
 import AppKit
 import SwiftUI
 
-private enum MarkdownBlock: Sendable {
-    case heading(Int, String)
-    case paragraph(String)
-    case bullet(Int, String)
-    case numbered(Int, String, String)
-    case quote(String)
-    case code(String, String)
-    case table([[String]])
-    case rule
-}
-
 /// A native, selectable Markdown reading surface. Parsing is deliberately
 /// bounded and runs off the main actor; no HTML or script is evaluated.
 struct SkillMarkdownPreview: View {
     private enum PreviewError: Error { case tooLarge }
     private let file: URL?
     private let content: String?
-    init(file: URL) { self.file = file; content = nil }
-    init(content: String) { file = nil; self.content = content }
+    private let documentNavigation: Bool
+    init(file: URL) { self.file = file; content = nil; documentNavigation = false }
+    init(content: String, documentNavigation: Bool = false) { file = nil; self.content = content; self.documentNavigation = documentNavigation }
     @State private var blocks: [MarkdownBlock] = []
     @State private var message: String?
     @State private var loading = true
+    @State private var outlineExpanded = true
+    @State private var availableWidth: CGFloat = 800
+    @State private var headings: [DocumentMarkup.Heading] = []
 
     var body: some View {
         Group {
-            if loading {
-                ProgressView(content == nil ? "正在读取 Skill 文档" : "正在排版文档")
-                    .frame(maxWidth: .infinity, minHeight: 180)
-            } else if let message {
-                StandbyEmptyState(label: message, symbol: "doc.text",
-                                  tint: Theme.Ink.claude, block: true)
-            } else {
-                LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
-                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                        blockView(block)
+            if documentNavigation {
+                ScrollViewReader { proxy in
+                    ZStack(alignment: .topLeading) {
+                        ScrollView {
+                            renderContent(proxy: proxy)
+                                .frame(maxWidth: 980, alignment: .leading)
+                                .padding(.horizontal, 28).padding(.vertical, 18)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .padding(.leading, outlineExpanded && !headings.isEmpty ? 218 : 0)
+                        if outlineExpanded && !headings.isEmpty {
+                            DocumentOutlinePanel(headings: headings, onClose: { outlineExpanded = false }) { heading in
+                                proxy.scrollTo(heading.id, anchor: .top)
+                            }.frame(width: 200).padding(10)
+                        } else {
+                            ActionIcon(symbol: "list.bullet.indent", tint: Theme.Ink.claude, size: 28) { outlineExpanded = true }
+                                .help("展开文档目录").padding(10).disabled(headings.isEmpty)
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-            }
+            } else { renderContent(proxy: nil) }
         }
         .task(id: content ?? file?.path ?? "") {
             loading = true
@@ -67,6 +66,7 @@ struct SkillMarkdownPreview: View {
                 }
                 guard !Task.isCancelled else { return }
                 blocks = parsed
+                headings = DocumentMarkup.outline(parsed)
                 if parsed.isEmpty { message = "文档没有可预览的内容" }
             } catch is CancellationError {
                 return
@@ -75,20 +75,43 @@ struct SkillMarkdownPreview: View {
                 message = "文档超过 512 KB，暂不预览。"
             } catch {
                 guard !Task.isCancelled else { return }
-                message = "无法读取 SKILL.md，请检查文件是否仍在原位置。"
+                message = documentNavigation ? "无法渲染文档，可切换源码查看。" : "无法读取 SKILL.md，请检查文件是否仍在原位置。"
             }
             loading = false
         }
     }
 
+    @ViewBuilder private func renderContent(proxy: ScrollViewProxy?) -> some View {
+        if loading && blocks.isEmpty {
+            ProgressView(content == nil ? "正在读取 Skill 文档" : "正在排版文档")
+                .frame(maxWidth: .infinity, minHeight: 180)
+        } else if let message {
+            StandbyEmptyState(label: message, symbol: "doc.text", tint: Theme.Ink.claude, block: true)
+        } else {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                    blockView(block).id(index)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
+        }
+    }
     @ViewBuilder private func blockView(_ block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let value):
-            inline(value)
-                .font(level == 1 ? Theme.Font.titleSmall : (level == 2 ? Theme.Font.section : Theme.Font.chromeEmph))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.top, level == 1 ? Theme.Space.s12 : Theme.Space.s8)
-                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                inline(value)
+                    .font(level == 1 ? Theme.Font.titleSmall : (level == 2 ? Theme.Font.section : Theme.Font.chromeEmph))
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                if documentNavigation {
+                    Text("H\(level)").font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary.opacity(0.4))
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.hairline.opacity(0.6)))
+                        .help("第 \(level) 级标题")
+                }
+            }.padding(.top, level == 1 ? Theme.Space.s12 : Theme.Space.s8)
         case .paragraph(let value):
             inline(value)
                 .font(Theme.Font.bodySmall)
@@ -146,27 +169,67 @@ struct SkillMarkdownPreview: View {
             .padding(Theme.Space.s12)
             .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         case .table(let rows):
+            let columnCount = rows.map(\.count).max() ?? 0
+            let cellWidth = max(190, min(360, availableWidth / CGFloat(max(1, columnCount)) - 20))
             ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
-                        HStack(alignment: .top, spacing: Theme.Space.s12) {
-                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                                inline(cell)
-                                    .font(rowIndex == 0 ? Theme.Font.microSemibold : Theme.Font.caption)
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .frame(width: 170, alignment: .leading)
+                        HStack(alignment: .top, spacing: 0) {
+                            ForEach(0..<columnCount, id: \.self) { column in
+                                tableCell(column < row.count ? row[column] : "", header: rowIndex == 0)
+                                    .frame(width: cellWidth, alignment: .topLeading).padding(10)
+                                    .frame(maxHeight: .infinity, alignment: .topLeading)
+                                    .overlay(alignment: .trailing) { Rectangle().fill(Theme.hairline).frame(width: 1) }
                             }
                         }
-                        .padding(Theme.Space.s10)
-                        .background(rowIndex == 0 ? Theme.bgOverlay : Theme.cardSurface)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(rowIndex == 0 ? Theme.bgOverlay : (rowIndex.isMultiple(of: 2) ? Theme.bgSecondary.opacity(0.45) : Theme.cardSurface))
                         if rowIndex < rows.count - 1 { HairlineDivider() }
                     }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                }.clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
             }
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.hairline))
+        case .task(let depth, let checked, let value):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square").foregroundStyle(checked ? Theme.Ink.success : Theme.textSecondary)
+                inline(value).foregroundStyle(Theme.textPrimary)
+            }.font(Theme.Font.bodySmall).padding(.leading, CGFloat(min(depth, 6)) * 14)
+        case .embed(let title, let kind):
+            HStack(spacing: 12) {
+                Image(systemName: kind == "whiteboard" ? "scribble.variable" : kind == "file" ? "paperclip" : "rectangle.on.rectangle")
+                    .font(.system(size: 18)).foregroundStyle(Theme.Ink.claude)
+                    .frame(width: 36, height: 36).background(Theme.claude.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(Theme.Font.caption.weight(.semibold))
+                    Text("此嵌入内容需在飞书中查看，可使用工具栏的打开按钮。")
+                        .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline))
+        case .image(let alt, let address):
+            HStack(spacing: 10) {
+                Image(systemName: "photo").foregroundStyle(Theme.Ink.claude)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(alt.isEmpty ? "图片" : alt).font(Theme.Font.caption)
+                    Text("图片预览请在飞书中查看").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                if let url = URL(string: address), url.scheme == "https", url.user == nil { Link("打开图片", destination: url).font(Theme.Font.micro) }
+            }.padding(12).background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 10))
         case .rule:
             HairlineDivider().padding(.vertical, Theme.Space.s4)
+        }
+    }
+
+    @ViewBuilder private func tableCell(_ value: String, header: Bool) -> some View {
+        if value.contains("```") {
+            Text(value.replacingOccurrences(of: "(?m)^```[^\n]*\n?", with: "", options: .regularExpression))
+                .font(Theme.Font.captionMono).foregroundStyle(Theme.textPrimary).lineSpacing(3)
+        } else {
+            inline(value).font(header ? Theme.Font.microSemibold : Theme.Font.caption)
+                .foregroundStyle(Theme.textPrimary).lineSpacing(3)
         }
     }
 
@@ -179,76 +242,49 @@ struct SkillMarkdownPreview: View {
     }
 
     nonisolated private static func parse(_ source: String) throws -> [MarkdownBlock] {
-        try Task.checkCancellation()
-        var lines = source.components(separatedBy: .newlines)
-        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
-           let close = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
-            lines.removeSubrange(0...close)
-        }
-        var blocks: [MarkdownBlock] = []
-        var paragraph: [String] = []
-        var code: [String] = []
-        var table: [[String]] = []
-        var language = ""
-        var fenced = false
-        func flush() {
-            if !paragraph.isEmpty {
-                blocks.append(.paragraph(paragraph.joined(separator: " ")))
-                paragraph.removeAll()
+        try DocumentMarkup.parse(source)
+    }
+}
+
+/// A floating outline shared by reading and editing; independent of the document list.
+struct DocumentOutlinePanel: View {
+    let headings: [DocumentMarkup.Heading]
+    let onClose: () -> Void
+    let onJump: (DocumentMarkup.Heading) -> Void
+    @State private var selectedID: Int?
+    var body: some View {
+        let minimumLevel = headings.map(\.level).min() ?? 1
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "list.bullet.indent").foregroundStyle(Theme.Ink.claude)
+                Text("目录").font(Theme.Font.microSemibold)
+                Text("\(headings.count)").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                ActionIcon(symbol: "sidebar.left", tint: Theme.textSecondary, size: 20) { onClose() }.help("收起目录")
             }
-            if !table.isEmpty {
-                blocks.append(.table(table))
-                table.removeAll()
-            }
-        }
-        for line in lines {
-            try Task.checkCancellation()
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                flush()
-                if fenced { blocks.append(.code(language, code.joined(separator: "\n"))); code.removeAll() }
-                else { language = String(trimmed.dropFirst(3)); code.removeAll() }
-                fenced.toggle()
-                continue
-            }
-            if fenced { code.append(line); continue }
-            if trimmed.hasPrefix("|"), trimmed.hasSuffix("|") {
-                if !paragraph.isEmpty { flush() }
-                let cells = trimmed.dropFirst().dropLast().split(separator: "|", omittingEmptySubsequences: false)
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                if !cells.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0 == "-" || $0 == ":" } }) {
-                    table.append(cells)
+            HairlineDivider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(headings) { heading in
+                        Button { selectedID = heading.id; onJump(heading) } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                Text(heading.number).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.textSecondary.opacity(0.6))
+                                Text((try? AttributedString(markdown: heading.title, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(heading.title))
+                                    .font(Theme.Font.caption).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.leading, CGFloat(max(0, heading.level - minimumLevel)) * 9)
+                            .padding(.horizontal, 5).padding(.vertical, 5)
+                            .background(selectedID == heading.id ? Theme.claude.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel("跳转到 " + heading.title)
+                    }
                 }
-                continue
-            }
-            if !table.isEmpty { flush() }
-            if trimmed.isEmpty { flush(); continue }
-            if trimmed == "---" || trimmed == "***" { flush(); blocks.append(.rule); continue }
-            let marks = trimmed.prefix(while: { $0 == "#" }).count
-            if (1...6).contains(marks), trimmed.dropFirst(marks).hasPrefix(" ") {
-                flush()
-                blocks.append(.heading(marks, String(trimmed.dropFirst(marks + 1))))
-                continue
-            }
-            let depth = (line.count - line.drop(while: { $0 == " " }).count) / 2
-            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-                flush(); blocks.append(.bullet(depth, String(trimmed.dropFirst(2)))); continue
-            }
-            if let dot = trimmed.firstIndex(of: "."),
-               trimmed[..<dot].allSatisfy({ $0.isNumber }),
-               trimmed[trimmed.index(after: dot)...].hasPrefix(" ") {
-                flush()
-                blocks.append(.numbered(depth, String(trimmed[...dot]),
-                                        String(trimmed[trimmed.index(dot, offsetBy: 2)...])))
-                continue
-            }
-            if trimmed.hasPrefix("> ") {
-                flush(); blocks.append(.quote(String(trimmed.dropFirst(2)))); continue
-            }
-            paragraph.append(trimmed)
+            }.frame(height: min(370, CGFloat(max(1, headings.count)) * 34))
         }
-        flush()
-        if fenced { blocks.append(.code(language, code.joined(separator: "\n"))) }
-        return blocks
+        .padding(10).foregroundStyle(Theme.textPrimary)
+        .background(Theme.cardSurface.opacity(0.96), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline))
+        .shadow(color: .black.opacity(Theme.isDark ? 0.22 : 0.07), radius: 12, x: 0, y: 4)
     }
 }

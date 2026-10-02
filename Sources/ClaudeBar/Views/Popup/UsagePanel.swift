@@ -12,7 +12,9 @@ struct UsagePanel: View {
                 .overlay(alignment: .bottomLeading) { datePickerAnchor }
             usageSummary
             UsageHeatmap(
-                days: providerStore.usageWeekDays,
+                days: UsageStats.heatmapDays(for: providerStore.usagePeriod,
+                                           periodDays: providerStore.usageDays,
+                                           weekDays: providerStore.usageWeekDays),
                 period: providerStore.usagePeriod,
                 reference: providerStore.usageReferenceDate,
                 compact: true,

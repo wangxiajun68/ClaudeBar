@@ -47,6 +47,27 @@ source += r'''
             require(GreetingPhrase.forDate(baseline.addingTimeInterval(Double(offset)), calendar: calendar) == stable,
                     "A greeting must not change with seconds or redraws")
         }
+        for language in GreetingPhrase.Language.allCases {
+            require(GreetingPhrase.resolve(.automatic, date: baseline, calendar: calendar, language: language)
+                    == GreetingPhrase.forDate(baseline, calendar: calendar, language: language),
+                    "Automatic preserves the contextual selection")
+            for selection in GreetingPhrase.Selection.allCases where selection != .automatic && selection != .custom {
+                let fixed = GreetingPhrase.resolve(selection, date: baseline, calendar: calendar, language: language)
+                require(!fixed.script.isEmpty, "Every selectable greeting needs text")
+                if selection != .monthly {
+                    require(fixed == GreetingPhrase.resolve(selection, date: date("2026-10-01", 23),
+                            calendar: calendar, language: language), "Fixed greetings must override dates/holidays")
+                }
+            }
+        }
+        require(GreetingPhrase.resolve(.monthly, date: date("2026-10-01"), calendar: calendar,
+                language: .english).script == "Hello, October", "Month follows the supplied local calendar")
+        require(GreetingPhrase.resolve(.custom, custom: "  Hello\nWorld  ", date: baseline).script == "Hello World",
+                "Custom greetings normalize lines without changing authored case")
+        require(GreetingPhrase.resolve(.custom, custom: String(repeating: "字", count: 100), date: baseline).script.count == 80,
+                "Custom greetings remain bounded even with old stored values")
+        require(GreetingPhrase.resolve(.custom, custom: " \n ", date: baseline, calendar: calendar) == stable,
+                "Empty custom text returns to automatic")
         var varied: Set<String> = []
         for offset in 0..<60 {
             let next = calendar.date(byAdding: .day, value: offset, to: baseline)!

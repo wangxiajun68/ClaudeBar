@@ -33,6 +33,7 @@ source += '\nenum SolarTimesFixture {\n' + declaration('Sources/ClaudeBar/Views/
 # functions compile into the harness as-is (the `View` conformance needs
 # AppKit/SwiftUI, which the harness already imports).
 source += declaration('Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift', 'struct WindDial: View {')
+source += '\n' + declaration('Sources/ClaudeBar/Views/Shared/GreetingCard.swift', '    private struct Metrics {').replace('private struct Metrics', 'struct GreetingMetricsFixture', 1) + '\n'
 source += '\nlet cardSource = ' + json.dumps(card_source, ensure_ascii=False) + '\n'
 source += r'''
 @main struct Regression {
@@ -40,22 +41,6 @@ source += r'''
         GreetingScript.resourceRoot = URL(fileURLWithPath: CommandLine.arguments[1])
         func require(_ condition: Bool, _ message: String = "Regression failed") {
             guard condition else { print("FAIL: " + message); exit(1) }
-        }
-        // Geometry the card owns is read out of the card source instead of
-        // being copied: a number typed twice drifts silently, and a clearance
-        // band that is *wider* than production turns the overlap checks below
-        // into green lines that can never fire. The old literals here were
-        // 80pt looser than the shipping card after `nowHeight` grew from 88.
-        func metric(_ name: String) -> CGFloat {
-            let pattern = "var " + name + ": CGFloat { "
-            guard let start = cardSource.range(of: pattern) else {
-                fatalError("GreetingStatusSheet.Metrics no longer declares \(name)")
-            }
-            let tail = cardSource[start.upperBound...].prefix(while: { $0 != "}" })
-            guard let value = Double(tail.split(separator: " ").first ?? "") else {
-                fatalError("Metrics.\(name) is not a literal any more: \(tail)")
-            }
-            return CGFloat(value)
         }
         // The card's call site, so a changed clearance composition (an extra
         // inset, a different constant) fails loudly here rather than silently
@@ -171,26 +156,30 @@ source += r'''
         require(WindDial.name("W") == "西", "an English point names the same direction in Chinese")
         require(WindDial.name("旋风") == nil, "a string naming no point must stay unresolved")
         require(authoritative.rise == forecastRise && authoritative.set == forecastSet, "Forecast precedence")
-        // The clearances are the real card's own: `GreetingStatusSheet.Metrics`
-        // passes `topClear: m.topClear` = margin - 8 + nowHeight + 6 and
-        // `bottomClear: m.bottomClear - 24` = sky - 14 - chartHeight - 6 - 24.
-        // Scraping the numbers keeps a stale literal from widening the band
-        // until the overlap check can never fire — the literals that used to be
-        // here were 80pt looser than the shipping card after `nowHeight` grew.
-        let nowHeight = metric("nowHeight")
-        let chartHeight = metric("chartHeight")
+        // Run the card's production metrics; do not duplicate its band math.
         let topClearCall = cardCallSite()
         require(topClearCall.contains("topClear: m.topClear")
-                && topClearCall.contains("bottomClear: m.bottomClear - 24"),
+                && topClearCall.contains("bottomClear: m.bottomClear)"),
                 "the card's clearance call site moved; this fixture's band no longer matches it")
         var count = 0
         for width: CGFloat in [620, 900, 1100, 1400] {
-            let sky = min(430, max(380, width * 0.38)).rounded()
-            let margin: CGFloat = width >= 900 ? 32 : 24
-            let top = margin - 8 + nowHeight + 6, bottom = sky - 14 - chartHeight - 6 - 24
+            let metrics = GreetingMetricsFixture(width: width)
+            let sky = metrics.sky, margin = metrics.margin
+            let top = metrics.topClear, bottom = metrics.bottomClear
+            if width >= 900 {
+                require(metrics.hourlyTop == metrics.chartTop && metrics.hourlyHeight == metrics.chartHeight,
+                        "Hourly/daily chart tops and heights must align")
+                require(metrics.hourlyX >= margin + metrics.sunWidth, "Hourly/sun overlap")
+                require(metrics.hourlyX + metrics.hourlyWidth + 24 <= width - margin - metrics.chartWidth,
+                        "Hourly/daily forecast overlap")
+                require(metrics.hourlyTop + metrics.hourlyHeight <= sky - 14, "Hourly chart outside sky")
+                require(top < 120, "Wide greetings must reclaim the old upper hourly lane")
+            } else {
+                require(metrics.hourlyTop + metrics.hourlyHeight < top, "Compact hourly/greeting overlap")
+            }
             for face in GreetingTypeface.allCases {
                 if face.supportsChinese { require(GreetingScript.isAvailable(face), "Bundled Chinese face missing: \(face)") }
-                for phrase in (face.supportsChinese ? ["早点休息呀，", "愿你自在绽放，", "新春快乐，", "雨天也温柔，"] : ["good morning,", "good afternoon,", "good evening,", "happy new year,"]) {
+                for phrase in (face.supportsChinese ? ["早点休息呀，", "愿你自在绽放，", "新春快乐，", "雨天也温柔，", String(repeating: "你好", count: 40) + "，"] : ["good morning,", "good afternoon,", "good evening,", "happy new year,", String(repeating: "hello ", count: 13) + ","]) {
                     for name in ["wangxiajun", "Xiajun Wang", "王夏军", "Alexandra Montgomery-Williams", ""] {
                         let layout = GreetingTypesetter.layout(phrase, name: name, typeface: face,
                             cardWidth: width, skyHeight: sky, margin: margin, topClear: top, bottomClear: bottom)

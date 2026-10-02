@@ -8,11 +8,10 @@ struct UsageAnalyticsSection: View {
     let sources: [UsageSource: [ModelUsage]]
     let period: UsagePeriod
     let interval: DateInterval
+    var onSelectMonth: ((Date) -> Void)? = nil
     var onSelectDay: (Date) -> Void
     @State private var analysis: UsageAnalysis?
     @State private var sourceRows: [SourceValue] = []
-    @State private var compressed = false
-    @State private var selectedDate: Date?
 
     private struct Request: Equatable {
         let days: [DayUsage]; let stats: [ModelUsage]
@@ -56,7 +55,6 @@ struct UsageAnalyticsSection: View {
             }.value
             guard !Task.isCancelled else { return }
             analysis = result.0; sourceRows = result.1
-            selectedDate = nil
         }
     }
 
@@ -134,32 +132,33 @@ struct UsageAnalyticsSection: View {
     private func activityCard(_ a: UsageAnalysis) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                heading(a.buckets.count > 1 ? "用量趋势" : "来源份额", a.buckets.count > 1 ? "chart.xyaxis.line" : "square.grid.2x2")
+                heading("用量热力图", "square.grid.3x3.fill")
                 Spacer()
-                caption(a.buckets.count > 1 ? "按\(a.grain) · \(a.buckets.count) 个周期" : "本地记录")
-                if a.buckets.count > 1 {
-                    Button { compressed.toggle() } label: { Image(systemName: "slider.horizontal.3") }
-                        .buttonStyle(.plain).help(compressed ? "使用原值坐标" : "使用长尾坐标")
-                        .accessibilityLabel("切换坐标尺度")
-                }
+                caption("按日 · \(a.activeDays) 天有记录")
             }
-            if a.buckets.count > 1 {
-                trajectory(a)
-                HStack(spacing: 16) {
-                    ForEach(sourceRows) { row in
-                        HStack(spacing: 5) {
-                            ProductBrandMark(brand: row.source.brandMark).frame(width: 16, height: 16)
-                                .accessibilityHidden(true)
-                            Circle().fill(UsageReportPalette.source(row.source)).frame(width: 5, height: 5)
-                            Text(row.source.shortLabel)
-                            Text(UsageAnalysis.share(row.tokens, of: sourceRows.reduce(0) { $0 + $1.tokens }))
-                                .monospacedDigit()
-                        }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-                    }
+            UsageHeatmap(days: days, period: period, reference: interval.start,
+                         onSelectDay: onSelectDay, onSelectMonth: onSelectMonth)
+            HStack(spacing: 6) {
+                caption("少")
+                ForEach([0.16, 0.4, 0.7, 1.0], id: \.self) { opacity in
+                    RoundedRectangle(cornerRadius: 2).fill(Theme.chartPurple.opacity(opacity))
+                        .frame(width: 10, height: 10)
                 }
-            } else {
-                sourceComposition
-                caption(a.buckets.isEmpty ? "本周期无已到达日期" : "来源占比不含 Cursor 官方账单")
+                caption("多")
+                Spacer()
+                caption("悬停查看 · 点击下钻")
+            }
+            HStack(spacing: 16) {
+                ForEach(sourceRows) { row in
+                    HStack(spacing: 5) {
+                        ProductBrandMark(brand: row.source.brandMark).frame(width: 16, height: 16)
+                            .accessibilityHidden(true)
+                        Circle().fill(UsageReportPalette.source(row.source)).frame(width: 5, height: 5)
+                        Text(row.source.shortLabel)
+                        Text(UsageAnalysis.share(row.tokens, of: sourceRows.reduce(0) { $0 + $1.tokens }))
+                            .monospacedDigit()
+                    }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
+                }
             }
         }.padding(16).frame(maxWidth: .infinity, alignment: .topLeading).usageFigure()
     }
@@ -203,134 +202,6 @@ struct UsageAnalyticsSection: View {
             }
             caption("本地记录 · 各分段按真实 Token 比例绘制")
         }.padding(16).frame(maxWidth: .infinity, alignment: .topLeading).usageFigure()
-    }
-
-    private func trajectory(_ a: UsageAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            GeometryReader { geo in
-                let left: CGFloat = 70
-                let height: CGFloat = 82
-                let width = max(1, geo.size.width - left)
-                let column = width / Double(a.buckets.count)
-                Canvas { context, _ in
-                    for value in ticks(a) {
-                        let y = height * (1 - value / upper(a))
-                        var guide = Path()
-                        guide.move(to: CGPoint(x: left - 4, y: y))
-                        guide.addLine(to: CGPoint(x: left, y: y))
-                        context.stroke(guide, with: .color(Theme.textSecondary), lineWidth: 1)
-                        context.draw(Text(tokenLabel(value, a)).font(Theme.Font.micro).foregroundColor(Theme.textSecondary),
-                                     at: CGPoint(x: left - 8, y: y), anchor: .trailing)
-                    }
-                    var axes = Path()
-                    axes.move(to: CGPoint(x: left, y: 0)); axes.addLine(to: CGPoint(x: left, y: height))
-                    axes.addLine(to: CGPoint(x: geo.size.width, y: height))
-                    context.stroke(axes, with: .color(Theme.hairline), lineWidth: 1)
-                    let points = a.buckets.enumerated().map { index, row in
-                        CGPoint(x: left + column * (Double(index) + 0.5), y: height * (1 - coordinate(Double(row.total), a) / upper(a)))
-                    }
-                    if let first = points.first, let last = points.last {
-                        var line = Path(); line.move(to: first)
-                        for point in points.dropFirst() { line.addLine(to: point) }
-                        var area = line
-                        area.addLine(to: CGPoint(x: last.x, y: height))
-                        area.addLine(to: CGPoint(x: first.x, y: height)); area.closeSubpath()
-                        context.fill(area, with: .linearGradient(Gradient(colors: [UsagePlotPalette.blue.opacity(0.36), UsagePlotPalette.blue.opacity(0.06)]),
-                                     startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: height)))
-                        context.stroke(line, with: .color(UsagePlotPalette.blue), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                        for (index, point) in points.enumerated() {
-                            let row = a.buckets[index]
-                            let radius: CGFloat = row.date == selectedDate || row.total == a.bucketMaximum ? 5 : 3.5
-                            let color = row.total == a.bucketMaximum ? UsagePlotPalette.clay : UsagePlotPalette.blue
-                            context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(color))
-                        }
-                    }
-                    for index in axisIndices(a) {
-                        let anchor: UnitPoint = index == 0 ? .topLeading : index == a.buckets.count - 1 ? .topTrailing : .top
-                        let x = index == 0 ? left : index == a.buckets.count - 1 ? geo.size.width : left + column * (Double(index) + 0.5)
-                        context.draw(Text(UsageStats.formatter(a.grain == "年" ? "yyyy" : a.grain == "月" ? "yyyy/M" : "M/d").string(from: a.buckets[index].date)).font(Theme.Font.micro).foregroundColor(Theme.textSecondary),
-                                     at: CGPoint(x: x, y: height + 8), anchor: anchor)
-                    }
-                }.accessibilityHidden(true)
-                HStack(spacing: 0) {
-                    ForEach(a.buckets) { row in
-                        Button {
-                            selectedDate = row.date
-                            if a.grain == "日" { onSelectDay(row.date) }
-                        } label: { Color.clear.contentShape(Rectangle()) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(row.label)，\(row.total.formatted()) Token，缓存命中 \(rateLabel(row.hitRate))")
-                            .help("\(row.label) · \(row.total.formatted()) Token")
-                    }
-                }.padding(.leading, left).frame(height: height)
-                .onContinuousHover { phase in
-                    switch phase {
-                    case .active(let point):
-                        let x = point.x - left
-                        guard x >= 0, x < width, point.y >= 0, point.y <= height else { selectedDate = nil; return }
-                        let index = Int(x / column)
-                        selectedDate = a.buckets.indices.contains(index) ? a.buckets[index].date : nil
-                    case .ended: selectedDate = nil
-                    }
-                }
-            }.frame(height: 108)
-            HStack {
-                Text(inspected(a).map { "\($0.total.formatted()) Token · 缓存命中 \(rateLabel($0.hitRate))" } ?? "峰值 \(UsageStats.formatTokens(a.bucketMaximum)) · \(a.buckets.count) 个观测周期")
-                Spacer()
-                Text(a.grain == "日" ? "悬停查看 · 点击日期下钻" : "悬停查看周期用量")
-            }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
-        }
-    }
-    private func coordinate(_ value: Double, _ a: UsageAnalysis) -> Double { compressed ? asinh(value / a.tokenScale) : value }
-    private func upper(_ a: UsageAnalysis) -> Double { max(1, coordinate(Double(a.bucketMaximum), a) * 1.15) }
-    private func ticks(_ a: UsageAnalysis) -> [Double] { [0, upper(a) / 2, upper(a)] }
-    private func tokenLabel(_ value: Double, _ a: UsageAnalysis) -> String {
-        UsageStats.formatTokens(Int(max(0, compressed ? sinh(value) * a.tokenScale : value)))
-    }
-    private func inspected(_ a: UsageAnalysis) -> UsageAnalysis.Bucket? {
-        guard let selectedDate else { return nil }
-        return a.buckets.first { $0.date == selectedDate }
-    }
-    private func axisIndices(_ a: UsageAnalysis) -> [Int] {
-        let stride = max(1, Int(ceil(Double(a.buckets.count) / 8)))
-        return a.buckets.indices.filter { $0 % stride == 0 || $0 == a.buckets.count - 1 }
-    }
-    private var sourceComposition: some View {
-        let total = sourceRows.reduce(0) { $0 + $1.tokens }
-        return VStack(alignment: .leading, spacing: 12) {
-            UsageCompositionBar(values: sourceRows.map { Double($0.tokens) },
-                                colors: sourceRows.map { UsageReportPalette.source($0.source) })
-                .frame(height: 12).accessibilityHidden(true)
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(sourceRows) { row in
-                    let color = UsageReportPalette.source(row.source)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
-                            ProductBrandMark(brand: row.source.brandMark).frame(width: 18, height: 18)
-                                .accessibilityHidden(true)
-                            Text(row.source.label).font(Theme.Font.microMedium)
-                                .foregroundColor(Theme.textSecondary).lineLimit(1)
-                        }
-                        Text(UsageAnalysis.share(row.tokens, of: total))
-                            .font(.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit())
-                            .foregroundColor(row.tokens > 0 ? color : Theme.textTertiary())
-                            .lineLimit(1)
-                        Text(UsageStats.formatTokens(row.tokens) + " Token")
-                            .font(Theme.Font.microMono).foregroundColor(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(color.opacity(row.tokens > 0 ? 0.055 : 0.025), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(alignment: .topLeading) {
-                        Capsule().fill(color.opacity(row.tokens > 0 ? 0.8 : 0.2))
-                            .frame(width: 20, height: 2).padding(.leading, 10)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .help("\(row.source.label)：\(row.tokens.formatted()) Token，\(UsageAnalysis.share(row.tokens, of: total))")
-                }
-            }
-        }.help("来源总量 \(total.formatted()) Token，不含 Cursor 官方账单")
     }
 
     private func rateLabel(_ rate: Double?) -> String { rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }

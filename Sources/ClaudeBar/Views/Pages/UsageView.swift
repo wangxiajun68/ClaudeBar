@@ -58,9 +58,17 @@ struct UsageView: View {
                 }.padding(.horizontal, 14).padding(.vertical, 8).usageFigure()
 
                 if providerStore.usagePublishedInterval == interval {
-                    UsageAnalyticsSection(days: providerStore.usageDays, stats: providerStore.usageStats,
+                    UsageAnalyticsSection(days: UsageStats.heatmapDays(for: providerStore.usagePeriod,
+                                                                    periodDays: providerStore.usageDays,
+                                                                    weekDays: providerStore.usageWeekDays),
+                                          stats: providerStore.usageStats,
                                           sources: providerStore.usageBySource,
-                                          period: providerStore.usagePeriod, interval: interval) { date in
+                                          period: providerStore.usagePeriod, interval: interval,
+                                          onSelectMonth: { date in
+                        providerStore.usagePeriod = .month
+                        providerStore.usageReferenceDate = date
+                        showCustomDatePicker = false
+                    }) { date in
                         providerStore.usagePeriod = .day
                         providerStore.usageReferenceDate = date
                         showCustomDatePicker = false

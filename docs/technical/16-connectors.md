@@ -23,28 +23,27 @@ CLI 关联能力按**显式来源**归属：Skill 的 `SKILL.md` 前言 `require
 
 | 平台 | Skills | MCP | 插件 |
 | --- | --- | --- | --- |
-| Claude Code | 原生 `skillOverrides` 支持 `on` / `name-only` / `user-invocable-only` / `off`。平台视图对独立 Skill 写入对应范围的 `settings.json` 的 `skillOverrides[name] = "off" / "on"`；全部平台视图采用可逆移库。插件内 Skills 应随插件管理。 | `/mcp` 的开关按项目写入 `~/.claude.json` 的 `disabledMcpServers`；`.mcp.json` 还有独立的批准/拒绝机制。本页只展示来源并指引到 `/mcp`，避免改写整个状态文件。 | `claude plugin enable/disable` 是官方 CLI。本页只对用户级已安装插件调用 CLI；项目、组织和云同步插件交还客户端。 |
-| Codex | 从 `.agents/skills`、`.codex/skills` 等目录发现；平台视图写入用户 `config.toml` 的 `[[skills.config]]`，使用 `SKILL.md` 的绝对路径和 `enabled`。共享目录保持原位，修改后重启 Codex。全部平台视图采用可逆移库。 | `config.toml` 的 `[mcp_servers.<id>] enabled = false` 可停用，`true` 可恢复。本页只改对应表的一行。 | 本地市场插件可用 `[plugins."name@marketplace"] enabled = false` 配置。本页只管理配置文件中可见的插件表；其余本机缓存标记为「状态待确认」，不当作已安装。云端或管理员分发的不在本机目录内。 |
-| Cursor | 从 `.cursor/skills`、`.agents/skills` 等位置发现，也兼容 Claude / Codex 的 Skills 目录。平台视图仅允许移库 Cursor 专属目录；共享 Skill 明确交给客户端管理，不以移库冒充平台独立停用。全部平台视图移库所有已扫描的同名安装。`disable-model-invocation` 仅关闭自动调用，仍可手动调用，因此不能当作完整停用。 | `agent mcp enable/disable <identifier>` 是官方 CLI；本页调用它处理本机 JSON 中可见的 MCP，状态仍以 Cursor 为准。 | Customize 是官方管理入口。本页展示本地插件和缓存来源，并明确标注缓存不代表已安装，不直接改写私有安装状态。 |
+| Claude Code | 平台视图与全部平台视图都采用可逆移库（见下）。插件内 Skills 应随插件管理。 | `/mcp` 的开关按项目写入 `~/.claude.json` 的 `disabledMcpServers`；`.mcp.json` 还有独立的批准/拒绝机制。本页只展示来源并指引到 `/mcp`，避免改写整个状态文件。 | `claude plugin enable/disable` 是官方 CLI。本页只对用户级已安装插件调用 CLI；项目、组织和云同步插件交还客户端。 |
+| Codex | 从 `.codex/skills`、`.agents/skills` 等目录发现；启停同样采用可逆移库。卡片上的平台状态来自目录本身是否在原位，不读取也不写入 `config.toml`。 | `config.toml` 的 `[mcp_servers.<id>] enabled = false` 可停用，`true` 可恢复。本页只改对应表的一行。 | 本地市场插件可用 `[plugins."name@marketplace"] enabled = false` 配置。本页只管理配置文件中可见的插件表；其余本机缓存标记为「状态待确认」，不当作已安装。云端或管理员分发的不在本机目录内。 |
+| Cursor | 从 `.cursor/skills`、`.agents/skills` 等位置发现，也兼容 Claude / Codex 的 Skills 目录；启停同样是可逆移库。`disable-model-invocation` 仅关闭自动调用，仍可手动调用，因此不能当作完整停用。 | `agent mcp enable/disable <identifier>` 是官方 CLI；本页调用它处理本机 JSON 中可见的 MCP，状态仍以 Cursor 为准。 | Customize 是官方管理入口。本页展示本地插件和缓存来源，并明确标注缓存不代表已安装，不直接改写私有安装状态。 |
 
 官方依据：[Claude Skills](https://code.claude.com/docs/en/skills)、[Claude MCP](https://code.claude.com/docs/en/mcp)、[Claude Plugins](https://code.claude.com/docs/en/discover-plugins)、[Codex Skills](https://learn.chatgpt.com/docs/build-skills)、[Codex MCP](https://learn.chatgpt.com/docs/extend/mcp)、[Codex Plugins](https://developers.openai.com/plugins/build/plugins)、[Cursor Skills](https://prod.cursor.com/docs/skills)、[Cursor MCP CLI](https://prod.cursor.com/docs/cli/mcp)、[Cursor Plugins](https://prod.cursor.com/docs/plugins)。
 
 ## 停用本地 Skill
 
-- 在 **Codex / Claude Code 平台视图**启停：对该平台所有已扫描的同名安装写入原生配置，不移动共享 Skill。卡片显示当前平台状态，快选平台同时切换操作范围。
-- 在 **全部平台视图**启停：按 `SKILL.md` 前言里的精确名称关联同名独立安装（没有名称时用目录名），将所有已扫描的对应目录或符号链接移入 `FilePaths.appSupportDir/DisabledSkills/`；恢复时不更改原生平台开关，也不会恢复通过平台视图停用的 Cursor 专属目录（登记独立记录平台范围）。全局停用优先，平台视图无法绕过全局停用。
+- **只有一个机制：可逆移库。**按 `SKILL.md` 前言里的精确名称（没有名称时用目录名）关联同名独立安装，把对应目录或符号链接整体移入 `FilePaths.appSupportDir/DisabledSkills/`，登记写入同目录的 `registry.json`；启用就是把目录移回原位。不移动的项（目录已不在原位）显示为已停用并只能启用。
+- **平台视图只决定「范围」，不决定「方式」。**平台行选中某个客户端时，联动只覆盖该平台已扫描到的同名安装；选「全部」时覆盖所有已扫描的同名安装。两种范围都走同一套移库，没有按平台写客户端配置的分支，所以不会出现「界面说停用了、客户端还在用」的状态。
+- 停用登记保存名称和摘要，以便相对链接移库后仍可展示。恢复拒绝覆盖任何已占用路径，包括悬空链接；旧登记格式仍可读取。
 - 只覆盖个人目录和当前所选项目的本地独立 Skills；不会自动覆盖未扫描项目、插件自带、隐藏系统、远端、管理员分发或之后新增的 Skills。同名但内容不同的安装也会联动，界面提示这一范围。
-- 符号链接作为独立安装入口扫描和移库，只移动链接本身；不递归链接容器。停用登记保存名称和摘要，以便相对链接移库后仍可展示。恢复拒绝覆盖任何已占用路径，包括悬空链接；旧登记格式仍可读取。
-- Cursor 的共享 Skills 没有已确认的公开完整独立停用接口，平台视图明确提示到客户端管理。`disable-model-invocation` 仍允许手动调用，不能用来冒充停用。
-- 已运行会话可能持有旧 Skill 上下文；这些开关不撤回会话中已经加载的内容。用户修改更高优先级、托管或未扫描范围的客户端设置时，最终状态以客户端为准。
+- 已运行会话可能持有旧 Skill 上下文；移库不撤回会话中已经加载的内容。用户修改更高优先级、托管或未扫描范围的客户端设置时，最终状态以客户端为准。
 
 ## 写入与边界
 
-- Codex TOML 只替换目标表的 `enabled` 行，其余字节保留；写入前再次读取并比对文件，避免覆盖扫描之后的更改。临时文件和原文件保持私有权限，完成后同目录原子替换。
+- Skill 启停只移动目录与写自己的 `registry.json`，不改动任何客户端配置；`~/.codex/config.toml`、`~/.claude/settings.json` 的内容在移库前后必须逐字节相同，回归测试对此有断言。
 - 所有连接器写入经过串行化；批量确认固定目标记录与项目，不在执行时重新解释筛选。操作期间界面冻结，避免交错提交。
-- Codex Skill 配置保留无关字节和注释，匹配目录与 `SKILL.md` 路径及链接别名，并同步更新重复匹配的条目。暂不支持的内联数组、引用表名或多行字符串会拒绝修改。Claude 的 JSON 写入保留无关键。
-- 原生 Skill 配置通过 `PrivateFileWriter` 原子写入为 0600，写入前比对原内容；配置符号链接保留。开发版在副作用入口拒绝写入。
+- 移库前先 `lstat` 判定源是否存在（悬空相对链接也要能移），并校验登记项指向停用区内部；`FileManager.moveItem` 移动的是链接本身，不递归其目标。
 - Skill 移库操作经过串行化，防止两个开关同时改写登记文件。
+- Codex TOML 只替换目标表的一行 `enabled`，其余字节保留；写入前再次读取并比对文件，避免覆盖扫描之后的更改。临时文件和原文件保持私有权限，完成后同目录原子替换。Claude 的 JSON 写入保留无关键。
 - CLI 调用只传固定子命令与扫描到的标识符，不经 shell 拼接；不输出配置内的令牌或错误正文。
 - Cursor 的 CLI 开关状态无法从公开的稳定磁盘格式确定，页面以「状态待确认」显示并直接提供启用/停用命令。Claude Code 的 MCP 同样以原生 `/mcp` 状态为准。
 - MCP 工具预览按 [官方生命周期](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle) 建立临时连接，按 [工具发现协议](https://modelcontextprotocol.io/specification/2025-06-18/server/tools) 请求元数据。支持直接启动的 stdio 和 Streamable HTTP；`npx` 等可能触发安装的运行器不会自动启动，旧式 SSE 或需客户端专属认证的服务会显示可恢复的错误说明。

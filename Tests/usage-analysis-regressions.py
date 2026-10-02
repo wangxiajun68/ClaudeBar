@@ -27,6 +27,16 @@ source = 'import Foundation\n' + '\n'.join(declaration(marker) for marker in [
     'enum UsagePeriod', 'struct DayUsage', 'struct ModelUsage', 'enum UsageProviderAttribution'
 ])
 source += '\n' + (root / 'Sources/ClaudeBar/Utils/UsageAnalysis.swift').read_text()
+usage_stats = (root / 'Sources/ClaudeBar/Utils/UsageStats.swift').read_text()
+start = usage_stats.index('    static func heatmapDays(')
+end = usage_stats.index('    /// The date interval covered', start)
+source += '\nenum UsageHeatmapData {\n' + usage_stats[start:end] + '}\n'
+popup = (root / 'Sources/ClaudeBar/Views/Popup/UsagePanel.swift').read_text()
+page = (root / 'Sources/ClaudeBar/Views/Pages/UsageView.swift').read_text()
+analytics = (root / 'Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift').read_text()
+assert 'days: UsageStats.heatmapDays(' in popup and 'periodDays: providerStore.usageDays' in popup
+assert 'days: UsageStats.heatmapDays(' in page
+assert 'UsageHeatmap(days: days' in analytics and 'trajectory(a)' not in analytics
 source += r'''
 @main struct Regression {
     static func main() {
@@ -38,6 +48,18 @@ source += r'''
         formatter.dateFormat = "yyyy-MM-dd"
         func date(_ day: String) -> Date { formatter.date(from: day)! }
         let october = DateInterval(start: date("2026-10-01"), end: date("2026-11-01"))
+
+        let periodRows = [DayUsage(day: "2026-09-01", inputTokens: 100),
+                          DayUsage(day: "2026-09-15", inputTokens: 200),
+                          DayUsage(day: "2026-10-01", inputTokens: 300)]
+        let weekRows = [periodRows[2]]
+        for period in [UsagePeriod.month, .year, .all] {
+            precondition(UsageHeatmapData.heatmapDays(for: period, periodDays: periodRows, weekDays: weekRows) == periodRows,
+                         "Calendar heatmaps must keep recorded dates outside the selected week")
+        }
+        for period in [UsagePeriod.day, .custom] {
+            precondition(UsageHeatmapData.heatmapDays(for: period, periodDays: periodRows, weekDays: weekRows) == weekRows)
+        }
 
         // Dates merge before aggregation, missing elapsed dates count as zero,
         // and records after today cannot lengthen the selected time series.

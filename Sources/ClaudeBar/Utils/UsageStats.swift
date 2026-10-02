@@ -5,6 +5,14 @@ import Foundation
 /// incrementally before each query).
 struct UsageStats {
 
+    /// Day mode includes its surrounding week; calendar grids need the full query window.
+    static func heatmapDays(for period: UsagePeriod, periodDays: [DayUsage], weekDays: [DayUsage]) -> [DayUsage] {
+        switch period {
+        case .day, .custom: return weekDays
+        case .month, .year, .all: return periodDays
+        }
+    }
+
     /// The date interval covered by a period anchored at `reference`.
     static func interval(for period: UsagePeriod, reference: Date) -> DateInterval {
         let cal = Calendar.current

@@ -439,11 +439,12 @@ struct VpnDomainRing {
 final class VpnDomainLog: ObservableObject {
     static let shared = VpnDomainLog()
 
-    /// Ten thousand recent connections, bounded in memory.
-    static let limit = 10_000
+    /// Recent diagnostic history; the UI displays bounded pages of this ring.
+    static let limit = 2_000
     private var ring = VpnDomainRing(capacity: VpnDomainLog.limit)
 
     @Published private(set) var connections: [VpnDomainConnection] = []
+    @Published private(set) var connectionRevision = 0
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
     /// Session total; per-domain summaries deliberately cover retained rows only.
@@ -456,7 +457,7 @@ final class VpnDomainLog: ObservableObject {
     /// Publish ceiling — same shape as `VpnLiveRates.minInterval`. A burst of
     /// connections (a page load opens dozens) should cost one view update, not
     /// dozens.
-    private static let minInterval: TimeInterval = 0.25
+    private static let minInterval: TimeInterval = 1
     private var lastFlush = Date.distantPast
     private var flushTask: Task<Void, Never>?
 
@@ -492,10 +493,13 @@ final class VpnDomainLog: ObservableObject {
         }.sorted { $0.id < $1.id }
         if connections != next {
             connections = next
+            connectionRevision &+= 1
         }
     }
 
     func clear() {
+        flushTask?.cancel()
+        flushTask = nil
         feed.reset()
         ring.clear()
         entries = []
@@ -521,6 +525,7 @@ final class VpnDomainLog: ObservableObject {
         var byHost: [String: VpnDomainLogStat] = [:]
         byHost.reserveCapacity(min(entries.count, 256))
         for entry in entries {
+            if Task.isCancelled { break }
             if var stat = byHost[entry.host] {
                 stat.hits += 1
                 switch entry.route {

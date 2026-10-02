@@ -54,17 +54,19 @@ trailing detail control opens complete endpoint/rule/outbound information, so
 mouse and system three-finger text selection are not intercepted by a row action.
 Copy targets the visible filtered set. Clear is a confirmed action in a menu.
 
-The route menu shows matching counts; the log glyph tooltip carries retained capacity. There is no footer. Domain summary covers retained records, not evicted
-history. Following is explicit and pauses on user scroll; paused history shows
+The route menu shows matching counts; the log glyph tooltip carries retained capacity. A compact footer pages through at most 200 rows at a time. Copy includes the full filtered set, across pages. Domain summary covers retained records, not evicted
+history. Following is explicit and pauses on user scroll or older-page navigation; paused history freezes its reading snapshot, even at ring eviction, and shows
 new matching record count and a return-to-latest action. Incoming logs do not
 change subscriptions, drawer geometry or the page's layout.
 
 ## Performance
 
-10,000 retained connection records in a fixed-capacity FIFO. Background parsing
-and the existing maximum four publishes per second remain. Ring wraparound
+2,000 retained connection records in a fixed-capacity FIFO, with at most 200
+rows handed to SwiftUI in each mode. Background parsing remains; history publishes
+at most once per second. The section subscribes to revisions for its active mode,
+so connection byte counters do not invalidate history or hidden workspaces. Ring wraparound
 replaces slots instead of shifting the head of an Array. Each publish produces an
-immutable bounded snapshot for readers. Historical search executes off-main;
+immutable bounded snapshot for readers. Historical and live-connection search/counting execute off-main;
 query task identity cancels stale publication and work on disappearance or
 when the narrow workspace hides traffic. Query loops cooperate with cancellation. Typing
 uses 150ms debounce. Domain folding and sorting run only in summary mode, in the
@@ -77,7 +79,9 @@ compact-workspace switches, preserving search, mode and position.
 Build the complete native app with `CLAUDEBAR_SKIP_INSTALL=1` (do not restart the
 user's VPN for visual verification). Parser/query/ring regression suite:
 `python3 Tests/vpn-domain-log-regressions.py`. Synthetic preview uses 1,500 nodes
-and 12,000 input records; only the last 10,000 remain. Verified desktop and narrow-window geometry, complete cumulative readings
+and 12,000 input records. Current retention is 2,000; those earlier visual checks
+used 10,000. The pagination changes have query/cache regressions and compiled
+bundle checks; interactive visual verification remains pending. Earlier checks verified desktop and narrow-window geometry, complete cumulative readings
 (2.0 GB download / 258.9 MB upload), current-node latency, always-visible probes,
 and native drag selection of log text. Also verified node search, Escape dismissal,
 retained-record search and domain summary. Resizing preserves search and mode.

@@ -61,8 +61,8 @@ assert 'ObservedObject private var domainLog' not in view and \
      're-evaluate the header, subscription cards and node mosaic')
 
 section = (root / 'Sources/ClaudeBar/Views/Pages/VpnDomainLogSection.swift').read_text()
-assert 'ObservedObject private var log = VpnDomainLog.shared' in section, \
-    'the section is the observer the page delegates to'
+assert '@ObservedObject private var log' not in section and '.onReceive(log.$revision)' in section and '.onReceive(log.$connectionRevision)' in section, \
+    'the section must subscribe to active revisions without observing every store field'
 assert 'role: .destructive' in section and 'confirmClear' in section, \
     '清空 must confirm: it discards the aggregate the user is reading'
 
@@ -95,6 +95,53 @@ final class FilterHarness {
 }
 """.replace('FILTER_ENUM', filter_enum).replace('QUERY_SOURCE', query_source)
 
+# Execute the actual asynchronous UI cache/action functions with an in-memory store.
+cache = section[section.index('    private struct RequestKey:'):section.index('    private func copyVisible()')]
+cache = cache.replace('private ', '')
+mode_enum = section[section.index('    enum Mode:'):section.index('    enum RouteFilter:')]
+async_harness = r"""
+@MainActor final class CacheFixture {
+    final class Store {
+        var entries: [VpnDomainEntry] = []
+        var connections: [VpnDomainConnection] = []
+        var revision = 0
+        var connectionRevision = 0
+    }
+    let log = Store()
+    var isVisible = true
+    var historyRevision = 0
+    var connectionRevision = 0
+    var mode: Mode = .detail
+    var routeFilter: RouteFilter = .all
+    var query = ""
+    var failedOnly = false
+    var followTail = true
+    var pendingRows = 0
+    var lastSeenID: UInt64?
+    var copied = false
+    var page = 0
+    var visibleRows: [VpnDomainEntry] = []
+    var visibleStats: [VpnDomainLogStat] = []
+    var visibleConnections: [VpnDomainConnection] = []
+    var visibleLeaks: [(service: String, hosts: [String])] = []
+    var routeCounts: [VpnDomainRoute: Int] = [:]
+    var matchedCount = 0
+    var tallyProxied = 0
+    var tallyDirect = 0
+    var tallyReject = 0
+    var visibleCount: Int {
+        switch mode {
+        case .detail: return visibleRows.count
+        case .summary: return visibleStats.count
+        case .connections: return visibleConnections.count
+        }
+    }
+    MODE_ENUM
+    FILTER_ENUM
+    CACHE
+}
+""".replace('MODE_ENUM', mode_enum).replace('FILTER_ENUM', filter_enum).replace('CACHE', cache)
+
 # --- the harness ------------------------------------------------------------
 swift = r'''
 import Foundation
@@ -106,6 +153,7 @@ enum DomainStat { STAT_FUNC }
 WATCHLIST
 
 FILTER_HARNESS
+ASYNC_HARNESS
 
 @main struct Regression {
     static func feedAll(_ lines: [String]) -> [VpnDomainEntry] {
@@ -120,7 +168,7 @@ FILTER_HARNESS
         feedAll([line]).first
     }
 
-    static func main() {
+    @MainActor static func main() async {
         // 1. Proxied: the shape that dominates a real log (11141 of 13141 lines
         //    in a 2.2 MB sample).
         guard let proxied = parse("time=\"2026-09-29T11:41:02.432485000+08:00\" level=info "
@@ -330,25 +378,109 @@ FILTER_HARNESS
                                            route: nil, failedOnly: false, summary: false)
         precondition(portSearch.rows.count == 1, "search also matches target ports")
 
+        // Bounded rendering covers every matching record without duplicates.
+        for count in [0, 1, 199, 200, 201, 2_000] {
+            for newest in [true, false] {
+                let pages = max(1, (count + VpnDomainQuery.pageSize - 1) / VpnDomainQuery.pageSize)
+                let ranges = (0..<pages).map { VpnDomainQuery.pageRange(count: count, page: $0, newestFirst: newest) }
+                precondition(ranges.allSatisfy { $0.count <= 200 })
+                precondition(ranges.flatMap { Array($0) }.sorted() == Array(0..<count))
+                precondition(VpnDomainQuery.pageRange(count: count, page: Int.max, newestFirst: newest) == ranges.last!)
+                precondition(VpnDomainQuery.pageRange(count: count, page: -1, newestFirst: newest) == ranges.first!)
+            }
+        }
+        let connections = [
+            VpnDomainConnection(id: "1", endpoint: "example.com:443", process: "Browser", route: .proxied,
+                                rule: "Match", outbound: "Node A", upload: 1, download: 2),
+            VpnDomainConnection(id: "2", endpoint: "example.com:80", process: "Terminal", route: .direct,
+                                rule: "Domain", outbound: "DIRECT", upload: 3, download: 4)
+        ]
+        let connectionResult = VpnDomainQuery.connections(connections, query: "  EXAMPLE ", route: .direct)
+        precondition(connectionResult.rows.map(\.id) == ["2"] && connectionResult.matched == 2)
+        precondition(connectionResult.counts[.proxied] == 1 && connectionResult.counts[.direct] == 1)
+        precondition(VpnDomainQuery.connections(connections, query: "browser", route: nil).rows.map(\.id) == ["1"])
+        precondition(VpnDomainQuery.connections(connections, query: "node a", route: nil).rows.count == 1)
+        precondition(VpnDomainQuery.connections(connections, query: "no-such-host", route: nil).rows.isEmpty)
+
         // Capacity, order, eviction, wraparound, and reuse after clear.
-        var ring = VpnDomainRing(capacity: 10_000)
+        var ring = VpnDomainRing(capacity: 2_000)
         let batch = (1...25_000).map { id -> VpnDomainEntry in
             var row = entries[0]
             row.id = UInt64(id)
             return row
         }
         ring.append(contentsOf: Array(batch.prefix(9_000)))
-        precondition(ring.count == 9_000 && ring.snapshot().first?.id == 1)
+        precondition(ring.count == 2_000 && ring.snapshot().first?.id == 7_001)
         ring.append(contentsOf: Array(batch.dropFirst(9_000)))
         let retained = ring.snapshot()
-        precondition(ring.count == 10_000 && retained.first?.id == 15_001
+        precondition(ring.count == 2_000 && retained.first?.id == 23_001
                      && retained.last?.id == 25_000)
         precondition(zip(retained, retained.dropFirst()).allSatisfy { $1.id == $0.id + 1 })
         ring.clear()
         precondition(ring.count == 0 && ring.snapshot().isEmpty)
         ring.append(contentsOf: Array(batch.prefix(3)))
         precondition(ring.snapshot().map(\.id) == [1, 2, 3])
-        print("vpn domain log OK · query + 10,000-row ring")
+        let cache = CacheFixture()
+        cache.log.entries = Array(batch.prefix(2_000))
+        await cache.recompute()
+        precondition(cache.visibleRows.first?.id == 1 && cache.visibleRows.last?.id == 2_000)
+        cache.followTail = false
+        cache.page = 3
+        cache.log.entries = Array(batch[1_000..<3_000])
+        await cache.recompute()
+        precondition(cache.visibleRows.first?.id == 1 && cache.visibleRows.last?.id == 2_000,
+                     "pause must freeze rows even when the ring evicts them")
+        precondition(cache.pendingRows == 1_000 && cache.page == 3)
+        await cache.recompute()
+        precondition(cache.pendingRows == 1_000, "same revision must not double count pending rows")
+        cache.followTail = true
+        await cache.recompute()
+        precondition(cache.visibleRows.first?.id == 1_001 && cache.visibleRows.last?.id == 3_000)
+        cache.followTail = false
+        cache.query = "no-such-host"
+        cache.resetFollow()
+        await cache.recompute()
+        precondition(cache.visibleRows.isEmpty && cache.page == 0 && cache.pendingRows == 0)
+        cache.query = ""
+        cache.resetFollow()
+        await cache.recompute()
+        cache.followTail = false
+        cache.log.entries = []
+        await cache.recompute()
+        precondition(cache.visibleRows.isEmpty, "clear must also discard a paused snapshot")
+        cache.mode = .connections
+        cache.log.connections = connections
+        await cache.recompute()
+        precondition(cache.visibleConnections.count == 2)
+        cache.isVisible = false
+        cache.log.connections = []
+        await cache.recompute()
+        precondition(cache.visibleConnections.count == 2, "hidden workspaces must skip queries")
+        cache.isVisible = true
+        await cache.recompute()
+        precondition(cache.visibleConnections.isEmpty)
+        cache.mode = .detail
+        cache.query = "cursor"
+        cache.log.entries = Array(batch.prefix(2_000))
+        let stale = Task { await cache.recompute() }
+        await Task.yield()
+        cache.query = "no-such-host"
+        await stale.value
+        precondition(cache.visibleRows.isEmpty, "obsolete searches must not publish")
+
+        // Optimized synthetic CPU measurement, separate from UI frame timing.
+        for size in [10_000, 2_000] {
+            let input = Array(batch.suffix(size))
+            let start = Date()
+            var checksum = 0
+            for _ in 0..<100 {
+                checksum += VpnDomainQuery.run(entries: input, query: "example", route: nil,
+                                               failedOnly: false, summary: false).matched
+            }
+            print(String(format: "VPN query %d rows × 100: %.2f ms (checksum %d)",
+                         size, Date().timeIntervalSince(start) * 1000, checksum))
+        }
+        print("vpn domain log OK · query + connections + 200-row pages + 2,000-row ring")
     }
 }
 '''
@@ -357,13 +489,14 @@ swift = (swift
          .replace('MODELS_AND_FEED', feed)
          .replace('STAT_FUNC', stat)
          .replace('WATCHLIST', watchlist)
-         .replace('FILTER_HARNESS', filter_harness))
+         .replace('FILTER_HARNESS', filter_harness)
+         .replace('ASYNC_HARNESS', async_harness))
 
 with tempfile.TemporaryDirectory() as tmp:
     temporary = Path(tmp)
     source_file = temporary / 'Regression.swift'
     source_file.write_text(swift)
     binary = temporary / 'regression'
-    subprocess.run(['swiftc', '-parse-as-library', str(source_file), '-o', str(binary)],
+    subprocess.run(['swiftc', '-O', '-parse-as-library', str(source_file), '-o', str(binary)],
                    check=True)
     subprocess.run([str(binary)], check=True)
