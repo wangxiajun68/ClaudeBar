@@ -117,6 +117,15 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         """)
         let headings = DocumentMarkup.outline(rich)
         precondition(headings.map(\.level) == [1, 2, 3] && headings.map(\.number) == ["1", "1.1", "1.1.1"])
+        // Feishu's docx XML goes to `<h9>`, and `HTMLFragment` converts all nine
+        // levels — so `outline` must survive what the same file emits. Before
+        // the clamp, a level-7 heading indexed past the six-slot counter array
+        // and trapped (verified: the compiled production pair exits on
+        // `<h7>x</h7>`). Deep levels number as 6; the point here is that the
+        // call returns at all.
+        let deep = DocumentMarkup.outline(try DocumentMarkup.parse("<h7>深</h7><p>文</p><h9>更深</h9>"))
+        precondition(deep.map(\.level) == [6, 6], "h7-h9 must not index past the counter array")
+        precondition(deep.allSatisfy { !$0.number.isEmpty }, "a deep heading still numbers")
         guard case .embed("白板", "whiteboard") = rich[1] else { preconditionFailure("Whiteboard leaked raw markup") }
         let rows = rich.compactMap { block -> [[String]]? in if case .table(let rows) = block { return rows }; return nil }.first!
         precondition(rows.count == 3 && rows[1][0] == "整理 & 保存" && rows[2][0].hasPrefix("↳"))

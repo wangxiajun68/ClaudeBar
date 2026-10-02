@@ -422,6 +422,38 @@ struct ModelUsage {
         precondition(partial.lines[0].isPartial && partial.lines[0].unpricedTokens == 1_000_000)
         ModelPricing.replaceOverrides([:])
 
+        // An override for a slug the bundled table **already prices** must win.
+        // This is the case a user editing a row actually produces, and the
+        // strictly-longer tie-break used to hand it back to the bundled rate:
+        // the edit was stored, labelled 手动 and reported as applied while every
+        // cost figure kept billing the old number. Assert on a slug taken from
+        // the bundled table itself, so the fixture cannot drift away from the
+        // case that matters.
+        guard let bundled = ModelPriceTable.entries.first else {
+            preconditionFailure("the bundled table is empty")
+        }
+        let bundledRate = ModelPricing.resolve(bundled.slug, on: "2026-10-02")?.rate
+        precondition(bundledRate != nil, "the bundled slug must resolve before the override")
+        let replacement = ModelPricing.PriceOverride(slug: bundled.slug,
+            rate: .init(currency: .usd, input: 99, output: 99, cacheRead: 9, cacheWrite: 9),
+            unpriced: nil, effectiveFrom: "2026-10-02", source: .manual)
+        ModelPricing.replaceOverrides([bundled.slug: [replacement]])
+        precondition(ModelPricing.resolve(bundled.slug, on: "2026-10-02")?.rate?.input == 99,
+                     "an override for a bundled slug must win on its day (\(bundled.slug))")
+        precondition(ModelPricing.resolve(bundled.slug, on: "2026-10-01")?.rate == bundledRate,
+                     "…and must not apply before its effectiveFrom date")
+        // The strictly-longer rule is still the other tie-break: a short
+        // override must not swallow a longer bundled slug that shares its prefix.
+        if let longer = ModelPriceTable.entries.first(where: {
+            $0.slug.hasPrefix(bundled.slug + "-") || $0.slug == bundled.slug
+        }), longer.slug != bundled.slug {
+            precondition(ModelPricing.resolve(longer.slug, on: "2026-10-02")?.rate?.input != 99,
+                         "a shorter override must not swallow \(longer.slug)")
+        }
+        ModelPricing.replaceOverrides([:])
+        precondition(ModelPricing.resolve(bundled.slug, on: "2026-10-02")?.rate == bundledRate,
+                     "clearing overrides restores the bundled rate")
+
         print("PASS: slug canonicalization, longest-match, disjoint currency buckets, "
               + "\(ModelPriceTable.entries.count) rate cards + \(ModelPriceTable.unpriced.count) stated-unpriced, "
               + "grouped formatting, opt-in conversion with no silent rate")
