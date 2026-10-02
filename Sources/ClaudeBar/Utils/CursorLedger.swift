@@ -252,9 +252,15 @@ enum CursorLedger {
     /// string. Nonsense and negatives collapse to 0 rather than trapping: a
     /// token count is a display figure and must never be able to crash a
     /// refresh.
+    ///
+    /// The range check is the whole point of routing through `JSONCoerce`:
+    /// `number(_:)` accepts strings, so `"1e300"` is finite and positive and
+    /// `Int(_:)` on it traps. `JSONCoerce.intVal` is the repo's one conversion
+    /// that already rejects out-of-range doubles (and out-of-range decimal
+    /// strings through the same `Int(exactly:)`).
     static func int(_ value: Any?) -> Int {
         guard let number = CursorUsageFetcher.number(value), number.isFinite, number > 0 else { return 0 }
-        return Int(number.rounded())
+        return JSONCoerce.intVal(number.rounded())
     }
 
     /// Fold rows onto their canonical model id, summing tokens *and* cents.

@@ -1181,8 +1181,16 @@ final class CodexProxyServer: @unchecked Sendable {
         if let te = headers["transfer-encoding"], te.lowercased().contains("chunked") {
             return nil // 411-equivalent: Codex always sends content-length
         }
-        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
-        while body.count < contentLength {
+        // The declared length is untrusted input arriving **before**
+        // `isAuthorized` runs, and both of the ways it can be hostile were
+        // reachable: a negative value traps in `prefix(_:)` ("Can't take a
+        // prefix of negative length") and kills the whole menu-bar process for
+        // anyone who can reach the loopback port; a huge one drove the loop
+        // below past `cap`, which the header loop had already stopped reading
+        // at, so the documented 64 MiB ceiling did not exist for the body.
+        let declared = Int(headers["content-length"] ?? "0") ?? 0
+        guard declared >= 0, declared <= cap else { return nil }
+        while body.count < declared {
             guard let chunk = await receive(connection) else { break }
             body.append(chunk)
         }
@@ -1190,7 +1198,7 @@ final class CodexProxyServer: @unchecked Sendable {
             method: String(parts[0]),
             path: String(parts[1]),
             headers: headers,
-            body: body.prefix(contentLength)
+            body: body.prefix(declared)
         )
     }
 
