@@ -11,8 +11,8 @@ struct ProxyUpstreamPickers: View {
         VStack(spacing: 0) {
             pickerRow(
                 title: "第三方 OpenAI",
-                caption: "Chat Completions / Responses 接口。",
-                followLabel: "与 Codex 相同",
+                caption: "Chat Completions / Responses 接口。默认跟随 Codex；未配置时使用 Claude Code 供应商的 OpenAI 兼容接口。",
+                followLabel: "自动跟随供应商",
                 providers: codexStore.providers.map {
                     ProxyVendorChoice(id: $0.id, name: $0.name, host: Self.host($0.baseURL))
                 },

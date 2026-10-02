@@ -245,11 +245,18 @@ final class CodexProviderStore: ObservableObject {
         providers.first { $0.id == activeProviderID }
     }
 
-    /// Third-party OpenAI picker; `nil` id follows the active Codex vendor.
+    /// Prefer the selected/active Codex vendor. With no active Codex vendor,
+    /// use the Claude vendor's OpenAI-compatible endpoint in memory only.
     func resolvedThirdPartyOpenAI() -> CodexProvider? {
         let id = AppPreferences.shared.proxyThirdPartyOpenAIProviderID
         if let id, let p = providers.first(where: { $0.id == id }) { return p }
-        return activeProvider
+        if let p = activeProvider { return p }
+        guard let c = claudePeer?.activeProvider,
+              !c.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !LocalProxyAddress.isLoopback(c.baseURL) else { return nil }
+        var p = ProviderBridge.toCodex(c)
+        p.id = c.id
+        return p
     }
 
     func resolvedThirdPartyAnthropic() -> Provider? {

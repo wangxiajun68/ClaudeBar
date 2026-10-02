@@ -243,7 +243,7 @@ enum HelpCatalog {
                 .para("Cursor、各种 SDK、curl 都可以走同一个代理。把 Base URL 指过来即可："),
                 .code(LocalProxyAddress.openaiRoot),
                 .para("模型名**不会被替换**——请求里的 `model` 原样转发。所以要么把第三方的上游切到真的提供这个模型的渠道，要么把客户端的模型名改成那个渠道认识的名字。"),
-                .para("第三方走哪家上游在「设置 → 本地代理 → 第三方接入 → 第三方供应商」里单独选，默认跟随 Codex / Claude Code 当前供应商。这个选择**不会**改 `~/.codex` 或 `settings.json`。"),
+                .para("第三方走哪家上游在「设置 → 本地代理 → 第三方接入 → 第三方供应商」里单独选。OpenAI 默认跟随 Codex；没有激活的 Codex 供应商时，使用 Claude Code 当前供应商的 OpenAI 兼容接口（上游须支持该接口）。Anthropic 默认跟随 Claude Code。这个选择**不会**改 `~/.codex` 或 `settings.json`。"),
             ],
             keywords: "第三方 third party base url cursor sdk model_not_found 无可用渠道"
         ),

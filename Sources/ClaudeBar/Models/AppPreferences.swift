@@ -104,7 +104,8 @@ final class AppPreferences: ObservableObject {
     }
 
     /// Third-party OpenAI traffic (`/chat/completions`, `/responses`). `nil`
-    /// follows the active Codex vendor. Otherwise a Codex-list provider id.
+    /// follows Codex, falling back to the Claude vendor's OpenAI-compatible
+    /// endpoint when Codex has no active vendor. Otherwise a Codex-list id.
     @Published var proxyThirdPartyOpenAIProviderID: UUID? {
         didSet {
             UserDefaults.standard.set(
