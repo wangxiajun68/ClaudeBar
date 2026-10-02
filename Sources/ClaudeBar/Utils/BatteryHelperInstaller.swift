@@ -72,18 +72,18 @@ enum BatteryHelperInstaller {
         let directory = "/Library/PrivilegedHelperTools"
         let shell = """
         set -eu
-        /bin/mkdir -p \(quote(directory))
-        test ! -L \(quote(directory))
-        test "$(/usr/bin/stat -f '%u' \(quote(directory)))" = 0
-        test "$(/usr/bin/stat -f '%Lp' \(quote(directory)))" = 755
-        stage=$(/usr/bin/mktemp \(quote(directory + "/.claudebar-battery.XXXXXX")))
+        /bin/mkdir -p \(ShellQuote.single(directory))
+        test ! -L \(ShellQuote.single(directory))
+        test "$(/usr/bin/stat -f '%u' \(ShellQuote.single(directory)))" = 0
+        test "$(/usr/bin/stat -f '%Lp' \(ShellQuote.single(directory)))" = 755
+        stage=$(/usr/bin/mktemp \(ShellQuote.single(directory + "/.claudebar-battery.XXXXXX")))
         trap '/bin/rm -f "$stage"' EXIT
-        /bin/cp \(quote(source.path)) "$stage"
-        test "$(/usr/bin/shasum -a 256 "$stage" | /usr/bin/cut -d ' ' -f 1)" = \(quote(hash))
+        /bin/cp \(ShellQuote.single(source.path)) "$stage"
+        test "$(/usr/bin/shasum -a 256 "$stage" | /usr/bin/cut -d ' ' -f 1)" = \(ShellQuote.single(hash))
         /usr/bin/codesign --verify --strict "$stage"
         /usr/sbin/chown root:wheel "$stage"
         /bin/chmod 4755 "$stage"
-        /bin/mv -f "$stage" \(quote(path))
+        /bin/mv -f "$stage" \(ShellQuote.single(path))
         """
         let literal = shell.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -101,9 +101,5 @@ enum BatteryHelperInstaller {
             return message.contains("-128") ? "已取消授权，未改变充电设置。" : "辅助工具安装失败：\(message.trimmingCharacters(in: .whitespacesAndNewlines))"
         }
         return isInstalled() ? nil : "辅助工具校验失败，未启用电池控制。"
-    }
-
-    private static func quote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

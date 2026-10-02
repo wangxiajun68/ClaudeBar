@@ -678,13 +678,11 @@ final class ProcessSampler {
         var memoryUsed: UInt64 = 0
         var memoryTotal: UInt64 = 0
         var coreCount: Int = 1
-        var gpuCoreCount: Int = 0
         var memoryActive: UInt64 = 0
         var memoryWired: UInt64 = 0
         var memoryCompressed: UInt64 = 0
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
-        var batteryTemperatureCelsius: Double?
         var memoryPressureLevel: Int = 0
         var diskUsed: UInt64 = 0
         var diskTotal: UInt64 = 1
@@ -1855,7 +1853,7 @@ source += r'''
 
         // Hardware readings — the strip's own numbers.
         var host = ProcessSampler.HostStats()
-        host.cpu = 47; host.gpu = 35; host.coreCount = 12; host.gpuCoreCount = 10
+        host.cpu = 47; host.gpu = 35; host.coreCount = 12
         host.memoryUsed = 13_400_000_000; host.memoryTotal = 16_000_000_000
         host.memoryActive = 6_700_000_000; host.memoryWired = 4_400_000_000; host.memoryCompressed = 1_900_000_000
         host.diskUsed = 443_000_000_000; host.diskTotal = 512_000_000_000
@@ -1873,7 +1871,6 @@ source += r'''
         host.powerSystemWatts = 61.8
         host.powerBatteryWatts = 34.6
         host.adapterRatedWatts = 96
-        host.batteryChargingWatts = 34.6
         ProcessSampler.shared.host = host
         var cells = ProcessSampler.CellLoad()
         cells.cores = (0..<12).map { 0.10 + Double(($0 * 37) % 60) / 100 }

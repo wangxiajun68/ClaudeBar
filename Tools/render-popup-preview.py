@@ -350,7 +350,7 @@ final class ProcessSampler {
     struct CellLoad: Equatable { var cores: [Double] = []; var gpuRenderers: [Double] = [] }
     struct HostStats: Equatable {
         var cpu: Double = 48; var gpu: Double = 44; var memoryUsed: UInt64 = 16_300_000_000
-        var memoryTotal: UInt64 = 34_400_000_000; var coreCount: Int = 10; var gpuCoreCount: Int = 0
+        var memoryTotal: UInt64 = 34_400_000_000; var coreCount: Int = 10
     }
     enum MonitorScope: Hashable { case popup, dashboard, sessions }
     enum Key: Hashable {

@@ -139,7 +139,6 @@ final class MainWindowController {
         let rootView = MainWindowView(initialPage: lastPage) { [weak self] page in
             self?.lastPage = page
         }
-            .environmentObject(providerStore)
             .environment(\.providerSource, providerStore)
             .environmentObject(codexProviderStore)
             .environmentObject(trafficState)

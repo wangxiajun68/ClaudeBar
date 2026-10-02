@@ -84,19 +84,19 @@ enum FanHelperInstaller {
         let staging = "/Library/PrivilegedHelperTools"
         let shell = """
         set -eu
-        /bin/mkdir -p \(quote(staging))
-        test ! -L \(quote(staging))
-        test "$(/usr/bin/stat -f '%u' \(quote(staging)))" = 0
-        test "$(/usr/bin/stat -f '%Lp' \(quote(staging)))" = 755
-        stage=$(/usr/bin/mktemp \(quote(staging + "/.claudebar-fanctl.XXXXXX")))
+        /bin/mkdir -p \(ShellQuote.single(staging))
+        test ! -L \(ShellQuote.single(staging))
+        test "$(/usr/bin/stat -f '%u' \(ShellQuote.single(staging)))" = 0
+        test "$(/usr/bin/stat -f '%Lp' \(ShellQuote.single(staging)))" = 755
+        stage=$(/usr/bin/mktemp \(ShellQuote.single(staging + "/.claudebar-fanctl.XXXXXX")))
         trap '/bin/rm -f "$stage"' EXIT
-        /bin/cp \(quote(source)) "$stage"
-        test "$(/usr/bin/shasum -a 256 "$stage" | /usr/bin/cut -d ' ' -f 1)" = \(quote(digest))
+        /bin/cp \(ShellQuote.single(source)) "$stage"
+        test "$(/usr/bin/shasum -a 256 "$stage" | /usr/bin/cut -d ' ' -f 1)" = \(ShellQuote.single(digest))
         /usr/bin/codesign --verify --strict "$stage"
         /bin/mkdir -p /usr/local/bin
         /usr/sbin/chown root:wheel "$stage"
         /bin/chmod 4755 "$stage"
-        /bin/mv -f "$stage" \(quote(helperPath))
+        /bin/mv -f "$stage" \(ShellQuote.single(helperPath))
         """
         let literal = shell.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -220,13 +220,6 @@ enum FanHelperInstaller {
               let attrs = try? FileManager.default.attributesOfItem(atPath: helperPath),
               let posix = attrs[.posixPermissions] as? NSNumber else { return false }
         return posix.uint16Value & 0o4000 != 0
-    }
-
-    /// Single-quoted for the shell, then embedded in an AppleScript string
-    /// literal — the paths are quoted here, the whole script is escaped where
-    /// it is interpolated.
-    private static func quote(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
 
