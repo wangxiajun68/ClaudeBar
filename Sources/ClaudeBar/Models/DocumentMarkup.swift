@@ -26,19 +26,37 @@ enum DocumentMarkup {
         }
     }
 
+    struct LocatedBlock: Sendable {
+        let block: MarkdownBlock
+        let range: NSRange
+    }
     static func parse(_ source: String) throws -> [MarkdownBlock] {
+        try locatedBlocks(source).map(\.block)
+    }
+    /// Ranges address the original UTF-16 source, including markup and Unicode.
+    /// HTML fragments may produce several blocks sharing one source range.
+    static func locatedBlocks(_ source: String) throws -> [LocatedBlock] {
         try Task.checkCancellation()
-        var lines = source.components(separatedBy: .newlines)
+        var lines = source.components(separatedBy: "\n")
+        var baseOffset = 0
         if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
-           let close = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) { lines.removeSubrange(0...close) }
+           let close = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) { baseOffset = lines[0...close].reduce(0) { $0 + $1.utf16.count + 1 }; lines.removeSubrange(0...close) }
         var blocks: [MarkdownBlock] = [], paragraph: [String] = [], table: [[String]] = []
-        var index = 0
+        var offsets = [baseOffset]
+        for line in lines { offsets.append(offsets.last! + line.utf16.count + 1) }
+        var ranges: [NSRange] = []
+        var index = 0, startLine = 0, paragraphStart = 0, paragraphEnd = 0, tableStart = 0, tableEnd = 0
+        func span(_ start: Int, _ end: Int) -> NSRange {
+            NSRange(location: offsets[start], length: max(0, min((source as NSString).length, offsets[end] - 1) - offsets[start]))
+        }
+        func emit(_ block: MarkdownBlock) { blocks.append(block); ranges.append(span(startLine, index)) }
         func flush() {
-            if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))); paragraph.removeAll() }
-            if !table.isEmpty { blocks.append(.table(table)); table.removeAll() }
+            if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))); ranges.append(span(paragraphStart, paragraphEnd)); paragraph.removeAll() }
+            if !table.isEmpty { blocks.append(.table(table)); ranges.append(span(tableStart, tableEnd)); table.removeAll() }
         }
         while index < lines.count {
             try Task.checkCancellation()
+            startLine = index
             let line = lines[index], trimmed = line.trimmingCharacters(in: .whitespaces)
             index += 1
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
@@ -53,7 +71,7 @@ enum DocumentMarkup {
                     if next.prefix(while: { $0 == marker }).count >= width && next.drop(while: { $0 == marker }).trimmingCharacters(in: .whitespaces).isEmpty { break }
                     code.append(lines[index - 1])
                 }
-                blocks.append(.code(language, code.joined(separator: "\n"))); continue
+                emit(.code(language, code.joined(separator: "\n"))); continue
             }
             if let tag = htmlBlockTag(trimmed) {
                 flush()
@@ -66,46 +84,54 @@ enum DocumentMarkup {
                         if next.lowercased().contains("</" + tag) { break }
                     }
                 }
-                blocks += try HTMLFragment.blocks(html.joined(separator: "\n")); continue
+                for block in try HTMLFragment.blocks(html.joined(separator: "\n")) { emit(block) }; continue
             }
             if trimmed.hasPrefix("|"), trimmed.hasSuffix("|") {
                 if !paragraph.isEmpty { flush() }
+                if table.isEmpty { tableStart = startLine }; tableEnd = index
                 let cells = tableCells(String(trimmed.dropFirst().dropLast()))
                 if !cells.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0 == "-" || $0 == ":" || $0 == " " } }) { table.append(cells) }
                 continue
             }
             if !table.isEmpty { flush() }
             if trimmed.isEmpty { flush(); continue }
-            if trimmed == "---" || trimmed == "***" || trimmed == "___" { flush(); blocks.append(.rule); continue }
+            if trimmed == "---" || trimmed == "***" || trimmed == "___" { flush(); emit(.rule); continue }
             let marks = trimmed.prefix(while: { $0 == "#" }).count
             if (1...6).contains(marks), trimmed.dropFirst(marks).hasPrefix(" ") {
-                flush(); blocks.append(.heading(marks, String(trimmed.dropFirst(marks + 1)).replacingOccurrences(of: "\\s+#+\\s*$", with: "", options: .regularExpression))); continue
+                flush(); emit(.heading(marks, String(trimmed.dropFirst(marks + 1)).replacingOccurrences(of: "\\s+#+\\s*$", with: "", options: .regularExpression))); continue
             }
             if index < lines.count, !trimmed.isEmpty {
                 let underline = lines[index].trimmingCharacters(in: .whitespaces)
                 if underline.count >= 3 && (underline.allSatisfy { $0 == "=" } || underline.allSatisfy { $0 == "-" }) {
-                    flush(); blocks.append(.heading(underline.first == "=" ? 1 : 2, trimmed)); index += 1; continue
+                    flush(); index += 1; emit(.heading(underline.first == "=" ? 1 : 2, trimmed)); continue
                 }
             }
             let depth = line.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { $0 + ($1 == "\t" ? 4 : 1) } / 2
             if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
                 flush()
                 let value = String(trimmed.dropFirst(2))
-                if value.hasPrefix("[ ] ") || value.lowercased().hasPrefix("[x] ") { blocks.append(.task(depth, value.lowercased().hasPrefix("[x]"), String(value.dropFirst(4)))) }
-                else { blocks.append(.bullet(depth, value)) }
+                if value.hasPrefix("[ ] ") || value.lowercased().hasPrefix("[x] ") { emit(.task(depth, value.lowercased().hasPrefix("[x]"), String(value.dropFirst(4)))) }
+                else { emit(.bullet(depth, value)) }
                 continue
             }
             if let dot = trimmed.firstIndex(where: { $0 == "." || $0 == ")" }), !trimmed[..<dot].isEmpty,
                trimmed[..<dot].allSatisfy({ $0.isNumber }), trimmed[trimmed.index(after: dot)...].hasPrefix(" ") {
-                flush(); blocks.append(.numbered(depth, String(trimmed[...dot]), String(trimmed[trimmed.index(dot, offsetBy: 2)...]))); continue
+                flush(); emit(.numbered(depth, String(trimmed[...dot]), String(trimmed[trimmed.index(dot, offsetBy: 2)...]))); continue
             }
-            if trimmed.hasPrefix(">") { flush(); blocks.append(.quote(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))); continue }
+            if trimmed.hasPrefix(">") { flush(); emit(.quote(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))); continue }
             if trimmed.hasPrefix("!["), let close = trimmed.range(of: "]("), trimmed.hasSuffix(")") {
-                flush(); blocks.append(.image(String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<close.lowerBound]), String(trimmed[close.upperBound..<trimmed.index(before: trimmed.endIndex)]))); continue
+                flush(); emit(.image(String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<close.lowerBound]), String(trimmed[close.upperBound..<trimmed.index(before: trimmed.endIndex)]))); continue
             }
+            if paragraph.isEmpty { paragraphStart = startLine }; paragraphEnd = index
             paragraph.append(HTMLFragment.inlineHTML(trimmed))
         }
-        flush(); return blocks
+        flush(); return zip(blocks, ranges).map { LocatedBlock(block: $0.0, range: $0.1) }
+    }
+    static func replacing(_ range: NSRange, in source: String, with replacement: String) -> String? {
+        guard range.location >= 0, range.length >= 0, range.location <= (source as NSString).length,
+              range.length <= (source as NSString).length - range.location,
+              Range(range, in: source) != nil else { return nil }
+        return (source as NSString).replacingCharacters(in: range, with: replacement)
     }
     /// Locate the original source heading for native editor navigation. Fenced
     /// code and HTML pre blocks are excluded, so duplicate text remains unambiguous.
