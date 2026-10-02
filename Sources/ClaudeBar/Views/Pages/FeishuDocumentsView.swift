@@ -15,7 +15,7 @@ struct FeishuDocumentsView: View {
     @State private var editorOutlineVisible = true
     @State private var draftHeadings: [DocumentMarkup.Heading] = []
     @State private var editorJump: FeishuEditorJump?
-    @State private var draftPreview = false
+    @State private var draftPreview = true
     @State private var previewText = ""
     @State private var confirmSave = false
     @State private var confirmDiscard = false
@@ -44,7 +44,7 @@ struct FeishuDocumentsView: View {
             } catch { }
         }
         .onChange(of: store.selected?.id) { _, _ in tab = "正文"; showSource = false }
-        .onChange(of: store.activeDraftID) { _, _ in draftPreview = false; titleFocused = store.activeDraft?.isNew == true }
+        .onChange(of: store.activeDraftID) { _, _ in draftPreview = true; titleFocused = store.activeDraft?.isNew == true }
         .task(id: store.activeDraft?.text) {
             do {
                 try await Task.sleep(for: .milliseconds(350)); try Task.checkCancellation()
@@ -212,11 +212,16 @@ struct FeishuDocumentsView: View {
                                 ActionIcon(symbol: showSource ? "text.alignleft" : "chevron.left.forwardslash.chevron.right", tint: showSource ? Theme.Ink.claude : Theme.textSecondary) { showSource.toggle() }
                                     .help(showSource ? "排版阅读" : "Markdown 源码")
                                 ActionIcon(symbol: "pencil", tint: Theme.Ink.claude) { store.beginEditing() }
-                                    .help(store.drafts[doc.id] == nil ? "编辑正文" : "继续编辑草稿").disabled(store.detailLoading || store.working)
+                                    .help("双击正文可就地编辑；此按钮打开草稿与保存操作").disabled(store.detailLoading || store.working)
                             }
                             visibleActions(doc)
                     }.frame(minWidth: 240, maxWidth: 580, alignment: .trailing)
                 }.padding(.horizontal, 14).padding(.vertical, 8)
+                if tab == "正文" && doc.isDocument && !showSource {
+                    Text("双击正文就地编辑 · 修改先保留在草稿，保存后同步飞书")
+                        .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 16).padding(.bottom, 8)
+                }
                 Divider()
                 if tab == "正文" {
                     if store.detailLoading && store.content.isEmpty {
@@ -255,7 +260,10 @@ struct FeishuDocumentsView: View {
     @ViewBuilder private func reader(_ text: String, source: Bool = false) -> some View {
         if source || text.utf8.count > 512_000 { FeishuDocumentReader(content: text) }
         else {
-            SkillMarkdownPreview(content: text, documentNavigation: true)
+            SkillMarkdownPreview(content: text, documentNavigation: true, onEdit: store.detailLoading || store.working ? nil : { updated in
+                if store.activeDraft == nil { store.beginEditing() }
+                store.updateDraft(text: updated)
+            })
                 .environment(\.openURL, OpenURLAction { url in url.scheme == "https" ? .systemAction : .discarded })
         }
     }
@@ -306,7 +314,7 @@ struct FeishuDocumentsView: View {
 
     private func draftFooter(_ draft: FeishuDraft) -> String {
         let prefix = draft.isNew ? "创建于 " + draft.location.title : "Markdown · " + (draft.revision.isEmpty ? "示例" : "版本 " + draft.revision)
-        return prefix + " · 退出前请保存草稿"
+        return prefix + " · 双击正文就地编辑 · 保存后同步飞书"
     }
 
     private func editor(_ draft: FeishuDraft) -> some View {
@@ -317,19 +325,19 @@ struct FeishuDocumentsView: View {
                         .textFieldStyle(.plain).font(.system(size: 14, weight: .semibold)).focused($titleFocused)
                 } else { Text(draft.title).font(.system(size: 14, weight: .semibold)).lineLimit(1) }
                 Spacer(minLength: 8)
-                Text(store.preview ? "示例草稿" : "未保存").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
-                ActionIcon(symbol: draftPreview ? "pencil" : "eye", tint: Theme.Ink.claude) { previewText = draft.text; draftPreview.toggle() }
-                    .help(draftPreview ? "返回编辑" : "预览与目录")
+                Text(store.preview ? "示例草稿" : draft.text == draft.original && !draft.isNew ? "尚无修改" : "未保存").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+                ActionIcon(symbol: draftPreview ? "chevron.left.forwardslash.chevron.right" : "doc.text", tint: Theme.Ink.claude) { previewText = draft.text; draftPreview.toggle() }
+                    .help(draftPreview ? "编辑整篇 Markdown 源码" : "返回排版与就地编辑")
                 ActionIcon(symbol: "doc.on.doc", tint: Theme.textSecondary) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(draft.text, forType: .string) }.help("复制草稿 Markdown")
                 ActionIcon(symbol: "trash", tint: Theme.Ink.error) { confirmDiscard = true }.help("丢弃草稿").disabled(store.working)
                 ActionIcon(symbol: "xmark", tint: Theme.textSecondary) { store.activeDraftID = nil }.help("保留草稿并返回阅读")
                 ActionButton(draft.isNew ? "创建" : "保存", symbol: "checkmark", tone: .accent, emphasis: .primary) {
                     if draft.isNew { Task { _ = await store.saveDraft() } } else { confirmSave = true }
-                }.keyboardShortcut("s", modifiers: .command).disabled(!draft.canSave || store.working || store.preview || !store.connection.ready)
+                }.help(draft.isNew ? "创建飞书文档" : "保存草稿到飞书（⌘S）").keyboardShortcut("s", modifiers: .command).disabled(!draft.canSave || store.working || store.preview || !store.connection.ready)
                 if store.working { ProgressView().controlSize(.small) }
             }.padding(.horizontal, 14).padding(.vertical, 8)
             Divider()
-            if draftPreview { reader(previewText) }
+            if draftPreview { reader(draft.text) }
             else {
                 ZStack(alignment: .topLeading) {
                     FeishuDocumentEditor(text: Binding(get: { store.activeDraft?.text ?? "" }, set: { store.updateDraft(text: $0) }), editable: !store.working, jump: editorJump)
@@ -391,6 +399,7 @@ struct FeishuDocumentsView: View {
                     Spacer()
                     Text(item["perm"].text == "edit" ? "可编辑" : item["perm"].text == "full_access" ? "完全管理" : "可阅读").foregroundStyle(Theme.textSecondary)
                     ActionIcon(symbol: "person.badge.minus", tint: Theme.Ink.error) { operation = .init(kind: .removeMember, document: doc, member: item) }
+                        .help("移除此协作者的文档访问权限").accessibilityLabel("移除协作者")
                         .disabled(store.preview || store.working || item["member_id"].text.isEmpty || item["member_type"].text.isEmpty || (doc.type == "wiki" && item["perm_type"].text.isEmpty))
                 }
             } else if tab == "历史" {
@@ -449,7 +458,7 @@ struct FeishuDocumentsView: View {
             Image(systemName: symbol)
             Text(text).font(Theme.Font.caption).textSelection(.enabled)
             Spacer()
-            ActionIcon(symbol: "xmark", size: 18) { if color == Theme.Ink.error { store.error = nil } else { store.notice = nil } }
+            ActionIcon(symbol: "xmark", size: 18) { if color == Theme.Ink.error { store.error = nil } else { store.notice = nil } }.help("关闭提示").accessibilityLabel("关闭提示")
         }.foregroundStyle(color).padding(8).background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 16).padding(.bottom, 8)
     }
@@ -459,7 +468,7 @@ struct FeishuDocumentsView: View {
                 FeishuWorkspaceMark().frame(width: 30, height: 30)
                 Text("连接飞书").font(.system(size: 20, weight: .semibold))
                 Spacer()
-                ActionIcon(symbol: "xmark", tint: Theme.textSecondary) { showSetup = false }
+                ActionIcon(symbol: "xmark", tint: Theme.textSecondary) { showSetup = false }.help("关闭飞书连接设置").accessibilityLabel("关闭连接设置")
             }
             HStack(spacing: 8) {
                 Circle().fill(store.connection.ready ? Theme.Ink.success : Theme.Ink.warning).frame(width: 7, height: 7)

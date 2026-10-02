@@ -8,8 +8,14 @@ struct SkillMarkdownPreview: View {
     private let file: URL?
     private let content: String?
     private let documentNavigation: Bool
-    init(file: URL) { self.file = file; content = nil; documentNavigation = false }
-    init(content: String, documentNavigation: Bool = false) { file = nil; self.content = content; self.documentNavigation = documentNavigation }
+    private let onEdit: ((String) -> Void)?
+    @State private var located: [DocumentMarkup.LocatedBlock] = []
+    @State private var editingIndex: Int?
+    @State private var editingText = ""
+    @State private var editingSource = ""
+    @FocusState private var blockFocused: Bool
+    init(file: URL) { self.file = file; content = nil; documentNavigation = false; onEdit = nil }
+    init(content: String, documentNavigation: Bool = false, onEdit: ((String) -> Void)? = nil) { file = nil; self.content = content; self.documentNavigation = documentNavigation; self.onEdit = onEdit }
     @State private var blocks: [MarkdownBlock] = []
     @State private var message: String?
     @State private var loading = true
@@ -25,7 +31,7 @@ struct SkillMarkdownPreview: View {
                         ScrollView {
                             renderContent(proxy: proxy)
                                 .frame(maxWidth: 980, alignment: .leading)
-                                .padding(.horizontal, 28).padding(.vertical, 18)
+                                .padding(.horizontal, 32).padding(.vertical, 28)
                                 .frame(maxWidth: .infinity)
                         }
                         .padding(.leading, outlineExpanded && !headings.isEmpty ? 218 : 0)
@@ -42,6 +48,7 @@ struct SkillMarkdownPreview: View {
             } else { renderContent(proxy: nil) }
         }
         .task(id: content ?? file?.path ?? "") {
+            editingIndex = nil
             loading = true
             message = nil
             do {
@@ -51,7 +58,7 @@ struct SkillMarkdownPreview: View {
                         guard content.utf8.count <= 512_000 else { throw PreviewError.tooLarge }
                         return try Self.parse(content)
                     }
-                    guard let file else { return [MarkdownBlock]() }
+                    guard let file else { return [DocumentMarkup.LocatedBlock]() }
                     let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                     guard size <= 512_000 else { throw PreviewError.tooLarge }
                     let data = try Data(contentsOf: file, options: .mappedIfSafe)
@@ -65,8 +72,9 @@ struct SkillMarkdownPreview: View {
                     worker.cancel()
                 }
                 guard !Task.isCancelled else { return }
-                blocks = parsed
-                headings = DocumentMarkup.outline(parsed)
+                located = parsed
+                blocks = parsed.map(\.block)
+                headings = DocumentMarkup.outline(blocks)
                 if parsed.isEmpty { message = "文档没有可预览的内容" }
             } catch is CancellationError {
                 return
@@ -88,9 +96,18 @@ struct SkillMarkdownPreview: View {
         } else if let message {
             StandbyEmptyState(label: message, symbol: "doc.text", tint: Theme.Ink.claude, block: true)
         } else {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.s12) {
+            LazyVStack(alignment: .leading, spacing: documentNavigation ? 14 : Theme.Space.s12) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                    blockView(block).id(index)
+                    VStack(alignment: .leading, spacing: 8) {
+                        blockView(block)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { beginBlockEdit(index) }
+                            .contextMenu {
+                                if onEdit != nil { Button("就地编辑此内容") { beginBlockEdit(index) } }
+                            }
+                        if editingIndex == index { blockEditor(index) }
+                    }.id(index)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
@@ -101,47 +118,40 @@ struct SkillMarkdownPreview: View {
         case .heading(let level, let value):
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 inline(value)
-                    .font(level == 1 ? Theme.Font.titleSmall : (level == 2 ? Theme.Font.section : Theme.Font.chromeEmph))
+                    .font(documentNavigation ? .system(size: [32.0, 25, 20, 17, 15, 14][min(5, max(0, level - 1))], weight: .semibold) : (level == 1 ? Theme.Font.titleSmall : (level == 2 ? Theme.Font.section : Theme.Font.chromeEmph)))
                     .foregroundStyle(Theme.textPrimary)
                     .accessibilityAddTraits(.isHeader)
-                if documentNavigation {
-                    Text("H\(level)").font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.4))
-                        .padding(.horizontal, 4).padding(.vertical, 2)
-                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.hairline.opacity(0.6)))
-                        .help("第 \(level) 级标题")
-                }
-            }.padding(.top, level == 1 ? Theme.Space.s12 : Theme.Space.s8)
+
+            }.padding(.top, documentNavigation ? (level == 1 ? 12 : 22) : Theme.Space.s8)
+                .padding(.bottom, documentNavigation ? 6 : 0)
         case .paragraph(let value):
             inline(value)
-                .font(Theme.Font.bodySmall)
+                .font(documentNavigation ? .system(size: 15) : Theme.Font.bodySmall)
                 .foregroundStyle(Theme.textPrimary)
-                .lineSpacing(4)
+                .lineSpacing(documentNavigation ? 7 : 4)
                 .fixedSize(horizontal: false, vertical: true)
         case .bullet(let depth, let value):
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s8) {
                 Text("•").foregroundStyle(Theme.Ink.claude)
                 inline(value).foregroundStyle(Theme.textPrimary)
             }
-            .font(Theme.Font.bodySmall)
-            .padding(.leading, CGFloat(min(depth, 3)) * 14)
+            .font(documentNavigation ? .system(size: 15) : Theme.Font.bodySmall)
+            .padding(.leading, CGFloat(min(depth, 8)) * 20)
         case .numbered(let depth, let number, let value):
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s8) {
                 Text(number).foregroundStyle(Theme.Ink.claude)
                 inline(value).foregroundStyle(Theme.textPrimary)
             }
-            .font(Theme.Font.bodySmall)
-            .padding(.leading, CGFloat(min(depth, 3)) * 14)
+            .font(documentNavigation ? .system(size: 15) : Theme.Font.bodySmall)
+            .padding(.leading, CGFloat(min(depth, 8)) * 20)
         case .quote(let value):
             inline(value)
-                .font(Theme.Font.bodySmall)
+                .font(documentNavigation ? .system(size: 15) : Theme.Font.bodySmall)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.leading, Theme.Space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .leading) {
-                    // Raw `claude`, not `Ink.claude`: this is a 2pt *rule*, and
-                    // the ink mix at half alpha is a near-invisible dark line.
-                    RoundedRectangle(cornerRadius: 1, style: .continuous).fill(Theme.claude.opacity(0.5)).frame(width: 2)
+                    Rectangle().fill(Theme.textSecondary).frame(width: 1)
                 }
         case .code(let language, let value):
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -156,7 +166,7 @@ struct SkillMarkdownPreview: View {
                     }
                     .buttonStyle(.plain)
                     .font(Theme.Font.microMedium)
-                    .foregroundStyle(Theme.Ink.claude)
+                    .foregroundStyle(Theme.Ink.claude).help("复制代码到剪贴板")
                 }
                 ScrollView(.horizontal) {
                     Text(value)
@@ -170,14 +180,14 @@ struct SkillMarkdownPreview: View {
             .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         case .table(let rows):
             let columnCount = rows.map(\.count).max() ?? 0
-            let cellWidth = max(190, min(360, availableWidth / CGFloat(max(1, columnCount)) - 20))
+            let cellWidth = max(150, min(340, availableWidth / CGFloat(max(1, columnCount)) - 24))
             ScrollView(.horizontal) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                         HStack(alignment: .top, spacing: 0) {
                             ForEach(0..<columnCount, id: \.self) { column in
                                 tableCell(column < row.count ? row[column] : "", header: rowIndex == 0)
-                                    .frame(width: cellWidth, alignment: .topLeading).padding(10)
+                                    .frame(width: cellWidth, alignment: .topLeading).padding(12)
                                     .frame(maxHeight: .infinity, alignment: .topLeading)
                                     .overlay(alignment: .trailing) { Rectangle().fill(Theme.hairline).frame(width: 1) }
                             }
@@ -193,7 +203,7 @@ struct SkillMarkdownPreview: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square").foregroundStyle(checked ? Theme.Ink.success : Theme.textSecondary)
                 inline(value).foregroundStyle(Theme.textPrimary)
-            }.font(Theme.Font.bodySmall).padding(.leading, CGFloat(min(depth, 6)) * 14)
+            }.font(documentNavigation ? .system(size: 15) : Theme.Font.bodySmall).padding(.leading, CGFloat(min(depth, 8)) * 20)
         case .embed(let title, let kind):
             HStack(spacing: 12) {
                 Image(systemName: kind == "whiteboard" ? "scribble.variable" : kind == "file" ? "paperclip" : "rectangle.on.rectangle")
@@ -226,11 +236,47 @@ struct SkillMarkdownPreview: View {
     @ViewBuilder private func tableCell(_ value: String, header: Bool) -> some View {
         if value.contains("```") {
             Text(value.replacingOccurrences(of: "(?m)^```[^\n]*\n?", with: "", options: .regularExpression))
-                .font(Theme.Font.captionMono).foregroundStyle(Theme.textPrimary).lineSpacing(3)
+                .font(.system(size: documentNavigation ? 13 : 12, design: .monospaced)).foregroundStyle(Theme.textPrimary).lineSpacing(4)
+                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 5))
         } else {
-            inline(value).font(header ? Theme.Font.microSemibold : Theme.Font.caption)
+            inline(value).font(.system(size: documentNavigation ? 14 : 12, weight: header ? .semibold : .regular))
                 .foregroundStyle(Theme.textPrimary).lineSpacing(3)
         }
+    }
+
+    private func beginBlockEdit(_ index: Int) {
+        guard onEdit != nil, editingIndex == nil, let content, located.indices.contains(index) else { return }
+        editingSource = content
+        editingText = (content as NSString).substring(with: located[index].range)
+        editingIndex = index
+        blockFocused = true
+    }
+
+    private func blockEditor(_ index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("编辑此内容 · Markdown / HTML").font(Theme.Font.caption.weight(.semibold))
+                Spacer()
+                Button("取消") { editingIndex = nil }.help("取消此处修改，保留原文")
+                Button("应用到草稿") {
+                    guard let content, content == editingSource,
+                          let updated = DocumentMarkup.replacing(located[index].range, in: content, with: editingText) else { return }
+                    editingIndex = nil
+                    onEdit?(updated)
+                }.help("只更新此内容；点击页面保存后才写入飞书")
+                    .disabled(content != editingSource)
+            }
+            TextEditor(text: $editingText)
+                .font(.system(size: 14, design: .monospaced))
+                .scrollContentBackground(.hidden).focused($blockFocused)
+                .frame(minHeight: 100, maxHeight: 260)
+                .accessibilityLabel("当前内容的 Markdown 或 HTML")
+            Text("其他内容保持排版。应用后可继续编辑，最后统一保存。")
+                .font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
+        }.padding(12)
+            .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.claude, lineWidth: 1))
     }
 
     private func inline(_ raw: String) -> Text {
@@ -241,8 +287,8 @@ struct SkillMarkdownPreview: View {
         return Text(raw)
     }
 
-    nonisolated private static func parse(_ source: String) throws -> [MarkdownBlock] {
-        try DocumentMarkup.parse(source)
+    nonisolated private static func parse(_ source: String) throws -> [DocumentMarkup.LocatedBlock] {
+        try DocumentMarkup.locatedBlocks(source)
     }
 }
 
