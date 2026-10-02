@@ -36,8 +36,6 @@ enum Theme {
     static var bgOverlay: Color { isDark ? Color(hex: 0x2A3038) : Color(hex: 0xE4EBF2) }
     static var cardSurface: Color { isDark ? Color(hex: 0x252A31) : Color.white }
 
-    static var base1: Color { bgSecondary }
-    static var base2: Color { cardSurface }
 
     // MARK: Signals (green = load · blue = GPU · amber = memory · violet = usage)
     static let claude = Color(hex: 0x3D7DFF)

@@ -35,13 +35,24 @@ enum DocumentMarkup {
         let title: String
         let number: String
     }
+    /// Numbered outline of the document's headings.
+    ///
+    /// Feishu's docx XML goes up to `<h9>`, and `HTMLFragment` converts all
+    /// nine, but the numbering only ever had six slots: a level-7 heading
+    /// indexed `counters[6]` and trapped. Levels are therefore clamped into
+    /// the six-deep numbering model instead of trusted.
     static func outline(_ blocks: [MarkdownBlock]) -> [Heading] {
-        let minimum = blocks.compactMap { block -> Int? in if case .heading(let level, _) = block { return level }; return nil }.min() ?? 1
+        func depth(_ level: Int) -> Int { min(max(level, 1), 6) }
+        let minimum = blocks.compactMap { block -> Int? in
+            if case .heading(let level, _) = block { return depth(level) }
+            return nil
+        }.min() ?? 1
         var counters = Array(repeating: 0, count: 6)
         return blocks.enumerated().compactMap { index, block in
-            guard case .heading(let level, let title) = block else { return nil }
+            guard case .heading(let rawLevel, let title) = block else { return nil }
+            let level = depth(rawLevel)
             counters[level - 1] += 1
-            if level < 6 { for slot in level..<6 { counters[slot] = 0 } }
+            for slot in level..<6 { counters[slot] = 0 }
             let number = counters[(minimum - 1)..<level].map { String(max(1, $0)) }.joined(separator: ".")
             return Heading(id: index, level: level, title: title, number: number)
         }

@@ -134,6 +134,16 @@ enum MCPToolDiscovery {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+
+        // A write to a child that already exited raises SIGPIPE, whose default
+        // disposition terminates the whole app — and an MCP server is the
+        // third-party process most likely to exit early (a crash, an
+        // npx/pnpm shim that quits, a server that rejects the initialized
+        // frame). Same call `CodexAppServerClient` and `BatteryChargeController`
+        // make on their child pipes; without it the `try send(...)` below
+        // never throws, the process just dies.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
         output.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil; collector.finish() }

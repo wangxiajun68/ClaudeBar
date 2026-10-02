@@ -434,6 +434,14 @@ enum ModelPricing {
     /// same one-pass rule this method documents, extended to a third table —
     /// checking overrides "first" would let an override for `glm-5` swallow the
     /// bundled `glm-5.3-flash`.
+    ///
+    /// **The equal-length case goes to the override.** A user edit or a fetched
+    /// row is normally for a slug the bundled table already prices — those are
+    /// exactly the models a user wants to correct — so a strictly-longer rule
+    /// left every such override stored, listed and reported as applied while
+    /// every cost path kept billing the bundled rate. Only the source order is
+    /// load-bearing, so `consider` takes the later candidate on a tie and the
+    /// override pass runs last.
     static func resolve(_ model: String, on date: String) -> Resolution? {
         let name = canonical(model)
         guard !name.isEmpty else { return nil }
@@ -445,7 +453,7 @@ enum ModelPricing {
 
         func consider(_ slug: String, _ resolution: Resolution) {
             guard matches(name, slug) else { return }
-            if best == nil || slug.count > best!.slug.count { best = (slug, resolution) }
+            if best == nil || slug.count >= best!.slug.count { best = (slug, resolution) }
         }
         for entry in table { consider(entry.slug, .priced(entry.rate)) }
         for (slug, reason) in ModelPriceTable.unpriced { consider(slug, .unpriced(reason)) }

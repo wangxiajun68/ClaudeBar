@@ -74,7 +74,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 | 类别 | Token | 用途 |
 |------|-------|------|
-| 基底 | `bgPrimary` / `bgSecondary` / `bgOverlay` / `cardSurface` | 浅色冰面 / 深色石墨两套表面阶（`base1`/`base2` 为旧别名） |
+| 基底 | `bgPrimary` / `bgSecondary` / `bgOverlay` / `cardSurface` | 浅色冰面 / 深色石墨两套表面阶 |
 | Claude | `claude` / `claudeHi` | 软蓝，Claude Code |
 | Cursor | `cursor` | 软紫，Cursor（文字用 `Theme.Ink.cursor`） |
 | Codex | `codex` | 暖瓷白，Codex 会话与供应商 |

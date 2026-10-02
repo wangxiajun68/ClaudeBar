@@ -552,7 +552,7 @@ struct VpnDomainLogSection: View {
         .padding(.horizontal, Theme.Space.s6)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.base1.opacity(0.5))
+        .background(Theme.bgSecondary.opacity(0.5))
         .textSelection(.enabled)
         .contextMenu {
             Button("复制域名") {
