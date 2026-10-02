@@ -270,9 +270,9 @@ enum CursorUsageFetcher {
         // Retried like the Codex fetch, but for a failure mode the Codex
         // fetcher does not have.
         //
-        // The probe uses the *system* proxy (no `connectionProxyDictionary`,
-        // see `session()`), and the app applies that proxy seconds after it
-        // starts — `VpnManager.waitUntilReady` writes it only once mihomo
+        // The probe uses the *system* proxy (no `connectionProxyDictionary`),
+        // and the app applies that proxy seconds after it starts —
+        // `VpnManager.waitUntilReady` writes it only once mihomo
         // answers `GET /version`, 2–4 s in. The launch fetch fires before that,
         // so it is sent to whatever the last session left behind: a
         // `127.0.0.1:<port>` with no listener, which fails instantly. Every
@@ -354,18 +354,17 @@ enum CursorUsageFetcher {
     ///
     /// `https://www.cursor.com` 308-redirects to the apex, so the RPC host is
     /// used directly instead of following one.
-    /// The session every Cursor probe uses.
     ///
-    /// **No `connectionProxyDictionary` is set — deliberately.** `URLSession.shared`
-    /// and this ephemeral config both inherit the system's HTTP/HTTPS proxy, and
-    /// that is the path that reaches `api2.cursor.sh` from a mainland network:
-    /// the direct route 401s/`403`s behind the GFW, and the tunneled one is the
-    /// only one that carries the token through. A `connectionProxyDictionary`
-    /// pointing at the mihomo mixed port was considered and **rejected** — it
-    /// would hard-wire the probe to ClaudeBar's own VPN being enabled, and the
-    /// reading is supposed to follow whatever network the user is on (this is
-    /// also why a direct probe answers 200 when a system proxy is up: the
-    /// proxy is what is doing the reaching).
+    /// **No `connectionProxyDictionary` is set — deliberately.** Both probes
+    /// call `URLSession.shared`, which inherits the system's HTTP/HTTPS proxy,
+    /// and that is the path that reaches `api2.cursor.sh` from a mainland
+    /// network: the direct route 401s/`403`s behind the GFW, and the tunneled
+    /// one is the only one that carries the token through. A
+    /// `connectionProxyDictionary` pointing at the mihomo mixed port was
+    /// considered and **rejected** — it would hard-wire the probe to
+    /// ClaudeBar's own VPN being enabled, and the reading is supposed to follow
+    /// whatever network the user is on (this is also why a direct probe answers
+    /// 200 when a system proxy is up: the proxy is what is doing the reaching).
     ///
     /// The cost of inheriting the system proxy is the launch window: for the
     /// first ~4 s the proxy may still point at a dead port from the last
@@ -429,16 +428,11 @@ enum CursorUsageFetcher {
         return min(100, max(0, spent / limit * 100))
     }
 
-    // MARK: - Grok Bot weekly window (Connect RPC)
+    // MARK: - Grok Bot weekly window (cursor.com web)
 
-    /// `POST https://cursor.com/api/dashboard/get-sand-usage-status` — the web
-    /// spelling, kept as the fallback. It wants the cookie form *and* an
-    /// `Origin` header; the bare JWT used by the RPC above would 401 here.
-    ///
-    /// The primary path is the Connect RPC (`GetSandUsageStatus`) on
-    /// `api2.cursor.sh`, which takes the **same bare JWT** as the plan call and
-    /// returns the same fields — measured 200 against a bare JWT, so the cookie
-    /// spelling below is only for a host that refuses the RPC.
+    /// `POST https://cursor.com/api/dashboard/get-sand-usage-status`. This is a
+    /// **web** endpoint, so it wants the cookie form *and* an `Origin` header —
+    /// the bare JWT that satisfies the RPC above would 401 here.
     private static func fetchGrok(subject: String?, token: String) async -> GrokUsage? {
         guard let subject, !subject.isEmpty else { return nil }
         guard let url = URL(string: "https://cursor.com/api/dashboard/get-sand-usage-status") else { return nil }

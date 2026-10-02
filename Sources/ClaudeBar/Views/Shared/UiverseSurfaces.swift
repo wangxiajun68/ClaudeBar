@@ -64,9 +64,10 @@ extension View {
 ///
 /// The ring is white in both themes, which is why it belongs on surfaces that
 /// carry a tint or sit on a dark ground: over a pure white card on the ice
-/// canvas a white ring is invisible, so a card with no accent keeps
-/// `framed: false`. This is the honest adaptation — the original's boldness
-/// comes from the saturated gradient behind it, not from the ring.
+/// canvas a white ring is invisible, so a card with no accent draws the muted
+/// engraved hairline (`Theme.innerFrameMuted`) instead. This is the honest
+/// adaptation — the original's boldness comes from the saturated gradient
+/// behind it, not from the ring.
 struct InnerFrameRing: View {
     var lineWidth: CGFloat = 1
     var inset: CGFloat = 3
@@ -78,13 +79,6 @@ struct InnerFrameRing: View {
             .strokeBorder(tint ?? Theme.innerFrame, lineWidth: lineWidth)
             .padding(inset)
             .allowsHitTesting(false)
-    }
-}
-
-extension View {
-    func innerFrame(_ lineWidth: CGFloat = 1, inset: CGFloat = 3,
-                    radius: CGFloat, tint: Color? = nil) -> some View {
-        overlay(InnerFrameRing(lineWidth: lineWidth, inset: inset, radius: radius, tint: tint))
     }
 }
 

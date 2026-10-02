@@ -429,6 +429,8 @@ struct GreetingCard: View {
 enum TerminalLauncher {
     static func resumeClaudeSession(cwd: String, sessionId: String, pid: Int?) {}
     static func resumeCodexSession(cwd: String, sessionId: String, pid: Int?, inDesktop: Bool) {}
+    static func revealInFinder(cwd: String) {}
+    static func openInCursor(cwd: String) {}
 }
 struct ProxyLogView: View { var body: some View { EmptyView() } }
 /// Which hosts each provider actually talks to, pinned in front of the
@@ -610,7 +612,6 @@ final class AppPreferences: ObservableObject {
     @Published var tokenUnitStyle: TokenUnitStyle = .chinese
     @Published var costDisplay: CostDisplay = .split
     @Published var greetingWeatherRendering = true
-    @Published var greetingShowsChip = false
     @Published var weatherCity = "广州"
     @Published var vpnEnabled = true
     @Published var vpnSystemProxyEnabled = true
@@ -1614,15 +1615,15 @@ source += r'''
     static func cursorSessions() -> [CursorSessionInfo] {
         [
             CursorSessionInfo(composerId: "c-1", name: "cm cloud concurrency",
-                              cwd: "/Users/x/Project/cmcc_skills", createdAt: 1_789_980_000_000,
+                              cwd: "/Users/x/Project/cmcc_skills",
                               lastUpdatedAt: 1_789_999_200_000, contextPercent: 68, status: .active,
-                              isAlive: true, messageCount: 18,
+                              isAlive: true,
                               currentActivity: "Edit · organize.py", title: "CM cloud organize concurrency",
                               subtitle: "Edited organize.py, schema.sql"),
             CursorSessionInfo(composerId: "c-2", name: "promo-film scrub",
-                              cwd: "/Users/x/Project/ClaudeBar", createdAt: 1_789_985_000_000,
+                              cwd: "/Users/x/Project/ClaudeBar",
                               lastUpdatedAt: 1_789_996_000_000, contextPercent: 24, status: .idle,
-                              isAlive: true, messageCount: 9,
+                              isAlive: true,
                               currentActivity: "Read · prompt.md", title: "宣传片运镜 scrub",
                               subtitle: "Edited film.html"),
         ]

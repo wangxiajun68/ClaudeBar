@@ -264,7 +264,7 @@ final class MotionLayerView: NSView {
             // main-thread samples inside `NSHostingView.layout()` at a median
             // 48.8 % for the old arc and 31.9 % for this one, disjoint ranges,
             // with the transaction count falling from ≈420 to ≈285. See
-            // `docs/technical/17-ui-audit-backlog.md` §7.
+            // `docs/reviews/ui-audit-backlog.md` §7.
             //
             // Composition, from the inside out: a conic gradient carries the
             // fade, a shape trims it to the arc's 100°, and the whole thing

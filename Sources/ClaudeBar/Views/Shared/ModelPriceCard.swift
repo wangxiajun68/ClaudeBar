@@ -23,12 +23,12 @@ struct ModelPriceCard: View {
 
     @State private var filter = ""
     @State private var editing: String?
-    /// A slug the user is adding that the catalog does not know yet. `editing`
-    /// alone cannot express it: the editor mounts *inside a row*
-    /// (`ForEach(rows) → PriceRow → if editing == slug`), and a brand-new slug
-    /// is by definition in no row, so 编辑价格 used to set state that nothing
-    /// drew. The draft is rendered as its own row above the table until the
-    /// first save puts it into the catalog.
+    /// A slug the user is adding whose row the filter is not drawing — either
+    /// one the catalog has never heard of, or a known one the current search
+    /// word excludes. `editing` alone cannot express it: the editor mounts
+    /// *inside a row* (`ForEach(rows) → PriceRow → if editing == slug`), so a
+    /// slug in no visible row would set state that nothing drew. The draft is
+    /// rendered as its own row above the table until its editor closes.
     @State private var draftSlug: String?
     @State private var showReport = false
     @State private var addSlug = ""
@@ -234,14 +234,26 @@ struct ModelPriceCard: View {
         .padding(.bottom, 10)
     }
 
+    /// The manual add path: hand the typed name to the same editor every row
+    /// uses, in the canonical spelling the catalog can store.
+    ///
+    /// `record` refuses a non-canonical slug, so a relay-style name
+    /// (`anthropic/claude-sonnet-4-6`, `-latest`, a dated snapshot) is reduced
+    /// to the vendor id before it is matched — that is what opens the table's
+    /// own row, pre-filled, instead of an editor whose save would be refused. A
+    /// name that reduces to nothing (a trailing `/`) keeps its typed form, so
+    /// the editor can still open and say why it cannot be stored.
     private func startAdding() {
-        let name = addSlug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !name.isEmpty else { return }
+        let typed = addSlug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !typed.isEmpty else { return }
+        let canonical = ModelPricing.canonical(typed)
+        let name = canonical.isEmpty ? typed : canonical
         editing = name
-        // Every slug the catalog can list gets its editor in place; anything
-        // else is the draft row, which lives outside the filter so a search
-        // word cannot hide the editor that was just opened.
-        draftSlug = catalog.allSlugs.contains(name) ? nil : name
+        // A slug whose row is on screen gets its editor mounted in place;
+        // anything else — a brand-new id, or a known one the current search
+        // word hid — is the draft row above the table, which lives outside the
+        // filter so the editor that was just opened cannot be swallowed by it.
+        draftSlug = rows.contains(name) ? nil : name
         adding = false
         addSlug = ""
     }
@@ -257,17 +269,19 @@ struct ModelPriceCard: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                if let draftSlug {
-                    // The not-yet-in-the-table row, with its editor already
-                    // open. Saving writes an override, which puts the slug into
-                    // `catalog.allSlugs`; cancelling clears the draft, so a
-                    // cancelled add leaves no phantom row behind.
+                if let draftSlug, !rows.contains(draftSlug) {
+                    // The row 编辑价格 just opened, for a slug the table below is
+                    // not drawing: either one the catalog has never heard of, or
+                    // a known one the search word excludes. Living outside the
+                    // filter is what stops that word from hiding the editor that
+                    // was just opened; as soon as `rows` lists the slug the row
+                    // below mounts the editor instead. Closing the editor either
+                    // way retires this draft — a save has made the slug a real
+                    // row, a cancel leaves no phantom behind.
                     PriceRow(slug: draftSlug,
                              editing: $editing,
                              sourceURL: sourceURL(for: draftSlug),
-                             onDraftEnded: {
-                                 if !catalog.allSlugs.contains(draftSlug) { self.draftSlug = nil }
-                             })
+                             onDraftEnded: { self.draftSlug = nil })
                         .padding(.horizontal, 20)
                     SettingsDivider()
                 }

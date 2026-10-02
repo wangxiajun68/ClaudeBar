@@ -133,12 +133,12 @@ final class ScreenshotOverlayController {
     fileprivate func copyAndClose(_ canvas: SnipCanvas) {
         guard let img = canvas.croppedImage() else { return }
         Self.writePasteboard(img)
-        dismissOverlay(keepPins: true)
+        dismissOverlay()
     }
 
     fileprivate func saveAndClose(_ canvas: SnipCanvas) {
         guard let img = canvas.croppedImage() else { return }
-        dismissOverlay(keepPins: true)
+        dismissOverlay()
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         panel.nameFieldStringValue = "ClaudeBar-\(Self.stamp()).png"
@@ -152,14 +152,20 @@ final class ScreenshotOverlayController {
 
     fileprivate func pinAndClose(_ canvas: SnipCanvas) {
         guard let img = canvas.croppedImage(), let sel = canvas.selectionInScreen() else { return }
+        // Pins the user already closed stay retained forever unless someone
+        // drops them — the panel only `orderOut`s itself on close.
+        pinPanels.removeAll { !$0.isVisible }
         let pin = ScreenshotPinPanel(image: img, origin: sel)
+        pin.onClose = { [weak self, weak pin] in
+            self?.pinPanels.removeAll { $0 === pin }
+        }
         pinPanels.append(pin)
         pin.orderFrontRegardless()
-        dismissOverlay(keepPins: true)
+        dismissOverlay()
     }
 
     func cancel() {
-        dismissOverlay(keepPins: true)
+        dismissOverlay()
     }
 
     /// Session-wide keyDown tap, active only during a capture. Swallows only
@@ -356,13 +362,9 @@ final class ScreenshotOverlayController {
         canvases = []
     }
 
-    private func dismissOverlay(keepPins: Bool) {
+    private func dismissOverlay() {
         tearDownPanels()
         capturing = false
-        if !keepPins {
-            for p in pinPanels { p.orderOut(nil) }
-            pinPanels = []
-        }
     }
 
     private static func captureDisplay(_ screen: NSScreen) async throws -> CGImage {
@@ -391,17 +393,21 @@ final class ScreenshotOverlayController {
     static func writePasteboard(_ image: NSImage) {
         let pb = NSPasteboard.general
         pb.clearContents()
+        // One item carrying both reps: `writeObjects` would append the image
+        // as a *second* item next to the PNG, so every paste reader saw the
+        // snip twice.
+        let item = NSPasteboardItem()
         // Prefer PNG so pixel-exact Retina resolution survives the round
         // trip; TIFF is a fallback for apps that only read TIFF.
         if let tiff = image.tiffRepresentation,
            let rep = NSBitmapImageRep(data: tiff),
            let png = rep.representation(using: .png, properties: [:]) {
-            pb.setData(png, forType: .png)
+            item.setData(png, forType: .png)
         }
-        pb.writeObjects([image])
         if let tiff = image.tiffRepresentation {
-            pb.setData(tiff, forType: .tiff)
+            item.setData(tiff, forType: .tiff)
         }
+        pb.writeObjects([item])
     }
 
     static func writePNG(_ image: NSImage, to url: URL) {
@@ -686,6 +692,12 @@ private final class SnipCanvas: NSView {
         markLayers = []
         draftLayer?.removeFromSuperlayer()
         draftLayer = nil
+        // Layers and model must fall together. `lockOnly` clears every *other*
+        // canvas on a lock, so leaving `marks` behind only surfaced on the
+        // multi-display path: re-locking rebuilt the layers from nothing while
+        // the crop still burned the stale marks in.
+        marks.removeAll()
+        markDraft = nil
     }
 
     private static func markShape(_ mark: SnipMark, in sel: CGRect) -> CAShapeLayer {
@@ -1112,6 +1124,8 @@ private final class ScreenshotPinPanel: NSPanel {
     /// until the cursor enters.
     private let chromeBar = PinChromeBar()
     private let padding: CGFloat = 34
+    /// Fired when the pin is dismissed, so the controller can release it.
+    var onClose: (() -> Void)?
 
     init(image: NSImage, origin: CGRect) {
         self.image = image
@@ -1183,6 +1197,7 @@ private final class ScreenshotPinPanel: NSPanel {
 
     private func closePin() {
         orderOut(nil)
+        onClose?()
     }
 
     private func copyPin() {

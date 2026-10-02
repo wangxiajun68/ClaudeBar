@@ -57,7 +57,7 @@ struct UsagePanel: View {
     /// supposed to drive the picker inside the region that dismisses it: the
     /// period chips' first click while the picker was open would close it
     /// without reaching `selectPeriod`. The probe in
-    /// `docs/technical/17-ui-audit-backlog.md` §6 could not drive a synthetic
+    /// `docs/reviews/ui-audit-backlog.md` §6 could not drive a synthetic
     /// click far enough to confirm the symptom, but the anchoring rule is
     /// documented and the fix is free, so the anchor is kept out of the controls
     /// either way. Zero-size and inert: nothing here draws or hit-tests.

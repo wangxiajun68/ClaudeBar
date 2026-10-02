@@ -19,12 +19,12 @@ enum AppConfig {
     /// Poll cadence when no window or popup is on screen. The session scan,
     /// Cursor DB read, and Codex directory walk are pure file I/O whose
     /// results nobody can see — so this skips the full scan cost in the
-    /// background while staying inside the completion detector's 10 s candidate
-    /// window: a busy→idle edge opens it, and the answer that confirms it is
-    /// usually written *after* the edge (the transcript write and the status
-    /// flip race), so a poll cadence at or beyond the window drops completions
-    /// outright. 8 s leaves room for one missed poll; the widget and the
-    /// menu-bar icon are the other readers at this tier.
+    /// background while staying inside the completion detector's freshness
+    /// budget (`ProviderStore.completionFreshness`, 60 s): a completed turn
+    /// is announced only if the session's own files were written within it,
+    /// so a cadence at or beyond the budget drops completions outright. 8 s
+    /// leaves room for one missed poll; the widget and the menu-bar icon are
+    /// the other readers at this tier.
     static let sessionPollHiddenInterval: TimeInterval = 8
 
     /// Number of busy/idle samples kept per session for the heartbeat

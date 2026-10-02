@@ -8,7 +8,32 @@ final class CaptureJSONStore {
         var rewritten: String
         var response: String
         var sse: String
-        var headers: String = ""
+        var headers: String
+
+        init(request: String, rewritten: String, response: String, sse: String,
+             headers: String = "") {
+            self.request = request
+            self.rewritten = rewritten
+            self.response = response
+            self.sse = sse
+            self.headers = headers
+        }
+
+        /// Hand-written: the synthesized decoder ignores property defaults, so a
+        /// payload written before `headers` existed would throw and readPayload
+        /// would fall back to an all-empty Payload even though the body parsed.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            request = try c.decode(String.self, forKey: .request)
+            rewritten = try c.decode(String.self, forKey: .rewritten)
+            response = try c.decode(String.self, forKey: .response)
+            sse = try c.decode(String.self, forKey: .sse)
+            headers = try c.decodeIfPresent(String.self, forKey: .headers) ?? ""
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case request, rewritten, response, sse, headers
+        }
     }
 
     private struct IndexRow: Codable {

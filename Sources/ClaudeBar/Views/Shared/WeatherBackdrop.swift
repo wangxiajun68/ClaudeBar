@@ -201,7 +201,7 @@ struct WeatherBackdrop: View {
     /// lobes carry no fill of their own and there is nothing to shadow.
     private static func cloud(_ ctx: inout GraphicsContext, at x: CGFloat, y: CGFloat,
                               scale: CGFloat, size: CGSize,
-                              body: Color, lit: Color) {
+                              lit: Color) {
         let width = scale * min(size.height, 440) * 2.3
         let height = width * 0.43
         var layer = ctx
@@ -247,8 +247,9 @@ struct WeatherBackdrop: View {
         }
     }
 
-    /// A disc, a corona, and ten rays that turn once every ~25 s. The rays are
-    /// the clear sky's motion; the disc breathing is too small to notice alone.
+    /// A breathing disc and corona, and three diffuse light pools drifting
+    /// across the card. The drift is the clear sky's motion; the breathing
+    /// alone is too small to notice.
     private static func drawSun(at c: CGPoint, size: CGSize, t: TimeInterval,
                                 ctx: inout GraphicsContext) {
         ctx.blendMode = .plusLighter
@@ -281,24 +282,22 @@ struct WeatherBackdrop: View {
     private static func drawPartly(night: Bool, celestial: Bool = true, size: CGSize, t: TimeInterval,
                                    ctx: inout GraphicsContext) {
         if celestial { drawClear(night: night, size: size, t: t, ctx: &ctx) }
-        let body = Color.white.opacity(night ? 0.22 : 0.82)
         let lit = Color.white.opacity(night ? 0.40 : 0.98)
         cloud(&ctx, at: drift(0.02, 0.28, t / 70), y: 0.42, scale: 0.50, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.40, 0.78, t / 52), y: 0.62, scale: 0.64, size: size,
-              body: body, lit: lit)
+              lit: lit)
     }
 
     private static func drawCloudy(night: Bool, size: CGSize, t: TimeInterval,
                                    ctx: inout GraphicsContext) {
-        let body = Color.white.opacity(night ? 0.16 : 0.55)
         let lit = Color.white.opacity(night ? 0.32 : 0.88)
         cloud(&ctx, at: drift(0.02, 0.30, t / 86), y: 0.30, scale: 0.56, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.34, 0.70, t / 64), y: 0.48, scale: 0.72, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.62, 1.02, t / 50), y: 0.66, scale: 0.80, size: size,
-              body: body, lit: lit)
+              lit: lit)
     }
 
     private static func drawFog(size: CGSize, t: TimeInterval, ctx: inout GraphicsContext) {
@@ -325,14 +324,13 @@ struct WeatherBackdrop: View {
 
     private static func drawRain(night: Bool, size: CGSize, intensity: Int,
                                  t: TimeInterval, ctx: inout GraphicsContext) {
-        let body = Color.white.opacity(night ? 0.16 : 0.28)
         let lit = Color.white.opacity(night ? 0.34 : 0.55)
         cloud(&ctx, at: drift(-0.08, 0.22, t / 70), y: 0.02, scale: 0.70, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.28, 0.62, t / 54), y: 0.08, scale: 0.86, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.64, 1.04, t / 46), y: 0.00, scale: 0.64, size: size,
-              body: body, lit: lit)
+              lit: lit)
         rainStreaks(size: size, intensity: intensity, t: t, ctx: &ctx, splashes: true)
         ctx.fill(Path(CGRect(x: 0, y: size.height * 0.86,
                              width: size.width, height: size.height * 0.14)),
@@ -447,12 +445,11 @@ struct WeatherBackdrop: View {
 
     private static func drawSnow(night: Bool, size: CGSize, t: TimeInterval,
                                  ctx: inout GraphicsContext) {
-        let body = Color.white.opacity(night ? 0.18 : 0.62)
         let lit = Color.white.opacity(night ? 0.40 : 0.95)
         cloud(&ctx, at: drift(0.04, 0.36, t / 74), y: 0.24, scale: 0.58, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.50, 0.92, t / 58), y: 0.34, scale: 0.68, size: size,
-              body: body, lit: lit)
+              lit: lit)
         // Three depths. Near flakes are larger and slower to sway, which reads
         // as depth of field without a blur pass.
         let depths: [(fall: Double, radius: CGFloat, alpha: Double, sway: Double)] = [
@@ -478,17 +475,16 @@ struct WeatherBackdrop: View {
 
     private static func drawThunder(size: CGSize, intensity: Int, t: TimeInterval,
                                     ctx: inout GraphicsContext) {
-        let body = SkyPalette.stormCloud.opacity(0.55)
         let lit = Color.white.opacity(0.16)
         cloud(&ctx, at: drift(0.00, 0.32, t / 60), y: 0.18, scale: 0.68, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.40, 0.82, t / 48), y: 0.28, scale: 0.80, size: size,
-              body: body, lit: lit)
+              lit: lit)
         cloud(&ctx, at: drift(0.74, 1.14, t / 42), y: 0.14, scale: 0.56, size: size,
-              body: body, lit: lit)
+              lit: lit)
         rainStreaks(size: size, intensity: max(intensity, 50), t: t, ctx: &ctx, splashes: true)
 
-        // One strike per ~4.5 s. The spike is the first tenth of the cycle;
+        // One strike per ~12 s. The flash is the first 8% of the cycle;
         // the rest is dark, so it reads as lightning and not as a pulse.
         let cycle = 12.0
         let phase = t.truncatingRemainder(dividingBy: cycle) / cycle
@@ -622,9 +618,7 @@ struct SkyPalette {
     static let sun = Color(hex: 0xFFC24D)
     static let sunCore = Color(hex: 0xFFE9A8)
     static let moon = Color(hex: 0xF4F7FF)
-    static let stormCloud = Color(hex: 0x2A3344)
     static let flash = Color(hex: 0xF7FBFF)
-    static let bolt = Color(hex: 0xFFF2B0)
 }
 
 /// A small density field with a sun-facing second sample for self-shadow.

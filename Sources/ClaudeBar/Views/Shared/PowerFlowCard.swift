@@ -122,7 +122,10 @@ struct PowerFlow: Equatable {
         case .assisting:
             return "电源输入 \(w(input ?? 0))，电池提供 \(w(battery))，共同为整机供电。"
         case .holding:
-            return "电池基本空闲，电源 \(w(input ?? load ?? 0)) 直接供整机。"
+            // Quote the load, the figure the adapter → system ribbon draws:
+            // on a holding battery PDTR sits 1–2 W above PSTR by the charger's
+            // conversion loss, so the input reading would contradict the label.
+            return "电池基本空闲，电源 \(w(load ?? input ?? 0)) 直接供整机。"
         case .onBattery:
             return "当前由电池以 \(w(battery)) 为整机供电。"
         }
@@ -203,7 +206,6 @@ private struct PowerFlowContent: View, Equatable {
                 .frame(height: compact ? 84 : 200)
             if !compact {
                 Text(flow.summary)
-                    .rollingNumber(flow.summary)
                     .font(Theme.Font.caption)
                     .foregroundColor(Theme.textSecondary)
                 }

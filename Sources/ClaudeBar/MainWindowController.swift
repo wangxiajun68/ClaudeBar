@@ -57,7 +57,6 @@ final class MainWindowController {
         }
         let window = makeWindow()
         self.window = window
-        window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         observeVisibility(of: window)
@@ -177,7 +176,17 @@ final class MainWindowController {
         // greeting sky. The top bar opts in itself; see `WindowDragRegion`.
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
+        // `setFrameAutosaveName` writes every later move back to the defaults,
+        // and restoring that frame is what carries the user's placement across
+        // launches — an unconditional `center()` therefore discards it.
+        // `setFrameUsingName` restores a saved frame and reports whether one
+        // existed; the Bool from `setFrameAutosaveName` cannot gate this, it
+        // only reports that the name was accepted (true even for a name
+        // nothing was ever saved under). Center only when there is nothing
+        // to restore.
+        let hadSavedFrame = window.setFrameUsingName("ClaudeBarMainWindow")
         window.setFrameAutosaveName("ClaudeBarMainWindow")
+        if !hadSavedFrame { window.center() }
         window.appearance = Theme.nsAppearance
         window.collectionBehavior = [.fullScreenAuxiliary]
         window.backgroundColor = Theme.windowNSColor

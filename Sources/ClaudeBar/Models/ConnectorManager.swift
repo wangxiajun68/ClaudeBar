@@ -422,22 +422,6 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
         isLoading = false
     }
 
-    func setEnabled(_ enabled: Bool, for record: ConnectorRecord, projectPath: String?) async {
-        do {
-            try await ConnectorMutationGate.shared.setEnabled(enabled, record: record)
-            errorMessage = nil
-            if case .cursorMCP = record.method {
-                noticeMessage = "已向 Cursor 发送\(enabled ? "启用" : "停用")命令；最终状态请在 Customize 中确认。"
-            } else {
-                noticeMessage = nil
-            }
-            await refresh(projectPath: projectPath, scanCLIs: false)
-        } catch {
-            noticeMessage = nil
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func remove(_ record: ConnectorRecord, projectPath: String?) async {
         do {
             try await ConnectorMutationGate.shared.remove(record)
@@ -1128,12 +1112,16 @@ private enum ConnectorInventory {
 
     private static func secureReplace(_ data: Data, at file: URL) throws {
         let temporary = file.deletingLastPathComponent().appendingPathComponent(".claudebar-\(UUID().uuidString)")
-        let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, mode_t(0o600))
+        let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode_t(0o600))
         guard descriptor >= 0 else { throw ConnectorError.changed }
         defer { try? fm.removeItem(at: temporary) }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         do {
             try handle.write(contentsOf: data)
+            // Flush before the rename: the stage-then-rename dance exists so a
+            // crash cannot leave a torn config behind, and rename may land
+            // before the bytes reach disk.
+            try handle.synchronize()
             try handle.close()
         } catch {
             try? handle.close()
@@ -1157,10 +1145,11 @@ private enum ConnectorInventory {
             try saveParkedSkills(entries)
             return
         }
-        guard fm.fileExists(atPath: original.path),
-              (try? original.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
-            throw ConnectorError.changed
-        }
+        // `itemExists` (lstat), not `fileExists`: a symlinked Skill install is a
+        // first-class record whose `canRemove` is true, and a parked one is a
+        // dangling relative link that `fileExists` would never find. `trashItem`
+        // removes the link itself and leaves its target in place.
+        guard itemExists(original) else { throw ConnectorError.changed }
         try fm.trashItem(at: original, resultingItemURL: nil)
     }
 

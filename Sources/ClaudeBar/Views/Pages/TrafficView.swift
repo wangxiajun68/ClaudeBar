@@ -1004,7 +1004,7 @@ struct TrafficView: View {
             let d = ProxyCaptureStore.shared.detail(
                 id: id, includeRaw: raw, includePayloads: raw, includeTools: tools)
             DispatchQueue.main.async {
-                guard gen == state.loadGen else { return }
+                guard gen == state.loadGen, state.mounted else { return }
                 detail = d
                 loadingDetail = false
                 if fullRender { rebuildFullTurns() }

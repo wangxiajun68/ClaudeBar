@@ -46,7 +46,7 @@ caught mid-flight, the new value sliding up over the old one; without it the
 frame after the change already shows the final value, and no frame ever shows
 two digits at once.)
 
-See docs/technical/08-performance.md and docs/technical/17-ui-audit-backlog.md.
+See docs/technical/08-performance.md and docs/reviews/ui-audit-backlog.md.
 """
 from pathlib import Path
 import re

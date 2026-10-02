@@ -89,7 +89,11 @@ struct GreetingCard: View {
         }
         .onAppear { codexStore.refreshConfiguredModel(); cursor.refresh() }
         .task { await AppPreferences.shared.prepareGreetingFonts() }
-        .task(id: surfaceVisible) {
+        // The rendering pref belongs in the id, not only in the guard: `.task`
+        // re-runs when the id changes and the body reads the gate once, so
+        // keyed on visibility alone the loop kept fetching after 天气渲染 was
+        // turned off.
+        .task(id: surfaceVisible && weatherRendering) {
             guard surfaceVisible, AppPreferences.shared.greetingWeatherRendering else { return }
             while !Task.isCancelled {
                 weather.refreshIfStale()

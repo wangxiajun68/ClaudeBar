@@ -40,7 +40,7 @@ enum IslandStyle {
     /// reserve exactly the same square. That equality is what lets
     /// `IslandMarkWell` draw either family without a second size, and it is
     /// the last surviving constant from the deleted glance reel — see
-    /// `docs/technical/17-ui-audit-backlog.md` §4.
+    /// `docs/reviews/ui-audit-backlog.md` §4.
     static let markWellSize: CGFloat = 20
 
     /// Fixed transparent panel; every morph happens inside it. Derived from
@@ -142,7 +142,6 @@ struct NotchIslandView: View {
     /// observing all of `AppPreferences` would re-render the island for every
     /// unrelated settings change.
     @State private var tokenStyle = AppPreferences.shared.tokenUnitStyle
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var vpnEnabled = AppPreferences.shared.vpnEnabled
 
     var body: some View {
@@ -562,6 +561,7 @@ private struct IslandGlint: View {
     let color: Color
     @State private var progress: CGFloat = 0
     @State private var visible = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         IslandShape(topFlare: IslandStyle.topFlare, bottomRadius: IslandStyle.alertBottomRadius)
@@ -570,6 +570,9 @@ private struct IslandGlint: View {
             .opacity(visible ? 1 : 0)
             .allowsHitTesting(false)
             .onAppear {
+                // Decoration, not information: Reduce Motion skips the sweep
+                // rather than shortening it.
+                guard !reduceMotion else { return }
                 withAnimation(.easeOut(duration: 0.9).delay(0.12)) { progress = 1.35 }
                 withAnimation(.easeIn(duration: 0.3).delay(0.85)) { visible = false }
             }
@@ -649,10 +652,12 @@ private struct IslandIconButton: View {
 }
 
 private struct IslandPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .animation(IslandStyle.hoverSpring, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : IslandStyle.hoverSpring, value: configuration.isPressed)
     }
 }
 

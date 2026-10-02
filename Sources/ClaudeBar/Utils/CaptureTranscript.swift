@@ -24,24 +24,29 @@ enum CaptureTranscript {
 
     // MARK: - Conversation
 
-    static func turns(from raw: String?, mode: ParseMode = .conversation, mediaDir: URL? = nil) -> [Turn] {
+    static func turns(
+        from raw: String?,
+        mode: ParseMode = .conversation,
+        mediaDir: URL? = nil,
+        includeImages: Bool = true
+    ) -> [Turn] {
         guard let raw, !raw.isEmpty else { return [] }
         guard let obj = object(raw) else {
             return mode == .full ? [Turn(role: "request", text: raw)] : []
         }
         var out: [Turn] = []
         if mode == .full {
-            appendRootFields(obj, into: &out)
+            appendRootFields(obj, includeImages: includeImages, into: &out)
         } else if let system = obj["system"] {
-            appendContent(system, role: "system", mode: mode, mediaDir: mediaDir, into: &out)
+            appendContent(system, role: "system", mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out)
         } else if let instructions = obj["instructions"] as? String, !instructions.isEmpty {
             let text = stripScaffolding(instructions)
             if !text.isEmpty { out.append(Turn(role: "system", text: text, name: "instructions")) }
         }
         if let messages = obj["messages"] as? [[String: Any]] {
-            for m in messages { appendMessage(m, mode: mode, mediaDir: mediaDir, into: &out) }
+            for m in messages { appendMessage(m, mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out) }
         } else if let input = obj["input"] as? [Any] {
-            for item in input { appendInput(item, mode: mode, mediaDir: mediaDir, into: &out) }
+            for item in input { appendInput(item, mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out) }
         } else if let prompt = obj["prompt"] as? String {
             emitText(prompt, role: "user", mode: mode, into: &out)
         }
@@ -69,7 +74,9 @@ enum CaptureTranscript {
     }
 
     static func preview(from raw: String?) -> String {
-        if let user = turns(from: raw).last(where: { $0.role == "user" }) {
+        // Runs on the proxy's ingest path; skip image decoding — the turns are
+        // thrown away except for the last user text.
+        if let user = turns(from: raw, includeImages: false).last(where: { $0.role == "user" }) {
             return clip(user.text)
         }
         return "(no messages)"
@@ -156,15 +163,15 @@ enum CaptureTranscript {
         }
         var out: [Turn] = []
         if let message = obj["message"] as? [String: Any] {
-            appendMessage(message, mode: mode, mediaDir: nil, into: &out)
+            appendMessage(message, mode: mode, mediaDir: nil, includeImages: true, into: &out)
         } else if let choices = obj["choices"] as? [[String: Any]] {
             for c in choices {
                 if let m = c["message"] as? [String: Any] {
-                    appendMessage(m, mode: mode, mediaDir: nil, into: &out)
+                    appendMessage(m, mode: mode, mediaDir: nil, includeImages: true, into: &out)
                 }
             }
         } else if let output = obj["output"] as? [Any] {
-            for item in output { appendInput(item, mode: mode, mediaDir: nil, into: &out) }
+            for item in output { appendInput(item, mode: mode, mediaDir: nil, includeImages: true, into: &out) }
         }
         if mode == .full, out.isEmpty {
             out.append(Turn(role: "response", text: stringifyJSON(obj)))
@@ -172,9 +179,9 @@ enum CaptureTranscript {
         return out
     }
 
-    private static func appendRootFields(_ obj: [String: Any], into out: inout [Turn]) {
+    private static func appendRootFields(_ obj: [String: Any], includeImages: Bool, into out: inout [Turn]) {
         if let system = obj["system"] {
-            appendContent(system, role: "system", mode: .full, mediaDir: nil, into: &out)
+            appendContent(system, role: "system", mode: .full, mediaDir: nil, includeImages: includeImages, into: &out)
         }
         if let instructions = obj["instructions"] as? String, !instructions.isEmpty {
             out.append(Turn(role: "system", text: instructions, name: "instructions"))
@@ -184,7 +191,13 @@ enum CaptureTranscript {
         }
     }
 
-    private static func appendMessage(_ m: [String: Any], mode: ParseMode, mediaDir: URL?, into out: inout [Turn]) {
+    private static func appendMessage(
+        _ m: [String: Any],
+        mode: ParseMode,
+        mediaDir: URL?,
+        includeImages: Bool,
+        into out: inout [Turn]
+    ) {
         let role = (m["role"] as? String) ?? ""
         if role == "tool" {
             out.append(Turn(
@@ -199,7 +212,7 @@ enum CaptureTranscript {
         if let r = m["reasoning_content"] as? String, !r.isEmpty {
             out.append(Turn(role: "thinking", text: r))
         }
-        appendContent(m["content"], role: role.isEmpty ? "user" : role, mode: mode, mediaDir: mediaDir, into: &out)
+        appendContent(m["content"], role: role.isEmpty ? "user" : role, mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out)
         if let calls = m["tool_calls"] as? [[String: Any]] {
             for c in calls {
                 let parsed = toolCallFields(c)
@@ -208,7 +221,13 @@ enum CaptureTranscript {
         }
     }
 
-    private static func appendInput(_ item: Any, mode: ParseMode, mediaDir: URL?, into out: inout [Turn]) {
+    private static func appendInput(
+        _ item: Any,
+        mode: ParseMode,
+        mediaDir: URL?,
+        includeImages: Bool,
+        into out: inout [Turn]
+    ) {
         guard let d = item as? [String: Any] else { return }
         let type = (d["type"] as? String) ?? ""
         if type == "function_call" {
@@ -233,12 +252,19 @@ enum CaptureTranscript {
             }
             return
         }
-        appendContent(d["content"] ?? d["text"], role: role.isEmpty ? "user" : role, mode: mode, mediaDir: mediaDir, into: &out)
+        appendContent(d["content"] ?? d["text"], role: role.isEmpty ? "user" : role, mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out)
     }
 
     /// Emit each content block in document order. Grouping text then tools
     /// used to scramble Anthropic assistant turns (text / tool_use / text).
-    private static func appendContent(_ any: Any?, role: String, mode: ParseMode, mediaDir: URL?, into out: inout [Turn]) {
+    private static func appendContent(
+        _ any: Any?,
+        role: String,
+        mode: ParseMode,
+        mediaDir: URL?,
+        includeImages: Bool,
+        into out: inout [Turn]
+    ) {
         if any == nil || any is NSNull { return }
         if let s = any as? String {
             emitText(s, role: role, mode: mode, into: &out)
@@ -252,11 +278,18 @@ enum CaptureTranscript {
             return
         }
         for p in parts {
-            emitPart(p, role: role, mode: mode, mediaDir: mediaDir, into: &out)
+            emitPart(p, role: role, mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out)
         }
     }
 
-    private static func emitPart(_ p: [String: Any], role: String, mode: ParseMode, mediaDir: URL?, into out: inout [Turn]) {
+    private static func emitPart(
+        _ p: [String: Any],
+        role: String,
+        mode: ParseMode,
+        mediaDir: URL?,
+        includeImages: Bool,
+        into out: inout [Turn]
+    ) {
         let type = (p["type"] as? String) ?? ""
         switch type {
         case "thinking", "reasoning", "redacted_thinking":
@@ -271,7 +304,7 @@ enum CaptureTranscript {
         case "tool_result", "function_call_output":
             if let parts = (p["content"] ?? p["output"]) as? [[String: Any]] {
                 for part in parts {
-                    emitPart(part, role: "tool", mode: mode, mediaDir: mediaDir, into: &out)
+                    emitPart(part, role: "tool", mode: mode, mediaDir: mediaDir, includeImages: includeImages, into: &out)
                 }
             } else {
                 out.append(Turn(
@@ -283,13 +316,13 @@ enum CaptureTranscript {
                         ?? ""))
             }
         case "image", "image_url", "input_image":
-            if let img = CaptureMedia.image(from: p, mediaDir: mediaDir) {
+            if includeImages, let img = CaptureMedia.image(from: p, mediaDir: mediaDir) {
                 out.append(Turn(role: role, text: "", name: "image", images: [img]))
             } else {
                 out.append(Turn(role: role, text: "[image]", name: "image"))
             }
         case "document", "file":
-            if let img = CaptureMedia.image(from: p, mediaDir: mediaDir) {
+            if includeImages, let img = CaptureMedia.image(from: p, mediaDir: mediaDir) {
                 out.append(Turn(role: role, text: "", name: type, images: [img]))
             } else {
                 out.append(Turn(

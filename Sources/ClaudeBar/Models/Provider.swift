@@ -9,6 +9,34 @@ struct ModelConfig: Codable, Identifiable, Equatable {
     var disableCompact: Bool = true
     var disableExperimentalBetas: Bool = true
     var autoCompactWindow: String = ""
+
+    init(id: UUID = UUID(), name: String, contextTokens: String = "",
+         disableCompact: Bool = true, disableExperimentalBetas: Bool = true,
+         autoCompactWindow: String = "") {
+        self.id = id
+        self.name = name
+        self.contextTokens = contextTokens
+        self.disableCompact = disableCompact
+        self.disableExperimentalBetas = disableExperimentalBetas
+        self.autoCompactWindow = autoCompactWindow
+    }
+
+    /// Hand-written: the synthesized decoder ignores property defaults, so one
+    /// row missing a key would throw and `Provider.init(from:)` would fall back
+    /// to an empty `models` array, silently losing every row in the file.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        contextTokens = try c.decodeIfPresent(String.self, forKey: .contextTokens) ?? ""
+        disableCompact = try c.decodeIfPresent(Bool.self, forKey: .disableCompact) ?? true
+        disableExperimentalBetas = try c.decodeIfPresent(Bool.self, forKey: .disableExperimentalBetas) ?? true
+        autoCompactWindow = try c.decodeIfPresent(String.self, forKey: .autoCompactWindow) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, contextTokens, disableCompact, disableExperimentalBetas, autoCompactWindow
+    }
 }
 
 // MARK: - Provider

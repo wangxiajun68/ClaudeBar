@@ -410,22 +410,22 @@ struct ConnectorsView: View {
 
     /// What a Remove would touch, for the copy. The plugin / MCP half is a
     /// config edit; a skill is a whole folder, which is the part worth naming.
-    private func removalSplit() -> (skills: Int, others: Int) {
-        let records = batchRecords(.remove)
+    /// The count is passed in because the caller already resolved the records.
+    private func removalSplit(_ records: [ConnectorRecord]) -> (skills: Int, others: Int) {
         let skills = records.filter { if case .skillMove = $0.method { return true } else { return false } }.count
         return (skills, records.count - skills)
     }
 
     private func askBatch(_ action: ConnectorBatchAction) {
-        let count = actionableCount(action)
-        guard count > 0 else { return }
         let targets = batchRecords(action)
+        let count = targets.count
+        guard count > 0 else { return }
         let places = Set(targets.flatMap(\.platforms).map(\.title))
         let where_ = places.isEmpty ? "" : "，涉及 " + places.sorted().joined(separator: "、")
         // Cursor's own state cannot be read, so a 停用 there is a *command*, not
         // a state change — the confirmation says so rather than promising an
         // outcome the app cannot know it got.
-        let cursor = batchRecords(action).filter { $0.batchCapability == .command }.count
+        let cursor = targets.filter { $0.batchCapability == .command }.count
         let cursorNote = cursor > 0 ? "，其中 \(cursor) 项由 Cursor 执行、状态请在 Customize 中核对" : ""
         let title: String
         let message: String
@@ -442,7 +442,7 @@ struct ConnectorsView: View {
                 ? "全局停用的 Skill 会还原；此前的平台停用设置仍然保留。被占用的路径会拒绝覆盖。"
                 : "只启用当前平台；全局停用的 Skill 需要先切到全部平台恢复。") + where_ + cursorNote + "。"
         case .remove:
-            let split = removalSplit()
+            let split = removalSplit(targets)
             title = "移除选中的 \(count) 项？"
             message = "Skill 会进废纸篓；插件和 MCP 会从该平台的配置里删掉。"
                 + (split.skills > 0 ? "其中 \(split.skills) 个 Skill 目录会连同内容一起进废纸篓。" : "")
@@ -479,6 +479,13 @@ struct ConnectorsView: View {
         let all = batchTargets(records: visibleRecords)
         let targets = Set(all.map(\.id))
         let selected = all.filter { selection.contains($0.id) }
+        // One pass of the batch policy per action, shared by the buttons and
+        // the readout below: each count re-derives the selection and re-expands
+        // its skills, so asking per use ran the whole filter a dozen times a
+        // render.
+        let disableCount = actionableCount(.disable)
+        let enableCount = actionableCount(.enable)
+        let removeCount = actionableCount(.remove)
         VStack(alignment: .leading, spacing: Theme.Space.s10) {
             HStack(spacing: Theme.Space.s8) {
                 Text("已选 \(selected.count) 项")
@@ -487,7 +494,7 @@ struct ConnectorsView: View {
                     .foregroundStyle(Theme.textPrimary)
                 ForEach(selectedPlatforms(selected), id: \.self) { item in
                     StatusPill(label: "\(item.title) \(selected.filter { $0.platforms.contains(item) }.count)",
-                               tint: platformFaceTint(item), ink: platformTint(item))
+                               tint: item.face, ink: item.ink)
                 }
                 if selected.isEmpty {
                     Text("点卡片左上角的复选框选中；下面的快捷键可以整批选。")
@@ -498,7 +505,7 @@ struct ConnectorsView: View {
                 if isBatching {
                     ProgressView().controlSize(.small)
                 }
-                Text(selectionActionability)
+                Text(selectionActionability(disable: disableCount, enable: enableCount, remove: removeCount))
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
@@ -533,11 +540,11 @@ struct ConnectorsView: View {
                     .disabled(selection.isEmpty)
                 Spacer(minLength: Theme.Space.s8)
                 ActionButton("停用") { askBatch(.disable) }
-                    .disabled(isBatching || actionableCount(.disable) == 0)
+                    .disabled(isBatching || disableCount == 0)
                 ActionButton("启用") { askBatch(.enable) }
-                    .disabled(isBatching || actionableCount(.enable) == 0)
+                    .disabled(isBatching || enableCount == 0)
                 ActionButton("移除", tone: .destructive) { askBatch(.remove) }
-                    .disabled(isBatching || actionableCount(.remove) == 0)
+                    .disabled(isBatching || removeCount == 0)
             }
             .frame(height: 30)
         }
@@ -552,14 +559,13 @@ struct ConnectorsView: View {
     }
 
     /// The one-line readout of what the selection can actually do. Three facts
-    /// the three buttons would otherwise state only by being disabled.
-    private var selectionActionability: String {
+    /// the three buttons would otherwise state only by being disabled. The
+    /// counts come from the caller, which already ran the policy for the
+    /// buttons — the readout used to re-derive all three.
+    private func selectionActionability(disable off: Int, enable on: Int, remove removable: Int) -> String {
         let records = selectedRecords()
         guard !records.isEmpty else { return "先在上面的网格里选中要处理的项" }
         var parts: [String] = []
-        let off = actionableCount(.disable)
-        let on = actionableCount(.enable)
-        let removable = actionableCount(.remove)
         if off > 0 { parts.append("可停用 \(off)") }
         if on > 0 { parts.append("可启用 \(on)") }
         if removable > 0 { parts.append("可移除 \(removable)") }
@@ -582,22 +588,6 @@ struct ConnectorsView: View {
         search = ""
         let kind = kind(of: item)
         selection = Set(manager.records.filter { $0.kind == kind }.map(\.id))
-    }
-
-    private func platformFaceTint(_ item: ConnectorPlatform) -> Color {
-        switch item {
-        case .claude: return Theme.claude
-        case .codex: return Theme.codex
-        case .cursor: return Theme.cursor
-        }
-    }
-
-    private func platformTint(_ item: ConnectorPlatform) -> Color {
-        switch item {
-        case .claude: return Theme.Ink.claude
-        case .codex: return Theme.Ink.codex
-        case .cursor: return Theme.Ink.cursor
-        }
     }
 
     private var emptyState: some View {
@@ -786,7 +776,7 @@ private struct ConnectorInventoryHeader: View {
                                      },
                                      tint: Theme.Ink.claude,
                                      itemTint: { item in
-                                         item.map(platformTint) ?? Theme.Ink.claude
+                                         item.map(\.ink) ?? Theme.Ink.claude
                                      },
                                      // Claude / Codex / Cursor are *identities*,
                                      // and this row already keeps their own hues
@@ -872,14 +862,6 @@ private struct ConnectorInventoryHeader: View {
     /// same selection pill as the three real clients.
     private var platformItems: [ConnectorPlatform?] {
         [nil] + ConnectorPlatform.allCases.map { Optional($0) }
-    }
-
-    private func platformTint(_ item: ConnectorPlatform) -> Color {
-        switch item {
-        case .claude: Theme.Ink.claude
-        case .codex: Theme.Ink.codex
-        case .cursor: Theme.Ink.cursor
-        }
     }
 
     /// All three clients' artwork is bundled, so all three draw it.
@@ -1003,12 +985,7 @@ private struct ConnectorCard: View {
     /// The card's platform hue as **text** — the `GlyphWell` mark and the
     /// per-platform chips, both of which need the readable variant.
     private var tint: Color {
-        switch record.platforms.first {
-        case .claude: return Theme.Ink.claude
-        case .codex: return Theme.Ink.codex
-        case .cursor: return Theme.Ink.cursor
-        case nil: return Theme.textSecondary
-        }
+        record.platforms.first?.ink ?? Theme.textSecondary
     }
 
     /// The same platform hue as a **surface** — the wash and the corner rings.
@@ -1017,12 +994,7 @@ private struct ConnectorCard: View {
     /// wash read as a dark smudge instead of as the card's accent. (`nil` — a
     /// connector with no platform — keeps the neutral hairline, i.e. no wash.)
     private var faceTint: Color? {
-        switch record.platforms.first {
-        case .claude: return Theme.claude
-        case .codex: return Theme.codex
-        case .cursor: return Theme.cursor
-        case nil: return nil
-        }
+        record.platforms.first?.face
     }
 
     var body: some View {
@@ -1070,8 +1042,8 @@ private struct ConnectorCard: View {
                             // the ink variant.
                             StatusPill(label: record.kind == .skill && record.skillPlatformStates[item] == false
                                        ? item.title + " · 停用" : item.title,
-                                       tint: platformFaceTint(item),
-                                       ink: platformTint(item))
+                                       tint: item.face,
+                                       ink: item.ink)
                         }
                         Text(record.scope)
                             .font(Theme.Font.micro)
@@ -1187,25 +1159,6 @@ private struct ConnectorCard: View {
             }
         }
         .frame(height: 30)
-    }
-
-    private func platformTint(_ item: ConnectorPlatform) -> Color {
-        switch item {
-        case .claude: return Theme.Ink.claude
-        case .codex: return Theme.Ink.codex
-        case .cursor: return Theme.Ink.cursor
-        }
-    }
-
-    /// The same platform hue as a **shape** — the `StatusPill` wash. The ink
-    /// mix lands near-navy behind a pill's own label, which is the mistake the
-    /// ink/shape pair exists to prevent.
-    private func platformFaceTint(_ item: ConnectorPlatform) -> Color {
-        switch item {
-        case .claude: return Theme.claude
-        case .codex: return Theme.codex
-        case .cursor: return Theme.cursor
-        }
     }
 }
 
@@ -1369,4 +1322,29 @@ private extension View {
     // one `Canvas` instead of one view per ring) plus the same lift and shadow,
     // so the connector grid and every other grid in the app are literally the
     // same surface.
+}
+
+/// The platform hue, in the two variants every readout on this page needs.
+/// Kept here rather than on the model: `ConnectorManager` imports only
+/// Foundation/Combine, and a view colour has no business in a model file.
+private extension ConnectorPlatform {
+    /// `Theme.Ink` — the readable variant, for a glyph or a pill label.
+    var ink: Color {
+        switch self {
+        case .claude: Theme.Ink.claude
+        case .codex: Theme.Ink.codex
+        case .cursor: Theme.Ink.cursor
+        }
+    }
+
+    /// `Theme.*` — the piece's own hue, for a wash or a ring. The ink mix
+    /// lands near-navy behind a label or as a surface fill, which is the
+    /// mistake the ink/shape pair exists to prevent.
+    var face: Color {
+        switch self {
+        case .claude: Theme.claude
+        case .codex: Theme.codex
+        case .cursor: Theme.cursor
+        }
+    }
 }

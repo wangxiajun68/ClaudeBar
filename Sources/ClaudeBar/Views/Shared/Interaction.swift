@@ -444,8 +444,10 @@ struct RollingNumberModifier: ViewModifier {
     ///   (`UIWakePolicy.hasVisibleWindow`, `surfaceIsVisible` in a `body`); the
     ///   figure asks via `rolls` instead of each owner remembering to gate.
     /// - **a value fed at >1 Hz.** The resource strip's CPU / GPU / 内存 / 硬盘
-    ///   heroes sample as often as once a second while a detail popover is open.
-    ///   At that rate the transition never settles: the tile is mid-roll when the
+    ///   heroes republish on the sampler's own cadence — every 2 s while a
+    ///   resource surface is open, 1 s once a session is live
+    ///   (`ProcessSampler.applyPeriod`). At that rate the transition never
+    ///   settles: the tile is mid-roll when the
     ///   next reading lands, so it never shows a readable frame and it redraws
     ///   the whole card per sample. Coat every other figure in the app.
     ///

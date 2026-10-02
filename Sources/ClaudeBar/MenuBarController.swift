@@ -108,13 +108,12 @@ final class MenuBarController: NSObject {
         refreshMenuBarBattery()
     }
 
-    /// The accessory is owned by AppKit, not by ARC: `removeFromSuperview` on
-    /// a view reachable only from the status-bar button's subview list drops
-    /// the last owning reference while `rateAccessory` — a plain strong
-    /// property — keeps a dangling pointer to it, and `tickVpnRate()` would
-    /// then write through freed memory. Call this before dropping anything
-    /// that can tear the status item down, and before `setup()` builds a new
-    /// one; `installVpnRateDisplay` re-creates it.
+    /// The view is retained by `rateAccessory`; `removeFromSuperview` drops
+    /// only AppKit's claim on it, and clearing the property is what releases
+    /// it. Call this before the status item or the observer graph tears down:
+    /// it cancels the `objectWillChange` sink, which could otherwise fire
+    /// mid-teardown, and invalidates the eight-second battery timer.
+    /// `installVpnRateDisplay` re-creates it.
     @MainActor
     func teardownVpnRateDisplay() {
         rateCancel?.cancel()
@@ -406,7 +405,7 @@ final class MenuBarController: NSObject {
     ///
     /// `parent` is the right member for a *popover*. A `confirmationDialog` /
     /// `.alert` off a panel is an `_NSAlertPanel` attached by `sheetParent`
-    /// instead — measured, see `docs/technical/17-ui-audit-backlog.md` §6 — so
+    /// instead — measured, see `docs/reviews/ui-audit-backlog.md` §6 — so
     /// the day a dialog lands in this panel it needs its own clause here.
     ///
     /// Local monitor catches mouse-downs delivered to OUR app windows.

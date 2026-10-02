@@ -3,13 +3,10 @@ import SwiftUI
 /// Quiet geometric marks: one silhouette, generous negative space, consistent weight.
 /// Compact labels stay monochrome; only live instruments use semantic color.
 struct InstrumentGlyph: View, Animatable {
-    enum Kind { case cpu, gpu, memory, disk, link, ethernet, fan, config, balance, sessions, tokens, quota, vpn, battery, refresh
-        case overview, traffic, settings, help, power, notification, folder, search, appearance, camera, cost, weather, clock }
+    enum Kind { case cpu, gpu, memory, disk, link, ethernet, fan, config, sessions, tokens, vpn, refresh
+        case overview, traffic, settings, help, power, notification, search, weather }
     var kind: Kind
     var tint: Color = Theme.chartBlue
-    var level: Double = 0
-    var detailed = false
-    var active = true
     var phase: Double = 0
 
     var animatableData: Double {
@@ -27,7 +24,6 @@ struct InstrumentGlyph: View, Animatable {
         case "network": return .ethernet
         case "fanblades": return .fan
         case "cube": return .config
-        case "yensign.circle": return .balance
         case "rectangle.stack", "rectangle.connected.to.line.below": return .sessions
         case "chart.bar": return .tokens
         case "square.grid.2x2": return .overview
@@ -37,15 +33,10 @@ struct InstrumentGlyph: View, Animatable {
         case "globe", "shield", "shield.checkered": return .vpn
         case "power": return .power
         case "bell", "bell.fill": return .notification
-        case "folder", "folder.fill": return .folder
         case "magnifyingglass": return .search
-        case "paintpalette", "circle.lefthalf.filled": return .appearance
-        case "camera": return .camera
-        case "banknote": return .cost
         case "arrow.clockwise": return .refresh
         case "cylinder": return .disk
         case "cloud.sun", "cloud.sun.fill", "sun.max": return .weather
-        case "clock", "clock.fill": return .clock
         default: return nil
         }
     }
@@ -57,10 +48,13 @@ struct InstrumentGlyph: View, Animatable {
             var c = context
             c.translateBy(x: (size.width - scale * 24) / 2, y: (size.height - scale * 24) / 2)
             c.scaleBy(x: scale, y: scale)
-            let ink = active ? tint : Theme.textSecondary
+            // No construction of this glyph sets a reading, so there is no
+            // `level`/`detailed`/`active`: the marks are drawn at one weight.
+            // A future meter that wants a fill adds the parameter back with
+            // the value in hand (see `InstrumentBadge` for the intended shape).
+            let ink = tint
             let track = ink.opacity(0.16)
-            let amount = min(1, max(0, level.isFinite ? level : 0))
-            let stroke = StrokeStyle(lineWidth: detailed ? 0.85 : 1.65, lineCap: .round, lineJoin: .round)
+            let stroke = StrokeStyle(lineWidth: 1.65, lineCap: .round, lineJoin: .round)
             func line(_ points: [CGPoint], _ color: Color) {
                 guard let first = points.first else { return }
                 var path = Path(); path.move(to: first)
@@ -94,13 +88,8 @@ struct InstrumentGlyph: View, Animatable {
                     line([CGPoint(x:18,y:p),CGPoint(x:21,y:p)],ink)
                 }
                 box(9-phase,9-phase,6+2*phase,6+2*phase,track,fill:true,radius:1.5)
-                if detailed, amount > 0 {
-                    var fill = c
-                    fill.clip(to: Path(roundedRect: CGRect(x:9,y:9,width:6,height:6),cornerRadius:1.5))
-                    fill.fill(Path(CGRect(x:9,y:15-6*amount,width:6,height:6*amount)),with:.color(ink))
-                }
             case .gpu:
-                LucideHardwarePaths.drawGPU(in: &c, tint: ink, level: amount, detailed: detailed)
+                LucideHardwarePaths.drawGPU(in: &c, tint: ink)
             case .memory:
                 box(2,6,20,11,ink,radius:2)
                 box(5,9,5,5,track,fill:true,radius:1)
@@ -113,39 +102,27 @@ struct InstrumentGlyph: View, Animatable {
                 circle(12,10,3.5,track,fill:true)
                 circle(12,10,1,ink,fill:true)
                 line([CGPoint(x:9,y:17),CGPoint(x:15,y:17)],track)
-                if !detailed || amount > 0 {
-                    line([CGPoint(x:9,y:17),CGPoint(x:9+6*(detailed ? amount : 1),y:17)],ink)
-                }
+                line([CGPoint(x:9,y:17),CGPoint(x:15,y:17)],ink)
             case .link:
                 arc(12,18,13,228,312,ink)
                 arc(12,18,8,228,312,ink)
                 circle(12,17,1.5+phase*0.5,ink,fill:true)
-                if !active { line([CGPoint(x:4,y:4),CGPoint(x:20,y:20)],ink) }
             case .ethernet:
                 box(7,3,10,7,ink)
                 line([CGPoint(x:12,y:10),CGPoint(x:12,y:16)],ink)
                 line([CGPoint(x:5,y:20),CGPoint(x:5,y:16),CGPoint(x:19,y:16),CGPoint(x:19,y:20)],ink)
             case .fan:
-                let symbol = c.resolve(Image(systemName: "fanblades.fill"))
+                // A resolved symbol carries the environment's foreground,
+                // not this glyph's `ink`: without the shading, the rotor
+                // was the one mark on the grid that ignored its tint.
+                var symbol = c.resolve(Image(systemName: "fanblades.fill"))
+                symbol.shading = .color(ink)
                 c.draw(symbol, in: CGRect(x: 3, y: 3, width: 18, height: 18))
             case .config:
                 box(4,4,6,6,ink,radius:2)
                 box(14,4,6,6,ink,radius:2)
                 box(4,14,6,6,ink,radius:2)
                 box(14,14-phase*2,6,6,ink,fill:true,radius:2)
-            case .balance:
-                circle(12,12,8,ink)
-                line([CGPoint(x:9,y:8),CGPoint(x:12,y:11),CGPoint(x:15,y:8)],ink)
-                line([CGPoint(x:9,y:13),CGPoint(x:15,y:13)],ink)
-                line([CGPoint(x:12,y:11),CGPoint(x:12,y:16)],ink)
-            case .cost:
-                // A banknote, not the ¥-in-a-circle of `.balance`: the two sit
-                // in the same grid and must not read as the same instrument.
-                box(2.5,6,19,12,ink,radius:3)
-                circle(12,12,3.2,ink)
-                line([CGPoint(x:12,y:10.4),CGPoint(x:12,y:13.6)],ink)
-                line([CGPoint(x:5.5,y:9),CGPoint(x:5.5,y:15)],track)
-                line([CGPoint(x:18.5,y:9),CGPoint(x:18.5,y:15)],track)
             case .sessions:
                 box(4,6,16,13,ink,radius:3)
                 line([CGPoint(x:8,y:10),CGPoint(x:10.5,y:12.5),CGPoint(x:8,y:15)],ink)
@@ -154,22 +131,8 @@ struct InstrumentGlyph: View, Animatable {
                 box(4,12,4,8,ink,fill:true)
                 box(10,7,4,13,ink.opacity(0.7),fill:true)
                 box(16,3,4,17,ink.opacity(0.4),fill:true)
-            case .quota:
-                // Open circular meter with two window markers: immediately
-                // reads as allowance remaining without looking like currency.
-                let quotaLevel = detailed ? amount : 0.68
-                arc(12,12,8,-52,232,track)
-                arc(12,12,8,-52,-52 + 284 * quotaLevel,ink)
-                circle(12,12,2.2,ink,fill:true)
-                line([CGPoint(x:12,y:12),CGPoint(x:16.5,y:8.5)],ink)
-                circle(5.7,17,1.1,ink.opacity(0.75),fill:true)
-                circle(18.3,17,1.1,ink.opacity(0.42),fill:true)
             case .vpn:
-                LucideHardwarePaths.drawVPN(in: &c, tint: ink, active: active)
-            case .battery:
-                box(3,7,16,10,ink,radius:3)
-                line([CGPoint(x:22,y:10),CGPoint(x:22,y:14)],ink)
-                if amount > 0 { box(5,9,12*amount,6,ink,fill:true,radius:min(1.5,6*amount)) }
+                LucideHardwarePaths.drawVPN(in: &c, tint: ink)
             case .overview:
                 box(3,3,8,10+phase*2,ink,radius:2.5)
                 box(14,3,7,6,ink.opacity(0.4),fill:true,radius:2)
@@ -209,12 +172,6 @@ struct InstrumentGlyph: View, Animatable {
                 c.stroke(bell,with:.color(ink),style:stroke)
                 arc(12+phase,19,2,0,180,ink)
                 circle(19,4,1+phase,ink.opacity(0.5),fill:true)
-            case .folder:
-                var folder = Path()
-                folder.move(to:CGPoint(x:3,y:7))
-                folder.addLines([CGPoint(x:3,y:4),CGPoint(x:9,y:4),CGPoint(x:12,y:7),CGPoint(x:21,y:7),CGPoint(x:21,y:20),CGPoint(x:3,y:20),CGPoint(x:3,y:7)])
-                c.stroke(folder,with:.color(ink),style:stroke)
-                line([CGPoint(x:7,y:12-phase),CGPoint(x:17,y:12-phase)],ink.opacity(0.4))
             case .weather:
                 // Sun behind a cloud: the card's own mark. The sun keeps the
                 // shape hue so it reads on the ice canvas even at 26pt.
@@ -234,25 +191,9 @@ struct InstrumentGlyph: View, Animatable {
                                      cornerSize: CGSize(width: 3.2, height: 3.2))
                 c.fill(cloud, with: .color(ink.opacity(0.16)))
                 c.stroke(cloud, with: .color(ink), style: stroke)
-            case .clock:
-                circle(12, 12, 9.2, ink)
-                line([CGPoint(x: 12, y: 12 - 5.4 + phase), CGPoint(x: 12, y: 12)], ink)
-                line([CGPoint(x: 12, y: 12), CGPoint(x: 12 + 4.6, y: 12 + 1.6)], ink)
-                circle(12, 12, 0.9, ink, fill: true)
             case .search:
                 circle(10,10,6+phase,ink)
                 line([CGPoint(x:15,y:15),CGPoint(x:21,y:21)],ink)
-            case .appearance:
-                circle(12,12,9,ink)
-                var half = c
-                half.clip(to:Path(CGRect(x:12,y:2,width:10,height:20)))
-                half.fill(Path(ellipseIn:CGRect(x:5,y:5,width:14,height:14)),with:.color(ink.opacity(0.7)))
-                circle(8,12,1+phase*0.5,ink,fill:true)
-            case .camera:
-                box(3,6,18,14,ink,radius:3)
-                line([CGPoint(x:8,y:6),CGPoint(x:9,y:3),CGPoint(x:15,y:3),CGPoint(x:16,y:6)],ink)
-                circle(12,13,4+phase,ink)
-                circle(18,9,0.8,ink,fill:true)
             case .refresh:
                 arc(12,12,7,40,310,ink)
                 line([CGPoint(x:12,y:6),CGPoint(x:17,y:6),CGPoint(x:17,y:1.5)],ink)

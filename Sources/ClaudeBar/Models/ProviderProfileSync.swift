@@ -192,29 +192,22 @@ enum ProviderProfileSync {
         if live { peer.restoreOfficial() }
     }
 
-    /// An existing row with the same profile, or the one saved configuration
-    /// of this vendor from before profiles existed. A second key for the same
-    /// vendor is left alone.
     private static func codexIndex(profileID: UUID, name: String, entry: ProviderCatalogEntry?,
                                    providers: [CodexProvider]) -> Int? {
-        if let index = providers.firstIndex(where: { $0.profileID == profileID }) { return index }
-        let open = providers.indices.filter { providers[$0].profileID == nil || providers[$0].profileID == profileID }
-        if let entry {
-            let same = open.filter {
-                providers[$0].catalogID == entry.id
-                    || ProviderCatalogEntry.matching(baseURL: providers[$0].baseURL)?.id == entry.id
-            }
-            if same.count == 1 { return same[0] }
-            return same.first {
-                providers[$0].name.caseInsensitiveCompare(name) == .orderedSame
-            }
-        }
-        let named = open.filter { providers[$0].name.caseInsensitiveCompare(name) == .orderedSame }
-        return named.count == 1 ? named[0] : nil
+        twinIndex(profileID: profileID, name: name, entry: entry, providers: providers)
     }
 
     private static func claudeIndex(profileID: UUID, name: String, entry: ProviderCatalogEntry?,
                                     providers: [Provider]) -> Int? {
+        twinIndex(profileID: profileID, name: name, entry: entry, providers: providers)
+    }
+
+    /// An existing row with the same profile, or the one saved configuration
+    /// of this vendor from before profiles existed. A second key for the same
+    /// vendor is left alone. Both stores' rows carry the same identity fields,
+    /// so one rule covers either side.
+    private static func twinIndex<T: TwinRow>(profileID: UUID, name: String, entry: ProviderCatalogEntry?,
+                                              providers: [T]) -> Int? {
         if let index = providers.firstIndex(where: { $0.profileID == profileID }) { return index }
         let open = providers.indices.filter { providers[$0].profileID == nil || providers[$0].profileID == profileID }
         if let entry {
@@ -331,3 +324,16 @@ enum ProviderProfileSync {
         store.activateModel(providerID: id, modelID: modelID)
     }
 }
+
+/// The identity fields both stores' rows share, so one lookup can serve either
+/// client. Stability of `profileID` is what links the two records; `catalogID`
+/// and `baseURL` only help adopt rows saved before profiles existed.
+private protocol TwinRow {
+    var profileID: UUID? { get }
+    var catalogID: String? { get }
+    var baseURL: String { get }
+    var name: String { get }
+}
+
+extension Provider: TwinRow {}
+extension CodexProvider: TwinRow {}

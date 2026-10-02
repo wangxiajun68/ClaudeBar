@@ -110,12 +110,12 @@ final class CodexProxyServer: @unchecked Sendable {
     /// reaches the proxy's injected key.
     ///
     /// `requiredInterfaceType` below is not a bind restriction — it only
-    /// constrains which interface the listener prefers. The live socket is a
-    /// wildcard `*:<port>` (verified with `lsof`), so the only thing standing
-    /// between a LAN peer and this key-injecting proxy is the macOS
-    /// application firewall, which is a user setting and off on plenty of
-    /// machines. Advisory locking plus mode 0600 is what keeps other local
-    /// users off the token file; it is a same-user secret, not a root secret.
+    /// constrains which interface the listener prefers. On its own the socket
+    /// came up as a wildcard `*:<port>` (verified with `lsof`), which is why
+    /// `requiredLocalEndpoint` is set below: a LAN peer must not reach this
+    /// key-injecting proxy. Mode 0600 plus `O_EXCL`/`O_NOFOLLOW` in
+    /// `loadOrCreateToken` is what keeps other local users off the token file;
+    /// it is a same-user secret, not a root secret.
     private let tokenPath: URL
 
     init(port: UInt16, state: CodexProxyState, tokenPath: URL = FilePaths.proxyTokenFile) {
@@ -357,6 +357,10 @@ final class CodexProxyServer: @unchecked Sendable {
             return
         }
 
+        // Whether a response head has gone out on this socket. Once it has, a
+        // fresh `respond(502 JSON)` would land a second `HTTP/1.1` status line
+        // inside an open body, so the catch arm has to keep speaking SSE.
+        var headWritten = false
         // 3. Parse body.
         guard let body = request.body,
               var json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
@@ -376,13 +380,16 @@ final class CodexProxyServer: @unchecked Sendable {
                json["messages"] != nil,
                json["input"] == nil {
                 try await forwardNativeChat(connection, request: request, json: json,
-                                            upstream: upstream, log: openaiTap)
+                                            upstream: upstream, log: openaiTap,
+                                            headWritten: &headWritten)
             } else if CodexProxyTransform.shouldBridgeToChat(
                 baseURL: upstream.baseURL, wireAPI: upstream.wireAPI, model: model) {
-                try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
+                try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap,
+                                         headWritten: &headWritten)
             } else {
                 do {
-                    try await forwardResponses(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
+                    try await forwardResponses(connection, request: request, json: &json, upstream: upstream, log: openaiTap,
+                                               headWritten: &headWritten)
                 } catch {
                     // Responses-lite gateway (Aibox/GLM wrappers): first turn
                     // of messages works, turn 2 replays function_call and the
@@ -390,7 +397,8 @@ final class CodexProxyServer: @unchecked Sendable {
                     // and cc-switch Chat both convert instead of forwarding.
                     guard CodexProxyTransform.isResponseInputReject(error),
                           !Self.wasInterrupted() else { throw error }
-                    try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap)
+                    try await forwardViaChat(connection, request: request, json: &json, upstream: upstream, log: openaiTap,
+                                             headWritten: &headWritten)
                 }
             }
         } catch {
@@ -399,9 +407,19 @@ final class CodexProxyServer: @unchecked Sendable {
             // Interrupt = hard stop. The client socket is already down (the
             // abort hook closed it), so there is nothing to answer; writing a
             // synthesized failure here would only race that teardown.
-            if !Self.wasInterrupted() {
+            if !Self.wasInterrupted(), !headWritten {
+                // Nothing is on the wire yet, so a real HTTP error response is
+                // still possible — but the client must get the framing it
+                // asked for. A streaming client would read a JSON error as a
+                // malformed event stream, so it gets a terminal SSE event
+                // instead. `headWritten` covers the case the Accept header
+                // misses: a forwarder that already flushed an SSE or
+                // upstream-error head (the client need not have sent
+                // `Accept: text/event-stream`), where a second `HTTP/1.1` line
+                // would corrupt the response.
                 let acceptSSE = request.headers["accept"]?.contains("text/event-stream") ?? false
                 if acceptSSE {
+                    await write(connection, data: sseHead())
                     await write(connection, data: CodexProxyTransform.synthesizeFailed(message: "上游请求失败：\(error.localizedDescription)"))
                 } else {
                     await respond(connection, status: "502 Bad Gateway", contentType: "application/json",
@@ -414,9 +432,11 @@ final class CodexProxyServer: @unchecked Sendable {
 
     /// Passthrough for OpenAI Chat Completions clients (Cursor, curl, etc.).
     /// Body and response stay Chat-shaped; no Responses rewrite.
+    /// `headWritten` flips once a response head is flushed on the socket, so
+    /// `handle()`'s failure arm knows a raw HTTP error is no longer writable.
     private func forwardNativeChat(_ connection: NWConnection, request: HTTPRequest,
                                    json: [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
-                                   log: ProxyLogTap) async throws {
+                                   log: ProxyLogTap, headWritten: inout Bool) async throws {
         let outData = try JSONSerialization.data(withJSONObject: json)
         let wantsStream = (json["stream"] as? Bool) ?? false
         let tap = await makeOpenAITap(
@@ -451,6 +471,7 @@ final class CodexProxyServer: @unchecked Sendable {
                 let http = response as? HTTPURLResponse
                 statusCode = http?.statusCode ?? 200
                 let ctype = http?.value(forHTTPHeaderField: "Content-Type") ?? "text/event-stream"
+                headWritten = true
                 await write(connection, data: streamHead(status: statusCode, contentType: ctype))
                 if statusCode >= 400 {
                     var errBody = Data()
@@ -512,9 +533,12 @@ final class CodexProxyServer: @unchecked Sendable {
 
     // MARK: - Responses-native upstream
 
+    /// Responses-native upstream. `headWritten` flips once the SSE head is on
+    /// the socket so `handle()`'s failure arm knows not to write a raw HTTP
+    /// error over it.
     private func forwardResponses(_ connection: NWConnection, request: HTTPRequest,
                                   json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
-                                  log: ProxyLogTap) async throws {
+                                  log: ProxyLogTap, headWritten: inout Bool) async throws {
         var registry = CodexProxyTransform.ToolRegistry()
         // Official OpenAI Responses understands `type:namespace` natively;
         // flattening would break dispatch. Every other Responses peer is the
@@ -557,6 +581,7 @@ final class CodexProxyServer: @unchecked Sendable {
             try Self.throwIfInterrupted(tap)
             let (lines, task) = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
             Self.attachUpstream(tap, task: task)
+            headWritten = true
             await write(connection, data: sseHead())
             var sawTerminal = false
             var sawCreated = false
@@ -635,9 +660,12 @@ final class CodexProxyServer: @unchecked Sendable {
         }
     }
 
+    /// Responses→Chat bridge. `headWritten` flips once the SSE head is on the
+    /// socket so `handle()`'s failure arm knows not to write a raw HTTP error
+    /// over it.
     private func forwardViaChat(_ connection: NWConnection, request: HTTPRequest,
                                 json: inout [String: Any], upstream: CodexProxyState.UpstreamEndpoint,
-                                log: ProxyLogTap) async throws {
+                                log: ProxyLogTap, headWritten: inout Bool) async throws {
         var registry = CodexProxyTransform.ToolRegistry()
         let chatBody = CodexProxyTransform.responsesToChatRequest(json, registry: &registry)
         let outData = try JSONSerialization.data(withJSONObject: chatBody)
@@ -667,6 +695,7 @@ final class CodexProxyServer: @unchecked Sendable {
         try Self.throwIfInterrupted(tap)
         let (chatLines, chatTask) = try await streamSSE(url: upstreamURL, apiKey: upstream.apiKey, body: outData)
         Self.attachUpstream(tap, task: chatTask)
+        headWritten = true
         await write(connection, data: sseHead())
         var streamState = CodexProxyTransform.ChatStreamState()
         streamState.registry = registry
@@ -830,16 +859,11 @@ final class CodexProxyServer: @unchecked Sendable {
             return
         }
 
-        let wantsStream: Bool = {
-            guard let body = request.body,
-                  let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return false }
-            return (json["stream"] as? Bool) ?? false
-        }()
-        let model: String = {
-            guard let body = request.body,
-                  let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return "" }
-            return (json["model"] as? String) ?? ""
-        }()
+        // The access log parses the body for model/stream, so reuse that read
+        // instead of deserializing the whole conversation a second time.
+        let peek = Self.peekJSON(request.body)
+        let wantsStream = peek.stream
+        let model = peek.model
 
         let tap: CaptureTap?
         if inspect, await shouldCaptureAnthropic(request.headers) {

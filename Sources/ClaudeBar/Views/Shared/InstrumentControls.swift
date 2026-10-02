@@ -50,11 +50,11 @@ enum ControlTone {
     /// visible without being loud.
     ///
     /// `ActionButton`'s default tone, and what every call site that does not
-    /// name one gets.
-    /// default for `ActionIcon` and `ActionPlateButtonStyle`, and the right
-    /// answer for a call site that wants a quiet plate on the ice canvas — a
-    /// dense row of icon actions, or a button drawn inside a card where a dark
-    /// pill would punch a hole in the surface.
+    /// name one gets — also the default for `ActionIcon` and
+    /// `ActionPlateButtonStyle`, and the right answer for a call site that
+    /// wants a quiet plate on the ice canvas — a dense row of icon actions, or
+    /// a button drawn inside a card where a dark pill would punch a hole in
+    /// the surface.
     case neutral
     /// The page's one primary action. Not a slab of the hue — a *tinted* fill at
     /// 14 % with the hue's ink as the label, the way macOS tints a secondary
@@ -806,7 +806,7 @@ extension View {
 /// and — the part that makes it recognisable — a **ring indicator** on the far
 /// side of the knob, red when off and green when on.
 ///
-/// Geometry is measured from the reference's two state images (216 × 92 track,
+/// Geometry is measured from the reference's two state images (222 × 84 track,
 /// 82 knob, 48 ring on the same artwork), not from the CSS numbers in the brief:
 /// the two disagree, and the images are the design. The CSS's own
 /// `115 × 55 / knob 42 / padding 6` gives a longer, flatter pill with a smaller
@@ -816,9 +816,9 @@ extension View {
 /// | --- | --- |
 /// | track h/w | 0.378 |
 /// | knob / track height | 0.976 |
-/// | knob centre, off → on | 24 % → 76 % of width |
+/// | knob centre, off → on | 53 / 169 px |
 /// | ring / track height | 0.571 |
-/// | ring centre, off → on | 76 % → 23 % |
+/// | ring centre, off → on | 169 / 53 px |
 ///
 /// **The ring does not travel.** That is the one structural thing the first
 /// attempt here got wrong. It reads as if the indicator slides across, but in
@@ -840,7 +840,7 @@ struct InstrumentToggleStyle: ToggleStyle {
     var tint: Color = Theme.Ink.claude
     /// `false` drops the label column, for a bare switch in a tile cell.
     var showsLabel = true
-    /// Overall width. The reference artwork is 216 wide; this default is about a
+    /// Overall width. The reference artwork is 222 wide; this default is about a
     /// third of that, because most call sites here sit in a caption row.
     var width: CGFloat = 62
 
@@ -891,6 +891,13 @@ struct InstrumentToggleStyle: ToggleStyle {
         /// ring is 48 with a 6 stroke.)
         var ringStrokeRatio: CGFloat = 6.0 / 48.0
         /// Knob centre when off, and when on (mirrored).
+        ///
+        /// The measured stops are 53 / 169 px, i.e. 0.24 / 0.76 of the width.
+        /// The drawn ones sit a touch further in — 0.265 / 0.735, the stop the
+        /// control has shipped — and, unlike `knobRatio` above, that is not a
+        /// shadow-footprint correction. At the 62pt default the two differ by
+        /// under 2pt, so re-deriving them would move every toggle in the app
+        /// for no visible gain.
         var knobOffCentre: CGFloat = 0.265
         var knobOnCentre: CGFloat = 0.735
 

@@ -211,13 +211,22 @@ final class VpnProxyGuard {
 
 // MARK: - TUN / DNS helper
 
+/// One service's DNS answer from before the TUN override. Empty `servers`
+/// means the service had no manual servers, so putting it back is
+/// `-setdnsservers <service> Empty` (DHCP).
+private struct OriginalDNS: Codable {
+    let service: String
+    let servers: [String]
+}
+
 /// TUN itself needs no extra config in mihomo (auto-route + the `tun:` block
 /// handle it), but on macOS the default-route DNS must be pinned to a public
 /// resolver while fake-ip is active — what clash-verge's set_dns.sh does.
-/// We reuse the app's existing privileged-helper pattern (setuid fanctl) for
-/// this: the helper binary runs networksetup as root.
+/// The calls below shell straight to `/usr/sbin/networksetup` under the
+/// user's own identity; the setuid fanctl helper has no networksetup mode.
 enum VpnTunDnsHelper {
-    static let helperPath = "/usr/local/bin/claudebar-fanctl" // existing setuid helper host
+    /// Per-service snapshot written before the first override; its presence
+    /// is what tells restore there is something to undo.
     static let dnsMarker = FilePaths.vpnDir.appendingPathComponent(".original_dns")
 
     /// Only meaningful when a TUN session is starting. Uses the public
@@ -240,22 +249,44 @@ enum VpnTunDnsHelper {
         Task.detached(priority: .userInitiated) { restoreSystemDNSNow() }
     }
 
+    /// Undo in the reverse order: put the recorded servers back first, then
+    /// drop the markers. A service that had manual servers gets them back;
+    /// one that had none was on DHCP and is reset to `Empty`. Services that
+    /// appeared after the snapshot are skipped — they were never touched.
     nonisolated static func restoreSystemDNSNow() {
         guard BuildChannel.allowsSystemIntegration else { return }
-        guard FileManager.default.fileExists(atPath: dnsMarker.path) else { return }
-        for service in VpnSystemProxyController.networkServices() {
-            _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "Empty"])
+        guard let data = try? Data(contentsOf: dnsMarker) else { return }
+        if let snapshot = try? JSONDecoder().decode([OriginalDNS].self, from: data) {
+            let live = Set(VpnSystemProxyController.networkServices())
+            for entry in snapshot where live.contains(entry.service) {
+                let args = entry.servers.isEmpty
+                    ? ["-setdnsservers", entry.service, "Empty"]
+                    : ["-setdnsservers", entry.service] + entry.servers
+                _ = Process.runAndRead("/usr/sbin/networksetup", args: args)
+            }
         }
+        // Removed even when the marker could not be decoded (e.g. one written
+        // by an older build): leaving it would re-run this restore on exit.
         try? FileManager.default.removeItem(at: dnsMarker)
         try? FileManager.default.removeItem(at: FilePaths.vpnTunMarker)
     }
 
     nonisolated private static func saveOriginalDNSIfNeeded() {
         guard !FileManager.default.fileExists(atPath: dnsMarker.path) else { return }
-        let services = VpnSystemProxyController.networkServices()
-        guard let first = services.first else { return }
-        let result = Process.runAndRead("/usr/sbin/networksetup", args: ["-getdnsservers", first])
-        try? result.output.write(to: dnsMarker, atomically: true, encoding: .utf8)
+        let snapshot = VpnSystemProxyController.networkServices().map { service in
+            OriginalDNS(service: service, servers: dnsServers(of: service))
+        }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        try? data.write(to: dnsMarker, options: .atomic)
+    }
+
+    /// `networksetup` answers "There aren't any DNS Servers set on <service>."
+    /// for a service that follows DHCP; every other output line is one server.
+    nonisolated private static func dnsServers(of service: String) -> [String] {
+        let result = Process.runAndRead("/usr/sbin/networksetup", args: ["-getdnsservers", service])
+        return result.output.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("There aren") }
     }
 }
 

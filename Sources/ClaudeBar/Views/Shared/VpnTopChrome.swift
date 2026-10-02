@@ -22,10 +22,10 @@ enum VpnDelayStyle {
 /// The popup's VPN readout, moved up to the status row so the header switcher
 /// row can carry a third *quota* family (Cursor) instead of a third control.
 ///
-/// It is the same reading the old VPN chip showed — the live node and its delay,
-/// or the port it is listening on — compressed to one line for the dense top
-/// strip. The picker itself (`VpnNodePickerPanel`) has not moved; this pill is
-/// its presentational trigger.
+/// It shows the old VPN chip's status reading — the live node and its delay —
+/// compressed to one line for the dense top strip. Clicking it opens the main
+/// window's VPN page; the in-popup node picker and the `127.0.0.1:<port>`
+/// readout are both gone.
 struct VpnStatusPill: View {
     @ObservedObject private var vpn = VpnManager.shared
     /// 0 = full (status row), 1 = tight. The status row has room for the node

@@ -251,19 +251,41 @@ enum Theme {
     }
 
     // MARK: Context health color
+
+    /// The context ladder as a single band: calm below 60 %, warning below
+    /// 85 %, critical past it.
+    ///
+    /// The thresholds are the rule; the hue is the surface's own. The two
+    /// functions below render the band in the sheet palette; a surface that
+    /// keeps its own palette (`CursorSessionCardView`'s violet, the island
+    /// gauge's mint/coral) can map the band instead of re-spelling `0.6`/`0.85`.
+    enum ContextLevel {
+        case ok, warn, critical
+
+        init(_ ratio: Double) {
+            if ratio < 0.6 { self = .ok }
+            else if ratio < 0.85 { self = .warn }
+            else { self = .critical }
+        }
+    }
+
     static func contextColor(_ ratio: Double) -> Color {
-        if ratio < 0.6 { return statusBusy }
-        if ratio < 0.85 { return statusWarning }
-        return statusError
+        switch ContextLevel(ratio) {
+        case .ok: return statusBusy
+        case .warn: return statusWarning
+        case .critical: return statusError
+        }
     }
 
     /// `contextColor` as readable text — the context label ("48.2k / 200k")
     /// is text, and the raw hues are 1.8–3.4:1 on the light canvas. The bar
     /// itself keeps `contextColor`.
     static func contextInk(_ ratio: Double) -> Color {
-        if ratio < 0.6 { return Ink.claude }
-        if ratio < 0.85 { return Ink.warning }
-        return Ink.error
+        switch ContextLevel(ratio) {
+        case .ok: return Ink.claude
+        case .warn: return Ink.warning
+        case .critical: return Ink.error
+        }
     }
 
     // MARK: Usage bar palette (hash-stable per model name)
@@ -384,7 +406,6 @@ extension View {
 /// one hue running through the whole block.
 struct PanelCardModifier: ViewModifier {
     var radius: CGFloat = Theme.Radius.lg
-    var fill: Double = 1
     var tint: Color? = nil
     var framed: Bool = true
 
@@ -422,9 +443,9 @@ struct PanelCardModifier: ViewModifier {
 }
 
 extension View {
-    func panelCard(radius: CGFloat = Theme.Radius.lg, fill: Double = 1,
+    func panelCard(radius: CGFloat = Theme.Radius.lg,
                    tint: Color? = nil, framed: Bool = true) -> some View {
-        modifier(PanelCardModifier(radius: radius, fill: fill, tint: tint, framed: framed))
+        modifier(PanelCardModifier(radius: radius, tint: tint, framed: framed))
     }
 }
 

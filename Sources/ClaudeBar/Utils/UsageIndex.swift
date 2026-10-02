@@ -284,11 +284,7 @@ struct UsageIndex {
     /// Does **not** walk transcripts — call `updateIndex()` separately when
     /// the corpus may have changed.
     static func fetch(in interval: DateInterval) -> [ModelUsage] {
-        let startDay = dayString(interval.start)
-        // DateInterval.end is exclusive; include the last local day that
-        // actually belongs to the period.
-        let lastIncluded = interval.end.addingTimeInterval(-1)
-        let endDay = dayString(lastIncluded)
+        let (startDay, endDay) = dayBounds(interval)
         let thirdParty = ProxyUsageStore.shared.fetch(startDay: startDay, endDay: endDay)
         if !DiskPersistence.useDatabase {
             return ModelUsage.merged(UsageJSONStore.shared.fetch(startDay: startDay, endDay: endDay) + thirdParty)
@@ -531,9 +527,7 @@ struct UsageIndex {
 
     /// Per-day totals for the river chart. Same interval rules as `fetch`.
     static func fetchDaily(in interval: DateInterval) -> [DayUsage] {
-        let startDay = dayString(interval.start)
-        let lastIncluded = interval.end.addingTimeInterval(-1)
-        let endDay = dayString(lastIncluded)
+        let (startDay, endDay) = dayBounds(interval)
         let thirdParty = ProxyUsageStore.shared.fetchDaily(startDay: startDay, endDay: endDay)
         if !DiskPersistence.useDatabase {
             return mergedDays(UsageJSONStore.shared.fetchDaily(startDay: startDay, endDay: endDay) + thirdParty)
@@ -730,11 +724,6 @@ struct UsageIndex {
 
     /// Depth-limited recursive walk over `root`, reading mtime/size from the
     /// enumerator's attributes instead of stat'ing each hit.
-    ///
-    /// Returns `nil` only when root itself cannot be read — an empty array is
-    /// a legitimate "no transcripts here", and conflating the two is what made
-    /// a scan of a `~/.codex/sessions` that moved look identical to a machine
-    /// with no Codex history.
     private static func collectFromEnumerator(root: URL, keyPrefix: String) -> [Candidate] {
         guard let en = FileManager.default.enumerator(
             at: root,

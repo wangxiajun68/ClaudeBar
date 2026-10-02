@@ -8,7 +8,11 @@ import SwiftUI
 struct VpnDomainLogSection: View {
     var isVisible = true
     @ObservedObject private var log = VpnDomainLog.shared
-    @ObservedObject private var manager = VpnManager.shared
+    /// Mirrored, not observed wholesale: `VpnManager` also publishes
+    /// `proxies`/`groups`/`testingNodes`, which delay tests rewrite on every
+    /// tick, and `VPNView` keeps this section mounted while hidden. Only the
+    /// running flag is read here, in the two empty-state captions.
+    @State private var isRunning = VpnManager.shared.isRunning
 
     @State private var mode: Mode = .detail
     @State private var routeFilter: RouteFilter = .all
@@ -79,6 +83,7 @@ struct VpnDomainLogSection: View {
         .vpnSurface()
         .foregroundColor(Theme.textPrimary)
         .task(id: requestKey) { await recompute() }
+        .onReceive(VpnManager.shared.$state.removeDuplicates()) { isRunning = ($0 == .running) }
         .onChange(of: routeFilter) { _, _ in resetFollow() }
         .onChange(of: query) { _, _ in resetFollow() }
         .onChange(of: failedOnly) { _, _ in resetFollow() }
@@ -220,7 +225,7 @@ struct VpnDomainLogSection: View {
                 label: "暂无流量记录",
                 symbol: "globe.asia.australia",
                 tint: Theme.textSecondary,
-                caption: manager.isRunning
+                caption: isRunning
                     ? "内核已在运行。每次新建 TCP 连接会在此留下一行，浏览器里打开一个页面就会看到。"
                     : "启动代理后，经内核的 TCP 连接会显示在这里。",
                 block: true)
@@ -259,7 +264,7 @@ struct VpnDomainLogSection: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s8) {
                 if visibleConnections.isEmpty {
-                    Text(manager.isRunning ? "暂无匹配的活动连接" : "启动代理后显示活动连接")
+                    Text(isRunning ? "暂无匹配的活动连接" : "启动代理后显示活动连接")
                         .foregroundColor(Theme.textSecondary)
                 }
                 ForEach(visibleConnections) { connection in

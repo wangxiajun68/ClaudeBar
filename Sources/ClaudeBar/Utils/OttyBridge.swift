@@ -73,7 +73,13 @@ enum OttyBridge {
         Task.detached(priority: .userInitiated) {
             if !wasRunning {
                 await launch(app)
-                guard waitUntilReady(cli) else { return }
+                guard waitUntilReady(cli) else {
+                    // The socket never came up, so no pane can be reached —
+                    // but Otty is still the app the user asked for; bring it
+                    // forward rather than dropping the resume silently.
+                    await activate(app)
+                    return
+                }
             }
             // A cold start restores the previous layout and relaunches its
             // agents; give a restored pane a moment to report its session
@@ -134,11 +140,17 @@ enum OttyBridge {
         return response.data ?? []
     }
 
-    /// The control socket appears a beat after the process does.
+    /// The control socket appears a beat after the process does. Poll to a
+    /// wall-clock deadline with a doubling interval (capped at 2 s): a cold
+    /// launch's socket can be later than a fixed probe count allowed for, and
+    /// a probe that hangs costs the CLI's own 2 s timeout.
     private static func waitUntilReady(_ cli: URL) -> Bool {
-        for _ in 0..<24 {
+        let deadline = Date().addingTimeInterval(20)
+        var interval: TimeInterval = 0.25
+        while Date() < deadline {
             if run(cli, ["--json", "pane", "list"]) != nil { return true }
-            Thread.sleep(forTimeInterval: 0.25)
+            Thread.sleep(forTimeInterval: interval)
+            interval = min(interval * 2, 2)
         }
         return false
     }

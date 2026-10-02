@@ -170,6 +170,18 @@ enum CodexConfigWriter {
         try PrivateFileWriter.write(Data(text.utf8), to: url)
     }
 
+    /// Read `config.toml` verbatim. A missing file is empty — a first switch
+    /// has nothing to preserve. A file that exists but fails to read
+    /// (non-UTF-8 bytes, permissions, a writer caught mid-replacement) throws
+    /// instead of collapsing to `""`: `parse("")` is an empty document, and
+    /// `render` would then write back only our managed keys, taking the
+    /// `[projects.*]`, `[mcp_servers.*]` and `notify = [...]` lines this
+    /// writer promises to copy verbatim with it.
+    private static func readConfigText(at url: URL) throws -> String {
+        guard FileManager.default.fileExists(atPath: url.path) else { return "" }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
     static func backUpOnce() {
         guard !didBackUp else { return }
         didBackUp = true
@@ -192,7 +204,7 @@ enum CodexConfigWriter {
     static func write(provider: CodexProvider, model: CodexModelConfig, key: String,
                       proxyBaseURL: String? = nil) throws {
         let url = FilePaths.codexConfigFile
-        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let text = try readConfigText(at: url)
         var doc = parse(text)
         // Before anything is rewritten: resolve which `[model_providers.*]`
         // table we are allowed to touch, and make sure a copy exists.
@@ -334,17 +346,14 @@ enum CodexConfigWriter {
         let doc = parse(text)
         var values: [String: String] = [:]
         for line in doc.preamble {
-            guard let m = line.range(of: #"^\s*([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*(#.*)?$"#, options: .regularExpression) else { continue }
-            let full = line[m]
-            let parts = full.components(separatedBy: "=")
-            guard parts.count >= 2 else { continue }
-            let key = parts[0].trimmingCharacters(in: .whitespaces)
-            guard managedTopLevelKeys.contains(key) else { continue }
-            var value = parts.dropFirst().joined(separator: "=").trimmingCharacters(in: .whitespaces)
-            if value.hasPrefix("\""), value.hasSuffix("\"") {
-                value = String(value.dropFirst().dropLast())
+            // Read through the same helper as the section keys below: it strips
+            // both the quotes and a trailing TOML comment. A regex match here
+            // returned the whole line as the value, so `model = "gpt-5" # pinned`
+            // came back quoted with the comment attached — and this value feeds
+            // the displayed model and the external-switch comparison.
+            for key in managedTopLevelKeys {
+                if let value = splitTOMLValue(line, key: key) { values[key] = value }
             }
-            values[key] = value
         }
         let model = values["model"] ?? ""
         let providerKey = values["model_provider"] ?? "openai"
@@ -499,7 +508,7 @@ enum CodexConfigWriter {
     static func restoreOfficial() throws {
         let url = FilePaths.codexConfigFile
         backUpOnceThreadSafe()
-        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let text = try readConfigText(at: url)
         var doc = parse(text)
         var currentKey: String?
         for line in doc.preamble {

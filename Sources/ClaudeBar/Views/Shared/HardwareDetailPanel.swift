@@ -26,7 +26,7 @@ struct HardwareSiliconMark: View {
     var cells: [Double] = []
     /// The size the tile gives the mark. Passed in so the popover's hero copy and
     /// the tile's copy are the *same drawing at the same proportions* — the
-    /// drawing fills whatever box it is handed on its own 120×92 grid.
+    /// drawing fills whatever box it is handed, scaled from Lucide's 24pt grid.
     var markHeight: CGFloat = 76
     var body: some View {
         VStack(spacing: 3) {
@@ -203,7 +203,7 @@ struct ConnectionDetailPanel: View {
                         Text("暂无读数").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     }
                 }
-                ConnectionSignalScale(rssi: status.rssi, compact: false)
+                ConnectionSignalScale(rssi: status.rssi)
                 if sampler.host.wifiName.isEmpty {
                     Button("授权读取 Wi-Fi 名称", systemImage: "location") {
                         NotificationCenter.default.post(.showMainWindow(page: .settings))
@@ -403,7 +403,6 @@ struct CapacityHardwareMark: View {
 /// Only new measurements animate; no polling or decorative frame loop.
 struct ConnectionSignalScale: View {
     let rssi: Int?
-    var compact: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var position: Double? { rssi.map { min(1, max(0, Double($0 + 100) / 60)) } }
 
@@ -431,33 +430,31 @@ struct ConnectionSignalScale: View {
                 ZStack(alignment: .leading) {
                     HStack(spacing: 0) {
                         ForEach(0..<Self.cellCount, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: compact ? 3 : 2.5, style: .continuous)
+                            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                                 .fill(geometry.size.width > 0
                                       && position.map { Double(index) / Double(Self.cellCount - 1) <= $0 } == true
                                       ? Theme.chartBlue : Self.emptyCell)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: compact ? 9 : 20)
-                                .padding(.horizontal, compact ? 1.5 : 3)
+                                .frame(height: 20)
+                                .padding(.horizontal, 3)
                         }
                     }
                     .frame(maxHeight: .infinity, alignment: .center)
-                    if !compact, let position {
+                    if let position {
                         Circle().fill(Theme.chartBlue).frame(width: 6, height: 6)
                             .offset(x: max(0, min(geometry.size.width - 6, (geometry.size.width - 6) * position)), y: -24)
                     }
                 }
             }
-            .frame(height: compact ? 9 : 40)
+            .frame(height: 40)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: rssi)
-            if !compact {
-                HStack {
-                    Text("−100 · 弱")
-                    Spacer()
-                    Text("−70")
-                    Spacer()
-                    Text("−40 · 强")
-                }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
-            }
+            HStack {
+                Text("−100 · 弱")
+                Spacer()
+                Text("−70")
+                Spacer()
+                Text("−40 · 强")
+            }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary).monospacedDigit()
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(rssi.map { "Wi-Fi 信号 \($0) dBm，刻度负 100 至负 40 dBm" } ?? "Wi-Fi 信号暂无读数")

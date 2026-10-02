@@ -367,6 +367,12 @@ struct CaptureAssembler {
 
     private mutating func upsertTool(_ tc: [String: Any]) {
         let index = (tc["index"] as? NSNumber)?.intValue ?? tools.count
+        // The index is upstream-supplied: a negative one would leave the growth
+        // loop below a no-op and trap on the subscript, and an absurd one would
+        // balloon `tools` with empty slots. Dropping an out-of-window delta
+        // beats clamping it onto a neighbouring slot, which would splice one
+        // call's arguments onto another's.
+        guard (0...64).contains(index) else { return }
         let fn = tc["function"] as? [String: Any] ?? [:]
         let tid = (tc["id"] as? String) ?? ""
         let name = (fn["name"] as? String) ?? ""

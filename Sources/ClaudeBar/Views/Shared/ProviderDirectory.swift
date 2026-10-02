@@ -115,10 +115,7 @@ struct ProviderCatalogBrowser: View {
                     || (category == .coding && entry.includesCodingPlan)
                 guard inCategory, !configuredOnly || !connections.isEmpty else { return nil }
                 if !searchTerm.isEmpty {
-                    let haystack = [entry.name, entry.detail, entry.category.rawValue]
-                        + (entry.endpoint(for: client)?.models ?? [])
-                        + connections.flatMap { [$0.name, $0.baseURL] + $0.models.map(\.name) }
-                    guard matches(haystack) else { return nil }
+                    guard matches(entrySearchText(entry, connections: connections)) else { return nil }
                 }
                 return EntryRow(entry: entry, connections: connections, order: order[entry.id] ?? 0)
             }
@@ -129,7 +126,7 @@ struct ProviderCatalogBrowser: View {
             }
     }
     private func custom(in layout: Partition) -> [Provider] {
-        layout.custom.filter { matches([$0.name, $0.baseURL] + $0.models.map(\.name)) }
+        layout.custom.filter { matches(connectionSearchText($0)) }
     }
     private var showsOfficial: Bool {
         (category == nil || category == .platform) && (!configuredOnly || activeID == nil) &&
@@ -217,20 +214,24 @@ struct ProviderCatalogBrowser: View {
             return PinnedActive(official: showsOfficial)
         }
         if let entry = ProviderCatalogEntry.all.first(where: { layout.saved($0).contains { $0.id == activeID } }),
-           matches(entrySearchText(entry, layout: layout)) {
+           matches(entrySearchText(entry, connections: layout.saved(entry))) {
             return PinnedActive(entryID: entry.id)
         }
         if let provider = layout.custom.first(where: { $0.id == activeID }),
-           matches([provider.name, provider.baseURL] + provider.models.map(\.name)) {
+           matches(connectionSearchText(provider)) {
             return PinnedActive(customID: provider.id)
         }
         return PinnedActive()
     }
 
-    private func entrySearchText(_ entry: ProviderCatalogEntry, layout: Partition) -> [String] {
-        let connections = layout.saved(entry)
-        return [entry.name, entry.detail, entry.category.rawValue] + (entry.endpoint(for: client)?.models ?? []) +
-            connections.flatMap { [$0.name, $0.baseURL] + $0.models.map(\.name) }
+    /// One haystack per saved connection, used by the grid, the custom section
+    /// and the pinned 「当前激活」 card so the fields they search cannot drift.
+    private func connectionSearchText(_ provider: Provider) -> [String] {
+        [provider.name, provider.baseURL] + provider.models.map(\.name)
+    }
+    private func entrySearchText(_ entry: ProviderCatalogEntry, connections: [Provider]) -> [String] {
+        [entry.name, entry.detail, entry.category.rawValue] + (entry.endpoint(for: client)?.models ?? []) +
+            connections.flatMap { connectionSearchText($0) }
     }
 
     @ViewBuilder private func pinnedCard(_ pinned: PinnedActive, layout: Partition) -> some View {

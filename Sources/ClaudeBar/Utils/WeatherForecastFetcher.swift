@@ -76,8 +76,8 @@ enum WeatherForecastFetcher {
         let days: [WeatherDay] = dates.indices.prefix(6).compactMap { i in
             guard let date = number(dates[i]), let code = value("weather_code", i),
                   let high = value("temperature_2m_max", i), let low = value("temperature_2m_min", i) else { return nil }
-            return WeatherDay(date: Date(timeIntervalSince1970: date), code: Int(code), high: high, low: low,
-                rainChance: value("precipitation_probability_max", i).map { min(100, max(0, Int($0))) },
+            return WeatherDay(date: Date(timeIntervalSince1970: date), code: int(code), high: high, low: low,
+                rainChance: value("precipitation_probability_max", i).map { min(100, max(0, int($0))) },
                 wind: value("wind_speed_10m_max", i), sunrise: value("sunrise", i).map { Date(timeIntervalSince1970: $0) },
                 sunset: value("sunset", i).map { Date(timeIntervalSince1970: $0) })
         }
@@ -91,8 +91,8 @@ enum WeatherForecastFetcher {
         return WeatherReading(place: place, temperatureC: temperature,
             feelsLikeC: number(current["apparent_temperature"]) ?? temperature, conditionCode: Int(code), conditionText: "",
             highC: today?.high ?? temperature, lowC: today?.low ?? temperature,
-            humidity: Int(number(current["relative_humidity_2m"]) ?? 0), windKph: number(current["wind_speed_10m"]) ?? 0,
-            windDirection: directions[(Int(wind / 45 + 0.5) % 8 + 8) % 8], isDay: number(current["is_day"]).map { $0 == 1 },
+            humidity: int(current["relative_humidity_2m"]), windKph: number(current["wind_speed_10m"]) ?? 0,
+            windDirection: directions[(int(wind / 45 + 0.5) % 8 + 8) % 8], isDay: number(current["is_day"]).map { $0 == 1 },
             sunrise: today?.sunrise.map(clock.string) ?? "—", sunset: today?.sunset.map(clock.string) ?? "—",
             rainChance: today?.rainChance ?? 0,
             observedAt: observed,
@@ -138,6 +138,15 @@ enum WeatherForecastFetcher {
     private static func number(_ value: Any?) -> Double? {
         guard let n = value as? NSNumber, n.doubleValue.isFinite else { return nil }
         return n.doubleValue
+    }
+
+    /// A JSON number → Int, zero when absent, invalid or out of `Int` range.
+    /// Truncates like `Int(_:)` (so the wind bearing's `+ 0.5` rounding still
+    /// works), but an out-of-range value like 1e300 — which `number(_:)`
+    /// accepts as finite — yields 0 instead of trapping the process.
+    private static func int(_ value: Any?) -> Int {
+        guard let number = number(value), number >= Double(Int.min), number < Double(Int.max) else { return 0 }
+        return Int(number)
     }
 }
 

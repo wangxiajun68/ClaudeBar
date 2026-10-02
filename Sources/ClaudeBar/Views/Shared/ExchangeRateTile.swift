@@ -22,7 +22,10 @@ struct ExchangeRateTile: View {
             HStack(spacing: 6) {
                 rateField
                 ActionButton(fx.isFetching ? "查询中…" : "更新", tone: .neutral) { fx.refresh() }
-                    .disabled(fx.isFetching)
+                    // `refresh()` refuses to fetch while a manual rate is
+                    // pinned, so leaving the control enabled would offer a
+                    // guaranteed no-op.
+                    .disabled(fx.isFetching || fx.isManual)
             }
         }
         .onDisappear { if editing { commit() } }

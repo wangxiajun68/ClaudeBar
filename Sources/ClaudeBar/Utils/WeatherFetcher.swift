@@ -115,18 +115,6 @@ struct WeatherReading: Equatable {
 
     var sky: Sky { skyHint ?? Self.sky(for: conditionCode) }
 
-    /// A copy that knows where it is. Used to hand the coordinates (and their
-    /// timezone) a domestic reading learned — or that Open-Meteo supplied — to
-    /// everything downstream that draws a sun, a moon or a star field.
-    func withCoordinates(latitude: Double?, longitude: Double?, timezone: String? = nil, source: String? = nil) -> WeatherReading {
-        var copy = self
-        if let latitude { copy.latitude = latitude }
-        if let longitude { copy.longitude = longitude }
-        if let timezone { copy.timezone = timezone }
-        if let source { copy.source = source }
-        return copy
-    }
-
     /// WW / WMO condition codes → the drawing family.
     ///
     /// Two numbering schemes arrive here and they overlap in the low hundreds,
@@ -834,8 +822,6 @@ extension WeatherFetcher {
 
         if let reading = await WeatherAmapFetcher.fetch(query: trimmed) { return await withHourly(reading) }
         if let reading = await WeatherCNFetcher.fetch(query: trimmed) { return await withHourly(reading) }
-        // `withCoordinates` seeds the sky's latitude/longitude (and the app's
-        // own non-Chinese-servers rule) onto a domestic reading. No network.
         if let reading = await WeatherForecastFetcher.fetch(query: trimmed) { return reading }
         guard let url = url(city: trimmed) else { return nil }
         do {

@@ -34,17 +34,6 @@ enum UsageSource: String, CaseIterable, Identifiable {
         case .thirdParty: return Theme.cursor
         }
     }
-
-    /// `color` as readable text, index-aligned with it — the source cards paint
-    /// their title and counts as glyphs, and the raw hues are 1.8–3.4:1 on the
-    /// ice canvas (see `Theme.Ink`). Bars and rings keep `color`.
-    var ink: Color {
-        switch self {
-        case .claude: return Theme.Ink.claude
-        case .codex: return Theme.Ink.codex
-        case .thirdParty: return Theme.Ink.cursor
-        }
-    }
 }
 
 /// Granularity for usage aggregation.
@@ -155,13 +144,6 @@ struct TodayUsage: Equatable {
     /// the rows are read rather than per render: slug canonicalisation runs two
     /// regex compilations per model.
     var cost = ModelPricing.Estimate()
-
-    /// `today / yesterday`, nil when there is nothing to compare against.
-    var pace: Double? {
-        yesterdayTokens > 0 ? Double(tokens) / Double(yesterdayTokens) : nil
-    }
-
-    var isEmpty: Bool { tokens == 0 && calls == 0 && cost.isEmpty }
 }
 
 /// Attribute official Codex traffic only from the transcript's provider ID.

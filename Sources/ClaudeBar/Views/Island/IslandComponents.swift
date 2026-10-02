@@ -163,7 +163,7 @@ struct IslandSessionRow: View {
                             .minimumScaleFactor(0.7)
                             .layoutPriority(1)
                         if session.contextRatio > 0 {
-                            IslandContextGauge(ratio: session.contextRatio, compact: true)
+                            IslandContextGauge(ratio: session.contextRatio)
                                 .fixedSize()
                         }
                     }
@@ -249,11 +249,16 @@ struct IslandSessionRow: View {
     }
 }
 
-/// Context-window fuel: a 36pt capsule and the percentage, amber past 60 %,
-/// red past 85 % — the same thresholds as `Theme.contextColor`.
+/// Context-window fuel: the percentage alone, mint below 60 %, amber below
+/// 85 %, coral past it — the same thresholds as `Theme.contextColor`.
+///
+/// A 36pt capsule used to lead the figure, and `compact` dropped it for the
+/// session row. That row is the type's only caller and has passed `compact:
+/// true` since the switch was added, so the bar has had no caller since then;
+/// the switch and its branch are deleted rather than kept as a path nothing
+/// exercises. The ink carries the warning the bar carried.
 struct IslandContextGauge: View {
     let ratio: Double
-    var compact = false
 
     private var color: Color {
         if ratio < 0.6 { return IslandStyle.mint }
@@ -262,21 +267,11 @@ struct IslandContextGauge: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            if !compact {
-                Capsule()
-                    .fill(Color.white.opacity(0.1))
-                    .frame(width: 36, height: 4)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(color).frame(width: max(4, 36 * min(1, ratio)), height: 4)
-                    }
-            }
-            RollingNumberText("\(Int((ratio * 100).rounded()))%")
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(compact ? color : IslandStyle.textSecondary)
-                .frame(width: 30, alignment: .trailing)
-        }
-        .help("上下文窗口占用")
+        RollingNumberText("\(Int((ratio * 100).rounded()))%")
+            .font(.system(size: 10.5, weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(color)
+            .frame(width: 30, alignment: .trailing)
+            .help("上下文窗口占用")
     }
 }
 

@@ -135,7 +135,12 @@ struct ProviderIdentityMark: View {
             if let entry, let image = ProviderBrandImages.image(entry.iconName, dark: Theme.isDark) {
                 Image(nsImage: image).resizable().scaledToFit().padding(size * 0.14)
             } else {
-                Image(systemName: "server.rack").font(.system(size: size * 0.45, weight: .medium))
+                // A custom or asset-less provider gets its own initial — the
+                // one thing that can tell two tiles without a bundled mark
+                // apart — instead of the single rack glyph they all used to
+                // share. Same idiom as the CLI avatars on the connectors page.
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textSecondary)
             }
         }

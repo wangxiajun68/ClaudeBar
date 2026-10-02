@@ -271,12 +271,12 @@ struct ResourceStrip: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     // No roll on these heroes. `ProcessSampler` re-publishes
-                    // `host` at 1 Hz while any hardware popover is open, which is
-                    // the same rate as the roll's own transition: the digits would
-                    // be mid-flight when the next reading lands and never land, and
-                    // each sample would put the whole card through a display cycle.
-                    // The figures that *should* roll are the ones a person reads
-                    // one at a time; a percentage gauge is read as a level. See
+                    // `host` every 2 s while a resource UI is open — 1 s once a
+                    // session is live — so a roll keyed on each reading would
+                    // open a fresh animated transaction per sample and put the
+                    // whole card through a display cycle per tick. The figures
+                    // that *should* roll are the ones a person reads one at a
+                    // time; a percentage gauge is read as a level. See
                     // `RollingNumberModifier.rolls`.
                     RollingNumberText(hero, rolls: false)
                             .font(Theme.Font.displayMetric)

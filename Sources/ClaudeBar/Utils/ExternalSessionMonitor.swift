@@ -18,7 +18,7 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     let kind: ExternalAgentKind
     let sessionId: String
     let cwd: String
-    let startedAt: Double        // epoch ms (first record or file birth)
+    let startedAt: Double        // epoch ms (index row's created_at; else file mtime)
     let updatedAt: Double        // epoch ms (file mtime)
     let model: String            // model declared by the tool ("" if unknown)
     /// Retained in the unarchived thread index; in the legacy fallback, live.
@@ -427,39 +427,27 @@ struct ExternalSessionMonitor {
         let threadSource: String
     }
 
-    /// Codex `thread/list` defaults to these sources. `exec` and `mcp` are
-    /// one-shot runs (often under `/tmp` or `/var/folders`) and are not main
-    /// sessions. An empty source is a legacy rollout that predates the field.
+    /// Whether a thread is a main (user) session, as opposed to a helper or an
+    /// excluded one-shot. Expressed through the same classifier the index uses,
+    /// so the two paths cannot drift on which source shapes are helpers.
     private static func isInteractiveMain(source: String, threadSource: String) -> Bool {
-        let thread = threadSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if thread == "subagent" || thread == "agent_created_thread" || thread.contains("subagent") {
-            return false
-        }
-        let raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.isEmpty { return thread.isEmpty || thread == "user" }
-        if raw.lowercased().contains("subagent") { return false }
-        if let data = raw.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return object["subagent"] == nil && isInteractiveMain(source: "", threadSource: thread)
-        }
-        switch raw.lowercased() {
-        case "cli", "vscode", "atlas", "chatgpt": return true
-        default: return false
-        }
+        threadKind(source: source, threadSource: threadSource) == .main
     }
     private static let indexLock = NSLock()
     private static var indexReadAt = Date.distantPast
     private static var indexRows: [IndexedThread]?
 
-    /// Whether a thread is retained at all, in the legacy fallback scan: an open
-    /// turn is held for `orphanedTurnWindow` and a closed one for as long as it
-    /// is recent. The indexed path does not ask — there, archive membership
-    /// decides and the row is authoritative even for an idle thread.
+    /// Whether a thread is retained at all, in the legacy fallback scan: a
+    /// rollout a process holds open survives until it ages out of
+    /// `recencyWindow`, and one nobody holds only while its turn is open *and*
+    /// was written within `orphanedTurnWindow`. The indexed path does not ask —
+    /// there, archive membership decides and the row is authoritative even for
+    /// an idle thread.
     ///
-    /// A holder is deliberately *not* part of this. Remaining visible and
+    /// A holder is part of retention, not of liveness. Remaining visible and
     /// currently running are different questions, and only `isRunning` answers
-    /// the second; this one decides whether a thread that no process has open is
-    /// worth walking to at all.
+    /// the second; this one decides whether a thread no process has open is
+    /// worth walking to at all — a held thread always is.
     private static func isLive(holder: CodexProcessScan.Holder?, openTask: Bool?,
                                updated: TimeInterval, now: TimeInterval) -> Bool {
         if holder != nil { return true }
@@ -590,19 +578,30 @@ struct ExternalSessionMonitor {
     /// (`ProviderStore.externalSessionTree`) decides what to do with each.
     enum ThreadKind { case main, helper, excluded }
 
+    /// The single source-shape classifier: `thread/list` sources default to the
+    /// interactive set, `exec` and `mcp` are one-shot runs (often under `/tmp`
+    /// or `/var/folders`), and anything shaped like a fan-out is a helper. Both
+    /// the index walk and the legacy rollout walk call this — directly or via
+    /// `isInteractiveMain` — so neither can drift on what a helper looks like.
     private static func threadKind(source: String, threadSource: String) -> ThreadKind {
         let thread = threadSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if thread == "subagent" || thread == "agent_created_thread" || thread.contains("subagent") {
             return .helper
         }
         let raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty source is a legacy rollout that predates the field, judged
+        // on `thread_source` alone.
+        if raw.isEmpty { return thread.isEmpty || thread == "user" ? .main : .excluded }
         if raw.lowercased().contains("subagent") { return .helper }
         if let data = raw.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           object["subagent"] != nil {
-            return .helper
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if object["subagent"] != nil { return .helper }
+            return thread.isEmpty || thread == "user" ? .main : .excluded
         }
-        return isInteractiveMain(source: source, threadSource: threadSource) ? .main : .excluded
+        switch raw.lowercased() {
+        case "cli", "vscode", "atlas", "chatgpt": return .main
+        default: return .excluded
+        }
     }
 
     /// Head/tail fields for `path`, re-reading only when mtime or size moved.

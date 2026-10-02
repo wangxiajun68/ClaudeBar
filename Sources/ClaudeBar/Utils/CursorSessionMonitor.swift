@@ -17,14 +17,12 @@ struct CursorSessionInfo: Identifiable, Equatable {
     let composerId: String
     let name: String
     let cwd: String
-    let createdAt: Double          // epoch ms
     let lastUpdatedAt: Double      // latest activity, epoch ms
     var contextPercent: Double     // 0...100 from head.contextUsagePercent (-1 if absent)
     var status: CursorStatus       // agent running?
     var isAlive: Bool              // recent enough to surface
 
-    // Filled by scanning the transcript tail (0/"" if no transcript).
-    var messageCount: Int = 0
+    // Filled by scanning the transcript tail ("" if no transcript).
     var currentActivity: String = ""
     /// `composerHeaders.value.name`, Cursor's own conversation title.
     var title: String = ""
@@ -127,7 +125,6 @@ enum CursorSubagentStatus: String, Equatable {
 
 /// Result of scanning a Cursor transcript tail.
 private struct CursorTranscriptScan {
-    let count: Int
     let activity: String
     let toolPending: Bool
     let completionID: String?
@@ -210,7 +207,6 @@ struct CursorSessionMonitor {
 
             let name = (obj["name"] as? String) ?? ""
             let subtitle = (obj["subtitle"] as? String) ?? ""
-            let createdAt = (obj["createdAt"] as? Double) ?? recency
             let submittedAt = (obj["lastUpdatedAt"] as? Double) ?? recency
             let checkpointAt = max(Double(sqlite3_column_int64(stmt, 3)),
                                    (obj["conversationCheckpointLastUpdatedAt"] as? Double) ?? 0)
@@ -238,12 +234,10 @@ struct CursorSessionMonitor {
                 composerId: composerId,
                 name: name,
                 cwd: cwd,
-                createdAt: createdAt,
                 lastUpdatedAt: updatedAt,
                 contextPercent: ctxPct,
                 status: turnInFlight ? .active : .idle,
                 isAlive: updatedAt > cutoff,
-                messageCount: scan.count,
                 currentActivity: scan.activity,
                 title: name,
                 subtitle: subtitle,
@@ -341,9 +335,9 @@ struct CursorSessionMonitor {
 
     // MARK: - Transcript scanning
 
-    /// Scan the tail of a composer transcript for message count, the latest
-    /// tool activity, and whether a turn is still in flight (no `turn_ended`
-    /// after the last user or assistant message). Mirrors `SessionMonitor.fetchContext`.
+    /// Scan the tail of a composer transcript for the latest tool activity and
+    /// whether a turn is still in flight (no `turn_ended` after the last user
+    /// or assistant message). Mirrors `SessionMonitor.fetchContext`.
     private static func scanTranscript(cwd: String, composerId: String) -> CursorTranscriptScan {
         scanTail(url: FilePaths.cursorTranscriptURL(cwd: cwd, composerId: composerId), readSize: 96_000)
     }
@@ -359,7 +353,7 @@ struct CursorSessionMonitor {
     /// turn from a frozen one — see `turnLiveWindowMs`.
     private static func scanTail(url: URL, readSize: UInt64) -> CursorTranscriptScan {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
-            return CursorTranscriptScan(count: 0, activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: 0)
+            return CursorTranscriptScan(activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: 0)
         }
         defer { try? handle.close() }
         let modifiedAt = ((try? url.resourceValues(forKeys: [.contentModificationDateKey])
@@ -367,11 +361,10 @@ struct CursorSessionMonitor {
         let size = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: size - min(readSize, size))
         guard let tailData = try? handle.readToEnd() else {
-            return CursorTranscriptScan(count: 0, activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: modifiedAt * 1000)
+            return CursorTranscriptScan(activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: modifiedAt * 1000)
         }
         // Lossy decode — a strict one fails for the whole window whenever the
         // seek landed mid-character (see `SessionMonitor.readContext`).
-        var msgCount = 0
         var lastActivity = ""
         var lastMessageLine = -1
         var lastTurnEndedLine = -1
@@ -400,7 +393,6 @@ struct CursorSessionMonitor {
             }
             guard (obj["role"] as? String) == "assistant",
                   let message = obj["message"] as? [String: Any] else { continue }
-            msgCount += 1
             lastMessageLine = lineIndex
             completionID = nil
             let blocks = message["content"] as? [[String: Any]] ?? []
@@ -415,7 +407,7 @@ struct CursorSessionMonitor {
         // otherwise hides slow first-token generation and queued work.
         let pending = lastMessageLine > lastTurnEndedLine
         let ended = lastTurnEndedLine >= 0 && lastTurnEndedLine > lastMessageLine
-        return CursorTranscriptScan(count: msgCount, activity: lastActivity, toolPending: pending,
+        return CursorTranscriptScan(activity: lastActivity, toolPending: pending,
                                     completionID: completionID, ended: ended, modifiedAt: modifiedAt * 1000)
     }
 

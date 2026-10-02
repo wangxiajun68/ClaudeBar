@@ -160,11 +160,6 @@ source += r'''
         precondition(DomesticWeatherParser.cityID(forName: "上海", tableJSON: "not json") == nil)
         precondition(DomesticWeatherParser.cityLookup(in: CNWeatherCityTable.json).count > 300)
 
-        var located = reading.withCoordinates(latitude: 1, longitude: 2, timezone: "UTC")
-        precondition(located.latitude == 1 && located.longitude == 2 && located.timezone == "UTC")
-        located = reading.withCoordinates(latitude: nil, longitude: nil, source: "测试")
-        precondition(located.latitude == reading.latitude && located.source == "测试")
-
         // Which forecast cell is "today" is asked in the *reading's* zone, not
         // the device's. Both domestic sources report mainland China; asking it
         // in the device's zone picked tomorrow's high/low for the last hours of

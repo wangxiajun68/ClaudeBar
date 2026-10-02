@@ -433,11 +433,7 @@ private struct SessionTileFull: View {
     }
 
     /// Reveal the session's working directory in Finder.
-    private func revealCwd() {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
-    }
+    private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
 
     private func resume() {
         TerminalLauncher.resumeClaudeSession(cwd: session.cwd, sessionId: session.sessionId,
@@ -563,18 +559,10 @@ private struct CursorTileFull: View {
     }
 
     /// Reveal the session's working directory in Finder.
-    private func revealCwd() {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
-    }
+    private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
 
     private func openCursor() {
-        guard !session.cwd.isEmpty, FileManager.default.fileExists(atPath: session.cwd) else { return }
-        let cursorURL = URL(fileURLWithPath: "/Applications/Cursor.app")
-        guard FileManager.default.fileExists(atPath: cursorURL.path) else { return }
-        NSWorkspace.shared.open([URL(fileURLWithPath: session.cwd)], withApplicationAt: cursorURL,
-                               configuration: NSWorkspace.OpenConfiguration())
+        TerminalLauncher.openInCursor(cwd: session.cwd)
     }
 }
 
@@ -759,11 +747,7 @@ private struct ExternalSessionTile: View {
                                             pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
-    private func revealCwd() {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
-    }
+    private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
 }
 
 /// A Codex session in the multi-session grid: a regular 宫格 card, the same
@@ -923,10 +907,6 @@ private struct ExternalSessionGridCard: View {
                                             pid: target.holderPID, inDesktop: target.inDesktop)
     }
 
-    private func revealCwd() {
-        guard !session.cwd.isEmpty,
-              FileManager.default.fileExists(atPath: session.cwd) else { return }
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
-    }
+    private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
 }
 

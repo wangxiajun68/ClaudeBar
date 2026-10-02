@@ -103,6 +103,10 @@ class ProviderStore: ObservableObject {
     /// One cleanup at a time: it spawns a `codex app-server`, and two of them
     /// racing would each try to delete the same fork.
     private var externalCleanupPending = false
+    /// Per-pid transcript stamps for `enrich`'s session cache — main-thread
+    /// state, captured before the detached scan like `currentContextLimits`
+    /// and replaced when that scan publishes. See `TranscriptStamp`.
+    private var transcriptStamps: [Int: TranscriptStamp] = [:]
 
     /// Poll cadence to fall back to when a scan has to be deferred because the
     /// previous one is still running. Only reached when a scan outlives its
@@ -132,10 +136,6 @@ class ProviderStore: ObservableObject {
     var externalTreeCache: [ExternalAgentKind: [ExternalSessionNode]] = [:]
     private var externalCompletionDetector = ConfirmedCompletionDetector<String>()
 
-    /// The outcome of the last stuck-thread cleanup, for the surface that asked
-    /// for it to report honestly (deleted vs downgraded to archive vs failed).
-    @Published var externalCleanupNotice: String?
-
     /// Remove a Codex thread whose open turn stopped advancing — the state that
     /// would otherwise be listed forever as a session that is neither running
     /// nor resumable (see `ExternalSessionInfo.hasStalledTurn`).
@@ -152,26 +152,11 @@ class ProviderStore: ObservableObject {
     func cleanUpExternalSession(_ session: ExternalSessionInfo) {
         guard !externalCleanupPending else { return }
         externalCleanupPending = true
-        externalCleanupNotice = nil
         Task.detached(priority: .userInitiated) {
-            let outcome: Result<CodexAppServerClient.Removal, Error>
-            do { outcome = .success(try CodexAppServerClient.remove(threadId: session.sessionId)) }
-            catch { outcome = .failure(error) }
+            _ = try? CodexAppServerClient.remove(threadId: session.sessionId)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.externalCleanupPending = false
-                switch outcome {
-                case .success(.deleted):
-                    self.externalCleanupNotice = "已删除 \(session.displayName)"
-                case .success(.archived(let reason)):
-                    // Codex refused the delete and the thread was archived
-                    // instead. Say so, and say why — a cleanup that silently
-                    // did less than it promised is the bug this app exists to
-                    // not have.
-                    self.externalCleanupNotice = "已归档 \(session.displayName)：\(reason)"
-                case .failure(let error):
-                    self.externalCleanupNotice = "清理失败：\(error.localizedDescription)"
-                }
                 // Re-scan now rather than waiting for the 5 s idle poll: the row
                 // is still on screen, and it should leave with the action.
                 self.refreshExternalSessions()
@@ -289,13 +274,17 @@ class ProviderStore: ObservableObject {
         // publish the parsed results, so the poll never blocks the UI.
         let contextLimits = currentContextLimits
         let previous = sessions
+        let stamps = transcriptStamps
         Task.detached(priority: .utility) {
-            let enriched = Self.enrich(SessionMonitor.fetchActive(), previous: previous, limits: contextLimits)
+            let scan = Self.enrich(SessionMonitor.fetchActive(), previous: previous,
+                                   stamps: stamps, limits: contextLimits)
+            let enriched = scan.sessions
             let samples = Self.heartbeatSamples(from: enriched)
             let pids = enriched.filter(\.isAlive).map(\.pid)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.sessionScanPending = false
+                self.transcriptStamps = scan.stamps
                 self.recordHeartbeats(samples)
                 if self.sessions != enriched {
                     self.sessions = enriched
@@ -413,14 +402,65 @@ class ProviderStore: ObservableObject {
         }
     }
 
+    /// Transcript identity for one session as `enrich` last saw it: its byte
+    /// size and modification date.
+    ///
+    /// `SessionInfo` is a value the scan builds fresh from the session file,
+    /// which carries no file-system facts about the transcript — so the
+    /// previous poll's numbers cannot ride on it, and reading them off
+    /// `previous` (which is `sessions`, itself already stripped) would compare
+    /// a transcript against itself. The store holds them instead, captured on
+    /// the main thread with the limits and handed to the detached scan.
+    private struct TranscriptStamp: Sendable {
+        var size: UInt64
+        var mtime: Double
+    }
+
+    /// One stat for both halves of the transcript identity: `transcriptSize`
+    /// plus the file's own modification date. `attributesOfItem` returns both,
+    /// so this is the same single stat the size check already paid for.
+    private static func transcriptStamp(for session: SessionInfo) -> TranscriptStamp {
+        let path = SessionMonitor.transcriptURL(for: session).path
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = attrs[.size] as? NSNumber,
+              let mtime = attrs[.modificationDate] as? Date else {
+            return TranscriptStamp(size: 0, mtime: 0)
+        }
+        return TranscriptStamp(size: size.uint64Value, mtime: mtime.timeIntervalSince1970)
+    }
+
     /// Enrich alive sessions with transcript context + subagents. Pure
     /// function so it can run wholly off-main.
-    private static func enrich(_ sessions: [SessionInfo], previous: [SessionInfo], limits: [String: Int]) -> [SessionInfo] {
+    ///
+    /// The previous poll is a cache of *derived* state, so each piece names its
+    /// own dependency instead of inheriting a whole record from one signal:
+    ///
+    ///   * cached context is keyed by the session's **identity** (a reused pid
+    ///     must not donate another session's answer) and by the parent
+    ///     transcript's identity — **size *and* mtime**, never size alone. A
+    ///     rewrite that lands on exactly the old byte count (a replaced answer
+    ///     of the same length, a compaction that pads to the same total) keeps
+    ///     the size and still changes the transcript, and the mtime is the
+    ///     file's own word for that; size 0 (missing or still empty) never
+    ///     caches anything.
+    ///   * `contextLimit` is re-derived from the live provider configuration
+    ///     rather than carried with the cached tokens, because the user can
+    ///     change the window while the transcript sits untouched.
+    ///   * subagents and workflows are re-scanned from their own files: a child
+    ///     writes its own `agent-*.jsonl`, so the parent file standing still
+    ///     says nothing about whether the tree below it moved.
+    private static func enrich(_ sessions: [SessionInfo], previous: [SessionInfo],
+                               stamps: [Int: TranscriptStamp],
+                               limits: [String: Int]) -> (sessions: [SessionInfo], stamps: [Int: TranscriptStamp]) {
         let prior = Dictionary(uniqueKeysWithValues: previous.map { ($0.pid, $0) })
+        var freshStamps: [Int: TranscriptStamp] = [:]
         var result = sessions
         for i in result.indices where result[i].isAlive {
-            let size = SessionMonitor.transcriptSize(for: result[i])
-            if let old = prior[result[i].pid], old.transcriptSize == size, size > 0 {
+            let stamp = Self.transcriptStamp(for: result[i])
+            freshStamps[result[i].pid] = stamp
+            if let old = prior[result[i].pid], old.sessionId == result[i].sessionId,
+               let previousStamp = stamps[result[i].pid],
+               previousStamp.size == stamp.size, previousStamp.mtime == stamp.mtime, stamp.size > 0 {
                 result[i].contextTokens = old.contextTokens
                 result[i].model = old.model
                 result[i].messageCount = old.messageCount
@@ -430,11 +470,13 @@ class ProviderStore: ObservableObject {
                 result[i].completionID = old.completionID
                 result[i].turnCount = old.turnCount
                 result[i].firstPrompt = old.firstPrompt
-                result[i].contextLimit = old.contextLimit
-                result[i].subagents = old.subagents
-                result[i].workflows = old.workflows
-                result[i].transcriptSize = size
+                result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
+                result[i].transcriptSize = stamp.size
                 Self.applyTranscriptBusyFallback(&result[i])
+                // Children move on their own clock; see the doc comment.
+                let subs = SessionMonitor.fetchSubagents(for: result[i])
+                result[i].subagents = subs.direct
+                result[i].workflows = subs.workflows
                 continue
             }
             let ctx = SessionMonitor.fetchContext(for: result[i])
@@ -453,14 +495,14 @@ class ProviderStore: ObservableObject {
             let priorCount = prior[result[i].pid]?.turnCount ?? ctx.turnCount
             result[i].turnCount = max(priorCount, ctx.turnCount)
             result[i].firstPrompt = ctx.title
-            result[i].transcriptSize = size
+            result[i].transcriptSize = stamp.size
             Self.applyTranscriptBusyFallback(&result[i])
             result[i].contextLimit = limits[result[i].model.lowercased()] ?? 0
             let subs = SessionMonitor.fetchSubagents(for: result[i])
             result[i].subagents = subs.direct
             result[i].workflows = subs.workflows
         }
-        return result
+        return (result, freshStamps)
     }
 
     /// Older CLIs have no `status` field, so a dangling `tool_use` is the only
@@ -862,22 +904,6 @@ class ProviderStore: ObservableObject {
         }
     }
 
-    func duplicateProvider(_ provider: Provider) {
-        var copy = Provider(
-            name: "\(provider.name) 副本",
-            authToken: provider.authToken,
-            baseURL: provider.baseURL,
-            models: provider.models,
-            activeModelID: provider.activeModelID,
-            captureEnabled: provider.captureEnabled,
-            catalogID: provider.catalogID
-        )
-        copy.profileID = UUID()
-        providers.append(copy)
-        saveProviders()
-        MainActor.assumeIsolated { ProviderProfileSync.pushClaude(copy, store: self) }
-    }
-
     /// Import Codex providers. Matching is by name or rewritten Anthropic URL.
     @discardableResult
     func importFromCodex(_ source: [CodexProvider]? = nil) -> ProviderBridge.ImportResult {
@@ -936,17 +962,6 @@ class ProviderStore: ObservableObject {
             refreshSharedProxy()
         }
         MainActor.assumeIsolated { ProviderProfileSync.pushClaude(providers[idx], store: self) }
-    }
-
-    /// Blank Claude provider with one placeholder model — ready to edit and save.
-    @MainActor
-    @discardableResult
-    func addBlankProvider() -> Provider {
-        let placeholder = ModelConfig(name: "model-name")
-        let p = Provider(name: "新供应商", models: [placeholder], activeModelID: placeholder.id)
-        providers.append(p)
-        saveProviders()
-        return p
     }
 
     /// Keep the shared local proxy's Claude upstream current. This does not

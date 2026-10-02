@@ -121,6 +121,10 @@ final class ExchangeRate: ObservableObject {
     /// Force a fetch — the settings tile's "更新" button. Rethrows nothing;
     /// failure surfaces through `lastError`.
     func refresh() {
+        // The manual field promises that nothing is fetched, ever; that promise
+        // has to hold at the side-effect entrance too, or the "更新" button
+        // becomes a way around it.
+        guard AppPreferences.shared.manualUSDToCNY == nil else { return }
         guard inflight == nil else { return }
         isFetching = true
         // One `@MainActor` task rather than `Task { await MainActor.run { … } }`:

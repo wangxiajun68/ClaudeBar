@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Compact Codex session card for the 2-column popup grid.
+/// Compact Codex session card for the popup's single full-width column.
 ///
 /// A user session with sub-agents keeps the child count in the title rail.
 /// The full swarm remains one click away in a popover instead of making every
@@ -9,7 +9,7 @@ struct ExternalSessionCardView: View {
     let session: ExternalSessionInfo
     /// How many sub-agents sit below this card (0 = a plain session card).
     var descendantCount: Int = 0
-    /// Immediate children, rendered inline under the parent. Empty on
+    /// Immediate children, shown as tiles in the `⋯N` swarm popover. Empty on
     /// sub-agents and on sessions that spawned nothing.
     var childAgents: [ExternalSessionInfo] = []
     var onDoubleTap: (() -> Void)? = nil

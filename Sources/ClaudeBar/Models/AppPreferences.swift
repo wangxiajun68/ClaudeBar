@@ -123,18 +123,6 @@ final class AppPreferences: ObservableObject {
         }
     }
 
-    /// When on, capture + usage use SQLite. When off, they append JSON/JSONL
-    /// under Application Support/ClaudeBar/logs — no database is opened.
-    @Published var databaseEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(databaseEnabled, forKey: "databaseEnabled")
-            ProxyCaptureStore.shared.reloadPersistence()
-            UsageIndex.reloadPersistence()
-            ProxyUsageStore.shared.reset()
-            NotificationCenter.default.post(name: .persistenceModeDidChange, object: nil)
-        }
-    }
-
     // MARK: VPN 代理（mihomo 内核）— 与上面的 LLM 本地代理无关
 
     /// 总开关：运行 mihomo 内核。
@@ -219,11 +207,6 @@ final class AppPreferences: ObservableObject {
         didSet { UserDefaults.standard.set(amapAPIKey, forKey: "amapAPIKey") }
     }
 
-    /// 概览问候卡的副标题用哪种称呼：本机名（默认）或机型芯片名。
-    @Published var greetingShowsChip: Bool {
-        didSet { UserDefaults.standard.set(greetingShowsChip, forKey: "greetingShowsChip") }
-    }
-
     /// 问候卡的天空是否开着「天气渲染」——云、雾、雨雪、闪电、玻璃雨滴这些按
     /// 实时天气动的图层。关掉只剩按太阳高度角插值的天空渐变色（暖冷、明暗仍
     /// 跟着一天走，只是不再下雨、不再飘云），所以卡片很安静、也很省电。
@@ -302,7 +285,6 @@ final class AppPreferences: ObservableObject {
         costDisplay = CostDisplay(rawValue: UserDefaults.standard.string(forKey: "costDisplay") ?? "") ?? .split
         weatherCity = UserDefaults.standard.string(forKey: "weatherCity") ?? "上海"
         amapAPIKey = UserDefaults.standard.string(forKey: "amapAPIKey") ?? ""
-        greetingShowsChip = UserDefaults.standard.object(forKey: "greetingShowsChip") as? Bool ?? false
         greetingLanguage = GreetingPhrase.Language(rawValue: UserDefaults.standard.string(forKey: "greetingLanguage") ?? "") ?? .chinese
         removedGreetingTypefaces = Set(UserDefaults.standard.stringArray(forKey: "removedGreetingTypefaces") ?? [])
         greetingTypeface = GreetingTypeface(rawValue: UserDefaults.standard.string(forKey: "greetingTypeface") ?? "") ?? .standard
@@ -316,7 +298,6 @@ final class AppPreferences: ObservableObject {
         proxyThirdPartyTrafficEnabled = UserDefaults.standard.object(forKey: "proxyThirdPartyTrafficEnabled") as? Bool ?? true
         proxyThirdPartyOpenAIProviderID = Self.uuid(from: "proxyThirdPartyOpenAIProviderID")
         proxyThirdPartyAnthropicProviderID = Self.uuid(from: "proxyThirdPartyAnthropicProviderID")
-        databaseEnabled = UserDefaults.standard.object(forKey: "databaseEnabled") as? Bool ?? true
 
         // VPN proxy module (defined in Utils/VPNPreferences.swift).
         // `as?` with a fallback rather than `as!`: this dictionary is built

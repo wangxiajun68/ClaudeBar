@@ -23,7 +23,6 @@ struct PanelHeader: View {
     @State private var codexProxyPort = AppPreferences.shared.codexProxyPort
     @State private var codexRoutingEnabled = AppPreferences.shared.codexRoutingEnabled
     @State private var vpnMixedPort = AppPreferences.shared.vpnMixedPort
-    @ObservedObject private var vpn = VpnManager.shared
     /// Cursor's allowance reading. Observed here so a quota refresh repaints
     /// this header only — not the session grid, KPI strip or action bar.
     @ObservedObject private var cursorStore = CursorUsageStore.shared

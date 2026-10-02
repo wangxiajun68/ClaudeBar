@@ -84,9 +84,11 @@ struct IslandSession: Identifiable, Equatable {
     let cwd: String
     let sessionId: String
     /// Unique proof that the most recent turn delivered a final answer; also
-    /// the turn *key* the completion detector de-duplicates on. Claude sessions
-    /// hand in `turnCount|uuid` (see `ProviderStore.detectIdleTransitions`),
-    /// Codex its `task_complete` turn id, Cursor its `turn-<offset>`.
+    /// the turn *key* the completion detector de-duplicates on. Per client:
+    /// Claude's answer UUID, Codex its `task_complete` turn id, Cursor its
+    /// `turn-<offset>`. The island feeds this id through bare; `ProviderStore`
+    /// is the one that mixes in the counter (`turnCount|uuid`, see its
+    /// `detectIdleTransitions`).
     var completionID: String? = nil
     /// The live process to reveal on click (Claude pid / Codex holder).
     var pid: Int? = nil
@@ -158,9 +160,6 @@ final class IslandLiveModel: ObservableObject {
     private static let alertFreshness: TimeInterval = 60
 
     var busySessions: [IslandSession] { sessions.filter(\.isBusy) }
-
-    /// Sessions parked on the user (a permission prompt or a question dialog).
-    var waitingSessions: [IslandSession] { sessions.filter(\.isWaiting) }
 
     private weak var providerStore: ProviderStore?
     private var cancellables: Set<AnyCancellable> = []
@@ -246,7 +245,9 @@ final class IslandLiveModel: ObservableObject {
     private func apply(_ fresh: [IslandSession]) {
         let oldIDs = sessions.map(\.id)
         // The turn key is the snapshot's own identity for "a new answer landed"
-        // (`turnCount|uuid` / `turnId` / `turn-<offset>`), so an answer that was
+        // (Claude's answer `uuid` / `turnId` / `turn-<offset>` — the bare id
+        // `completionID` carries; the `turnCount|uuid` composite belongs to
+        // `ProviderStore`'s own detector, not this one), so an answer that was
         // already announced never re-fires, and one that lands while the island
         // is watching still does. The island's alert still needs freshness (an
         // answer delivered while the island was off screen must not pop out of

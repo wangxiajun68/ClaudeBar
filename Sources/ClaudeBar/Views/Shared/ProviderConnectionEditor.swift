@@ -301,7 +301,10 @@ struct ProviderConnectionEditor: View {
         }.padding(24).background(Theme.bgPrimary)
     }
 
-    private var reasoningOptions: [String] { ["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] }
+    /// `max` is deliberately absent: on load the store treats it as the
+    /// retired default sentinel and rewrites it to `""`, so offering it here
+    /// would silently undo the choice on the next app start.
+    private var reasoningOptions: [String] { ["", "none", "minimal", "low", "medium", "high", "xhigh", "ultra"] }
     private var reasoningLabel: String {
         let effort = draft.models.first { $0.id == draft.activeModelID }?.reasoningEffort ?? ""
         return effort.isEmpty ? "推理 · 默认" : "推理 · " + effort

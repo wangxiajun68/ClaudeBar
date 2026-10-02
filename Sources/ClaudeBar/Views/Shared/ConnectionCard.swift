@@ -102,12 +102,12 @@ struct LinkCard: View {
         return status.subtitle
     }
 
-    /// 0…1 across the same −100…−40 dBm ruler the ruler and the popover draw, so
-    /// the mark's lit cells and the popover's scale cannot disagree about one
+    /// 0…1 across the shared −100…−40 dBm ruler (`WiFiBars.fraction`), so the
+    /// mark's lit cells and the popover's scale cannot disagree about one
     /// reading. `nil` (no reading) is 0 — an unattached radio lights nothing.
     private var signalFraction: Double {
         guard let rssi = status.rssi else { return 0 }
-        return min(1, max(0, Double(rssi + 100) / 60))
+        return WiFiBars.fraction(for: rssi)
     }
 
     /// Whole-card state, as one value, so the mark is tinted from the same
@@ -202,11 +202,11 @@ enum ConnectMarkState {
 /// signal meter over the interface's Lucide outline.
 ///
 /// This is the tile's *reading*, in the place every other card on the strip
-/// draws one. It is deliberately the same drawing as `ConnectionSignalScale`'s
-/// `compact` ruler — same 30 cells, one per dBm step across −100…−40 — turned
-/// into a mark rather than a full-width row: a mark that measures the signal
-/// belongs in the mark slot, and the row it replaced stretched across the tile
-/// with nothing on its right.
+/// draws one. It draws `ConnectionSignalScale`'s ruler in mark form — a cell
+/// row over the same −100…−40 dBm fraction (`WiFiBars.fraction`), reduced to
+/// the mark slot — rather than the full-width 30-cell row it replaced: a mark
+/// that measures the signal belongs in the mark slot, and that row stretched
+/// across the tile with nothing on its right.
 ///
 /// It is also honest about which interface it is. Ethernet is a socket, Wi-Fi an
 /// arc — the two are not the same object and a strip that drew only the Wi-Fi
@@ -264,13 +264,15 @@ struct ConnectInterfaceMark: View {
     }
 }
 
-/// Thirty equal cells across the −100…−40 dBm ruler, filled from the left.
+/// Twelve equal cells across the −100…−40 dBm ruler (~5 dB per cell), filled
+/// from the left: a filled cell is a step of signal, so the *count* is the
+/// reading. Twelve, not the panel ruler's thirty — the mark is a *reduction*
+/// of the same ruler to the mark slot's width, so the shared thing is the
+/// fraction (`WiFiBars.fraction`), not the number of cells.
 ///
-/// The same ruler as `ConnectionSignalScale`, in mark form: a filled cell is one
-/// grade of signal, so the *count* is the reading. Drawing it here (rather than
-/// reusing the wide view) is what keeps the mark inside the 176×130 slot every
-/// sibling reserves; the shared thing is the ruler's definition, which lives in
-/// `WiFiBars` / the −100…−40 endpoints both views read.
+/// Drawing it here (rather than reusing the wide view) is what keeps the mark
+/// inside the 176×130 slot every sibling reserves; the shared things are the
+/// fraction and the unfilled-cell ink (`ConnectionSignalScale.emptyCell`).
 private struct SignalCellRow: View {
     var strength: Double
 
@@ -285,7 +287,7 @@ private struct SignalCellRow: View {
         return HStack(spacing: 2) {
             ForEach(0..<Self.count, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(index < lit ? Theme.chartBlue : Theme.cardFill(0.18))
+                    .fill(index < lit ? Theme.chartBlue : ConnectionSignalScale.emptyCell)
                     .frame(maxWidth: .infinity)
                     .frame(height: 14)
             }
@@ -300,6 +302,14 @@ private struct SignalCellRow: View {
 enum WiFiBars {
     static func symbol(for rssi: Int) -> String {
         rssi < -80 ? "wifi.exclamationmark" : "wifi"
+    }
+
+    /// 0…1 across the −100…−40 dBm ruler — the one place a reading becomes a
+    /// position, so the tile's mark and the panel's ruler cannot put the same
+    /// dBm at two lengths. Clamped at both ends: an RSSI outside the ruler pins
+    /// to the nearest end instead of overflowing its view.
+    static func fraction(for rssi: Int) -> Double {
+        min(1, max(0, Double(rssi + 100) / 60))
     }
 
     static func label(for rssi: Int) -> String? {

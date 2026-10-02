@@ -23,7 +23,7 @@ final class ProcessSampler {
     /// without stopping the others. There used to be an `island` case, set by
     /// the glance reel; the reel is deleted and nothing sets it, so it is gone
     /// rather than left as a scope no surface can enter — a stale case here
-    /// reads as a live feature (see `docs/technical/17-ui-audit-backlog.md` §4).
+    /// reads as a live feature (see `docs/reviews/ui-audit-backlog.md` §4).
     enum MonitorScope: Hashable {
         case popup
         case dashboard
@@ -397,7 +397,15 @@ final class ProcessSampler {
             index.claudeRoots = claudeRoots
         }
 
-        let gpu = foreground ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
+        // The accelerator read and the SMC temperature sweep are the tick's two
+        // dear reads, so they wait for a surface that can see them. `foreground`
+        // alone is not that test: the popup is a `.nonactivatingPanel`, so
+        // opening it never activates the app, and its GPU cell read 0 while its
+        // tooltip had no temperatures. A live scope means a surface is on
+        // screen — `ResourceMonitorScope` follows `surfaceIsVisible` — the same
+        // admission the attribution reads already use.
+        let wantsDevices = foreground || !activeScopes.isEmpty
+        let gpu = wantsDevices ? HardwareSensors.gpuReading() : HostAccelerator.Reading()
         // A GPU that reports its own temperature is read every tick — it is one
         // property fetch on an already-matched service, and it is the
         // warmer-hotspot reading. One that does not (Apple Silicon's
@@ -422,10 +430,10 @@ final class ProcessSampler {
         // fallback rides the same gate. The accelerator's *own* figure was
         // already taken above, per tick, because on a GPU that reports one it
         // is the warmer-hotspot read.
-        if gpu.temperatureCelsius == nil, foreground, now - temperatureSampleAt >= 5 {
+        if gpu.temperatureCelsius == nil, wantsDevices, now - temperatureSampleAt >= 5 {
             gpuTemperature = HardwareSensors.gpuTemperatureCelsius()
         }
-        if foreground, now - temperatureSampleAt >= 5 {
+        if wantsDevices, now - temperatureSampleAt >= 5 {
             cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
             batteryTemperature = HardwareSensors.batteryTemperatureCelsius()
             temperatureSampleAt = now
@@ -457,9 +465,9 @@ final class ProcessSampler {
             memoryActive: memory.active,
             memoryWired: memory.wired,
             memoryCompressed: memory.compressed,
-            cpuTemperatureCelsius: foreground ? cpuTemperature : nil,
-            gpuTemperatureCelsius: foreground ? gpuTemperature : nil,
-            batteryTemperatureCelsius: foreground ? batteryTemperature : nil,
+            cpuTemperatureCelsius: wantsDevices ? cpuTemperature : nil,
+            gpuTemperatureCelsius: wantsDevices ? gpuTemperature : nil,
+            batteryTemperatureCelsius: wantsDevices ? batteryTemperature : nil,
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
             diskTotal: disk.total,

@@ -72,21 +72,19 @@ extension EnvironmentValues {
 /// straight into an `NSHostingView` traps with exit 133 and
 /// `ProviderState.update()` as the top app frame; the same view with
 /// `.environment(\.providerSource, store)` runs indefinitely. See
-/// `docs/technical/17-ui-audit-backlog.md` §8.
+/// `docs/reviews/ui-audit-backlog.md` §8.
 @propertyWrapper struct ProviderState: DynamicProperty {
     @Environment(\.providerSource) private var source
     @Environment(\.surfaceIsVisible) private var visible
     @StateObject private var invalidation = StoreInvalidation()
     private let fields: ProviderFields
-    private var explicitStore: ProviderStore?
 
-    init(_ fields: ProviderFields, store: ProviderStore? = nil) {
+    init(_ fields: ProviderFields) {
         self.fields = fields
-        self.explicitStore = store
     }
 
     var wrappedValue: ProviderStore {
-        guard let store = explicitStore ?? source else {
+        guard let store = source else {
             preconditionFailure("ProviderState requires providerSource")
         }
         return store
@@ -129,7 +127,7 @@ extension ProviderStore {
             out += [changes($sessions), changes($cursorSessions), changes($externalSessions)]
         }
         if fields.contains(.heartbeats) { out.append(changes($heartbeats)) }
-        if fields.contains(.expansion) { out += [changes($expandedSessionPIDs), changes($cursorExpanded)] }
+        if fields.contains(.expansion) { out.append(changes($expandedSessionPIDs)) }
         return out
     }
 }

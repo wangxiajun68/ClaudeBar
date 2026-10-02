@@ -324,15 +324,8 @@ final class ProxyCaptureStore {
         } else {
             lock.lock()
             jsonStore.patch(id) {
-                $0.state = state
-                $0.httpStatus = status
-                $0.endedAt = ended
-                $0.promptTokens = assembler.promptTokens
-                $0.completionTokens = assembler.completionTokens
-                $0.cacheReadTokens = assembler.cacheReadTokens
-                $0.cacheWriteTokens = assembler.cacheWriteTokens
-                $0.error = error
-                if !assembler.model.isEmpty { $0.model = assembler.model }
+                Self.applyFinish(&$0, state: state, status: status, ended: ended,
+                                 assembler: assembler, error: error)
             }
             jsonStore.mergePayload(id,
                 response: Self.truncate(assembler.toResponseJSON(), cap: payloadCap),
@@ -347,15 +340,8 @@ final class ProxyCaptureStore {
             self.streams.live[id] = live
             self.previews.map[id] = Self.clip(live.content.isEmpty ? live.reasoning : live.content)
             self.patchMain(id) {
-                $0.state = state
-                $0.httpStatus = status
-                $0.endedAt = ended
-                $0.promptTokens = assembler.promptTokens
-                $0.completionTokens = assembler.completionTokens
-                $0.cacheReadTokens = assembler.cacheReadTokens
-                $0.cacheWriteTokens = assembler.cacheWriteTokens
-                $0.error = error
-                if !assembler.model.isEmpty { $0.model = assembler.model }
+                Self.applyFinish(&$0, state: state, status: status, ended: ended,
+                                 assembler: assembler, error: error)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self else { return }
@@ -473,7 +459,18 @@ final class ProxyCaptureStore {
 
     func clearAll() {
         if useDatabase {
+            // SQLite drops the rows, but media directories (decoded
+            // screenshots, keyed by capture id) are only removed by
+            // `delete(_:)`. Without this, 「清空全部抓包」 left every screenshot
+            // on disk with no row to reach it — and the age-gated sweep in
+            // `pruneLocked` deliberately keeps directories younger than a day,
+            // so they outlived the clear. Read the ids under the same lock as
+            // the DELETE so no `begin` can slip in between the two.
+            lock.lock()
+            let mediaIDs = connection().flatMap { loadListIDs($0) } ?? []
             exec("DELETE FROM captures", args: [])
+            lock.unlock()
+            removeMedia(ids: mediaIDs)
         } else {
             lock.lock(); jsonStore.clearAll(); lock.unlock()
         }
@@ -745,6 +742,19 @@ final class ProxyCaptureStore {
         return ids
     }
 
+    /// Remove `<id>/` payload directories off-main. The ids are already gone
+    /// from the list, so the delay is invisible; the directory unlinks are what
+    /// must not run on the caller (a user-triggered 清空).
+    private func removeMedia(ids: [Int64]) {
+        guard !ids.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let fm = FileManager.default
+            for id in ids {
+                try? fm.removeItem(at: CaptureMedia.mediaDir(captureID: id))
+            }
+        }
+    }
+
     private func execRaw(_ sql: String) {
         guard let db else { return }
         sqlite3_exec(db, sql, nil, nil, nil)
@@ -937,6 +947,23 @@ final class ProxyCaptureStore {
     private func patchMain(_ id: Int64, _ mutate: (inout CaptureSummary) -> Void) {
         guard let idx = catalog.records.firstIndex(where: { $0.id == id }) else { return }
         mutate(&catalog.records[idx])
+    }
+
+    /// The summary fields a finished capture writes, shared by the JSON store
+    /// patch and the main-thread patch: the two rows must agree, and a field
+    /// added to one copy and missed in the other is a silent divergence between
+    /// what is on disk and what the list draws.
+    private static func applyFinish(_ s: inout CaptureSummary, state: CaptureState, status: Int,
+                                    ended: Date, assembler: CaptureAssembler, error: String?) {
+        s.state = state
+        s.httpStatus = status
+        s.endedAt = ended
+        s.promptTokens = assembler.promptTokens
+        s.completionTokens = assembler.completionTokens
+        s.cacheReadTokens = assembler.cacheReadTokens
+        s.cacheWriteTokens = assembler.cacheWriteTokens
+        s.error = error
+        if !assembler.model.isEmpty { s.model = assembler.model }
     }
 
     static func truncate(_ text: String?, cap: Int) -> String {

@@ -413,10 +413,10 @@ source += '''
     ]
     store.cursorSessions = [
         CursorSessionInfo(composerId: "composer-1", name: "AgentLoop 追踪",
-                          cwd: "/Users/x/Project/Neo", createdAt: 0,
+                          cwd: "/Users/x/Project/Neo",
                           lastUpdatedAt: Date().timeIntervalSince1970 * 1000 - 8_000,
                           contextPercent: 68, status: .active, isAlive: true,
-                          messageCount: 30, currentActivity: "编辑 routes.ts",
+                          currentActivity: "编辑 routes.ts",
                           title: "AgentLoop 追踪", subtitle: "Edited routes.ts",
                           toolPending: true),
     ]

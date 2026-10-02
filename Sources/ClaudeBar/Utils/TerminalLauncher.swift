@@ -104,6 +104,15 @@ enum TerminalLauncher {
         launch(command: command, cwd: cwd, sessionId: sessionId)
     }
 
+    /// Reveal a working directory in Finder. The four session tiles (Claude /
+    /// Cursor / two Codex shapes) each used to carry a byte-identical copy of
+    /// the guard plus `selectFile`.
+    static func revealInFinder(cwd: String) {
+        guard !cwd.isEmpty,
+              FileManager.default.fileExists(atPath: cwd) else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: cwd)
+    }
+
     /// Open a workspace folder in Cursor.app. No-op if Cursor isn't installed
     /// or the folder doesn't exist.
     static func openInCursor(cwd: String) {
@@ -131,10 +140,17 @@ enum TerminalLauncher {
 
     /// `cd "<cwd>" && <command>`, quoted for the AppleScript string it is
     /// embedded in (AppleScript and the shell each consume one backslash layer).
+    ///
+    /// Inside the shell's double quotes `$`, backtick and backslash all stay
+    /// live, and `isSafePath` screens only control characters, so each is
+    /// escaped here. The backslash pass must run first, or it would double the
+    /// backslashes the later passes add.
     private static func shellCommand(_ command: String, in cwd: String) -> String {
         let safeCwd = cwd
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
         return "cd \"\(safeCwd)\" && \(command)"
     }
 
@@ -205,7 +221,9 @@ enum TerminalLauncher {
 
     // MARK: - Validation
 
-    /// Reject paths that could break AppleScript string literals or inject shell syntax.
+    /// Reject control characters, which would break the AppleScript string
+    /// literal the path lands in. Shell metacharacters are not screened here;
+    /// `shellCommand` escapes the ones that stay live inside double quotes.
     private static func isSafePath(_ path: String) -> Bool {
         !path.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
     }

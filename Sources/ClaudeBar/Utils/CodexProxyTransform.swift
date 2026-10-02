@@ -1118,8 +1118,6 @@ enum CodexProxyTransform {
         var textBuffer = ""
         // chat tool_call index → item state
         var calls: [Int: (itemID: String, callID: String, name: String, buffer: String, added: Bool)] = [:]
-        var finishedCalls: [[String: Any]] = []
-        var usage: [String: Any]? = nil
         var registry = ToolRegistry()
 
         mutating func next() -> Int { sequenceNumber += 1; return sequenceNumber }
@@ -1173,14 +1171,14 @@ enum CodexProxyTransform {
             if !entry.added, !entry.name.isEmpty {
                 entry.added = true
                 events.append(responseEvent("response.output_item.added", state: &state, extra: [
-                    "output_index": state.finishedCalls.count + state.calls.count,
+                    "output_index": state.calls.count,
                     "item": functionCallItem(entry, inProgress: true, registry: state.registry),
                 ]))
             }
             if !argsDeltaSource(fn, entry: entry).isEmpty {
                 events.append(responseEvent("response.function_call_arguments.delta", state: &state, extra: [
                     "item_id": entry.itemID,
-                    "output_index": state.finishedCalls.count + state.calls.count,
+                    "output_index": state.calls.count,
                     "delta": argsDeltaSource(fn, entry: entry),
                 ]))
             }
@@ -1262,8 +1260,8 @@ enum CodexProxyTransform {
     }
 
     /// Restore an apply_patch-style function call into a custom_tool_call.
-    /// Returns nil when the name isn't a custom tool (passthrough as function_call).
-    static func chatToolCallToCustomTool(_ name: String, argsJSON: String) -> [String: Any]? {
+    /// Callers only reach this for names in the registry's custom set.
+    static func chatToolCallToCustomTool(_ name: String, argsJSON: String) -> [String: Any] {
         var raw = customInputFromChatArgs(argsJSON)
         if name == "apply_patch" { raw = normalizeApplyPatch(raw) }
         return customToolCall(name: name, input: raw)
@@ -1334,10 +1332,25 @@ enum CodexProxyTransform {
             return sse(e)
         }
         if !sawTerminal {
+            let responseID = "resp_" + UUID().uuidString
+            if !sawCreated {
+                // Head the synthesized terminal with the `response.created`
+                // the relay skipped — Codex reads the turn's response id
+                // from it.
+                let started: [String: Any] = [
+                    "id": responseID,
+                    "object": "response",
+                    "created_at": Int(Date().timeIntervalSince1970),
+                    "status": "in_progress",
+                    "model": "",
+                    "output": [],
+                ]
+                out += emit(["type": "response.created", "response": started])
+            }
             // response.failed can't be used (Codex surfaces an error); emit a
             // completed with zero usage — the actual content already streamed.
             let resp: [String: Any] = [
-                "id": "resp_" + UUID().uuidString,
+                "id": responseID,
                 "object": "response",
                 "created_at": Int(Date().timeIntervalSince1970),
                 "status": "completed",
@@ -1409,10 +1422,9 @@ enum CodexProxyTransform {
             let input: String
             if inProgress {
                 input = ""
-            } else if let custom = chatToolCallToCustomTool(entry.name, argsJSON: entry.buffer) {
-                return mergedCustom(custom, entry: entry, inProgress: false)
             } else {
-                input = entry.buffer
+                return mergedCustom(chatToolCallToCustomTool(entry.name, argsJSON: entry.buffer),
+                                    entry: entry, inProgress: false)
             }
             return [
                 "id": entry.itemID,

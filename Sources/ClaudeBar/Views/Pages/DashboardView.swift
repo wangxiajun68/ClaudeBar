@@ -194,8 +194,8 @@ struct DashboardView: View {
         /// `tint` as readable text, for the running/idle capsule.
         let pillInk: Color
         let busy: Bool
-        /// Parked on the user (Claude Code only today) — a third state the
-        /// busy/idle capsule could not express. See `SessionStatus.waiting`.
+        /// Parked on the user — a third state the busy/idle capsule could not
+        /// express. See `SessionStatus.waiting`.
         var waiting: Bool = false
         let project: String
         let activity: String
@@ -236,9 +236,13 @@ struct DashboardView: View {
                     mark: .cursor,
                     tint: Theme.cursor,
                     pillInk: Theme.Ink.cursor,
-                    busy: s.status == .active,
+                    busy: s.isBusy,
+                    waiting: s.isWaiting,
                     project: s.displayTitle,
-                    activity: s.currentActivity,
+                    // Cursor's park reason is always the pending plan, unlike
+                    // Claude's varying wait reasons — same wording as
+                    // `CursorSessionCardView.statusLine`.
+                    activity: s.isWaiting ? "等待你确认计划" : s.currentActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,

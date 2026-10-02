@@ -384,10 +384,10 @@ private struct MainWindowSessionStatus: View {
                    ink: isBusy ? Theme.Ink.claude : Theme.Ink.idle)
     }
 
-    private var isBusy: Bool {
-        providerStore.anyClaudeBusy || providerStore.activeCursorCount > 0
-            || providerStore.anyExternalBusy
-    }
+    /// The store's published flag, not a re-derivation: `refreshAnyBusy` runs
+    /// it once per poll over the whole session set, and this view used to
+    /// repeat those three passes on every invalidation.
+    private var isBusy: Bool { providerStore.anySessionBusy }
 
     /// Counts come from `ProviderStore`'s own derived values: the pill used to
     /// run its own `filter` / `contains` passes over the same three arrays on
@@ -428,6 +428,15 @@ private struct WindowDragRegion: NSViewRepresentable {
     func performWindowDrag(with event: NSEvent)
 }
 
+/// Names AppKit's private fill action, which is what a system title bar runs
+/// for the 填充 double-click choice — unlike `performZoom:`, it honours the
+/// "Tiled windows have margins" setting. The SDK does not import it, so it
+/// goes out as the ObjC selector and the call site probes for it first.
+@objc private protocol WindowFillHandling {
+    @objc(_zoomFill:)
+    func zoomFill(_ sender: Any?)
+}
+
 private final class WindowDragView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -435,14 +444,43 @@ private final class WindowDragView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let window, !event.modifierFlags.contains(.control) else { return }
         if event.clickCount >= 2 {
-            // Same preference as a system title bar: zoom, or minimize.
+            performDoubleClickAction(on: window)
+            return
+        }
+        window.perform(#selector(WindowDragHandling.performWindowDrag(with:)), with: event)
+    }
+
+    /// Same preference as a system title bar: minimize, zoom, fill, or nothing.
+    ///
+    /// `AppleActionOnDoubleClick` is the key System Settings writes and
+    /// HIToolbox reads; `AppleMiniaturizeOnDoubleClick` is the pre-Yosemite
+    /// bool that nothing writes any more, so reading only it made every
+    /// action zoom. The old bool still answers when the new key is absent
+    /// (or carries a value none of the arms recognises), and zoom stays the
+    /// final fallback — the historical default.
+    private func performDoubleClickAction(on window: NSWindow) {
+        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+        case "Minimize":
+            window.miniaturize(nil)
+        case "Maximize":
+            window.performZoom(nil)
+        case "Fill":
+            let fill = #selector(WindowFillHandling.zoomFill(_:))
+            if window.responds(to: fill) {
+                window.perform(fill, with: nil)
+            } else {
+                window.performZoom(nil)
+            }
+        case "None":
+            break
+        case nil:
             if UserDefaults.standard.bool(forKey: "AppleMiniaturizeOnDoubleClick") {
                 window.miniaturize(nil)
             } else {
                 window.performZoom(nil)
             }
-            return
+        default:
+            window.performZoom(nil)
         }
-        window.perform(#selector(WindowDragHandling.performWindowDrag(with:)), with: event)
     }
 }

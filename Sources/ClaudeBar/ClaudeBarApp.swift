@@ -31,8 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 VpnProxyGuard.shared.start()
             }
         } else {
-            // A previous session may have died with the proxy still set.
-            VpnSystemProxyController.clearSystemProxy()
+            // A previous session may have died with the proxy still set. The
+            // clear spawns one `networksetup` per service, so it runs off the
+            // main thread — launch does not wait on it.
+            VpnSystemProxyController.clearSystemProxyAsync()
         }
 
         // The menu bar's ↓/↑ strip is always on screen, and without a tunnel

@@ -137,7 +137,7 @@ func run() throws {
 
     // 6. Cursor and Codex flow through the same pipeline.
     var cursor = CursorSessionInfo(composerId: "c-1", name: "t", cwd: "/tmp/proj",
-                                   createdAt: 1, lastUpdatedAt: nowMs, contextPercent: 10,
+                                   lastUpdatedAt: nowMs, contextPercent: 10,
                                    status: .idle, isAlive: true)
     cursor.hasPendingDecision = true
     let codex = ExternalSessionInfo(kind: .codex, sessionId: "x-1", cwd: "/tmp/proj",

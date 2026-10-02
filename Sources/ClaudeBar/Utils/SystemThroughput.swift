@@ -20,9 +20,11 @@ import Darwin
 /// allowlist of prefixes (`en` for hardware, `utun`/`ppp`/`ipsec` for tunnels)
 /// that has to be kept in step with every way macOS can carry traffic — a
 /// dock, an iPhone bridge, a corporate tunnel — and a new one silently reads
-/// as zero. The kernel already excludes loopback from these counters, and
-/// summing everything counts a packet twice only when this very machine is
-/// both endpoints, which is not a case the menu bar has to be right about.
+/// as zero. Loopback is the one exception, and it is excluded by its
+/// `IFF_LOOPBACK` flag rather than by the name `lo0`: the kernel does count
+/// it, and this machine is routinely both endpoints — the in-process Codex
+/// proxy relays every turn over `127.0.0.1` — so summing it in would report
+/// each proxied byte on the strip twice, once as down and once as up.
 @MainActor
 final class SystemThroughput: ObservableObject {
     static let shared = SystemThroughput()
@@ -94,8 +96,9 @@ final class SystemThroughput: ObservableObject {
         if up != self.up { self.up = up }
     }
 
-    /// Per-interface byte counters. Keyed by BSD name (`en0`, `utun3`), which
-    /// is what makes the next tick able to subtract the right pair.
+    /// Per-interface byte counters, loopback excluded. Keyed by BSD name
+    /// (`en0`, `utun3`), which is what makes the next tick able to subtract the
+    /// right pair.
     private static func interfaceCounters() -> [String: (bytesIn: UInt32, bytesOut: UInt32)] {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let first = head else { return [:] }
@@ -107,6 +110,7 @@ final class SystemThroughput: ObservableObject {
             defer { cursor = entry.pointee.ifa_next }
             guard let address = entry.pointee.ifa_addr,
                   address.pointee.sa_family == UInt8(AF_LINK),
+                  entry.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0,
                   let data = entry.pointee.ifa_data,
                   let name = entry.pointee.ifa_name else { continue }
             let stats = data.assumingMemoryBound(to: if_data.self).pointee

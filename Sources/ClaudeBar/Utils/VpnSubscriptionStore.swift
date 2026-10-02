@@ -111,6 +111,10 @@ final class VpnSubscriptionStore: ObservableObject {
         subscriptions.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: profileURL(id))
         if activeID == id { activeID = subscriptions.first?.id }
+        // browsingID is not persisted, but leaving it on the deleted card
+        // would blank the node panel instead of falling back to the active
+        // subscription, the same way `load()` mirrors activeID.
+        if browsingID == id { browsingID = activeID }
         save()
     }
 
@@ -380,7 +384,9 @@ final class VpnSubscriptionStore: ObservableObject {
 
     private static func parseHeaderParam(_ raw: String, key: String) -> String? {
         let needle = key.lowercased() + "="
-        guard let range = raw.lowercased().range(of: needle) else { return nil }
+        // Match on `raw` itself: lowercasing can change a scalar's UTF-8 length
+        // (e.g. "İ"), and an index taken from that copy no longer addresses raw.
+        guard let range = raw.range(of: needle, options: .caseInsensitive) else { return nil }
         var rest = String(raw[range.upperBound...])
         if rest.hasPrefix("\"") {
             rest.removeFirst()

@@ -74,7 +74,7 @@
 
 **查询**：读取 `isArchived=0 AND isSubagent=0` 且 `recency` 或 `checkpointAt` 在最近 3 天的 header。先解析运行状态再按忙碌优先排序，列表通常保留 14 个，但全部运行会话必须保留。取消查询前 80 条的硬截断，避免较早提交的长任务被新会话挤掉。查询只扫描小型 `composerHeaders` 索引表，不读取大型 `cursorDiskKV` 消息正文。
 
-**head 字段解析**：`name`、`createdAt`、`lastUpdatedAt`、`contextUsagePercent`、`unfinishedRunAt`、`conversationCheckpointLastUpdatedAt`；`workspaceIdentifier.uri.fsPath`（或 `draftTarget.environment.uri.fsPath`）取 cwd。`agentLocation.status == "active"` 是可能残留的绑定标记，只用于提交后 120 秒的启动宽限，不能代表整轮运行状态。
+**head 字段解析**：`name`、`lastUpdatedAt`、`contextUsagePercent`、`unfinishedRunAt`、`conversationCheckpointLastUpdatedAt`；`workspaceIdentifier.uri.fsPath`（或 `draftTarget.environment.uri.fsPath`）取 cwd。`agentLocation.status == "active"` 是可能残留的绑定标记，只用于提交后 120 秒的启动宽限，不能代表整轮运行状态。
 
 **运行判断**：主会话和子 Agent 共用 `CursorTranscriptScan.inFlight`。
 

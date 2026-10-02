@@ -45,7 +45,11 @@ struct CompactFanPair: View {
                             )
                             Text(shortName(fan, index: index))
                                 .font(.system(size: 8, weight: .medium, design: .rounded))
-                                .foregroundColor(fan.mode.isAutomatic ? Theme.textTertiary() : bladeTint(fan))
+                                // The rotor above wears `bladeTint` because it is
+                                // *shape*; this caption is *text*, so the override
+                                // amber comes in its Ink variant — the same split
+                                // `ResourceStrip.fanInk` makes.
+                                .foregroundColor(fan.mode.isAutomatic ? Theme.textTertiary() : Theme.Ink.warning)
                                 .lineLimit(1)
                         }
                     }

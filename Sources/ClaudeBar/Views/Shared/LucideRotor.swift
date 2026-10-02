@@ -211,32 +211,49 @@ final class RotorLayerView: NSView {
         rotor.add(spin, forKey: Self.spinKey)
     }
 
-    /// Retimes the layer without a jump: freeze the current local time into
-    /// `timeOffset`, restart the clock now, then apply the new rate.
     private func setSpeed(_ speed: Float) {
-        guard rotor.speed != speed else { return }
+        rotor.retime(to: speed)
+    }
+}
+
+// MARK: - Phase-preserving retiming
+
+extension CALayer {
+    /// Retimes without a jump: freeze the layer's own local time into
+    /// `timeOffset`, restart the clock now, then apply the new rate — so a new
+    /// reading lands as a speed change instead of a jump back to the
+    /// animation's start. Shared by every rate-following decorative layer
+    /// (rotor blades, the power-flow clock) so they keep phase the same way.
+    func retime(to speed: Float) {
+        guard self.speed != speed else { return }
         let now = CACurrentMediaTime()
-        let local = rotor.convertTime(now, from: nil)
-        rotor.timeOffset = local
-        rotor.beginTime = now
-        rotor.speed = speed
+        timeOffset = convertTime(now, from: nil)
+        beginTime = now
+        self.speed = speed
     }
 }
 
 
 /// One decoded illustration and two circular blade crops, shared by every surface.
 /// Coordinates are measured in the bundled 1536 × 1024 artwork, not host hardware.
+/// The panel that overlays rotors on the same illustration derives its placement
+/// from these, so a re-measured crop cannot silently leave the blades behind.
 enum FanArtwork {
+    static let canvasSize = CGSize(width: 1536, height: 1024)
+    static let rotorDiameter: CGFloat = 216
+    static let leftRotorCenter = CGPoint(x: 300, y: 315)
+    static let rightRotorCenter = CGPoint(x: 1237, y: 315)
+
     static let image: NSImage? = Bundle.main.url(forResource: "macbook-internals-illustration", withExtension: "png")
         .flatMap { NSImage(contentsOf: $0) }
     private static let cgImage = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    static let leftRotor = crop(centerX: 300, centerY: 315)
-    static let rightRotor = crop(centerX: 1237, centerY: 315)
-    private static func crop(centerX: CGFloat, centerY: CGFloat) -> CGImage? {
+    static let leftRotor = crop(center: leftRotorCenter)
+    static let rightRotor = crop(center: rightRotorCenter)
+    private static func crop(center: CGPoint) -> CGImage? {
         guard let cgImage else { return nil }
-        let scale = CGFloat(cgImage.width) / 1536
-        return cgImage.cropping(to: CGRect(x: (centerX - 108) * scale,
-                                          y: (centerY - 108) * scale,
-                                          width: 216 * scale, height: 216 * scale))
+        let scale = CGFloat(cgImage.width) / canvasSize.width
+        return cgImage.cropping(to: CGRect(x: (center.x - rotorDiameter / 2) * scale,
+                                          y: (center.y - rotorDiameter / 2) * scale,
+                                          width: rotorDiameter * scale, height: rotorDiameter * scale))
     }
 }

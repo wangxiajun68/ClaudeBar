@@ -30,7 +30,12 @@ struct SourceRing: View {
                 .strokeBorder(Theme.cardFill(0.07), lineWidth: thickness)
             if total > 0 {
                 ForEach(Array(arcs.enumerated()), id: \.offset) { _, arc in
+                    // Inset by half the band so the arc shares the track's
+                    // centerline: `strokeBorder` paints inside the circle,
+                    // while a bare `.stroke` centres on the path and would
+                    // hang half a band outside `size`.
                     Circle()
+                        .inset(by: thickness / 2)
                         .trim(from: arc.start, to: arc.end)
                         .stroke(arc.color.opacity(0.9),
                                 style: StrokeStyle(lineWidth: thickness, lineCap: .butt))
@@ -62,8 +67,8 @@ struct SourceRing: View {
         let color: Color
     }
 
-    /// Cumulative fractions. Slices keep a hair of separation so adjacent
-    /// arcs never read as one; the trim API is inclusive of both ends.
+    /// Cumulative fractions. Adjacent slices share their boundary: an arc's
+    /// `end` is the next one's `start`; the trim API is inclusive of both ends.
     private var arcs: [Arc] {
         let visible = slices.filter { $0.value > 0 }
         guard total > 0, !visible.isEmpty else { return [] }

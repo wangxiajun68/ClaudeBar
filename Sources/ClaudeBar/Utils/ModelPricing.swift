@@ -301,7 +301,9 @@ enum ModelPricing {
         var isEmpty: Bool { lines.isEmpty }
 
         /// How many models fell into one `Unpriced` bucket. The buckets mean
-        /// different things to the user, so the head line splits them.
+        /// different things to the user, but every aggregate surface prints one
+        /// merged count (`unpricedModels`); only the regression harness reads
+        /// this split.
         func unpricedCount(of reason: Unpriced) -> Int {
             lines.reduce(0) { $0 + ($1.unpriced == reason ? 1 : 0) }
         }

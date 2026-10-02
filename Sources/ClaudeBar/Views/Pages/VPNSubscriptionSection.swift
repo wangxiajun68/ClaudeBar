@@ -186,15 +186,10 @@ struct VpnSubscriptionSection: View {
     private func expireText(_ sub: VpnSubscription) -> String {
         guard let expires = sub.expires else { return "未查询" }
         let date = Self.day.string(from: expires)
-        let days = Int(expires.timeIntervalSinceNow / 86400)
-        if days < 0 { return "\(date) · 已过期" }
-        return "\(date) · \(days) 天"
-    }
-
-    private func barColor(_ ratio: Double) -> Color {
-        if ratio >= 0.9 { return Theme.statusError }
-        if ratio >= 0.75 { return Theme.claudeHi }
-        return Theme.external
+        // Compare dates, not the day count: Int truncates toward zero, so an
+        // expiry a few hours ago would report 0 天 instead of 已过期.
+        if expires < Date() { return "\(date) · 已过期" }
+        return "\(date) · \(max(0, Int(expires.timeIntervalSinceNow / 86400))) 天"
     }
 
     private func saveEditor(_ item: SubEditor, name: String, url: String) async {

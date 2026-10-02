@@ -68,7 +68,6 @@ final class BatteryChargeController {
     private(set) var probing = false
     private(set) var notice = ""
     private(set) var measuredText = ""
-    private(set) var reportedPercent: Int?
     var threshold: Double {
         didSet {
             let value = min(100, max(Self.minLimit, threshold.rounded()))
@@ -373,7 +372,6 @@ final class BatteryChargeController {
         if state != status.state { stateChangedAt = lastResponseAt }
         mode = Mode(rawValue: status.mode) ?? .system
         state = status.state; appliedLimit = status.limit; sleeping = status.sleeping
-        reportedPercent = status.percent >= 0 ? status.percent : nil
         notice = Self.noticeText(status.notice)
         recoveryUnconfirmed = status.error == "restore_failed"
         if let request = inFlight, request.revision == status.revision {

@@ -132,7 +132,6 @@ Apple M3 Pro，1100×474 pt 卡片，2200×948 px，11 种日间/夜间/降水�
 | `Shared/CodexQuotaGauges.swift` | 输入/事件更新路径 |
 | `Shared/CommandPalette.swift` | 输入/事件更新路径 |
 | `Shared/ConnectionCard.swift` | 输入/事件更新路径 |
-| `Shared/ConnectivityProbeButton.swift` | 输入/事件更新路径 |
 | `Shared/ContextBar.swift` | 输入/事件更新路径 |
 | `Shared/CursorSessionCardView.swift` | 输入/事件更新路径 |
 | `Shared/DecorativeMotion.swift` | 原生桥接 |

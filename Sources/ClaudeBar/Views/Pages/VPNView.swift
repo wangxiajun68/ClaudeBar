@@ -341,11 +341,7 @@ struct VPNView: View {
     /// the other app instead of promising something it will not do.
     private func portConflictMessage(_ conflict: VpnManager.PortConflict) -> String {
         var lines: [String] = []
-        if let owner = conflict.owner {
-            lines.append("端口 \(conflict.port) 已被「\(owner)」占用，内核未启动。")
-        } else {
-            lines.append("端口 \(conflict.port) 已被占用，内核未启动。")
-        }
+        lines.append(VpnManager.conflictMessage(conflict) + "。")
         if conflict.isOurOwnCore {
             lines.append("占用者是 ClaudeBar 自己上一次留下的内核，通常几秒内会被回收 —— 稍后重试即可。")
         } else if conflict.port == prefs.vpnMixedPort {
@@ -883,7 +879,7 @@ private struct VPNCurrentNodeLatency: View {
         }
         .foregroundColor(delay == 0 ? Theme.Ink.error : (delay != nil ? Theme.Ink.success : Theme.textSecondary))
         .fixedSize(horizontal: true, vertical: false)
-        .help("当前节点最近一次测速结果；点击站点可检测实际访问延迟")
+        .help("当前节点最近一次测速结果")
     }
 }
 

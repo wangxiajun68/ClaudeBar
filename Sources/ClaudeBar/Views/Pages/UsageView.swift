@@ -103,14 +103,14 @@ struct UsageView: View {
                 .foregroundColor(Theme.textSecondary)
             TileGrid(.pageUsage) {
                 UsagePlatformCard(source: .claude, stats: providerStore.usageBySource[.claude] ?? [],
-                                  days: providerStore.usageDaysBySource[.claude] ?? [], overallTokens: total)
+                                  overallTokens: total)
                 CursorTokenUsageCard(window: UsageStats.interval(
                     for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate))
                 UsagePlatformCard(source: .codex, stats: providerStore.usageBySource[.codex] ?? [],
-                                  days: providerStore.usageDaysBySource[.codex] ?? [], overallTokens: total)
+                                  overallTokens: total)
                 if !thirdParty.isEmpty {
                     UsagePlatformCard(source: .thirdParty, stats: thirdParty,
-                                      days: providerStore.usageDaysBySource[.thirdParty] ?? [], overallTokens: total)
+                                      overallTokens: total)
                 }
             }
         }
@@ -197,7 +197,7 @@ struct UsageView: View {
         var keys: [UsageSource: [String: Set<String>]] = [:]
         func register(_ source: UsageSource, _ provider: Provider) {
             for model in provider.models {
-                let key = Self.normalized(model.name)
+                let key = ModelPricing.canonical(model.name)
                 keys[source, default: [:]][key, default: []].insert(provider.name)
             }
         }
@@ -227,7 +227,7 @@ struct UsageView: View {
             for stat in providerStore.usageBySource[source] ?? [] {
                 let parts = UsageProviderAttribution.split(stat, official: source == .codex ? official[stat.model] : nil)
                 add(parts.official, to: "OpenAI 官方")
-                let owners = candidates(for: source, key: Self.normalized(stat.model))
+                let owners = candidates(for: source, key: ModelPricing.canonical(stat.model))
                 add(parts.remaining, to: owners.count == 1 ? (owners.first ?? "未归属") : "未归属")
             }
         }
@@ -239,10 +239,6 @@ struct UsageView: View {
             if rhs.name == "未归属" { return true }
             return lhs.total.totalTokens > rhs.total.totalTokens
         }
-    }
-
-    private static func normalized(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func selectPeriod(_ period: UsagePeriod) {
@@ -372,7 +368,6 @@ private struct UsageProviderCard: View {
 private struct UsagePlatformCard: View {
     let source: UsageSource
     let stats: [ModelUsage]
-    let days: [DayUsage]
     let overallTokens: Int
     @State private var hovered = false
 

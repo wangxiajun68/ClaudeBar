@@ -70,6 +70,12 @@ final class UsageJSONStore {
     private var files: [String: FileRec] = [:]
     private var rollup: [String: RollupRec] = [:]
     private var loaded = false
+    /// Set by every mutation, cleared once `persistLocked` has written the
+    /// files. Index passes fire on FSEvents bursts where every transcript was
+    /// skipped as unchanged, and the caller still saves at the end of each
+    /// one; without this, those bursts re-encoded and rewrote the whole
+    /// rollup for nothing.
+    private var dirty = false
 
     func load() {
         lock.lock(); defer { lock.unlock() }
@@ -89,13 +95,14 @@ final class UsageJSONStore {
     }
 
     func upsertFile(key: String, rec: FileRec) {
-        lock.lock(); files[key] = rec; lock.unlock()
+        lock.lock(); files[key] = rec; dirty = true; lock.unlock()
     }
 
     func deletePath(_ path: String) {
         lock.lock()
         files.removeValue(forKey: path)
         rollup = rollup.filter { $0.value.path != path }
+        dirty = true
         lock.unlock()
     }
 
@@ -103,6 +110,7 @@ final class UsageJSONStore {
         lock.lock()
         rollup = rollup.filter { $0.value.path != path }
         for row in rows { rollup[Self.key(row)] = row }
+        dirty = true
         lock.unlock()
     }
 
@@ -121,6 +129,7 @@ final class UsageJSONStore {
                 rollup[k] = row
             }
         }
+        dirty = true
         lock.unlock()
     }
 
@@ -217,6 +226,7 @@ final class UsageJSONStore {
         files = [:]
         rollup = [:]
         loaded = false
+        dirty = false
         lock.unlock()
     }
 
@@ -252,11 +262,14 @@ final class UsageJSONStore {
         if stale || unprefixed || oldParser {
             files = files.filter { !$0.key.hasPrefix("codex:") }
             rollup = rollup.filter { !$0.value.path.hasPrefix("codex:") }
+            dirty = true
             persistLocked()
         }
     }
 
     private func persistLocked() {
+        guard dirty else { return }
+        dirty = false
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys]
         if let data = try? enc.encode(files) {
