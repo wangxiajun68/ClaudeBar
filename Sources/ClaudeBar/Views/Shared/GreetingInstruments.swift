@@ -892,27 +892,37 @@ struct HourlyWeatherInstrument: View {
                     let low = metric == .temperature ? (values.min() ?? 0) - 1 : 0
                     let high = metric == .probability ? 100 : max(low + 1, values.max() ?? 1)
                     let span = max(3600, hours.last!.date.timeIntervalSince(hours.first!.date))
-                    let width = max(0, geometry.size.width - 20)
+                    let width = max(0, geometry.size.width - 32)
                     let tint = metric == .precipitation || metric == .probability ? Color(hex: darkInk ? 0x175A80 : 0x77CFF3)
                         : metric == .temperature ? Color(hex: darkInk ? 0x874416 : 0xFFD18A) : ink
                     Canvas { context, size in
-                        let baseline: CGFloat = 20
+                        let baseline: CGFloat = 34
                         var axis = Path()
                         axis.move(to: CGPoint(x: 0, y: baseline))
                         axis.addLine(to: CGPoint(x: size.width, y: baseline))
-                        context.stroke(axis, with: .color(ink.opacity(0.25)), lineWidth: 0.5)
+                        if metric != .precipitation && metric != .probability {
+                            context.stroke(axis, with: .color(ink.opacity(0.16)), lineWidth: 0.5)
+                        }
                         var line = Path()
                         var previous: Date?
                         for hour in hours {
-                            let x = 10 + width * hour.date.timeIntervalSince(hours.first!.date) / span
+                            let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
                             guard let value = metric.value(hour) else { previous = nil; continue }
-                            let y = baseline - 18 * (value - low) / (high - low)
+                            let y = baseline - 20 * (value - low) / (high - low)
                             if metric == .precipitation || metric == .probability {
+                                let track = CGRect(x: x - 10, y: 14, width: 20, height: 20)
+                                context.fill(Path(roundedRect: track, cornerRadius: 3), with: .color(ink.opacity(0.06)))
                                 if value > 0 {
-                                    let bar = CGRect(x: x - 5, y: y, width: 10, height: max(1, baseline - y))
-                                    context.fill(Path(roundedRect: bar, cornerRadius: 2), with: .color(tint))
+                                    let bar = CGRect(x: x - 10, y: y, width: 20, height: max(1, baseline - y))
+                                    context.fill(Path(roundedRect: bar, cornerRadius: min(3, bar.height / 2)),
+                                                 with: .linearGradient(Gradient(colors: [tint, tint.opacity(0.45)]),
+                                                                       startPoint: CGPoint(x: x, y: y),
+                                                                       endPoint: CGPoint(x: x, y: baseline)))
                                 } else {
-                                    context.fill(Path(ellipseIn: CGRect(x: x - 1, y: baseline - 1, width: 2, height: 2)), with: .color(ink.opacity(0.6)))
+                                    var zero = Path()
+                                    zero.move(to: CGPoint(x: x - 4, y: baseline))
+                                    zero.addLine(to: CGPoint(x: x + 4, y: baseline))
+                                    context.stroke(zero, with: .color(ink.opacity(0.35)), lineWidth: 1)
                                 }
                             } else {
                                 if let previous, hour.date.timeIntervalSince(previous) <= 3600 {
@@ -925,14 +935,22 @@ struct HourlyWeatherInstrument: View {
                         context.stroke(line, with: .color(tint), lineWidth: 1.5)
                     }
                     ForEach(hours) { hour in
-                        let x = 10 + width * hour.date.timeIntervalSince(hours.first!.date) / span
+                        let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
                         Text(clock(hour.date) + "时")
                             .font(.system(size: 8, weight: .medium).monospacedDigit())
                             .foregroundStyle(ink.opacity(0.86))
-                            .position(x: x, y: 29)
-                        if metric.value(hour) == nil {
+                            .position(x: x, y: 43)
+                        if metric == .precipitation || metric == .probability {
+                            Text(metric.value(hour).map { value in
+                                metric == .probability ? String(format: "%.0f", value)
+                                    : value == 0 ? "0" : String(format: "%.1f", value)
+                            } ?? "—")
+                                .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(ink.opacity(0.9))
+                                .position(x: x, y: 6)
+                        } else if metric.value(hour) == nil {
                             Text("—").font(.system(size: 9)).foregroundStyle(ink.opacity(0.8))
-                                .position(x: x, y: 10)
+                                .position(x: x, y: 20)
                         }
                     }
                 }

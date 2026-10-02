@@ -308,7 +308,7 @@ struct GreetingStatusSheet: View {
         var sill: CGFloat { 56 }
         var total: CGFloat { sky + sill }
         var top: CGFloat { margin - 8 }
-        var nowHeight: CGFloat { 144 }
+        var nowHeight: CGFloat { 156 }
         var chartWidth: CGFloat { narrow ? 236 : 300 }
         var chartHeight: CGFloat { 80 }
         var sunWidth: CGFloat { narrow ? 196 : 212 }
@@ -453,17 +453,6 @@ struct GreetingStatusSheet: View {
                 }
                 .equatable()
                 .transition(.opacity)
-            }
-            if let aside = phrase.aside {
-                Text(aside)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(topRightInk.opacity(0.9))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                    .frame(width: m.width - m.margin * 2, alignment: .trailing)
-                    .offset(x: m.margin, y: layout.nameFrame.maxY + 6)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
             }
             Unchanged(key: SillKey(ccModel: ccModel, ccProvider: ccProvider, codexModel: codexModel,
                                    codexProvider: codexProvider, tokens: tokens,
@@ -645,7 +634,7 @@ struct GreetingStatusSheet: View {
             .offset(x: layout.phraseFrame.minX, y: layout.phraseFrame.minY)
             .allowsHitTesting(false)
             .accessibilityElement()
-            .accessibilityLabel("\(phrase.script)，\(name)。\(phrase.aside ?? "")")
+            .accessibilityLabel("\(phrase.script)，\(name)。")
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -683,7 +672,7 @@ struct GreetingStatusSheet: View {
             metricRow(ink: ink, vivid: vivid)
             if liveWeather, focusedDay == nil, let reading {
                 HourlyWeatherInstrument(reading: reading, date: skyDate, ink: ink, darkInk: !vivid)
-                    .frame(width: m.narrow ? 216 : 270, height: 48)
+                    .frame(width: m.narrow ? 216 : 270, height: 60)
             }
         }
         .frame(height: m.nowHeight, alignment: .topTrailing)
