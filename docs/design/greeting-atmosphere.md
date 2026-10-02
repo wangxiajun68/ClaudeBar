@@ -100,7 +100,7 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 | 用途 | 字体 | 理由 |
 | --- | --- | --- |
-| 问候 | 默认 **Borel**（SIL OFL 1.1，随包 `Resources/Fonts`），全小写；设置 → 通用 → 天气与问候 → 问候字体可在 24 款间切换（`GreetingTypeface`：20 款随包 Google Fonts + SignPainter / Snell Roundhand / Savoye LET / Zapfino 四款系统字体） | 在 24 款候选的同屏对比中，Borel 是唯一单线、圆头、连笔宽松的——最接近 "hello"，所以作为默认。只有单线字体在填充外加圆角描边（Borel `0.012em × 2`，Playwrite `0.008em`，Sacramento `0.01em` 等），均匀加粗而不填死 a / e / o 的字腔；粗细对比强的字体不描，以免糊掉发丝线。设置页默认折起，只留当前这一款的字样；展开后每张卡片用该字体、同一套轮廓与加粗写出当前问候语；切换后问候卡重写一遍。系统字体按 PostScript 名查找，找不到的卡片置灰 |
+| 问候 | 默认 **Borel**（SIL OFL 1.1，随包 `Resources/Fonts`），全小写；设置 → 通用 → 天气与问候 → 问候字体可在 53 款间切换（`GreetingTypeface`：14 款中文 + 39 款拉丁，其中 49 款随包、SignPainter / Snell Roundhand / Savoye LET / Zapfino 四款系统字体） | 在候选字体的同屏对比中，Borel 是唯一单线、圆头、连笔宽松的——最接近 "hello"，所以作为默认。只有单线字体在填充外加圆角描边（Borel `0.012em × 2`，Playwrite `0.008em`，Sacramento `0.01em` 等），均匀加粗而不填死 a / e / o 的字腔；粗细对比强的字体不描，以免糊掉发丝线。设置页默认折起，只留当前这一款的字样；展开后每张卡片用该字体、同一套轮廓与加粗写出当前问候语；切换后问候卡重写一遍。系统字体按 PostScript 名查找，找不到的卡片置灰 |
 | 签名 | SF Pro Semibold，全大写，字距 0.16em | 与手写体对比，安静的第二声部 |
 | 回落 | Snell Roundhand Bold | 系统必备；仅在资源缺失时使用 |
 

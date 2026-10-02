@@ -7,7 +7,7 @@
 ClaudeBar/
 ├── Sources/
 │   ├── build.sh                          ← 开发者 / CI 构建脚本（非终端用户安装器）
-│   ├── AppIcon.icns / AppIcon.svg        ← 应用图标
+│   ├── AppIcon.icns / AppIcon-1024.png   ← 应用图标（dev 通道另有 AppIcon-Dev.icns / AppIcon-Dev-1024.png）
 │   ├── ProviderIcons/                    ← 厂商品牌图标（LobeHub Icons，随包内置；见其 README）
 │   ├── BrandAssets/                      ← 三家客户端 + ClaudeBar 自己的图标底片（由 Tools/gen-brand-marks.py 生成）
 │   ├── batteryctl/                       ← 电池控制 C 辅助进程（`batteryctl.c` + `policy.h`）
@@ -57,7 +57,7 @@ ClaudeBar/
 │   │       ├── Pages/                    ← Dashboard / Sessions / Providers / Connectors / Usage / Traffic / VPN / Settings / Help
 │   │       ├── Shared/                  ← Tile / ConnectionCard / CodexModelMark / ProviderDirectory / PermissionsSection / SettingsControls / 问候卡的 Atmosphere 系列 / …
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
-│   ├── Fonts/                             ← 问候的 20 款手写体（SIL OFL / Apache 2.0）+ 各自的许可证；build.sh 复制进 Resources/Fonts
+│   ├── Fonts/                             ← 问候的 49 款随包手写体（SIL OFL / Apache 2.0）+ 各自的许可证；build.sh 复制进 Resources/Fonts
 │   └── Widget/
 ├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载
 ├── docs/

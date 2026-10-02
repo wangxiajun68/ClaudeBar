@@ -26,7 +26,7 @@
 | `Views/Shared/WeatherReadingSky.swift` | `WeatherReading.Sky` 的 SF Symbols 符号名与中文文案映射（`symbol(night:)` / `caption`），给天气卡、预报带与供应商图标用。原文件里的 620pt popover 成稿 `WeatherExplorer` / `SolarHorizon` / `ForecastStrip` 已无调用点，已删除；预报现在是 `GreetingInstruments.swift` 的 `ForecastRibbon` |
 | `Views/Shared/GreetingCard.swift` | 仪表盘问候卡：`GreetingCard`（读 store）+ 纯展示 `GreetingStatusSheet`。天空为 Metal 大气；左上时钟 + **自动 / 手动**天空模式，右上实时天气（地点、温度、图标化体感 / 湿度 / 风向 / 降水），右下六日预报带，左下日轨（手动时换成天气 × 时段 × 24h 时间轴控制台），底部窗台读数。无悬浮层：预报聚焦某天时右上原位改读那天，窗台胶囊悬停原位展开。手动模式的天气 / 时刻存 `@AppStorage("greeting.*")`，时刻拖动中只放 `@State`，落定才写回。时间动画由 `FrameTicker`（`CADisplayLink`）驱动；窗台、预报带、右上此刻包在 `Unchanged(key:)` 里，拖动时不重建（性能见 `docs/design/greeting-atmosphere.md` §5.7） |
 | `Views/Shared/GreetingInstruments.swift` | 问候卡的仪表：`WeatherGlyph`、`HumidityDrop`、`WindDial`、`InstrumentMetric`、`ForecastRibbon`（高低温带 + 降水柱，悬停聚焦 / 点击固定 / ←→）、`SunPath`（含日出日落时刻解析）、`SillGauge`（窗台额度：剩余百分比，读法同弹窗 `QuotaSwayGauge`）、`SkyModeToggle`、`SkyConsole` + `SkyTimeline`（手动天空） |
-| `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView`、帧率策略、`PageScrollActivity` 滚动定帧、不阻塞主线程的 drawable 预算）、`GreetingScript`（`GreetingTypeface` 字体目录：24 款可选、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
+| `Views/Shared/Atmosphere/*.swift` | Metal 天空：`SkyScene`（太阳高度 × 天气 → 调色与参数，`mix` 供天气交叉淡变）、`AtmosphereShader`（运行时编译的 MSL）、`AtmosphereRenderer`（问候语排版 / 双通道纹理、天气 1.2 s 淡变、入场与书写）、`AtmosphereView`（`MTKView`、帧率策略、`PageScrollActivity` 滚动定帧、不阻塞主线程的 drawable 预算）、`GreetingScript`（`GreetingTypeface` 字体目录：53 款可选（14 款中文 / 39 款拉丁，其中 49 款随包、4 款系统）、各自的 `wght` 与加粗；按字体 × 文本缓存字形轮廓，缺字体时回落 Snell Roundhand） |
 | `Views/Shared/CodexModelMark.swift` | popup 头部 chip 的客户端 mark：只有 `ProductBrandMark` 的品牌图形（13pt），家族名不再并排重复（chip 自己已写）；`CursorMark` 是同一个形状的 Cursor 版（不复用 `codex:` 三态，那个 `Bool` 会把它画成 Claude） |
 | `Views/Shared/PermissionsSection.swift` | 设置页"权限与隐私"：逐项开关、系统状态、跳转系统设置 |
 | `Utils/TerminalLauncher.swift` | 继续会话：`ResumeTerminal`（自动 / Otty / Warp / 终端）选择与回退；Warp / 终端走 AppleScript（需"自动化"） |
@@ -56,7 +56,7 @@
 | `Views/Shared/FanInternalsPanel.swift` | 风扇卡的 popover：直接画随包的 `Resources/macbook-internals-illustration.png` 机身插画，左右两个风扇位按插画坐标切成圆形涡轮（`FanArtwork` 裁切，各自按自己的 rpm 转、各自一圈按自己最大值填充的转速弧），各自一行读数与「拉满 / 恢复自动」；插画缺失时退回 `laptopcomputer` SF 符号 |
 | `Views/Shared/HardwareDetailPanel.swift` | `HardwareIdentity`（机型 / GPU 名，进程内不变）+ `HardwareSiliconMark` + `LoadHistoryChart` + `HardwareDetailPanel`（CPU / GPU）+ `ConnectionDetailPanel`（连接卡 popover：网络 / 本机代理 / 附近与设备三段，顶部是链路本身的状态而非「连接」这个标题，RSSI 刻度与 `ConnectionStatus` 词汇表和卡片共用；地址行归档进「复制诊断」）+ `CapacityHardwareMark` |
 | `Resources/macbook-internals-illustration.png` | 独立生成的详细结构插画（PNG，非 SVG）；来源与提示词见 `ASSET-LICENSES.md`，随应用离线分发 |
-| `Sources/Fonts/*.ttf` + `*-OFL.txt` / `*-LICENSE.txt` | 问候的可选 20 款手写体与**各自的许可证**（每款一个文件，版权与保留字体名在其中）。`Sources/build.sh` 复制进 `Resources/Fonts`，`GreetingScript` 按文件名加载；字体不装进系统、不单独分发，出处逐条记在 `Resources/ASSET-LICENSES.md` |
+| `Sources/Fonts/*.ttf` + `*-OFL.txt` / `*-LICENSE.txt` | 问候的可选 49 款随包手写体与**各自的许可证**（每款一个文件，版权与保留字体名在其中）。`Sources/build.sh` 复制进 `Resources/Fonts`，`GreetingScript` 按文件名加载；字体不装进系统、不单独分发，出处逐条记在 `Resources/ASSET-LICENSES.md` |
 | `Tools/gen-cn-weather-cities.py` | 生成 `CNWeatherCityTable.swift`：从仍在服务的 `city3jdata` 省→市树取地级市，逐个探测 `weather_index/{id}.html` 是否有效再写回（该站的 `toy1` 名字搜索接口已失效，对任何中文城市名都返回空数组，所以名字→id 只能这样离线建表）。**表是生成物，改它要重跑脚本** |
 | `Tools/bench-atmosphere.py` | 问候卡天空的性能基准：用生产着色器按卡片实际尺寸离屏绘制各天气，报 GPU / CPU 每帧中位数，以及排版、栅格化、首次取字形的主线程耗时。SwiftUI 侧的每步更新耗时见 `Tools/render-greeting-preview.py --bench`（`BENCH_PACE=0` 定频对比，`--bench-baseline` 为对照） |
 | `Tools/gen-brand-marks.py` | 品牌方块的归一化：把 `Sources/ProviderIcons/` 的 LobeHub 原图剪到自己的墨迹、按画布 90% 写回 `Sources/BrandAssets/`（构建随包 + 随 appex 内置）。原图各自带着到画布边缘的留白，13pt 的方块里 Anthropic 只剩 65%。**按宽度定标**——共享边长会让竖高的 Cursor 立方体比旁边的 CC 小 12% |
@@ -113,4 +113,4 @@
 | `Tests/battery-control.c` | 电池辅助进程回归：IOKit transport 换内存模拟，不写真实 SMC |
 | `Sources/Widget/*.swift` | WidgetKit |
 | `Sources/BrandAssets/*.png` | 三家客户端 + ClaudeBar 自己的品牌图形（`Tools/gen-brand-marks.py` 生成）；`Sources/build.sh` 除随应用内置外**还会复制进 appex**——扩展有它自己的 `Bundle.main`，不复制的话小组件会静默退回兜底字形，看起来就像一次有意的改动 |
-| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo（打成 `.xz` 并复用仓库内那份）/ 把 `Sources/BrandAssets/` 复制进 appex / 把 `Sources/Fonts/`（问候的 20 款手写体 + 各自的许可证）复制进 `Resources/Fonts`，由 `GreetingScript` 按文件名加载 |
+| `Sources/build.sh` | 构建 / 签名 / 安装 / 拉取 mihomo（打成 `.xz` 并复用仓库内那份）/ 把 `Sources/BrandAssets/` 复制进 appex / 把 `Sources/Fonts/`（问候的 49 款随包手写体 + 各自的许可证）复制进 `Resources/Fonts`，由 `GreetingScript` 按文件名加载 |

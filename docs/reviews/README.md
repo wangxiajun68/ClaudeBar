@@ -8,3 +8,5 @@
 - [低负载与动效审查](performance-audit-2026-09-30.md)
 - [天气卡视觉与 GPU 测量](weather-card-measurements-2026-09-30.md)
 - [电池控制审查](battery-control-audit-2026-09-27.md)
+- [问候字体研究](greeting-font-research-2026-10-01.md)
+- [灵动岛会话监控审查](island-session-monitor-audit-2026-10-01.md)（复现脚本 [island-session-monitor-repro-2026-10-01.py](island-session-monitor-repro-2026-10-01.py)）

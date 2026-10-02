@@ -26,17 +26,19 @@ docs/
 ├── FAQ.md                    使用与排障
 ├── RELEASING.md              维护者发版步骤
 ├── VERSIONING.md             版本号、tag、CHANGELOG 约定
+├── DEVELOPMENT.md            开发环境与 dev / release 版本隔离
 ├── CHANGELOG.md              用户可见的版本变更
 ├── FEISHU_DOCUMENTS.md       飞书文档工作区
 ├── WORKFLOW_MONITORING.md    Claude Code workflow 状态监控
 ├── promo/                    宣传影片、介绍图与制作说明
+├── reviews/                  历史审查与测量证据（按构建与日期归档）
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
 │   ├── 01–10 *.md + 专题 *.md
 │   └── surfaces/             按界面分的设计说明
 └── technical/                技术实现（代码如何工作）
     ├── README.md
-    └── 01–17 *.md + 专题 *.md
+    └── 01–13、15、16、18 *.md + 专题 *.md
 ```
 
 ---
@@ -57,7 +59,7 @@ docs/
 | 08 | [error-handling](design/08-error-handling.md) | 失败场景与降级 |
 | 09 | [build-and-distribution](design/09-build-and-distribution.md) | 构建、分发与平台要求 |
 | 10 | [notch-island](design/10-notch-island.md) | 刘海灵动岛与权限与隐私开关 |
-| — | [greeting-atmosphere](design/greeting-atmosphere.md) | 概览问候卡：Metal 大气、手动天空、24 款问候字体 |
+| — | [greeting-atmosphere](design/greeting-atmosphere.md) | 概览问候卡：Metal 大气、手动天空、53 款问候字体 |
 | — | [weather-observatory](design/weather-observatory.md) | **已取代**：Canvas 版问候带与内联预报区 |
 | — | [surfaces/settings](design/surfaces/settings.md) | 设置页：四类分组与精简清单 |
 

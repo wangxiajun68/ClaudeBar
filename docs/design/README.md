@@ -20,10 +20,10 @@
 | 08 | [error-handling.md](08-error-handling.md) | 失败场景与降级策略 | 处理边界情况时 |
 | 09 | [build-and-distribution.md](09-build-and-distribution.md) | 构建、分发、平台要求 | 构建与发版时 |
 | 10 | [notch-island.md](10-notch-island.md) | 刘海灵动岛：视觉、状态机、数据口径、性能；权限与隐私开关 | 改灵动岛或权限时 |
-| — | [greeting-atmosphere.md](greeting-atmosphere.md) | 概览问候卡：Metal 大气天空、手动天空控制台、24 款问候字体、逐层配色与帧率预算 | 改问候卡 / 天空时 |
+| — | [greeting-atmosphere.md](greeting-atmosphere.md) | 概览问候卡：Metal 大气天空、手动天空控制台、53 款问候字体、逐层配色与帧率预算 | 改问候卡 / 天空时 |
 | — | [weather-observatory.md](weather-observatory.md) | **已取代**：Canvas 版问候带与 HUD 内联预报区（`ForecastStrip`）的现场记录；仍成立的是 Open-Meteo 与天文口径 | 查早期结论时 |
 
-按界面组织的说明放在 [`surfaces/`](surfaces)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：四类分组、精简清单与验证边界）。
+按界面组织的说明放在 [`surfaces/`](surfaces)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：四类分组、精简清单与验证边界）、[usage.md](surfaces/usage.md)（用量分析：读数层级、数据口径与验证范围）、[vpn.md](surfaces/vpn.md)（VPN 页：节点、订阅与流量日志）、[feishu-documents.md](surfaces/feishu-documents.md)（飞书文档工作区：浏览、编辑与权限边界）。
 
 ---
 
