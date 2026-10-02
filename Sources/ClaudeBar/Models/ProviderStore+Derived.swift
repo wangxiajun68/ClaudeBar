@@ -11,19 +11,11 @@ extension ProviderStore {
     /// Alive sessions currently busy.
     var busySessionCount: Int { aliveSessions.filter(\.isBusy).count }
 
-    /// Alive sessions parked on the user — a permission prompt or an
-    /// `AskUserQuestion` dialog is on screen. See `SessionStatus.waiting`.
-    var waitingSessionCount: Int { aliveSessions.filter(\.isWaiting).count }
-
     /// Alive Cursor sessions.
     var aliveCursorSessions: [CursorSessionInfo] { cursorSessions }
 
     /// Cursor sessions currently active.
     var activeCursorCount: Int { cursorSessions.filter(\.isBusy).count }
-
-    /// Cursor sessions parked on the user — a plan awaiting 应用, or a blocking
-    /// action. See `CursorSessionInfo.hasPendingDecision`.
-    var waitingCursorCount: Int { cursorSessions.filter(\.isWaiting).count }
 
     /// Is any Claude session busy (drives brand pulse / status icon).
     var anyClaudeBusy: Bool { sessions.contains { $0.isAlive && $0.isBusy } }
@@ -56,7 +48,6 @@ extension ProviderStore {
     struct ExternalSessionNode: Identifiable {
         var id: String { session.id }
         let session: ExternalSessionInfo
-        let depth: Int
         let children: [ExternalSessionNode]
         /// This node's session plus every descendant's, in pre-order.
         ///
@@ -71,9 +62,8 @@ extension ProviderStore {
         /// array to count it (see `SessionsView`).
         let activeDescendantCount: Int
 
-        init(session: ExternalSessionInfo, depth: Int, children: [ExternalSessionNode]) {
+        init(session: ExternalSessionInfo, children: [ExternalSessionNode]) {
             self.session = session
-            self.depth = depth
             self.children = children
             self.flattened = [session] + children.flatMap(\.flattened)
             self.activeDescendantCount = children.reduce(0) {
@@ -104,17 +94,17 @@ extension ProviderStore {
             // Orphaned or completed helpers must never become main cards.
             alive.filter { !$0.isSubagent }
         }
-        func build(_ session: ExternalSessionInfo, depth: Int, ancestors: Set<String> = []) -> ExternalSessionNode {
+        func build(_ session: ExternalSessionInfo, ancestors: Set<String> = []) -> ExternalSessionNode {
             let visited = ancestors.union([session.sessionId])
             let children = (childrenOf[session.sessionId] ?? [])
                 .filter { $0.isActive && !visited.contains($0.sessionId) }
                 .sorted { $0.updatedAt > $1.updatedAt }
-                .map { build($0, depth: depth + 1, ancestors: visited) }
-            return ExternalSessionNode(session: session, depth: depth, children: children)
+                .map { build($0, ancestors: visited) }
+            return ExternalSessionNode(session: session, children: children)
         }
         let result = roots()
             .sorted { $0.updatedAt > $1.updatedAt }
-            .map { build($0, depth: 0) }
+            .map { build($0) }
         externalTreeCache[kind] = result
         return result
     }
@@ -126,17 +116,6 @@ extension ProviderStore {
 
     /// Formatted total ("12.3K").
     var totalUsageLabel: String { UsageStats.formatTokens(totalUsageTokens) }
-
-    /// Max per-model total in the current period (bar scale denominator).
-    var maxUsageTokens: Int { max(usageStats.first?.totalTokens ?? 1, 1) }
-
-    /// Totals per source for the whole period — the river's legend and the
-    /// popup total line.
-    var usageTotalBySource: [(source: UsageSource, tokens: Int)] {
-        UsageSource.allCases.map { source in
-            (source, (usageBySource[source] ?? []).reduce(0) { $0 + $1.totalTokens })
-        }
-    }
 
     /// Estimated list-price spend for the selected period.
     ///

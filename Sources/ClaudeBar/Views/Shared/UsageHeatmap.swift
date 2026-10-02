@@ -160,7 +160,6 @@ struct UsageHeatmap: View {
     private struct Cell {
         var date: Date?
         var intensity: Double?
-        var empty = true
         var label = ""
         var help = ""
         var isToday = false
@@ -185,7 +184,6 @@ struct UsageHeatmap: View {
             return Cell(
                 date: date,
                 intensity: tokens.map { Double($0) / peak },
-                empty: tokens == nil,
                 label: cal.veryShortWeekdaySymbols[weekday - 1],
                 help: helpText(date: date, tokens: tokens),
                 isToday: cal.isDate(date, inSameDayAs: today) || cal.isDate(date, inSameDayAs: selected)
@@ -212,8 +210,7 @@ struct UsageHeatmap: View {
     }
 
     static func dayKey(_ date: Date) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+        ModelPricing.dayKey(date)
     }
 }
 
@@ -260,7 +257,7 @@ private struct HeatLayout {
 /// Sliding-pill period strip, rendered by the shared `SegmentedCapsule` so the
 /// usage page and the popup read as the same control as the connector and
 /// provider filters. Compact mode uses two-character labels so 「自定义」
-/// cannot wrap in the 400pt popup.
+/// cannot wrap in the 460pt popup.
 struct PeriodTabs: View {
     var period: UsagePeriod
     var compact: Bool = false

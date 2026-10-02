@@ -1,7 +1,11 @@
 import SwiftUI
 
 /// Adapted from Lucide gpu / shield-check (ISC); see Resources/Lucide.txt.
-/// Shared 24-point geometry keeps small toolbar and large dashboard marks consistent.
+/// The small mark is an adaptation of Lucide's `gpu`, not the generated
+/// `LucideHardwareGeometry` the large dashboard marks draw: it is deliberately
+/// two-tone (a gradient wash on the closed board, a separate bracket stroke,
+/// cores filled at rest), which the cached single-path API cannot express. The
+/// two can drift when the generator runs.
 ///
 /// Neither drawing takes a reading: the glyph's `level`/`detailed` parameters
 /// were never set by any construction, so the two cores are drawn at their

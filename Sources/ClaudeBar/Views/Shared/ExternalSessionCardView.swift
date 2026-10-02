@@ -9,7 +9,7 @@ struct ExternalSessionCardView: View {
     let session: ExternalSessionInfo
     /// How many sub-agents sit below this card (0 = a plain session card).
     var descendantCount: Int = 0
-    /// Immediate children, shown as tiles in the `⋯N` swarm popover. Empty on
+    /// Descendants shown as tiles in the `⋯N` swarm popover. Empty on
     /// sub-agents and on sessions that spawned nothing.
     var childAgents: [ExternalSessionInfo] = []
     var onDoubleTap: (() -> Void)? = nil

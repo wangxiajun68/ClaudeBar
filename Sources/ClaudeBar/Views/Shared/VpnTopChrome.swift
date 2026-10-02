@@ -6,14 +6,6 @@ enum VpnDelayStyle {
         if ms <= 0 { return "超时" }
         return "\(ms)ms"
     }
-
-    static func color(_ ms: Int?) -> Color {
-        guard let ms else { return Theme.textTertiary() }
-        if ms <= 0 { return Theme.statusError }
-        if ms < 200 { return Theme.statusSuccess }
-        if ms < 800 { return Theme.claudeHi }
-        return Theme.statusError
-    }
 }
 
 
@@ -28,19 +20,21 @@ enum VpnDelayStyle {
 /// readout are both gone.
 struct VpnStatusPill: View {
     @ObservedObject private var vpn = VpnManager.shared
-    /// 0 = full (status row), 1 = tight. The status row has room for the node
-    /// name; a caller that is itself cramped can shrink it to dot + delay.
-    var compact = false
 
     var body: some View {
-        Button {
+        // Read once: `liveLeafName` walks the primary group and the selector
+        // chain, and `resolvedDelay` walks it again — and the label and the
+        // tooltip each read both.
+        let leaf = vpn.liveLeafName ?? "代理"
+        let delay = vpn.isRunning ? vpn.resolvedDelay(leaf) : nil
+        return Button {
             NotificationCenter.default.post(.showMainWindow(page: .vpn))
         } label: {
             HStack(spacing: 4) {
                 Circle()
                     .fill(vpn.isRunning ? Theme.chartGreen : Theme.Ink.idle)
                     .frame(width: 5, height: 5)
-                Text(label)
+                Text(label(leaf: leaf, delay: delay))
                     .font(.system(size: 11, design: .rounded))
                     .foregroundColor(vpn.isRunning ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
@@ -49,20 +43,18 @@ struct VpnStatusPill: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        .help(help(leaf: leaf, delay: delay))
+        .accessibilityLabel(help(leaf: leaf, delay: delay))
     }
 
-    private var label: String {
+    private func label(leaf: String, delay: Int?) -> String {
         switch vpn.state {
         case .starting: return "VPN 启动中…"
         case .missingCore: return "VPN 未装内核"
         default: break
         }
         if vpn.isRunning {
-            let leaf = vpn.liveLeafName ?? "代理"
-            if compact { return VpnDelayStyle.text(vpn.resolvedDelay(leaf)) }
-            if let delay = vpn.resolvedDelay(leaf) {
+            if let delay {
                 return "\(leaf) · \(VpnDelayStyle.text(delay))"
             }
             return leaf
@@ -70,10 +62,9 @@ struct VpnStatusPill: View {
         return "VPN 未启用"
     }
 
-    private var help: String {
+    private func help(leaf: String, delay: Int?) -> String {
         if vpn.isRunning {
-            let leaf = vpn.liveLeafName ?? "代理"
-            return "VPN · \(leaf) · \(VpnDelayStyle.text(vpn.resolvedDelay(leaf))) · 点击打开 VPN 页"
+            return "VPN · \(leaf) · \(VpnDelayStyle.text(delay)) · 点击打开 VPN 页"
         }
         return "VPN 未启用 · 点击打开 VPN 页"
     }
@@ -231,13 +222,12 @@ struct CursorUsagePanel: View {
         return "Cursor 账户"
     }
 
-    /// `10月3日 20:31` — the reset moment, date-qualified because both windows
-    /// are days away and a bare clock would read as "today".
+    /// `10月3日` — the reset moment, date-qualified once it is not today; a
+    /// reset later today reads as a bare clock (`20:31`).
     static func shortDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        if Calendar.current.isDateInToday(date) { formatter.dateFormat = "HH:mm" }
-        else { formatter.dateFormat = "M月d日" }
-        return formatter.string(from: date)
+        if Calendar.current.isDateInToday(date) {
+            return UsageStats.formatter("HH:mm").string(from: date)
+        }
+        return UsageStats.formatter("M月d日").string(from: date)
     }
 }

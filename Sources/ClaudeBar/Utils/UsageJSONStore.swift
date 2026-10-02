@@ -145,13 +145,7 @@ final class UsageJSONStore {
         for row in rollup.values where row.day >= startDay && row.day <= endDay
             && !row.path.hasPrefix("openclaw")
             && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
-            var u = byModel[row.model] ?? ModelUsage(model: row.model)
-            u.calls += row.calls
-            u.inputTokens += row.input
-            u.outputTokens += row.output
-            u.cacheReadTokens += row.cacheRead
-            u.cacheCreationTokens += row.cacheCreate
-            byModel[row.model] = u
+            Self.accumulate(row, into: &byModel)
         }
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
@@ -162,13 +156,7 @@ final class UsageJSONStore {
         loadLocked()
         var grouped: [String: [String: ModelUsage]] = [:]
         for row in rollup.values where row.day >= startDay && row.day <= endDay && row.path.hasPrefix(pathPrefix) {
-            var usage = grouped[row.path]?[row.model] ?? ModelUsage(model: row.model)
-            usage.calls += row.calls
-            usage.inputTokens += row.input
-            usage.outputTokens += row.output
-            usage.cacheReadTokens += row.cacheRead
-            usage.cacheCreationTokens += row.cacheCreate
-            grouped[row.path, default: [:]][row.model] = usage
+            Self.accumulate(row, into: &grouped[row.path, default: [:]])
         }
         return grouped.mapValues { Array($0.values) }
     }
@@ -180,13 +168,7 @@ final class UsageJSONStore {
         loadLocked()
         var byModel: [String: ModelUsage] = [:]
         for row in rollup.values where row.path.hasPrefix(pathPrefix) && row.path.hasSuffix(pathSuffix) {
-            var usage = byModel[row.model] ?? ModelUsage(model: row.model)
-            usage.calls += row.calls
-            usage.inputTokens += row.input
-            usage.outputTokens += row.output
-            usage.cacheReadTokens += row.cacheRead
-            usage.cacheCreationTokens += row.cacheCreate
-            byModel[row.model] = usage
+            Self.accumulate(row, into: &byModel)
         }
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
@@ -211,12 +193,7 @@ final class UsageJSONStore {
         for row in rollup.values where row.day >= startDay && row.day <= endDay
             && !row.path.hasPrefix("openclaw")
             && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
-            var d = byDay[row.day] ?? DayUsage(day: row.day)
-            d.inputTokens += row.input
-            d.outputTokens += row.output
-            d.cacheReadTokens += row.cacheRead
-            d.cacheCreationTokens += row.cacheCreate
-            byDay[row.day] = d
+            Self.accumulate(row, into: &byDay)
         }
         return byDay.values.filter { $0.totalTokens > 0 }.sorted { $0.day < $1.day }
     }
@@ -237,9 +214,10 @@ final class UsageJSONStore {
            let obj = try? JSONDecoder().decode([String: FileRec].self, from: data) {
             files = obj
         }
-        // Lossy decode: the rollup is append-only JSONL and its last line can
-        // legitimately be half-written (the app was killed mid-append). Strict
-        // decoding threw away every other line with it.
+        // Lossy decode: the writer rewrites this file atomically in full, so a
+        // half-written line is on-disk damage (corruption or a hand-edit), not
+        // a torn append. Skipping the bad line keeps the rest of the rollup
+        // readable — strict decoding threw away every other line with it.
         if let data = try? Data(contentsOf: FilePaths.usageRollupJSONL) {
             let text = String(decoding: data, as: UTF8.self)
             let dec = JSONDecoder()
@@ -286,5 +264,27 @@ final class UsageJSONStore {
 
     private static func key(_ row: RollupRec) -> String {
         row.path + "\u{1F}" + row.day + "\u{1F}" + row.model
+    }
+
+    /// Fold one rollup row into a per-model bucket — `fetch`, `fetchByPath`
+    /// and `fetchSession` share this body, they differ only in the bucket.
+    private static func accumulate(_ row: RollupRec, into byModel: inout [String: ModelUsage]) {
+        var u = byModel[row.model] ?? ModelUsage(model: row.model)
+        u.calls += row.calls
+        u.inputTokens += row.input
+        u.outputTokens += row.output
+        u.cacheReadTokens += row.cacheRead
+        u.cacheCreationTokens += row.cacheCreate
+        byModel[row.model] = u
+    }
+
+    /// Same fold for per-day totals, which carry no call or model counts.
+    private static func accumulate(_ row: RollupRec, into byDay: inout [String: DayUsage]) {
+        var d = byDay[row.day] ?? DayUsage(day: row.day)
+        d.inputTokens += row.input
+        d.outputTokens += row.output
+        d.cacheReadTokens += row.cacheRead
+        d.cacheCreationTokens += row.cacheCreate
+        byDay[row.day] = d
     }
 }

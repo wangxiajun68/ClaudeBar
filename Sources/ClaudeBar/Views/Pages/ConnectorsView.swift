@@ -365,7 +365,7 @@ struct ConnectorsView: View {
     /// *derived* association, so letting a CLI stand in for the skills that
     /// depend on it would make one click edit records the user never saw.
     private func batchTargets(records shown: [ConnectorRecord]) -> [BatchTarget] {
-        shown.map { BatchTarget(id: $0.id, name: $0.name, platforms: $0.platforms) }
+        shown.map { BatchTarget(id: $0.id, platforms: $0.platforms) }
     }
 
     private func toggleBatchMode() {
@@ -411,9 +411,8 @@ struct ConnectorsView: View {
     /// What a Remove would touch, for the copy. The plugin / MCP half is a
     /// config edit; a skill is a whole folder, which is the part worth naming.
     /// The count is passed in because the caller already resolved the records.
-    private func removalSplit(_ records: [ConnectorRecord]) -> (skills: Int, others: Int) {
-        let skills = records.filter { if case .skillMove = $0.method { return true } else { return false } }.count
-        return (skills, records.count - skills)
+    private func removalSplit(_ records: [ConnectorRecord]) -> Int {
+        records.filter { if case .skillMove = $0.method { return true } else { return false } }.count
     }
 
     private func askBatch(_ action: ConnectorBatchAction) {
@@ -442,10 +441,10 @@ struct ConnectorsView: View {
                 ? "全局停用的 Skill 会还原；此前的平台停用设置仍然保留。被占用的路径会拒绝覆盖。"
                 : "只启用当前平台；全局停用的 Skill 需要先切到全部平台恢复。") + where_ + cursorNote + "。"
         case .remove:
-            let split = removalSplit(targets)
+            let skills = removalSplit(targets)
             title = "移除选中的 \(count) 项？"
             message = "Skill 会进废纸篓；插件和 MCP 会从该平台的配置里删掉。"
-                + (split.skills > 0 ? "其中 \(split.skills) 个 Skill 目录会连同内容一起进废纸篓。" : "")
+                + (skills > 0 ? "其中 \(skills) 个 Skill 目录会连同内容一起进废纸篓。" : "")
                 + where_ + "。此操作不可撤销。"
         }
         pendingBatch = BatchConfirm(action: action, title: title, message: message,
@@ -461,11 +460,6 @@ struct ConnectorsView: View {
             selection.removeAll()
             isBatching = false
         }
-    }
-
-    /// The targets behind the current selection, for the confirmation copy.
-    private var selectionTargets: [BatchTarget] {
-        batchTargets(records: visibleRecords)
     }
 
     /// The bulk action bar: a tile the width of the grid, pinned under it. It
@@ -911,13 +905,12 @@ private struct RemovalRequest: Identifiable {
 }
 
 /// One row the bulk bar can act on: the identity a tick is keyed by, plus the
-/// two facts the bar prints. Deliberately *not* a `ConnectorRecord` — the bar
-/// only ever needs to count and name, and copying the whole record (with its
+/// platforms its readout counts by. Deliberately *not* a `ConnectorRecord` —
+/// the bar needs nothing past those two, and copying the whole record (with its
 /// URLs and connection stanza) into every bar render would rebuild far more
 /// than the counts it reads.
 private struct BatchTarget: Identifiable {
     let id: String
-    let name: String
     let platforms: [ConnectorPlatform]
 }
 

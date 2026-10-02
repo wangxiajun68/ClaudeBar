@@ -88,13 +88,6 @@ enum ProviderBridge {
             catalogID: source.catalogID)
     }
 
-    /// Claude and Codex records of the same vendor — name or rewritten OpenAI URL.
-    static func matches(_ claude: Provider, _ codex: CodexProvider) -> Bool {
-        if claude.name.caseInsensitiveCompare(codex.name) == .orderedSame { return true }
-        return normalizeURL(claude.baseURL) == normalizeURL(codex.baseURL)
-            && !claude.baseURL.isEmpty && !codex.baseURL.isEmpty
-    }
-
     // MARK: - Model records
 
     /// The one Claude → Codex model mapping. `preserving` keeps the id and

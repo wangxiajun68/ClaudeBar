@@ -84,10 +84,10 @@ struct ProviderStatusBadge: View {
 /// The keyboard behaviour the app's push button must have — focus ring, space /
 /// Return, disabled — with **no** authored chrome.
 ///
-/// Every state this used to draw (a faded fill, a rim, the one-shot perimeter
-/// sweep, a press offset) now belongs to `ActionPlateButtonStyle`, and this app
-/// has exactly one push-button language. Two hand-rolled copies of it is how the
-/// same page ended up with a rounded *rectangle* button beside a capsule one.
+/// Every state this used to draw (a faded fill, a rim, a press offset) now
+/// belongs to `ActionPlateButtonStyle`, and this app has exactly one push-button
+/// language. Two hand-rolled copies of it is how the same page ended up with a
+/// rounded *rectangle* button beside a capsule one.
 ///
 /// The style is kept as a name because the provider card passes it positionally
 /// at the call site (`ProviderActionStyle(prominent:)`) and because these buttons
@@ -191,6 +191,10 @@ struct ProviderModelChoice: Hashable {
     let providerID: UUID
     let modelID: UUID
 
+    static func isCurrent(_ provider: Provider, _ model: ModelConfig, activeID: UUID?) -> Bool {
+        provider.id == activeID && provider.activeModel?.id == model.id
+    }
+
     static func resolve(_ choice: Self?, providers: [Provider], activeID: UUID?) -> (Provider, ModelConfig)? {
         if let choice, let provider = providers.first(where: { $0.id == choice.providerID }),
            let model = provider.models.first(where: { $0.id == choice.modelID }),
@@ -212,7 +216,7 @@ struct ProviderModelSelector: View {
     private var target: (Provider, ModelConfig)? { ProviderModelChoice.resolve(choice, providers: providers, activeID: activeID) }
     private var isCurrent: Bool {
         guard let (provider, model) = target else { return false }
-        return provider.id == activeID && provider.activeModel?.id == model.id
+        return ProviderModelChoice.isCurrent(provider, model, activeID: activeID)
     }
 
     var body: some View {
@@ -296,7 +300,7 @@ private struct ProviderModelPicker: View {
                                 Text(provider.name).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).padding(.top, 4)
                                 ForEach(models) { model in
                                     let item = ProviderModelChoice(providerID: provider.id, modelID: model.id)
-                                    let current = provider.id == activeID && provider.activeModel?.id == model.id
+                                    let current = ProviderModelChoice.isCurrent(provider, model, activeID: activeID)
                                     Button { onSelect(item) } label: {
                                         HStack(spacing: 10) {
                                             Image(systemName: item == selected ? "checkmark.circle.fill" : "circle")
@@ -340,7 +344,7 @@ struct ProviderActivationControl: View {
     private var target: (Provider, ModelConfig)? { ProviderModelChoice.resolve(choice, providers: providers, activeID: activeID) }
     private var isActive: Bool {
         guard let (provider, model) = target else { return false }
-        return provider.id == activeID && provider.activeModel?.id == model.id
+        return ProviderModelChoice.isCurrent(provider, model, activeID: activeID)
     }
     var body: some View {
         Button {

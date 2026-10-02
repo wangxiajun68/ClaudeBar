@@ -5,11 +5,8 @@ import Foundation
 struct VpnIPInfo: Equatable {
     var ip: String = ""
     var country: String = ""
-    var countryCode: String = ""
-    var region: String = ""
     var city: String = ""
     var isp: String = ""
-    var asn: Int = 0
 }
 
 /// One site on the connectivity strip (Apple / GitHub / Google / YouTube).
@@ -221,13 +218,6 @@ final class VpnNetProbe: ObservableObject {
         if let success = obj["success"] as? Bool, success == false { return nil }
         let loc = obj["location"] as? [String: Any]
         let conn = obj["connection"] as? [String: Any]
-        let asnRaw = obj["asn"] ?? obj["as"]
-        let asn: Int
-        if let n = asnRaw as? Int { asn = n }
-        else if let s = asnRaw as? String {
-            let digits = s.replacingOccurrences(of: "AS", with: "").split(separator: " ").first.map(String.init) ?? s
-            asn = Int(digits) ?? 0
-        } else { asn = JSONCoerce.intVal(conn?["asn"]) }
         let ip = (obj["ip"] as? String)
             ?? (obj["query"] as? String)
             ?? (obj["ipAddress"] as? String)
@@ -239,20 +229,10 @@ final class VpnNetProbe: ObservableObject {
             ip: trimmed,
             country: (obj["country"] as? String) ?? (obj["country_name"] as? String)
                 ?? (loc?["country"] as? String) ?? "",
-            countryCode: {
-                let raw = (obj["country_code"] as? String)
-                    ?? (loc?["country_code"] as? String)
-                    ?? (obj["countryCode"] as? String)
-                    ?? ""
-                return raw.count == 2 ? raw : ""
-            }(),
-            region: (obj["region"] as? String) ?? (obj["regionName"] as? String)
-                ?? (loc?["state"] as? String) ?? "",
             city: (obj["city"] as? String) ?? (loc?["city"] as? String) ?? "",
             isp: (obj["organization"] as? String) ?? (obj["isp"] as? String)
                 ?? (obj["org"] as? String)
                 ?? (conn?["org"] as? String) ?? (conn?["isp"] as? String)
-                ?? (obj["organization_name"] as? String) ?? "",
-            asn: asn)
+                ?? (obj["organization_name"] as? String) ?? "")
     }
 }

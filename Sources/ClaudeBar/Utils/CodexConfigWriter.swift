@@ -193,8 +193,10 @@ enum CodexConfigWriter {
         PrivateFileWriter.harden(dst)
     }
 
-    /// Writing happens off the main actor (`CodexProviderStore.activate`), so
-    /// the latch needs its own lock rather than riding on main-thread timing.
+    /// Every current caller is main-actor serialized (`CodexProviderStore`),
+    /// where the flag alone would hold. The lock stays as future-proofing:
+    /// `write` is not actor-isolated, and a caller that ever moves off the
+    /// main actor must not race two backups out of one launch.
     private static let backUpLock = NSLock()
     static func backUpOnceThreadSafe() {
         backUpLock.lock(); defer { backUpLock.unlock() }

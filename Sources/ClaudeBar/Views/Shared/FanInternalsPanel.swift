@@ -14,10 +14,16 @@ struct FanInternalsPanel: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Label("\(fanMonitor.fans.count) 个风扇", systemImage: "fanblades")
-                    .rollingNumber("\(fanMonitor.fans.count) 个风扇")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                // The roll belongs to the leaf that draws the digits, not the
+                // `Label` container, so the count takes the title-closure form.
+                Label {
+                    Text("\(fanMonitor.fans.count) 个风扇")
+                        .rollingNumber("\(fanMonitor.fans.count) 个风扇")
+                } icon: {
+                    Image(systemName: "fanblades")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
             }
             internalsIllustration
             if fanMonitor.fans.isEmpty {

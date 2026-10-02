@@ -28,7 +28,6 @@ struct CursorSessionInfo: Identifiable, Equatable {
     var title: String = ""
     /// `composerHeaders.value.subtitle` — e.g. "Edited app.py, frontend.html".
     var subtitle: String = ""
-    var toolPending: Bool = false   // bounded transcript/checkpoint evidence → working
     var completionID: String? = nil // byte offset of the latest successful final answer
     var subagents: [CursorSubagentInfo] = []
     /// Cursor is parked on the user: a plan is waiting to be applied, or an
@@ -241,7 +240,6 @@ struct CursorSessionMonitor {
                 currentActivity: scan.activity,
                 title: name,
                 subtitle: subtitle,
-                toolPending: turnInFlight,
                 completionID: terminalCurrent ? scan.completionID : nil,
                 hasPendingDecision: pendingDecision
             ))
@@ -364,7 +362,7 @@ struct CursorSessionMonitor {
             return CursorTranscriptScan(activity: "", toolPending: false, completionID: nil, ended: false, modifiedAt: modifiedAt * 1000)
         }
         // Lossy decode — a strict one fails for the whole window whenever the
-        // seek landed mid-character (see `SessionMonitor.readContext`).
+        // seek landed mid-character (see `SessionMonitor.fetchContext`).
         var lastActivity = ""
         var lastMessageLine = -1
         var lastTurnEndedLine = -1

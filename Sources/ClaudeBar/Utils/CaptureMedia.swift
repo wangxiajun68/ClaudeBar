@@ -6,11 +6,10 @@ import AppKit
 /// they are written beside the capture and replaced with a short file ref.
 enum CaptureMedia {
     static let payloadCapBytes = 16 * 1024 * 1024
-    static let payloadCapLabel = "16 MB"
+    static let payloadCapLabel = "\(payloadCapBytes / 1024 / 1024) MB"
     private static let filePrefix = "cbfile:"
 
     struct EmbeddedImage: Equatable {
-        var mediaType: String
         var fileURL: URL? = nil
         var data: Data? = nil
     }
@@ -81,10 +80,12 @@ enum CaptureMedia {
             if let url = dict["image_url"] as? [String: Any],
                let s = url["url"] as? String, isBulky(s) {
                 var u = url
-                if let ref = persistURL(s, dir: dir, index: &index) { u["url"] = ref }
+                if let ref = persist(s, mediaType: "image/png", dir: dir, index: &index) { u["url"] = ref }
                 out["image_url"] = u
             } else if let s = dict["image_url"] as? String, isBulky(s) {
-                if let ref = persistURL(s, dir: dir, index: &index) { out["image_url"] = ref }
+                if let ref = persist(s, mediaType: "image/png", dir: dir, index: &index) {
+                    out["image_url"] = ref
+                }
             }
             for (k, v) in out {
                 if k == "source" || k == "image_url" { continue }
@@ -108,30 +109,25 @@ enum CaptureMedia {
             && s.count > 800
     }
 
-    private static func persistURL(_ url: String, dir: URL, index: inout Int) -> String? {
-        if url.hasPrefix(filePrefix) { return url }
-        if url.hasPrefix("data:image"), let parsed = decodeDataURI(url) {
-            return persist(parsed.data, mediaType: parsed.mime, dir: dir, index: &index)
-        }
-        if looksBase64(url) {
-            return persist(url, mediaType: "image/png", dir: dir, index: &index)
-        }
-        return nil
-    }
-
     private static func persist(_ data: String, mediaType: String, dir: URL, index: inout Int) -> String? {
         if data.hasPrefix(filePrefix) { return data }
         let payload: Data
+        var mime = mediaType
         if data.hasPrefix("data:image"), let parsed = decodeDataURI(data) {
             payload = parsed.data
+            // The URI's own mime wins: callers hand `image/png` as a fallback,
+            // and a JPEG passed through as .png loses its extension.
+            mime = parsed.mime
         } else {
             payload = Data(base64Encoded: data.replacingOccurrences(of: "\n", with: "")) ?? Data()
         }
         guard !payload.isEmpty else { return nil }
-        let ext = ext(for: mediaType)
+        let ext = ext(for: mime)
         let name = String(format: "img-%03d.%@", index, ext)
         index += 1
-        try? payload.write(to: dir.appendingPathComponent(name), options: .atomic)
+        guard (try? payload.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil else {
+            return nil
+        }
         return filePrefix + name
     }
 
@@ -140,35 +136,36 @@ enum CaptureMedia {
         let ext = ext(for: mediaType)
         let name = String(format: "img-%03d.%@", index, ext)
         index += 1
-        try? data.write(to: dir.appendingPathComponent(name), options: .atomic)
+        guard (try? data.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil else {
+            return nil
+        }
         return filePrefix + name
     }
 
     // MARK: - Decode
 
     private static func image(fromSource source: [String: Any], mediaDir: URL?) -> EmbeddedImage? {
-        let mime = (source["media_type"] as? String) ?? "image/png"
         guard let data = source["data"] as? String else { return nil }
-        return decodeBlob(data, mime: mime, mediaDir: mediaDir)
+        return decodeBlob(data, mediaDir: mediaDir)
     }
 
     private static func image(fromURL url: String, mediaDir: URL?) -> EmbeddedImage? {
         if url.hasPrefix("http") { return nil }
         if url.hasPrefix("data:image"), let parsed = decodeDataURI(url) {
-            return EmbeddedImage(mediaType: parsed.mime, data: parsed.data)
+            return EmbeddedImage(data: parsed.data)
         }
-        return decodeBlob(url, mime: "image/png", mediaDir: mediaDir)
+        return decodeBlob(url, mediaDir: mediaDir)
     }
 
-    private static func decodeBlob(_ raw: String, mime: String, mediaDir: URL?) -> EmbeddedImage? {
+    private static func decodeBlob(_ raw: String, mediaDir: URL?) -> EmbeddedImage? {
         if raw.hasPrefix(filePrefix) {
             let name = String(raw.dropFirst(filePrefix.count))
             guard let mediaDir else { return nil }
-            return EmbeddedImage(mediaType: mime, fileURL: mediaDir.appendingPathComponent(name))
+            return EmbeddedImage(fileURL: mediaDir.appendingPathComponent(name))
         }
         let cleaned = raw.replacingOccurrences(of: "\n", with: "")
         guard let data = Data(base64Encoded: cleaned), !data.isEmpty else { return nil }
-        return EmbeddedImage(mediaType: mime, data: data)
+        return EmbeddedImage(data: data)
     }
 
     private static func decodeDataURI(_ uri: String) -> (data: Data, mime: String)? {

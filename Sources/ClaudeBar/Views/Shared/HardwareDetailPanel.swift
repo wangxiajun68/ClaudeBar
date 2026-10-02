@@ -12,7 +12,11 @@ enum HardwareIdentity {
         guard sysctlbyname("machdep.cpu.brand_string", &buffer, &size, nil, 0) == 0 else { return "Mac" }
         return String(cString: buffer)
     }()
-    static var shortName: String { name.replacingOccurrences(of: "Apple ", with: "") }
+    /// Apple's raw names read "Apple M4 Pro"; the captions want the chip alone.
+    /// One transform, so the CPU and GPU captions cannot drift apart.
+    private static func short(_ full: String) -> String { full.replacingOccurrences(of: "Apple ", with: "") }
+    static var shortName: String { short(name) }
+    static var shortGPUName: String { short(gpuName) }
 }
 
 struct HardwareSiliconMark: View {
@@ -32,7 +36,7 @@ struct HardwareSiliconMark: View {
         VStack(spacing: 3) {
             HardwareIllustration(kind: gpu ? .gpu : .cpu, load: load, tint: tint, cells: cells)
                 .frame(height: markHeight)
-            Text(gpu ? HardwareIdentity.gpuName.replacingOccurrences(of: "Apple ", with: "") : HardwareIdentity.shortName).font(.system(size: 11, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.6)
+            Text(gpu ? HardwareIdentity.shortGPUName : HardwareIdentity.shortName).font(.system(size: 11, weight: .bold, design: .rounded)).lineLimit(1).minimumScaleFactor(0.6)
         }
         .padding(.horizontal, 2)
         .accessibilityLabel("\(gpu ? HardwareIdentity.gpuName : HardwareIdentity.name) · \(gpu ? "GPU" : "CPU") 总负载 \(Int(min(1, max(0, load.isFinite ? load : 0)) * 100))%")

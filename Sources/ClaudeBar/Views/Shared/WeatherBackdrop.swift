@@ -23,7 +23,7 @@ struct WeatherBackdrop: View {
     let isDay: Bool?
     /// 0…100. Widens a shower so drizzle and a downpour are different pictures.
     var intensity: Int = 40
-    var astronomy: SkyAstronomy.Snapshot? = nil
+    var astronomy: SkyAstronomy.Snapshot
     var windKph: Double = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -67,14 +67,14 @@ struct WeatherBackdrop: View {
     // MARK: - Drawing
 
     private static func draw(sky: WeatherReading.Sky, night: Bool, palette: SkyPalette,
-                             intensity: Int, astronomy: SkyAstronomy.Snapshot?, windKph: Double, t: TimeInterval, size: CGSize,
+                             intensity: Int, astronomy: SkyAstronomy.Snapshot, windKph: Double, t: TimeInterval, size: CGSize,
                              ctx: inout GraphicsContext) {
         drawWind(speed: windKph, t: t, size: size, ctx: &ctx)
         drawLight(palette: palette, t: t, size: size, ctx: &ctx)
-        if let astronomy { drawCelestial(astronomy, sky: sky, size: size, t: t, ctx: &ctx) }
+        drawCelestial(astronomy, sky: sky, size: size, t: t, ctx: &ctx)
         switch sky {
-        case .clear: if astronomy == nil { drawClear(night: night, size: size, t: t, ctx: &ctx) }
-        case .partly: drawPartly(night: night, celestial: astronomy == nil, size: size, t: t, ctx: &ctx)
+        case .clear: break
+        case .partly: drawPartly(night: night, size: size, t: t, ctx: &ctx)
         case .cloudy: drawCloudy(night: night, size: size, t: t, ctx: &ctx)
         case .fog: drawFog(size: size, t: t, ctx: &ctx)
         case .rain: drawRain(night: night, size: size, intensity: intensity, t: t, ctx: &ctx)
@@ -213,40 +213,6 @@ struct WeatherBackdrop: View {
 
     // MARK: Clear
 
-    private static func drawClear(night: Bool, size: CGSize, t: TimeInterval,
-                                  ctx: inout GraphicsContext) {
-        if night {
-            for i in 0..<28 {
-                let x = starX(i) * size.width
-                let y = starY(i) * size.height
-                let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.6 + Double(i % 5) * 0.25) + Double(i)))
-                let r = 0.65 + Double((i * 37) % 5) * 0.28
-                ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
-                         with: .color(SkyPalette.moon.opacity((0.35 + Double(i % 3) * 0.2) * twinkle)))
-            }
-            let c = CGPoint(x: size.width * 0.76, y: min(size.height * 0.15, 76))
-            let r = min(size.height * 0.14, 56)
-            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 2.2, y: c.y - r * 2.2,
-                                            width: r * 4.4, height: r * 4.4)),
-                     with: .radialGradient(Gradient(colors: [SkyPalette.moon.opacity(0.28),
-                                                             SkyPalette.moon.opacity(0)]),
-                                           center: c, startRadius: r * 0.2, endRadius: r * 2.2))
-            ctx.drawLayer { layer in
-                layer.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.55, y: c.y - r * 0.55,
-                                                  width: r * 1.1, height: r * 1.1)),
-                           with: .color(SkyPalette.moon))
-                layer.blendMode = .destinationOut
-                layer.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.55 + r * 0.34,
-                                                  y: c.y - r * 0.55 - r * 0.12,
-                                                  width: r * 1.05, height: r * 1.05)),
-                           with: .color(.black))
-            }
-        } else {
-            drawSun(at: CGPoint(x: size.width * 0.78, y: min(size.height * 0.13, 65)),
-                    size: size, t: t, ctx: &ctx)
-        }
-    }
-
     /// A breathing disc and corona, and three diffuse light pools drifting
     /// across the card. The drift is the clear sky's motion; the breathing
     /// alone is too small to notice.
@@ -279,9 +245,8 @@ struct WeatherBackdrop: View {
 
     // MARK: Partly / cloudy / fog
 
-    private static func drawPartly(night: Bool, celestial: Bool = true, size: CGSize, t: TimeInterval,
+    private static func drawPartly(night: Bool, size: CGSize, t: TimeInterval,
                                    ctx: inout GraphicsContext) {
-        if celestial { drawClear(night: night, size: size, t: t, ctx: &ctx) }
         let lit = Color.white.opacity(night ? 0.40 : 0.98)
         cloud(&ctx, at: drift(0.02, 0.28, t / 70), y: 0.42, scale: 0.50, size: size,
               lit: lit)
@@ -501,13 +466,6 @@ struct WeatherBackdrop: View {
         let span = to - from
         let travel = 0.5 + 0.5 * sin(t * 2 * .pi)
         return CGFloat(from + span * travel)
-    }
-
-    private static func starX(_ i: Int) -> CGFloat {
-        CGFloat(0.02 + Double((i * 73) % 100) / 100 * 0.96)
-    }
-    private static func starY(_ i: Int) -> CGFloat {
-        CGFloat(0.05 + Double((i * 41) % 100) / 100 * 0.90)
     }
 }
 

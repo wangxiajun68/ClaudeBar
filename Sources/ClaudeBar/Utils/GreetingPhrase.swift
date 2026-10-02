@@ -115,7 +115,10 @@ enum GreetingPhrase {
             return choose([("下午好呀", "喝口水，让接下来的时间轻松一点"), ("慢慢来就好", "不必一次做好所有事，先做好眼前这件"), ("休息一下吧", "看看远处，给眼睛和心情都放个小假"), ("愿你从容些", "一点一点推进，也是在向前走"), ("今天也不错", "别只盯着没做完的，也看看已经做到的"), ("给自己一点甜", "一杯喜欢的饮料，也能让下午亮起来"), ("伸个懒腰吧", "放松肩颈，再舒舒服服地继续"), ("保持好心情", "认真做事，也记得好好照顾自己")])
         case .evening:
             return choose([("晚上好呀", "把忙碌放缓一点，给自己留些时间"), ("今天辛苦了", "吃顿暖暖的晚饭，慢慢享受夜晚"), ("夜色正温柔", "愿今晚安静，也愿你心里轻松"), ("歇一歇吧", "这一天已经很努力了，也该照顾自己"), ("愿今晚轻松", "听首喜欢的歌，把心情慢慢放松"), ("让日子慢下来", "留一点夜晚，给自己和喜欢的人"), ("灯火可亲", "愿你有热饭，有陪伴，也有好心情"), ("今晚也温暖", "忙碌之外，别忘了生活的小小美好")])
-        case .late, .night: return Phrase(script: "晚安呀", aside: "早点休息，明天见")
+        // .late and .night returned in the first switch above, so this one only
+        // phrases the five daytime parts; the trap is what keeps every path
+        // from falling out of the end of the function.
+        default: preconditionFailure("late and night return above")
         }
     }
 

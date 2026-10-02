@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import SwiftUI
 
 /// What the island's alert strip is showing.
 ///
@@ -37,19 +36,8 @@ enum IslandAlert: Equatable, Identifiable {
 }
 
 /// The three agent families ClaudeBar watches.
-enum IslandAgent: String, Equatable, CaseIterable {
+enum IslandAgent: String, Equatable {
     case claude, codex, cursor
-
-    /// The island's own instrument vocabulary for this family, so a session
-    /// module on a glance card uses the same drawing family as the rest of the
-    /// app instead of a one-off SF Symbol.
-    var markKind: InstrumentGlyph.Kind {
-        switch self {
-        case .claude: return .sessions
-        case .codex: return .config
-        case .cursor: return .overview
-        }
-    }
 
     var label: String {
         switch self {
@@ -375,9 +363,10 @@ final class IslandLiveModel: ObservableObject {
     // MARK: - Usage
 
     func reloadUsage() {
-        // A generation check discards stale results but still lets every
-        // request run six database queries. Keep at most one pass in flight
-        // and one trailing refresh with the latest index contents.
+        // One pass in flight, one trailing pass: a call that lands mid-pass is
+        // folded into a single re-run over the latest index contents, so a
+        // burst of `usageStats` publishes cannot stack up overlapping batches
+        // of aggregate queries.
         guard !usageRefreshPending else {
             usageRefreshQueued = true
             return
@@ -453,8 +442,7 @@ final class IslandLiveModel: ObservableObject {
         let byDay = UsageIndex.fetchDailyModels(in: DateInterval(start: seriesStart, end: todayEnd))
         usage.days = (0..<30).compactMap { offset in
             guard let date = cal.date(byAdding: .day, value: offset, to: seriesStart) else { return nil }
-            let c = cal.dateComponents([.year, .month, .day], from: date)
-            let key = String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+            let key = ModelPricing.dayKey(date)
             let models = byDay[key] ?? []
             // Priced at the rate in force on that day, not at today's: the
             // series is a month of history, and a mid-month price change must

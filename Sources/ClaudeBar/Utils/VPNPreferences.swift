@@ -5,11 +5,6 @@ import Foundation
 
 extension AppPreferences {
     static func vpnDefaults() -> [String: Any] {
-        // One-time migration: 7897 was the original mixed-port default;
-        // move stored values matching it to 7890 so existing installs follow.
-        if UserDefaults.standard.integer(forKey: "vpnMixedPort") == 7897 {
-            UserDefaults.standard.set(7890, forKey: "vpnMixedPort")
-        }
         let vpnDefaults: [String: Any] = [
             "vpnEnabled": UserDefaults.standard.object(forKey: "vpnEnabled") as? Bool ?? false,
             "vpnSystemProxyEnabled": UserDefaults.standard.object(forKey: "vpnSystemProxyEnabled") as? Bool ?? false,

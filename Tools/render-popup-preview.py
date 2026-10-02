@@ -418,8 +418,7 @@ source += '''
                           lastUpdatedAt: Date().timeIntervalSince1970 * 1000 - 8_000,
                           contextPercent: 68, status: .active, isAlive: true,
                           currentActivity: "编辑 routes.ts",
-                          title: "AgentLoop 追踪", subtitle: "Edited routes.ts",
-                          toolPending: true),
+                          title: "AgentLoop 追踪", subtitle: "Edited routes.ts"),
     ]
     store.externalSessions = [
         ExternalSessionInfo(kind: .codex, sessionId: "9c1d", cwd: "/Users/x/Project/api",

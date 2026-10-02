@@ -8,7 +8,6 @@ final class FanMonitor {
     static let shared = FanMonitor()
 
     var fans: [FanInfo] = []
-    var smcAvailable = false
     var lastError: String?
     var helperInstalled = FanHelperInstaller.isInstalled()
 
@@ -68,7 +67,6 @@ final class FanMonitor {
             Task { @MainActor in
                 guard let self else { return }
                 self.reading = false
-                if self.smcAvailable != available { self.smcAvailable = available }
                 // 绝大多数 tick 数值不变 —— Equatable 守卫，避免资源区无谓重渲。
                 if next != self.fans { self.fans = next }
             }
@@ -84,7 +82,9 @@ final class FanMonitor {
     }
 
     func setManual(_ fanID: Int, rpm: Int) {
-        // Defer observable mutations until the slider's update has completed.
+        // Defer the @Observable mutation out of the current view update, and
+        // coalesce rapid repeats: a second tap within 0.1 s cancels the first,
+        // so only the last RPM of a burst reaches the helper.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingSpeedTasks.removeValue(forKey: fanID)?.cancel()

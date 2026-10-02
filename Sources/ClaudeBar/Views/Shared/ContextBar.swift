@@ -5,7 +5,6 @@ import SwiftUI
 struct ContextBar: View {
     let ratio: Double
     var height: CGFloat = 4
-    var trackOpacity: Double = 0.08
     /// Override the customary ratio-derived hue. `nil` (the default) keeps the
     /// context tinting; a caller that is reading something other than context
     /// fill — an allowance that is *consumed* rather than *remaining* — passes
@@ -16,7 +15,7 @@ struct ContextBar: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: height / 2, style: .continuous)
-                    .fill(Theme.cardFill(trackOpacity))
+                    .fill(Theme.cardFill(0.08))
                 RoundedRectangle(cornerRadius: height / 2, style: .continuous)
                     .fill(tint ?? Theme.contextColor(ratio))
                     .frame(width: max(height, geo.size.width * min(max(ratio, 0), 1.0)))

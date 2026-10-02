@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// A proportional ring: one arc per slice, drawn with `Circle().trim` so it
-/// stays crisp at any size and needs no Canvas. Slices are ordered largest
-/// first; a zero-total ring renders as an empty track.
+/// stays crisp at any size and needs no Canvas. Arcs follow the caller's slice
+/// order and zero-value slices are skipped; a zero-total ring renders as an
+/// empty track.
 ///
 /// Sits beside model usage: each model tile opens one of these showing where
 /// that model's tokens came from (Claude Code / Codex / third-party).

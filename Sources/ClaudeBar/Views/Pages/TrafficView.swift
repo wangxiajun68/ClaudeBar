@@ -38,6 +38,12 @@ final class TrafficPageState: ObservableObject {
     /// in-flight load it expects to accept after remount.
     var mounted = false
     let detailQueue = DispatchQueue(label: "com.claudebar.capture-detail", qos: .userInitiated)
+    /// The in-flight item, kept so `reloadDetail` / `rebuildFullTurns` can
+    /// cancel a superseded load and `onDisappear` can drop it. `cancel()` on an
+    /// item that already ran is a no-op and keeps the block — and the detail
+    /// payload it captured — alive, so the handle is released where its
+    /// lifetime is owned (on replacement, or on unmount) rather than from the
+    /// completion block, which cannot reference its own item by name.
     var detailWork: DispatchWorkItem?
     var fullWork: DispatchWorkItem?
 
@@ -336,19 +342,24 @@ struct TrafficView: View {
             rebuildConversation()
         }
         .onReceive(catalog.$records) { _ in
-            // @Published emits before assignment; read the committed array.
-            // One handler, not two: this used to be paired with an
-            // `onChange(of: catalog.records.count)` that ran the same filter a
-            // second time for the same publish (and a count-only handler would
-            // miss an in-place record update anyway, hence the deferral).
+            // @Published emits before assignment; read the committed array one
+            // runloop turn from now.
             DispatchQueue.main.async {
                 // Cheap guard: a record publish that does not change what the
                 // filter reads (an in-place status/duration patch) must not
                 // re-run the O(rows × 3 lowercased()) pass and re-diff the
                 // 120-row list behind it.
-                guard recordsStamp != Self.stamp(catalog.records) else { return }
-                recomputeFiltered()
-                if selectedID == nil { selectedID = filtered.first?.id }
+                if recordsStamp != Self.stamp(catalog.records) {
+                    recomputeFiltered()
+                }
+                // Outside the guard: a prune (`ProxyCaptureStore` caps the list
+                // at 120 and drops the tail) removes the selected row without
+                // touching a field the stamp hashes, and a skipped
+                // reconciliation leaves `selectedID` on a row that is gone —
+                // no highlight, empty detail pane until the next click.
+                if selectedID == nil || !filtered.contains(where: { $0.id == selectedID }) {
+                    selectedID = filtered.first?.id
+                }
             }
         }
         .onChange(of: currentSummary?.state) { _, state in
@@ -398,10 +409,16 @@ struct TrafficView: View {
             }
         }
         .onDisappear {
+            // Release the work handles, not just cancel them: cancel() on a
+            // completed item is a no-op, and the stored block otherwise keeps
+            // the last detail payload alive for as long as the page state
+            // (which is permanent) lives.
             state.mounted = false
             state.loadGen += 1
             state.detailWork?.cancel()
+            state.detailWork = nil
             state.fullWork?.cancel()
+            state.fullWork = nil
             state.clearConversation()
         }
         .onChange(of: filter) { _, _ in recomputeFiltered() }
@@ -850,7 +867,8 @@ struct TrafficView: View {
 
     private func bubble(role: String, text: String, dim: Bool, live: Bool = false, name: String = "",
                         images: [CaptureMedia.EmbeddedImage] = []) -> some View {
-        let title = name.isEmpty ? roleLabel(role) : "\(roleLabel(role)) · \(name)"
+        let title = name.isEmpty ? ConversationBuilder.roleLabel(role)
+            : "\(ConversationBuilder.roleLabel(role)) · \(name)"
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(title)
@@ -907,22 +925,6 @@ struct TrafficView: View {
             .foregroundColor(kind == .anthropic ? Theme.Ink.claude : Theme.Ink.codex)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill((kind == .anthropic ? Theme.claude : Theme.codex).opacity(0.15)))
-    }
-
-    private func roleLabel(_ role: String) -> String {
-        switch role {
-        case "user": return "用户"
-        case "assistant": return "助手"
-        case "system": return "系统"
-        case "developer": return "开发者"
-        case "thinking": return "思考"
-        case "tools": return "工具声明"
-        case "tool", "function": return "工具"
-        case "block": return "块"
-        case "response": return "响应"
-        case "request": return "请求"
-        default: return role
-        }
     }
 
     private func roleColor(_ role: String) -> Color {
@@ -1168,15 +1170,6 @@ private struct TrafficRow: View, Equatable {
         }
         .padding(.horizontal, 5).padding(.vertical, 1)
         .background(Capsule().fill(color.opacity(0.18)))
-    }
-
-    private var dot: Color {
-        switch rec.state {
-        case .streaming, .pending: return Theme.claudeHi
-        case .done: return Theme.external
-        case .error: return Theme.statusError
-        case .aborted: return Theme.statusWarning
-        }
     }
 }
 

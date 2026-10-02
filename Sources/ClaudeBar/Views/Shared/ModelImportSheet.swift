@@ -17,8 +17,15 @@ struct ModelImportSheet: View {
         self.existingNames = existingNames
         self.onImport = onImport
         self.onCancel = onCancel
-        let importable = candidates.filter { !existingNames.contains($0.lowercased()) }
-        _selection = State(initialValue: Set(importable))
+        _selection = State(initialValue: Set(Self.importable(candidates, notIn: existingNames)))
+    }
+
+    /// The single rule for what can be imported: a candidate whose name is not
+    /// already taken, compared case-insensitively. The initializer cannot read a
+    /// computed property (`self` is not fully initialized yet), so the rule lives
+    /// in a static helper that both the initial selection and 全选可导入 share.
+    private static func importable(_ candidates: [String], notIn existingNames: Set<String>) -> [String] {
+        candidates.filter { !existingNames.contains($0.lowercased()) }
     }
 
     private var filtered: [String] {
@@ -104,6 +111,6 @@ struct ModelImportSheet: View {
     }
 
     private func selectAllImportable() {
-        selection = Set(candidates.filter { !existingNames.contains($0.lowercased()) })
+        selection = Set(Self.importable(candidates, notIn: existingNames))
     }
 }

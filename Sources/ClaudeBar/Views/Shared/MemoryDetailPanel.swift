@@ -48,7 +48,14 @@ struct MemoryDetailPanel: View {
         .task(id: refresh) {
             loading = true
             failed = false
-            let snapshot = await Task.detached(priority: .utility) { ProcessMemoryRow.read() }.value
+            // A detached worker inherits no cancellation, so forward the panel's
+            // by hand: the ps fork must not outlive the popover that asked for it.
+            let worker = Task.detached(priority: .utility) { ProcessMemoryRow.read() }
+            let snapshot = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard !Task.isCancelled else { return }
             failed = snapshot == nil
             rows = snapshot ?? []

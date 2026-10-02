@@ -3,7 +3,6 @@ import Combine
 import CoreBluetooth
 import CoreLocation
 import IOBluetooth
-import SwiftUI
 import UserNotifications
 
 extension Notification.Name {
@@ -50,40 +49,6 @@ enum AppPermission: String, CaseIterable, Identifiable {
         case .bluetooth: return "蓝牙"
         case .location, .currentLocation: return "定位服务"
         case .cursorData: return "无系统弹窗"
-        }
-    }
-
-    var purpose: String {
-        switch self {
-        case .widgetData:
-            return "把用量与会话快照写入小组件的共享容器。关闭时不写入，小组件保持上次内容。"
-        case .notifications:
-            return "会话由运行转为空闲时发送系统通知。"
-        case .screenRecording:
-            return "注册全局热键，拉框截图并复制到剪贴板。"
-        case .automation:
-            return "通过 AppleScript 在 Warp / 终端里执行 resume 命令；关闭时只打开终端并把命令复制到剪贴板。Otty 走本机通道，不需要此权限。"
-        case .bluetooth:
-            return "连接卡片显示蓝牙开关，读取 AirPods 等耳机电量。"
-        case .location:
-            return "macOS 把 Wi-Fi 名称视为位置信息；只读名称与信号，不读取坐标。"
-        case .currentLocation:
-            return "概览问候卡按当前所在位置取天气。关闭后改用「天气城市」，不再读取位置。"
-        case .cursorData:
-            return "只读打开 Cursor 的 state.vscdb，列出进行中的 Cursor 会话。"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .widgetData: return "square.grid.2x2"
-        case .notifications: return "bell"
-        case .screenRecording: return "camera.viewfinder"
-        case .automation: return "terminal"
-        case .bluetooth: return "headphones"
-        case .location: return "wifi"
-        case .currentLocation: return "location.fill"
-        case .cursorData: return "cursorarrow.rays"
         }
     }
 
@@ -143,24 +108,6 @@ enum PermissionStatus: Equatable {
         case .notDetermined: return "未授权"
         case .askOnUse: return "使用时询问"
         case .notRequired: return "无需授权"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .granted: return Theme.statusSuccess
-        case .denied: return Theme.statusError
-        case .notDetermined: return Theme.statusWarning
-        case .askOnUse, .notRequired: return Theme.statusIdle
-        }
-    }
-
-    var ink: Color {
-        switch self {
-        case .granted: return Theme.Ink.success
-        case .denied: return Theme.Ink.error
-        case .notDetermined: return Theme.Ink.warning
-        case .askOnUse, .notRequired: return Theme.Ink.idle
         }
     }
 }

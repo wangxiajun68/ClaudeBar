@@ -13,7 +13,6 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
     static let shared = WiFiNameAuthorization()
     @Published private(set) var status: CLAuthorizationStatus
     @Published private(set) var requesting = false
-    @Published var showSettingsHelp = false
     private let manager: CLLocationManager
     private var requestTimeout: DispatchWorkItem?
 
@@ -23,9 +22,6 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
         super.init()
         manager.delegate = self
     }
-
-    // macOS exposes its granted state as authorizedAlways.
-    var authorized: Bool { status == .authorizedAlways }
 
     func request() {
         guard BuildChannel.promptsForSystemPermissions else { return }
@@ -46,7 +42,6 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
                 guard let self, self.requesting else { return }
                 self.status = self.manager.authorizationStatus
                 self.requesting = false
-                self.showSettingsHelp = !self.authorized
                 self.requestTimeout = nil
             }
             self.requestTimeout = timeout
@@ -56,7 +51,7 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
 
     func openSettings() {
         guard BuildChannel.promptsForSystemPermissions else { return }
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") else { return }
+        guard let url = AppPermission.location.settingsURL else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -66,6 +61,5 @@ final class WiFiNameAuthorization: NSObject, ObservableObject, CLLocationManager
         requestTimeout?.cancel()
         requestTimeout = nil
         requesting = false
-        if authorized { showSettingsHelp = false }
     }
 }

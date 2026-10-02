@@ -23,7 +23,7 @@ struct Uniforms {
     float time;
     float scale;
     float4 zenith;      // rgb, a: sky band height (pt)
-    float4 mid;         // rgb, a: exposure
+    float4 mid;         // rgb, a: unused (1)
     float4 horizon;     // rgb, a: nightness
     float4 glow;        // rgb, a: strength
     float4 sun;         // uv, radius pt, visibility
@@ -106,6 +106,31 @@ static float luminance(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722))
 
 // Moonlit cloud tops: a cool grey a little above the night zenith.
 static float3 nightBellyTop(constant Uniforms &u) { return u.zenith.rgb * 1.8 + float3(0.06, 0.07, 0.09); }
+
+struct Light {
+    float2 sunPt;       // the sun's pt position, parallax included
+    float2 moonPt;      // the moon's, same
+    float2 lightPt;     // whichever of the two is the light source
+    float3 col;         // the light's colour
+    float vis;          // its visibility over the deck
+    bool sun;           // true while the sun is the source
+};
+
+// One rig for the two passes that need it: `scene()` draws the deck with it and
+// `foreground()` shades the greeting with the same one, so the two can never
+// disagree about where the light is or how bright it is.
+static Light light(constant Uniforms &u, float2 par, float W, float skyH) {
+    Light l;
+    l.sunPt = u.sun.xy * float2(W, skyH) + par * 0.05;
+    l.moonPt = u.moon.xy * float2(W, skyH) + par * 0.05;
+    // `sunColor.a` is the sun's altitude in degrees: the sun is the light
+    // source whenever it is above the horizon, the moon otherwise.
+    l.sun = u.sunColor.a > -3.0;
+    l.lightPt = l.sun ? l.sunPt : l.moonPt;
+    l.col = l.sun ? u.sunColor.rgb : float3(0.78, 0.84, 1.0) * 0.55;
+    l.vis = l.sun ? u.sun.w : u.moon.w * 0.6;
+    return l;
+}
 
 // Cloud density on a perspective ceiling: rows near the horizon are farther
 // away, so the same noise is compressed and drifts slower on screen.
@@ -236,12 +261,15 @@ static SceneOut scene(constant Uniforms &u, constant float4 *stars,
     float2 uv = float2(pt.x / W, pt.y / skyH);
     float3 c = skyGradient(u, uv.y);
 
-    float2 sunPt = u.sun.xy * float2(W, skyH) + par * 0.05;
-    float2 moonPt = u.moon.xy * float2(W, skyH) + par * 0.05;
-    bool sunLight = u.sunColor.a > -3.0;
-    float2 lightPt = sunLight ? sunPt : moonPt;
-    float3 lightCol = sunLight ? u.sunColor.rgb : float3(0.78, 0.84, 1.0) * 0.55;
-    float lightVis = sunLight ? u.sun.w : u.moon.w * 0.6;
+    // The deck's light rig; `foreground()` builds the same one, so the two
+    // passes cannot disagree about where the light is.
+    Light li = light(u, par, W, skyH);
+    float2 sunPt = li.sunPt;
+    float2 moonPt = li.moonPt;
+    bool sunLight = li.sun;
+    float2 lightPt = li.lightPt;
+    float3 lightCol = li.col;
+    float lightVis = li.vis;
 
     // Horizon scattering under the sun (or moon), strongest in twilight.
     float2 gc = float2(u.sun.x, HORIZON + 0.02);
@@ -393,9 +421,12 @@ static float3 foreground(constant Uniforms &u, texture2d<float> tt, float2 pt, f
     float night = u.horizon.a;
     float2 par = u.parallax.xy;
     float2 uv = float2(pt.x / W, pt.y / skyH);
-    float2 sunPt = u.sun.xy * float2(W, skyH) + par * 0.05;
-    bool sunLight = u.sunColor.a > -3.0;
-    float2 lightPt = sunLight ? sunPt : u.moon.xy * float2(W, skyH) + par * 0.05;
+    // The light on the greeting. Its rim, glare and the drops all register
+    // against the deck's own rig, so the composite rebuilds that one.
+    Light li = light(u, par, W, skyH);
+    float2 sunPt = li.sunPt;
+    bool sunLight = li.sun;
+    float2 lightPt = li.lightPt;
 
     // Plates are baked at full density. `plate` keeps the brightest marks when
     // the weather is light and lets the rest in as it thickens. Sizes match
@@ -712,7 +743,7 @@ fragment float4 atmosphere_fragment(VOut in [[stage_in]],
     float2 v = (pt / float2(W, Hc) - 0.5) * float2(1.0, 1.25);
     c *= 1.0 - 0.14 * pow(length(v) * 1.2, 2.4);
     c *= mix(1.0, 0.8, smoothstep(u.zenith.a * 0.9, Hc, pt.y));
-    c *= u.mid.a * mix(1.0, 0.88, u.parallax.z);
+    c *= mix(1.0, 0.88, u.parallax.z);
     c *= mix(0.3, 1.0, u.effects.w);
 
     // Keep highlights from clipping, then dither to hide gradient banding.

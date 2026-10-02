@@ -31,8 +31,8 @@ struct LucideRotor: View {
     /// hosting view, so a rotor at a steady speed still paid the app's most
     /// expensive per-cycle cost.
     ///
-    /// The gauge is a 2pt arc around a 48pt circle; 1.5 % of it is about 1 pt of
-    /// arc, which is the smallest change worth interpolating. So the value is
+    /// The gauge is a 2pt arc; at the default 48pt size a 1.5 % step is about
+    /// 1 pt of arc, the smallest change worth interpolating. So the value is
     /// snapped to a 1.5 % grid: a wobble that does not cross a step produces an
     /// equal value, and `onChange` therefore opens no transaction. The rotor's
     /// `degreesPerSecond` keeps reading the live `rpm`, so the blades still track

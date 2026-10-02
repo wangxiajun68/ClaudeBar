@@ -9,7 +9,7 @@ struct ClaudeBarWidget: Widget {
                 .widgetURL(URL(string: BuildChannel.urlScheme + "://"))
         }
         .configurationDisplayName(BuildChannel.appName)
-        .description("Claude Code 状态概览")
+        .description("Claude Code、Codex 与 Cursor 状态概览")
         .supportedFamilies([.systemLarge])
         .contentMarginsDisabled()
     }

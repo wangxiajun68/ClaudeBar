@@ -504,9 +504,7 @@ private struct IslandAlertContent: View {
 
     private var headline: String {
         switch alert {
-        case .finished(let session):
-            return session.project.isEmpty ? session.agent.label : session.project
-        case .needsInput(let session):
+        case .finished(let session), .needsInput(let session):
             return session.project.isEmpty ? session.agent.label : session.project
         case .quotaReset(let window):
             return "\(window.label) 已重置"

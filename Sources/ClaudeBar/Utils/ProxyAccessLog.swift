@@ -65,10 +65,9 @@ struct ProxyLogEntry: Identifiable, Equatable {
     }
 
     /// `⌊input + output + cache read + cache write⌋`, all four summed — the
-    /// same fold as `TokenTotals.total` in `StreamAssembler`, which is what the
-    /// Usage page's per-model rollup is built from. (It is *not*
-    /// `ModelUsage.totalTokens`, which sums only the two non-cache buckets.)
-    /// `nil` when the upstream reported nothing.
+    /// same fold as `TokenTotals.total` in `StreamAssembler`, and as
+    /// `ModelUsage.totalTokens`, which is what the Usage page's per-model
+    /// rollup is built from. `nil` when the upstream reported nothing.
     var totalTokens: Int? {
         guard promptTokens != nil || completionTokens != nil
                 || cacheReadTokens != nil || cacheWriteTokens != nil else { return nil }
@@ -216,6 +215,13 @@ final class ProxyAccessLog: ObservableObject {
         if rows.count > limit {
             dropped = rows.count - limit
             rows.removeFirst(dropped)
+            // A row evicted here can never be sealed — `finish` bails on a
+            // missing id — so its pending usage would sit in the dictionary
+            // for the life of the process. Ids are monotonic, so anything
+            // below the new first id is gone for good.
+            if let first = rows.first {
+                pendingTokens = pendingTokens.filter { $0.key >= first.id }
+            }
         }
         lock.unlock()
         publishAppended(entry, droppedFirst: dropped)
@@ -315,8 +321,12 @@ final class ProxyAccessLog: ObservableObject {
     }
 
     private func loadLocked() -> [ProxyLogEntry] {
-        guard let data = try? Data(contentsOf: FilePaths.proxyLogFile),
-              let text = String(data: data, encoding: .utf8) else { return [] }
+        guard let data = try? Data(contentsOf: FilePaths.proxyLogFile) else { return [] }
+        // Lossy decode (see UsageJSONStore.load): the sidecar is append-only
+        // JSONL, so its last line can legitimately be half-written, and one
+        // damaged byte must not cost the whole log — the per-line `decode`
+        // below already skips anything that does not parse.
+        let text = String(decoding: data, as: UTF8.self)
         var rows: [ProxyLogEntry] = []
         rows.reserveCapacity(limit)
         for line in text.split(whereSeparator: \.isNewline) {

@@ -21,7 +21,6 @@ struct ResourceStrip: View {
         let help = helpText()
         return EqualRowGrid(spacing: Theme.Space.gridGap, minColumnWidth: 0, fixedColumns: 3) {
             meter("CPU",
-                  icon: "cpu",
                   hero: String(format: "%.0f%%", sampler.host.cpu),
                   // The hero is a *figure*, so it takes the text variant of the
                   // hue — `chartGreen` is a fill color and measures 1.99:1 on
@@ -35,7 +34,6 @@ struct ResourceStrip: View {
                   help: help,
                   tempColor: cpuTempColor)
             meter("GPU",
-                  icon: "square.3.layers.3d",
                   hero: String(format: "%.0f%%", sampler.host.gpu),
                   heroTint: Theme.textPrimary,
                   load: sampler.host.gpu / 100,
@@ -46,7 +44,6 @@ struct ResourceStrip: View {
                   help: help,
                   tempColor: gpuTempColor)
             meter("内存",
-                  icon: "memorychip",
                   hero: String(format: "%.0f%%", memPercent),
                   heroTint: Theme.textPrimary,
                   load: memPercent / 100,
@@ -56,7 +53,6 @@ struct ResourceStrip: View {
                   pill: memoryPill,
                   help: help)
             meter("硬盘",
-                  icon: "internaldrive",
                   hero: String(format: "%.0f%%", sampler.host.diskPercent),
                   heroTint: Theme.textPrimary,
                   load: sampler.host.diskPercent / 100,
@@ -76,7 +72,6 @@ struct ResourceStrip: View {
                      // is routed through.
                      interface: linkInterface)
             meter("风扇",
-                  icon: "fanblades",
                   hero: fanHero,
                   // The figure is *text* here, so it takes the `Theme.Ink` variant
                   // of the tile's hue rather than plain ink — the same rule the
@@ -226,11 +221,25 @@ struct ResourceStrip: View {
 
     private enum ResourceKind {
         case cpu, gpu, memory, fans, disk
+
+        /// The entry of the one glyph table this tile's badge stands for. The
+        /// mapping is stated here rather than by looking the tile's SF Symbol
+        /// string back up: the two lists are 1:1 (fans draws the rotor, not
+        /// `fanblades`), and a switch over the cases — rather than a lookup
+        /// that falls back — makes a newly added case a compile decision.
+        var glyphKind: InstrumentGlyph.Kind {
+            switch self {
+            case .cpu: return .cpu
+            case .gpu: return .gpu
+            case .memory: return .memory
+            case .fans: return .fan
+            case .disk: return .disk
+            }
+        }
     }
 
     private func meter(
         _ label: String,
-        icon: String,
         hero: String,
         heroTint: Color,
         load: Double,
@@ -250,7 +259,7 @@ struct ResourceStrip: View {
                 // out, and a tile that looks like it is waiting is worse than a
                 // tile with no ornament at all. The reading is the big mark on
                 // the right and the figure beside it; this is the caption.
-                InstrumentBadge(kind: InstrumentGlyph.kind(for: icon) ?? .link, tint: tint)
+                InstrumentBadge(kind: kind.glyphKind, tint: tint)
                     .frame(width: 26, height: 26)
                 Text(label)
                     .font(Theme.Font.chrome)
@@ -326,7 +335,7 @@ struct ResourceStrip: View {
                         // pair changes: same size, same spacing, same captions.
                         CompactFanPair(fans: fanMonitor.fans,
                                        restingTint: tint,
-                                       onToggle: toggleFan)
+                                       onToggle: fanMonitor.toggleMode)
                     case .disk:
                         CapacityHardwareMark(disk: true, load: load,
                                              bytes: sampler.host.diskTotal, tint: tint,
@@ -370,25 +379,26 @@ struct ResourceStrip: View {
         .hoverTile(tint: tint, dense: false)
         .help(help)
         return Group {
-            if kind == .cpu {
+            switch kind {
+            case .cpu:
                 Button { showCPU = true } label: { content }
                     .buttonStyle(.pressable)
                     .popover(isPresented: $showCPU) { HardwareDetailPanel(gpu: false) }
-            } else if kind == .gpu {
+            case .gpu:
                 Button { showGPU = true } label: { content }
                     .buttonStyle(.pressable)
                     .popover(isPresented: $showGPU) { HardwareDetailPanel(gpu: true) }
-            } else if kind == .memory {
+            case .memory:
                 Button { showMemory = true } label: { content }
                     .buttonStyle(.pressable)
                     .help("查看各进程的内存占用")
                     .popover(isPresented: $showMemory) { MemoryDetailPanel() }
-            } else if kind == .disk {
+            case .disk:
                 Button { showDisk = true } label: { content }
                     .buttonStyle(.pressable)
                     .help("查看启动磁盘占用图表")
                     .popover(isPresented: $showDisk) { DiskUsagePanel() }
-            } else if kind == .fans {
+            case .fans:
                 // Child buttons own fan control; tapping the surrounding tile opens details.
                 content
                     .contentShape(Rectangle())
@@ -396,8 +406,6 @@ struct ResourceStrip: View {
                     .accessibilityAction(named: Text("查看散热详情")) { showFans = true }
                     .help("点击风扇调速，点击卡片其他区域查看散热详情")
                     .popover(isPresented: $showFans) { FanInternalsPanel() }
-            } else {
-                content
             }
         }
     }
@@ -405,7 +413,7 @@ struct ResourceStrip: View {
     /// The box every mark on the strip is handed — CPU / GPU silicon, the DIMM
     /// and the drive bay at full size, the fan pair inside it. One constant, so
     /// four tiles cannot end up with four subtly different marks, and so the
-    /// popovers that redraw the same mark at hero size can name the same number.
+    /// 连接 card, which fills the slot with its own mark, names the same box.
     static let markSlot = CGSize(width: 176, height: 130)
 
     /// Illustration height inside `markSlot`. The slot and the card stay put;
@@ -414,10 +422,6 @@ struct ResourceStrip: View {
     /// the capacity label under the DIMM / drive, so these stop short of 130.
     static let hardwareMarkHeight: CGFloat = 108
     static let capacityMarkHeight: CGFloat = 120
-
-    private func toggleFan(_ fan: FanInfo) {
-        fanMonitor.toggleMode(of: fan)
-    }
 
     private func cpuAttributionCaption() -> String {
         let parts: [String] = sampler.shares.compactMap { share in
@@ -434,6 +438,9 @@ struct ResourceStrip: View {
             let mem = ProcessSampler.Snapshot.byteLabel(share.memoryBytes)
             return "\(share.label)  CPU \(cpu)%  \(mem)"
         }
+        // The host line comes from the model, not from a second hand-built
+        // copy here — the KPI strip's tooltip prints the same sentence, and
+        // two copies drift the first time one side gains a reading.
         lines.insert(sampler.host.summaryLine, at: 0)
         return lines.joined(separator: "\n")
     }

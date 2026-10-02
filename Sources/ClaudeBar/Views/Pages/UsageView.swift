@@ -19,9 +19,11 @@ struct UsageView: View {
         // per pass.
         let periodLabel = UsageStats.label(for: providerStore.usagePeriod,
                                            reference: providerStore.usageReferenceDate)
-        // The daily spark's buckets describe the period, so it is handed the
-        // period's own interval rather than left to infer a span from whichever
-        // days happen to have rows in them.
+        // The period's own interval, not one inferred from whichever days
+        // happen to have rows: it identifies the requested window. The
+        // analytics section is keyed to it and appears only once the store
+        // has published this same window, and both the attribution task and
+        // `providerGroups` match on it.
         let interval = UsageStats.interval(for: providerStore.usagePeriod,
                                            reference: providerStore.usageReferenceDate)
         return ScrollView {

@@ -207,7 +207,8 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
         retime()
     }
 
-    /// 60 Hz while the pen is moving: a line written at 30 Hz visibly steps.
+    /// The display rate while the pen is moving: a line written at the resting
+    /// rate visibly steps.
     func boostWhileWriting() {
         guard let duration = renderer.input?.layout?.writeDuration else { return }
         boost(for: duration + 0.6)

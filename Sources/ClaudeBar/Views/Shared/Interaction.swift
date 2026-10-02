@@ -40,37 +40,6 @@ extension ButtonStyle where Self == UiversePressStyle {
     static var uiversePress: UiversePressStyle { UiversePressStyle() }
 }
 
-/// One-shot lift on appear. Delay is staggered so stacked popup sections
-/// cascade without animating every inner cell (that would hitch scroll).
-///
-/// **Currently no call site.** It used to stagger the popup's sections on open;
-/// those `.appearLift(...)` calls were removed, and DESIGN.md's "popup sections
-/// lift in once" now describes nothing in the code. Kept because the stagger
-/// *shape* — a one-shot per section, never per inner cell — is the right one
-/// for a surface that wants it, and the `onAppear`-guarded `@State` is the
-/// non-obvious half of getting it right.
-struct AppearLift: ViewModifier {
-    var delay: Double = 0
-    @State private var shown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 8)
-            .onAppear {
-                guard !shown else { return }
-                withAnimation(reduceMotion ? nil : Theme.Animation.smooth.delay(delay)) { shown = true }
-            }
-    }
-}
-
-extension View {
-    func appearLift(delay: Double = 0) -> some View {
-        modifier(AppearLift(delay: delay))
-    }
-}
-
 // MARK: - Action buttons
 
 // The push button used to be declared here, as `adaptiveGlassButton`. It is now
@@ -183,7 +152,9 @@ struct HoverState: ViewModifier {
 }
 
 extension View {
-    /// Drive `isHovered` from pointer movement, animated with the theme spring.
+    /// Drive `isHovered` from pointer movement, dropping writes for the
+    /// duration of a flick. The write itself is plain; a surface that animates
+    /// on the flag owns the transition.
     func hoverState(_ isHovered: Binding<Bool>) -> some View {
         modifier(HoverState(isHovered: isHovered))
     }

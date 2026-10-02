@@ -22,12 +22,10 @@ final class CodexProxyServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "claudebar.proxy")
     private var listener: NWListener?
 
-    /// Set on the connection's task when the user interrupts that *specific*
-    /// call from the traffic page. `handle()` reads it when deciding whether to
-    /// seal the capture as `.aborted` or as a plain upstream failure.
-    /// Set for the duration of one connection's `handle()` call, carrying that
-    /// connection's interrupt state. `handle()` reads it when deciding whether
-    /// to seal the capture as `.aborted` or as a plain upstream failure.
+    /// Set for the duration of one connection's `handle()` call, when the user
+    /// interrupts that *specific* call from the traffic page. `handle()` reads
+    /// it when deciding whether to seal the capture as `.aborted` or as a
+    /// plain upstream failure.
     @TaskLocal private static var interruptFlag: InterruptFlag?
 
     /// Cancel plumbing for one connection, shared with the traffic page.
@@ -123,8 +121,6 @@ final class CodexProxyServer: @unchecked Sendable {
         self.state = state
         self.tokenPath = tokenPath
     }
-
-    var isRunning: Bool { listener != nil }
 
     func start() throws {
         guard listener == nil else { return }
@@ -816,8 +812,7 @@ final class CodexProxyServer: @unchecked Sendable {
         var suffix = path.split(separator: "?").first.map(String.init) ?? path
         if suffix.hasPrefix("/") { suffix.removeFirst() }
         // Codex sends /v1/responses; drop a duplicated /v1 when the base already
-        // ends with it. Versioned roots that are not /v1 (e.g. /paas/v4) keep
-        // their own suffix and only append the last path component.
+        // ends with it.
         if s.hasSuffix("/v1") && (suffix == "v1" || suffix.hasPrefix("v1/")) {
             suffix = suffix == "v1" ? "" : String(suffix.dropFirst(3))
         }

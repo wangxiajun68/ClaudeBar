@@ -155,8 +155,7 @@ struct PowerFlow: Equatable {
 
 // MARK: - Card
 
-/// Energy Sankey shared by the dashboard, the menu popup and the battery
-/// popover.
+/// Energy Sankey shared by the dashboard and, compact, the menu popup.
 struct PowerFlowCard: View {
     var compact = false
     private let sampler = ProcessSampler.shared
@@ -517,9 +516,11 @@ private struct SankeyLayout {
 
 // MARK: - Band shape
 
-/// A horizontal band with S-curved edges; its four edge ordinates animate,
-/// so a new reading eases the widths instead of jumping. Bands leaving one
-/// node leave a hairline between them, as AlDente draws them.
+/// A horizontal band with S-curved edges; its four edge ordinates are
+/// animatable, so a mode change eases the widths instead of jumping — a new
+/// reading in the same mode swaps instantly, by design (see the animation-key
+/// note on `PowerFlowContent`). Bands leaving one node leave a hairline between
+/// them, as AlDente draws them.
 private struct RibbonShape: Shape {
     var x0: CGFloat
     var x1: CGFloat
@@ -633,14 +634,18 @@ private final class SankeyWaveView: NSView {
         setSpeed(0)
     }
 
+    /// How far one gradient stop band travels over its second-long sweep. The
+    /// rendered wave speed is the clock's rate over this, so both the gradient
+    /// stride and the playback rate read it from one place.
+    private var wavePeriod: CGFloat { max(240, min(480, (travel.to - travel.from) * 0.65)) }
+
     private func updatePlayback() {
         guard animating, window?.occlusionState.contains(.visible) == true else {
             setSpeed(0)
             return
         }
-        let period = max(240, min(480, (travel.to - travel.from) * 0.65))
         let speeds: [CGFloat] = [0, 24, 32, 40, 48]
-        setSpeed(Float(speeds[min(max(pace, 0), speeds.count - 1)] / period))
+        setSpeed(Float(speeds[min(max(pace, 0), speeds.count - 1)] / wavePeriod))
     }
 
     override func layout() {
@@ -678,7 +683,6 @@ private final class SankeyWaveView: NSView {
             bands[id] = nil
         }
 
-        let wavePeriod: CGFloat = max(240, min(480, (travel.to - travel.from) * 0.65))
         let repeatCount = max(3, Int(ceil(bounds.width / wavePeriod)) + 2)
         let gradientWidth = CGFloat(repeatCount) * wavePeriod
         let opacity: [CGFloat] = dark ? [0.02, 0.05, 0.16, 0.05] : [0.01, 0.03, 0.11, 0.03]
@@ -705,7 +709,6 @@ private final class SankeyWaveView: NSView {
             band.gradient.locations = locations
             band.gradient.frame = CGRect(x: -wavePeriod, y: 0,
                                          width: gradientWidth, height: bounds.height)
-            band.container.isHidden = false
             CATransaction.commit()
 
             if !animating {

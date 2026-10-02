@@ -78,6 +78,9 @@ enum CursorUsageFetcher {
         /// `includedSpend` in cents.
         var includedSpendCents: Double?
         /// `bonusSpend` in cents (promotional usage beyond what was purchased).
+        /// A wire mirror: decoded and persisted (`cursor-allowance.json`), but
+        /// no reader consumes it — `usedFraction` counts `includedSpend`, and
+        /// the bonus is the promotional overage the plan does not cap.
         var bonusSpendCents: Double?
         /// Cursor's own server-side "you have hit the limit" flag. When set,
         /// the plan is spent regardless of how the money fields read.
@@ -146,7 +149,11 @@ enum CursorUsageFetcher {
         /// 0–100, as reported (0.52 means "0.52% used", not "0.52 fraction").
         var usedPercent: Double
         var planName: String?
+        /// `hasAvailableUsage` — a wire mirror with no reader: the popup's Grok
+        /// line derives everything from `usedPercent` instead.
         var hasAvailableUsage: Bool?
+        /// `currentPeriodStart` — a wire mirror with no reader; the weekly reset
+        /// that gets drawn is `nextReset`.
         var currentPeriodStart: Date?
         var nextReset: Date?
     }

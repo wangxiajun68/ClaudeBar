@@ -5,12 +5,8 @@ import Foundation
 struct UsageAnalysis {
     struct Bucket: Identifiable {
         let date: Date
-        let end: Date
         let label: String
         let total: Int
-        let input: Int
-        let write: Int
-        let output: Int
         let prompt: Int
         let hit: Int
         var id: Date { date }
@@ -52,9 +48,7 @@ struct UsageAnalysis {
     let median: Double
     let p95: Double
     let bucketMaximum: Int
-    let bucketMinimumPositive: Int?
     let bucketMedian: Double
-    let peak: Bucket?
     let temporalTotal: Int
     let calendarRows: [Bucket]
     let calendarMaximum: Int
@@ -73,12 +67,12 @@ struct UsageAnalysis {
         let parser = DateFormatter()
         parser.locale = Locale(identifier: "en_US_POSIX")
         parser.timeZone = calendar.timeZone; parser.dateFormat = "yyyy-MM-dd"
-        var records: [Date: (total: Int, input: Int, write: Int, output: Int, prompt: Int, hit: Int)] = [:]
+        var records: [Date: (total: Int, prompt: Int, hit: Int)] = [:]
         for day in days {
             guard let date = parser.date(from: day.day) else { continue }
             let key = calendar.startOfDay(for: date)
-            let old = records[key] ?? (0, 0, 0, 0, 0, 0)
-            records[key] = (old.total + day.totalTokens, old.input + day.inputTokens, old.write + day.cacheCreationTokens, old.output + day.outputTokens,
+            let old = records[key] ?? (0, 0, 0)
+            records[key] = (old.total + day.totalTokens,
                             old.prompt + day.inputTokens + day.cacheReadTokens + day.cacheCreationTokens,
                             old.hit + day.cacheReadTokens)
         }
@@ -89,10 +83,10 @@ struct UsageAnalysis {
         var rows: [Bucket] = []
         while cursor < end {
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor), next > cursor else { break }
-            let values = records[cursor] ?? (0, 0, 0, 0, 0, 0)
-            rows.append(Bucket(date: cursor, end: next,
+            let values = records[cursor] ?? (0, 0, 0)
+            rows.append(Bucket(date: cursor,
                                label: "\(calendar.component(.month, from: cursor))/\(calendar.component(.day, from: cursor))",
-                               total: values.total, input: values.input, write: values.write, output: values.output, prompt: values.prompt, hit: values.hit))
+                               total: values.total, prompt: values.prompt, hit: values.hit))
             cursor = next
         }
         daily = rows
@@ -100,18 +94,17 @@ struct UsageAnalysis {
         let yearly = period == .all && rows.count > 730
         grain = yearly ? "年" : monthly ? "月" : "日"
         if monthly {
-            var grouped: [Date: (total: Int, input: Int, write: Int, output: Int, prompt: Int, hit: Int)] = [:]
+            var grouped: [Date: (total: Int, prompt: Int, hit: Int)] = [:]
             for row in rows {
                 let unit: Calendar.Component = yearly ? .year : .month
                 let date = calendar.dateInterval(of: unit, for: row.date)?.start ?? row.date
-                let old = grouped[date] ?? (0, 0, 0, 0, 0, 0)
-                grouped[date] = (old.total + row.total, old.input + row.input, old.write + row.write, old.output + row.output, old.prompt + row.prompt, old.hit + row.hit)
+                let old = grouped[date] ?? (0, 0, 0)
+                grouped[date] = (old.total + row.total, old.prompt + row.prompt, old.hit + row.hit)
             }
             buckets = grouped.keys.sorted().map { date in
                 let values = grouped[date]!
-                let next = calendar.date(byAdding: yearly ? .year : .month, value: 1, to: date) ?? date
                 let label = yearly ? "\(calendar.component(.year, from: date))" : "\(calendar.component(.month, from: date))月"
-                return Bucket(date: date, end: min(next, end), label: label, total: values.total, input: values.input, write: values.write, output: values.output, prompt: values.prompt, hit: values.hit)
+                return Bucket(date: date, label: label, total: values.total, prompt: values.prompt, hit: values.hit)
             }
         } else { buckets = rows }
         activeDays = rows.filter { $0.total > 0 }.count
@@ -119,7 +112,6 @@ struct UsageAnalysis {
         p95 = Self.quantile(rows.map { Double($0.total) }, fraction: 0.95)
         bucketMedian = Self.quantile(buckets.map { Double($0.total) }, fraction: 0.5)
         bucketMaximum = buckets.map(\.total).max() ?? 0
-        bucketMinimumPositive = buckets.map(\.total).filter { $0 > 0 }.min()
         let ordered = buckets.map(\.total).sorted()
         tokenScale = max(1, Self.quantile(ordered.filter { $0 > 0 }.map(Double.init), fraction: 0.5))
         var empirical: [CurvePoint] = []
@@ -173,7 +165,6 @@ struct UsageAnalysis {
         }
         lorenz = concentration
         effectiveModels = squaredShares > 0 ? 1 / squaredShares : 0
-        peak = rows.max { $0.total < $1.total }
         temporalTotal = rows.reduce(0) { $0 + $1.total }
         calendarRows = Array(rows.suffix(366))
         calendarMaximum = calendarRows.map(\.total).max() ?? 0

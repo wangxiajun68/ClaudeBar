@@ -117,7 +117,9 @@ enum JSONTree {
 
     private static func numberText(_ n: NSNumber) -> String {
         let d = n.doubleValue
-        if d.rounded() == d, abs(d) <= Double(Int64.max) {
+        // Double(Int64.max) rounds up to 2^63, so the upper bound has to stay
+        // exclusive — 2^63 itself is not representable as Int64 and wraps.
+        if d.rounded() == d, d >= -Double(Int64.max) - 1, d < Double(Int64.max) {
             return "\(n.int64Value)"
         }
         return n.stringValue
@@ -404,7 +406,11 @@ private struct JSONNodeRow: View {
     }
 
     private func isLongString(_ s: String) -> Bool {
-        s.count > 80 || s.contains("\n")
+        // Any string past the inline cap is long by length alone, so only the
+        // first 81 characters need the newline scan — a full `count` or
+        // `contains` would walk a multi-megabyte scalar on every body pass.
+        if s.index(s.startIndex, offsetBy: 81, limitedBy: s.endIndex) != nil { return true }
+        return s.prefix(81).contains("\n")
     }
 
     private func quoted(_ s: String) -> String {
@@ -412,7 +418,9 @@ private struct JSONNodeRow: View {
     }
 
     private func clip(_ s: String, _ n: Int) -> String {
-        let one = s.replacingOccurrences(of: "\n", with: " ")
+        // Newlines past position n never reach the output, so the replacement
+        // scan and the count only need the retained prefix.
+        let one = s.prefix(n + 1).replacingOccurrences(of: "\n", with: " ")
         if one.count <= n { return one }
         return String(one.prefix(n)) + "…"
     }

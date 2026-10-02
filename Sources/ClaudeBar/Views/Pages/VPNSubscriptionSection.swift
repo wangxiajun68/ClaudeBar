@@ -200,9 +200,13 @@ struct VpnSubscriptionSection: View {
         case .edit(let id):
             store.rename(id, name: name)
             let current = store.subscriptions.first { $0.id == id }?.url
-            if current != url {
+            // replaceURL stores the trimmed value; compare the same trimmed
+            // form so a padded-but-identical paste doesn't re-download the
+            // profile and restart the active core for nothing.
+            let next = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            if current != next {
                 busyID = id
-                if await store.replaceURL(id, url: url), store.activeID == id, manager.isRunning {
+                if await store.replaceURL(id, url: next), store.activeID == id, manager.isRunning {
                     manager.reloadConfig()
                 }
                 busyID = nil

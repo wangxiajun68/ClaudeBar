@@ -1,16 +1,19 @@
-import AppKit
 import SwiftUI
 
 /// A request example stays behind one explicit action in advanced proxy settings.
 struct ProxyCurlExample: View {
     var model: String
     @State private var showingExample = false
-
-    private var snippet: String { LocalProxyAddress.chatCompletionsCurl(model: model) }
+    /// Filled on open: the token read creates `proxy-token` on first use, which
+    /// must not be a side effect of rendering the settings page.
+    @State private var snippet = ""
 
     var body: some View {
         SettingsRow(title: "接入示例", caption: "包含本机鉴权令牌，可复制到其他客户端。") {
-            ActionButton("查看示例", tone: .neutral) { showingExample = true }
+            ActionButton("查看示例", tone: .neutral) {
+                snippet = LocalProxyAddress.chatCompletionsCurl(model: model)
+                showingExample = true
+            }
         }
         .popover(isPresented: $showingExample, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.s12) {

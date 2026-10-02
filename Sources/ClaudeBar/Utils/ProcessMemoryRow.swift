@@ -19,6 +19,12 @@ struct ProcessMemoryRow: Identifiable, Sendable {
             if process.isRunning { process.terminate() }
             return nil
         }
+        // readToEnd blocks until ps exits, so cancellation only becomes visible
+        // here; drop the child and the snapshot when the requesting view is gone.
+        guard !Task.isCancelled else {
+            if process.isRunning { process.terminate() }
+            return nil
+        }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line -> Self? in

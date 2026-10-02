@@ -26,10 +26,11 @@ struct LinkCard: View {
                     // The hero, in the same slot and the same type as the five
                     // meters beside it: the card's *figure* is the connected
                     // network's name, because that is the one thing this card is
-                    // about that a number cannot say. See `Color.heroFont` note in
-                    // `ResourceStrip.meter` — a name is not a metric, so it takes
-                    // the same rounded weight at the same size rather than the
-                    // metric font's digits.
+                    // about that a number cannot say. See the `heroTint` note in
+                    // `ResourceStrip.meter`; the shared hero font is
+                    // `Theme.Font.displayMetric` — a name is not a metric, so it
+                    // takes the same rounded weight at the same size rather than
+                    // the metric font's digits.
                     RollingNumberText(status.title, rolls: false)
                         .font(Theme.Font.displayMetric)
                         .foregroundColor(Theme.textPrimary)
@@ -86,7 +87,7 @@ struct LinkCard: View {
         // over the gaps between the marks.
         .contentShape(Rectangle())
         .onTapGesture { showConnections = true }
-        .accessibilityAction(named: "查看连接地图") { showConnections = true }
+        .accessibilityAction(named: "查看连接详情") { showConnections = true }
         .popover(isPresented: $showConnections) { ConnectionDetailPanel() }
     }
 
@@ -268,7 +269,8 @@ struct ConnectInterfaceMark: View {
 /// from the left: a filled cell is a step of signal, so the *count* is the
 /// reading. Twelve, not the panel ruler's thirty — the mark is a *reduction*
 /// of the same ruler to the mark slot's width, so the shared thing is the
-/// fraction (`WiFiBars.fraction`), not the number of cells.
+/// fraction (`WiFiBars.fraction`; the panel keeps the same rule in
+/// `ConnectionSignalScale.position`), not the number of cells.
 ///
 /// Drawing it here (rather than reusing the wide view) is what keeps the mark
 /// inside the 176×130 slot every sibling reserves; the shared things are the
@@ -300,10 +302,6 @@ private struct SignalCellRow: View {
 /// connection panel names the same grade the tile does — two vocabularies for one
 /// reading is how a tile and its popover end up disagreeing.
 enum WiFiBars {
-    static func symbol(for rssi: Int) -> String {
-        rssi < -80 ? "wifi.exclamationmark" : "wifi"
-    }
-
     /// 0…1 across the −100…−40 dBm ruler — the one place a reading becomes a
     /// position, so the tile's mark and the panel's ruler cannot put the same
     /// dBm at two lengths. Clamped at both ends: an RSSI outside the ruler pins

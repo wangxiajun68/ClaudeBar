@@ -42,8 +42,6 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     /// Sub-agent display name (`"Darwin"`, `"Curie"`, …); empty for user
     /// sessions.
     var agentNickname: String = ""
-    /// Spawn depth from `source.subagent.thread_spawn.depth` (0 when absent).
-    var spawnDepth: Int = 0
     /// The `codex` process writing this rollout, when one is.
     var holderPID: Int? = nil
     /// The holder is Codex Desktop's bundled app-server, not a terminal CLI.
@@ -401,7 +399,6 @@ struct ExternalSessionMonitor {
                             parentThreadId: parsed.parentThreadId,
                             threadSource: parsed.threadSource,
                             agentNickname: parsed.agentNickname,
-                            spawnDepth: parsed.spawnDepth,
                             holderPID: holder?.pid,
                             inDesktop: holder?.inDesktop ?? false
                         )
@@ -508,7 +505,7 @@ struct ExternalSessionMonitor {
                 completionID: parsed?.completionID,
                 contextTokens: parsed?.contextUsed ?? 0, contextLimit: parsed?.contextLimit ?? 0,
                 parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",
-                agentNickname: parsed?.agentNickname ?? "", spawnDepth: parsed?.spawnDepth ?? 0,
+                agentNickname: parsed?.agentNickname ?? "",
                 holderPID: holder?.pid, inDesktop: holder?.inDesktop ?? false, title: row.title)
             if isHelper { scan.subagents.append(info) } else { scan.main.append(info) }
         }

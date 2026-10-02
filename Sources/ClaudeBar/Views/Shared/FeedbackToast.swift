@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Bottom confirmation toast: a status dot + message. Lifecycle is owned by
-/// the caller (message + token drive a `.task(id:)` auto-dismiss); this view
-/// only renders and animates.
+/// Bottom confirmation toast: a status mark in the shared glyph well + message.
+/// Lifecycle is owned by the caller (message + token drive a `.task(id:)`
+/// auto-dismiss); this view only renders and animates.
 struct FeedbackToast: View {
     let message: String?
     var tint: Color = Theme.statusSuccess

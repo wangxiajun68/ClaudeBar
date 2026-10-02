@@ -5,7 +5,7 @@ import Observation
 @MainActor
 @Observable
 final class BatteryChargeController {
-    enum Mode: Int, CaseIterable, Identifiable {
+    enum Mode: Int, Identifiable {
         case system, limit, hold, discharge
         var id: Int { rawValue }
         static var displayOrder: [Mode] { [.limit, .hold, .discharge, .system] }
@@ -54,6 +54,7 @@ final class BatteryChargeController {
     }
     static let shared = BatteryChargeController()
     static let minLimit: Double = 20
+    private static let savedModeKey = "batteryChargeMode"
     private(set) var mode = Mode.system
     private(set) var savedMode = Mode.system
     private(set) var state = 0
@@ -96,7 +97,7 @@ final class BatteryChargeController {
     private init() {
         let stored = UserDefaults.standard.object(forKey: "batteryChargeLimit") as? Int ?? 80
         threshold = Double(min(100, max(Int(Self.minLimit), stored)))
-        savedMode = Mode(rawValue: UserDefaults.standard.integer(forKey: "batteryChargeMode")) ?? .system
+        savedMode = Mode(rawValue: UserDefaults.standard.integer(forKey: Self.savedModeKey)) ?? .system
     }
 
     func refreshHelperAuthorization() async {
@@ -180,6 +181,14 @@ final class BatteryChargeController {
         }
     }
 
+    // Only read back at launch, so an unchanged mode needs no rewrite. This
+    // keeps the two-second status tick from touching defaults on every report.
+    private func persistSavedMode(_ mode: Mode) {
+        guard mode != savedMode else { return }
+        savedMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.savedModeKey)
+    }
+
     var managesLimit: Bool {
         process != nil && input != nil && !recoveryUnconfirmed && !sleeping && mode != .system
     }
@@ -211,16 +220,14 @@ final class BatteryChargeController {
         guard canApply(requested) else { return }
         desiredMode = requested
         if requested == .system {
-            savedMode = .system
-            UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+            persistSavedMode(.system)
         }
         if pending {
             pendingMessage = "正在结束当前操作并还原系统…"
             return
         } // Allow system restoration to supersede an in-flight operation.
         if requested == .system && process == nil {
-            savedMode = .system
-            UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+            persistSavedMode(.system)
             desiredMode = nil
             if !recoveryUnconfirmed { mode = .system; state = 0; lastError = nil }
             return
@@ -235,8 +242,7 @@ final class BatteryChargeController {
             if let failure { lastError = failure; pending = false; desiredMode = nil; return }
             // A restore requested during authorization cancels enabling management.
             if desiredMode == .system {
-                pending = false; desiredMode = nil; savedMode = .system
-                UserDefaults.standard.set(savedMode.rawValue, forKey: "batteryChargeMode")
+                pending = false; desiredMode = nil; persistSavedMode(.system)
                 return
             }
             do { try start() }
@@ -390,12 +396,10 @@ final class BatteryChargeController {
                 try? input?.close(); input = nil
             }
             if status.error.isEmpty {
-                savedMode = mode
-                UserDefaults.standard.set(mode.rawValue, forKey: "batteryChargeMode")
+                persistSavedMode(mode)
             }
         } else if mode != .system && status.error.isEmpty {
-            savedMode = mode
-            UserDefaults.standard.set(mode.rawValue, forKey: "batteryChargeMode")
+            persistSavedMode(mode)
         }
         refreshMeasurement()
     }

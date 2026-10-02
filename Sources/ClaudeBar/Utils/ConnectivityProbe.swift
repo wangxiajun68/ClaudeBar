@@ -7,14 +7,8 @@ enum ConnectivityProbe {
 
     struct Hit: Sendable, Equatable {
         var ok: Bool
-        var status: Int
         var latencyMS: Int
         var message: String
-
-        var summary: String {
-            if ok { return "\(latencyMS)ms · HTTP \(status)" }
-            return message
-        }
     }
 
     // MARK: - Proxy
@@ -41,19 +35,19 @@ enum ConnectivityProbe {
                 let ms = millis(since: started)
                 if (200..<300).contains(status) {
                     let extra = proxyHealthDetail(data)
-                    return Hit(ok: true, status: status, latencyMS: ms,
+                    return Hit(ok: true, latencyMS: ms,
                                message: extra.isEmpty ? "本地代理正常" : extra)
                 }
                 if status != 404 {
-                    return Hit(ok: false, status: status, latencyMS: ms,
+                    return Hit(ok: false, latencyMS: ms,
                                message: describeBody(data, status: status))
                 }
             } catch {
-                return Hit(ok: false, status: 0, latencyMS: millis(since: started),
+                return Hit(ok: false, latencyMS: millis(since: started),
                            message: describeError(error, host: "127.0.0.1:\(port)"))
             }
         }
-        return Hit(ok: false, status: 404, latencyMS: millis(since: started),
+        return Hit(ok: false, latencyMS: millis(since: started),
                    message: "代理无 /health 响应")
     }
 

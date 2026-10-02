@@ -118,14 +118,6 @@ enum CaptureTranscript {
 
         collectTools(from: object(request), upsert: upsert, setOutput: setOutput)
         collectTools(from: object(response), upsert: upsert, setOutput: setOutput)
-        if let resp = object(response),
-           let message = resp["message"] as? [String: Any],
-           let calls = message["tool_calls"] as? [[String: Any]] {
-            for c in calls {
-                let parsed = toolCallFields(c)
-                upsert(id: parsed.id, name: parsed.name, arguments: parsed.arguments)
-            }
-        }
         return order.compactMap { map[$0] }
     }
 

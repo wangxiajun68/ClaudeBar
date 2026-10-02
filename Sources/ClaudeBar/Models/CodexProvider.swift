@@ -128,4 +128,25 @@ struct CodexProvidersFile: Codable {
     var activeProviderID: UUID?
     /// `[model_providers.X]` table key written to config.toml.
     var activeKey: String = "custom"
+
+    init(providers: [CodexProvider], activeProviderID: UUID?, activeKey: String = "custom") {
+        self.providers = providers
+        self.activeProviderID = activeProviderID
+        self.activeKey = activeKey
+    }
+
+    /// Hand-written, like the row types above: the synthesized decoder ignores
+    /// property defaults, so a file without `activeKey` (hand-edited, external
+    /// tool) would throw and `load()` would fall back to an empty list — which
+    /// the next `save()` writes over the real file.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        providers = try c.decode([CodexProvider].self, forKey: .providers)
+        activeProviderID = try c.decodeIfPresent(UUID.self, forKey: .activeProviderID)
+        activeKey = try c.decodeIfPresent(String.self, forKey: .activeKey) ?? "custom"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case providers, activeProviderID, activeKey
+    }
 }

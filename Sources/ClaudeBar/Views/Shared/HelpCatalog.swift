@@ -35,10 +35,10 @@ enum HelpChapter: String, CaseIterable, Identifiable {
 
 /// One run of article body.
 ///
-/// An enum rather than Markdown: the app has no Markdown rendering path at all
-/// (`AttributedString`, `Markdown` — zero hits), and a shortcut line needs the
-/// keycap component, which Markdown cannot express. Five cases cover every
-/// article here.
+/// An enum rather than Markdown: the body needs block structure (bullets /
+/// keys / paths) and the keycap component, neither of which Markdown can
+/// express; the renderer parses inline emphasis only (`HelpView.helpText`).
+/// Five cases cover every article here.
 enum HelpBlock {
     case para(String)
     case bullets([String])
@@ -190,7 +190,7 @@ enum HelpCatalog {
             title: "模型花费是怎么算的",
             summary: "按厂商官方刊例价折算的估算；Cursor 那一行是真账单。",
             body: [
-                .para("概览的「模型花费」与用量页每个模型瓦片上的金额，都是**拿本机记录的 token 乘官方刊例价**算出来的。Claude Code / Codex 的订阅不按 token 计费，第三方中转基本不回传单价，所以应用拿不到真实账单——这个数字回答的是「这些 token 走按量 API 要花多少钱」。"),
+                .para("popup 用量区的「花费」、概览问候卡上的「预估」与用量页每个模型瓦片上的估算金额，都是**拿本机记录的 token 乘官方刊例价**算出来的。Claude Code / Codex 的订阅不按 token 计费，第三方中转基本不回传单价，所以应用拿不到真实账单——这个数字回答的是「这些 token 走按量 API 要花多少钱」。"),
                 .para("**唯一的例外是 Cursor。** 它的接口回传实际扣费，所以用量页上 Cursor 花的模型会多一行「Cursor 实扣 $34.65」——那是 Cursor 真扣掉的数额，与上面那行估算**回答的是两个问题、来自两个来源，永远不相加**。"),
                 .para("人民币与美元**分列不换算**：主数字是金额大的那个，副行写「另有 $43.20」。没有汇率的换算会得到一个谁都不认的数字。"),
                 .para("有模型算不出钱，就写清楚是什么情况，而不是显示 0：**订阅制**（Kimi Code 会员、火山 Coding Plan 这类按套餐计的）根本不按 token 收费；**未公开价**是厂商没公布刊例价（百炼的 qwen3.8 系列缓存命中价）；**未计价**是价目表还没收录这个模型名。三者的 token 都不计入合计，tooltip 里写明这部分总共多少。"),
@@ -316,7 +316,7 @@ enum HelpCatalog {
             id: "sessions-units",
             chapter: .sessions,
             title: "换 Token 单位",
-            summary: "设置 → 外观 → Token 单位：万/亿 或 K/M/B。",
+            summary: "设置 → 用量与计费 → Token 单位：万 / 亿 或 K / M / B。",
             body: [
                 .para("主窗口、popup 与桌面 Widget 同步生效。"),
             ],
@@ -339,7 +339,7 @@ enum HelpCatalog {
                     "选一个节点——菜单栏 popup 的 VPN 格也能切",
                     "需要接管流量时开「系统代理」（Wi-Fi / 以太网写 `127.0.0.1` + mixed-port），或在设置里开 TUN",
                 ]),
-                .para("菜单栏显示 ↓↑ 实时速率；出站路径写成 `日本 › 电信` 这样的面包屑。"),
+                .para("菜单栏显示 ↓↑ 实时速率；当前出口节点名显示在 popup 的 VPN 格与 VPN 页。"),
             ],
             keywords: "vpn 订阅 subscription 节点 node 系统代理 tun mihomo 内核 开关"
         ),
@@ -491,7 +491,7 @@ enum HelpCatalog {
                     (path: "~/.claude/", note: "读；切换时写 settings.json"),
                     (path: "~/.codex/", note: "读；切换时写 config.toml"),
                     (path: "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb", note: "只读"),
-                    (path: "~/Library/Application Support/ClaudeBar/logs/", note: "开了抓包才写"),
+                    (path: "~/Library/Application Support/ClaudeBar/logs/", note: "访问日志默认写；抓包正文开了抓包才写"),
                     (path: "~/Library/Application Support/ClaudeBar/vpn/", note: "订阅与内核配置，只留本机"),
                 ]),
             ],

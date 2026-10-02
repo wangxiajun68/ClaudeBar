@@ -12,11 +12,11 @@ import Observation
 final class AudioAccessoryMonitor {
     static let shared = AudioAccessoryMonitor()
 
-    enum Source: String {
-        case bluetoothLog = "CBPowerSource"
-        case batteryCenter = "BatteryCenter"
-        case profiler = "system_profiler"
-        case audioRoute = "CoreAudio"
+    enum Source {
+        case bluetoothLog
+        case batteryCenter
+        case profiler
+        case audioRoute
 
         /// Lower sorts first — used when merging two readings of one device.
         var rank: Int {
@@ -39,7 +39,6 @@ final class AudioAccessoryMonitor {
     struct Accessory: Identifiable, Equatable {
         var id: String
         var name: String
-        var category: String = ""
         var combined: Reading?
         var left: Reading?
         var right: Reading?
@@ -182,7 +181,7 @@ private final class Engine: @unchecked Sendable {
             self.routeRefresh?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.timer != nil, !self.suspended else { return }
-                self.poll(forceProfiler: true, publish: self.publishHandler)
+                self.poll(forceProfiler: true)
             }
             self.routeRefresh = work
             self.queue.asyncAfter(deadline: .now() + 0.35, execute: work)
@@ -227,7 +226,7 @@ private final class Engine: @unchecked Sendable {
             t.schedule(deadline: .now(), repeating: 5.0, leeway: .seconds(1))
             t.setEventHandler { [weak self] in
                 guard let self else { return }
-                self.poll(forceProfiler: false, publish: self.publishHandler)
+                self.poll(forceProfiler: false)
             }
             t.resume()
             timer = t
@@ -267,7 +266,7 @@ private final class Engine: @unchecked Sendable {
                 // Visibility flips on every notch-island hover; a profiler
                 // spawn (hundreds of ms) per flip is only worth it when the
                 // topology it reports is more than a minute old.
-                poll(forceProfiler: Date().timeIntervalSince(lastProfilerAt) > 60, publish: publishHandler)
+                poll(forceProfiler: Date().timeIntervalSince(lastProfilerAt) > 60)
             } else {
                 timer.suspend()
             }
@@ -284,7 +283,7 @@ private final class Engine: @unchecked Sendable {
         lastPublishedReason = nil
     }
 
-    func poll(forceProfiler: Bool, publish: (@MainActor ([AudioAccessoryMonitor.Accessory], String?) -> Void)?) {
+    func poll(forceProfiler: Bool) {
         let now = Date()
 
         // Read both subsystems together. `merged` keeps what earlier polls
@@ -349,7 +348,7 @@ private final class Engine: @unchecked Sendable {
         guard snapshot != lastPublished || reason != lastPublishedReason else { return }
         lastPublished = snapshot
         lastPublishedReason = reason
-        Task { @MainActor in publish?(snapshot, reason) }
+        Task { @MainActor in publishHandler?(snapshot, reason) }
     }
 
     /// Combine separately announced headset and case records into one accessory.
@@ -368,7 +367,10 @@ private final class Engine: @unchecked Sendable {
         // the only place the reading is turned into a claim about connection,
         // and it deliberately happens *after* merging: whether a headset is
         // connected has nothing to do with which source reported its levels.
-        let route = ConnectionSource.defaultOutputName()
+        // The device is read once and both facts derived from it, so a route
+        // switch between reads cannot label the row with a stale transport.
+        let defaultOutput = ConnectionSource.defaultOutput()
+        let route = defaultOutput.name
 
         var out: [AudioAccessoryMonitor.Accessory] = []
         for (identifier, var body) in bodies {
@@ -391,7 +393,7 @@ private final class Engine: @unchecked Sendable {
             orphan.connection = resolveConnection(for: orphan, route: route)
             out.append(orphan)
         }
-        if let route, ConnectionSource.defaultOutputIsBluetooth(),
+        if let route, defaultOutput.isBluetooth,
            !out.contains(where: { ConnectionSource.routeMatches(accessoryName: $0.name, routeName: route) }) {
             var accessory = AudioAccessoryMonitor.Accessory(id: "audio-route:" + route, name: route)
             accessory.source = .audioRoute
@@ -443,7 +445,6 @@ private final class Engine: @unchecked Sendable {
                 next.name = device.name
                 next.nameIsCaseName = device.nameIsCaseName
             }
-            if next.category.isEmpty { next.category = device.category }
             if better(device.combined, over: next.combined, from: source, existing: next.source) {
                 next.combined = device.combined
             }
@@ -498,11 +499,13 @@ private enum ConnectionSource {
         return names
     }
 
-    /// The name of the current default audio output, via `CoreAudio`.
+    /// The current default audio output, via `CoreAudio`.
     ///
     /// Read straight from the HAL — no subprocess, so it is cheap enough to
     /// check on every poll and it reacts immediately when audio starts or stops.
-    static func defaultOutputName() -> String? {
+    /// The device, its name and its transport come from one read so a route
+    /// switch between two calls cannot pair a name with a stale transport.
+    static func defaultOutput() -> (name: String?, isBluetooth: Bool) {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -510,7 +513,9 @@ private enum ConnectionSource {
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                         &address, 0, nil, &size, &device) == noErr else { return nil }
+                                         &address, 0, nil, &size, &device) == noErr else {
+            return (nil, false)
+        }
 
         var nameAddress = AudioObjectPropertyAddress(
             mSelector: kAudioObjectPropertyName,
@@ -518,24 +523,18 @@ private enum ConnectionSource {
             mElement: kAudioObjectPropertyElementMain)
         var name: CFString = "" as CFString
         var nameSize = UInt32(MemoryLayout<CFString>.size)
-        let status = withUnsafeMutablePointer(to: &name) { pointer -> OSStatus in
+        let nameStatus = withUnsafeMutablePointer(to: &name) { pointer -> OSStatus in
             AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, pointer)
         }
-        guard status == noErr else { return nil }
-        return name as String
-    }
 
-    static func defaultOutputIsBluetooth() -> Bool {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return false }
         address.mSelector = kAudioDevicePropertyTransportType
         var transport: UInt32 = 0
         size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
-        return transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+        let transportStatus = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
+        let isBluetooth = transportStatus == noErr
+            && (transport == kAudioDeviceTransportTypeBluetooth
+                || transport == kAudioDeviceTransportTypeBluetoothLE)
+        return (nameStatus == noErr ? name as String : nil, isBluetooth)
     }
 
     /// Names differ in whitespace between sources — `system_profiler` emits a
@@ -731,6 +730,14 @@ private enum LogText {
         return out.trimmingCharacters(in: .whitespaces)
     }
 
+    /// The join key a log source forms from a device name: the localized case
+    /// suffix comes off first, then any per-part glyph, so a case record and a
+    /// per-bud record of the same headset both land on the key `assemble()`
+    /// stores it under. Both log parsers share this or their rows never pair.
+    static func identity(from name: String) -> String {
+        strippingPartLabel(strippingCaseSuffix(name))
+    }
+
     /// `Name = "\134U5927\134U738b..."` — `bluetoothd` escapes its non-ASCII as
     /// `\134` (octal for the backslash) followed by a `\Uxxxx` scalar, so one
     /// substitution has to happen before the scalars can be read.
@@ -786,11 +793,11 @@ private enum PowerSourceLogParser {
         // localized name ("大王的AirPods Pro充电盒"). Whichever source notices
         // the case first must land on the *body's* key so `assemble()` pairs
         // the two halves back into one headset instead of drawing it twice.
-        let identifier = LogText.strippingPartLabel(LogText.strippingCaseSuffix(name))
+        let identifier = LogText.identity(from: name)
 
         let components = LogText.components(in: message)
+        let category = LogText.token(after: "AcCa", in: message) ?? ""
         var accessory = AudioAccessoryMonitor.Accessory(id: identifier, name: name)
-        accessory.category = LogText.token(after: "AcCa", in: message) ?? ""
 
         // **Scope, not just identity.** macOS 26 announces the charging case as
         // its own accessory under the *same* `AcID` as the buds ("大王的AirPods
@@ -799,7 +806,7 @@ private enum PowerSourceLogParser {
         // which is how the meter ended up showing a case name with bud levels.
         // A case-only sighting therefore gets its own slot; everything else
         // (buds, or a combined announcement) shares the body slot.
-        let isCaseOnly = accessory.category.localizedCaseInsensitiveContains("battery case")
+        let isCaseOnly = category.localizedCaseInsensitiveContains("battery case")
             || (components["Case"] != nil && components["Left"] == nil && components["Right"] == nil)
         accessory.id = isCaseOnly ? "\(identifier)#case" : identifier
         accessory.nameIsCaseName = isCaseOnly
@@ -822,7 +829,7 @@ private enum PowerSourceLogParser {
         // line split out a component, or it says it is an audio device. A
         // combined level alone is not enough — the built-in battery has one.
         let hasComponents = accessory.left != nil || accessory.right != nil || accessory.caseLevel != nil
-        return (hasComponents || LogText.isAudio(category: accessory.category))
+        return (hasComponents || LogText.isAudio(category: category))
             && accessory.hasAnyReading ? [accessory] : nil
     }
 
@@ -881,7 +888,7 @@ private enum BatteryCenterLogParser {
         // ("大王的AirPods Pro充电盒"), so the suffix comes off before the key is
         // formed and the scope is added instead — otherwise the same headset
         // answered twice, once per source.
-        let identifier = LogText.strippingPartLabel(LogText.strippingCaseSuffix(name))
+        let identifier = LogText.identity(from: name)
 
         guard let rawCharge = value("percentCharge", "Current Capacity"),
               let percent = Int(rawCharge), (1...100).contains(percent) else { return nil }
@@ -899,7 +906,6 @@ private enum BatteryCenterLogParser {
         let part = value("Part Identifier", "Part Name") ?? ""
         let category = value("Accessory Category", "accessoryCategory") ?? ""
         var accessory = AudioAccessoryMonitor.Accessory(id: identifier, name: name)
-        accessory.category = category
         let reading = AudioAccessoryMonitor.Reading(percent: percent, charging: charging)
 
         // This subsystem also reports the Mac's own battery under the same
@@ -1004,9 +1010,18 @@ private enum ProfilerSource {
         } catch {
             return nil
         }
+        // The child's own `-timeout` is not a guarantee; a wedged
+        // system_profiler would otherwise block the read below — and with it
+        // the poll queue — forever. Terminate at a hard deadline so the queue
+        // is never held past it.
+        let timeout = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 8, execute: timeout)
         // Read before waiting so a large payload cannot deadlock on a full pipe.
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        timeout.cancel()
         guard process.terminationStatus == 0, let accessories = parse(data) else { return nil }
         return (accessories, ConnectionSource.parseConnected(data))
     }
@@ -1039,7 +1054,6 @@ private enum ProfilerSource {
         // rows — one per source — and the meter drew it twice. The name is the
         // one field all three sources agree on, so it is the join key.
         var accessory = AudioAccessoryMonitor.Accessory(id: name, name: name)
-        accessory.category = fields["device_minorType"] as? String ?? ""
         accessory.left = reading(fields["device_batteryLevelLeft"],
                                  charging: fields["device_batteryLevelLeftCharging"])
         accessory.right = reading(fields["device_batteryLevelRight"],
@@ -1059,7 +1073,6 @@ private enum ProfilerSource {
         if accessory.caseLevel != nil {
             var box = AudioAccessoryMonitor.Accessory(id: "\(name)#case", name: name)
             box.caseLevel = accessory.caseLevel
-            box.category = "Audio Battery Case"
             return [accessory, box]
         }
         return [accessory]

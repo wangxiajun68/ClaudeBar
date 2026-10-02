@@ -61,11 +61,6 @@ struct CursorCredentials: Equatable {
     /// `sub` from the JWT payload, e.g. `google-oauth2|user_01…`. Only the
     /// cookie-authenticated web endpoints need it, and only percent-encoded.
     var subject: String?
-    var email: String?
-    /// `pro` / `ultra` / `free`, from `stripeMembershipType`.
-    var membershipType: String?
-    /// `active` / `canceled`, from `stripeSubscriptionStatus`.
-    var subscriptionStatus: String?
 
     /// Whether there is enough here to call the usage API at all.
     var canQueryUsage: Bool { accessToken?.isEmpty == false }
@@ -86,13 +81,10 @@ extension CursorDB {
 
         let wanted: Set<String> = [
             "cursorAuth/accessToken",
-            "cursorAuth/cachedEmail",
-            "cursorAuth/stripeMembershipType",
-            "cursorAuth/stripeSubscriptionStatus",
         ]
-        // One statement, keys bound by `IN`, so this is a single scan of
-        // `ItemTable`'s primary-key index rather than five round trips.
-        let sql = "SELECT key, value FROM ItemTable WHERE key IN (?, ?, ?, ?)"
+        // One statement, key bound by `IN`, so this is a single scan of
+        // `ItemTable`'s primary-key index.
+        let sql = "SELECT key, value FROM ItemTable WHERE key IN (?)"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
@@ -109,10 +101,7 @@ extension CursorDB {
         let token = values["cursorAuth/accessToken"]
         return CursorCredentials(
             accessToken: token,
-            subject: token.flatMap(jwtSubject),
-            email: values["cursorAuth/cachedEmail"],
-            membershipType: values["cursorAuth/stripeMembershipType"],
-            subscriptionStatus: values["cursorAuth/stripeSubscriptionStatus"]
+            subject: token.flatMap(jwtSubject)
         )
     }
 

@@ -63,7 +63,7 @@ final class ProxyUsageStore {
     func record(model: String, at date: Date, input: Int, output: Int,
                 cacheRead: Int, cacheWrite: Int = 0) {
         let name = model.isEmpty ? "unknown" : model
-        let day = Self.dayString(date)
+        let day = ModelPricing.dayKey(date)
         guard input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0 else { return }
         lock.lock()
         defer { lock.unlock() }
@@ -180,6 +180,11 @@ final class ProxyUsageStore {
         guard sqlite3_open_v2(Self.dbURL.path, &db,
                               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
                               nil) == SQLITE_OK, let handle = db else {
+            // `open_v2` hands back a handle even when it fails, and that
+            // handle keeps the file lock. Clear it, or the next call returns
+            // it before `openFailed` is ever consulted.
+            sqlite3_close(db)
+            db = nil
             openFailed = true
             return nil
         }
@@ -333,10 +338,5 @@ final class ProxyUsageStore {
 
     private static func key(_ day: String, _ model: String) -> String {
         day + "\u{1F}" + model
-    }
-
-    private static func dayString(_ date: Date) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 }

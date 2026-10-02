@@ -242,10 +242,6 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
         }
     }
 
-    /// The value the key field should carry for a local endpoint. Kept as a
-    /// named constant so layouts and the placeholder agree on one string.
-    static let localEndpointPlaceholderKey = "ollama"
-
     static func supportsNativeResponses(baseURL: String, model: String) -> Bool {
         all.contains { entry in
             guard let endpoint = entry.codex, endpoint.wireAPI == "responses" else { return false }

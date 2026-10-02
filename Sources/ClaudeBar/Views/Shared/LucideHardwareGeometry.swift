@@ -22,10 +22,10 @@ enum LucideHardwareGeometry {
     ///
     /// Cached: the geometry is a pure function of `kind` (the file is generated
     /// from Lucide's SVGs and never varies at runtime), and the hot reader is a
-    /// `Canvas` that runs once per display cycle while a machine mark animates.
-    /// Rebuilding the CPU outline is 30-plus path commands — allocation and
-    /// hashing in Core Graphics' path storage — per call, and the mark is drawn
-    /// on four tiles of the dashboard strip.
+    /// `Canvas` whose body re-evaluates on every sampler tick — about 1 Hz — on
+    /// four tiles of the dashboard strip. Rebuilding the CPU outline is 30-plus
+    /// path commands — allocation and hashing in Core Graphics' path storage —
+    /// per call.
     ///
     /// `@MainActor` because every caller is a SwiftUI body; the cache is filled
     /// on first use and never invalidated, so no lock is needed.

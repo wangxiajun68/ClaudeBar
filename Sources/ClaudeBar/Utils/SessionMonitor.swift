@@ -285,14 +285,6 @@ struct SessionMonitor {
         }
     }
 
-    /// Scan a session's transcript for context-window usage. Reads only the
-    /// tail of the file (last ~96KB) — the latest assistant message's total
-    /// input tokens (fresh + cache read + cache create) approximates the
-    /// current context size — plus the most recent tool_use (current activity)
-    /// and whether a tool call is still pending (no result yet → busy).
-    ///
-    /// Single open/seek/read per poll; `size` from `seekToEnd` doubles as the
-    /// existence check, so no separate `fileExists` stat is needed.
     /// The session's first human prompt, from the transcript's *head*.
     ///
     /// The title is not in the tail this monitor normally reads, so this is a
@@ -342,6 +334,14 @@ struct SessionMonitor {
         return ""
     }
 
+    /// Scan a session's transcript for context-window usage. Reads only the
+    /// tail of the file (last ~96KB) — the latest assistant message's total
+    /// input tokens (fresh + cache read + cache create) approximates the
+    /// current context size — plus the most recent tool_use (current activity)
+    /// and whether a tool call is still pending (no result yet → busy).
+    ///
+    /// Single open/seek/read per poll; `size` from `seekToEnd` doubles as the
+    /// existence check, so no separate `fileExists` stat is needed.
     static func fetchContext(for session: SessionInfo) -> ContextScan {
         guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else {
             return ContextScan(tokens: 0, model: "", count: 0, activity: "", toolPending: false,
@@ -471,18 +471,9 @@ struct SessionMonitor {
 
         var direct: [SubagentInfo] = []
         for entry in entries where entry.lastPathComponent.hasSuffix(".meta.json") {
-            guard let data = try? Data(contentsOf: entry),
-                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-            // Filename: agent-<id>.meta.json → agentId "agent-<id>".
-            let fname = entry.deletingPathExtension().deletingPathExtension().lastPathComponent
-            let agentId = (meta["agentId"] as? String) ?? fname
-            let agentType = (meta["agentType"] as? String) ?? "agent"
-            let description = (meta["description"] as? String) ?? ""
-            var info = SubagentInfo(agentId: agentId, agentType: agentType, description: description)
-            let (activity, pending) = scanAgentActivity(transcript: subagentsDir.appendingPathComponent("\(fname).jsonl"))
-            info.activity = activity
-            info.status = pending ? .running : .done
-            direct.append(info)
+            if let info = parseAgent(at: entry, in: subagentsDir, defaultType: "agent") {
+                direct.append(info)
+            }
         }
 
         // Workflows live under subagents/workflows/<wf_id>/agent-<id>.meta.json
@@ -496,17 +487,9 @@ struct SessionMonitor {
                 if let agentFiles = try? FileManager.default.contentsOfDirectory(
                     at: wfDir, includingPropertiesForKeys: nil) {
                     for entry in agentFiles where entry.lastPathComponent.hasSuffix(".meta.json") {
-                        guard let data = try? Data(contentsOf: entry),
-                              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                        let fname = entry.deletingPathExtension().deletingPathExtension().lastPathComponent
-                        let agentId = (meta["agentId"] as? String) ?? fname
-                        let agentType = (meta["agentType"] as? String) ?? "workflow-subagent"
-                        let description = (meta["description"] as? String) ?? ""
-                        var info = SubagentInfo(agentId: agentId, agentType: agentType, description: description)
-                        let (activity, pending) = scanAgentActivity(transcript: wfDir.appendingPathComponent("\(fname).jsonl"))
-                        info.activity = activity
-                        info.status = pending ? .running : .done
-                        wf.agents.append(info)
+                        if let info = parseAgent(at: entry, in: wfDir, defaultType: "workflow-subagent") {
+                            wf.agents.append(info)
+                        }
                     }
                 }
                 workflows.append(wf)
@@ -528,6 +511,24 @@ struct SessionMonitor {
         return (direct: direct, workflows: workflows)
     }
 
+    /// Parse one `agent-<id>.meta.json` and scan its sibling transcript.
+    /// `dir` holds both files; the two callers share everything but the
+    /// default agentType and the destination array.
+    private static func parseAgent(at entry: URL, in dir: URL, defaultType: String) -> SubagentInfo? {
+        guard let data = try? Data(contentsOf: entry),
+              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let fname = entry.deletingPathExtension().deletingPathExtension().lastPathComponent
+        // Filename: agent-<id>.meta.json → agentId "agent-<id>".
+        let agentId = (meta["agentId"] as? String) ?? fname
+        let agentType = (meta["agentType"] as? String) ?? defaultType
+        let description = (meta["description"] as? String) ?? ""
+        var info = SubagentInfo(agentId: agentId, agentType: agentType, description: description)
+        let (activity, pending) = scanAgentActivity(transcript: dir.appendingPathComponent("\(fname).jsonl"))
+        info.activity = activity
+        info.status = pending ? .running : .done
+        return info
+    }
+
     /// Read the tail of an agent transcript and return (latest activity,
     /// toolPending). Mirrors the pending-tool logic in `fetchContext`.
     private static func scanAgentActivity(transcript: URL) -> (activity: String, pending: Bool) {
@@ -541,7 +542,7 @@ struct SessionMonitor {
         guard let tailData = try? handle.readToEnd() else {
             return ("", false)
         }
-        // Lossy decode — see `readContext` for why a strict one drops the
+        // Lossy decode — see `fetchContext` for why a strict one drops the
         // whole tail on a mid-character seek.
         let tail = String(decoding: tailData, as: UTF8.self)
 

@@ -5,7 +5,6 @@ enum ModelListFetcher {
 
     struct ModelListPayload {
         var models: [String]
-        var source: String
     }
 
     enum Outcome {
@@ -28,7 +27,7 @@ enum ModelListFetcher {
             guard !Task.isCancelled else { return .failure("已取消") }
             switch await requestModels(url: candidate.url, apiKey: key, authStyle: candidate.authStyle) {
             case .success(let models) where !models.isEmpty:
-                return .success(ModelListPayload(models: models.sorted(), source: candidate.url.absoluteString))
+                return .success(ModelListPayload(models: models.sorted()))
             case .success:
                 lastError = "接口返回空模型列表（\(candidate.url.path)）"
             case .failure(let message):
@@ -164,31 +163,37 @@ enum ModelListFetcher {
 
         if let dict = root as? [String: Any] {
             if let rows = dict["data"] as? [[String: Any]] {
-                let ids = rows.compactMap { row -> String? in
-                    (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String)
-                }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                let ids = extractIDs(from: rows)
                 if !ids.isEmpty { return dedupe(ids) }
             }
             if let rows = dict["models"] as? [[String: Any]] {
-                let ids = rows.compactMap { row -> String? in
-                    (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String)
-                }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                let ids = extractIDs(from: rows)
                 if !ids.isEmpty { return dedupe(ids) }
             }
             if let names = dict["models"] as? [String] {
-                let ids = names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                let ids = extractIDs(from: names)
                 if !ids.isEmpty { return dedupe(ids) }
             }
         }
 
         if let rows = root as? [[String: Any]] {
-            let ids = rows.compactMap { row -> String? in
-                (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String)
-            }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let ids = extractIDs(from: rows)
             if !ids.isEmpty { return dedupe(ids) }
         }
 
         return nil
+    }
+
+    /// Lists spell the model id `id`, `model` or `name` depending on the vendor;
+    /// the first key present wins, so a display name never overrides the real id.
+    private static func extractIDs(from rows: [[String: Any]]) -> [String] {
+        rows.compactMap { row -> String? in
+            (row["id"] as? String) ?? (row["model"] as? String) ?? (row["name"] as? String)
+        }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    private static func extractIDs(from names: [String]) -> [String] {
+        names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
     private static func dedupe(_ ids: [String]) -> [String] {

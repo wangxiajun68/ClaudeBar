@@ -53,11 +53,8 @@ struct ProviderCatalogBrowser: View {
     private struct Partition {
         var buckets: [String: [Provider]]
         var custom: [Provider]
-        /// Catalog entry id → saved connection count, so the sort and the
-        /// "configured only" filter do not walk the bucket array per entry.
-        var counts: [String: Int] = [:]
         func saved(_ entry: ProviderCatalogEntry) -> [Provider] { buckets[entry.id] ?? [] }
-        func hasSaved(_ entry: ProviderCatalogEntry) -> Bool { (counts[entry.id] ?? 0) > 0 }
+        func hasSaved(_ entry: ProviderCatalogEntry) -> Bool { !saved(entry).isEmpty }
     }
 
     /// One URL match per saved row. The grid used to match every row against
@@ -74,19 +71,21 @@ struct ProviderCatalogBrowser: View {
                 custom.append(provider)
             }
         }
-        var counts: [String: Int] = [:]
-        for (id, rows) in buckets { counts[id] = rows.count }
-        return Partition(buckets: buckets, custom: custom, counts: counts)
+        return Partition(buckets: buckets, custom: custom)
     }
 
-    /// The search term, lowercased once; the old version lowercased a joined
-    /// haystack per entry per render.
+    /// The search term, trimmed and lowercased; haystacks are lowercased to
+    /// match it.
     private var searchTerm: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
-    private func matches(_ texts: [String]) -> Bool {
+    /// Joined and lowercased once per haystack, not per `contains`.
+    private func searchHaystack(_ texts: [String]) -> String {
+        texts.joined(separator: " ").lowercased()
+    }
+    private func matches(_ haystack: String) -> Bool {
         guard !searchTerm.isEmpty else { return true }
-        return texts.joined(separator: " ").lowercased().contains(searchTerm)
+        return haystack.contains(searchTerm)
     }
 
     /// Catalog entries with their saved connections attached, computed in one
@@ -115,7 +114,8 @@ struct ProviderCatalogBrowser: View {
                     || (category == .coding && entry.includesCodingPlan)
                 guard inCategory, !configuredOnly || !connections.isEmpty else { return nil }
                 if !searchTerm.isEmpty {
-                    guard matches(entrySearchText(entry, connections: connections)) else { return nil }
+                    let haystack = searchHaystack(entrySearchText(entry, connections: connections))
+                    guard matches(haystack) else { return nil }
                 }
                 return EntryRow(entry: entry, connections: connections, order: order[entry.id] ?? 0)
             }
@@ -126,11 +126,11 @@ struct ProviderCatalogBrowser: View {
             }
     }
     private func custom(in layout: Partition) -> [Provider] {
-        layout.custom.filter { matches(connectionSearchText($0)) }
+        layout.custom.filter { matches(searchHaystack(connectionSearchText($0))) }
     }
     private var showsOfficial: Bool {
         (category == nil || category == .platform) && (!configuredOnly || activeID == nil) &&
-            matches(["官方", "默认", client.title, client == .codex ? "ChatGPT OpenAI" : "Claude Anthropic"])
+            matches(searchHaystack(["官方", "默认", client.title, client == .codex ? "ChatGPT OpenAI" : "Claude Anthropic"]))
     }
 
     var body: some View {
@@ -164,13 +164,14 @@ struct ProviderCatalogBrowser: View {
                             (category == .coding ? group == .coding : $0.category == group) && $0.id != pinned.entryID
                         }
                         if !items.isEmpty || (group == .platform && showsOfficial && !pinned.official) {
+                            let showsOfficialHere = group == .platform && showsOfficial && !pinned.official
                             VStack(alignment: .leading, spacing: 12) {
                                 SectionHeader(icon: group.symbol, title: group.rawValue,
                                               tint: Theme.Ink.claude,
-                                              count: items.count + ((group == .platform && showsOfficial && !pinned.official) ? 1 : 0),
+                                              count: items.count + (showsOfficialHere ? 1 : 0),
                                               countBesideTitle: true)
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 275), spacing: 12, alignment: .top)], spacing: 12) {
-                                    if group == .platform && showsOfficial && !pinned.official {
+                                    if showsOfficialHere {
                                         OfficialProviderCard(client: client, isDefault: activeID == nil, onUse: onUseOfficial)
                                     }
                                     ForEach(items) { row in
@@ -214,11 +215,11 @@ struct ProviderCatalogBrowser: View {
             return PinnedActive(official: showsOfficial)
         }
         if let entry = ProviderCatalogEntry.all.first(where: { layout.saved($0).contains { $0.id == activeID } }),
-           matches(entrySearchText(entry, connections: layout.saved(entry))) {
+           matches(searchHaystack(entrySearchText(entry, connections: layout.saved(entry)))) {
             return PinnedActive(entryID: entry.id)
         }
         if let provider = layout.custom.first(where: { $0.id == activeID }),
-           matches(connectionSearchText(provider)) {
+           matches(searchHaystack(connectionSearchText(provider))) {
             return PinnedActive(customID: provider.id)
         }
         return PinnedActive()
@@ -352,6 +353,19 @@ private struct ProviderCardSurface<Content: View>: View {
     }
 }
 
+private struct ProviderBalanceReadout: View {
+    let balance: String
+
+    var body: some View {
+        RollingNumberText(balance)
+            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(Theme.textPrimary)
+            .lineLimit(1)
+            .help("账户余额")
+    }
+}
+
 private struct ProviderDirectoryCard: View {
     @State private var modelChoice: ProviderModelChoice?
     let entry: ProviderCatalogEntry
@@ -384,14 +398,7 @@ private struct ProviderDirectoryCard: View {
                     Text(entry.detail).font(Theme.Font.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
                 Spacer(minLength: 8)
-                if let balance = balanceLabel {
-                    RollingNumberText(balance)
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .help("账户余额")
-                }
+                if let balance = balanceLabel { ProviderBalanceReadout(balance: balance) }
             }.frame(height: 44, alignment: .top)
 
             ProviderModelSelector(providers: connections, activeID: activeID, choice: $modelChoice)
@@ -445,8 +452,12 @@ private struct CustomProviderDirectoryCard: View {
     let onOpen: () -> Void
     let onActivate: (UUID) -> Void
 
+    private var state: ProviderCardState {
+        ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete
+    }
+
     var body: some View {
-        ProviderCardSurface(state: ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete, selected: selected) {
+        ProviderCardSurface(state: state, selected: selected) {
             HStack(alignment: .top, spacing: 12) {
                 ProviderIdentityMark(name: provider.name, size: 40)
                 VStack(alignment: .leading, spacing: 4) {
@@ -454,18 +465,11 @@ private struct CustomProviderDirectoryCard: View {
                     Text("自定义供应商").font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 8)
-                if let balance {
-                    RollingNumberText(balance)
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .help("账户余额")
-                }
+                if let balance { ProviderBalanceReadout(balance: balance) }
             }.frame(height: 44, alignment: .top)
             ProviderModelSelector(providers: [provider], activeID: active ? provider.id : nil, choice: $modelChoice)
             HStack {
-                ProviderStatusBadge(state: ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete)
+                ProviderStatusBadge(state: state)
                 Spacer()
                 RollingNumberText("\(provider.models.count) 个模型").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }.frame(height: 22)
@@ -490,7 +494,7 @@ private struct OfficialProviderCard: View {
     var body: some View {
         ProviderCardSurface(state: isDefault ? .active : .ready) {
             HStack(spacing: 12) {
-                ProviderIdentityMark(entry: ProviderCatalogEntry.all.first { $0.id == (client == .codex ? "openai" : "anthropic") },
+                ProviderIdentityMark(entry: ProviderCatalogEntry.entry(id: client == .codex ? "openai" : "anthropic"),
                                      name: "官方", size: 40)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("官方").font(.system(size: 15, weight: .semibold, design: .rounded))

@@ -208,14 +208,6 @@ struct ConnectorRecord: Identifiable, Sendable, Equatable {
             sharedOwner: sharedOwner)
     }
 
-    /// Plugin install folder, when this record points at a directory rather than a config file.
-    var installDirectory: URL? {
-        if let directory = detailDirectory { return directory }
-        guard kind == .plugin else { return nil }
-        let name = source.lastPathComponent
-        if name.hasSuffix(".json") || name.hasSuffix(".toml") || name.hasSuffix(".md") { return nil }
-        return source
-    }
     var canToggle: Bool {
         if case .skillMove = method, skillParkedPlatform != nil { return false }
         return enabled != nil && !isNative
@@ -549,11 +541,11 @@ private enum ConnectorInventory {
         var result: [String: PluginBundleContents] = [:]
         result.reserveCapacity(records.count)
         for record in records where record.kind == .plugin {
-            // `detailDirectory ?? source`, not `installDirectory`: that property
-            // returns nil for any source whose last path component looks like a
-            // config file, which is exactly the Claude/Codex catalog plugin
-            // (its `source` is `settings.json`). Those plugins therefore never
-            // got a contents entry, and the card told the user the install
+            // `detailDirectory`, else `source` when it is a directory: a catalog
+            // plugin's `source` is `settings.json`, but its `detailDirectory` is
+            // the install folder, and the cached plugin records carry the version
+            // folder as `source`. Anything else has no bundle to read — without
+            // that guard the card claimed the install had
             // "没有单独列出的 Skill 或 MCP" for a bundle it had never read.
             guard let directory = record.detailDirectory
                     ?? (record.source.hasDirectoryPath ? record.source : nil) else { continue }
@@ -774,17 +766,24 @@ private enum ConnectorInventory {
         }
     }
 
+    /// The folder a cached plugin's manifest lives in. The cache layouts differ
+    /// only in which manifest names their client writes; the listing rule does
+    /// not, so the three scans share it here.
+    private static func pluginVersion(in root: URL, manifests: [String]) -> URL? {
+        let children = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey],
+                                                    options: [.skipsHiddenFiles])) ?? []
+        return children.first { child in
+            manifests.contains { fm.fileExists(atPath: child.appendingPathComponent($0).path) }
+        }
+    }
+
     private static func codexPluginDirectory(_ identifier: String) -> URL? {
         guard let separator = identifier.lastIndex(of: "@") else { return nil }
         let plugin = String(identifier[..<separator])
         let marketplace = String(identifier[identifier.index(after: separator)...])
         let root = home.appendingPathComponent(".codex/plugins/cache")
             .appendingPathComponent(marketplace).appendingPathComponent(plugin)
-        let versions = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        return versions.first(where: {
-            fm.fileExists(atPath: $0.appendingPathComponent("plugin.json").path) ||
-            fm.fileExists(atPath: $0.appendingPathComponent(".codex-plugin/plugin.json").path)
-        })
+        return pluginVersion(in: root, manifests: ["plugin.json", ".codex-plugin/plugin.json"])
     }
 
     private static func tomlCommand(_ line: String) -> String? {
@@ -951,9 +950,7 @@ private enum ConnectorInventory {
         for marketplace in marketplaces {
             guard let plugins = try? fm.contentsOfDirectory(at: marketplace, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { continue }
             for plugin in plugins {
-                guard let versions = try? fm.contentsOfDirectory(at: plugin, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]),
-                      let version = versions.first(where: { fm.fileExists(atPath: $0.appendingPathComponent("plugin.json").path) ||
-                          fm.fileExists(atPath: $0.appendingPathComponent(".cursor-plugin/plugin.json").path) }) else { continue }
+                guard let version = pluginVersion(in: plugin, manifests: ["plugin.json", ".cursor-plugin/plugin.json"]) else { continue }
                 records.append(ConnectorRecord(id: "cursor:cache:\(plugin.path)", name: plugin.lastPathComponent,
                     summary: "Cursor 插件缓存 · 安装和启用状态请在 Customize 中确认", kind: .plugin,
                     platforms: [.cursor], scope: "本机缓存", source: version,
@@ -971,9 +968,7 @@ private enum ConnectorInventory {
             for plugin in plugins {
                 let name = "\(plugin.lastPathComponent)@\(marketplace.lastPathComponent)"
                 guard !configured.contains(name),
-                      let versions = try? fm.contentsOfDirectory(at: plugin, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]),
-                      let version = versions.first(where: { fm.fileExists(atPath: $0.appendingPathComponent("plugin.json").path) ||
-                          fm.fileExists(atPath: $0.appendingPathComponent(".codex-plugin/plugin.json").path) }) else { continue }
+                      let version = pluginVersion(in: plugin, manifests: ["plugin.json", ".codex-plugin/plugin.json"]) else { continue }
                 records.append(ConnectorRecord(id: "codex:cache:\(plugin.path)", name: name,
                     summary: "Codex 插件缓存 · 安装和启用状态请在 Codex 中确认", kind: .plugin,
                     platforms: [.codex], scope: "本机缓存", source: version,

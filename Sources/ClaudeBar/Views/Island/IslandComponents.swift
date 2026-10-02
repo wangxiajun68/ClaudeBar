@@ -268,39 +268,25 @@ struct IslandContextGauge: View {
     }
 }
 
-/// One module's icon well. Its geometry is a constant so a `Canvas`-drawn
-/// product mark and an instrument glyph reserve exactly the same square — that
-/// equality is what lets a route page and a hardware page share one grid.
+/// One module's icon well: the route chip's agent mark in a tinted circle, at
+/// 0.62 of the fixed `IslandStyle.markWellSize` square.
 ///
-/// Instrument glyphs are drawn at 0.62 of the well, the same fraction the
-/// product marks use, so the two mark families carry the same optical weight.
+/// The well used to take a second, `InstrumentGlyph.Kind` mark family for the
+/// deleted glance reel's module tiles, drawn at the same 0.62 of the square so
+/// the two families carried the same optical weight. That reel was the glyph
+/// arm's only caller outside this file; with it gone the arm was unreachable,
+/// so the arm and its `init(kind:)` are deleted rather than kept as a path
+/// nothing exercises. A glyph variant later would be a small addition against
+/// an agent-only well.
 struct IslandMarkWell: View {
-    let kind: InstrumentGlyph.Kind?
-    let mark: IslandAgent?
+    let mark: IslandAgent
     let tint: Color
-
-    init(kind: InstrumentGlyph.Kind, tint: Color) {
-        self.kind = kind
-        self.mark = nil
-        self.tint = tint
-    }
-
-    init(mark: IslandAgent, tint: Color) {
-        self.kind = nil
-        self.mark = mark
-        self.tint = tint
-    }
 
     var body: some View {
         ZStack {
             Circle().fill(tint.opacity(0.16))
-            if let mark {
-                IslandAgentMark(agent: mark)
-                    .frame(width: IslandStyle.markWellSize * 0.62, height: IslandStyle.markWellSize * 0.62)
-            } else if let kind {
-                InstrumentGlyph(kind: kind, tint: tint)
-                    .frame(width: IslandStyle.markWellSize * 0.62, height: IslandStyle.markWellSize * 0.62)
-            }
+            IslandAgentMark(agent: mark)
+                .frame(width: IslandStyle.markWellSize * 0.62, height: IslandStyle.markWellSize * 0.62)
         }
         .frame(width: IslandStyle.markWellSize, height: IslandStyle.markWellSize)
         .accessibilityHidden(true)

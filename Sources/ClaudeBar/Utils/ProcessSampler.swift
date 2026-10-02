@@ -89,10 +89,6 @@ final class ProcessSampler {
         var memoryUsed: UInt64 = 0
         var memoryTotal: UInt64 = 0
         var coreCount: Int = 1
-        /// GPU core count as the driver publishes it. Zero on a machine whose
-        /// driver publishes none. The per-unit readings live in `CellLoad`,
-        /// not here: see the note there.
-        var gpuCoreCount: Int = 0
         /// Physical memory by page category, in bytes. These are the *real*
         /// buckets `vm_statistics64` reports — not an apportionment of
         /// `memoryUsed`, which is `active + inactive + speculative + wired +
@@ -100,18 +96,14 @@ final class ProcessSampler {
         /// them. `used` is the sampler's own pressure figure and is the one the
         /// percentage on screen comes from; the parts are for the mark.
         ///
-        /// They do **not** sum to `used`: `free` counts bytes that are nobody's
-        /// (`speculative` is a subset of neither), and the categories are
-        /// sampled independently. That is why they are carried as raw bytes and
+        /// They do **not** sum to `used`: the categories are sampled
+        /// independently. That is why they are carried as raw bytes and
         /// normalised by the mark rather than as pre-divided shares.
         var memoryActive: UInt64 = 0
         var memoryWired: UInt64 = 0
         var memoryCompressed: UInt64 = 0
         var cpuTemperatureCelsius: Double?
         var gpuTemperatureCelsius: Double?
-        /// Battery cell temperature, when the SMC reports one. Distinct from
-        /// the CPU / GPU sensors: on battery the cell is what gets warm.
-        var batteryTemperatureCelsius: Double?
         var memoryPressureLevel: Int = 0
         var diskUsed: UInt64 = 0
         var diskTotal: UInt64 = 1
@@ -124,7 +116,6 @@ final class ProcessSampler {
         var batteryInstalled: Bool = false
         var batteryCharging: Bool = false
         var batteryExternalPower: Bool = false
-        var batteryChargingWatts: Double?
         var powerInputWatts: Double?
         var powerSystemWatts: Double?
         var powerBatteryWatts: Double?
@@ -225,8 +216,7 @@ final class ProcessSampler {
     private var linkSample: HardwareSensors.LinkStatus?
     private var linkSampleAt: TimeInterval = 0
     private var cpuTemperature: Double?
-    private var batteryTemperature: Double?
-    /// The GPU's SMC fallback, held on the same 5 s gate as the two above.
+    /// The GPU's SMC fallback, held on the same 5 s gate as the CPU read.
     private var gpuTemperature: Double?
     private var temperatureSampleAt: TimeInterval = -.infinity
     private var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
@@ -270,7 +260,6 @@ final class ProcessSampler {
                 snapshot.batteryPercent = battery.percent
                 snapshot.batteryCharging = battery.charging
                 snapshot.batteryExternalPower = battery.externalPower
-                snapshot.batteryChargingWatts = battery.chargingWatts
                 snapshot.powerInputWatts = battery.inputWatts
                 snapshot.powerSystemWatts = battery.systemWatts
                 snapshot.powerBatteryWatts = battery.batteryWatts
@@ -451,7 +440,6 @@ final class ProcessSampler {
         }
         if wantsDevices, now - temperatureSampleAt >= 5 {
             cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
-            batteryTemperature = HardwareSensors.batteryTemperatureCelsius()
             temperatureSampleAt = now
         }
         // Read on *every* tier, not just the foreground one. The 电量 mark is
@@ -477,13 +465,11 @@ final class ProcessSampler {
             memoryUsed: memory.used,
             memoryTotal: ProcessInfo.processInfo.physicalMemory,
             coreCount: max(ProcessInfo.processInfo.processorCount, 1),
-            gpuCoreCount: gpu.coreCount,
             memoryActive: memory.active,
             memoryWired: memory.wired,
             memoryCompressed: memory.compressed,
             cpuTemperatureCelsius: wantsDevices ? cpuTemperature : nil,
             gpuTemperatureCelsius: wantsDevices ? gpuTemperature : nil,
-            batteryTemperatureCelsius: wantsDevices ? batteryTemperature : nil,
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
             diskTotal: disk.total,
@@ -496,7 +482,6 @@ final class ProcessSampler {
             batteryInstalled: battery.installed,
             batteryCharging: battery.charging,
             batteryExternalPower: battery.externalPower,
-            batteryChargingWatts: battery.chargingWatts,
             powerInputWatts: battery.inputWatts,
             powerSystemWatts: battery.systemWatts,
             powerBatteryWatts: battery.batteryWatts,
@@ -603,7 +588,6 @@ final class ProcessSampler {
                 host.diskTotal = (host.diskTotal / 1_048_576) * 1_048_576
                 if let t = host.cpuTemperatureCelsius { host.cpuTemperatureCelsius = t.rounded() }
                 if let t = host.gpuTemperatureCelsius { host.gpuTemperatureCelsius = t.rounded() }
-                if let t = host.batteryTemperatureCelsius { host.batteryTemperatureCelsius = t.rounded() }
                 // RSSI jitters ±1 dBm and the power rails in milliwatts between
                 // samples; below these steps nothing on screen changes, so the
                 // equality check below can actually hold.
@@ -612,7 +596,6 @@ final class ProcessSampler {
                 host.powerInputWatts = tenth(host.powerInputWatts)
                 host.powerSystemWatts = tenth(host.powerSystemWatts)
                 host.powerBatteryWatts = tenth(host.powerBatteryWatts)
-                host.batteryChargingWatts = tenth(host.batteryChargingWatts)
 
                 if self.claudeBar != claudeBar { self.claudeBar = claudeBar }
                 if self.host != host { self.host = host }
@@ -773,7 +756,7 @@ final class ProcessSampler {
     /// set could disagree at the boundary, and a mark that contradicts the
     /// number above it is worse than no mark.
     private func memoryBreakdown() -> (used: UInt64, active: UInt64, wired: UInt64,
-                                       compressed: UInt64, cached: UInt64, free: UInt64) {
+                                       compressed: UInt64) {
         var vm = vm_statistics64()
         var count = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64>.stride / MemoryLayout<integer_t>.stride)
@@ -782,7 +765,7 @@ final class ProcessSampler {
                 host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
         }
-        guard kr == KERN_SUCCESS else { return (0, 0, 0, 0, 0, 0) }
+        guard kr == KERN_SUCCESS else { return (0, 0, 0, 0) }
         let page = UInt64(vm_kernel_page_size)
         let active = UInt64(vm.active_count) &* page
         let inactive = UInt64(vm.inactive_count) &* page
@@ -792,8 +775,7 @@ final class ProcessSampler {
         let purgeable = UInt64(vm.purgeable_count) &* page
         let external = UInt64(vm.external_page_count) &* page
         let used = active &+ inactive &+ speculative &+ wired &+ compressed &- purgeable &- external
-        return (min(used, ProcessInfo.processInfo.physicalMemory), active, wired, compressed,
-                inactive &+ purgeable, UInt64(vm.free_count) &* page &+ speculative)
+        return (min(used, ProcessInfo.processInfo.physicalMemory), active, wired, compressed)
     }
 
     private func footprint(pid: pid_t) -> UInt64 {

@@ -3,6 +3,10 @@ import SwiftUI
 /// Input / cache-hit / cache-write / output as a labeled stacked track.
 struct TokenMixStrip: View {
     let stats: [ModelUsage]
+    /// Selects the compact drawing: 8pt bar, tight legend spacing, bare
+    /// labels. The `false` arm — 10pt bar, wider legend, numbered "输入 N"
+    /// labels — never ships: every call site in the app passes `true`, so do
+    /// not read that arm as live behaviour.
     var compact: Bool = false
     var rolls = true
 

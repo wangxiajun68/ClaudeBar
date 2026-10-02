@@ -150,7 +150,6 @@ final class ExchangeRate: ObservableObject {
                 // can do about it (set a manual rate).
                 self.lastError = "汇率查询失败，请检查网络或改用手动汇率"
             }
-            NotificationCenter.default.post(name: .exchangeRateDidChange, object: nil)
         }
     }
 
@@ -242,8 +241,4 @@ final class ExchangeRate: ObservableObject {
     private static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
-}
-
-extension Notification.Name {
-    static let exchangeRateDidChange = Notification.Name("com.claudebar.exchangeRateDidChange")
 }

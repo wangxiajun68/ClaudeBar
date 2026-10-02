@@ -171,8 +171,8 @@ struct MachineKpiStrip: View {
     }
 
     /// Share of physical memory in use, 0…1 — the popup keeps the three-column
-    /// form ("12.4G") but the mark needs the *fraction*, or the arc would spin
-    /// at full rate on a machine with 128 GB of which 12 GB are used.
+    /// form ("12.4G") but the accent rule needs the *fraction*, or it would
+    /// stand at full width on a machine with 128 GB of which 12 GB are used.
     private var memPercent: Double {
         guard sampler.host.memoryTotal > 0 else { return 0 }
         return Double(sampler.host.memoryUsed) / Double(sampler.host.memoryTotal)
@@ -307,11 +307,11 @@ private struct MachineKpiButton: View {
 
     let kind: Kind
     let value: String
-    /// 0…1 — the same reading the strip prints, handed to the mark so its lit
-    /// arc travels at a rate proportional to it. Passed in rather than derived
-    /// here: the strip already holds the sampler and has already formatted the
-    /// figure, and two places computing "the load" is how a label and its
-    /// ornament end up disagreeing.
+    /// 0…1 — the cell's own reading as a share, drawn as the 2pt accent rule
+    /// under the cell: CPU / GPU pass percent ÷ 100, memory its 0…1 share.
+    /// Passed in rather than derived here: the strip already holds the sampler
+    /// and has already formatted the figure, and two places computing "the
+    /// load" is how a label and its ornament end up disagreeing.
     var load: Double = 0
     /// The host tooltip, built once by the strip and shared by its cells.
     var help: String = ""

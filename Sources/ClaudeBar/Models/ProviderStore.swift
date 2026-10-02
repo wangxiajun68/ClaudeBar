@@ -49,17 +49,6 @@ class ProviderStore: ObservableObject {
     @Published private(set) var usageEstimate = ModelPricing.Estimate()
     @Published var usageLoading: Bool = false
     @Published private(set) var usagePublishedInterval: DateInterval?
-    /// Cursor's **actually charged** amount per canonical model id, for the
-    /// window `CursorLedgerStore.window` covers.
-    ///
-    /// Deliberately parallel to `usageStats` and never folded into it.
-    /// `ModelPricing` estimates a model's cost from its tokens and the
-    /// published price table; this is the amount Cursor deducted, read from
-    /// Cursor's own ledger. The two live in different dictionaries, are
-    /// rendered as two labelled numbers, and are never summed — a single
-    /// number that mixed them would be neither an estimate nor a bill, and
-    /// `docs/technical/15-model-cost.md` is built on that distinction holding.
-    ///
     /// Today's totals, independent of `usagePeriod`.
     ///
     /// The dashboard's 今日花费 / 今日 Token cards are a fixed window while
@@ -120,13 +109,12 @@ class ProviderStore: ObservableObject {
     private static let completionFreshness: TimeInterval = 60
 
     // Only a new transcript-confirmed final answer may produce an idle banner.
-    @Published var anySessionBusy = false   // drives the menu-bar icon
+    @Published var anySessionBusy = false   // status pill, busy/idle poll tier + visibility-gated sampler rate
     private var claudeCompletionDetector = ConfirmedCompletionDetector<Int>()
     private var cursorCompletionDetector = ConfirmedCompletionDetector<String>()
 
     // Live Cursor (IDE) sessions
     @Published var cursorSessions: [CursorSessionInfo] = []
-    @Published var cursorExpanded: Set<String> = []
 
     // Live Codex sessions
     @Published var externalSessions: [ExternalSessionInfo] = [] {
@@ -371,13 +359,14 @@ class ProviderStore: ObservableObject {
         refreshAnyBusy()
     }
 
-    /// Menu-bar icon: any Claude / Cursor / Codex session mid-turn.
+    /// Any Claude / Cursor / Codex session mid-turn: drives the main window's
+    /// status pill and the busy/idle poll cadence.
     ///
     /// Deliberately **not** "any session that is not idle": a session parked on
     /// a permission prompt (`SessionStatus.waiting`) has nothing in flight, so
-    /// it must not hold the menu-bar icon at busy or keep the poll on the
-    /// busy-tier cadence. What the user is waiting for in that state is their
-    /// own input, and the card says so.
+    /// it must not count as busy or keep the poll on the busy-tier cadence.
+    /// What the user is waiting for in that state is their own input, and the
+    /// card says so.
     private func refreshAnyBusy() {
         let claude = sessions.contains { $0.isAlive && $0.isBusy }
         let cursor = cursorSessions.contains { $0.isBusy }
@@ -395,7 +384,7 @@ class ProviderStore: ObservableObject {
             // rollout file's mtime) that a long turn keeps refreshed — so a
             // single Codex run pinned the sampler at 1 Hz for the whole turn
             // with nothing on screen watching it. Keep `anySessionBusy`
-            // accurate for the menu-bar icon and the poll cadence; only the
+            // accurate for the status pill and the poll cadence; only the
             // 1 Hz *sampling* rate follows visibility.
             ProcessSampler.shared.setLive(busy && UIWakePolicy.hasVisibleWindow)
         }
@@ -786,12 +775,8 @@ class ProviderStore: ObservableObject {
     private func hardenLegacySecretFiles() {
         guard !Self.hardenedLegacy else { return }
         Self.hardenedLegacy = true
-        let fm = FileManager.default
         for url in [FilePaths.settingsFile, FilePaths.codexProvidersFile] {
-            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
-                  let mode = attrs[.posixPermissions] as? NSNumber,
-                  mode.intValue & 0o077 != 0 else { continue }
-            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            PrivateFileWriter.harden(url)
         }
     }
 

@@ -40,8 +40,6 @@ enum ModelPriceSources {
         /// How to read the page. A function so a vendor's parser and its URL
         /// stay in one place, and so adding a vendor is one entry.
         let parse: @Sendable (String) -> [ParsedRow]
-
-        static func == (lhs: Vendor, rhs: Vendor) -> Bool { lhs.name == rhs.name }
     }
 
     /// One row a parser extracted, still in the vendor's own terms.
@@ -211,14 +209,12 @@ enum ModelPriceSources {
         case http(Int)
         case badResponse
         case badJSON
-        case empty
 
         var errorDescription: String? {
             switch self {
             case .http(let code): return "价源返回 HTTP \(code)"
             case .badResponse: return "价源响应无法识别"
             case .badJSON: return "价源返回的不是预期格式"
-            case .empty: return "价源没有返回可用的价格"
             }
         }
     }
@@ -304,16 +300,21 @@ enum ModelPriceSources {
         }
     }
 
-    /// The first number in a cell, ignoring currency marks and thousands
-    /// separators. Returns nil rather than 0 for "no number here" — a zero would
-    /// be a price.
-    static func number(_ text: String) -> Double? {
+    /// One cell's numbers, comma- and currency-stripped. The two callers below
+    /// differ only in which end they take, so the cleaning lives here once.
+    private static func cellNumbers(_ text: String) -> [Double] {
         let cleaned = text.replacingOccurrences(of: ",", with: "")
             .replacingOccurrences(of: "¥", with: " ")
             .replacingOccurrences(of: "元", with: " ")
             .replacingOccurrences(of: "$", with: " ")
-        guard let match = allMatches(of: "-?\\d+(?:\\.\\d+)?", in: cleaned).first else { return nil }
-        return Double(match)
+        return allMatches(of: "-?\\d+(?:\\.\\d+)?", in: cleaned).compactMap { Double($0) }
+    }
+
+    /// The first number in a cell, ignoring currency marks and thousands
+    /// separators. Returns nil rather than 0 for "no number here" — a zero would
+    /// be a price.
+    static func number(_ text: String) -> Double? {
+        cellNumbers(text).first
     }
 
     /// The **last** number in a cell. Some vendors print the list price with the
@@ -321,11 +322,7 @@ enum ModelPriceSources {
     /// page). The discounted number is what is charged, and it is the one the
     /// bundled table carries, so the last number is the right one.
     static func lastNumber(_ text: String) -> Double? {
-        let cleaned = text.replacingOccurrences(of: ",", with: "")
-            .replacingOccurrences(of: "¥", with: " ")
-            .replacingOccurrences(of: "元", with: " ")
-        guard let match = allMatches(of: "-?\\d+(?:\\.\\d+)?", in: cleaned).last else { return nil }
-        return Double(match)
+        cellNumbers(text).last
     }
 
     private static func number(_ any: Any?) -> Double? {

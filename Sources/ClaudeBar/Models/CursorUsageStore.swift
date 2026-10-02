@@ -19,11 +19,6 @@ final class CursorUsageStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var note: String?
 
-    /// When the displayed reading was taken. Nil while nothing has been
-    /// published — the chip's headline is the plan name, so a stale figure
-    /// needs no other mark than the tooltip.
-    @Published private(set) var readingAt: Date?
-
     private var task: Task<Void, Never>?
     private var timer: Timer?
 
@@ -35,7 +30,6 @@ final class CursorUsageStore: ObservableObject {
         if let last = CursorUsageFetcher.lastKnown() {
             plan = last.plan
             grok = last.grok
-            readingAt = last.at
         }
     }
     /// Launch the poll. Idempotent — safe to call from every `onAppear`.
@@ -74,7 +68,6 @@ final class CursorUsageStore: ObservableObject {
             if !snapshot.isEmpty {
                 self.plan = snapshot.plan
                 self.grok = snapshot.grok
-                self.readingAt = Date()
             }
             self.note = snapshot.note
             self.loading = false

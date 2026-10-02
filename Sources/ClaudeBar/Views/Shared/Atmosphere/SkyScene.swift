@@ -13,14 +13,14 @@ import simd
 /// dayness), amount)`. The horizon stop takes less of the tint than the zenith,
 /// which is why an overcast sunrise still shows a warm seam.
 struct SkyScene: Equatable {
-    enum Weather: String, CaseIterable {
+    enum Weather: String {
         case clear, cloudy, overcast, lightRain, heavyRain, thunder, snow, fog
     }
 
     /// The eight parts of a solar day. Rising and setting halves are distinct
     /// because a morning and an afternoon at the same altitude are not the
     /// same colour.
-    enum Band: String, CaseIterable {
+    enum Band {
         case night, dawn, sunrise, morning, noon, afternoon, sunset, dusk
     }
 
@@ -65,12 +65,18 @@ struct SkyScene: Equatable {
     /// clears the top edge by its own radius.
     static let altitudeSpan: Double = 0.72
 
+    /// Relative luminance of an sRGB colour: decode to linear light, then the
+    /// Rec. 709 weights. The ink comparisons beside it are ratios of this, so
+    /// both callers have to agree on where the crossover lies.
+    static func luminance(_ c: SIMD3<Float>) -> Float {
+        func linear(_ v: Float) -> Float { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
+    }
+
     /// Relative luminance of the sky behind the greeting (the band between the
     /// mid and horizon stops, where the glyphs sit).
     var greetingGroundLuminance: Float {
-        let c = simd_mix(mid, horizon, SIMD3(repeating: 0.3))
-        func linear(_ v: Float) -> Float { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
-        return 0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
+        Self.luminance(simd_mix(mid, horizon, SIMD3(repeating: 0.3)))
     }
 
     /// Choose the greeting's ink at the light/dark contrast crossover, before
@@ -96,12 +102,8 @@ struct SkyScene: Equatable {
     /// Compare the two actual inks in linear sRGB, rather than choosing by
     /// clock time or appearance. Top and horizon instruments can differ.
     func prefersDarkInk(at uv: SIMD2<Float>, aspect: Float) -> Bool {
-        func luminance(_ c: SIMD3<Float>) -> Float {
-            func linear(_ v: Float) -> Float { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
-            return 0.2126 * linear(c.x) + 0.7152 * linear(c.y) + 0.0722 * linear(c.z)
-        }
-        let background = luminance(instrumentGround(at: uv, aspect: aspect))
-        let navy = luminance(SIMD3<Float>(20, 30, 51) / 255)
+        let background = Self.luminance(instrumentGround(at: uv, aspect: aspect))
+        let navy = Self.luminance(SIMD3<Float>(20, 30, 51) / 255)
         return (background + 0.05) / (navy + 0.05) > 1.05 / (background + 0.05)
     }
 
@@ -125,7 +127,9 @@ struct SkyScene: Equatable {
         }
         let zenith = tint(clear[0], 0), mid = tint(clear[1], 1), horizon = tint(clear[2], 2)
 
-        let twilight = Float(max(0, 1 - abs(sunAlt + 2) / 12))
+        // The snapshot already derives this from the same altitude; keeping one
+        // expression means the renderer and the twilight tint cannot drift.
+        let twilight = Float(astronomy.twilight)
         let nightness = smooth(2, -12, Float(sunAlt))
         let clarity = look.clarity
 

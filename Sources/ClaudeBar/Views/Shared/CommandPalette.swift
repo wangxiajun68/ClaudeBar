@@ -13,12 +13,10 @@ enum CommandResult: Equatable {
 }
 // MARK: - Command item
 
-/// A single searchable row in the command palette. `kind` drives the icon and
-/// accent tint; `subtitle` is secondary help text shown under the title.
+/// A single searchable row in the command palette. `icon` and `tint` drive the
+/// row's glyph and accent; `subtitle` is secondary help text under the title.
 struct CommandItem: Identifiable {
-    enum Kind { case page, claudeSession, cursorSession, provider }
     let id: String
-    let kind: Kind
     let title: String
     let subtitle: String
     let icon: String
@@ -30,10 +28,9 @@ struct CommandItem: Identifiable {
     let searchTitle: String
     let searchSubtitle: String
 
-    init(id: String, kind: Kind, title: String, subtitle: String,
+    init(id: String, title: String, subtitle: String,
          icon: String, tint: Color, result: CommandResult) {
         self.id = id
-        self.kind = kind
         self.title = title
         self.subtitle = subtitle
         self.icon = icon
@@ -88,9 +85,8 @@ struct CommandPalette: View {
                     }
                     .shadowCard(radius: 24, y: 12, opacity: 0.12)
                     // The entrance is carried by the transition alone: this
-                    // subtree only exists inside `if isPresented`, so all three
-                    // of these read their "arrived" arm on every evaluation and
-                    // never contribute a value to interpolate.
+                    // subtree only exists inside `if isPresented`, so the
+                    // transition supplies the scale and fade.
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
                     .focusable()
                     .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
@@ -199,13 +195,13 @@ struct CommandPalette: View {
     /// keystroke.
     private func buildItems() -> [CommandItem] {
         var items = AppPage.allCases.map { p in
-            CommandItem(id: "page:\(p.rawValue)", kind: .page, title: p.label,
+            CommandItem(id: "page:\(p.rawValue)", title: p.label,
                         subtitle: "前往页面",
                         icon: p.icon, tint: Theme.accent,
                         result: .page(p))
         }
         items += providerStore.sessions.filter(\.isAlive).map { s in
-            CommandItem(id: "claude:\(s.pid)", kind: .claudeSession, title: s.displayTitle,
+            CommandItem(id: "claude:\(s.pid)", title: s.displayTitle,
                         subtitle: s.name.isEmpty ? "Claude Code · PID \(s.pid)" : s.name,
                         icon: "rectangle.connected.to.line.below",
                         tint: Theme.statusBusy,
@@ -213,7 +209,7 @@ struct CommandPalette: View {
         }
         // Cursor sessions carry no UUID, so they route to the sessions page.
         items += providerStore.cursorSessions.map { s in
-            CommandItem(id: "cursor:\(s.composerId)", kind: .cursorSession, title: s.displayTitle,
+            CommandItem(id: "cursor:\(s.composerId)", title: s.displayTitle,
                         subtitle: s.name.isEmpty ? "Cursor" : s.name,
                         // The palette is a list of *sessions*, so a row's icon
                         // is the row's kind, not a brand — the sessions page
@@ -226,7 +222,7 @@ struct CommandPalette: View {
                         result: .page(.sessions))
         }
         items += providerStore.providers.map { p in
-            CommandItem(id: "provider:\(p.id)", kind: .provider, title: p.name,
+            CommandItem(id: "provider:\(p.id)", title: p.name,
                         subtitle: p.activeModel?.name ?? "供应商",
                         icon: "cube",
                         tint: Theme.accent,

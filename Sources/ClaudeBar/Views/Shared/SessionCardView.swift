@@ -107,7 +107,9 @@ struct SessionCardView: View {
     /// The activity line doubles as the reason line while parked: what the
     /// session is blocked on is the only useful thing to say about it.
     private var statusLine: String {
-        if isWaiting { return session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason }
+        // `waitingReason` is non-empty whenever `isWaiting` — its own `""`
+        // arm resolves to "等待你确认" — so it needs no default here.
+        if isWaiting { return session.waitingReason }
         return session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity
     }
 

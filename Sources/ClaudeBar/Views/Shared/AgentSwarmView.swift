@@ -260,7 +260,7 @@ struct AgentSwarmView: View {
     private func childCard(_ child: ExternalSessionInfo, grid: SwarmGrid) -> some View {
         let isHovered = hoveredId == child.id
         let radius: CGFloat = 4
-        let showsAge = !compact && grid.cardHeight >= 30
+        let showsAge = !compact
         /// Leading inset of the status dot, and the gap before the label. The
         /// label's leading padding is the sum of the two — sharing a single
         /// "text starts here" constant with the dot's own inset is what let the

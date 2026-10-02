@@ -609,9 +609,6 @@ final class AtmosphereRenderer {
     private var flashSeed: Float = 0
     /// The strike's strokes: onset (s after `flashStart`) and peak brightness.
     private var flashStrokes: [SIMD2<Double>] = []
-    /// A fixed strike for stills (previews and tests), in `lightning`'s
-    /// uniform layout. `nil` keeps the default: a dim deck and no channel.
-    var stillFlash: SIMD4<Float>?
     private var nextMeteor = CACurrentMediaTime() + 20
     private var meteorStart: Double = -10
     private var meteorPath = SIMD4<Float>()
@@ -828,6 +825,10 @@ final class AtmosphereRenderer {
     }
 
     private func install(_ texture: MTLTexture?, frame: CGRect, key: TextKey, reduceMotion: Bool) {
+        // A failed rasterisation must not be recorded as this key's texture:
+        // leaving `textKey` behind makes the next frame ask again, and the
+        // texture already on screen stays where it was drawn.
+        guard let texture else { textKey = nil; return }
         // A new phrase (the hour turned) is written in, not swapped in.
         if phraseChanged, textTexture != nil, !reduceMotion, !capturing { rewrite() }
         phraseChanged = false
@@ -966,7 +967,7 @@ final class AtmosphereRenderer {
     /// `w`: channel brightness (0 for a sheet flash).
     private func lightning(scene: SkyScene, now: Double, still: Bool) -> SIMD4<Float> {
         guard scene.thunder > 0 else { return .zero }
-        if still { return stillFlash.map { SIMD4($0.x * scene.thunder, $0.y, $0.z, $0.w * scene.thunder) } ?? SIMD4(0.18, 0.5, 0, 0) }
+        if still { return SIMD4(0.18, 0.5, 0, 0) }
         if now >= nextFlash {
             flashStart = now
             flashBolt = Double.random(in: 0...1, using: &rng) < 0.6

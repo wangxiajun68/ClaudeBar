@@ -4,9 +4,9 @@ import SwiftUI
 ///
 /// The chip reserves ~26pt under its model name, and this is what fills it when
 /// a family has more than one thing worth saying: up to two small labelled
-/// gauges side by side, plus one quiet line beneath for the money. The Codex
-/// chip needs only the two gauges; a family with a spend figure as well (Cursor)
-/// passes `detail`.
+/// gauges side by side. Everything else in the zone belongs to the chip — the
+/// money line is its footer (`quotaDetail`) and the in-flight read is its own
+/// dimming (`opacity`), so this view draws only the gauges.
 ///
 /// **Each cell is `[arc over reset] [label over percentage]`.** The three facts
 /// are which window, how much is used and when it resets; the first two are
@@ -48,26 +48,12 @@ struct QuotaSwayGauge: View {
     }
 
     let metrics: [Metric]
-    /// One quiet line under the gauges — e.g. "$492.45 / $20". Empty hides it.
-    var detail: String = ""
-    var onRefresh: (() -> Void)?
-    var loading = false
     /// The width the row may occupy, supplied by the host chip. Zero = measure
     /// myself with a `GeometryReader`.
     var width: CGFloat = 0
 
     var body: some View {
-        if loading {
-            ProgressView().controlSize(.mini)
-        } else if metrics.isEmpty {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.clockwise").font(.system(size: 10))
-                Text(detail.isEmpty ? "额度" : detail)
-                    .font(Theme.Font.meta).foregroundColor(Theme.textSecondary)
-                    .lineLimit(1)
-            }
-            .accessibilityElement(children: .contain)
-        } else if width > 0 {
+        if width > 0 {
             row(in: width)
         } else {
             GeometryReader { geo in
@@ -102,7 +88,6 @@ struct QuotaSwayGauge: View {
         let used = Int(min(100, max(0, metric.usedPercent)).rounded())
         var parts = ["\(metric.label)：剩余 \(100 - used)%（已用 \(used)%）"]
         if !metric.resetCompact.isEmpty { parts.append(metric.resetCompact) }
-        if !detail.isEmpty { parts.append(detail) }
         return parts.joined(separator: " · ")
     }
 }

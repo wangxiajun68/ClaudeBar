@@ -164,18 +164,7 @@ enum CodexProxyTransform {
                 registry.registerCustom(name)
                 appendClean(customToolAsFunction(tool, name: name))
             case "tool_search":
-                appendClean(cleanFunctionTool([
-                    "name": "tool_search",
-                    "description": "Search and load Codex tools, plugins, connectors, and MCP namespaces for the current task.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "query": ["type": "string"],
-                            "limit": ["type": "integer"],
-                        ],
-                        "required": ["query"],
-                    ],
-                ], name: "tool_search"))
+                appendClean(toolSearchTool())
             default:
                 break
             }
@@ -209,6 +198,25 @@ enum CodexProxyTransform {
                 "type": "object",
                 "properties": ["input": ["type": "string", "description": desc]],
                 "required": ["input"],
+            ],
+        ]
+    }
+
+    /// One builder for both dialects: the Chat path's per-parameter
+    /// descriptions ship to either upstream, and a single literal cannot
+    /// drift between the two switches the way it did before.
+    private static func toolSearchTool() -> [String: Any] {
+        [
+            "type": "function",
+            "name": "tool_search",
+            "description": "Search and load Codex tools, plugins, connectors, and MCP namespaces for the current task.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "query": ["type": "string", "description": "Search query for tools or connectors to load."],
+                    "limit": ["type": "integer", "description": "Maximum number of tool groups to return."],
+                ],
+                "required": ["query"],
             ],
         ]
     }
@@ -728,38 +736,11 @@ enum CodexProxyTransform {
                 // Freeform tool (apply_patch) → function with a single string arg.
                 guard let name = tool["name"] as? String else { break }
                 registry.registerCustom(name)
-                var desc = (tool["description"] as? String) ?? ""
-                if let format = tool["format"] as? [String: Any],
-                   let grammar = format["definition"] as? String {
-                    desc += "\n\nGrammar:\n\(grammar)"
-                }
-                appendTool([
-                    "type": "function",
-                    "name": name,
-                    "description": desc,
-                    "strict": false,
-                    "parameters": [
-                        "type": "object",
-                        "properties": ["input": ["type": "string", "description": desc]],
-                        "required": ["input"],
-                    ],
-                ])
+                appendTool(customToolAsFunction(tool, name: name))
             case "tool_search":
                 // cc-switch keeps tool_search as a callable function so the
                 // model can still load deferred MCP namespaces.
-                appendTool([
-                    "type": "function",
-                    "name": "tool_search",
-                    "description": "Search and load Codex tools, plugins, connectors, and MCP namespaces for the current task.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "query": ["type": "string", "description": "Search query for tools or connectors to load."],
-                            "limit": ["type": "integer", "description": "Maximum number of tool groups to return."],
-                        ],
-                        "required": ["query"],
-                    ],
-                ])
+                appendTool(toolSearchTool())
             default:
                 break // web_search / web_search_preview / image_generation / …: dropped
             }
@@ -927,19 +908,10 @@ enum CodexProxyTransform {
         // Buffer consecutive function_call items into one assistant tool_calls
         // message, flushed before the first matching function_call_output.
         var pendingCalls: [[String: Any]] = []
-        var pendingToolImages: [ExtractedImage] = []
         func flushCalls() {
             guard !pendingCalls.isEmpty else { return }
             messages.append(["role": "assistant", "content": "", "tool_calls": pendingCalls])
             pendingCalls = []
-        }
-        func flushToolImages() {
-            guard !pendingToolImages.isEmpty else { return }
-            messages.append([
-                "role": "user",
-                "content": pendingToolImages.map { chatImagePart($0) },
-            ])
-            pendingToolImages.removeAll(keepingCapacity: true)
         }
 
         func toolCallsEntry(_ call: [String: Any]) -> [String: Any] {
@@ -958,7 +930,6 @@ enum CodexProxyTransform {
             switch item["type"] as? String {
             case "message":
                 flushCalls()
-                flushToolImages()
                 // cc-switch `responses_role_to_chat_role`: developer is a
                 // Codex/OpenAI system alias; mapping it to user duplicates
                 // the instructions as a human turn.
@@ -973,22 +944,21 @@ enum CodexProxyTransform {
             case "reasoning":
                 continue // summaries are not replayable for most Chat backends
             case "function_call":
-                flushToolImages()
                 pendingCalls.append(toolCallsEntry(item))
             case "function_call_output":
                 // Assistant tool_calls flush happens lazily here so all
                 // consecutive calls share one message.
                 flushCalls()
                 let callID = (item["call_id"] as? String) ?? ""
-                let split = splitToolOutput(item["output"])
-                messages.append(["role": "tool", "tool_call_id": callID, "content": split.text])
-                pendingToolImages.append(contentsOf: split.images)
+                // rewriteToolsAndInput already hoisted any image out of the
+                // output, so only the placeholder text is left here.
+                messages.append(["role": "tool", "tool_call_id": callID,
+                                 "content": splitToolOutput(item["output"]).text])
             default:
                 continue
             }
         }
         flushCalls()
-        flushToolImages()
 
         // tools → Chat shape
         var chatTools: [[String: Any]] = []
@@ -1162,12 +1132,15 @@ enum CodexProxyTransform {
         for tc in first["tool_calls"] as? [[String: Any]] ?? [] {
             let idx = (tc["index"] as? NSNumber)?.intValue ?? 0
             let fn = tc["function"] as? [String: Any] ?? [:]
+            // Chat tool-call arguments are incremental: this chunk's slice is
+            // both what the delta event carries and what the buffer absorbs.
+            let argsDelta = (fn["arguments"] as? String) ?? ""
             var entry = state.calls[idx] ?? (itemID: "fc_" + UUID().uuidString,
                                              callID: (tc["id"] as? String) ?? "call_" + UUID().uuidString,
                                              name: "", buffer: "", added: false)
             if let id = tc["id"] as? String, !id.isEmpty { entry.callID = id }
             if let n = fn["name"] as? String, !n.isEmpty { entry.name += n }
-            if let args = fn["arguments"] as? String { entry.buffer += args }
+            if !argsDelta.isEmpty { entry.buffer += argsDelta }
             if !entry.added, !entry.name.isEmpty {
                 entry.added = true
                 events.append(responseEvent("response.output_item.added", state: &state, extra: [
@@ -1175,11 +1148,11 @@ enum CodexProxyTransform {
                     "item": functionCallItem(entry, inProgress: true, registry: state.registry),
                 ]))
             }
-            if !argsDeltaSource(fn, entry: entry).isEmpty {
+            if !argsDelta.isEmpty {
                 events.append(responseEvent("response.function_call_arguments.delta", state: &state, extra: [
                     "item_id": entry.itemID,
                     "output_index": state.calls.count,
-                    "delta": argsDeltaSource(fn, entry: entry),
+                    "delta": argsDelta,
                 ]))
             }
             state.calls[idx] = entry
@@ -1188,32 +1161,12 @@ enum CodexProxyTransform {
         // Usage on the final chunk.
         if let usage = chatDelta["usage"] as? [String: Any] {
             var resp = baseResponse(state, status: "completed")
-            var u: [String: Any] = usage
-            if let i = u["prompt_tokens"] { u["input_tokens"] = i }
-            if let o = u["completion_tokens"] { u["output_tokens"] = o }
-            let input = (u["input_tokens"] as? NSNumber)?.intValue ?? 0
-            let output = (u["output_tokens"] as? NSNumber)?.intValue ?? 0
-            u["total_tokens"] = (u["total_tokens"] as? NSNumber)?.intValue ?? input + output
-            // Preserve the upstream's cached-token count — hardcoding 0 makes
-            // Codex's /status cache-hit rate always read 0% on Chat upstreams
-            // (DeepSeek/Qwen report it as prompt_tokens_details.cached_tokens,
-            // same shape the Anthropic side already keeps).
-            let cached = ((u["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? NSNumber)?.intValue
-                ?? ((u["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? NSNumber)?.intValue
-                ?? 0
-            u["input_tokens_details"] = ["cached_tokens": cached]
-            u["output_tokens_details"] = ["reasoning_tokens": 0]
-            resp["usage"] = u
+            resp["usage"] = usage
+            normalizeUsage(&resp)
             events.append(contentsOf: completedEvents(state: &state, response: resp))
         }
 
         return events
-    }
-
-    /// Chat tool-call arguments for this delta: the slice Chat sent (we treat
-    /// each chunk's arguments as incremental — the standard behavior).
-    private static func argsDeltaSource(_ fn: [String: Any], entry: (itemID: String, callID: String, name: String, buffer: String, added: Bool)) -> String {
-        (fn["arguments"] as? String) ?? ""
     }
 
     /// Emit the terminal sequence: close open items + response.completed.
@@ -1304,8 +1257,10 @@ enum CodexProxyTransform {
 
     // MARK: - Synthetic terminals
 
-    static func synthesizeCompletedZeroUsage() -> Data {
-        let resp: [String: Any] = [
+    /// Completed envelope with zero usage, shared by the two synthesizers —
+    /// the callers differ only in how they number and frame the event.
+    private static func zeroUsageCompletedResponse() -> [String: Any] {
+        [
             "id": "resp_" + UUID().uuidString,
             "object": "response",
             "created_at": Int(Date().timeIntervalSince1970),
@@ -1314,7 +1269,14 @@ enum CodexProxyTransform {
             "output": [],
             "usage": ["input_tokens": 0, "output_tokens": 0, "total_tokens": 0],
         ]
-        let event: [String: Any] = ["type": "response.completed", "sequence_number": 0, "response": resp]
+    }
+
+    static func synthesizeCompletedZeroUsage() -> Data {
+        let event: [String: Any] = [
+            "type": "response.completed",
+            "sequence_number": 0,
+            "response": zeroUsageCompletedResponse(),
+        ]
         return sse(event) + sseRaw("[DONE]")
     }
 
@@ -1349,15 +1311,8 @@ enum CodexProxyTransform {
             }
             // response.failed can't be used (Codex surfaces an error); emit a
             // completed with zero usage — the actual content already streamed.
-            let resp: [String: Any] = [
-                "id": responseID,
-                "object": "response",
-                "created_at": Int(Date().timeIntervalSince1970),
-                "status": "completed",
-                "model": "",
-                "output": [],
-                "usage": ["input_tokens": 0, "output_tokens": 0, "total_tokens": 0],
-            ]
+            var resp = zeroUsageCompletedResponse()
+            resp["id"] = responseID
             out += emit(["type": "response.completed", "response": resp])
             out += sseRaw("[DONE]")
         }

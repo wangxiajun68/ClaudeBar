@@ -104,7 +104,6 @@ enum ControlMetrics {
 private struct ControlPressModifier: ViewModifier {
     @Binding var hovered: Bool
     @Binding var pressed: Bool
-    @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
@@ -113,8 +112,33 @@ private struct ControlPressModifier: ViewModifier {
             .onHover { if hovered != $0 { hovered = $0 } }
             .animation(reduceMotion ? nil : Theme.Animation.snappy, value: pressed)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovered)
+            .disabledTreatment()
+    }
+}
+
+/// The one **disabled look**: 0.34 opacity and a full desaturation, the pair a
+/// control fades to when it is not enabled.
+///
+/// Its own modifier rather than two lines inside `ControlPressModifier`, because
+/// the two styles that do not compose the press modifier — the
+/// `ActionPlateButtonStyle` body and the page band's `HeaderControlModifier` —
+/// wear the same treatment, and a call site documents relying on the number
+/// (`ConnectorsView`). Three copies is how a treatment drifts.
+private struct DisabledTreatmentModifier: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
             .opacity(enabled ? 1 : 0.34)
             .saturation(enabled ? 1 : 0)
+    }
+}
+
+private extension View {
+    /// The shared disabled look. `isEnabled` is read inside the modifier, so a
+    /// call site does not thread a flag into it.
+    func disabledTreatment() -> some View {
+        modifier(DisabledTreatmentModifier())
     }
 }
 
@@ -673,11 +697,9 @@ struct ActionPlateButtonStyle: ButtonStyle {
             .animation(reduceMotion ? nil : (tone == .sparkle ? Theme.Animation.sparkle
                                                               : .easeOut(duration: 0.14)),
                        value: hovered)
-            .opacity(enabled ? 1 : 0.34)
-            .saturation(enabled ? 1 : 0)
+            .disabledTreatment()
     }
 
-    @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Same rule as `ActionButton.labelColor`, kept here because a style's body
@@ -1188,7 +1210,6 @@ struct PerimeterSweep: View {
 /// keeps the shadow static (it is depth, not motion) but drops nothing else.
 struct GroundShadow: View {
     var active: Bool
-    var width: CGFloat? = nil
 
     var body: some View {
         Capsule()
@@ -1196,7 +1217,7 @@ struct GroundShadow: View {
                 LinearGradient(colors: [.black.opacity(0.26), .black.opacity(0.14)],
                                startPoint: .top, endPoint: .bottom)
             )
-            .frame(width: width, height: 7)
+            .frame(height: 7)
             .blur(radius: 7)
             .opacity(active ? 0.9 : 0.35)
             .animation(Theme.Motion.state, value: active)
@@ -1222,14 +1243,17 @@ extension View {
 }
 
 private struct HeaderControlModifier: ViewModifier {
-    @Environment(\.isEnabled) private var enabled
+    /// The band's control is the regular plate at the band's own proportions:
+    /// the font, padding and height are read from `ControlMetrics.regular`
+    /// rather than re-typed, so retuning the regular plate carries to the band.
+    private let metrics: ControlMetrics = .regular
 
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+            .font(.system(size: metrics.labelSize, weight: .semibold, design: .rounded))
             .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 13)
-            .frame(height: 30)
+            .padding(.horizontal, metrics.hPadding)
+            .frame(height: metrics.height)
             .background {
                 ControlPlate(tone: .neutral, tint: Theme.claude, emphasis: .standard,
                              shape: Capsule(), hovered: false, pressed: false)
@@ -1239,8 +1263,7 @@ private struct HeaderControlModifier: ViewModifier {
                             cornerRadius: 15, surface: .clear, color: .black)
             }
             .contentShape(Capsule())
-            .opacity(enabled ? 1 : 0.34)
-            .saturation(enabled ? 1 : 0)
+            .disabledTreatment()
     }
 }
 

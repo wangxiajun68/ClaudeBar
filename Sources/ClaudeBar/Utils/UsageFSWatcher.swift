@@ -58,10 +58,13 @@ enum UsageFSWatcher {
         lock.unlock()
         work?.cancel()
         if let existing {
-            // `stop()` runs on main, `schedule()` on `queue`; FSEvents requires
-            // both to agree, so land the teardown on `queue` as well. By the
-            // time it runs the fields are already cleared and any in-flight
-            // `debounceWork` invocation is cancelled, so it is a no-op there.
+            // `stop()` and `start()` run on main while callbacks (and thus
+            // `schedule()`) run on `queue`; land the teardown on `queue` so it
+            // serializes with an in-flight callback. The re-schedule there is
+            // defensive — `SetDispatchQueue` returns void, so the schedule from
+            // `start()` cannot be verified. By the time it runs the fields are
+            // already cleared and any in-flight `debounceWork` invocation is
+            // cancelled, so a late callback is a no-op.
             FSEventStreamSetDispatchQueue(existing, queue)
             queue.async {
                 FSEventStreamStop(existing)

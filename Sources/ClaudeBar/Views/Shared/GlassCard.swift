@@ -2,21 +2,18 @@ import SwiftUI
 
 // MARK: - Selection tint
 
-/// Selected/active Liquid Glass tint: a translucent accent wash behind the
-/// content, drawn only when `isActive`. Single source for row selection
-/// backgrounds so editors and lists stay visually consistent.
+/// Selected/active tint: a translucent accent wash behind a selected row,
+/// drawn only when `isActive`.
 struct SelectionTintModifier: ViewModifier {
     var isActive: Bool
     var color: Color
     var corner: CGFloat
-    /// Extra opacity for the "active and emphasized" case (busy rows).
-    var opacity: Double = 0.16
 
     func body(content: Content) -> some View {
         content.background {
             if isActive {
                 RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(color.opacity(opacity))
+                    .fill(color.opacity(0.16))
             }
         }
     }
@@ -26,9 +23,8 @@ extension View {
     func selectionTint(
         _ isActive: Bool,
         color: Color = Theme.accent,
-        corner: CGFloat = Theme.Radius.sm,
-        opacity: Double = 0.16
+        corner: CGFloat = Theme.Radius.sm
     ) -> some View {
-        modifier(SelectionTintModifier(isActive: isActive, color: color, corner: corner, opacity: opacity))
+        modifier(SelectionTintModifier(isActive: isActive, color: color, corner: corner))
     }
 }

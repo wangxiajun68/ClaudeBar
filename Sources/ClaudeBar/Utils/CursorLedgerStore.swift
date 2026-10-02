@@ -77,22 +77,6 @@ final class CursorLedgerStore: ObservableObject {
 
     // MARK: - Reading
 
-    /// The reading to draw for `window`, or nil when nothing covers it.
-    ///
-    /// A snapshot for a *different* window is still returned — the caller shows
-    /// it with `isStale(for:)` saying so — because the alternative is a money
-    /// row that appears and disappears as the user clicks period chips, which
-    /// reads as the data being broken rather than as it being scoped.
-    func snapshot(for window: DateInterval) -> CursorLedger.Snapshot? {
-        guard let stored = self.window, !rows.isEmpty else { return nil }
-        return CursorLedger.Snapshot(
-            rows: Array(rows.values),
-            windowStart: stored.start,
-            windowEnd: stored.end,
-            truncated: truncated
-        )
-    }
-
     /// Whether the reading on hand does **not** cover `window`, so the view can
     /// caption it with the window it does cover.
     ///
@@ -176,12 +160,10 @@ final class CursorLedgerStore: ObservableObject {
 
 /// `9月28日` — the window caption's date format. Date-qualified because a
 /// billing window is weeks long and a bare day number would not say which month
-/// it belongs to.
+/// it belongs to. The pattern goes through `UsageStats.formatter` so it reuses
+/// the cached `DateFormatter` instead of building one per call.
 func cursorLedgerShortDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "zh_CN")
-    formatter.dateFormat = "M月d日"
-    return formatter.string(from: date)
+    UsageStats.formatter("M月d日").string(from: date)
 }
 
 /// The network side, split out so the store stays a state machine.

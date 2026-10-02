@@ -449,7 +449,7 @@ private enum WindowSnapper {
         // under the cursor (CleanShot/Snipaste behavior), not the largest —
         // sorting by area used to make hover snap to a maximized window
         // behind the small one the user was pointing at.
-        var candidates: [(CGRect, CGFloat)] = [] // (cocoa frame, area)
+        var candidates: [CGRect] = []
         for item in info {
             if (item[kCGWindowOwnerPID as String] as? pid_t) == selfPID { continue }
             if (item[kCGWindowLayer as String] as? Int ?? 0) != 0 { continue }
@@ -460,13 +460,13 @@ private enum WindowSnapper {
                   let w = cgFloat(bounds["Width"]), let h = cgFloat(bounds["Height"]),
                   w >= 120, h >= 80 else { continue }
             let cocoa = CGRect(x: x, y: originY - y - h, width: w, height: h)
-            candidates.append((cocoa, w * h))
+            candidates.append(cocoa)
         }
 
         var result: [CGDirectDisplayID: [CGRect]] = [:]
         for screen in screens {
             var rects: [CGRect] = []
-            for (cocoa, _) in candidates {
+            for cocoa in candidates {
                 let local = cocoa.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
                 let hit = local.intersection(CGRect(origin: .zero, size: screen.frame.size))
                 // Require a meaningful chunk of the window on this screen so a
@@ -845,9 +845,7 @@ private final class SnipCanvas: NSView {
         guard let start = dragStart else { return }
         if hypot(p.x - start.x, p.y - start.y) > 4 { dragging = true }
         if dragging {
-            selection = NSRect(
-                x: min(start.x, p.x), y: min(start.y, p.y),
-                width: abs(a(start.x, p.x)), height: abs(a(start.y, p.y)))
+            selection = NSRect(from: start, to: p)
             hoverWindow = nil
         }
         refreshMask()
@@ -861,6 +859,7 @@ private final class SnipCanvas: NSView {
             if draft.tool == .pen ? draft.stroke.count > 2 : moved > 4 {
                 marks.append(draft)
                 commitDraftLayer()
+                toolbar.refreshTints()
             } else {
                 draftLayer?.removeFromSuperlayer()
                 draftLayer = nil
@@ -994,8 +993,6 @@ private final class SnipCanvas: NSView {
         return CGRect(x: min(minX, maxX), y: min(minY, maxY),
                        width: abs(maxX - minX), height: abs(maxY - minY))
     }
-
-    private func a(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a - b }
 }
 
 private final class SnipToolbar: NSView {
@@ -1071,7 +1068,7 @@ private final class SnipToolbar: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    private func refreshTints() {
+    func refreshTints() {
         for (b, tool) in toolButtons {
             let on = tool == activeTool
             b.contentTintColor = on ? NSColor(srgbRed: 0.92, green: 0.18, blue: 0.22, alpha: 1)

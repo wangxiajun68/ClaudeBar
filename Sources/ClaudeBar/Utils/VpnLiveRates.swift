@@ -101,8 +101,6 @@ final class VpnLiveRates: ObservableObject {
         }
         speedDown = pendingDown
         speedUp = pendingUp
-        traffic.up = pendingUp
-        traffic.down = pendingDown
         appendHistory(down: pendingDown, up: pendingUp)
     }
 

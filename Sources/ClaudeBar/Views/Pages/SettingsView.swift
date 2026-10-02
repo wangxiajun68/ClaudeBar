@@ -8,7 +8,6 @@ struct SettingsView: View {
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var permissions = PermissionCenter.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
-    @Environment(\.scenePhase) private var scenePhase
 
     @ObservedObject var state = SettingsState()
     @State private var fontBrowserExpanded = false
@@ -56,13 +55,15 @@ struct SettingsView: View {
                 state.codexPortDraft = String(prefs.codexProxyPort)
                 state.weatherCityDraft = prefs.weatherCity
                 state.amapKeyDraft = prefs.amapAPIKey
-                state.amapKeySaved = prefs.amapAPIKey
                 state.initialized = true
             }
             refreshInstalledTerminals()
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshInstalledTerminals() }
+        // The settings hierarchy is mounted by an NSHostingView, not a
+        // WindowGroup, so `scenePhase` never reports `.active` here; the app
+        // activation notification is the signal that actually fires.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshInstalledTerminals()
         }
         .onChange(of: prefs.codexProxyPort) { _, port in
             if !codexPortFocused { state.codexPortDraft = String(port) }
@@ -255,16 +256,12 @@ struct SettingsView: View {
                         // gives no confirmation that the secret was stored.
                         ActionButton("保存", size: .regular) { commitAmapKey() }
                             .disabled(!amapKeyEdited)
-                            // `ActionButton` draws its own plate, so `.disabled`
-                            // alone would leave it looking pressable while doing
-                            // nothing — dim it explicitly.
-                            .opacity(amapKeyEdited ? 1 : 0.45)
                         if amapKeyEdited {
                             Text("未保存")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.Ink.warning)
                                 .accessibilityLabel("高德 Key 有未保存的修改")
-                        } else if state.amapKeyDraft == state.amapKeySaved && !state.amapKeyDraft.isEmpty {
+                        } else if !state.amapKeyDraft.isEmpty {
                             Text("已保存")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.Ink.success)
@@ -513,12 +510,12 @@ struct SettingsView: View {
         state.weatherCityDraft = city
         guard city != prefs.weatherCity else { return }
         prefs.weatherCity = city
+        WeatherStore.shared.refresh()
     }
 
     private func commitAmapKey() {
         let key = state.amapKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         state.amapKeyDraft = key
-        state.amapKeySaved = key
         amapKeyFocused = false
         guard key != prefs.amapAPIKey else { return }
         prefs.amapAPIKey = key
@@ -587,7 +584,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     @Published var portError: String?
     @Published var weatherCityDraft = ""
     @Published var amapKeyDraft = ""
-    @Published var amapKeySaved = ""
     @Published var showProxyAdvanced = false
     @Published var showWeatherAdvanced = false
     var initialized = false

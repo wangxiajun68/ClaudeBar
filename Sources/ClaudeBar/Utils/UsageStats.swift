@@ -24,7 +24,8 @@ struct UsageStats {
         }
     }
 
-    /// Human-readable label for the period, e.g. "2026-07-30", "JULY 2026", "2026".
+    /// Human-readable label for the period, e.g. "2026年7月30日", "2026年7月",
+    /// "2026年"; `.all` renders "全部记录".
     ///
     /// Formatters are cached: this is called from `body` (dashboard, usage page
     /// and the popup header), so building one per call allocated on every

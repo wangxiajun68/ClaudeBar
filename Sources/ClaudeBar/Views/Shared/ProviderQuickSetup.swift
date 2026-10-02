@@ -34,9 +34,13 @@ struct ProviderQuickSetup: View {
                     HStack {
                         Label("连接凭据", systemImage: "key.horizontal").font(.system(size: 15, weight: .semibold))
                         Spacer()
-                        Link(destination: URL(string: draft.entry.website)!) {
-                            Label("获取 Key", systemImage: "arrow.up.right")
-                        }.font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
+                        // Same guard as the connection editor: an entry whose
+                        // URL does not parse drops the link rather than
+                        // trapping the sheet.
+                        if let url = URL(string: draft.entry.website) {
+                            Link(destination: url) { Label("获取 Key", systemImage: "arrow.up.right") }
+                                .font(Theme.Font.caption).foregroundStyle(ProviderCardState.ready.color)
+                        }
                     }
                     ProviderFormField("配置名称") { TextField("供应商名称", text: $draft.name) }
                     ProviderFormField("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }

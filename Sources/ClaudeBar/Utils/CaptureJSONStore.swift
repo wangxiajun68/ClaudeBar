@@ -85,12 +85,7 @@ final class CaptureJSONStore {
             }
         }
         summaries.sort { $0.id > $1.id }
-        if summaries.count > listLimit {
-            let drop = Array(summaries.dropFirst(listLimit))
-            summaries = Array(summaries.prefix(listLimit))
-            for s in drop { deletePayload(s.id) }
-            persistIndex()
-        }
+        if prune() { persistIndex() }
         if let raw = try? String(contentsOf: FilePaths.captureSeqFile, encoding: .utf8),
            let n = Int64(raw.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0 {
             nextId = n
@@ -184,11 +179,15 @@ final class CaptureJSONStore {
         persistIndex()
     }
 
-    private func prune() {
-        guard summaries.count > listLimit else { return }
+    /// Returns true when rows were dropped, so callers only rewrite the index
+    /// when the retention rule actually removed something.
+    @discardableResult
+    private func prune() -> Bool {
+        guard summaries.count > listLimit else { return false }
         let drop = Array(summaries.dropFirst(listLimit))
         summaries = Array(summaries.prefix(listLimit))
         for s in drop { deletePayload(s.id) }
+        return true
     }
 
     private func persistIndex() {

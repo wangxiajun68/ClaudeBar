@@ -20,10 +20,6 @@ struct CodexModelMark: View {
     /// tooltip spells the family out anyway, so this only has to be right for
     /// VoiceOver reading the mark in isolation.
     var value: String?
-    /// Kept so the type stays settled for callers that pass a second line; the
-    /// chip draws its own.
-    var note: String?
-    var tint: Color = Theme.Ink.claude
 
     var body: some View {
         mark(side: 13)

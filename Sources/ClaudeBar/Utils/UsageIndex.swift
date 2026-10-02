@@ -623,8 +623,9 @@ struct UsageIndex {
             let chunk = readBytes(file.path, from: prior.offset)
             guard !chunk.isEmpty else { return }
             // Parse complete lines only; the trailing partial line (if any)
-            // is left for the next append to complete. `chunkFrom` marks the
-            // start of the first *new complete* line within the chunk.
+            // is left for the next append to complete. `consumed` is the byte
+            // count of the complete lines, so the offset stored below stops
+            // before the partial one and it is re-read once terminated.
             let (lines, consumed) = completeLines(chunk)
             guard consumed > 0 else { return }
 
@@ -961,7 +962,6 @@ struct UsageIndex {
     /// Last cumulative total in a file — used only to stamp `cx_*` so a
     /// rewrite can be detected. Day-level usage comes from `last_token_usage`.
     private struct CodexTotal {
-        let date: Date
         let input: Int
         let output: Int
         let cached: Int
@@ -1020,8 +1020,7 @@ struct UsageIndex {
             var cumulativeDelta: [String: Any]?
             if let total = info["total_token_usage"] as? [String: Any] {
                 let cumulative = JSONCoerce.intVal(total["total_tokens"])
-                last = CodexTotal(date: date,
-                                  input: JSONCoerce.intVal(total["input_tokens"]),
+                last = CodexTotal(input: JSONCoerce.intVal(total["input_tokens"]),
                                   output: JSONCoerce.intVal(total["output_tokens"]),
                                   cached: JSONCoerce.intVal(total["cached_input_tokens"]),
                                   total: cumulative)

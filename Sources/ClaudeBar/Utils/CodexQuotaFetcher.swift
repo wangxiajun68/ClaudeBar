@@ -22,8 +22,6 @@ struct CodexQuotaWindow: Equatable, Identifiable {
         return String(format: "%.1f%%", usedPercent)
     }
 
-    var resetText: String { resetClock }
-
     /// Clock time of the next allowance refresh. Today omits the date.
     var resetClock: String {
         guard let resetsAt else { return "重置时间未知" }
@@ -124,9 +122,9 @@ enum CodexQuotaFetcher {
 
     /// The most recent successful snapshot, if it is still fresh.
     ///
-    /// Only trustworthy snapshots are cached — see `remember`. A failure is
-    /// never served from here, so a transient blip cannot be pinned for a
-    /// minute.
+    /// Only trustworthy snapshots are cached — see the store guard in
+    /// `fetch()`. A failure is never served from here, so a transient blip
+    /// cannot be pinned for a minute.
     private static let cache = Cache()
 
     private final class Cache {

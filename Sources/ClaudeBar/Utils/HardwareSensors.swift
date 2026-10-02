@@ -12,19 +12,12 @@ enum HostAccelerator {
     struct Reading: Equatable {
         var utilization: Double = 0
         var temperatureCelsius: Double?
-        /// GPU core count, as the driver publishes it (`gpu-core-count`, e.g. 18
-        /// on an M3 Pro). Zero when the key is absent.
-        ///
-        /// Read, not inferred: the dashboard's GPU mark draws this many cells,
-        /// and a cell count that is guessed from the machine's marketing name
-        /// would be the one number on that card with no source.
-        var coreCount: Int = 0
         /// The three sub-unit readings the driver does publish, in this order:
         /// overall device, renderer, tiler. **macOS does not publish per-core
         /// GPU load at all** (verified: `PerformanceStatistics` carries only
         /// these three, and no per-engine array), so unlike the CPU mark the
-        /// GPU mark's cells cannot each hold a real number — it draws the real
-        /// core *count* and spends its live detail on these three instead.
+        /// GPU mark's cells cannot each hold a core — it draws these three
+        /// sub-unit readings instead, one cell each.
         var renderers: [Double] = []
     }
 
@@ -47,21 +40,24 @@ enum HostAccelerator {
                   let dict = props?.takeRetainedValue() as? [String: Any],
                   let stats = dict["PerformanceStatistics"] as? [String: Any] else { continue }
             let figure = utilization(from: stats)
-            // The busiest accelerator wins the headline, and then *its* core
-            // count and sub-unit readings are the ones reported — mixing one
-            // device's percent with another's core count would describe a
-            // machine that does not exist.
+            // The busiest accelerator wins the headline, and then *its*
+            // sub-unit readings are the ones reported — mixing one device's
+            // percent with another's breakdown would describe a machine that
+            // does not exist.
             if figure >= best.utilization {
                 best.utilization = figure
-                best.coreCount = (dict["gpu-core-count"] as? Int) ?? best.coreCount
-                best.renderers = rendererKeys.map { Self.percent(stats[$0]) }
+                // `gpu-core-count` present is what marks a driver that fills
+                // these sub-unit keys; without it the mark stays on its single
+                // whole-die fallback rather than drawing empty sub-unit cells.
+                if (dict["gpu-core-count"] as? Int) != nil {
+                    best.renderers = rendererKeys.map { Self.percent(stats[$0]) }
+                }
             }
             if let temp = temperature(from: stats) {
                 best.temperatureCelsius = max(best.temperatureCelsius ?? 0, temp)
             }
         }
         best.utilization = max(0, min(100, best.utilization))
-        if best.coreCount <= 0 { best.renderers = [] }
         return best
     }
 
@@ -196,7 +192,6 @@ enum HardwareSensors {
         var percent = 0
         var charging = false
         var externalPower = false
-        var chargingWatts: Double?
         var inputWatts: Double?
         var systemWatts: Double?
         var batteryWatts: Double? // Positive = charging, negative = discharging.
@@ -243,9 +238,6 @@ enum HardwareSensors {
             status.adapterRatedWatts = rated
         }
         applyPowerReadings(to: &status, battery: dict)
-        if let battery = status.batteryWatts, battery > 0 {
-            status.chargingWatts = battery
-        }
         return status
     }
 

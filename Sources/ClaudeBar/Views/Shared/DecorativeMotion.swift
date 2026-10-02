@@ -258,12 +258,14 @@ final class MotionLayerView: NSView {
             // animated transaction in flight for as long as the island drew a
             // busy badge, and while a transaction is in flight *every* display
             // cycle re-runs the whole hosting view's layout — the island's
-            // panel is the full expanded box even when collapsed, so each one
-            // laid out 640 × 386. Swapping the two builds under the same
-            // launcher and sampling them alternately puts the share of
-            // main-thread samples inside `NSHostingView.layout()` at a median
-            // 48.8 % for the old arc and 31.9 % for this one, disjoint ranges,
-            // with the transaction count falling from ≈420 to ≈285. See
+            // panel is the full expanded box (640 × 386) even when collapsed,
+            // though §7 withdrew that size as the cost multiplier: two `-O`
+            // builds differing only in `panelSize` measured the same within
+            // machine drift. Swapping the two builds under the same launcher
+            // and sampling them alternately puts the share of main-thread
+            // samples inside `NSHostingView.layout()` at a median 48.8 % for
+            // the old arc and 31.9 % for this one, disjoint ranges, with the
+            // transaction count falling from ≈420 to ≈285. See
             // `docs/reviews/ui-audit-backlog.md` §7.
             //
             // Composition, from the inside out: a conic gradient carries the

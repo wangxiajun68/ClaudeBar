@@ -51,12 +51,10 @@ struct PlainDumpView: NSViewRepresentable {
         if tv.string != next {
             tv.string = next
         }
-        let width = scroll.contentView.bounds.width
-        if width > 8, tv.textContainer?.containerSize.width != max(8, width - 16) {
-            tv.textContainer?.containerSize = NSSize(
-                width: max(8, width - 16),
-                height: CGFloat.greatestFiniteMagnitude)
-        }
+        // No width sync here: `widthTracksTextView` keeps the container at
+        // `frame.width − 2 × textContainerInset`, and the frame follows the clip
+        // view. A width recomputed from the scroll view disagrees by the inset
+        // difference and would fight the tracking on every update pass.
     }
 
     private var displayString: String {

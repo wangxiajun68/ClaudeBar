@@ -48,7 +48,6 @@ final class VpnSubscriptionStore: ObservableObject {
     /// does not reload the core. Nil means the active subscription.
     @Published var browsingID: UUID? = nil
     @Published var errorMessage: String? = nil
-    @Published var isUpdating = false
 
     private var refreshTimer: Timer?
     /// Set by VpnManager at startup; when non-nil, profile downloads go
@@ -175,9 +174,9 @@ final class VpnSubscriptionStore: ObservableObject {
         guard let sub = subscriptions.first(where: { $0.id == id }) else { return false }
         await updateError(nil)
         do {
-            let (headers, body) = try await downloadHeaders(url: sub.url)
+            let (body, headers) = try await downloadProfile(url: sub.url)
             if let idx = subscriptions.firstIndex(where: { $0.id == id }) {
-                Self.applyUserInfo(headers: headers, body: body ?? "", to: &subscriptions[idx])
+                Self.applyUserInfo(headers: headers, body: body, to: &subscriptions[idx])
                 subscriptions[idx].lastUpdated = Date()
                 if subscriptions[idx].total == 0 && subscriptions[idx].expires == nil {
                     await updateError("未返回流量/有效期。确认链接可用，且机场对 clash-verge UA 下发 subscription-userinfo。")
@@ -205,12 +204,14 @@ final class VpnSubscriptionStore: ObservableObject {
         NSPasteboard.general.setString(url, forType: .string)
     }
 
-    /// Periodic refresh (30 min), mirroring clash-verge's timer.
+    /// Periodic refresh (30 min), mirroring clash-verge's timer. Invalidating
+    /// first is the only teardown: a timer armed by an earlier core start must
+    /// not keep refreshing against one that has since stopped.
     func startAutoRefresh() {
-        guard refreshTimer == nil else { return }
+        refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, let id = self.activeID, !self.isUpdating else { return }
+                guard let self, let id = self.activeID else { return }
                 if await self.refresh(id) { self.manager?.reloadConfig() }
             }
         }
@@ -289,13 +290,6 @@ final class VpnSubscriptionStore: ObservableObject {
             throw VpnProfileError.http(http.statusCode, snippet)
         }
         return (try text(from: data, response: http), http.allHeaderFields)
-    }
-
-    /// Quota headers use the same direct fetch as the node list. Going out
-    /// through the mixed port is what attached the 1 GB placeholder quota.
-    private func downloadHeaders(url: String) async throws -> (headers: [AnyHashable: Any], body: String?) {
-        let (body, headers) = try await downloadProfile(url: url)
-        return (headers, body)
     }
 
     private static func text(from data: Data, response: HTTPURLResponse) throws -> String {

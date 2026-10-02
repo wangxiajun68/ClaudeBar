@@ -75,7 +75,10 @@ struct ConnectorDetailSheet: View {
                 }
                 Spacer()
                 if FileManager.default.fileExists(atPath: contentFile.path) {
-                    ActionButton(record.kind == .plugin ? "打开安装位置" : "打开原文件") {
+                    // A plugin without an install folder (its record has only
+                    // the config file) opens that file, so the label must not
+                    // promise an install location the body doesn't show either.
+                    ActionButton(record.detailDirectory != nil ? "打开安装位置" : "打开原文件") {
                         NSWorkspace.shared.open(contentFile)
                     }
                 }
@@ -240,8 +243,14 @@ struct ConnectorDetailSheet: View {
         toolsLoading = true
         toolsError = nil
         do {
-            tools = try await MCPToolDiscovery.list(connection: connection, from: record.source)
+            let discovered = try await MCPToolDiscovery.list(connection: connection, from: record.source)
+            guard !Task.isCancelled else { return }
+            tools = discovered
         } catch {
+            // Dismissing the sheet cancels the read, and the transport reports
+            // that as an ordinary error; showing it would look like a real
+            // discovery failure.
+            guard !Task.isCancelled else { return }
             toolsError = error.localizedDescription
         }
         toolsLoading = false
@@ -249,9 +258,11 @@ struct ConnectorDetailSheet: View {
 
     private func loadPluginInfo() async {
         let directory = record.detailDirectory ?? record.source
-        pluginInfo = await Task.detached(priority: .utility) {
+        let info = await Task.detached(priority: .utility) {
             PluginPreviewInfo.read(directory: directory)
         }.value
+        guard !Task.isCancelled else { return }
+        pluginInfo = info
     }
 }
 

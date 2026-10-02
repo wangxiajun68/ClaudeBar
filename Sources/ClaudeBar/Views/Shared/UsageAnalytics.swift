@@ -343,7 +343,7 @@ struct UsageAnalyticsSection: View {
     }
 }
 
-/// Exact proportions: zero values occupy no arc or width, including tiny
+/// Exact proportions: zero values occupy no width, including tiny
 /// nonzero shares. Labels carry the small values instead of inflating marks.
 private struct UsageCompositionBar: View {
     let values: [Double]

@@ -32,8 +32,10 @@ enum ResumeTerminal: String, CaseIterable, Identifiable {
     ///
     /// `isInstalled` is a LaunchServices lookup plus a file stat, so a view that
     /// renders this (and the picker's four options) paid seven such probes per
-    /// body pass. Settings caches the set from its 5 s scan and passes it here,
-    /// which keeps this the single place the preference is resolved.
+    /// body pass. Settings caches the set when the page mounts and when the app
+    /// returns to the foreground, and passes it here; `nil` still probes
+    /// `isInstalled` for the callers outside Settings. Either way this stays
+    /// the single place the preference is resolved.
     func resolved(installed: Set<ResumeTerminal>?) -> ResumeTerminal {
         func has(_ choice: ResumeTerminal) -> Bool {
             installed.map { $0.contains(choice) } ?? choice.isInstalled
@@ -154,6 +156,15 @@ enum TerminalLauncher {
         return "cd \"\(safeCwd)\" && \(command)"
     }
 
+    /// Escape text for an AppleScript string literal (Warp's keystroke text,
+    /// Terminal's `do script` source). This is the AppleScript layer only; the
+    /// shell layer a cwd additionally needs lives in `shellCommand`.
+    private static func appleScriptEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     private static func title(for cwd: String) -> String {
         let name = (cwd as NSString).lastPathComponent
         return name.isEmpty ? "ClaudeBar" : name
@@ -189,9 +200,7 @@ enum TerminalLauncher {
         NSWorkspace.shared.open([URL(fileURLWithPath: cwd)],
                                 withApplicationAt: URL(fileURLWithPath: "/Applications/Warp.app"),
                                 configuration: NSWorkspace.OpenConfiguration())
-        let appleStr = shellCmd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+        let appleStr = appleScriptEscaped(shellCmd)
         let script = """
         tell application "Warp" to activate
         delay 0.35
@@ -208,10 +217,7 @@ enum TerminalLauncher {
 
     /// Terminal: native `do script` runs the command in a new window.
     private static func runInAppleTerminal(shellCmd: String) {
-        let appleStr = shellCmd
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "tell application \"Terminal\" to do script \"\(appleStr)\""
+        let script = "tell application \"Terminal\" to do script \"\(appleScriptEscaped(shellCmd))\""
         runAppleScript(script)
         NSWorkspace.shared.openApplication(
             at: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),

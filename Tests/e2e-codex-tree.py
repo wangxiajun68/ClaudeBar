@@ -44,7 +44,7 @@ import AppKit
                                 updatedAt: updated, model: "gpt-6", isAlive: true, isActive: active,
                                 completionID: nil, contextTokens: 10, contextLimit: 100,
                                 parentThreadId: parent, threadSource: sub ? "subagent" : "user",
-                                agentNickname: sub ? "explore" : "", spawnDepth: sub ? 1 : 0,
+                                agentNickname: sub ? "explore" : "",
                                 holderPID: nil, inDesktop: false)
         }
         let now = Date().timeIntervalSince1970 * 1000

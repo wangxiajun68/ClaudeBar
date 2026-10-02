@@ -874,8 +874,11 @@ struct HourlyWeatherInstrument: View {
 
     var body: some View {
         let hours = reading.upcomingHours(at: date)
+        // `hourMetric` only names a metric off a non-empty hour set, so an
+        // empty one already lands in the else.
         if abs(date.timeIntervalSince(reading.observedAt)) < 7200,
-           let metric = reading.hourMetric(at: date), !hours.isEmpty {
+           let metric = reading.hourMetric(at: date) {
+            let help = details(hours: hours, metric: metric)
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(metric.title + " · " + metric.unit)
@@ -934,9 +937,9 @@ struct HourlyWeatherInstrument: View {
                     }
                 }
             }
-            .help(details(hours: hours, metric: metric))
+            .help(help)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(details(hours: hours, metric: metric))
+            .accessibilityLabel(help)
         } else {
             Text("小时预报暂不可用")
                 .font(.system(size: 9, weight: .medium))

@@ -33,12 +33,6 @@ struct SectionHeader: View {
     /// wider population (sessions plus their sub-agents, say) reads as a
     /// negative idle figure.
     var activeCount: Int? = nil
-    /// The letter between the busy and idle figures in the pill: "1B · 2I".
-    /// A computed constant rather than a stored one, so the memberwise
-    /// initialiser stays internal (`private` *stored* properties would make it
-    /// private) — and no call site ever set it anyway: a second word for the
-    /// same state is not a knob.
-    private var activeSymbol: String { "B" }
     /// Muted text laid out immediately before the count pill — for a tally that
     /// belongs to the same section but is not the count itself (the sub-agents
     /// beside the sessions that spawned them).
@@ -91,11 +85,13 @@ struct SectionHeader: View {
                 // No implicit `.animation(value: ...)` here either, and for
                 // the same reason as the branch below: `activeCount` / `count`
                 // are session-poll outputs, so a value-keyed modifier opens a
-                // new animated transaction every poll. It bought nothing —
-                // `StatusPill` is plain `Text`, there is no transition for an
-                // implicit animation to interpolate.
+                // new animated transaction every poll, and an in-flight
+                // transaction makes every display cycle re-layout the whole
+                // hosting view. The pill's digits already roll through its own
+                // `.rollingNumber()`, so an implicit animation here would only
+                // reopen that transaction.
                 StatusPill(
-                    label: "\(activeCount)\(activeSymbol) · \(count - activeCount)I",
+                    label: "\(activeCount)B · \(count - activeCount)I",
                     tint: activeCount > 0 ? tint : Theme.textSecondary,
                     ink: activeCount > 0 ? (ink ?? tint) : Theme.textSecondary
                 )

@@ -13,8 +13,6 @@ struct VpnProxy: Identifiable, Equatable {
     let port: Int
     /// ms; nil = not tested / timeout.
     var delay: Int?
-    /// Currently selected inside its group.
-    var isCurrent: Bool = false
 }
 
 struct VpnGroup: Identifiable, Equatable {
@@ -47,12 +45,6 @@ enum VpnFormat {
     static func bytes(_ b: Int64) -> String {
         let (n, unit) = scaled(b)
         return String(format: "%6.1f %@", n, unit)
-    }
-
-    /// Menu-bar density: `"   0.0K"` — always 7 characters.
-    static func compact(_ b: Int64) -> String {
-        let (n, unit) = scaled(b)
-        return String(format: "%6.1f%@", n, String(unit.prefix(1)))
     }
 
     /// Connection count `"   0"`…`"9999"` — always 4 characters.
@@ -163,7 +155,8 @@ final class VpnManager: ObservableObject {
     /// Owns the core's stdout/stderr file. Held as a file descriptor rather
     /// than re-opened by path on every write, so the log can be rotated
     /// underneath it (`core.log` reached 86 MB on this machine, appended to
-    /// forever, with nothing ever reading more than its last 16 KB).
+    /// forever, with nothing ever reading more than its last 64 KB — the
+    /// 64,000-byte window in `extractFatal`).
     private let coreLogFD = CoreLogWriter(url: FilePaths.vpnCoreLogFile)
     private let vpnLogWriter = CoreLogWriter(url: FilePaths.vpnLogFile)
     /// Generation of `coreLogFD` that `failoverLogOffset` was measured
@@ -270,9 +263,6 @@ final class VpnManager: ObservableObject {
     }
 
     var liveLeafName: String? { livePath.last }
-
-    /// Best-effort label for the currently selected outbound node.
-    var activeNodeName: String? { liveLeafName }
 
     /// Port to route profile downloads through (nil unless running).
     var mixedPortIfRunning: Int? { isRunning ? prefs.vpnMixedPort : nil }
@@ -843,9 +833,13 @@ final class VpnManager: ObservableObject {
 
     // MARK: External controller API
 
-    private func api(_ method: String, _ path: String,
-                     body: Data? = nil, query: [String: String] = [:],
-                     timeout: TimeInterval = 20) async throws -> [String: Any] {
+    /// Controller request prelude shared by `api`, `apiResponse` and the
+    /// traffic stream: loopback URL, query, method / timeout and the Bearer
+    /// secret, so an auth or encoding change lands in one place instead of
+    /// three.
+    private func makeRequest(_ method: String, _ path: String,
+                             body: Data? = nil, query: [String: String] = [:],
+                             timeout: TimeInterval = 20) -> URLRequest {
         var comps = URLComponents(string: "http://127.0.0.1:\(controllerPort)\(path)")!
         if !query.isEmpty {
             comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -860,6 +854,13 @@ final class VpnManager: ObservableObject {
             req.httpBody = body
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
+        return req
+    }
+
+    private func api(_ method: String, _ path: String,
+                     body: Data? = nil, query: [String: String] = [:],
+                     timeout: TimeInterval = 20) async throws -> [String: Any] {
+        let req = makeRequest(method, path, body: body, query: query, timeout: timeout)
         let (data, response) = try await VpnHTTP.session().data(for: req)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200..<300).contains(http.statusCode) else {
@@ -872,20 +873,7 @@ final class VpnManager: ObservableObject {
     private func apiResponse(_ method: String, _ path: String,
                              body: Data? = nil, query: [String: String] = [:],
                              timeout: TimeInterval = 20) async throws -> (status: Int, json: [String: Any], raw: String) {
-        var comps = URLComponents(string: "http://127.0.0.1:\(controllerPort)\(path)")!
-        if !query.isEmpty {
-            comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-        }
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = method
-        req.timeoutInterval = timeout
-        if !prefs.vpnControllerSecret.isEmpty {
-            req.setValue("Bearer \(prefs.vpnControllerSecret)", forHTTPHeaderField: "Authorization")
-        }
-        if let body = body {
-            req.httpBody = body
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
+        let req = makeRequest(method, path, body: body, query: query, timeout: timeout)
         let (data, response) = try await VpnHTTP.session().data(for: req)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         let raw = String(decoding: data, as: UTF8.self)
@@ -933,14 +921,11 @@ final class VpnManager: ObservableObject {
             }
         }
         groupsOut.sort { $0.name < $1.name }
-        var currentNodes = Set<String>()
-        for g in groupsOut { currentNodes.insert(g.current) }
         let proxiesOut: [VpnProxy] = nodeNames.sorted().map { name in
             let d = details[name]!
             return VpnProxy(
                 name: name, type: d.type, server: d.server, port: d.port,
-                delay: d.history.last,
-                isCurrent: currentNodes.contains(name))
+                delay: d.history.last)
         }
         return (groupsOut, proxiesOut)
     }
@@ -1163,11 +1148,11 @@ final class VpnManager: ObservableObject {
 /// Append-only file that keeps itself under `maxBytes`.
 ///
 /// Both VPN logs are diagnostics: the in-app ring shows the last 500 lines,
-/// `extractFatal` reads the last 16 KB, and the failover ticker reads forward
-/// from an offset. None of them need history, so an unbounded append is pure
-/// disk growth — `core.log` had reached 86 MB and `vpn.log` 900 KB on this
-/// machine. On rotation the tail is kept so a crash report written just before
-/// the threshold survives.
+/// `extractFatal` reads the last 64 KB (64,000 bytes), and the failover ticker
+/// reads forward from an offset. None of them need history, so an unbounded
+/// append is pure disk growth — `core.log` had reached 86 MB and `vpn.log`
+/// 900 KB on this machine. On rotation the tail is kept so a crash report
+/// written just before the threshold survives.
 ///
 /// `append` is called from the core's `readabilityHandler` (a background
 /// thread); every mutation goes through `lock`. Rotation bumps `generation`
@@ -1322,10 +1307,9 @@ extension VpnManager {
     }
 
     private func consumeTrafficStream() async {
-        let comps = URLComponents(string: "http://127.0.0.1:\(controllerPort)/traffic")!
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "GET"
-        req.timeoutInterval = 86_400
+        // `Accept` is stream-specific — set on the request `makeRequest` hands
+        // back, not folded into the shared prelude.
+        var req = makeRequest("GET", "/traffic", timeout: 86_400)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if !prefs.vpnControllerSecret.isEmpty {
             req.setValue("Bearer \(prefs.vpnControllerSecret)", forHTTPHeaderField: "Authorization")

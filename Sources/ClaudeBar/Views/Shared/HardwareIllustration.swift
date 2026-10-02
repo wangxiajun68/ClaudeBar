@@ -106,10 +106,10 @@ struct HardwareIllustration: View {
     /// 130pt the old `height * 0.22` gave the icon a hair under half the slot
     /// and the bars a lane thicker than the gap between two DIMM pads. Tying
     /// the lane to the *icon's* side keeps the mark the same drawing at every
-    /// size the app hands it. The clamp keeps a short popover mark from paying
-    /// 20pt of its height for a lane.
+    /// size the app hands it. The 12pt floor keeps a short popover mark's lane
+    /// from thinning to a sliver.
     static func placement(in size: CGSize) -> (icon: CGRect, lane: CGRect, scale: CGFloat) {
-        let laneH = min(max(12, size.height * 0.17), max(12, size.height * 0.26))
+        let laneH = max(12, size.height * 0.17)
         let iconH = size.height - laneH - 7
         let side = min(size.width, iconH)
         let scale = side / grid

@@ -1,6 +1,6 @@
 import Combine
 import Foundation
-import SwiftUI
+import Observation
 
 /// Current conditions and optional daily forecasts for the same location.
 struct WeatherReading: Equatable {
@@ -160,7 +160,7 @@ struct WeatherReading: Equatable {
         if has("雷阵雨", "雷雨", "雷") { return .thunder }
         if has("冰雹") { return .hail }
         if has("雨夹雪", "冻雨", "雨雪", "雨凇") { return .sleet }
-        if has("暴雨", "大雨", "中雨", "大雨", "阵雨", "雷阵雨", "雨") {
+        if has("暴雨", "大雨", "中雨", "阵雨", "雷阵雨", "雨") {
             return has("暴雨", "大雨", "中雨", "阵雨") ? .rain : .drizzle
         }
         if has("毛毛雨", "细雨") { return .drizzle }
@@ -502,11 +502,6 @@ enum DomesticWeatherParser {
             timezone: "Asia/Shanghai", forecast: days,
             forecastNote: days.isEmpty ? "预报暂不可用 · 点击刷新重试" : nil,
             source: "高德", skyHint: skyHint)
-    }
-
-    private static func mergesDayNight(_ cast: [String: Any]?) -> (high: Double, low: Double)? {
-        guard let high = number(cast?["daytemp"]), let low = number(cast?["nighttemp"]) else { return nil }
-        return (high, low)
     }
 
     /// A single reading from 中国天气网's `dataSK` plus its `fc.f[]` array.

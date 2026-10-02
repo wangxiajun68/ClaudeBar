@@ -10,11 +10,10 @@ import SwiftUI
 struct InstrumentSearchField: View {
     let prompt: String
     @Binding var text: String
-    var radius: CGFloat = Theme.Radius.md
     @FocusState private var focused: Bool
 
     var body: some View {
-        InstrumentField(radius: radius, focused: focused) {
+        InstrumentField(focused: focused) {
             HStack(spacing: Theme.Space.s8) {
                 SignatureGlyph(name: "magnifyingglass",
                                tint: focused ? Theme.Ink.claude : Theme.textSecondary,

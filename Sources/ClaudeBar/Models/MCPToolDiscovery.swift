@@ -25,9 +25,16 @@ enum MCPToolDiscovery {
 
     static func list(connection: MCPConnection, from config: URL) async throws -> [MCPToolSummary] {
         if let url = connection.url { return try await listHTTP(connection: connection, url: url) }
-        return try await Task.detached(priority: .utility) {
+        // A detached task carries no cancellation, so forward the caller's by
+        // hand: the child must not outlive the view that asked for it.
+        let worker = Task.detached(priority: .utility) {
             try listSync(connection: connection, from: config)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     private static func listHTTP(connection: MCPConnection, url: URL) async throws -> [MCPToolSummary] {
@@ -143,17 +150,22 @@ enum MCPToolDiscovery {
             "protocolVersion": "2025-06-18", "capabilities": [:] as [String: String],
             "clientInfo": ["name": "ClaudeBar", "version": "1.0"]
         ]], to: input)
-        let initialized = try response(collector, id: 1, until: deadline)
+        let initialized: [String: Any]
+        do { initialized = try response(collector, id: 1, until: deadline) }
+        catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
         guard initialized["error"] == nil else { throw DiscoveryError.serverError }
         guard initialized["result"] is [String: Any] else { throw DiscoveryError.invalidResponse }
         try send(["jsonrpc": "2.0", "method": "notifications/initialized"], to: input)
         var tools: [MCPToolSummary] = []
         var cursor: String?
         for page in 0..<10 {
+            if Task.isCancelled { return [] }
             let id = page + 2
             let params: [String: String] = cursor.map { ["cursor": $0] } ?? [:]
             try send(["jsonrpc": "2.0", "id": id, "method": "tools/list", "params": params], to: input)
-            let message = try response(collector, id: id, until: deadline)
+            let message: [String: Any]
+            do { message = try response(collector, id: id, until: deadline) }
+            catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
             guard message["error"] == nil else { throw DiscoveryError.serverError }
             guard let result = message["result"] as? [String: Any],
                   let entries = result["tools"] as? [[String: Any]] else { throw DiscoveryError.invalidResponse }

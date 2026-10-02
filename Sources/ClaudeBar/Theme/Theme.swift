@@ -56,11 +56,6 @@ enum Theme {
     static let accent = claude
     static let cursorAccent = cursor
 
-    /// Session-kind hue — blue for Claude, violet for Cursor.
-    static func signal(isCursor: Bool) -> Color {
-        isCursor ? cursor : claude
-    }
-
     // MARK: Text
     static var textPrimary: Color { isDark ? Color(hex: 0xF5F5F7) : Color(hex: 0x1C1C1E) }
     static var textSecondary: Color { isDark ? Color(hex: 0xA8ADB4) : Color(hex: 0x6E6E73) }
@@ -131,11 +126,10 @@ enum Theme {
         isDark ? Color(hex: 0x101216) : Color(hex: 0xE6ECF4)
     }
 
-    static var windowNSColor: NSColor {
-        isDark
-            ? NSColor(srgbRed: 22/255, green: 24/255, blue: 28/255, alpha: 1)
-            : NSColor(srgbRed: 238/255, green: 243/255, blue: 248/255, alpha: 1)
-    }
+    /// `bgPrimary` as an `NSColor` — the AppKit window shell and CALayer fills
+    /// cannot take a `Color`. Derived rather than re-spelled, so the window
+    /// background cannot drift from the canvas.
+    static var windowNSColor: NSColor { NSColor(bgPrimary) }
 
     static var nsAppearance: NSAppearance {
         NSAppearance(named: isDark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
@@ -171,7 +165,6 @@ enum Theme {
     // macOS system text styles only (SF Pro / SF Mono). No bundled custom fonts.
     enum Tracking {
         static let titleSmall: CGFloat = -0.01
-        static let caption: CGFloat = 0.03
     }
 
     enum Font {
@@ -241,12 +234,6 @@ enum Theme {
             case .popupProvider, .popupUsage: return (2, 0)
             case .popupSession: return (1, 0)
             }
-        }
-
-        /// Equal-width mosaic columns that fill the row — no leftover gutter.
-        static func mosaic(columns: Int, spacing: CGFloat = 1) -> [GridItem] {
-            Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top),
-                  count: max(2, columns))
         }
     }
 
@@ -405,7 +392,7 @@ extension View {
     }
 }
 
-// MARK: - Panel card (translucent surface; native glass buttons on macOS 26+)
+// MARK: - Panel card (card surface + hairline + inner ring)
 
 /// The primary *content* surface: an optional accent wash over `cardSurface`,
 /// a hairline edge, and the same inset frame ring the tiles carry, so a page's
@@ -462,27 +449,6 @@ extension View {
     func panelCard(radius: CGFloat = Theme.Radius.lg,
                    tint: Color? = nil, framed: Bool = true) -> some View {
         modifier(PanelCardModifier(radius: radius, tint: tint, framed: framed))
-    }
-}
-
-// MARK: - Active tile edge (de-carded selection for tiles & rows)
-
-/// Selection treatment shared by provider tiles and model rows: a 2px accent
-/// edge on the leading side plus a quiet tint fill. (Formerly the private
-/// `ActiveRowEdge` in ProviderRow.swift.)
-struct ActiveTileEdge: ViewModifier {
-    var isActive: Bool
-    var selected: Bool
-    var corner: CGFloat = Theme.Radius.sm
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                if isActive {
-                    RoundedRectangle(cornerRadius: corner, style: .continuous)
-                        .fill(Theme.chartGreen.opacity(0.10))
-                }
-            }
     }
 }
 
@@ -591,8 +557,9 @@ enum PillMark {
         }
     }
 
-    /// The client's own bundled artwork, at `size`, in the pill's ink.
-    func view(size: CGFloat, ink: Color) -> some View {
+    /// The client's own bundled artwork, at `size`. The mark selects its own
+    /// light or dark file from the theme, so there is no ink to pass.
+    func view(size: CGFloat) -> some View {
         ProductBrandMark(brand: brand, well: false)
             .frame(width: size, height: size)
     }
@@ -616,7 +583,7 @@ struct StatusPill: View {
     var body: some View {
         HStack(spacing: 4) {
             if let mark {
-                mark.view(size: 11, ink: ink ?? tint)
+                mark.view(size: 11)
                     .accessibilityHidden(true)
             }
             Text(label)

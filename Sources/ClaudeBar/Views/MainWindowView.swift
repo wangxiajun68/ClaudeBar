@@ -28,19 +28,10 @@ enum AppPage: String, CaseIterable, Identifiable {
         }
     }
 
-    var icon: String {
-        switch self {
-        case .dashboard: return "square.grid.2x2"
-        case .sessions: return "rectangle.stack"
-        case .providers: return "cube"
-        case .connectors: return "puzzlepiece.extension"
-        case .usage: return "chart.bar"
-        case .traffic: return "arrow.left.arrow.right"
-        case .vpn: return "globe"
-        case .settings: return "slider.horizontal.3"
-        case .help: return "questionmark.circle"
-        }
-    }
+    /// `PageIdentity` owns the destination marks — the palette and the page
+    /// heading both read it. A second table here had already drifted for 帮助,
+    /// so one destination could name itself two ways.
+    var icon: String { PageIdentity.symbol(label) }
 }
 
 // MARK: - Main window root

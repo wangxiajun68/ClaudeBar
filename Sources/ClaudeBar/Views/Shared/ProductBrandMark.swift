@@ -48,12 +48,12 @@ struct ProductBrandMark: View {
     /// than as a deliberate difference. Its artwork is the app's own icon
     /// (`Tools/make-claudebar-mark.py`), so the app names itself the same way it
     /// names the clients: with its real mark, not a glyph standing in for one.
-    enum Brand: String {
+    enum Brand {
         case claude, codex, cursor, claudebar
 
         /// `false` = CC, `true` = Codex — the convention the callers that only
         /// ever choose between those two have always used (`GlyphWell.brand`,
-        /// `SegmentedCapsule.brand`, `SettingTile.brand`), kept so those call
+        /// `SegmentedCapsule.brand`, `SectionHeader.brand`), kept so those call
         /// sites did not have to move when Cursor joined. It is not a
         /// convenience: those surfaces genuinely offer only the two *provider*
         /// clients, and Cursor has no API endpoint to configure.
@@ -88,16 +88,16 @@ struct ProductBrandMark: View {
     ///
     /// There is no memberwise init to fall back on: declaring `init(brand:)`
     /// below suppresses it, which is exactly why this one has to spell out all
-    /// four properties. A call site that forgot one silently lost it — the
-    /// island's `page: true` was accepted by a stale memberwise init and did
-    /// nothing, which is the bug this shape prevents.
+    /// three properties (`brand`, `well`, `page`). A call site that forgot one
+    /// silently lost it — the island's `page: true` was accepted by a stale
+    /// memberwise init and did nothing, which is the bug this shape prevents.
     ///
     /// - Parameters:
     ///   - well: draw the icon well behind the artwork. Off for a caller that
     ///     has already put the mark in a well of its own.
     ///   - page: which page the mark is drawn on, for the ink — `nil` = a themed
     ///     surface, `true` = a black one (the island), `false` = a light one
-    ///     (the greeting card's pale sky). See `dark`.
+    ///     (no caller today). See `dark`.
     init(brand: Brand, well: Bool = true, page: Bool? = nil) {
         self.brand = brand
         self.well = well
@@ -115,9 +115,10 @@ struct ProductBrandMark: View {
     /// Which **page** this mark is drawn on, for the ink.
     ///
     /// `nil` = a **themed** surface (`Theme.bgSecondary` / `Theme.cardSurface`),
-    /// whose tone follows `Theme.isDark`. `true` = a **black** page (the island,
-    /// the notch bar, the recessed metre well); `false` = a **light** page (the
-    /// greeting card's pale sky, a white card, the popup's ice canvas).
+    /// whose tone follows `Theme.isDark`. `true` = a ground **dark in both
+    /// themes** (the island, its collapsed notch bar, the greeting card's dark
+    /// sill glass); `false` = a ground **light in both themes**, and no caller
+    /// passes one today: the greeting card's pale sky is no longer one.
     ///
     /// It is deliberately not `Theme.isDark`: the island is black in *both*
     /// themes, so asking the theme question drew the wrong ink on the app's
@@ -137,6 +138,8 @@ struct ProductBrandMark: View {
     /// selector and says exactly that; the earlier version had it inverted for
     /// both of the explicit cases, so the island asked for the black file on its
     /// black badge and the popup's light chip asked for the white one.
+    /// `Tests/product-mark-regressions.py` measures both files and pins this
+    /// direction, so an edit that inverts it fails rather than ships.
     var page: Bool? = nil
 
     private var asset: String { brand.asset }

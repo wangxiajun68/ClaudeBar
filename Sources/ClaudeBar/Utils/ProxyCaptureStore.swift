@@ -173,7 +173,7 @@ final class ProxyCaptureStore {
     private var flushWork: DispatchWorkItem?
     private let liveFlushQueue = DispatchQueue(label: "com.claudebar.capture-live", qos: .utility)
     private let listLimit = 120
-    private let payloadCap = 16 * 1024 * 1024
+    private let payloadCap = CaptureMedia.payloadCapBytes
     private let isoFormatter = ISO8601DateFormatter()
     private lazy var jsonStore = CaptureJSONStore(listLimit: listLimit, iso: isoFormatter)
     private var useDatabase: Bool { DiskPersistence.useDatabase }
@@ -191,9 +191,9 @@ final class ProxyCaptureStore {
     ///
     /// Called from `TrafficView.onAppear` — the only surface that renders the
     /// list. The load is idempotent: a second call while one is in flight (a
-    /// fast page switch away and back) is a no-op, and a later call after the
-    /// first finished re-reads, which is what a user returning to the page
-    /// expects after the proxy has been writing rows behind it.
+    /// fast page switch away and back) is a no-op, and so is any later call
+    /// with the default `force: false`; `force: true` is the escape hatch that
+    /// re-reads regardless.
     func loadListIfNeeded(force: Bool = false) {
         lock.lock()
         if listLoaded && !force { lock.unlock(); return }
@@ -274,7 +274,7 @@ final class ProxyCaptureStore {
             }
             if stream { self.streams.live[id] = CaptureLive() }
         }
-        return CaptureTap(id: id, kind: kind, source: source, modelName: model,
+        return CaptureTap(id: id, source: source, modelName: model,
                           store: self, inflight: inflight)
     }
 
@@ -527,7 +527,6 @@ final class ProxyCaptureStore {
                 raw_sse TEXT,
                 FOREIGN KEY (capture_id) REFERENCES captures(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS captures_started ON captures(started_at DESC);
             """, nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil)
         // Older databases predate the cache-write column. The capture rows are
@@ -535,6 +534,10 @@ final class ProxyCaptureStore {
         // recorded then" — not defensible to re-derive, and not worth a
         // rebuild that would throw away the rows.
         sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil)
+        // Every statement against `captures` orders or filters by id, its
+        // INTEGER PRIMARY KEY, so the secondary index on `started_at` written
+        // by older builds is maintenance with no reader. Drop it once.
+        sqlite3_exec(db, "DROP INDEX IF EXISTS captures_started", nil, nil, nil)
         return db
     }
 
@@ -1009,7 +1012,6 @@ final class ProxyCaptureStore {
 /// Held by the proxy for the lifetime of one upstream call.
 final class CaptureTap {
     let id: Int64
-    let kind: CaptureKind
     /// Origin of the request — the durable third-party rollup is written from
     /// here, where the value is known without a lookup.
     let source: CaptureSource
@@ -1026,10 +1028,9 @@ final class CaptureTap {
     private var firstToken = false
     private var startedStreaming = false
 
-    init(id: Int64, kind: CaptureKind, source: CaptureSource, modelName: String,
+    init(id: Int64, source: CaptureSource, modelName: String,
          store: ProxyCaptureStore, inflight: ProxyInflight.Handle? = nil) {
         self.id = id
-        self.kind = kind
         self.source = source
         self.modelName = modelName
         self.store = store

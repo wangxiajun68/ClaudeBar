@@ -82,8 +82,6 @@ final class ModelPriceCatalog: ObservableObject {
         var appliedCNY = 0
         var unchanged = 0
         var failures: [Failure] = []
-        /// Vendors skipped because they have no machine-readable page at all.
-        var unparsableVendors: [String] = []
         var error: String?
 
         var headline: String {
@@ -126,11 +124,8 @@ final class ModelPriceCatalog: ObservableObject {
     /// list, and any override for a slug the bundled table has never heard of
     /// (a model the user added by hand).
     ///
-    /// Bundled rows come first so the list's resting order is the table's own
-    /// (vendors group together); overrides are added for slugs that are not
-    /// already present. The view sorts within that by the same longest-slug
-    /// discipline `ModelPricing.matches` uses, so `glm-5` sits above
-    /// `glm-5.3-flash`.
+    /// Deduplicated across the three sources and returned alphabetically — the
+    /// card's resting order, and the order its search field filters.
     var allSlugs: [String] {
         var seen = Set<String>()
         var out: [String] = []

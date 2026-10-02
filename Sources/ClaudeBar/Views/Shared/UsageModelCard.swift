@@ -135,6 +135,7 @@ struct UsageModelCard: View {
             estimateRow(shown)
             settlementRow(actual)
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityMoney(shown, actual: actual))
     }
 

@@ -65,7 +65,10 @@ final class MenuBarController: NSObject {
         appearanceObs = NotificationCenter.default.addObserver(
             forName: .appearanceDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyPanelAppearance() }
+            MainActor.assumeIsolated {
+                guard let self, let panel = self.panel else { return }
+                self.applyPanelAppearance(to: panel)
+            }
         }
     }
 
@@ -244,7 +247,7 @@ final class MenuBarController: NSObject {
         // Rebuild the hosting view on open rather than keeping a hidden one
         // alive. An ordered-out panel still owns a live SwiftUI graph: its
         // 2s fan poll, 1 Hz VPN chart and body re-evaluation all keep running
-        // for a window nobody can see. The panel and vibrancy container are
+        // for a window nobody can see. The panel (and its content view) is
         // reused, so only the content is remade (~50–150 ms).
         if hostingView == nil { makeHostingView() }
         guard let hosting = hostingView else { return }
@@ -296,7 +299,6 @@ final class MenuBarController: NSObject {
     private func makeHostingView() {
         let rootView = AnyView(
             MenuBarView(providerStore: providerStore, codexStore: codexProviderStore)
-                .environmentObject(providerStore)
                 .environment(\.providerSource, providerStore)
                 .environmentObject(codexProviderStore)
         )
@@ -316,15 +318,19 @@ final class MenuBarController: NSObject {
         hostingView = hosting
     }
 
-    private func applyPanelAppearance() {
+    /// The single place the panel's shell styling is stated: `makePanel` calls
+    /// it once at build time so the first `show()` after launch is styled, and
+    /// the appearance notification calls it so a light/dark switch repaints a
+    /// panel that is already built.
+    private func applyPanelAppearance(to panel: NSPanel) {
         let fill = Theme.windowNSColor
-        panel?.appearance = Theme.nsAppearance
-        panel?.backgroundColor = .clear
-        panel?.isOpaque = false
-        panel?.contentView?.layer?.backgroundColor = fill.cgColor
-        panel?.contentView?.layer?.cornerRadius = 22
-        panel?.contentView?.layer?.cornerCurve = .continuous
-        panel?.contentView?.layer?.masksToBounds = true
+        panel.appearance = Theme.nsAppearance
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.contentView?.layer?.backgroundColor = fill.cgColor
+        panel.contentView?.layer?.cornerRadius = 22
+        panel.contentView?.layer?.cornerCurve = .continuous
+        panel.contentView?.layer?.masksToBounds = true
     }
 
     private func makePanel() -> NSPanel {
@@ -335,21 +341,18 @@ final class MenuBarController: NSObject {
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
         panel.hasShadow = true
-        panel.appearance = Theme.nsAppearance
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         let host = NSView()
         host.wantsLayer = true
-        host.layer?.backgroundColor = Theme.windowNSColor.cgColor
-        host.layer?.cornerRadius = 22
-        host.layer?.cornerCurve = .continuous
-        host.layer?.masksToBounds = true
 
         panel.contentView = host
         host.autoresizesSubviews = true
+        // The shell's fill, radius and appearance live in one place; styling
+        // here rather than only on the theme notification keeps the very first
+        // show() from going out unstyled.
+        applyPanelAppearance(to: panel)
         panel.onCancel = { [weak self] in
             MainActor.assumeIsolated { self?.hide() }
         }

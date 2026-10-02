@@ -35,7 +35,6 @@ struct InstrumentGlyph: View, Animatable {
         case "bell", "bell.fill": return .notification
         case "magnifyingglass": return .search
         case "arrow.clockwise": return .refresh
-        case "cylinder": return .disk
         case "cloud.sun", "cloud.sun.fill", "sun.max": return .weather
         default: return nil
         }
@@ -49,9 +48,9 @@ struct InstrumentGlyph: View, Animatable {
             c.translateBy(x: (size.width - scale * 24) / 2, y: (size.height - scale * 24) / 2)
             c.scaleBy(x: scale, y: scale)
             // No construction of this glyph sets a reading, so there is no
-            // `level`/`detailed`/`active`: the marks are drawn at one weight.
-            // A future meter that wants a fill adds the parameter back with
-            // the value in hand (see `InstrumentBadge` for the intended shape).
+            // `level`/`detailed`/`active`: the marks are drawn at one weight,
+            // and a future meter that wants a fill adds the parameter back
+            // with the value in hand.
             let ink = tint
             let track = ink.opacity(0.16)
             let stroke = StrokeStyle(lineWidth: 1.65, lineCap: .round, lineJoin: .round)
@@ -207,13 +206,9 @@ struct InstrumentBadge: View {
     var kind: InstrumentGlyph.Kind
     var size: CGFloat = 24
     var tint: Color = Theme.textSecondary
-    var engaged = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        InstrumentGlyph(kind: kind, tint: tint, phase: engaged && !reduceMotion ? 1 : 0)
+        InstrumentGlyph(kind: kind, tint: tint)
             .frame(width: size, height: size)
-            .scaleEffect(engaged && !reduceMotion ? 1.06 : 1)
-            .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.76), value: engaged)
     }
 }

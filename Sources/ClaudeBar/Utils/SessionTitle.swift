@@ -56,7 +56,7 @@ struct SessionTitle: Equatable {
 
     /// One-line title: the session's own title, or its first prompt, or the
     /// folder. Kept for callers that have a single label slot (⌘K, the
-    /// dashboard's row) — see `label(_:)` for the two-part card header.
+    /// dashboard's row) — see `cardLabel` for the two-part card header.
     var display: String {
         for candidate in [authored, firstPrompt] {
             let cleaned = Self.condense(candidate)

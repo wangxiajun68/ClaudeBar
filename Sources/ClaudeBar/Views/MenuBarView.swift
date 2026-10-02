@@ -105,20 +105,13 @@ struct MenuBarView: View {
         .onReceive(providerStore.$hasSettingsFile.removeDuplicates()) { hasSettingsFile = $0 }
         .onReceive(codexStore.$providers.map { !$0.isEmpty }.removeDuplicates()) { hasCodexProviders = $0 }
         .overlay(alignment: .bottom) {
-            // The toast is the only reader of `panel.feedbackMessage`, so it
-            // invalidates here rather than invalidating the shell: the write
-            // used to re-evaluate the header, both panels and the action bar to
-            // display nothing (nothing mounted the toast at all).
-            FeedbackToast(message: panel.feedbackMessage)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
-                .allowsHitTesting(false)
-        }
-        .task(id: panel.feedbackToken) {
-            guard panel.feedbackToken > 0 else { return }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(Theme.Animation.smooth) { panel.feedbackMessage = nil }
+            // `PanelState` goes to the child as a whole, so the shell's own
+            // body never reads `feedbackMessage` or `feedbackToken`. Both
+            // reads used to live here, and the child that matters at the end
+            // of a toast is the clear write 2s in: it invalidated the shell,
+            // re-evaluating the header, both panels and the action bar to
+            // take an overlay back off.
+            FeedbackToastHost(panel: panel)
         }
     }
 
@@ -231,5 +224,33 @@ struct MenuBarView: View {
 
     private func openSettingsFile() {
         NSWorkspace.shared.open(FilePaths.settingsFile)
+    }
+}
+
+/// The toast and its auto-dismiss, kept out of the shell's own body.
+///
+/// Reading `panel.feedbackMessage` / `panel.feedbackToken` there made the toast
+/// the shell's invalidation, not its own: the write that clears the message
+/// after 2s re-evaluated the header, both panels and the action bar to re-render
+/// an overlay that is already fading out. Both reads live here now, so a toast
+/// only ever invalidates this overlay subtree — same reason as
+/// `MainWindowSessionStatus` on the main window.
+private struct FeedbackToastHost: View {
+    let panel: PanelState
+
+    var body: some View {
+        FeedbackToast(message: panel.feedbackMessage)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+            .allowsHitTesting(false)
+            // A token, not the message: re-showing the same text still
+            // restarts the 2s timer, and the `> 0` guard keeps the first
+            // frame from arming a dismiss before anything was ever shown.
+            .task(id: panel.feedbackToken) {
+                guard panel.feedbackToken > 0 else { return }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(Theme.Animation.smooth) { panel.feedbackMessage = nil }
+            }
     }
 }

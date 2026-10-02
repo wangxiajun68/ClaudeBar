@@ -167,7 +167,7 @@ struct VPNView: View {
         VStack(alignment: .leading, spacing: 0) {
             overviewHeader
             HairlineDivider()
-            VPNTrafficStrip(compact: true)
+            VPNTrafficStrip()
             HairlineDivider()
             Button { nodesOpen = true } label: {
                 VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -781,66 +781,37 @@ struct VPNView: View {
 // MARK: - Isolated traffic strip (observes rates, not the mosaic)
 
 private struct VPNTrafficStrip: View {
-    var compact = false
     @ObservedObject private var manager = VpnManager.shared
     @ObservedObject private var rates = VpnLiveRates.shared
 
     var body: some View {
-        Group {
-            if compact {
-                VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                    VpnSpeedChart(history: rates.speedHistory)
-                        .frame(height: 24)
-                        .opacity(manager.isRunning ? 1 : 0.35)
-                    HStack(spacing: Theme.Space.s12) {
-                        compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: 80,
-                                    help: "内核 mixed-port 实时下行，不是订阅额度。")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: 80,
-                                    help: "内核 mixed-port 实时上行，不是订阅额度。")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    totals
-                }
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: Theme.Space.s12) {
-                        liveRates
-                        Spacer(minLength: Theme.Space.s12)
-                        totals
-                    }
-                    VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                        liveRates
-                        totals
-                    }
-                }
+        VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            VpnSpeedChart(history: rates.speedHistory)
+                .frame(height: 24)
+                .opacity(manager.isRunning ? 1 : 0.35)
+            HStack(spacing: Theme.Space.s12) {
+                compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: 80,
+                            help: "内核 mixed-port 实时下行，不是订阅额度。")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: 80,
+                            help: "内核 mixed-port 实时上行，不是订阅额度。")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            totals
         }
         .padding(.horizontal, Theme.Space.s12)
         .padding(.vertical, Theme.Space.s8)
         .opacity(manager.isRunning ? 1 : 0.45)
     }
 
-    private var liveRates: some View {
-        HStack(spacing: Theme.Space.s12) {
-            VpnSpeedChart(history: rates.speedHistory)
-                .frame(width: compact ? 80 : 120, height: 32)
-                .opacity(manager.isRunning ? 1 : 0.35)
-            compactStat("下载", VpnFormat.rate(rates.speedDown), Theme.Ink.success, width: compact ? 72 : 110,
-                        help: "内核 mixed-port 实时下行，不是订阅额度。为 0 表示此刻没有连接在传数据。")
-            compactStat("上传", VpnFormat.rate(rates.speedUp), Theme.Ink.claude, width: compact ? 72 : 110,
-                        help: "内核 mixed-port 实时上行，不是订阅额度。")
-        }
-    }
-
     private var totals: some View {
         HStack(spacing: Theme.Space.s12) {
-            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: compact ? 72 : 110)
-                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
-            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: compact ? 72 : 110)
-                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
-            compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: compact ? 48 : 64)
-                .frame(maxWidth: compact ? .infinity : nil, alignment: .leading)
+            compactStat("累计下载", VpnFormat.bytes(rates.traffic.totalDown), Theme.textPrimary, width: 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            compactStat("累计上传", VpnFormat.bytes(rates.traffic.totalUp), Theme.textPrimary, width: 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            compactStat("连接", VpnFormat.connections(rates.traffic.activeConnections), Theme.textPrimary, width: 48)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
         }
     }
@@ -852,7 +823,7 @@ private struct VPNTrafficStrip: View {
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
             RollingNumberText(value)
-                .font(.system(size: compact ? 15 : 17, weight: .medium, design: .rounded).monospacedDigit())
+                .font(.system(size: 15, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundColor(tint)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)

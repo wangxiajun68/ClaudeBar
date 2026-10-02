@@ -10,7 +10,6 @@ enum ConnectorSkillPolicy {
 
     private struct Entry {
         let start: Int
-        let end: Int
         let path: String
         let enabledLine: Int?
         let enabled: Bool
@@ -44,7 +43,7 @@ enum ConnectorSkillPolicy {
                lines[flag].range(of: #"^\s*enabled\s*=\s*(true|false)\s*(#.*)?$"#, options: .regularExpression) == nil {
                 throw PolicyError.unsupported
             }
-            result.append(Entry(start: start, end: end, path: path, enabledLine: flags.first,
+            result.append(Entry(start: start, path: path, enabledLine: flags.first,
                                 enabled: flags.first.map { lines[$0].range(of: #"^\s*enabled\s*=\s*false\b"#, options: .regularExpression) == nil } ?? true))
         }
         return result

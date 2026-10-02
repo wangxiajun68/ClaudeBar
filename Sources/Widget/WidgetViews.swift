@@ -16,7 +16,6 @@ struct WidgetPalette {
     // MARK: Foundation
 
     var bgPrimary: Color { isDark ? Color(hex: 0x16181C) : Color(hex: 0xEEF3F8) }
-    var bgSecondary: Color { isDark ? Color(hex: 0x1E2228) : Color(hex: 0xF7FAFC) }
     var accent: Color { isDark ? Color(hex: 0x5B9CFF) : Color(hex: 0x2B62D6) }
     var cursorAccent: Color { isDark ? Color(hex: 0xA99BFF) : Color(hex: 0x7A34B8) }
 
@@ -62,8 +61,10 @@ struct WidgetPalette {
     }
 }
 
-/// Hash-stable per-model tint mirroring `Theme.barGradient(for:)`. Fills, so
-/// the saturated palette is correct in both schemes.
+/// Hash-stable per-model tint mirroring `Theme.barColor(for:)` /
+/// `Theme.djb2` — `color(for:)` below has to keep the same
+/// `(djb2 % Int.max) % count` reduction or the two surfaces disagree. Fills,
+/// so the saturated palette is correct in both schemes.
 private enum WidgetBars {
     static let palette: [Color] = [
         Color(hex: 0x5B9CFF),
@@ -295,7 +296,6 @@ struct WidgetEntryView: View {
             sectionHeader(title: "活跃会话",
                           detail: "\(s.totalSessionCount) 个 · \(s.busySessionCount) 运行中"
                               + waitingSuffix(s.sessions.filter { $0.status == "waiting" }.count),
-                          icon: nil,
                           p: p,
                           topPadding: 10)
 
@@ -312,7 +312,6 @@ struct WidgetEntryView: View {
             sectionHeader(title: "Cursor",
                           detail: "\(s.cursorSessions.count) · \(s.cursorSessions.filter { $0.status == "active" }.count) 活跃"
                               + waitingSuffix(s.cursorSessions.filter { $0.status == "waiting" }.count),
-                          icon: nil,
                           p: p,
                           topPadding: s.sessions.isEmpty ? 10 : 6,
                           mark: .cursor)
@@ -333,7 +332,6 @@ struct WidgetEntryView: View {
             sectionHeader(title: "Codex",
                           detail: "\(s.externalSessions.count) · \(s.externalSessions.filter { $0.status == "busy" }.count) 运行中"
                               + waitingSuffix(s.externalSessions.filter { $0.status == "waiting" }.count),
-                          icon: nil,
                           p: p,
                           topPadding: (s.sessions.isEmpty && s.cursorSessions.isEmpty) ? 10 : 6,
                           brand: true)
@@ -363,8 +361,10 @@ struct WidgetEntryView: View {
         /// The four families, mirroring `ProductBrandMark.Brand` in the app.
         /// Cursor is artwork here too: the appex cannot import the app's type,
         /// and the widget's Cursor section header had the same wrong glyph.
-        /// `claudebar` mirrors the app's own mark (its icon's rings) for the one
-        /// tally that names no other product.
+        /// `claudebar` mirrors the app's `Brand`, which uses it for the 第三方
+        /// tally that names no other product; no section in this target draws
+        /// it, so it has no widget call site yet — it stays so the two enums
+        /// keep the same shape.
         enum Brand {
             case claude, codex, cursor, claudebar
 
@@ -452,7 +452,6 @@ struct WidgetEntryView: View {
 
     private func sectionHeader(title: String,
                                detail: String,
-                               icon: String?,
                                p: WidgetPalette,
                                topPadding: CGFloat,
                                brand: Bool? = nil,
@@ -462,10 +461,6 @@ struct WidgetEntryView: View {
                 WidgetBrandMark(brand: mark, dark: p.isDark)
             } else if let brand {
                 WidgetBrandMark(codex: brand, dark: p.isDark)
-            } else if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 9))
-                    .foregroundColor(p.textTertiary)
             }
             Text(title)
                 .font(.system(size: 10, weight: .semibold))

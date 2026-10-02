@@ -77,7 +77,7 @@ enum OttyBridge {
                     // The socket never came up, so no pane can be reached —
                     // but Otty is still the app the user asked for; bring it
                     // forward rather than dropping the resume silently.
-                    await activate(app)
+                    await SessionHost.activate(app)
                     return
                 }
             }
@@ -100,7 +100,7 @@ enum OttyBridge {
             } else {
                 run(cli, ["tab", "new", "--cwd", cwd, "--title", title, "--command", command])
             }
-            await activate(app)
+            await SessionHost.activate(app)
         }
     }
 
@@ -118,7 +118,7 @@ enum OttyBridge {
                 ?? (byCwd.count == 1 ? byCwd.first : nil) {
                 focus(pane, cli: cli)
             }
-            await activate(app)
+            await SessionHost.activate(app)
         }
     }
 
@@ -176,16 +176,6 @@ enum OttyBridge {
     private static func launch(_ app: URL) async {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
-        _ = try? await NSWorkspace.shared.openApplication(at: app, configuration: configuration)
-    }
-
-    /// LaunchServices activation works from a background (accessory) app,
-    /// where `NSRunningApplication.activate()` is ignored under macOS 14's
-    /// cooperative activation.
-    @MainActor
-    private static func activate(_ app: URL) async {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
         _ = try? await NSWorkspace.shared.openApplication(at: app, configuration: configuration)
     }
 }

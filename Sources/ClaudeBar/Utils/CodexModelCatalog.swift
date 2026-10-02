@@ -49,17 +49,19 @@ enum CodexModelCatalog {
             "supported_in_api": true,
             "shell_type": "shell_command",
             "input_modalities": ["text", "image"],
-            "supports_parallel_tool_calls": true,
-            "supports_reasoning_summaries": true,
             "default_reasoning_summary": "none",
             "support_verbosity": true,
             "default_verbosity": "low",
             "supported_reasoning_levels": reasoningLevels,
-            // Required by current ModelInfo serde (no default). Missing these
-            // makes `model_catalog_json` fail to parse and Codex falls back.
-            "apply_patch_tool_type": NSNull(),
+            // Required by current ModelInfo serde (no default). Missing
+            // either makes `model_catalog_json` fail to parse and Codex
+            // falls back.
             "truncation_policy": ["mode": "bytes", "limit": 10_000],
             "experimental_supported_tools": [] as [Any],
+            // Optional: null here omits the freeform patch tool (strict
+            // gateways reject `type:custom`), and 95 matches Codex's own
+            // default for the effective window percent.
+            "apply_patch_tool_type": NSNull(),
             "effective_context_window_percent": 95,
             "additional_speed_tiers": [] as [Any],
             "service_tiers": [] as [Any],

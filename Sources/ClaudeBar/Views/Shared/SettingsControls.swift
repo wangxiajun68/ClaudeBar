@@ -68,8 +68,7 @@ struct SettingsRow<Control: View>: View {
 
 struct SettingsDivider: View {
     var body: some View {
-        Rectangle().fill(Theme.hairline).frame(height: 1)
-            .padding(.horizontal, 20).accessibilityHidden(true)
+        HairlineDivider(inset: 20).accessibilityHidden(true)
     }
 }
 

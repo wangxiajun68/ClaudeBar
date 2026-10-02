@@ -112,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertFirstButtonReturn:
             FanHelperInstaller.install()
         case .alertSecondButtonReturn:
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+            LaunchAtLogin.openLoginItemsSettings()
         default:
             break
         }

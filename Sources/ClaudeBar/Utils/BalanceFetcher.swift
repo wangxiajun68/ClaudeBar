@@ -72,7 +72,7 @@ struct BalanceFetcher {
         guard let url = URL(string: baseURL), url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased() else { return nil }
         if host == "api.deepseek.com" { return .deepseek }
-        if host == "api.moonshot.cn" || host == "api.moonshot.com" { return .moonshotCN }
+        if host == "api.moonshot.cn" { return .moonshotCN }
         if host == "api.moonshot.ai" { return .moonshotGlobal }
         if host == "api.siliconflow.cn" || host == "api.siliconflow.com" { return .siliconflow }
         if host == "openrouter.ai" { return .openrouter }

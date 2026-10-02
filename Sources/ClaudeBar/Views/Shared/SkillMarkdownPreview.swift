@@ -62,6 +62,9 @@ struct SkillMarkdownPreview: View {
                 if parsed.isEmpty { message = "文档没有可预览的内容" }
             } catch is CancellationError {
                 return
+            } catch PreviewError.tooLarge {
+                guard !Task.isCancelled else { return }
+                message = "文档超过 512 KB，暂不预览。"
             } catch {
                 guard !Task.isCancelled else { return }
                 message = "无法读取 SKILL.md，请检查文件是否仍在原位置。"

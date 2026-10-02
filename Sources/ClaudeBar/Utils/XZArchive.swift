@@ -4,7 +4,7 @@ import Compression
 /// Streams an `.xz` archive to a file.
 ///
 /// It exists for one payload — the mihomo core, which the build packages
-/// compressed rather than as a 54 MB binary (see `VpnManager.installCore`).
+/// compressed rather than as a 54 MB binary (see `VpnManager.extractBundledCoreIfNeeded`).
 /// Apple's `libcompression` decodes LZMA natively, so this needs no dependency
 /// and no helper process; measured on the shipped core the whole decode is
 /// **0.6 s**, and because it streams, peak memory is the 16 MiB LZMA dictionary

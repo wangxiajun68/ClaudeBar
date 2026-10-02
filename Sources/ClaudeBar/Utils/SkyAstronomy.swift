@@ -14,7 +14,6 @@ enum SkyAstronomy {
         var moonPhase: Double
         var sidereal: Double
         var latitude: Double
-        var night: Bool { sun.altitude < -6 }
         var twilight: Double { max(0, 1 - abs(sun.altitude + 2) / 12) }
     }
     struct SolarEvents: Equatable {

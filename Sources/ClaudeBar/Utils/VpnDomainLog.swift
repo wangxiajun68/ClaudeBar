@@ -23,7 +23,7 @@ enum VpnDomainRoute: String, CaseIterable, Identifiable {
 ///
 /// The core logs bytes for a *closed* connection only, in a separate
 /// `[TCP] ... closed` line this app does not read, so there is deliberately no
-/// byte field here: the UI says "无字节" rather than inventing a number.
+/// byte field here rather than inventing a number.
 struct VpnDomainEntry: Identifiable, Equatable {
     var id: UInt64
     /// `HH:mm:ss`, sliced positionally out of the core's ISO timestamp.
@@ -265,7 +265,7 @@ final class VpnDomainFeed: @unchecked Sendable {
         var routing = line[tagEnd...]
         if routing.hasSuffix("\"") { routing = routing.dropLast() }
         if let err = routing.range(of: " error:") { routing = routing[..<err.lowerBound] }
-        let failed = routing.contains(" error:") || line.contains(" error:")
+        let failed = line.contains(" error:")
 
         var outbound = ""
         var rule = ""
@@ -429,7 +429,7 @@ struct VpnDomainRing {
 /// Separate from `VpnManager` for the same reason `VpnLiveRates` and
 /// `VpnLogStore` are: a connection line must not invalidate the VPN page's
 /// 1100-line body (header, subscription cards, node mosaic). `VPNView` never
-/// observes this object — only the collapsed badge and the section do.
+/// observes this object — only `VpnDomainLogSection` does.
 ///
 /// **In memory only.** This is a live diagnostic, not an audit trail:
 /// `core.log` is still on disk for anything that needs to outlive the session,
@@ -444,7 +444,6 @@ final class VpnDomainLog: ObservableObject {
     private var ring = VpnDomainRing(capacity: VpnDomainLog.limit)
 
     @Published private(set) var connections: [VpnDomainConnection] = []
-    @Published private(set) var connectionRevision = 0
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
     /// Session total; per-domain summaries deliberately cover retained rows only.
@@ -493,7 +492,6 @@ final class VpnDomainLog: ObservableObject {
         }.sorted { $0.id < $1.id }
         if connections != next {
             connections = next
-            connectionRevision &+= 1
         }
     }
 
@@ -515,8 +513,6 @@ final class VpnDomainLog: ObservableObject {
     /// The time column is what separates a pre-restart row from a post-restart
     /// one, so no "cleared at …" marker is needed either.
     func resetCarry() { feed.resetCarry() }
-
-    func stats() -> [VpnDomainLogStat] { Self.stat(entries: entries) }
 
     /// Per-domain rollup, most-hit first. Pure and static so the regression
     /// suite can drive it without a main actor.

@@ -30,6 +30,3 @@ extension WeatherReading.Sky {
         }
     }
 }
-
-/// One open weather instrument: a magnetic date rail, comparable temperature
-/// ranges, then a horizon plot and readings. No nested panel backgrounds.

@@ -232,6 +232,12 @@ struct GreetingStatusSheet: View {
     /// 「预演」里挑了一层天气时，天空用这一层，但时刻仍是此刻——调色板照一天走。
     private var pinnedScene: SkyScene {
         guard let weather = pinnedWeather else { return SkyScene.pinned }
+        return scene(for: weather)
+    }
+
+    /// 一层挑定的天气画成场景：手动的天空与 `pinnedScene` 共用这一份，风沿用
+    /// 实时读数。
+    private func scene(for weather: SkyScene.Weather) -> SkyScene {
         let sample = Self.sample(weather)
         return SkyScene.make(sky: sample.sky, rainChance: sample.rain, windKph: max(8, reading?.windKph ?? 10),
                              windDirection: reading?.windDirection ?? "", astronomy: astronomy)
@@ -239,9 +245,7 @@ struct GreetingStatusSheet: View {
 
     private func makeScene() -> SkyScene {
         if manual {
-            let sample = Self.sample(manualWeather)
-            return SkyScene.make(sky: sample.sky, rainChance: sample.rain, windKph: max(8, reading?.windKph ?? 10),
-                                 windDirection: reading?.windDirection ?? "", astronomy: astronomy)
+            return scene(for: manualWeather)
         }
         if pinnedWeather != nil {
             // The palette is what is on trial here, so the reading survives the
@@ -434,7 +438,7 @@ struct GreetingStatusSheet: View {
                         .offset(x: m.margin, y: m.chartTop)
                         .transition(.opacity.combined(with: .offset(y: 10)))
                 } else {
-                    sunPath(scene: scene, ink: bottomLeftInk, vivid: !bottomLeftDark, times: dayTimes)
+                    sunPath(ink: bottomLeftInk, vivid: !bottomLeftDark, times: dayTimes)
                         .frame(width: m.sunWidth)
                         .offset(x: m.margin, y: m.sky - 14 - 57)
                         .transition(.opacity)
@@ -545,7 +549,7 @@ struct GreetingStatusSheet: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         } else {
-            FallbackSky(scene: scene, reading: reading, astronomy: astronomy, layout: layout, skyHeight: m.sky)
+            FallbackSky(scene: scene, reading: reading, astronomy: astronomy, layout: layout)
                 .frame(width: m.width, height: m.total)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -764,9 +768,10 @@ struct GreetingStatusSheet: View {
                 caption(reading.skyLabel, high: reading.highC, low: reading.lowC, ink: ink)
             } else if !liveWeather {
                 // The pinned sky: no reading, so name the sky itself. The
-                // glyph is the sky's own weather, at the same size as the
-                // reading it stands in for.
-                WeatherGlyph(symbol: pinnedSkySymbol(night: night), size: 28, ink: ink, vivid: vivid)
+                // glyph is the sky's own weather — through `PinnedSky`, the
+                // one bridge to `WeatherReading.Sky.symbol`, at the same size
+                // as the reading it stands in for.
+                WeatherGlyph(symbol: PinnedSky.sky(for: pinnedWeather).symbol(night: night), size: 28, ink: ink, vivid: vivid)
                 caption(PinnedSky.sky(for: pinnedWeather).caption, high: nil, low: nil, ink: ink)
             } else {
                 WeatherGlyph(symbol: weatherLoading ? "cloud" : "icloud.slash", size: 24, ink: ink, vivid: false)
@@ -774,16 +779,6 @@ struct GreetingStatusSheet: View {
                 caption(weatherLoading ? "获取中" : "离线", high: nil, low: nil, ink: ink)
             }
         }
-    }
-
-    /// 固定天空时的天气图标：挑过的一层用它的 SVG 图标，没挑过就是一片晴空。
-    ///
-    /// Through `PinnedSky` so there is **one** weather→glyph table: this switch
-    /// used to restate `WeatherReading.Sky.symbol(night:)`, and the console's
-    /// table restated it a third time — heavy rain came out `cloud.rain.fill`
-    /// here and `cloud.heavyrain.fill` there.
-    private func pinnedSkySymbol(night: Bool) -> String {
-        PinnedSky.sky(for: pinnedWeather).symbol(night: night)
     }
 
     private func bigTemperature(_ value: Double, ink: Color) -> some View {
@@ -954,7 +949,7 @@ struct GreetingStatusSheet: View {
         SunPath.times(on: sceneDate, reading: reading, zone: zone)
     }
 
-    private func sunPath(scene: SkyScene, ink: Color, vivid: Bool, times: (rise: Date?, set: Date?)) -> some View {
+    private func sunPath(ink: Color, vivid: Bool, times: (rise: Date?, set: Date?)) -> some View {
         let caption: String?
         if timeOffset != 0 { caption = "预览 \(previewTime)" }
         else if skyHovered, liveWeather { caption = "拖动天空 · 漫游一天" }
@@ -1273,7 +1268,6 @@ struct GreetingStatusSheet: View {
     }
 }
 
-/// Meteor-shower peak nights (local dates), when the clear-sky meteor rate rises.
 /// Evaluates `content` again only when `key` changes (used with
 /// `.equatable()`). The sheet's parts take closures, which SwiftUI cannot
 /// compare, so without this every change of the sheet's state — sixty or a
@@ -1316,6 +1310,7 @@ private struct Unchanged<Key: Equatable, Content: View>: View, Equatable {
     }
 }
 
+/// Meteor-shower peak nights (local dates), when the clear-sky meteor rate rises.
 enum SkyEvents {
     static func meteorShower(on date: Date, in zone: TimeZone) -> Bool {
         var calendar = Calendar(identifier: .gregorian)
@@ -1337,7 +1332,6 @@ private struct FallbackSky: View {
     var reading: WeatherReading?
     var astronomy: SkyAstronomy.Snapshot
     var layout: GreetingTypesetter.Layout
-    var skyHeight: CGFloat
 
     private func color(_ c: SIMD3<Float>) -> Color { Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)) }
 

@@ -167,6 +167,9 @@ enum VpnProviderDirect {
         for line in lines[(keyAt + 1)...] {
             let trimmed = line.drop { $0 == " " || $0 == "\t" }
             guard !trimmed.isEmpty else { continue }
+            // A comment line under `rules:` is not a sequence item; reading
+            // `# …` as a dedent to the next key used to drop the pins silently.
+            guard !trimmed.hasPrefix("#") else { continue }
             guard trimmed.hasPrefix("-") else { return nil } // dedented to the next key
             return String(line.prefix { $0 == " " || $0 == "\t" })
         }

@@ -3,26 +3,25 @@ import SwiftUI
 /// Compact popup HUD. ClaudeBar is opened to switch a model or a proxy —
 /// not to read Mac specs (those already live in the meter cards).
 ///
-/// Row 1: live facts (sessions · local proxy · VPN · rates) + refresh.
+/// Row 1: live facts (sessions · local proxy · VPN) + refresh.
 /// Row 2: three switchers — Claude Code, Codex, Cursor — each a popover.
 ///
 /// **VPN moved up into row 1.** The switcher row used to spend its third cell
 /// on a VPN control, which made the header answer "which proxy" three times and
 /// never answer "how much allowance is left" for the third client. VPN is a
 /// *connection state*, not a model to switch, so it now rides the fact strip as
-/// a compact pill (still the trigger for `VpnNodePickerPanel`), and the freed
-/// cell shows Cursor's allowance — the one family whose quota was otherwise
-/// invisible in the popup.
+/// a compact pill (still the trigger for the main window's VPN page), and the
+/// freed cell shows Cursor's allowance — the one family whose quota was
+/// otherwise invisible in the popup.
 struct PanelHeader: View {
     @ProviderState([.configuration, .sessions]) var providerStore: ProviderStore
     @EnvironmentObject var codexStore: CodexProviderStore
-    /// The three preferences this header renders, subscribed individually.
+    /// The two preferences this header renders, subscribed individually.
     /// Observing `AppPreferences.shared` wholesale re-evaluated the whole
     /// header — including both popover switchers' labels — for any unrelated
     /// write (a notch flag, the token-unit toggle, `manualUSDToCNY`).
     @State private var codexProxyPort = AppPreferences.shared.codexProxyPort
     @State private var codexRoutingEnabled = AppPreferences.shared.codexRoutingEnabled
-    @State private var vpnMixedPort = AppPreferences.shared.vpnMixedPort
     /// Cursor's allowance reading. Observed here so a quota refresh repaints
     /// this header only — not the session grid, KPI strip or action bar.
     @ObservedObject private var cursorStore = CursorUsageStore.shared
@@ -72,8 +71,8 @@ struct PanelHeader: View {
             }
             // The 1pt divider between chips, and nothing else. The chips are
             // drawn edge-to-edge in their slots, so this fill is only ever a
-            // hairline: a `visualPercentCap` that inset each chip would expose a
-            // 13pt band either side of it, which is why there is no cap.
+            // hairline: any inset that narrowed a chip would expose a 13pt
+            // band either side of it, which is why there is no cap.
             .background(Theme.hairline)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
@@ -84,7 +83,6 @@ struct PanelHeader: View {
         .onAppear { codexStore.refreshConfiguredModel() }
         .onReceive(AppPreferences.shared.$codexProxyPort.removeDuplicates()) { codexProxyPort = $0 }
         .onReceive(AppPreferences.shared.$codexRoutingEnabled.removeDuplicates()) { codexRoutingEnabled = $0 }
-        .onReceive(AppPreferences.shared.$vpnMixedPort.removeDuplicates()) { vpnMixedPort = $0 }
     }
 
     // MARK: Status row
@@ -347,23 +345,6 @@ private struct HeaderSwitchChip<Popover: View>: View {
     /// `codex: Bool`.
     var mark: (() -> AnyView)? = nil
     var quotaWindows: [CodexQuotaWindow] = []
-    /// A hard ceiling on the width the chip *draws* at.
-    ///
-    /// **Always `nil` today — kept as the seam for the change, not as live
-    /// behaviour.** A popup scaled wider than the 424pt it was measured at hands
-    /// the three columns the extra width as three wider cells, and a two-window
-    /// allowance row has nothing to spend it on, so the surplus became a longer
-    /// empty gap after the second window. Capping the drawn width was tried to
-    /// hold the density where it was measured — and it *did* fix the gap, but the
-    /// inset chip left the row's 1pt hairline fill showing as a 13pt grey band
-    /// either side of every column, so the row read as three tiles with gutters
-    /// (see the screenshots in the change that added this) instead of one control
-    /// group. Dropping the fill fixed the band but cost the divider. Both were
-    /// worse than the plain greedy chip, so the cap is off and the width question
-    /// is answered by the shell instead: `MenuBarView` is 460pt wide and the row
-    /// simply draws at 143pt per column. The seam stays so a future pass can
-    /// re-open it with a row treatment that keeps the divider.
-    var visualPercentCap: CGFloat? = nil
     /// Chip accent — also drives the eyebrow, which is text.
     var tint: Color
     /// Readable counterpart of `tint` for the eyebrow; see `StatusPill`.
@@ -401,10 +382,10 @@ private struct HeaderSwitchChip<Popover: View>: View {
         // like. Every zone below is therefore always present, and a chip with
         // nothing to put in one reserves its height rather than closing the gap:
         //
-        //   1. mark (and the disclosure chevron)     18pt
-        //   2. model name                            17pt
-        //   3. allowance row (gauges, or blank)      26pt
-        //   4. footer — vendor, or the spend line    12pt
+        //    1. mark (and the disclosure chevron)    `ChipZone.mark`
+        //    2. model name                           `ChipZone.name`
+        //    3. allowance row (gauges, or blank)     `ChipZone.allowance`
+        //    4. footer — vendor, or the spend line   `ChipZone.footer`
         VStack(alignment: .leading, spacing: 2) {
             Button { open.toggle() } label: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -482,8 +463,16 @@ private struct HeaderSwitchChip<Popover: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.cardSurface)
         // No cap: the chip is greedy in its slot, so the three columns tile
-        // edge-to-edge and the row's 1pt spacing is a true divider. See
-        // `visualPercentCap` for why an inset chip was tried and withdrawn.
+        // edge-to-edge and the row's 1pt spacing is a true divider. Capping the
+        // drawn width was tried to hold the density where it was measured — it
+        // *did* fix the wider popup's surplus gap after a two-window allowance
+        // row — but the inset chip then left the row's hairline fill showing as
+        // a 13pt grey band either side of every column, so the row read as
+        // three tiles with gutters instead of one control group; dropping the
+        // fill fixed the band but cost the divider. Both were worse than the
+        // plain greedy chip, so the cap stays off and the width question is
+        // answered by the shell instead: `MenuBarView` is 460pt wide and the
+        // row simply draws at 143pt per column.
     }
 
     /// Zone 3, for every chip. A family with allowances draws the gauges; one

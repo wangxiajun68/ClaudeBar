@@ -31,7 +31,6 @@ struct HoverTileModifier: ViewModifier {
     var tint: Color?
     var dense: Bool
     var lens: DepthLensSpec?
-    var framed: Bool
     /// See `TileSurface.lift` — off for a full-width band, which is the case
     /// where the 2pt rise can carry the pointer out of its own hover region.
     var lift: Bool = true
@@ -39,7 +38,7 @@ struct HoverTileModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         TileSurface(tint: tint, hovered: hovered, dense: dense, lens: lens,
-                    framed: framed, lift: lift, reduceMotion: reduceMotion) {
+                    lift: lift, reduceMotion: reduceMotion) {
             content
         }
         .hoverState($hovered)
@@ -50,10 +49,8 @@ struct HoverTileModifier: ViewModifier {
 
 extension View {
     func hoverTile(tint: Color? = nil, dense: Bool = false,
-                   lens: DepthLensSpec? = nil, framed: Bool = true,
-                   lift: Bool = true) -> some View {
-        modifier(HoverTileModifier(tint: tint, dense: dense, lens: lens,
-                                   framed: framed, lift: lift))
+                   lens: DepthLensSpec? = nil, lift: Bool = true) -> some View {
+        modifier(HoverTileModifier(tint: tint, dense: dense, lens: lens, lift: lift))
     }
 }
 
@@ -539,7 +536,7 @@ struct OrbitGauge: View {
             .animation(Theme.Motion.state, value: clamped)
         }
         // No fixed frame of its own: the gauge fills whatever box it is given
-        // (the quota chip sizes it at 15pt, the expanded gauge at 30), and a
+        // (the quota chip sizes it at 15pt, its only host today), and a
         // hard `bodySize` frame here would clip it to the *dot's* size.
         .frame(minWidth: bodySize * 2, minHeight: bodySize * 2)
         .accessibilityHidden(true)
@@ -577,10 +574,10 @@ struct ConveyorBelt: View {
 ///
 /// This is the piece that fixes the specific complaint that 「连接器页面太平庸」.
 /// Every page used to open with a hand-rolled white rounded rectangle and a 1px
-/// grey border — `ConnectorInventoryHeader` literally inlined `panelCard` minus
-/// its wash and minus its inner frame ring (`ConnectorsView.swift:414-419`) —
-/// which is the exact shape of a generic admin dashboard's header and the exact
-/// reason the page read as plain while the cards *below* it were distinct.
+/// grey border. `ConnectorInventoryHeader` drew `cardSurface` plus a hairline —
+/// `panelCard`'s fill without its wash, ring or shadow — which is the exact
+/// shape of a generic admin dashboard's header and the exact reason the page
+/// read as plain while the cards *below* it were distinct.
 ///
 /// A header earns its place in the family the same way a card does, by carrying
 /// the parts that still read at this size:

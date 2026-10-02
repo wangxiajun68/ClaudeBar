@@ -118,6 +118,9 @@ struct ProviderConnectionEditor: View {
         } message: {
             Text("「\(draft.name)」会从 Claude Code 和 Codex 两边移除。正在使用它时，会回到官方连接。")
         }
+        .onChange(of: draft.name) { _, _ in error = nil }
+        .onChange(of: draft.apiKey) { _, _ in error = nil }
+        .onChange(of: draft.baseURL) { _, _ in error = nil }
     }
 
     private var header: some View {

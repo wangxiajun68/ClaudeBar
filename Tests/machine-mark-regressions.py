@@ -78,7 +78,12 @@ assert 'sweepRate' in illustration, \
 # --- 4. The ring is gone from every header call site ------------------------
 meter = strip[strip.index('private func meter('):strip.index('private func cpuAttributionCaption(')]
 assert not call_sites(meter), 'ResourceStrip.meter must not wrap its glyph in a LoadRing'
-assert 'InstrumentBadge(kind: InstrumentGlyph.kind(for: icon)' in meter
+# The badge's `Kind` is stated by the tile's own case (`ResourceKind.glyphKind`
+# — a switch, so a new tile is a compile decision), not by looking its SF Symbol
+# string back up in `InstrumentGlyph.kind(for:)`.
+assert 'InstrumentBadge(kind: kind.glyphKind, tint: tint)' in meter
+assert 'var glyphKind: InstrumentGlyph.Kind {' in strip, \
+    'the tile must state its glyph kind by case rather than by symbol string'
 assert 'ZStack' not in meter.split('HStack(spacing: 6)')[1].split('Text(label)')[0], \
     'the glyph must stand alone, not sit in a ZStack behind an ornament'
 

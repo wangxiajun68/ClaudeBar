@@ -73,9 +73,10 @@ struct ModelPriceCard: View {
         }
     }
 
-    /// Error first, then what is pending, then the age of what is on screen —
-    /// the same order `ExchangeRateTile.caption` uses, for the same reason: the
-    /// most actionable line goes nearest the control.
+    /// What is pending, then the table's check date and size, then how much has
+    /// been edited by hand and how stale it all is. Check errors are not
+    /// repeated here — the report block below leads with them instead
+    /// (`catalog.report?.headline`).
     private var caption: String {
         if catalog.isChecking { return "正在核对价源…" }
         var parts: [String] = []
@@ -578,23 +579,25 @@ private struct PriceEditor: View {
             // A new row starts from whatever the table resolves today, so the
             // user is editing a plausible price rather than a blank.
             if case .priced(let rate)? = catalog.resolution(for: slug) {
-                currency = rate.currency
-                input = ModelPriceCard.rateTextFor(rate.input)
-                output = ModelPriceCard.rateTextFor(rate.output)
-                cacheRead = ModelPriceCard.rateTextFor(rate.cacheRead)
-                cacheWrite = ModelPriceCard.rateTextFor(rate.cacheWrite)
+                fill(from: rate)
             }
             return
         }
         from = existing.effectiveFrom
         unpriced = existing.unpriced
         if let rate = existing.rate {
-            currency = rate.currency
-            input = ModelPriceCard.rateTextFor(rate.input)
-            output = ModelPriceCard.rateTextFor(rate.output)
-            cacheRead = ModelPriceCard.rateTextFor(rate.cacheRead)
-            cacheWrite = ModelPriceCard.rateTextFor(rate.cacheWrite)
+            fill(from: rate)
         }
+    }
+
+    /// One rate → fields, shared by both seeding paths: today's table for a new
+    /// row, the stored override for an edit.
+    private func fill(from rate: ModelPricing.Rate) {
+        currency = rate.currency
+        input = ModelPriceCard.rateTextFor(rate.input)
+        output = ModelPriceCard.rateTextFor(rate.output)
+        cacheRead = ModelPriceCard.rateTextFor(rate.cacheRead)
+        cacheWrite = ModelPriceCard.rateTextFor(rate.cacheWrite)
     }
 
     private func commit() {

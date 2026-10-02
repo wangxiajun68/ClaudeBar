@@ -29,7 +29,11 @@ struct DiskUsagePanel: View {
                         }
                     }.frame(width: 126, height: 126).padding(8)
                     VStack(alignment: .leading, spacing: 14) {
-                        metric("已用", bytes: used, color: Theme.chartPurple)
+                        // The caption is *text*, so it takes the `Theme.Ink`
+                        // variant of the ring's hue — raw `chartPurple` measures
+                        // ~3.5:1 here, and the badge above already pairs the two
+                        // this way (see the `Theme.Ink` note in Theme.swift).
+                        metric("已用", bytes: used, color: Theme.Ink.cursor)
                         metric("可用", bytes: free, color: Theme.textSecondary)
                         metric("总容量", bytes: total, color: Theme.textPrimary)
                     }

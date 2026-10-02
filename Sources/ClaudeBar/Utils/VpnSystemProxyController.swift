@@ -61,6 +61,8 @@ enum VpnSystemProxyController {
             return "系统代理：没有可用网络服务"
         }
         var failed = 0
+        // Read once: the provider files cannot change mid-loop.
+        let bypass = bypassDomains()
         for service in services {
             let commands: [[String]] = [
                 ["-setautoproxystate", service, "off"],
@@ -71,7 +73,7 @@ enum VpnSystemProxyController {
                 ["-setwebproxystate", service, "on"],
                 ["-setsecurewebproxystate", service, "on"],
                 ["-setsocksfirewallproxystate", service, "on"],
-                ["-setproxybypassdomains", service] + bypassDomains(),
+                ["-setproxybypassdomains", service] + bypass,
 
             ]
             for args in commands {
@@ -298,9 +300,9 @@ extension Process {
         let output: String
     }
 
-    /// Synchronous, non-injected run capturing stdout+stderr. Small args only
-    /// (networksetup calls) — not for large output. Named runAndRead to avoid
-    /// clashing with FanHelperInstaller's throwing Process.run.
+    /// Synchronous, non-injected run capturing stdout+stderr, read to EOF
+    /// before waiting on the child. Small args only (networksetup calls) —
+    /// not for large output.
     static func runAndRead(_ path: String, args: [String]) -> RunResult {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: path)

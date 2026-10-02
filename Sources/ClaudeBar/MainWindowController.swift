@@ -155,7 +155,6 @@ final class MainWindowController {
         // the same arrangement the notch island and the menu-bar popup use.
         hosting.sizingOptions = []
         hosting.autoresizingMask = [.width, .height]
-        hosting.frame = window.contentLayoutRect
         window.contentView = hosting
     }
 
