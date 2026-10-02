@@ -533,13 +533,15 @@ struct WidgetEntryView: View {
         // agents' rows read the same vocabulary and a future signal needs no
         // widget change.
         let isWaiting = s.status == "waiting"
+        let tool = s.currentActivity ?? ""
+        let detail = isBusy && !tool.isEmpty ? tool : (s.model.isEmpty ? s.relativeUpdated : s.model)
         return HStack(spacing: 8) {
             Circle()
                 .fill(isWaiting ? p.waitingDot : (isBusy ? p.busyDot : p.idleDot))
                 .frame(width: 6, height: 6)
 
             rowTitle(s.projectFolder.isEmpty ? "codex" : s.projectFolder,
-                     detail: s.model.isEmpty ? s.relativeUpdated : s.model,
+                     detail: detail,
                      p: p)
 
             Spacer()

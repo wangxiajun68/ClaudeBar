@@ -296,7 +296,7 @@ final class IslandLiveModel: ObservableObject {
         for s in claude where s.isAlive {
             out.append(IslandSession(
                 id: "cc:\(s.pid)", agent: .claude, project: s.projectFolder,
-                activity: s.currentActivity, model: s.model,
+                activity: s.displayActivity, model: s.model,
                 isBusy: s.isBusy,
                 isWaiting: s.isWaiting, waitingReason: s.waitingReason,
                 contextRatio: s.contextRatio,
@@ -306,7 +306,7 @@ final class IslandLiveModel: ObservableObject {
         for s in cursor where s.isAlive {
             out.append(IslandSession(
                 id: "cursor:\(s.composerId)", agent: .cursor, project: s.projectFolder,
-                activity: s.currentActivity, model: "",
+                activity: s.displayActivity, model: "",
                 isBusy: s.isBusy,
                 isWaiting: s.isWaiting,
                 waitingReason: s.isWaiting ? "等待你确认计划" : "",
@@ -317,7 +317,7 @@ final class IslandLiveModel: ObservableObject {
         for s in external where s.isAlive && !s.isSubagent {
             out.append(IslandSession(
                 id: "codex:\(s.sessionId)", agent: .codex, project: s.projectFolder,
-                activity: "", model: s.model,
+                activity: s.currentActivity, model: s.model,
                 isBusy: s.isActive,
                 // Codex journals no park, so this is `false` today; carried
                 // through anyway so the island reads one field for every agent

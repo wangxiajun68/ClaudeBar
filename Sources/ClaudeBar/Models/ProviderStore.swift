@@ -1308,7 +1308,7 @@ class ProviderStore: ObservableObject {
                     contextLimit: s.contextLimit,
                     contextRatio: s.contextRatio,
                     projectFolder: s.projectFolder,
-                    currentActivity: s.isWaiting ? s.waitingReason : s.currentActivity,
+                    currentActivity: s.isWaiting ? s.waitingReason : s.displayActivity,
                     waiting: s.isWaiting
                 )
             },
@@ -1319,7 +1319,7 @@ class ProviderStore: ObservableObject {
                     contextRatio: s.contextRatio,
                     contextPercent: s.contextPercent,
                     projectFolder: s.projectFolder,
-                    currentActivity: s.isWaiting ? "等待你确认计划" : s.currentActivity,
+                    currentActivity: s.isWaiting ? "等待你确认计划" : s.displayActivity,
                     relativeUpdated: s.relativeUpdated,
                     waiting: s.isWaiting
                 )
@@ -1341,6 +1341,7 @@ class ProviderStore: ObservableObject {
                     contextRatio: s.contextRatio,
                     projectFolder: s.displayName,
                     relativeUpdated: s.relativeUpdated,
+                    currentActivity: s.currentActivity,
                     waiting: s.isWaiting
                 )
             },

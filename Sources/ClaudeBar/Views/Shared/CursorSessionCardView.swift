@@ -99,6 +99,6 @@ struct CursorSessionCardView: View {
     /// claiming the session is still working.
     private var statusLine: String {
         if isWaiting { return "等待你确认计划" }
-        return session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity
+        return session.displayActivity.isEmpty ? "等待下一步" : session.displayActivity
     }
 }

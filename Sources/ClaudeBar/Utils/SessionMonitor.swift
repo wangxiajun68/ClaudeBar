@@ -77,10 +77,22 @@ struct SessionInfo: Identifiable, Equatable {
     var isBusy: Bool { !isWaiting && (status.isWorking || toolPending || workflows.contains { $0.status == .running }) }
 
     var displayActivity: String {
-        if !status.isWorking, !toolPending, let workflow = workflows.first(where: { $0.status == .running }) {
+        // A parent turn keeps its own tool (`Bash`, `Read`) while work it
+        // already launched keeps running. The activity line is the only place
+        // the island, the popup and the dashboard say what is in flight, so
+        // every running workflow and every running direct subagent is named
+        // here — one of them is not a summary of the rest.
+        if isWaiting { return currentActivity }
+        var parts: [String] = []
+        for workflow in workflows where workflow.status == .running {
             let name = workflow.name.isEmpty ? "Workflow" : workflow.name
-            return workflow.phase.isEmpty ? name : "\(name) · \(workflow.phase)"
+            parts.append(workflow.phase.isEmpty ? name : "\(name) · \(workflow.phase)")
         }
+        for agent in subagents where agent.status == .running {
+            let name = agent.description.isEmpty ? agent.agentType : agent.description
+            parts.append(agent.activity.isEmpty ? name : "\(name) · \(agent.activity)")
+        }
+        if !parts.isEmpty { return parts.joined(separator: " + ") }
         return currentActivity
     }
 

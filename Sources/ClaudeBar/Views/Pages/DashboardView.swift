@@ -221,7 +221,7 @@ struct DashboardView: View {
                     project: s.displayTitle,
                     activity: s.isWaiting
                         ? (s.waitingReason.isEmpty ? "等待你确认" : s.waitingReason)
-                        : s.currentActivity,
+                        : s.displayActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,
@@ -242,7 +242,7 @@ struct DashboardView: View {
                     // Cursor's park reason is always the pending plan, unlike
                     // Claude's varying wait reasons — same wording as
                     // `CursorSessionCardView.statusLine`.
-                    activity: s.isWaiting ? "等待你确认计划" : s.currentActivity,
+                    activity: s.isWaiting ? "等待你确认计划" : s.displayActivity,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,
@@ -261,7 +261,7 @@ struct DashboardView: View {
                     pillInk: Theme.Ink.success,
                     busy: s.isActive,
                     project: s.displayName,
-                    activity: s.model,
+                    activity: s.isActive && !s.currentActivity.isEmpty ? s.currentActivity : s.model,
                     contextRatio: s.contextRatio,
                     contextLabel: s.contextLabel,
                     updated: s.relativeUpdated,

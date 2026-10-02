@@ -73,7 +73,9 @@ struct ExternalSessionCardView: View {
                     .lineLimit(1)
             }
 
-            Text(session.model.isEmpty ? session.cwd : session.model)
+            Text(session.isActive && !session.currentActivity.isEmpty
+                 ? session.currentActivity
+                 : (session.model.isEmpty ? session.cwd : session.model))
                 .font(Theme.Font.micro)
                 .foregroundColor(isActive ? Theme.textPrimary.opacity(0.7) : Theme.textTertiary())
                 .lineLimit(1)

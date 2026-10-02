@@ -187,6 +187,11 @@ func runTests() throws {
           "abandoned child transcripts still expire")
     check(children.first { $0.id == "child-done" }?.status == .done,
           "a current child terminal marker beats sticky unfinished metadata")
+    let named = session("parent")?.displayActivity ?? ""
+    check(named.contains("child") && named.contains("nested-child") && named.contains("child-checkpoint"),
+          "running children are named on the parent activity line, got \\(named)")
+    check(!named.contains("child-frozen") && !named.contains("child-done"),
+          "finished children stay off the activity line")
 
     // A plan waiting to be applied, or a blocking action: Cursor's own signal
     // that the run is held up on a human. It used to be ignored, so such a

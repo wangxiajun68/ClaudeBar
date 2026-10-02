@@ -193,13 +193,13 @@ final class WorkflowMonitor: @unchecked Sendable {
         }
     }
 
+    /// Terminal records only. A quoted `<task-id>` in an ordinary message, and
+    /// the same XML sitting in a `queue-operation` before it is delivered, are
+    /// not status events. Claude Code 2.1.287 delivers the record as an
+    /// `attachment` whose `origin` lives under `attachment`, with the XML in
+    /// `prompt` rather than `message.content`.
     private func applyNotification(_ json: [String: Any], to records: inout Records) {
-        guard (json["origin"] as? [String: Any])?["kind"] as? String == "task-notification",
-              let message = json["message"] as? [String: Any] else { return }
-        let texts: [String]
-        if let content = message["content"] as? String { texts = [content] }
-        else { texts = (message["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String } }
-        for text in texts {
+        for text in notificationTexts(json) {
             guard let taskID = tag("task-id", in: text), let id = records.taskRuns[taskID],
                   records.runs[id]?.taskID == taskID, let status = tag("status", in: text) else { continue }
             records.runs[id]?.status = WorkflowStatus.parse(status)
@@ -207,6 +207,24 @@ final class WorkflowMonitor: @unchecked Sendable {
             records.runs[id]?.done = tag("agents_done", in: text).flatMap(Int.init)
             records.runs[id]?.errors = tag("agents_error", in: text).flatMap(Int.init)
         }
+    }
+
+    private func notificationTexts(_ json: [String: Any]) -> [String] {
+        var texts: [String] = []
+        if (json["origin"] as? [String: Any])?["kind"] as? String == "task-notification",
+           let message = json["message"] as? [String: Any] {
+            texts.append(contentsOf: contentTexts(message["content"]))
+        }
+        if let attachment = json["attachment"] as? [String: Any],
+           (attachment["origin"] as? [String: Any])?["kind"] as? String == "task-notification" {
+            texts.append(contentsOf: contentTexts(attachment["prompt"]))
+        }
+        return texts
+    }
+
+    private func contentTexts(_ content: Any?) -> [String] {
+        if let content = content as? String { return [content] }
+        return (content as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
     }
 
     private func tag(_ name: String, in text: String) -> String? {

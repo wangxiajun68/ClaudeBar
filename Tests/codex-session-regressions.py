@@ -34,6 +34,29 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
     thread('child-stale', child=True, age=600, open_turn=True)
     thread('exec-once', source='exec', open_turn=True)
     thread('mcp-once', source='mcp')
+    # A tool body larger than the 512KB tail hides task_started from the window.
+    # 120s is past the 90s recency fallback and inside the 5-minute open-turn
+    # window, so only a lookback that actually finds task_started stays running.
+    pad = 'x' * 600_000
+    def buried(name, events, age):
+        path = work / 'sessions' / (name + '.jsonl')
+        lines = [json.dumps({'type': 'session_meta', 'payload': {'cwd': '/tmp/project', 'source': 'vscode'}})]
+        lines.extend(json.dumps(event) for event in events)
+        lines.append(json.dumps({'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'output': pad}}))
+        path.write_text('\n'.join(lines) + '\n')
+        os.utime(path, (now - age, now - age))
+        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)',
+                   (name, str(path), '/tmp/project', now - age, now - age, 'vscode', 0, 'Title ' + name))
+    call = {'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec'}}
+    buried('buried-open', [
+        {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+        call,
+    ], 120)
+    buried('buried-done', [
+        {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+        {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
+        call,
+    ], 30)
     db.commit()
     harness = work / 'Main.swift'
     harness.write_text('''import Foundation
@@ -42,8 +65,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
         static func main() {
             let sessions = ExternalSessionMonitor.fetchActive()
             let ids = Set(sessions.map(\\.sessionId))
-            precondition(ids == Set(["idle", "running", "stale-open", "stalled", "missing", "malformed"]), "Unarchived main threads must remain visible: \\(ids)")
-            precondition(sessions.filter(\\.isActive).map(\\.sessionId) == ["running"])
+            precondition(ids == Set(["idle", "running", "stale-open", "stalled", "missing", "malformed", "buried-open", "buried-done"]), "Unarchived main threads must remain visible: \\(ids)")
+            precondition(sessions.filter(\\.isActive).map(\\.sessionId) == ["running", "buried-open"],
+                         "an open turn behind a huge tool body stays running: \\(sessions.filter(\\.isActive).map(\\.sessionId))")
+            precondition(sessions.first { $0.sessionId == "buried-open" }?.currentActivity == "exec",
+                         "the tool call behind that body is the activity line")
+            precondition(sessions.first { $0.sessionId == "buried-done" }?.isActive == false,
+                         "a completion behind a huge tool body is still a completion")
             // Every open turn that stopped advancing is offered for cleanup —
             // both the hours-old one and the day-old one. `idle`, `missing` and
             // `malformed` have no open turn at all, so they are never cleanup

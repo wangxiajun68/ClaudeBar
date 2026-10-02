@@ -96,6 +96,18 @@ func run() throws {
     precondition(fetch().completedCount == 1, "replayed results are counted once")
     try notification("completed", task: "task-2")
     precondition(fetch(alive: false).status == .completed, "explicit terminal record survives process exit")
+    // 2.1.287 writes the terminal record on an attachment, and a queue copy of
+    // the same XML before that delivery is not itself a status event.
+    try launch("task-3")
+    let queued = "<task-notification><task-id>task-3</task-id><status>completed</status><agent_count>4</agent_count><agents_done>4</agents_done><agents_error>0</agents_error></task-notification>"
+    try append(["type": "queue-operation", "operation": "enqueue", "content": queued], to: parent)
+    precondition(fetch().status == .running, "a queued copy is not the delivered notification")
+    try append(["type": "attachment", "attachment": [
+        "type": "queued_command", "commandMode": "task-notification", "prompt": queued,
+        "origin": ["kind": "task-notification"]]], to: parent)
+    wf = fetch(alive: false)
+    precondition(wf.status == .completed && wf.totalCount == 4 && wf.completedCount == 4 && wf.failedCount == 0,
+                 "an attachment envelope is the native terminal notification")
     let missing = monitor.enrich([], transcript: parent, directory: root.appendingPathComponent("missing"), sessionAlive: true)
     precondition(missing.count == 1 && missing[0].status == .completed,
                  "a launch/notification remains visible without agent files")
@@ -103,8 +115,22 @@ func run() throws {
                               name: "", status: .idle, updatedAt: 0, isAlive: true)
     session.workflows = [WorkflowInfo(workflowId: "wf_busy", status: .running)]
     precondition(session.isBusy, "idle parent still shows background workflow activity")
+    session.status = .busy
+    session.currentActivity = "Bash · cargo"
+    session.workflows = [
+        WorkflowInfo(workflowId: "wf_a", name: "neo-serve-audit", phase: "Verify", status: .running),
+        WorkflowInfo(workflowId: "wf_b", name: "neo-cli-spec", phase: "Critique", status: .running),
+        WorkflowInfo(workflowId: "wf_c", name: "finished", phase: "Synthesize", status: .completed),
+    ]
+    precondition(session.displayActivity == "neo-serve-audit · Verify + neo-cli-spec · Critique",
+                 "every running workflow stays visible while the parent turn is busy")
+    session.subagents = [SubagentInfo(agentId: "agent-a", agentType: "claude",
+                                      description: "Fix neo-loop", activity: "Edit", status: .running)]
+    precondition(session.displayActivity == "neo-serve-audit · Verify + neo-cli-spec · Critique + Fix neo-loop · Edit",
+                 "a running direct subagent is named beside the workflows")
     session.status = .waiting
     precondition(!session.isBusy && session.isWaiting, "workflow must not hide user action needed")
+    precondition(session.displayActivity == "Bash · cargo", "a waiting turn keeps its own activity text")
     // Exercise the production session scan, including directory resolution.
     let project = FilePaths.claudeDir.appendingPathComponent("projects")
         .appendingPathComponent(SessionMonitor.projectDirName(for: session.cwd))

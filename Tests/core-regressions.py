@@ -24,12 +24,14 @@ def method(source, name):
 env = read('Models/Preset.swift').split('\n}\n', 1)[0] + '\n}\n'
 monitor = read('Utils/ExternalSessionMonitor.swift')
 parsers = '\n'.join(method(monitor, name) for name in
-                    ['codexSpawnInfo', 'readHead', 'readCodexContext'])
-# The tail reader sizes its own window from two constants; the slice has to
-# carry them or the extraction does not type-check (which is how this fixture
-# found out the method had grown a dependency).
+                    ['codexSpawnInfo', 'readHead', 'readCodexContext', 'recoverBeforeTail'])
+# The tail reader sizes its own window from constants and, when the window
+# carries no lifecycle line, falls back to a bounded lookback behind it; the
+# slice has to carry both or the extraction does not type-check (which is how
+# this fixture found out the method had grown a dependency).
 constants = '\n'.join(
-    line for line in monitor.split('\n') if 'static let codexTail' in line)
+    line for line in monitor.split('\n') if 'static let codexTail' in line
+    or 'static let codexLifecycle' in line)
 if 'CLAUDEBAR_CORE_OLD_TAIL' in os.environ:
     # A/B knob for the fixture above: recompile the reader as the 48 KB
     # `size - min(48_000, size)` read it replaced, to prove the fixture still

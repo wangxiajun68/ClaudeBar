@@ -452,6 +452,7 @@ private struct CursorTileFull: View {
                             accent: Theme.cursorAccent, ink: Theme.Ink.cursor)
     }
     @State private var isHovered = false
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -483,7 +484,7 @@ private struct CursorTileFull: View {
             .opacity(session.contextPercent >= 0 ? 1 : 0.25)
 
             ActivityLine(activity: isWaiting ? "等待你确认计划"
-                                             : (session.currentActivity.isEmpty ? " " : session.currentActivity),
+                                             : (session.displayActivity.isEmpty ? " " : session.displayActivity),
                          isBusy: isActive || isWaiting,
                          color: isWaiting ? Theme.statusWarning : Theme.cursorAccent)
             SessionLoadChip(key: .cursor, shared: true)
@@ -494,14 +495,19 @@ private struct CursorTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
-                // Cursor's own spawned agents were only ever reachable through
-                // the removed expand path; the popup card has always counted
-                // them, so the full-width tile does too rather than being the
-                // one surface that hides them.
                 if !session.subagents.isEmpty {
-                    StatusPill(label: "⋯\(session.subagents.count)",
-                               tint: Theme.externalHi, ink: Theme.Ink.success)
-                        .help("Cursor 为这个会话派生的子 agent")
+                    Button(action: { isExpanded.toggle() }) {
+                        HStack(spacing: 4) {
+                            Text("\(session.subagents.count)")
+                                .font(Theme.Font.caption)
+                                .foregroundColor(Theme.textTertiary())
+                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                .font(Theme.Font.micro)
+                                .foregroundColor(Theme.textSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(isExpanded ? "收起子 agent" : "展开子 agent")
                 }
                 SessionActionChips(isHovered: isHovered) {
                     ActionChip(systemImage: "cursorarrow",
@@ -512,6 +518,12 @@ private struct CursorTileFull: View {
                         revealCwd()
                     }
                 }
+            }
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(session.subagents) { cursorAgentRow($0) }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(Theme.Space.s12)
@@ -529,6 +541,25 @@ private struct CursorTileFull: View {
 
     private func openCursor() {
         TerminalLauncher.openInCursor(cwd: session.cwd)
+    }
+
+    private func cursorAgentRow(_ agent: CursorSubagentInfo) -> some View {
+        let running = agent.status == .running
+        return HStack(spacing: 6) {
+            Circle().fill(running ? Theme.cursorAccent : Theme.textTertiary()).frame(width: 4, height: 4)
+            Text(agent.agentType).font(Theme.Font.bodySmall)
+                .foregroundColor(running ? Theme.textPrimary.opacity(0.85) : Theme.textTertiary())
+                .lineLimit(1)
+            if !agent.description.isEmpty {
+                Text("· \(agent.description)").font(Theme.Font.bodySmall).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 8)
+            if !agent.activity.isEmpty {
+                Text("↳ \(agent.activity)").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1).truncationMode(.tail)
+            }
+        }
     }
 }
 
@@ -644,7 +675,9 @@ private struct ExternalSessionTile: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .opacity(session.cwd.isEmpty ? 0.25 : 1)
-                Text(session.model.isEmpty ? " " : session.model)
+                Text(session.isActive && !session.currentActivity.isEmpty
+                     ? session.currentActivity
+                     : (session.model.isEmpty ? " " : session.model))
                     .font(Theme.Font.captionMono)
                     .foregroundColor(Theme.textTertiary())
                     .lineLimit(1)

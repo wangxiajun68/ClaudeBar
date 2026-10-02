@@ -64,7 +64,23 @@ struct CursorSessionInfo: Identifiable, Equatable {
     /// Mid-work: a turn is in flight and *not* held up by a decision. The
     /// dashboard's 运行中 count and the menu-bar pulse both mean this, so the
     /// parked case has to be subtracted here rather than at each call site.
-    var isBusy: Bool { status == .active && !hasPendingDecision }
+    /// A child that is still running keeps the parent busy after the parent's
+    /// own turn has gone idle. The parked case stays excluded: a decision
+    /// waiting on the user is not work.
+    var isBusy: Bool { !isWaiting && (status == .active || subagents.contains { $0.status == .running }) }
+
+    /// Running children belong on the same line as the parent's own tool.
+    /// Callers that are parked already substitute the waiting reason.
+    var displayActivity: String {
+        let running = subagents.filter { $0.status == .running }
+        if isWaiting || running.isEmpty { return currentActivity }
+        let children = running.map { agent -> String in
+            let name = agent.description.isEmpty ? agent.agentType : agent.description
+            return agent.activity.isEmpty ? name : "\(name) · \(agent.activity)"
+        }
+        if currentActivity.isEmpty { return children.joined(separator: " + ") }
+        return (children + [currentActivity]).joined(separator: " + ")
+    }
 
     /// Folder name derived from cwd, e.g. "ClaudeBar".
     var projectFolder: String {

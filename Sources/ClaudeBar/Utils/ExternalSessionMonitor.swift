@@ -47,6 +47,10 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     /// The holder is Codex Desktop's bundled app-server, not a terminal CLI.
     var inDesktop = false
     var title: String = ""
+    /// Last tool the open turn called (`exec`, `apply_patch`, …). Empty when
+    /// the tail and the lookback behind it carry no call. Surfaces that only
+    /// showed the model name were reading this as absent.
+    var currentActivity: String = ""
 
     var isSubagent: Bool { parentThreadId != nil || threadSource == "subagent" }
 
@@ -308,6 +312,7 @@ struct ExternalSessionMonitor {
         var spawnDepth: Int
         var hasOpenTask: Bool?
         var completionID: String?
+        var activity: String
     }
     private static var codexFileCache: [String: CodexFileCache] = [:]
     /// `fetchActive` is called from detached tasks and polls can overlap, so
@@ -400,7 +405,8 @@ struct ExternalSessionMonitor {
                             threadSource: parsed.threadSource,
                             agentNickname: parsed.agentNickname,
                             holderPID: holder?.pid,
-                            inDesktop: holder?.inDesktop ?? false
+                            inDesktop: holder?.inDesktop ?? false,
+                            currentActivity: parsed.activity
                         )
                         if isHelper { scan.subagents.append(info) } else { scan.main.append(info) }
                     }
@@ -506,7 +512,8 @@ struct ExternalSessionMonitor {
                 contextTokens: parsed?.contextUsed ?? 0, contextLimit: parsed?.contextLimit ?? 0,
                 parentThreadId: parsed?.parentThreadId, threadSource: parsed?.threadSource ?? "",
                 agentNickname: parsed?.agentNickname ?? "",
-                holderPID: holder?.pid, inDesktop: holder?.inDesktop ?? false, title: row.title)
+                holderPID: holder?.pid, inDesktop: holder?.inDesktop ?? false, title: row.title,
+                currentActivity: parsed?.activity ?? "")
             if isHelper { scan.subagents.append(info) } else { scan.main.append(info) }
         }
         return scan
@@ -626,7 +633,8 @@ struct ExternalSessionMonitor {
             agentNickname: spawn?.nickname ?? "",
             spawnDepth: spawn?.depth ?? 0,
             hasOpenTask: ctx.hasOpenTask,
-            completionID: ctx.completionID)
+            completionID: ctx.completionID,
+            activity: ctx.activity)
         codexCacheLock.lock()
         codexFileCache[path] = entry
         codexCacheLock.unlock()
@@ -719,17 +727,21 @@ struct ExternalSessionMonitor {
     /// The window has to be able to span a whole turn, because a single record
     /// can swallow it: one local rollout carries an 11 MB `function_call_output`
     /// and a 120 KB read landed entirely inside it, so the loop sees no
-    /// lifecycle event at all and reports `hasOpenTask == nil` — the same "run
-    /// started mid-file / corrupt" state the adapter synthesizes for a rollout
-    /// the tool had already compacted. The visible cost is a completion that
-    /// never confirms plus a turn that keeps reading as busy until the 90 s
-    /// recency fallback expires. Turns themselves are large (69 of 85 measured
-    /// root turns wrote more than the old 48 KB), so the window is sized well
-    /// above the per-record norm rather than around it, and the read backs up
-    /// `codexTailLineSlack` bytes first so the window can be trimmed to start
-    /// on a record boundary instead of mid-line.
-    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String, completionID: String?) {
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "", nil) }
+    /// lifecycle event at all. A missing lifecycle used to leave `hasOpenTask`
+    /// nil and the turn on the 90 s recency clock — an open `exec` that stayed
+    /// quiet for two minutes read as idle. When the window itself has no
+    /// lifecycle line, a bounded lookback recovers the newest
+    /// `task_started` / `task_complete` / `turn_aborted` and the newest tool
+    /// name, skipping records too large to be either. Turns themselves are
+    /// large (69 of 85 measured root turns wrote more than the old 48 KB), so
+    /// the window is sized well above the per-record norm rather than around
+    /// it, and the read backs up `codexTailLineSlack` bytes first so the window
+    /// can be trimmed to start on a record boundary instead of mid-line.
+    private static let codexLifecycleLookback: UInt64 = 24 * 1024 * 1024
+    private static let codexLifecycleLineCap = 65_536
+
+    private static func readCodexContext(path: String) -> (used: Int, limit: Int, hasOpenTask: Bool?, model: String, completionID: String?, activity: String) {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return (0, 0, nil, "", nil, "") }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         // Scan for the window's record boundary in a small probe first: the
@@ -743,13 +755,14 @@ struct ExternalSessionMonitor {
             start = probeStart + UInt64(probe.distance(from: probe.startIndex, to: newline) + 1)
         }
         try? handle.seek(toOffset: start)
-        guard let data = try? handle.readToEnd(), !data.isEmpty else { return (0, 0, nil, "", nil) }
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return (0, 0, nil, "", nil, "") }
         let window = Data(data.prefix(Self.codexTailWindow + Int(size - start)))
         let text = String(decoding: window, as: UTF8.self)
         var used = 0, limit = 0
         var model = ""
         var hasOpenTask: Bool?
         var completionID: String?
+        var activity = ""
         var finalMessageReady = false
         for line in text.split(separator: "\n") {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -768,6 +781,7 @@ struct ExternalSessionMonitor {
                             && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 case "function_call", "custom_tool_call":
                     finalMessageReady = false
+                    if let name = payload["name"] as? String, !name.isEmpty { activity = name }
                 default:
                     break
                 }
@@ -826,6 +840,48 @@ struct ExternalSessionMonitor {
                 used = limit > 0 ? min(total, limit) : total
             }
         }
-        return (max(0, used), limit, hasOpenTask, model, completionID)
+        if hasOpenTask == nil, start > 0 {
+            let recovered = recoverBeforeTail(handle: handle, before: start)
+            hasOpenTask = recovered.open
+            if activity.isEmpty { activity = recovered.activity }
+        }
+        return (max(0, used), limit, hasOpenTask, model, completionID, activity)
+    }
+
+    /// Newest lifecycle event and tool name in the bytes the tail window did
+    /// not cover. Records larger than `codexLifecycleLineCap` are tool bodies,
+    /// not lifecycle lines, and are skipped rather than parsed.
+    private static func recoverBeforeTail(handle: FileHandle, before end: UInt64) -> (open: Bool?, activity: String) {
+        guard end > 0 else { return (nil, "") }
+        let floor = end > Self.codexLifecycleLookback ? end - Self.codexLifecycleLookback : 0
+        try? handle.seek(toOffset: floor)
+        guard let data = try? handle.read(upToCount: Int(end - floor)), !data.isEmpty else { return (nil, "") }
+        var text = String(decoding: data, as: UTF8.self)
+        if floor > 0, let newline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: newline)...])
+        }
+        var open: Bool?
+        var activity = ""
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            if line.utf8.count > Self.codexLifecycleLineCap { continue }
+            guard line.contains("task_started") || line.contains("task_complete") || line.contains("turn_aborted")
+                    || line.contains("function_call") || line.contains("custom_tool_call") else { continue }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let payload = object["payload"] as? [String: Any] else { continue }
+            if object["type"] as? String == "event_msg", let eventType = payload["type"] as? String {
+                switch eventType {
+                case "task_started": open = true
+                case "task_complete", "turn_aborted": open = false
+                default: break
+                }
+            } else if object["type"] as? String == "response_item" {
+                let kind = payload["type"] as? String ?? ""
+                if (kind == "function_call" || kind == "custom_tool_call"),
+                   let name = payload["name"] as? String, !name.isEmpty {
+                    activity = name
+                }
+            }
+        }
+        return (open, activity)
     }
 }

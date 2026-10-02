@@ -82,6 +82,9 @@ struct WidgetSnapshot: Codable {
         var contextRatio: Double
         var projectFolder: String
         var relativeUpdated: String
+        /// Last tool of an open turn. Optional so a snapshot from an older
+        /// build still decodes; empty means the row falls back to the model.
+        var currentActivity: String?
         /// A Codex thread parked on the user. Codex journals no such state today
         /// (see `ExternalSessionInfo.isWaiting`), so this is `false` for every
         /// snapshot a current build writes — it is here so the widget reads one

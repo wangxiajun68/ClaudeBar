@@ -84,7 +84,7 @@ for token, body in [('FAN_START', method(fan, '    func start()')),
     low_load = low_load.replace(token, body)
 
 markdown = (shared / 'SkillMarkdownPreview.swift').read_text()
-markdown_slice = (root / 'Sources/ClaudeBar/Models/DocumentMarkup.swift').read_text()
+markdown_slice = (root / 'Sources/ClaudeBar/Models/DocumentTable.swift').read_text() + (root / 'Sources/ClaudeBar/Models/DocumentMarkup.swift').read_text()
 markdown_slice += 'enum MarkdownFixture {\n' + method(markdown, '    nonisolated private static func parse(').replace('private static func', 'static func') + '\n}\n'
 
 benchmark = r'''
@@ -245,7 +245,7 @@ final class FixtureWindow: NSWindow {
 
         let markdown = try MarkdownFixture.parse("---\ntitle: Demo\n---\n# Title\n\nParagraph\n\n```swift\nlet x = 1\n```")
         precondition(markdown.count == 3)
-        guard case .heading(1, "Title") = markdown[0], case .code("swift", "let x = 1") = markdown[2]
+        guard case .heading(1, "Title") = markdown[0].block, case .code("swift", "let x = 1") = markdown[2].block
         else { fatalError("Markdown formatting changed") }
         let markdownLatch = ParseLatch()
         let cancelledMarkdown = Task.detached {
