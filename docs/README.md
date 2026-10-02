@@ -1,6 +1,6 @@
 # ClaudeBar 文档中心
 
-> 本仓库文档的唯一入口。最后更新：2026-09-30
+> 本仓库文档的唯一入口。最后更新：2026-10-02
 
 ClaudeBar 的文档按 **设计（为什么）** 与 **技术（怎么做）** 两层组织。先读设计建立产品上下文，再按需查阅技术实现。
 
@@ -27,6 +27,8 @@ docs/
 ├── RELEASING.md              维护者发版步骤
 ├── VERSIONING.md             版本号、tag、CHANGELOG 约定
 ├── CHANGELOG.md              用户可见的版本变更
+├── FEISHU_DOCUMENTS.md       飞书文档工作区
+├── WORKFLOW_MONITORING.md    Claude Code workflow 状态监控
 ├── promo/                    宣传影片、介绍图与制作说明
 ├── design/                   产品设计（做什么、怎么交互）
 │   ├── README.md
@@ -103,6 +105,8 @@ docs/
 | 改供应商目录 / 会话判定 | [technical/13](technical/13-provider-directory.md) |
 | 改模型价目 / 花费口径 | [technical/15](technical/15-model-cost.md) |
 | 改连接器页（Skills / MCP） | [technical/16](technical/16-connectors.md) |
+| 改飞书文档工作区 | [FEISHU_DOCUMENTS](FEISHU_DOCUMENTS.md) |
+| 改会话 / workflow 判定 | [technical/13](technical/13-provider-directory.md) · [WORKFLOW_MONITORING](WORKFLOW_MONITORING.md) |
 | 构建 / 签名 / 发版 | [09](design/09-build-and-distribution.md) · [technical/07](technical/07-build-and-signing.md) · [VERSIONING](VERSIONING.md) · [RELEASING](RELEASING.md) |
 | 性能优化 | [technical/08](technical/08-performance.md) |
 | 边界与错误 | [08](design/08-error-handling.md) |
