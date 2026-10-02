@@ -16,14 +16,22 @@
 | 文件 | 职责 |
 |------|------|
 | `Utils/ModelPricing.swift` | slug 归一化与匹配、逐桶计价、分币种累加、金额格式化、「无价」分类。**只管估算**——不接受金额，也就不可能把实扣折进来 |
-| `Utils/ModelPriceTable.swift` | 内置价目表 + 无价名单。**更新价格只改这一个文件**，日期在 `ModelPricing.updated` |
+| `Utils/ModelPriceTable.swift` | 内置价目表 + 无价名单（编译进二进制、带核查日期）。**改内置价只改这一个文件**，日期在 `ModelPricing.updated` |
+| `Utils/ModelPriceCatalog.swift` | 价目表的可写层：用户编辑与抓取回来的**覆盖行**（各带生效日）、待确认队列、核查新鲜度；落盘 `price-overrides.json`。**不发网络请求** |
+| `Utils/ModelPriceSources.swift` | 出站那一半：models.dev（美元厂商）与各人民币厂商的定价页解析。解析不出的页面返回空并报告为「未能读取」，绝不用聚合源的国际价顶替 |
 | `Utils/CursorLedger.swift` / `Utils/CursorLedgerStore.swift` | Cursor 的**实际扣费**：解码、窗口规划与取数节奏（见 [04 数据访问层](04-data-access-layer.md)） |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：双源查询、TTL 缓存、手动覆盖；默认模式下不发请求 |
 | `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行：估算一行、`Cursor 实扣` 一行，各自成句、永不相加 |
+| `Views/Shared/ModelPriceCard.swift` | 设置页的模型定价表：逐行编辑、覆盖行的溯源标签、待确认的抓取候选与差异行 |
 | `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示） |
 | `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个估算入口；实扣不进 store，`UsageView` 直接读 `CursorLedgerStore`（`rows` / `windowLabel`） |
-| `Tests/model-cost-regressions.py` | 锁定 slug 匹配（含 effort 档归一）、币种隔离、无价分类与格式化 |
+| `Tests/model-cost-regressions.py` | 锁定 slug 匹配（含 effort 档归一）、**覆盖价与内置表的并列判定**（同 slug 的覆盖在生效日取胜、生效日之前不生效、清除后复原；短 slug 覆盖不吞更长内置 slug）、币种隔离、无价分类与格式化 |
+| `Tests/model-price-source-regressions.py` | 用 `Tests/fixtures/price-pages/` 的页面快照跑真实解析器，抽出的数字与内置表的行逐条比对 |
 | `Tests/cursor-ledger-regressions.py` | 锁定实扣解码、窗口退化、以及「实扣到不了估算那条路」（`ModelUsage` 不带钱） |
+
+### 覆盖行与内置表的关系
+
+覆盖（用户手动编辑或抓取后应用）不替换内置表，而是在解析时参与同一次最长匹配，**等长 slug 时覆盖胜出**，因此「改一行内置模型的价格」这种最常见的编辑确实生效；覆盖行还带生效日，生效日之前记录的用量仍按当时的价格计价，改价因此是前向的。默认不抓取：`autoCheckIfStale()` 在没有核查记录时直接返回，第一次联网必须由用户点「查询更新」发起，抓取结果默认进入待确认队列而不是直接应用。
 
 ## 计价口径
 
@@ -220,9 +228,9 @@ claude-opus-5-5        38.7M
 
 ## 为什么不接动态价源
 
-调研过全部公开的机器可读价源（2026-09-25），结论是**没有一个能替代这张表**，而且有几个会静默改错数字。记录在这里，避免以后有人顺手接一个。
+调研过全部公开的机器可读价源（2026-09-25），结论是**没有一个能替代这张表**，而且有几个会静默改错数字。记录在这里，避免以后有人顺手接一个。**表仍然是唯一事实来源**：抓取只用来核对与提议，不自动改写。
 
-**美元那一半是能解决的**，人民币那一半不能：
+**美元那一半自动核对，人民币那一半读厂商自己的定价页**：
 
 | 来源 | 单位 | 币种 | 覆盖本表 | 问题 |
 |---|---|---|---|---|
@@ -232,6 +240,8 @@ claude-opus-5-5        38.7M
 | OpenRouter `/models` | 每 token | USD | 50/56 | **ToS 明令禁止**抓取与再分发（见下）；且 headline 是**最便宜路由**的价，不是厂商刊例价 |
 | PPIO `api.ppinfra.com` | 每百万 | **CNY（未声明）** | ~12/56 命中 | 是**转售商**自己的价目，不是厂商的 |
 
+models.dev 在这张表里只用于 **Anthropic 与 OpenAI 两家**（`ModelPriceSources.usdVendors`），因为其余条目是聚合源自己折出来的国际价；人民币厂商一律读厂商定价页（DeepSeek / 智谱 / Kimi / 百炼 / 阶跃 / MiniMax，见 `ModelPriceSources.vendors`），解析不出的页面返回空并报「未能读取」。火山方舟在 `uncheckable` 里，理由写在名单上。
+
 **三个会静默改错的具体例子**（都是我实测确认的，不是推断）：
 
 1. **DeepSeek 会掉一半。** models.dev 的 `deepseek/deepseek-flash` 是 `0.15 USD`，÷6.75 ≈ ¥1——正是**错峰**价。本表的约定是记峰时（见上「三条规则」）。直接导入会让这两行腰斩。
@@ -240,13 +250,12 @@ claude-opus-5-5        38.7M
 
 **OpenRouter 是法律问题，不是技术问题。** 它的 ToS（2026-08-31 更新）明确禁止用任何自动化手段「抓取或复制本服务上的任何信息」，以及「以转售为目的访问本服务」。把它的端点接进一个消费级应用并复制价格，是灰的。**不要接。**
 
-**唯一站得住的用法是漂移告警，不是替换。** 表继续是唯一事实来源；定期（比如随发版）拉一次 models.dev，把「USD × 汇率」与本表的 CNY 值比对，差异超过阈值就提示人工复核。有了 [显示货币](#可选折算设置--模型花费--显示货币) 的汇率之后这件事才成立——否则没有共同尺度可比。这样既拿到了自动发现改价的好处，又不会让一个外部源在你不知情的时候把数字改成另一个约定。
-
 ## 更新价目表
 
 1. 核对厂商定价页，改 `Sources/ClaudeBar/Utils/ModelPriceTable.swift` 里对应的行（文件里每段都标了来源 URL）。
 2. 改 `ModelPricing.updated` 的日期（tooltip 末尾显示「价目表核查于 …」）—— 它是唯一的日期来源，价目表文件里只写注释。
 3. `python3 Tests/model-cost-regressions.py` —— 会校验 slug 唯一且 canonical、input/output 非零、cache 桶非零、无价名单与价目表不重叠，以及**本应用目录里内置的那些模型 ID 都有交代**。
+4. 设置页「模型定价 → 查询更新」可以对现有行做一次自动核对：差异进入待确认队列，逐条「应用」才写入 `price-overrides.json`，不改动内置表也不重新发版。抓到的页面解析数字由 `Tests/model-price-source-regressions.py` 用 `Tests/fixtures/price-pages/` 的快照守着。
 
 模型 ID 以 [§13 供应商目录](13-provider-directory.md) 里的预设为准：那张表里的 slug 是「用户实际会记录下来的名字」，这里少一行，那张卡片就会显示「未计价」。新增厂商时两处一起加。
 
