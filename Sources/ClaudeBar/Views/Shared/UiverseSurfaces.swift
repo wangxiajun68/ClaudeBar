@@ -384,7 +384,7 @@ struct SegmentedCapsule<Item: Hashable>: View {
                 .padding(2)
                 .allowsHitTesting(false)
         }
-        .animation(reduceMotion ? nil : Theme.Animation.snappy, value: selection)
+        .animation(reduceMotion ? nil : Theme.Animation.smooth, value: selection)
         .accessibilityElement(children: .contain)
     }
 }
@@ -444,7 +444,8 @@ private struct SegmentedItem: View {
                                    size: 13, engaged: active || hovered)
                 }
                 Text(title)
-                    .font(active ? Theme.Font.chromeEmph : Theme.Font.chrome)
+                    // Selection changes ink and the pill, never label metrics.
+                    .font(Theme.Font.chromeEmph)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                     .fixedSize()
@@ -466,7 +467,7 @@ private struct SegmentedItem: View {
             }
             .contentShape(Capsule())
         }
-        .buttonStyle(.pressable)
+        .buttonStyle(.plain)
         .hoverState($hovered)
         .shineOnHover(tint: Theme.isDark ? .white : .white.opacity(0.85),
                       shape: Capsule(),

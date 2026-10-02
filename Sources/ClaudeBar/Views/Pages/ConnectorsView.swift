@@ -24,16 +24,71 @@ struct ConnectorsView: View {
     private let columns = [GridItem(.adaptive(minimum: 268), spacing: Theme.Space.gridGapPage, alignment: .top)]
     private var selectedProject: String? { projectPath.isEmpty ? nil : projectPath }
 
+    // Both toolbars reserve this same leading slot. The navigation control is
+    // owned by the stable overlay, so neither page can recreate or reposition it.
+    private let navigationWidth: CGFloat = 190
+
     var body: some View {
-        VStack(spacing: 0) {
-            if showFeishu { FeishuDocumentsView(navigation: AnyView(connectorTabs)) }
-            else {
-                HStack { connectorTabs; Spacer() }
-                    .padding(.horizontal, Theme.Space.s24).padding(.top, Theme.Space.s12)
-                inventory
+        ZStack(alignment: .topLeading) {
+            if showFeishu {
+                FeishuDocumentsView(navigationWidth: navigationWidth)
+            } else {
+                VStack(spacing: 0) {
+                    inventoryToolbar
+                    inventory
+                }
+            }
+            connectorTabs
+                .frame(width: navigationWidth, height: 36, alignment: .leading)
+                .padding(.horizontal, Theme.Space.s24)
+                .padding(.top, Theme.Space.s12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.bgPrimary)
+    }
+
+    private var inventoryToolbar: some View {
+        HStack(spacing: Theme.Space.s8) {
+            Color.clear.frame(width: navigationWidth).accessibilityHidden(true)
+            InstrumentSearchField(prompt: focus == .local ? "搜索本机命令" : "搜索名称、平台或 Skill", text: $search)
+                .frame(height: 32)
+            ActionIcon(symbol: "arrow.clockwise", tint: Theme.textSecondary) {
+                Task { await manager.refresh(projectPath: selectedProject) }
+            }
+            .disabled(manager.isLoading)
+            .help(manager.isLoading ? "正在扫描本机与项目配置" : "刷新连接器")
+            projectControl
+            if focus != .local {
+                ActionButton(batchMode ? "完成管理" : "批量管理", symbol: "checklist") {
+                    toggleBatchMode()
+                }
+                .disabled(manager.records.isEmpty)
+                .help(batchMode ? "退出批量管理；已选内容会被清空" : "选中多张卡片，一次停用、启用或移除")
             }
         }
-        .background(Theme.bgPrimary)
+        .frame(height: 36)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.top, Theme.Space.s12)
+        .padding(.bottom, Theme.Space.s12)
+        .disabled(isBatching || !busyIDs.isEmpty)
+    }
+
+    private var projectControl: some View {
+        HStack(spacing: 4) {
+            Button(action: chooseProject) {
+                Label(projectPath.isEmpty ? "选择项目" : URL(fileURLWithPath: projectPath).lastPathComponent,
+                      systemImage: "folder")
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(width: projectPath.isEmpty ? nil : 160)
+            }
+            .buttonStyle(.plain).headerControl()
+            .help(projectPath.isEmpty ? "扫描个人配置，并可添加项目配置" : projectPath)
+            if !projectPath.isEmpty {
+                ActionIcon(symbol: "xmark", tint: Theme.textSecondary) { projectPath = "" }
+                    .help("移除项目范围，保留个人配置")
+            }
+        }
+        .disabled(isBatching || !busyIDs.isEmpty)
     }
 
     private var connectorTabs: some View {
@@ -57,7 +112,7 @@ struct ConnectorsView: View {
             // plain stack.
             if loading || count == 0 {
                 VStack(alignment: .leading, spacing: 0) {
-                    chrome(count: count, bulkAvailable: false)
+                    chrome(count: count)
                     if loading { loadingState } else { emptyState }
                 }
                 .padding(.horizontal, Theme.Space.s24)
@@ -87,7 +142,7 @@ struct ConnectorsView: View {
                             }
                         }
                     } header: {
-                        chrome(count: count, bulkAvailable: focus != .local)
+                        chrome(count: count)
                     }
                 }
                 .padding(.horizontal, Theme.Space.s24)
@@ -244,73 +299,25 @@ struct ConnectorsView: View {
         return false
     }
 
-    private var header: some View {
-        ConnectorInventoryHeader(
-            focus: focus,
-            platform: platform,
-            counts: Dictionary(uniqueKeysWithValues: ConnectorPlatform.allCases.map { item in
-                (item, manager.count(kind: kind(of: focus), platform: item))
-            }),
-            kindCounts: Dictionary(uniqueKeysWithValues: ConnectorFocus.allCases.map { item in
-                (item, item == .local ? manager.localCLIs.count : manager.count(kind: kind(of: item)))
-            }),
-            localCount: manager.localCLIs.count,
-            total: manager.records.count,
-            currentCount: kindCount(focus),
-            loading: manager.isLoading,
-            projectName: projectPath.isEmpty ? nil : URL(fileURLWithPath: projectPath).lastPathComponent,
-            onSelectPlatform: { item in
-                withAnimation(Theme.Motion.state) {
-                    // Tapping the selected chip clears the filter, which is
-                    // what the chip's own selected state implies and what the
-                    // empty state's 「清空筛选」 says it does.
-                    platform = (item != nil && platform == item) ? nil : item
-                    if focus == .local { focus = .plugin }
-                }
-            },
-            onRefresh: { Task { await manager.refresh(projectPath: selectedProject) } },
-            onChooseProject: chooseProject
-        )
-        .padding(.top, Theme.Space.s8)
-        .padding(.bottom, Theme.Space.s16)
-    }
-
-    /// Title, filters and notices. Horizontal inset lives on the scroll
-    /// content, once, so the header and the cards share an edge.
-    private func chrome(count: Int, bulkAvailable: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            toolbar(count: count, bulkAvailable: bulkAvailable)
-            notices
-        }
-    }
-
-    private func toolbar(count: Int, bulkAvailable: Bool) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+    /// One compact control band. Counts live on the category tabs; the
+    /// trailing count is the filtered result, rather than another inventory total.
+    private func chrome(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s10) {
             HStack(spacing: Theme.Space.s8) {
                 ConnectorKindFilter(items: ConnectorFocus.allCases,
                                     selection: focus,
                                     count: kindCount,
                                     onSelect: { item in
-                    withAnimation(Theme.Motion.state) {
-                        focus = item
-                        // A platform filter picked under 插件 means
-                        // nothing under Skills; carrying it over landed
-                        // the user on a silently empty grid.
-                        platform = nil
-                    }
+                    // Only the pill animates, never the inventory's geometry.
+                    focus = item
+                    platform = nil
                 })
                 Spacer(minLength: Theme.Space.s8)
+                if focus != .local { platformFilter }
                 Text("\(count) 项")
-                    .rollingNumber("\(count) 项")
-                    .font(Theme.Font.microMedium)
+                    .font(Theme.Font.microMono)
                     .foregroundStyle(Theme.textSecondary)
-                if bulkAvailable {
-                    ActionButton(batchMode ? "完成管理" : "批量管理", symbol: "checklist") {
-                        withAnimation(Theme.Motion.state) { toggleBatchMode() }
-                    }
-                    .help(batchMode ? "退出批量管理；已选内容会被清空" : "选中多张卡片，一次停用、启用或移除")
-                }
+                    .frame(minWidth: 48, alignment: .trailing)
             }
             if focus == .skill {
                 Text(platform.map { "启停范围：\($0.title)。同名 Skill 的各个已扫描安装会一起移入或移出停用区。" }
@@ -318,16 +325,21 @@ struct ConnectorsView: View {
                     .font(Theme.Font.micro)
                     .foregroundStyle(Theme.textSecondary)
             }
-            InstrumentSearchField(prompt: "搜索名称、平台或包含的 Skill", text: $search)
-                .frame(height: 38)
-            if !projectPath.isEmpty {
-                Button("清除项目筛选") { projectPath = "" }
-                    .buttonStyle(.plain)
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.Ink.claude)
-            }
+            notices
         }
-        .padding(.bottom, Theme.Space.s12)
+        .padding(.bottom, Theme.Space.s8)
+    }
+
+    private var platformFilter: some View {
+        SegmentedCapsule(items: [nil] + ConnectorPlatform.allCases.map { Optional($0) },
+                         selection: platform,
+                         title: { $0?.title ?? "全部" },
+                         count: { item in
+                             item.map { manager.count(kind: kind(of: focus), platform: $0) } ?? kindCount(focus)
+                         },
+                         tint: Theme.Ink.claude,
+                         itemTint: { $0?.ink ?? Theme.Ink.claude },
+                         onSelect: { platform = $0 })
     }
 
     @ViewBuilder private var notices: some View {
@@ -524,24 +536,10 @@ struct ConnectorsView: View {
                 // coloured label is not a control, and these two sit in the
                 // same row as three real buttons. `on: false` because they are
                 // *momentary* — nothing stays "selected" after 全选.
-                Menu {
-                    Button("选本页全部") { selection = targets }
-                    Divider()
-                    ForEach(ConnectorPlatform.allCases) { item in
-                        Button("只选 \(item.title)（\(all.filter { $0.platforms.contains(item) }.count)）") {
-                            platform = item
-                            selection = Set(all.filter { $0.platforms.contains(item) }.map(\.id))
-                        }
-                    }
-                    Divider()
-                    Button("选全部 Skills（不只看本页）") { selectKind(.skill) }
-                    Button("选全部 MCP（不只看本页）") { selectKind(.mcp) }
-                    Button("选全部插件（不只看本页）") { selectKind(.plugin) }
-                } label: {
-                    InstrumentMenuLabel(title: "按平台 / 类型快选", tint: Theme.Ink.claude)
+                ForEach([ConnectorFocus.plugin, .skill, .mcp]) { item in
+                    ChipButton("全部\(item.title)", symbol: item.symbol, on: false) { selectKind(item) }
+                        .help("选择整个清单里的\(item.title)，并清除搜索与平台筛选")
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("按平台只筛本页；按类型可选整个清单里的同类项")
                 Spacer(minLength: Theme.Space.s8)
                 ChipButton("全选本页", symbol: "checkmark.square", on: false) { selection = targets }
                     .disabled(selected.count == all.count)
@@ -695,202 +693,6 @@ struct ConnectorsView: View {
     }
 }
 
-/// The page's header card: title, live counts, refresh / project controls, and
-/// the platform filter. The three client destinations are real filters; scan and
-/// project stay reachable from every state, because a scan is the answer to
-/// "this list looks wrong" and hiding it behind the filter would be a trap.
-///
-/// The *type* filter (插件 / Skills / MCP / 本机 CLI) is not here — it lives in
-/// `toolbar` below this card, since it selects what the page shows rather than
-/// describing what was found.
-private struct ConnectorInventoryHeader: View {
-    let focus: ConnectorFocus
-    let platform: ConnectorPlatform?
-    let counts: [ConnectorPlatform: Int]
-    /// The three type totals the reading strip prints, keyed by focus kind.
-    let kindCounts: [ConnectorFocus: Int]
-    let localCount: Int
-    let total: Int
-    let currentCount: Int
-    let loading: Bool
-    let projectName: String?
-    let onSelectPlatform: (ConnectorPlatform?) -> Void
-    let onRefresh: () -> Void
-    let onChooseProject: () -> Void
-
-    var body: some View {
-        PageHeaderCard(tint: Theme.Ink.claude,
-                       faceTint: Theme.claude) { engaged in
-            VStack(alignment: .leading, spacing: Theme.Space.s14) {
-                // The band's leading half is the app's shared `PageTitle` +
-                // subtitle, not a hand-typed heading: this header used to draw
-                // its own `GlyphWell(size: 38)` beside a 22pt **semibold**
-                // label, while every other page's title is `PageTitle`'s
-                // 22pt **bold** beside a 34pt well. Two pages, two marks, two
-                // weights — the inconsistency this page's title showed next to
-                // 模型. `PageTitle` also owns the `PageIdentity` mark/hue for
-                // 连接器, so the well can no longer drift from its hue.
-                HStack(alignment: .top, spacing: Theme.Space.s12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        PageTitle(title: "连接器", engaged: engaged)
-                        Text(subtitle)
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer(minLength: Theme.Space.s8)
-                    // The band's own controls take the shared page-band
-                    // button (`.headerControl()`, `InstrumentControls.swift`):
-                    // a capsule milled into the band with a lit perimeter that
-                    // travels once on hover. `.plain` first, because the default
-                    // bezel would draw a second grey rect inside that well.
-                    Button(action: onRefresh) {
-                        Label("刷新", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(loading)
-                    .headerControl()
-                    Button(action: onChooseProject) {
-                        Label(projectName ?? "选择项目", systemImage: "folder")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.plain)
-                    .headerControl()
-                }
-
-                // The composition strip. The header's job is to answer "what is
-                // in here" before the grid does, and four grey figures answering
-                // it separately is not an answer — it is four numbers to read.
-                // Drawn as one proportional bar instead: each type owns a
-                // segment sized by its share, so the *shape* of the inventory is
-                // legible in one glance and the figures are there for the reader
-                // who wants them.
-                inventoryStrip
-
-                if focus != .local {
-                    // The platform row is the same segmented capsule as the type
-                    // filter below it, with one difference: each item keeps its own
-                    // hue, because Claude / Codex / Cursor are identities rather
-                    // than entries in one list. Four equal-width bordered cards
-                    // (the previous shape) drew a second card grid inside the
-                    // header card and made the selection read as "which one is
-                    // filled" instead of "where am I".
-                    SegmentedCapsule(items: platformItems,
-                                     selection: platform,
-                                     title: { $0?.title ?? "全部" },
-                                     symbol: { item in
-                                         item.map(platformSymbol) ?? "square.grid.2x2"
-                                     },
-                                     count: { item in
-                                         item.map { counts[$0] ?? 0 } ?? currentCount
-                                     },
-                                     tint: Theme.Ink.claude,
-                                     itemTint: { item in
-                                         item.map(\.ink) ?? Theme.Ink.claude
-                                     },
-                                     // Claude / Codex / Cursor are *identities*,
-                                     // and this row already keeps their own hues
-                                     // for the same reason. Their SF Symbols were
-                                     // the last place the app said "a command
-                                     // line" where the product had a mark.
-                                     brand: platformBrand,
-                                     fillsWidth: true,
-                                     onSelect: onSelectPlatform)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-        }
-    }
-
-    private var subtitle: String {
-        if loading { return "正在扫描本机与项目配置" }
-        if focus == .local { return "本机已安装 \(localCount) 个 CLI" }
-        return "共 \(total) 项能力 · 当前分类 \(currentCount) 项"
-    }
-
-    /// The types the strip proportions, in the order the filter lists them.
-    private var stripParts: [(focus: ConnectorFocus, count: Int, face: Color, ink: Color)] {
-        [
-            (.plugin, kindCounts[.plugin] ?? 0, Theme.claude, Theme.Ink.claude),
-            (.skill, kindCounts[.skill] ?? 0, Theme.cursor, Theme.Ink.cursor),
-            (.mcp, kindCounts[.mcp] ?? 0, Theme.statusSuccess, Theme.Ink.success),
-        ]
-    }
-
-    private var stripTotal: Int {
-        max(1, stripParts.reduce(0) { $0 + $1.count })
-    }
-
-    /// One proportional bar plus a legend that doubles as the figures. The bar
-    /// takes the **shape** hues (a fill), the legend the **ink** ones (text) —
-    /// the same split every other bar-and-label pair in the app keeps.
-    private var inventoryStrip: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    ForEach(stripParts, id: \.focus) { part in
-                        let share = CGFloat(part.count) / CGFloat(stripTotal)
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(part.face.opacity(part.count == 0 ? 0.13 : 0.85))
-                            .frame(width: max(3, geo.size.width * share - 2))
-                    }
-                }
-            }
-            .frame(height: 6)
-
-            HStack(spacing: Theme.Space.s14) {
-                ForEach(stripParts, id: \.focus) { part in
-                    HStack(spacing: 5) {
-                        Circle().fill(part.face).frame(width: 6, height: 6)
-                        Text(part.focus.title)
-                            .font(Theme.Font.micro)
-                            .foregroundStyle(Theme.textSecondary)
-                        Text("\(part.count)")
-                            .rollingNumber("\(part.count)")
-                            .font(Theme.Font.microSemibold)
-                            .foregroundStyle(part.ink)
-                    }
-                }
-                Spacer(minLength: 0)
-                HStack(spacing: 5) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Theme.textTertiary())
-                    Text("本机 CLI")
-                        .font(Theme.Font.micro)
-                        .foregroundStyle(Theme.textSecondary)
-                    Text("\(localCount)")
-                        .rollingNumber("\(localCount)")
-                        .font(Theme.Font.microSemibold)
-                        .foregroundStyle(Theme.textPrimary)
-                }
-            }
-        }
-    }
-
-    /// `nil` is the 全部 entry, kept in the same list so it slides under the
-    /// same selection pill as the three real clients.
-    private var platformItems: [ConnectorPlatform?] {
-        [nil] + ConnectorPlatform.allCases.map { Optional($0) }
-    }
-
-    /// All three clients' artwork is bundled, so all three draw it.
-    private func platformBrand(_ item: ConnectorPlatform?) -> Bool? {
-        switch item {
-        case .claude: false
-        case .codex: true
-        default: nil
-        }
-    }
-
-    private func platformSymbol(_ item: ConnectorPlatform) -> String {
-        switch item {
-        case .claude: "terminal"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .cursor: ""
-        }
-    }
-}
-
 private enum ConnectorFocus: String, CaseIterable, Identifiable {
     case plugin, skill, mcp, local
     var id: String { rawValue }
@@ -988,15 +790,13 @@ private struct ConnectorCard: View {
     let onSetEnabled: (Bool) -> Void
     let onRemove: () -> Void
     @State private var hovered = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     /// The card's platform hue as **text** — the `GlyphWell` mark and the
     /// per-platform chips, both of which need the readable variant.
     private var tint: Color {
         record.platforms.first?.ink ?? Theme.textSecondary
     }
 
-    /// The same platform hue as a **surface** — the wash and the corner rings.
+    /// The same platform hue as a **surface** — the card wash.
     /// Deliberately a second value rather than `tint` used twice: the ink mix
     /// lands near-navy behind a card whose own title is `textPrimary`, so the
     /// wash read as a dark smudge instead of as the card's accent. (`nil` — a
@@ -1006,42 +806,37 @@ private struct ConnectorCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Button(action: onDetails) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 10) {
                         // Reserve the leading slot for the independent selection
                         // button overlaid below, outside the detail button.
                         if selecting {
                             Color.clear.frame(width: 24, height: 24)
                         }
-                        // A connector that belongs to one client shows that
-                        // client's mark; the kind (plugin / skill / MCP) is
-                        // already printed under the name, and the chip row
-                        // below prints the platform's own hue. Three copies of
-                        // the same fact was the reason the well read as
-                        // decoration.
+                        // The active category supplies the kind; use the
+                        // subtitle for this installation's scope instead.
                         GlyphWell(name: record.kind.symbol,
-                                  tint: tint, size: 40, engaged: hovered,
+                                  tint: tint, size: 32, engaged: hovered,
                                   mark: record.brandWellMark)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(record.name)
-                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text(record.kind == .skill ? "Skill" : record.kind.title)
+                            Text(record.scope)
                                 .font(Theme.Font.microSemibold)
                                 .foregroundStyle(Theme.textSecondary)
                         }
                         Spacer(minLength: 4)
-                        status
                     }
                     Text(blurb)
                         .font(Theme.Font.caption)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
-                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
                     HStack(spacing: 4) {
                         ForEach(record.platforms) { item in
                             // The same pill every other readout in the app uses,
@@ -1052,10 +847,6 @@ private struct ConnectorCard: View {
                                        tint: item.face,
                                        ink: item.ink)
                         }
-                        Text(record.scope)
-                            .font(Theme.Font.micro)
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
                         Spacer(minLength: 0)
                     }
                     .frame(height: 22)
@@ -1064,45 +855,25 @@ private struct ConnectorCard: View {
             }
             .buttonStyle(.plain)
             .help(selecting ? "查看详情；左上角是选择框" : "查看详情")
-            Spacer(minLength: 0)
-            HairlineDivider()
-            // The action row gives way to an empty strip of the same height
-            // rather than disappearing: the card is a fixed 210pt, and a footer
-            // that collapsed would make every tile in the grid reflow the moment
-            // bulk mode is toggled.
+            // Reserve the action row so entering bulk mode keeps grid geometry stable.
             if selecting {
-                Color.clear.frame(height: 30)
+                HStack { Spacer(); status }.frame(height: 30)
             } else {
                 actions
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 164, maxHeight: 164, alignment: .topLeading)
         // One independent selection target, aligned with the reserved header
         // slot. Keeping it outside the detail button avoids nested buttons.
         .overlay(alignment: .topLeading) {
             if selecting {
                 ConnectorTick(selected: selected) { onToggleSelection?() }
-                    .offset(x: 16, y: 24)
+                    .offset(x: 12, y: 16)
             }
         }
-        .tile(tint: faceTint, hovered: hovered, lens: lens)
-        // Tilt and shine only while this card is the one under the pointer.
-        // The modifier used to leave a 3D transform on every card in the
-        // inventory, including the ones at rest, and scrolling re-rasterised
-        // each of them. The lift still comes from `.tile()`.
-        .depthTilt(corner: Theme.Radius.lg, hovered: hovered, reduceMotion: reduceMotion)
+        .tile(tint: faceTint, hovered: hovered)
         .hoverState($hovered)
-    }
-
-    /// The corner ornament, drawn in the card's own platform hue as a surface,
-    /// matching the wash under it. Sized past the tile's 22pt radius so it
-    /// reads as depth behind the header rather than as a badge; the type mark
-    /// itself is the `GlyphWell` in that header, so the rings stay hue-only and
-    /// the card keeps one identity, not two.
-    private var lens: DepthLensSpec? {
-        guard let faceTint else { return nil }
-        return DepthLensSpec(tint: faceTint, size: 132, rings: 3)
     }
 
     private var blurb: String {
@@ -1155,11 +926,11 @@ private struct ConnectorCard: View {
                 Button("停用") { onSetEnabled(false) }
                     .connectorUtilityButton()
             } else {
-                Text("在客户端中管理")
-                    .font(Theme.Font.micro)
-                    .foregroundStyle(Theme.textSecondary)
+                Button("查看详情", action: onDetails)
+                    .connectorUtilityButton()
             }
             Spacer(minLength: 4)
+            status
             if record.canRemove && !isBusy {
                 Button("移除", action: onRemove)
                     .connectorUtilityButton()
@@ -1237,7 +1008,7 @@ private struct LocalCLICard: View {
                 // `LocalCLIRecord.monogram` for why this is not a logo: the
                 // inventory is a list of *commands*, most of which have no mark
                 // to bundle, and 20 identical terminals read as a failed render.
-                CLIAvatar(record: cli, size: 40, engaged: hovered)
+                CLIAvatar(record: cli, size: 32, engaged: hovered)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cli.name)
                         .font(Theme.Font.chromeEmph)
@@ -1268,8 +1039,8 @@ private struct LocalCLICard: View {
             }
             .frame(height: 30)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 210, maxHeight: 210, alignment: .topLeading)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 164, maxHeight: 164, alignment: .topLeading)
         // Surface hue, not the ink variant: `Theme.Ink.claude` is mixed for
         // text and lands near-navy as a wash. The header mark keeps the ink.
         .tile(tint: Theme.claude, hovered: hovered,

@@ -234,13 +234,17 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
 5. **VPN CTA** — dark sparkle pill. Live outbound path is a `›` breadcrumb,
    not a decorative metro line.
 6. **Settings** — six purpose-based categories, sidebar navigation and grouped rows; explicit Save / Apply for credentials and ports.
-7. **Connectors** — a header card (title, live counts, refresh, project picker)
-   over a `SegmentedCapsule` type filter (插件 / Skills / MCP / 本机 CLI, each
-   with its count), a second `SegmentedCapsule` for the platform (全部 / Claude
-   Code / Codex / Cursor), and the search box. Tiles are fixed-height and
-   adaptive; each names its type and keeps the state action visible. A sheet
-   renders Skill Markdown, MCP tool metadata, or plugin contents; scrolling
-   never expands or relays out a tile.
+7. **Connectors** — one 36pt toolbar contains the persistent 连接器 / 飞书文档
+   switch, search and page actions. Each page reserves the same leading slot
+   under the parent-owned switch, so navigation keeps its namespace and position.
+   The connector list begins with fully expanded category and platform capsules
+   on one row, including their counts; no title/statistics card or dropdown filter.
+   Segment labels keep identical font metrics in both selection states, with
+   smooth pill motion and no press scaling or spring overshoot.
+   Tiles are fixed at 164pt with scope under the name, a two-line summary,
+   platform chips and directly visible enable/disable, state and remove controls.
+   Bulk shortcuts are also visible buttons. A sheet renders Skill Markdown,
+   MCP tool metadata or plugin contents; no 3D tilt on this scrolling grid.
 8. **Main navigation** — a centered white capsule floats over the continuous
    ice canvas; brand and live status stay outside it. At narrow widths tabs
    lose glyphs before labels, preserving the full destination list.
@@ -316,10 +320,9 @@ delay, a selection tally — rolls per digit with the island's own effect:
   Internals use a bundled detailed vector-style PNG illustration. It is a
   conceptual overview, not an exact host-specific board map or a true SVG.
   Both illustrated fans animate independently using the shared turbine crops.
-- The 3D card's tilt is a **hero** treatment, not part of `.tile()`: only
-  `ConnectorCard` opts in via `.depthTilt()`, and only while that one card is
-  hovered, so at most one subtree is ever rasterised in 3D. It stays off
-  scrolling grids of 200 cards.
+- The 3D card's tilt is a **hero** treatment, not part of `.tile()`.
+  Connector inventory tiles use the ordinary surface and hover state; 3D tilt
+  stays off scrolling grids of 200 cards.
 - The main navigation uses one static elevated surface; only tab hover and
   selection animate. No full-width material blur or scrolling tab strip.
 

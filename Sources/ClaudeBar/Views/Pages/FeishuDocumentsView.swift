@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct FeishuDocumentsView: View {
-    var navigation: AnyView? = nil
+    var navigationWidth: CGFloat = 0
     @ObservedObject private var store = FeishuDocumentStore.shared
     @State private var search = ""
     @State private var tab = "正文"
@@ -72,9 +72,10 @@ struct FeishuDocumentsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            if let navigation { navigation }
-            else { FeishuWorkspaceMark().frame(width: 22, height: 22); Text("飞书文档").font(Theme.Font.caption.weight(.semibold)) }
+        HStack(spacing: Theme.Space.s8) {
+            if navigationWidth > 0 {
+                Color.clear.frame(width: navigationWidth).accessibilityHidden(true)
+            }
             Button { showDocuments.toggle() } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "folder")
@@ -114,7 +115,9 @@ struct FeishuDocumentsView: View {
                 .help("导入 Word / Markdown").disabled(store.preview || store.working || !store.location.space.isEmpty)
         }
         .font(Theme.Font.microMedium).foregroundStyle(Theme.textPrimary)
-        .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 6)
+        .frame(height: 36)
+        .padding(.horizontal, Theme.Space.s24)
+        .padding(.top, Theme.Space.s12).padding(.bottom, Theme.Space.s12)
     }
 
     private var inventory: some View {
