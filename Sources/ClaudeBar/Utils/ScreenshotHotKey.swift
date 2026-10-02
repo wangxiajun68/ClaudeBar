@@ -45,18 +45,32 @@ final class ScreenshotHotKey: ObservableObject {
             installWakeObserverIfNeeded()
         } else {
             unregister()
+            removeWakeObserver()
         }
     }
 
     /// After sleep/lock, other apps may have grabbed ⌘⇧A in the meantime.
     /// Reclaim both the tap and the exclusive registration. Installed once —
     /// `startIfEnabled` and `setEnabled(true)` can both be reached.
+    ///
+    /// The handler re-checks the preference: the observer is installed while
+    /// the feature is on and removed when it is turned off, so this is the
+    /// second line of defence against a wake re-registering a hotkey the user
+    /// has since disabled (which would swallow ⌘⇧A system-wide again, with the
+    /// settings row still reading off).
     private func installWakeObserverIfNeeded() {
         guard wakeMonitor == nil else { return }
         wakeMonitor = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard AppPreferences.shared.screenshotHotkeyEnabled else { return }
             self?.register()
         }
+    }
+
+    private func removeWakeObserver() {
+        guard let wakeMonitor else { return }
+        NSWorkspace.shared.notificationCenter.removeObserver(wakeMonitor)
+        self.wakeMonitor = nil
     }
 
     /// Release the Carbon hot key and the wake observer. Called at
@@ -64,10 +78,7 @@ final class ScreenshotHotKey: ObservableObject {
     /// observer outlives the singleton otherwise.
     func stop() {
         unregister()
-        if let wakeMonitor {
-            NSWorkspace.shared.notificationCenter.removeObserver(wakeMonitor)
-            self.wakeMonitor = nil
-        }
+        removeWakeObserver()
         if let handlerRef {
             RemoveEventHandler(handlerRef)
             self.handlerRef = nil

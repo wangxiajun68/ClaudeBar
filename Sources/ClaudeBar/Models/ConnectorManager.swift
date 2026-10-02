@@ -1036,11 +1036,19 @@ private enum ConnectorInventory {
         var entries = try parkedSkills()
         if let index = entries.firstIndex(where: { $0.original == original.path }) {
             let stored = URL(fileURLWithPath: entries[index].stored)
-            // Same resolution rule as the restore path in `setSkillEnabled`: the
-            // final component may be a symlink into a shared root, and resolving
-            // it would land outside the vault.
-            guard stored.resolvingSymlinksInPath().deletingLastPathComponent().path == vault.resolvingSymlinksInPath().path else { throw ConnectorError.changed }
-            if fm.fileExists(atPath: stored.path) {
+            // Resolve the **directory**, never the entry itself — the same rule
+            // (and the same order) as the restore path in `setSkillEnabled`.
+            // Resolving the whole path first follows the parked link to its
+            // target, so the guard then compares the target's parent against
+            // the vault and refuses to remove a symlinked record that is
+            // plainly sitting in it: the card kept offering 移除 and every
+            // attempt reported 文件已变化.
+            guard stored.deletingLastPathComponent().resolvingSymlinksInPath().path == vault.resolvingSymlinksInPath().path else { throw ConnectorError.changed }
+            // `itemExists` (lstat): a parked link whose target is gone is still
+            // an entry in the vault, and `fileExists` follows the link and
+            // reports nothing there — the entry was then dropped while the
+            // link itself stayed on disk forever.
+            if itemExists(stored) {
                 try fm.trashItem(at: stored, resultingItemURL: nil)
             }
             entries.remove(at: index)
