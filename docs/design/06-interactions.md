@@ -38,7 +38,7 @@
 
 主窗口「模型」页是供应商目录（`ProviderDirectoryHost`）：品牌大标 + 当前连接 + 搜索 / 「仅当前」筛选 + Claude / Codex 两栈网格。选中一项后用 `ProviderConnectionEditor` 弹窗编辑——名称 / Key / 接口地址 / 模型列表 / 每个模型的上下文窗口与压缩阈值 / Codex 协议与推理强度——保存时若该 Provider 当前激活，则重新 `activateModel` 应用变更。目录页即列表，弹窗不再套第二列导航。
 
-源码里曾另有一套 master-detail 编辑器（`ProviderEditorView` / `CodexProviderEditorView` + `ProviderEditorModel`），没有挂载点，已删除；它独有的四个 per-model 字段先折进了 `ProviderConnectionEditor`，见 [technical/17](../reviews/ui-audit-backlog.md) §3。
+源码里曾另有一套 master-detail 编辑器（`ProviderEditorView` / `CodexProviderEditorView` + `ProviderEditorModel`），没有挂载点，已删除；它独有的四个 per-model 字段先折进了 `ProviderConnectionEditor`，见 [审查证据](../reviews/ui-audit-backlog.md) §3。
 
 ## Widget 联动
 

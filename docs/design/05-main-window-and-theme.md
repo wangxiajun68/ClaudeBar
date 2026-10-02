@@ -46,19 +46,19 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 
 - `Tile.swift`：`TileGrid` + `.tile()` / `.hoverTile()` modifier。表面本身（底 + 强调水洗 + 内嵌白环 + 角上深度环 + 悬停描边与抬升）定义在 `Views/Shared/UiverseSurfaces.swift`，`panelCard()` 与 `.tile()` 是同一套的两种密度；与 `panelCard()` 同族的半透明表面，密度更高。
 - `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep` + `.depthTilt()`（只给单张 hero 卡）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
-- `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageBar.swift` 的 `UsageModelTile` / `UsageStackBar` 已并入）。
-- `ProviderTile`（`ProviderRow.swift`）**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），已删除；目录宫格那颗瓦片由 `ProviderDirectoryCard` 承担。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 也没有挂载点，已删除（[technical/17](../reviews/ui-audit-backlog.md) §3）。
+- `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageModelTile` / `UsageStackBar` 已并入）。
+- `ProviderTile`（`ProviderRow.swift`）**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），已删除；目录宫格那颗瓦片由 `ProviderDirectoryCard` 承担。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 也没有挂载点，已删除（[审查证据](../reviews/ui-audit-backlog.md) §3）。
 - `CodexModelMark.swift`：popup 头部 chip 的客户端 **mark 本身**——`ProductBrandMark` 的真实品牌图形（Claude 放射星 / Codex 扇贝终端 / Cursor 立方体），13pt，**不再并排画家族名**（chip 自己已经写了那个词，同一格曾把家族说两遍）。**那一版「增长图形 + Codex 额度 lane」的合并 mark 已删**：它唯一的 `.tile` 调用点随概览状态单重做而消失，额度改由 chip 自己的行承载（`QuotaSwayGauge`），lane 那份绘制、`flow:` 扫光与两个 `TimelineView` 站点一并退场。
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`ProductBrandMark` 画的是**四家客户端的真实品牌图形** —— Anthropic 的 `A\`、OpenAI 的花结、**Cursor 的立方体**（LobeHub 1.97.1，Cursor 原先画的是 `cursorarrow.rays`，那是一支指针而不是这家的 mark），以及 **ClaudeBar 自己的 mark**（从 `Sources/AppIcon-1024.png` 由 `Tools/make-claudebar-mark.py` 推出，给用量图例里的「第三方」用 —— 一个四项图例里三项有图形、第四项只有文字，读起来是一行没画完）。外面套一层 `Theme.bgSecondary` 圆角方块——白标在浅色面上、黑标在深色面上都会消失，所以底色是图形的**可读性**前提，不是装饰。哪一层由 `page:` 决定而不是 `Theme.isDark`：灵动岛在两种主题下都是黑的。图形由 `Tools/gen-brand-marks.py` 归一化到画布 90%（`Sources/BrandAssets/`）：原始 PNG 各自带着到画布边缘的留白，实测在 13pt 的 header 块里 Anthropic 只剩 65%、OpenAI 更小，读起来是一团糊；归一化**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%），于是一行里并排的三家看起来是同一个尺寸。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
 - `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（**网络 / 本机代理 / 附近与设备三段**：网络段是链路本身的状态与一根标定过的 RSSI 尺，代理段是这台机器上唯一由本应用拥有的一条连接，设备段是挂在上面的耳机与隔空投送入口；MAC / IP / DNS 归档进底部的「复制诊断」。卡片与面板共用同一个 `ConnectionStatus` 词汇表和同一根 `ConnectionSignalScale`，两处不会对同一条链路说两个词；且两处都写明「接入」与「可用」是两件事，结构由 `Tests/connection-panel-regressions.py` 锁定），风扇弹出 `FanInternalsPanel`（随包 `macbook-internals-illustration.png` 机身插画，两个涡轮按插画坐标裁切（`FanArtwork`），插画缺失时退回 `laptopcomputer` SF 符号）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
 - 风扇使用 精细涡轮插画、中性仪表环及随 RPM 连续旋转的 Core Animation。点击风扇直接切换最大 / 自动；点击卡片其余区域打开详情，详情保留独立调速按钮。机内结构使用高清矢量风格概念插画，不代表精确机型图。
-- `VpnTopChrome.swift`：`VpnStatusPill`（popup 状态行的节点 / 延迟药丸，点击切到主窗口 VPN 页选节点、测速）、`CursorUsagePanel`（Cursor chip 的面板：月度 + Grok 两条额度）、`VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除。
-- `SectionHeader`、`StatusDot` / `StatusBadge`、`HeartbeatSparkline`。
+- `VpnTopChrome.swift`：`VpnStatusPill`（popup 状态行的节点 / 延迟药丸，点击切到主窗口 VPN 页选节点、测速）、`CursorUsagePanel`（Cursor chip 的面板：月度 + Grok 两条额度）、`VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除；`GlassCard` 本身也已删除，文件只剩 `selectionTint`。
+- `SectionHeader`、`PulsingStatusDot` / `OverviewStatusDot`（`SessionStatusViews.swift`）、`ProviderStatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、`rollingNumber()`。下压按钮曾在这里（`adaptiveGlassButton()`），现已移到 `InstrumentControls.swift` 的 `ActionButton`。
 - `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
-- `GlassCard` + `SelectionTint`（选中着色，非系统玻璃）。
+- `GlassCard.swift`：只剩 `selectionTint(_:color:corner:)`（选中行的强调水洗，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
 - `ProxyCurlExample`：第三方接入中的一行，按需查看并复制 curl 示例；连通性检测保留在供应商相关界面。
 - 设置页采用 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`，统一行内对齐与细分隔线，使用原生 macOS 开关和选择器；不再使用每项一张卡片的宫格。布局与精简明细见 [设置页](surfaces/settings.md)。
@@ -87,4 +87,4 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - **字体**：SF Pro 单族；`displayMetric*` + `.monospacedDigit()`；瓦片字阶 `tileValue` / `tileLabel` / `tileDetail`；popup 密度别名 `rowTitle` / `micro*` / `badgeMono`。
 - **宫格**：`GridLayout.Preset`（`pageMetric` 4 等分、`pageSession` / `pageUsage` / `pageProvider` 自适应、popup 2 列预设）+ `Space.gridGap` / `gridGapPage`。
 - **动效**：`bouncy` / `smooth` / `snappy` / `sparkle` / `roll` + `Motion.page` / `Motion.state`——全部状态驱动，无常驻时间线。
-- **Helper**：`contextColor(ratio)`、`barColor(for:)` + `djb2`、`ActiveTileEdge`（accent 左缘 2px + tint 填充）。
+- **Helper**：`contextColor(ratio)`、`barColor(for:)` + `djb2`。

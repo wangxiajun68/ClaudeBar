@@ -13,7 +13,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - **间距/圆角/字距/字体**：`Space`（s2/s4/s6/s8/s10/s12/s14/s16/s24 + `gridGap`/`gridGapPage`）、`Radius`（sm 8 / md 12 / lg 16 / xl 20）、`Tracking`（titleSmall / caption）、`Font` —— 系统字阶（`titleSmall`/`bodyLarge`/`body`/`bodySmall`/`caption`/`captionMono`/`labelSection`）+ 显示字阶（`displayMetric`/`displayMetricSmall`/`displayHero`）+ popup 密度别名（`rowTitle`/`micro*`/`badgeMono`/`console`）+ 界面字阶（`chrome`/`chromeEmph`/`brand`/`section`/`eyebrow`/`meta`/`kpi`/`pill`）+ 瓦片字阶（`tileValue`/`tileValueSmall`/`tileMicroValue`/`tileLabel`/`tileDetail`）。
 - **宫格**：`GridLayout.Preset`（`pageSession`·`pageUsage` 自适应 → `TileGrid`；`mosaic(columns:)` 是 VPN 页等宽铺满的变体）。**设置页不再走这条路径**：它整片换成了 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`（`Views/Shared/SettingsControls.swift`）——一组一张中性面板、行内标签左对齐控件右对齐、原生 macOS 开关与选择器，不再有每项一张卡、彩色图标井、深度环与悬停抬升。口径见 [设置页](../design/surfaces/settings.md)。**副作用**：`pageMetric` / `pageProvider` / `pageSetting` / `pageSettingDense` / `popupSession` / `popupProvider` / `popupUsage` 这七个枚举值随这一轮**失去了全部调用点**（设置页是最后的使用者，popup 的三个从来只有定义），目前仍留在 `Preset` 里以免在这次改动里顺手动到 `Tile.swift` 与 `Theme.swift` 的排布分支；下一次动 `TileGrid` 时应当连同 `equalRow` 的分支一起删掉。
 - **动画**：`Animation`（bouncy/smooth/snappy/sparkle/roll）、`Motion.page`/`Motion.state`——全部状态驱动，无常驻时间线。
-- **表面/Helper**：`panelCard()`（半透明白填充 + 发丝线描边的扁平卡片，**非** `glassEffect`——主窗口大面积玻璃曾占用约 100 MB GPU 纹理）、`.tile()`（宫格瓦片表面，与 `panelCard` 同族、更密更浅，实现在 `Views/Shared/Tile.swift` 的 `TileSurface`）、`shadowCard()`、`cardFill(_:)`、`divider`/`hairline`、`contextColor(ratio)`（blue/warning/red）、`barColor(for:)` + `djb2`（跨进程稳定 hash 调色板）、`ActiveTileEdge`（accent 左缘选中态）、`HairlineDivider`（去卡片化的发丝线分区）、`Theme.Ink.*`（信号色的文字版）/ 原信号色（形状版）。下压按钮是 `ActionButton`（`InstrumentControls.swift`）：`tone:` 说这个控件**是什么**（`.neutral` 铣削凹槽，默认 / `.sparkle` 深色板 / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。历史名字 `ProviderActionStyle` 是同一块板的转发，`adaptiveGlassButton()` 已删除——旧写法用 `prominent:` / `filled:` / `ink:` 描述**长相**而不表态**用途**，同一页因此会出现两种按钮语言。
+- **表面/Helper**：`panelCard()`（半透明白填充 + 发丝线描边的扁平卡片，**非** `glassEffect`——主窗口大面积玻璃曾占用约 100 MB GPU 纹理）、`.tile()`（宫格瓦片表面，与 `panelCard` 同族、更密更浅，实现在 `Views/Shared/Tile.swift` 的 `TileSurface`）、`shadowCard()`、`cardFill(_:)`、`divider`/`hairline`、`contextColor(ratio)`（blue/warning/red）、`barColor(for:)` + `djb2`（跨进程稳定 hash 调色板）、`HairlineDivider`（去卡片化的发丝线分区）、`Theme.Ink.*`（信号色的文字版）/ 原信号色（形状版）。下压按钮是 `ActionButton`（`InstrumentControls.swift`）：`tone:` 说这个控件**是什么**（`.neutral` 铣削凹槽，默认 / `.sparkle` 深色板 / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。历史名字 `ProviderActionStyle` 是同一块板的转发，`adaptiveGlassButton()` 已删除——旧写法用 `prominent:` / `filled:` / `ink:` 描述**长相**而不表态**用途**，同一页因此会出现两种按钮语言。
 
 ## 表面语言（`Views/Shared/UiverseSurfaces.swift`）
 
@@ -74,7 +74,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 ## `ProviderTile` — deleted
 
-- `ProviderTile`（`Views/ProviderRow.swift`）自 `2fd24f7` 起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30 随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [17](../reviews/ui-audit-backlog.md) §9。
+- `ProviderTile`（`Views/ProviderRow.swift`）自 `2fd24f7` 起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30 随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [审查证据](../reviews/ui-audit-backlog.md) §9。
 - `popup` 的模型切换走 `PanelHeader` 的 chip → `ModelSwitchList`，不用瓦片网格；`PopupModelTile` 已删除。
 - `formatContext`：`200000 → 200K`、`1000000 → 1M`。
 

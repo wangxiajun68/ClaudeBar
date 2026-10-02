@@ -198,7 +198,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 - 两翼会盖住紧贴刘海的菜单栏图标，因此可关。
 - 屏幕录制 / 截图会拍到打开的灵动岛（未设置 `sharingType = .none`）。
-- 展开态不使用右下角的轮播卡片（额度 / 本机 / 余额），那些数字由菜单栏 popup 与主窗口承载；曾经的 `IslandGlanceReel` 与它的几何常量已删除（见 [technical/17](../reviews/ui-audit-backlog.md) §4），展开态就是 header + 会话格 + 用量卡。
+- 展开态不使用右下角的轮播卡片（额度 / 本机 / 余额），那些数字由菜单栏 popup 与主窗口承载；曾经的 `IslandGlanceReel` 与它的几何常量已删除（见 [审查证据](../reviews/ui-audit-backlog.md) §4），展开态就是 header + 会话格 + 用量卡。
 - 后续可做：多屏各显示一个。
 
 **返回** [设计文档](README.md)
