@@ -747,6 +747,12 @@ final class FanMonitor {
         if fan.mode.isAutomatic { setMaxSpeed(fan.id) }
         else { setAutomatic(fan.id) }
     }
+    /// Mirrors the fleet-wide pair the tile and the KPI chip both read.
+    var allAtMax: Bool {
+        guard !fans.isEmpty else { return false }
+        return fans.allSatisfy { !$0.mode.isAutomatic }
+    }
+    func setAllMax(_ max: Bool) {}
 }
 
 struct FanMode: Equatable {

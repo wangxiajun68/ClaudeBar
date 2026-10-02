@@ -110,6 +110,24 @@ final class FanMonitor {
         else { setAutomatic(fan.id) }
     }
 
+    /// Whether every detected fan is held off automatic — what the tile's
+    /// 「最大」 caption and the KPI chip's label both read, and what decides
+    /// which way the fleet-wide toggle goes.
+    var allAtMax: Bool {
+        guard !fans.isEmpty else { return false }
+        return fans.allSatisfy { !$0.mode.isAutomatic }
+    }
+
+    /// The fleet-wide counterpart of `toggleMode(of:)`: hold every fan at max,
+    /// or hand the whole set back to the system.
+    func setAllMax(_ max: Bool) {
+        if max {
+            for fan in fans { setManual(fan.id, rpm: fan.maxRPM) }
+        } else {
+            resetAllToAutomatic()
+        }
+    }
+
     func resetAllToAutomatic() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

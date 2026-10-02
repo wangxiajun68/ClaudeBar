@@ -183,20 +183,9 @@ struct MachineKpiStrip: View {
         return "\(fanMonitor.fans.map(\.rpm).reduce(0, +))"
     }
 
-    private var fansAtMax: Bool {
-        guard !fanMonitor.fans.isEmpty else { return false }
-        return fanMonitor.fans.allSatisfy { !$0.mode.isAutomatic }
-    }
+    private var fansAtMax: Bool { fanMonitor.allAtMax }
 
-    private func toggleFanMax() {
-        if fansAtMax {
-            fanMonitor.resetAllToAutomatic()
-        } else {
-            for fan in fanMonitor.fans {
-                fanMonitor.setManual(fan.id, rpm: fan.maxRPM)
-            }
-        }
-    }
+    private func toggleFanMax() { fanMonitor.setAllMax(!fansAtMax) }
 
     private func helpText() -> String {
         sampler.host.summaryLine

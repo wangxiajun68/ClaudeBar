@@ -121,10 +121,7 @@ struct ResourceStrip: View {
         return "自动"
     }
 
-    private var fansAtMax: Bool {
-        guard !fanMonitor.fans.isEmpty else { return false }
-        return fanMonitor.fans.allSatisfy { !$0.mode.isAutomatic }
-    }
+    private var fansAtMax: Bool { fanMonitor.allAtMax }
 
     /// The fan card's hue.
     ///
@@ -434,17 +431,10 @@ struct ResourceStrip: View {
     private func helpText() -> String {
         var lines = sampler.shares.map { share -> String in
             let cpu = Int((share.cpuShare * 100).rounded())
-            let mem = ProcessSampler.Snapshot(memoryBytes: share.memoryBytes).memoryLabel
+            let mem = ProcessSampler.Snapshot.byteLabel(share.memoryBytes)
             return "\(share.label)  CPU \(cpu)%  \(mem)"
         }
-        var hostLine = "本机  CPU \(Int(sampler.host.cpu.rounded()))%  GPU \(Int(sampler.host.gpu.rounded()))%  \(sampler.host.memoryLabel)"
-        if let cpuT = sampler.host.temperatureLabel(celsius: sampler.host.cpuTemperatureCelsius) {
-            hostLine += "  CPU \(cpuT)"
-        }
-        if let gpuT = sampler.host.temperatureLabel(celsius: sampler.host.gpuTemperatureCelsius) {
-            hostLine += "  GPU \(gpuT)"
-        }
-        lines.insert(hostLine, at: 0)
+        lines.insert(sampler.host.summaryLine, at: 0)
         return lines.joined(separator: "\n")
     }
 }
