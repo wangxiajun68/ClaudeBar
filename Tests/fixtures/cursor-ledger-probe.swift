@@ -76,6 +76,24 @@ PRICING
         precondition(kept?.count == 1 && kept?.first?.model == "composer-2.5",
                      "a nameless row is dropped, the rest survive")
 
+        // A huge token value must collapse to 0, not trap. `int(_:)` accepts
+        // strings, so `"1e300"` is finite and positive — `Int(_:)` on it exits
+        // the process with SIGTRAP, which is what routing through
+        // `JSONCoerce.intVal` (range-checked) exists to prevent.
+        precondition(CursorLedger.int("1e300") == 0, "an out-of-range token count must collapse to 0")
+        precondition(CursorLedger.int(1e300) == 0, "same for a numeric value")
+        precondition(CursorLedger.int("-5") == 0 && CursorLedger.int("abc") == 0)
+        precondition(CursorLedger.int("1317999") == 1_317_999, "in-range values are unchanged")
+        let hugeRow = """
+        {"aggregations":[{"modelIntent":"composer-2.5","inputTokens":"1e300","outputTokens":"2",
+          "cacheReadTokens":"0","totalCents":1.0}]}
+        """
+        guard let clamped = CursorLedger.parseAggregated(Data(hugeRow.utf8)) else {
+            preconditionFailure("a row with an out-of-range count is still a decodable page")
+        }
+        precondition(clamped.first?.inputTokens == 0 && clamped.first?.outputTokens == 2,
+                     "the bad field clamps, the rest of the row survives")
+
         // --- 2. The event ledger, where `tokenUsage` can be missing --------
         // Real shapes: two token calls, and a non-token dispatch with no
         // `tokenUsage` key at all.

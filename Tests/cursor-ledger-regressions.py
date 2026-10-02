@@ -78,6 +78,13 @@ pricing_enum = pricing[pricing.index('enum ModelPricing {'):pricing.rindex('\n}\
 # that names the three modes comes along.
 cost_display = slice_between(pricing, 'enum CostDisplay', '\n}\n') + '\n}'
 table_enum = slice_between(table, 'enum ModelPriceTable {', '\n}\n') + '\n}'
+# `CursorLedger.int` converts through `JSONCoerce.intVal` — the one numeric
+# coercion in the repo that range-checks before `Int(_:)`, so a huge token
+# string cannot trap the refresh. It is a Foundation-only enum with no other
+# dependency, and the harness compiles production slices rather than stubs, so
+# the guard is exercised on the real conversion.
+coerce_enum = slice_between((utils / 'JSONCoerce.swift').read_text(),
+                            'enum JSONCoerce {', '\n}\n') + '\n}'
 # The production `ModelUsage`, compiled in so the money-field guard protects the
 # real type. `enum ModelUsage` is a top-level declaration ending at the next
 # doc-commented top-level type; a new declaration appended right after it would
@@ -94,7 +101,7 @@ SWIFT = (SWIFT
          .replace('COSTDISPLAY', cost_display)
          .replace('NUMBER', number_helper)
          .replace('LEDGER', ledger_enum)
-         .replace('PRICING', pricing_enum + '\n\n' + table_enum)
+         .replace('PRICING', pricing_enum + '\n\n' + table_enum + '\n\n' + coerce_enum)
          .replace('USAGE_SOURCE', indent(usage_source))
          )
 

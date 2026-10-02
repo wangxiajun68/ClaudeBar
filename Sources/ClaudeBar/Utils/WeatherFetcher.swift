@@ -218,9 +218,20 @@ struct WeatherReading: Equatable {
         }
     }
 
+    /// `Double` → `Int` with a range guard, for every count that comes off a
+    /// network payload. `Int(_:)` traps for any finite value outside `Int`'s
+    /// range, so an odd number from a weather endpoint (`sd: 1e300`) would take
+    /// the whole app down inside a refresh instead of leaving the last good
+    /// reading on screen. `WeatherForecastFetcher` keeps the same guard for the
+    /// same reason.
+    static func wholeNumber(_ value: Double) -> Int {
+        guard value >= Double(Int.min), value < Double(Int.max) else { return 0 }
+        return Int(value)
+    }
+
     /// The temperature the card prints, rounded — one decimal of a degree is
     /// noise on a tile that is read at a glance.
-    var temperatureText: String { "\(Int(temperatureC.rounded()))°" }
+    var temperatureText: String { "\(WeatherReading.wholeNumber(temperatureC.rounded()))°" }
 }
 
 /// Open-Meteo current + six-day weather, with wttr.in as a current-only fallback.
@@ -491,7 +502,7 @@ enum DomesticWeatherParser {
             conditionText: weatherText,
             highC: today?.high ?? temperature,
             lowC: today?.low ?? temperature,
-            humidity: Int(liveValue("humidity") ?? 0),
+            humidity: WeatherReading.wholeNumber(liveValue("humidity") ?? 0),
             windKph: windKph(fromBeaufort: live?["windpower"] as? String),
             windDirection: live?["winddirection"] as? String ?? "",
             isDay: nil,
@@ -555,7 +566,7 @@ enum DomesticWeatherParser {
 
         let days = cnForecastDays(forecast)
         let today = days.first
-        let rainChance = rain.map { Int(min(100, max(0, $0 * 100))) } ?? self.rainChance(fromText: weatherText)
+        let rainChance = rain.map { WeatherReading.wholeNumber(min(100, max(0, $0 * 100))) } ?? self.rainChance(fromText: weatherText)
         return WeatherReading(
             place: (dataSK["cityname"] as? String) ?? "",
             temperatureC: temperature,
@@ -564,7 +575,7 @@ enum DomesticWeatherParser {
             conditionText: weatherText,
             highC: today?.high ?? temperature,
             lowC: today?.low ?? temperature,
-            humidity: Int(number(dataSK["sd"]) ?? percent(dataSK["SD"]) ?? 0),
+            humidity: WeatherReading.wholeNumber(number(dataSK["sd"]) ?? percent(dataSK["SD"]) ?? 0),
             windKph: windKph(fromBeaufort: dataSK["WS"] as? String),
             windDirection: (dataSK["WD"] as? String) ?? "",
             isDay: nil,
@@ -656,6 +667,7 @@ enum DomesticWeatherParser {
         if let s = value as? String { return Double(s) }
         return nil
     }
+
 
     /// 中国天气网 writes humidity twice — `sd` as a number and `SD` as "68%".
     /// A percentage sign is not a Double, so the string form needs stripping.
