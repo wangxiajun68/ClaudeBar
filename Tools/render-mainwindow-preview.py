@@ -1573,13 +1573,23 @@ struct ConnectionDetailPanel: View { var body: some View { EmptyView() } }
 
 
 # The resource strip: drop the five popovers (they rebuild the same mark at
-# hero size and are never open in a render) by substituting the whole tile.
+# hero size and are never open in a render) by wrapping the tile's closure body
+# in a dead `if false` arm.
 _strip = require_file('Sources/ClaudeBar/Views/Shared/ResourceStrip.swift')
-_strip = _strip.replace('''        return Group {
-            if kind == .cpu {''', '''        return Group {
-            if false {
-                EmptyView()''')
-assert 'if false {' in _strip, 'ResourceStrip popover block moved — update the renderer'
+# The tile's `switch kind` lists its cases directly now, so the wrapper is
+# placed by brace-matching rather than by a `if kind == .cpu` literal: the
+# popovers' views are still *compiled* (the panels are stubbed above) but never
+# mounted.
+_anchor = '        return Group {\n            switch kind {\n'
+_pos = _strip.index(_anchor)
+_open = _strip.index('{', _pos)
+_depth, _end = 1, _open + 1
+while _depth:
+    _depth += (_strip[_end] == '{') - (_strip[_end] == '}')
+    _end += 1
+_strip = (_strip[:_open + 1] + '\n            if false { EmptyView() } else {'
+          + _strip[_open + 1:_end - 1] + '}' + _strip[_end - 1:])
+assert 'if false { EmptyView() } else {' in _strip, 'ResourceStrip popover block moved — update the renderer'
 source += _strip
 
 # ---------------------------------------------------------------------------
