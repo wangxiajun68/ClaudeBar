@@ -19,6 +19,8 @@ struct ProviderConnectionModel: Identifiable, Equatable {
     var contextTokens = ""
     var disableCompact = false
     var disableExperimentalBetas = false
+    var maxConcurrentSubagents = "20"
+    var workflowMaxConcurrentAgents = "30"
 }
 
 struct ProviderConnectionDraft: Identifiable {
@@ -56,6 +58,12 @@ struct ProviderConnectionDraft: Identifiable {
         // Same rule as the preset flow: a loopback endpoint needs no key.
         if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !ProviderCatalogEntry.isLocalEndpoint(trimmed) { return "请填写 API Key（自建网关填写网关 Key）。" }
+        for model in models {
+            if let error = ModelConfig.concurrencyValidationError(
+                subagents: model.maxConcurrentSubagents, workflow: model.workflowMaxConcurrentAgents) {
+                return error
+            }
+        }
         if modelNames.isEmpty { return "请至少保留一个模型 ID。" }
         let lowered = modelNames.map { $0.lowercased() }
         if Set(lowered).count != lowered.count { return "模型 ID 不能重复。" }
@@ -273,6 +281,16 @@ struct ProviderConnectionEditor: View {
                 }
             }
             if client == .claude {
+                HStack(alignment: .top, spacing: 12) {
+                    ProviderFormField("Subagent 并发数") {
+                        TextField("20", text: $draft.models[index].maxConcurrentSubagents)
+                    }
+                    ProviderFormField("Workflow 并发数") {
+                        TextField("30", text: $draft.models[index].workflowMaxConcurrentAgents)
+                    }
+                }
+                Text("Subagent 为正整数；Workflow 为 1–256。分别需要 Claude Code 2.1.217+ / 2.1.269+，新会话生效。")
+                    .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                 Toggle("禁用压缩", isOn: $draft.models[index].disableCompact)
                     .toggleStyle(.instrument)
                     .font(Theme.Font.caption)

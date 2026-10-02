@@ -29,7 +29,9 @@ struct SettingsManager {
             ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: (envDict["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"] as? String) ?? "",
             ANTHROPIC_DEFAULT_FABLE_MODEL: (envDict["ANTHROPIC_DEFAULT_FABLE_MODEL"] as? String) ?? "",
             ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: (envDict["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] as? String) ?? "",
-            CLAUDE_CODE_AUTO_COMPACT_WINDOW: (envDict["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] as? String) ?? ""
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: (envDict["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] as? String) ?? "",
+            CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: (envDict["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] as? String) ?? "",
+            CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS: (envDict["CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS"] as? String) ?? ""
         )
     }
 
@@ -119,6 +121,8 @@ struct SettingsManager {
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
         "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS",
+        "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS",
     ]
 
     /// Strip the third-party overlay from `settings.json` so Claude Code

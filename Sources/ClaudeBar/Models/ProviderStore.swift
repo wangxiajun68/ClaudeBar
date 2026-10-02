@@ -868,7 +868,9 @@ class ProviderStore: ObservableObject {
             ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: model.name,
             ANTHROPIC_DEFAULT_FABLE_MODEL: model.name,
             ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: model.name,
-            CLAUDE_CODE_AUTO_COMPACT_WINDOW: model.autoCompactWindow
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW: model.autoCompactWindow,
+            CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: model.maxConcurrentSubagents.trimmingCharacters(in: .whitespacesAndNewlines),
+            CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS: model.workflowMaxConcurrentAgents.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 

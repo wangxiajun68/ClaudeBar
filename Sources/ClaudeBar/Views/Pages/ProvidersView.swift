@@ -335,7 +335,9 @@ struct ProvidersView: View {
                 models: provider.models.map {
                     ProviderConnectionModel(id: $0.id, name: $0.name, autoCompactTokenLimit: $0.autoCompactWindow,
                                             contextTokens: $0.contextTokens, disableCompact: $0.disableCompact,
-                                            disableExperimentalBetas: $0.disableExperimentalBetas)
+                                            disableExperimentalBetas: $0.disableExperimentalBetas,
+                                            maxConcurrentSubagents: $0.maxConcurrentSubagents,
+                                            workflowMaxConcurrentAgents: $0.workflowMaxConcurrentAgents)
                 },
                 activeModelID: provider.activeModelID ?? provider.models.first?.id)
         }
@@ -361,7 +363,9 @@ struct ProvidersView: View {
             let models = draft.models.map {
                 ModelConfig(id: $0.id, name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
                             contextTokens: $0.contextTokens, disableCompact: $0.disableCompact,
-                            disableExperimentalBetas: $0.disableExperimentalBetas, autoCompactWindow: $0.autoCompactTokenLimit)
+                            disableExperimentalBetas: $0.disableExperimentalBetas, autoCompactWindow: $0.autoCompactTokenLimit,
+                            maxConcurrentSubagents: $0.maxConcurrentSubagents.trimmingCharacters(in: .whitespacesAndNewlines),
+                            workflowMaxConcurrentAgents: $0.workflowMaxConcurrentAgents.trimmingCharacters(in: .whitespacesAndNewlines))
             }
             var provider = providerStore.providers.first { $0.id == draft.id } ?? Provider(name: draft.name)
             provider.id = draft.id

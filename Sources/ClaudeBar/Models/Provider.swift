@@ -9,16 +9,36 @@ struct ModelConfig: Codable, Identifiable, Equatable {
     var disableCompact: Bool = true
     var disableExperimentalBetas: Bool = true
     var autoCompactWindow: String = ""
+    var maxConcurrentSubagents: String = "20"
+    var workflowMaxConcurrentAgents: String = "30"
 
     init(id: UUID = UUID(), name: String, contextTokens: String = "",
          disableCompact: Bool = true, disableExperimentalBetas: Bool = true,
-         autoCompactWindow: String = "") {
+         autoCompactWindow: String = "", maxConcurrentSubagents: String = "20",
+         workflowMaxConcurrentAgents: String = "30") {
         self.id = id
         self.name = name
         self.contextTokens = contextTokens
         self.disableCompact = disableCompact
         self.disableExperimentalBetas = disableExperimentalBetas
         self.autoCompactWindow = autoCompactWindow
+        self.maxConcurrentSubagents = maxConcurrentSubagents
+        self.workflowMaxConcurrentAgents = workflowMaxConcurrentAgents
+    }
+
+    static func concurrencyValidationError(subagents: String, workflow: String) -> String? {
+        func count(_ raw: String) -> Int? {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+            return Int(value)
+        }
+        guard let subagents = count(subagents), subagents > 0 else {
+            return "Subagent 并发数必须为正整数。"
+        }
+        guard let workflow = count(workflow), (1...256).contains(workflow) else {
+            return "Workflow 并发数必须为 1–256 的整数。"
+        }
+        return nil
     }
 
     /// Hand-written: the synthesized decoder ignores property defaults, so one
@@ -32,10 +52,13 @@ struct ModelConfig: Codable, Identifiable, Equatable {
         disableCompact = try c.decodeIfPresent(Bool.self, forKey: .disableCompact) ?? true
         disableExperimentalBetas = try c.decodeIfPresent(Bool.self, forKey: .disableExperimentalBetas) ?? true
         autoCompactWindow = try c.decodeIfPresent(String.self, forKey: .autoCompactWindow) ?? ""
+        maxConcurrentSubagents = try c.decodeIfPresent(String.self, forKey: .maxConcurrentSubagents) ?? "20"
+        workflowMaxConcurrentAgents = try c.decodeIfPresent(String.self, forKey: .workflowMaxConcurrentAgents) ?? "30"
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, contextTokens, disableCompact, disableExperimentalBetas, autoCompactWindow
+        case maxConcurrentSubagents, workflowMaxConcurrentAgents
     }
 }
 
