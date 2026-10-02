@@ -291,7 +291,7 @@ enum GreetingTypesetter {
 
     /// Maximize measured ink inside the free band. Short greetings grow until
     /// height limits them; longer greetings shrink to fit the card width.
-    /// Compare inline and dropped signatures without sacrificing phrase size.
+    /// Reserve a separate line for the name beneath the greeting.
     /// `topClear` / `bottomClear` bound the free band between the instruments
     /// along the top and bottom edges; the ink (and a dropped name) is centred
     /// in it, a touch above true centre so it reads as sitting, not sinking.
@@ -362,16 +362,15 @@ enum GreetingTypesetter {
             nameWidths[nameSize] = width
             return (nameSize, width)
         }
-        func extents(size: CGFloat, inline: Bool) -> (head: CGFloat, hang: CGFloat, drop: CGFloat) {
+        func extents(size: CGFloat) -> (head: CGFloat, hang: CGFloat, drop: CGFloat) {
             let name = nameMetrics(for: size)
             let head = (ascent + weight) * size
             let tail = (descent + weight) * size
             if caption.isEmpty { return (head, tail, 0) }
-            if inline { return (max(head, name.size * 0.78), max(tail, name.size * 0.24), 0) }
-            let drop = max(tail, name.size) + name.size * 1.6
+            let drop = tail + max(8, name.size * 0.4) + name.size * 0.78
             return (head, max(tail, drop + name.size * 0.24), drop)
         }
-        func largestSize(inline: Bool) -> CGFloat {
+        func largestSize() -> CGFloat {
             var low: CGFloat = 0
             var high = min(band / max(0.01, ascent + descent + weight * 2),
                            available / max(0.01, line.bounds.width + weight * 2))
@@ -380,21 +379,16 @@ enum GreetingTypesetter {
             for _ in 0..<24 {
                 let candidate = (low + high) / 2
                 let name = nameMetrics(for: candidate)
-                let e = extents(size: candidate, inline: inline)
+                let e = extents(size: candidate)
                 let width = (line.bounds.width + weight * 2) * candidate
-                let fitsWidth = caption.isEmpty || !inline
-                    ? max(width, name.width) <= available
-                    : width + candidate * 0.22 + name.width <= available
+                let fitsWidth = max(width, name.width) <= available
                 if fitsWidth && e.head + e.hang <= band { low = candidate } else { high = candidate }
             }
             return low.rounded(.down)
         }
-        let droppedSize = largestSize(inline: false)
-        let inlineSize = caption.isEmpty ? droppedSize : largestSize(inline: true)
-        let inline = !caption.isEmpty && inlineSize >= droppedSize
-        let size = max(1, inline ? inlineSize : droppedSize)
+        let size = max(1, largestSize())
         let name = nameMetrics(for: size)
-        let e = extents(size: size, inline: inline)
+        let e = extents(size: size)
         let drop = e.drop
         let spare = max(0, band - e.head - e.hang)
         let baseline = (top + spare * 0.46 + e.head).rounded()
@@ -402,20 +396,15 @@ enum GreetingTypesetter {
         let ink = CGRect(x: origin.x + line.bounds.minX * size, y: origin.y + line.bounds.minY * size,
                          width: line.bounds.width * size, height: line.bounds.height * size)
             .insetBy(dx: -size * weight, dy: -size * weight)
-        let nameOrigin: CGPoint
-        if inline {
-            nameOrigin = CGPoint(x: (origin.x + line.bounds.maxX * size + size * 0.22).rounded(), y: baseline)
-        } else {
-            let right = min(ink.maxX - size * 0.05, cardWidth - margin)
-            nameOrigin = CGPoint(x: max(margin, (right - name.width).rounded()),
+        let right = min(ink.maxX - size * 0.05, cardWidth - margin)
+        let nameOrigin = CGPoint(x: max(margin, (right - name.width).rounded()),
                                  y: (baseline + drop).rounded())
-        }
         // About 0.2 s an em of advance — the unhurried pace of the Mac's
         // "hello" — within bounds that keep a short word from being curt and a
         // festival name from dragging.
         let write = min(2.8, max(1.6, 0.9 + Double(line.advance) * 0.2))
         return Layout(phrase: text, name: caption, typeface: typeface, fontSize: size, origin: origin, phraseFrame: ink,
-                      nameSize: name.size, nameOrigin: nameOrigin, nameWidth: name.width, nameInline: inline,
+                      nameSize: name.size, nameOrigin: nameOrigin, nameWidth: name.width, nameInline: false,
                       padding: (size * 0.3).rounded(), writeDuration: write / Double(phraseShare))
     }
 

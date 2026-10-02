@@ -185,7 +185,7 @@ source += r'''
                 "the card's clearance call site moved; this fixture's band no longer matches it")
         var count = 0
         for width: CGFloat in [620, 900, 1100, 1400] {
-            let sky = min(430, max(330, width * 0.38)).rounded()
+            let sky = min(430, max(380, width * 0.38)).rounded()
             let margin: CGFloat = width >= 900 ? 32 : 24
             let top = margin - 8 + nowHeight + 6, bottom = sky - 14 - chartHeight - 6 - 24
             for face in GreetingTypeface.allCases {
@@ -206,10 +206,9 @@ source += r'''
                                          "Name horizontal bounds: \(label) \(layout)")
                             require(layout.nameFrame.minY >= top - 2 && layout.nameFrame.maxY <= bottom + 2,
                                          "Name instrument overlap: \(label) \(layout)")
-                            if !layout.nameInline {
-                                require(layout.nameFrame.minY > layout.phraseFrame.maxY,
-                                             "Name/greeting overlap: \(label)")
-                            }
+                            require(!layout.nameInline, "Name must occupy a separate line: \(label)")
+                            require(layout.nameFrame.minY > layout.phraseFrame.maxY,
+                                         "Name/greeting overlap: \(label)")
                         }
                         require(layout == GreetingTypesetter.layout(phrase, name: name, typeface: face,
                             cardWidth: width, skyHeight: sky, margin: margin, topClear: top, bottomClear: bottom), "Cache mismatch")

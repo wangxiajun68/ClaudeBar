@@ -246,7 +246,7 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 平滑渲染：时刻连续变化时天空按太阳高度连续插值；天气切换时 `SkyScene.mix` 在 1.2 s 内对调色、云量、降水、雾、星光等连续量做 smoothstep 淡变，连续多次切换从屏幕上的当前状态起步，淡变期间 Metal 视图以显示器满帧率运行。
 
-**天气渲染关掉后（`AppPreferences.greetingWeatherRendering`）**，同一片天空改按要求绘制：`SkyScene.pinned` 是一层按太阳高度连续插值的晴空——调色、日月与云量都在，只是没有雨雪、雾、闪电和玻璃雨滴（星点从真实坐标投影出来，这一档不指所以也去掉）。这不是「另一种天气」，所以右侧不再读实时天气（`liveWeather == false` 时右上、预报带与体感行都让位，日轨改从本机时区推算），`WeatherStore` 也不再被这张卡刷新。若在「预演」里挑过一层天气（`greeting.pinnedWeather`），则按那一层画：色板仍是今天的，只是多一层选定的云或雨。
+**天气渲染关掉后（`AppPreferences.greetingWeatherRendering`）**，同一片天空改按要求绘制：`SkyScene.pinned` 是一层按太阳高度连续插值的晴空——调色、日月与云量都在，只是没有雨雪、雾、闪电和玻璃雨滴（星点从真实坐标投影出来，这一档不指所以也去掉）。这不是「另一种天气」，所以右侧不再读实时天气（`liveWeather == false` 时右上、预报带与体感行都让位，日轨改从本机时区推算），`WeatherStore` 也不再被这张卡刷新。
 
 ### 5.7 性能预算与帧率策略
 

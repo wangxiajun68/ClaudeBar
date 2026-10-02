@@ -562,33 +562,26 @@ enum PinnedSky {
     }
 }
 
-/// 实时 / 手动 / 贴图：天空跟着实时天气与钟点、跟着自选的天气与时刻，还是关掉
-/// 天气、只留一张天空贴图。一个胶囊，选中项在两三格之间滑动。
-///
-/// 第三格是「预演」：天气渲染开着时它替换掉「贴图」那一格的位置，选中它
-/// 只换天气图层、时刻留在原地。实时天气关掉（`rendering == false`）之后
-/// 天空停在一种天气上，"贴图"这一格才是把它重新打开的开关。
+/// Automatic or manual sky; when rendering is disabled, the photo button
+/// restores live weather.
 struct SkyModeToggle: View {
-    /// "auto" / "manual" / "preview"
+    /// "auto" / "manual"; legacy values behave as automatic.
     var skyMode: String
     /// 偏好里「实时天气（天气渲染）」那一项。关掉意思是天空现在停在某一层，
     /// 也正是这一格出现的原因。
     var rendering: Bool
     var ink: Color
     var setManual: (Bool) -> Void
-    /// 开 / 关「预演」（只在实时天气开着时有意义）。
-    var setPreview: (Bool) -> Void
     /// 「贴图」那一段：把实时天气关掉的那一项再打开。
     var setRendering: (Bool) -> Void
 
     @Namespace private var pill
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var previewing: Bool { skyMode == "preview" }
     private var manual: Bool { skyMode == "manual" }
-    private var none: Bool { !rendering && !manual && !previewing }
+    private var none: Bool { !rendering && !manual }
 
-    private var selection: Int { manual ? 1 : (previewing ? 2 : 0) }
+    private var selection: Int { manual ? 1 : 0 }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -598,10 +591,6 @@ struct SkyModeToggle: View {
             } else {
                 segment(0, title: "自动", symbol: "sparkles", help: "天空跟随实时天气与时间")
                 segment(1, title: "手动", symbol: "slider.horizontal.3", help: "自选天气与时段，拖动时间轴预览")
-                if rendering {
-                    segment(2, title: "预演", symbol: "wand.and.stars",
-                            help: "只换这一层天气，时刻留在此刻")
-                }
             }
         }
         .padding(2)
@@ -640,23 +629,9 @@ struct SkyModeToggle: View {
         case 0:
             if none { setRendering(true) } else { setManual(false) }
         case 1:
-            // 手动换自动，或预演换手动；同一个动作——真正的手动。
-            //
-            // Re-tapping 手动 while already manual must be a no-op: the pair
-            // below leaves manual by the *other* door first (`setPreview(false)`
-            // writes `skyMode = "auto"` unconditionally), which makes
-            // `setManual`'s own `on != manual` guard pass and re-seeds the hour
-            // from now — silently throwing away the time the user just scrubbed
-            // and persisting it. Case 0 does not have the problem because
-            // `setManual(false)` finds `manual == false` and returns.
-            if previewing {
-                setPreview(false)
-            } else if manual {
-                return
-            }
             setManual(true)
         default:
-            setPreview(!previewing)
+            break
         }
     }
 }
@@ -864,8 +839,8 @@ struct InstrumentPressStyle: ButtonStyle {
     }
 }
 
-/// Six source-provided hour buckets. Rain uses an honest zero baseline; gaps
-/// remain gaps, and unavailable precipitation never becomes a zero-height bar.
+/// Six source-provided hour buckets. Rain follows a water-like area curve;
+/// missing readings break the curve instead of becoming dry hours.
 struct HourlyWeatherInstrument: View {
     var reading: WeatherReading
     var date: Date
@@ -900,39 +875,60 @@ struct HourlyWeatherInstrument: View {
                         var axis = Path()
                         axis.move(to: CGPoint(x: 0, y: baseline))
                         axis.addLine(to: CGPoint(x: size.width, y: baseline))
-                        if metric != .precipitation && metric != .probability {
-                            context.stroke(axis, with: .color(ink.opacity(0.16)), lineWidth: 0.5)
-                        }
-                        var line = Path()
+                        context.stroke(axis, with: .color(ink.opacity(0.14)), lineWidth: 0.5)
+                        let watery = metric == .precipitation || metric == .probability
+                        var segments: [[CGPoint]] = []
+                        var points: [CGPoint] = []
                         var previous: Date?
                         for hour in hours {
-                            let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
-                            guard let value = metric.value(hour) else { previous = nil; continue }
-                            let y = baseline - 20 * (value - low) / (high - low)
-                            if metric == .precipitation || metric == .probability {
-                                let track = CGRect(x: x - 10, y: 14, width: 20, height: 20)
-                                context.fill(Path(roundedRect: track, cornerRadius: 3), with: .color(ink.opacity(0.06)))
-                                if value > 0 {
-                                    let bar = CGRect(x: x - 10, y: y, width: 20, height: max(1, baseline - y))
-                                    context.fill(Path(roundedRect: bar, cornerRadius: min(3, bar.height / 2)),
-                                                 with: .linearGradient(Gradient(colors: [tint, tint.opacity(0.45)]),
-                                                                       startPoint: CGPoint(x: x, y: y),
-                                                                       endPoint: CGPoint(x: x, y: baseline)))
-                                } else {
-                                    var zero = Path()
-                                    zero.move(to: CGPoint(x: x - 4, y: baseline))
-                                    zero.addLine(to: CGPoint(x: x + 4, y: baseline))
-                                    context.stroke(zero, with: .color(ink.opacity(0.35)), lineWidth: 1)
-                                }
-                            } else {
-                                if let previous, hour.date.timeIntervalSince(previous) <= 3600 {
-                                    line.addLine(to: CGPoint(x: x, y: y))
-                                } else { line.move(to: CGPoint(x: x, y: y)) }
-                                context.fill(Path(ellipseIn: CGRect(x: x - 1.5, y: y - 1.5, width: 3, height: 3)), with: .color(tint))
+                            guard let value = metric.value(hour) else {
+                                if !points.isEmpty { segments.append(points); points = [] }
+                                previous = nil
+                                continue
                             }
+                            if let previous, hour.date.timeIntervalSince(previous) > 3600 {
+                                if !points.isEmpty { segments.append(points); points = [] }
+                            }
+                            let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
+                            let y = baseline - 20 * (value - low) / (high - low)
+                            points.append(CGPoint(x: x, y: y))
                             previous = hour.date
                         }
-                        context.stroke(line, with: .color(tint), lineWidth: 1.5)
+                        if !points.isEmpty { segments.append(points) }
+                        if watery {
+                            var guide = Path()
+                            guide.move(to: CGPoint(x: 16, y: 14))
+                            guide.addLine(to: CGPoint(x: size.width - 16, y: 14))
+                            context.stroke(guide, with: .color(ink.opacity(0.1)),
+                                           style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                        }
+                        for points in segments {
+                            guard let first = points.first, let last = points.last else { continue }
+                            var line = Path()
+                            line.move(to: first)
+                            for index in 1..<points.count {
+                                let previous = points[index - 1], point = points[index]
+                                let step = (point.x - previous.x) / 3
+                                line.addCurve(to: point,
+                                              control1: CGPoint(x: previous.x + step, y: previous.y),
+                                              control2: CGPoint(x: point.x - step, y: point.y))
+                            }
+                            if watery, points.count > 1 {
+                                var water = line
+                                water.addLine(to: CGPoint(x: last.x, y: baseline))
+                                water.addLine(to: CGPoint(x: first.x, y: baseline))
+                                water.closeSubpath()
+                                context.fill(water, with: .linearGradient(
+                                    Gradient(colors: [tint.opacity(0.3), tint.opacity(0.03)]),
+                                    startPoint: CGPoint(x: 0, y: 14), endPoint: CGPoint(x: 0, y: baseline)))
+                            }
+                            context.stroke(line, with: .color(tint.opacity(0.9)),
+                                           style: StrokeStyle(lineWidth: watery ? 1.2 : 1.5, lineCap: .round))
+                            for point in points {
+                                context.fill(Path(ellipseIn: CGRect(x: point.x - 1.3, y: point.y - 1.3, width: 2.6, height: 2.6)),
+                                             with: .color(tint))
+                            }
+                        }
                     }
                     ForEach(hours) { hour in
                         let x = 16 + width * hour.date.timeIntervalSince(hours.first!.date) / span
@@ -943,14 +939,14 @@ struct HourlyWeatherInstrument: View {
                         if metric == .precipitation || metric == .probability {
                             Text(metric.value(hour).map { value in
                                 metric == .probability ? String(format: "%.0f", value)
-                                    : value == 0 ? "0" : String(format: "%.1f", value)
+                                    : value == 0 ? "0" : value < 0.1 ? "<0.1" : String(format: "%.1f", value)
                             } ?? "—")
                                 .font(.system(size: 8, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(ink.opacity(0.9))
                                 .position(x: x, y: 6)
                         } else if metric.value(hour) == nil {
                             Text("—").font(.system(size: 9)).foregroundStyle(ink.opacity(0.8))
-                                .position(x: x, y: 20)
+                                .position(x: x, y: 12)
                         }
                     }
                 }

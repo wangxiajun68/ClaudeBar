@@ -70,7 +70,6 @@ for mark in ('anthropic', 'openai'):
 # an f-string would try to read them as fields.
 source = ("import AppKit\n@MainActor var fixtureSkyDate = Date()\n@MainActor var fixtureCardWidth: CGFloat = 1100\n"
           + "@MainActor var fixtureSkyMode = \"auto\"\n"
-          + "@MainActor var fixturePinnedWeather = \"none\"\n"
           + "@MainActor var fixtureWeatherRendering = true\n"
           + "@MainActor var fixtureClockPreview: Date? = nil\n"
           + "@MainActor func fixtureBenchOffset() -> TimeInterval { Double(benchClock.tick) * 90 }\n"
@@ -171,19 +170,10 @@ source += (root / 'Sources/ClaudeBar/Views/Shared/CodexModelMark.swift').read_te
 # gauges) are self-contained views; the whole file comes in as is.
 source += (root / 'Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift').read_text() + '\n'
 sheet = (root / 'Sources/ClaudeBar/Views/Shared/GreetingCard.swift').read_text()
-# The fixture's `bare`/`pinned` passes drive the pinned weather through the
-# argument domain; the declaration is only here so the sheet has a default.
-sheet = sheet.replace('@AppStorage("greeting.pinnedWeather") private var pinnedWeatherRaw = "none"',
-                      '@AppStorage("greeting.pinnedWeather") private var pinnedWeatherRaw = "snow"')
 if '--bench-baseline' in sys.argv:
     # Every part rebuilt on every change, as before `Unchanged` existed.
     sheet = sheet.replace('static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }',
                           'static func == (lhs: Self, rhs: Self) -> Bool { false }')
-# The fixture already ran this module's body through the type checker once
-# before; `liveWeather` is a plain computed Bool on the sheet, so pin it here
-# rather than let it nest inside the big `VStack` literal.
-sheet = sheet.replace('private var liveWeather: Bool { Self.liveWeatherShown(rendering: manualWeatherFetch ? false : weatherRendering,\n                                                         pinned: pinnedWeatherRaw) }',
-                      'private var liveWeather: Bool { true }')
 sheet = sheet.replace(
     """            let clockZone: String? = liveWeather ? reading?.timezone : nil
             let clockPreview: Date? = manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate)
@@ -196,9 +186,8 @@ sheet = sheet.replace(
                 GreetingClock(ink: topLeftInk, timezone: clockZone, preview: clockPreview)
                 SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: topLeftInk,
                               setManual: { setManual($0, scene: scene) },
-                              setPreview: { setPreview($0) },
                               setRendering: { AppPreferences.shared.greetingWeatherRendering = $0 })
-                    .frame(width: m.skyToggleWidth(threeWay: self.weatherRendering || manual), alignment: .leading)
+                    .frame(width: m.skyToggleWidth, alignment: .leading)
             }
             .padding(.leading, m.margin)
             .padding(.top, m.top)
@@ -216,9 +205,8 @@ sheet = sheet.replace("    // MARK: - Sky",
                           preview: manual ? manualDate : (timeOffset == 0 || !liveWeather ? nil : sceneDate))
             SkyModeToggle(skyMode: skyMode, rendering: self.weatherRendering, ink: ink,
                           setManual: { setManual($0, scene: makeScene()) },
-                          setPreview: { setPreview($0) },
                           setRendering: { _ in })
-                .frame(width: m.skyToggleWidth(threeWay: self.weatherRendering || manual), alignment: .leading)
+                .frame(width: m.skyToggleWidth, alignment: .leading)
         }
         .padding(.leading, m.margin)
         .padding(.top, m.top)
@@ -263,16 +251,15 @@ source += r'''
         let out = URL(fileURLWithPath: CommandLine.arguments[1])
         if CommandLine.arguments.contains("--bench") { benchUpdates(); return }
         let review = CommandLine.arguments.contains("--weather-review")
-        for mode in (review ? ["auto", "manual"] : ["auto", "manual", "pinned", "bare"]) {
+        for mode in (review ? ["auto", "manual"] : ["auto", "manual", "bare"]) {
         // The sheet reads its sky mode through @AppStorage; the argument
         // domain is volatile, so the fixture never writes a preference.
         UserDefaults.standard.setVolatileDomain(["greeting.skyMode": mode == "manual" ? "manual" : "auto",
                                                  "greeting.manualWeather": "snow",
-                                                 "greeting.pinnedWeather": mode == "pinned" ? "snow" : "none",
                                                  "greeting.manualMinutes": 17.0 * 60 + 55],
                                                 forName: UserDefaults.argumentDomain)
         // "bare": 天气渲染关着，但天空没有挑过任何一层——就是默认的贴图。
-        fixtureWeatherRendering = mode != "pinned" && mode != "bare"
+        fixtureWeatherRendering = mode != "bare"
         for dark in (review ? [false] : [false, true]) {
             AppPreferences.shared.isDark = dark
             for width in [1100.0, 620.0] {
@@ -280,7 +267,7 @@ source += r'''
                 // Light auto also writes the sunny card once per selectable
                 // face, so a face whose proportions break the layout shows up.
                 let faces = !review && mode == "auto" && !dark ? GreetingTypeface.allCases.map { "face-" + $0.rawValue } : []
-                for scene in (mode == "manual" ? ["sun"] : mode == "pinned" ? ["sun", "empty"] : ["sun", "rain", "heavy", "thunder", "night", "cloud", "snow", "fog", "empty"]) + faces {
+                for scene in (mode == "manual" ? ["sun"] : ["sun", "rain", "heavy", "thunder", "night", "cloud", "snow", "fog", "empty"]) + faces {
                     let typeface = scene.hasPrefix("face-") ? GreetingTypeface(rawValue: String(scene.dropFirst(5)))! : .standard
                     fixtureSkyDate = ISO8601DateFormatter().date(from: scene == "night" ? "2026-09-28T13:00:00Z" : "2026-09-28T02:17:01Z")!
                     let empty = scene == "empty"
