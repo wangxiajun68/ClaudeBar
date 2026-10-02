@@ -180,6 +180,9 @@ final class NotchIslandController {
             },
             expandFromAlert: { [weak self] in
                 MainActor.assumeIsolated { self?.expand() }
+            },
+            dismissAlert: { [weak self] in
+                MainActor.assumeIsolated { self?.collapse(animated: true) }
             })
 
         let panel = NotchIslandPanel()

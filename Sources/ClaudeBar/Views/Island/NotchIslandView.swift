@@ -102,6 +102,7 @@ struct IslandActions {
     var openSession: (IslandSession) -> Void
     var openMainWindow: () -> Void
     var expandFromAlert: () -> Void
+    var dismissAlert: () -> Void
 }
 
 /// The token-unit style, carried as an environment *value* rather than as an
@@ -467,6 +468,17 @@ private struct IslandAlertContent: View {
                         .frame(height: 26)
                         .background(Capsule().fill(tint.opacity(0.16)))
                 }
+                Button(action: actions.dismissAlert) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(IslandStyle.textTertiary)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(IslandPressStyle())
+                .help("收起通知")
+                .accessibilityLabel("收起通知")
             }
             .padding(.horizontal, IslandStyle.sidePadding + 8)
             .frame(height: IslandStyle.alertBodyHeight)
