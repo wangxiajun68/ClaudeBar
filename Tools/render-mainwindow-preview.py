@@ -969,6 +969,9 @@ final class VpnManager: ObservableObject {
     @Published var testingNodes: Set<String> = []
     var isRunning: Bool { state == .running }
     static let primaryGroupNames = ["主代理", "GLOBAL", "PROXY"]
+    static func conflictMessage(_ conflict: PortConflict) -> String {
+        "端口 \(conflict.port) 被占用，内核未启动"
+    }
     var primaryGroup: VpnGroup? { groups.first }
     var livePath: [String] { ["主代理", "香港 · HKG-01"] }
     var liveLeafName: String? { "香港 · HKG-01" }
@@ -1538,6 +1541,10 @@ source += require('Sources/ClaudeBar/Utils/ProcessSampler.swift', 'extension Pro
 source += require('Sources/ClaudeBar/Views/Shared/HardwareDetailPanel.swift', 'enum HardwareIdentity {')
 source += require('Sources/ClaudeBar/Views/Shared/HardwareDetailPanel.swift', 'struct HardwareSiliconMark: View {')
 source += require('Sources/ClaudeBar/Views/Shared/HardwareDetailPanel.swift', 'struct CapacityHardwareMark: View {')
+# The tile's signal mark shares the ruler's unfilled-cell ink
+# (`ConnectionSignalScale.emptyCell`), and the panel itself is not in this
+# fixture — only `ConnectionCard` is — so the declaration is sliced here.
+source += require('Sources/ClaudeBar/Views/Shared/HardwareDetailPanel.swift', 'struct ConnectionSignalScale: View {')
 source += require_file('Sources/ClaudeBar/Utils/CursorLedger.swift')
 
 # The detail panels the strip's tiles open. Their bodies are page-scale and
