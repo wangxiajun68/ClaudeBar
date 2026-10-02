@@ -206,6 +206,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-session-waiting-') as folder:
         # gets a stub rather than dragging the preferences layer into a fixture.
         'enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }',
         (utils / 'JSONCoerce.swift').read_text(),
+        (utils / 'WorkflowMonitor.swift').read_text(),
         (utils / 'SessionMonitor.swift').read_text(),
         swift,
     ]))

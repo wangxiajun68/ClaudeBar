@@ -316,7 +316,7 @@ private struct SessionTileFull: View {
             }
             .opacity(session.contextTokens > 0 ? 1 : 0.25)
 
-            ActivityLine(activity: isWaiting ? waitingActivity : (session.currentActivity.isEmpty ? " " : session.currentActivity),
+            ActivityLine(activity: isWaiting ? waitingActivity : (session.displayActivity.isEmpty ? " " : session.displayActivity),
                          isBusy: isBusy || isWaiting,
                          color: isWaiting ? Theme.statusWarning : Theme.statusBusy)
             SessionLoadChip(key: .pid(session.pid))
@@ -418,12 +418,21 @@ private struct SessionTileFull: View {
     private func workflowRow(_ wf: WorkflowInfo) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "gearshape").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
-            Text(wf.workflowId).font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
+            Text(wf.name.isEmpty ? wf.workflowId : wf.name).font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
                 .lineLimit(1).truncationMode(.middle)
-            RollingNumberText("· \(wf.agents.count) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+            Text(wf.status.label).font(Theme.Font.caption)
+                .foregroundColor(wf.status == .failed ? Theme.Ink.error : wf.status == .running ? Theme.Ink.claude : Theme.textTertiary())
+            if !wf.phase.isEmpty {
+                Text(wf.phase).font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            RollingNumberText("· \(wf.completedCount)/\(wf.totalCount) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
                 .lineLimit(1)
             if wf.runningCount > 0 {
                 Text("(\(wf.runningCount)●)").rollingNumber("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
+            }
+            if wf.failedCount > 0 {
+                Text("\(wf.failedCount) 失败").font(Theme.Font.caption).foregroundColor(Theme.Ink.error)
             }
             Spacer()
         }
@@ -882,4 +891,3 @@ private struct ExternalSessionGridCard: View {
 
     private func revealCwd() { TerminalLauncher.revealInFinder(cwd: session.cwd) }
 }
-

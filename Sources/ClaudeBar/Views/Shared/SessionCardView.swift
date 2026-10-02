@@ -110,7 +110,7 @@ struct SessionCardView: View {
         // `waitingReason` is non-empty whenever `isWaiting` — its own `""`
         // arm resolves to "等待你确认" — so it needs no default here.
         if isWaiting { return session.waitingReason }
-        return session.currentActivity.isEmpty ? "等待下一步" : session.currentActivity
+        return session.displayActivity.isEmpty ? "等待下一步" : session.displayActivity
     }
 
     /// How many agents this session spawned, and how many are running.
@@ -118,7 +118,7 @@ struct SessionCardView: View {
         var total = session.subagents.count
         var running = session.subagents.filter { $0.status == .running }.count
         for workflow in session.workflows {
-            total += workflow.agents.count
+            total += workflow.totalCount
             running += workflow.runningCount
         }
         return (total, running)

@@ -158,8 +158,9 @@ func run() throws {
 try run()
 '''
 
+workflow_status = (utils / 'WorkflowMonitor.swift').read_text().split('final class WorkflowMonitor:')[0]
 claude_src = (utils / 'SessionMonitor.swift').read_text()
-claude_models = claude_src[claude_src.index('/// A live Claude Code session, parsed from'):
+claude_models = workflow_status + claude_src[claude_src.index('/// A live Claude Code session, parsed from'):
                            claude_src.index('/// Reads ~/.claude/sessions/*.json and reports live Claude Code sessions.')]
 
 cursor_src = (utils / 'CursorSessionMonitor.swift').read_text()

@@ -74,7 +74,15 @@ struct SessionInfo: Identifiable, Equatable {
 
     /// Mid-work — what every "运行中" in the app means. See
     /// `SessionStatus.isWorking`.
-    var isBusy: Bool { !isWaiting && (status.isWorking || toolPending) }
+    var isBusy: Bool { !isWaiting && (status.isWorking || toolPending || workflows.contains { $0.status == .running }) }
+
+    var displayActivity: String {
+        if !status.isWorking, !toolPending, let workflow = workflows.first(where: { $0.status == .running }) {
+            let name = workflow.name.isEmpty ? "Workflow" : workflow.name
+            return workflow.phase.isEmpty ? name : "\(name) · \(workflow.phase)"
+        }
+        return currentActivity
+    }
 
     /// One sentence for what the user is being asked for, e.g. "等待你确认 · Bash"
     /// / "等待确认计划". Empty when not waiting.
@@ -189,7 +197,7 @@ enum SessionStatus: String {
 /// Status of a subagent, derived from whether its latest tool_use has a
 /// following tool_result.
 enum SubagentStatus: String {
-    case running, done
+    case running, done, unknown
 }
 
 /// A subagent spawned by a session (Task/Agent tool), parsed from the
@@ -209,7 +217,13 @@ struct WorkflowInfo: Identifiable, Equatable {
     var id: String { workflowId }
     let workflowId: String
     var agents: [SubagentInfo] = []
-    var runningCount: Int { agents.filter { $0.status == .running }.count }
+    var name: String = ""
+    var phase: String = ""
+    var status: WorkflowStatus = .unknown
+    var totalCount: Int = 0
+    var completedCount: Int = 0
+    var failedCount: Int = 0
+    var runningCount: Int = 0
 }
 
 /// Result of scanning a transcript tail for context-window usage and the
@@ -463,11 +477,8 @@ struct SessionMonitor {
     /// and workflows (each workflow groups its member agents).
     static func fetchSubagents(for session: SessionInfo) -> (direct: [SubagentInfo], workflows: [WorkflowInfo]) {
         let subagentsDir = sessionDirURL(for: session).appendingPathComponent("subagents")
-        guard FileManager.default.fileExists(atPath: subagentsDir.path),
-              let entries = try? FileManager.default.contentsOfDirectory(
-                  at: subagentsDir, includingPropertiesForKeys: nil) else {
-            return (direct: [], workflows: [])
-        }
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: subagentsDir, includingPropertiesForKeys: nil)) ?? []
 
         var direct: [SubagentInfo] = []
         for entry in entries where entry.lastPathComponent.hasSuffix(".meta.json") {
@@ -487,7 +498,7 @@ struct SessionMonitor {
                 if let agentFiles = try? FileManager.default.contentsOfDirectory(
                     at: wfDir, includingPropertiesForKeys: nil) {
                     for entry in agentFiles where entry.lastPathComponent.hasSuffix(".meta.json") {
-                        if let info = parseAgent(at: entry, in: wfDir, defaultType: "workflow-subagent") {
+                        if let info = parseAgent(at: entry, in: wfDir, defaultType: "workflow-subagent", scanActivity: false) {
                             wf.agents.append(info)
                         }
                     }
@@ -502,19 +513,16 @@ struct SessionMonitor {
             return a.agentId < b.agentId
         }
         direct.sort(by: sort)
-        workflows.sort { lhs, rhs in
-            let lr = lhs.runningCount > 0
-            let rr = rhs.runningCount > 0
-            if lr != rr { return lr }      // running workflows first
-            return lhs.workflowId < rhs.workflowId
-        }
+        workflows = WorkflowMonitor.shared.enrich(
+            workflows, transcript: transcriptURL(for: session), directory: workflowsDir,
+            sessionAlive: session.isAlive)
         return (direct: direct, workflows: workflows)
     }
 
     /// Parse one `agent-<id>.meta.json` and scan its sibling transcript.
     /// `dir` holds both files; the two callers share everything but the
     /// default agentType and the destination array.
-    private static func parseAgent(at entry: URL, in dir: URL, defaultType: String) -> SubagentInfo? {
+    private static func parseAgent(at entry: URL, in dir: URL, defaultType: String, scanActivity: Bool = true) -> SubagentInfo? {
         guard let data = try? Data(contentsOf: entry),
               let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let fname = entry.deletingPathExtension().deletingPathExtension().lastPathComponent
@@ -523,6 +531,7 @@ struct SessionMonitor {
         let agentType = (meta["agentType"] as? String) ?? defaultType
         let description = (meta["description"] as? String) ?? ""
         var info = SubagentInfo(agentId: agentId, agentType: agentType, description: description)
+        guard scanActivity else { info.status = .unknown; return info }
         let (activity, pending) = scanAgentActivity(transcript: dir.appendingPathComponent("\(fname).jsonl"))
         info.activity = activity
         info.status = pending ? .running : .done
