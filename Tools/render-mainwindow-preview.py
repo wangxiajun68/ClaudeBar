@@ -710,6 +710,10 @@ final class ProcessSampler {
             guard let celsius, celsius > 0 else { return nil }
             return String(format: "%.0f°C", celsius.rounded())
         }
+        /// The stub carries fixed readings, so the line is spelled out rather
+        /// than assembled from them; production's own `summaryLine` sits in the
+        /// struct the fixture replaces.
+        var summaryLine: String { "本机  CPU 18%  GPU 7%  13.4 GB / 16.0 GB" }
         var memoryWells: [Double] { memoryTotal > 0 ? [0.42, 0.28, 0.12] : [] }
         var diskWells: [Double] { diskTotal > 0 ? [0.81, 0.19] : [] }
     }
