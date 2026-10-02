@@ -6,6 +6,8 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'Sources/ClaudeBar/Utils/GreetingPhrase.swift').read_text()
+# The greeting draws season and solar-term lines from the offline term calendar.
+source = (root / 'Sources/ClaudeBar/Utils/SolarTerm.swift').read_text() + '\n' + source
 source += r'''
 @main struct Regression {
     static func main() {
@@ -51,13 +53,49 @@ source += r'''
             require(GreetingPhrase.resolve(.automatic, date: baseline, calendar: calendar, language: language)
                     == GreetingPhrase.forDate(baseline, calendar: calendar, language: language),
                     "Automatic preserves the contextual selection")
-            for selection in GreetingPhrase.Selection.allCases where selection != .automatic && selection != .custom {
+            for selection in GreetingPhrase.Selection.allCases where selection != .automatic && selection != .custom && selection != .verse && selection != .everyday {
                 let fixed = GreetingPhrase.resolve(selection, date: baseline, calendar: calendar, language: language)
                 require(!fixed.script.isEmpty, "Every selectable greeting needs text")
                 if selection != .monthly {
                     require(fixed == GreetingPhrase.resolve(selection, date: date("2026-10-01", 23),
                             calendar: calendar, language: language), "Fixed greetings must override dates/holidays")
                 }
+            }
+        }
+        // The verse choice follows the season, so two dates in different
+        // seasons must not draw from the same pool.
+        for language in GreetingPhrase.Language.allCases {
+            require(GreetingPhrase.resolve(.verse, date: date("2026-04-10", 10), calendar: calendar, language: language)
+                    != GreetingPhrase.resolve(.verse, date: date("2026-11-10", 10), calendar: calendar, language: language),
+                    "Verse follows the season, not a fixed string")
+            for selection in [GreetingPhrase.Selection.verse, .automatic] {
+                let verse = GreetingPhrase.resolve(selection, date: date("2026-04-10", 10), calendar: calendar, language: language)
+                require(!verse.script.isEmpty && !(verse.aside ?? "").isEmpty,
+                        "Every verse greeting needs a line and a source")
+                // Chinese lines are short by nature; English poetry fragments
+                // are allowed longer but must stay legible on narrow cards.
+                let limit = language == .chinese ? 10 : 24
+                require(verse.script.count <= limit, "Verse headlines stay readable on narrow cards")
+            }
+        }
+        // The everyday choice keeps the plain human greetings: it never reaches
+        // for a verse, still says "早点休息" at bedtime, and answers the hour.
+        for language in GreetingPhrase.Language.allCases {
+            let bedtime = GreetingPhrase.resolve(.everyday, date: date("2026-04-10", 23),
+                    calendar: calendar, language: language)
+            require(!bedtime.script.isEmpty && !(bedtime.aside ?? "").isEmpty,
+                    "Everyday greetings need a line and a note")
+            let restful = language == .chinese ? ["休息", "晚安", "睡"] : ["rest", "sleep", "night"]
+            require(restful.contains { bedtime.aside!.contains($0) || bedtime.script.contains($0) },
+                    "Everyday bedtime still cares about rest")
+            let noon = GreetingPhrase.resolve(.everyday, date: date("2026-04-10", 12),
+                    calendar: calendar, language: language)
+            require(noon != bedtime, "Everyday greetings follow the hour")
+            // Everyday English greetings are plain words rather than poems, so
+            // they may run a little longer; the layout scales them down.
+            require(noon.script.count <= 16, "Everyday headlines stay readable")
+            if language == .english {
+                require(noon.script.unicodeScalars.allSatisfy { $0.isASCII }, "Everyday English copy is ASCII")
             }
         }
         require(GreetingPhrase.resolve(.monthly, date: date("2026-10-01"), calendar: calendar,

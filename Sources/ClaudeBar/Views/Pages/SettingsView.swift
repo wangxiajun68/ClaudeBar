@@ -274,7 +274,11 @@ struct SettingsView: View {
                 .padding(.horizontal, 20).padding(.vertical, 14)
                 .disabled(!prefs.greetingWeatherRendering)
                 SettingsDivider()
-                SettingsRow(title: "问候语", caption: prefs.greetingSelection == .automatic ? "随时间、节日和天气自动选择" : "文字随窗口和字体自动缩放") {
+                SettingsRow(title: "问候语", caption: prefs.greetingSelection == .automatic
+                    ? "随节气、季节、时辰与天气自动选择"
+                    : (prefs.greetingSelection == .verse ? "按节气与季节摘取诗词，忽略节日和天气"
+                        : (prefs.greetingSelection == .everyday ? "按时辰说一句日常问候，不引用诗词"
+                            : "文字随窗口和字体自动缩放"))) {
                     Menu {
                         ForEach(GreetingPhrase.Selection.allCases) { selection in
                             Button(selection.label) { prefs.greetingSelection = selection }

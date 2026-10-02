@@ -10,11 +10,12 @@ enum GreetingPhrase {
     }
 
     enum Selection: String, CaseIterable, Identifiable {
-        case automatic, hello, morning, afternoon, evening, night, welcome, gentle, monthly, custom
+        case automatic, everyday, hello, morning, afternoon, evening, night, welcome, gentle, monthly, verse, custom
         var id: String { rawValue }
         var label: String {
             switch self {
             case .automatic: return "自动"
+            case .everyday: return "日常问候"
             case .hello: return "你好呀"
             case .morning: return "早上好呀"
             case .afternoon: return "下午好呀"
@@ -23,9 +24,19 @@ enum GreetingPhrase {
             case .welcome: return "欢迎回来"
             case .gentle: return "慢慢来就好"
             case .monthly: return "你好，本月"
+            case .verse: return "诗词"
             case .custom: return "自定义"
             }
         }
+    }
+
+    /// `automatic` reads the day (festivals, weather, hour); `verse` answers
+    /// with a line of poetry from the solar term or season, ignoring festivals
+    /// and weather, so a click on the card can hand the headline back to the
+    /// time of year alone. `everyday` keeps the plain human greetings — a warm
+    /// "早上好" or "早点休息" for the hour — and never reaches for a verse.
+    enum Mode {
+        case automatic, everyday, verse
     }
 
     static func resolve(_ selection: Selection, custom: String = "", date: Date,
@@ -34,7 +45,9 @@ enum GreetingPhrase {
         let chinese = language == .chinese
         let script: String
         switch selection {
-        case .automatic: return forDate(date, calendar: calendar, language: language, context: context)
+        case .automatic: return forDate(date, calendar: calendar, language: language, context: context, mode: .automatic)
+        case .everyday: return forDate(date, calendar: calendar, language: language, context: context, mode: .everyday)
+        case .verse: return forDate(date, calendar: calendar, language: language, context: context, mode: .verse)
         case .hello: script = chinese ? "你好呀" : "Hello"
         case .morning: script = chinese ? "早上好呀" : "Good morning"
         case .afternoon: script = chinese ? "下午好呀" : "Good afternoon"
@@ -92,11 +105,16 @@ enum GreetingPhrase {
         var englishWish: String
     }
 
-    /// Festivals first; rest at late hours next; then weather, weekend and the
-    /// ordinary day. Presence is enough for a gentle wish — no activity tracking
-    /// or assumption that the person has been working all night.
+    /// Festivals first; rest at late hours next; then weather, the solar term of
+    /// the day, weekend and the ordinary season. Presence is enough for a
+    /// gentle wish — no activity tracking or assumption that the person has
+    /// been working all night.
+    ///
+    /// `verse` skips festivals and weather so the headline is always a line of
+    /// poetry, chosen for the solar term or the season and hour.
     static func forDate(_ date: Date, calendar: Calendar = .current,
-                        language: Language = .chinese, context: Context = Context()) -> Phrase {
+                        language: Language = .chinese, context: Context = Context(),
+                        mode: Mode = .automatic) -> Phrase {
         let part = DayPart.of(hour: calendar.component(.hour, from: date))
         let seed = (calendar.ordinality(of: .day, in: .era, for: date) ?? 0)
             + calendar.component(.hour, from: date)
@@ -105,68 +123,104 @@ enum GreetingPhrase {
             return Phrase(script: line.0, aside: line.1)
         }
         let weatherWish = weatherPhrase(part: part, hour: calendar.component(.hour, from: date), language: language, context: context)
-        if let holiday = holiday(on: date, calendar: calendar) {
+        if mode == .automatic, let holiday = holiday(on: date, calendar: calendar) {
             let late = part == .late || part == .night
             let wish = language == .chinese ? holiday.wish : holiday.englishWish
             let aside = late ? (language == .chinese ? "\(wish)；也记得早点休息" : "\(wish) · rest when you can")
                 : (weatherWish?.aside ?? wish)
             return Phrase(script: language == .chinese ? holiday.name : holiday.englishName, aside: aside)
         }
-        if part != .late && part != .night, let weatherWish { return weatherWish }
+        if mode == .automatic, part != .late && part != .night, let weatherWish { return weatherWish }
 
-        if language == .english {
+        // The everyday choice keeps the plain human greeting for the hour
+        // ("早上好呀", "早点休息"), so the card can stay warm without a verse.
+        if mode == .everyday {
+            return choose(everydayLines(part: part, language: language))
+        }
+
+        // Rest still wins over a poem at bedtime; a verse for the night reads
+        // quieter than one for the working day.
+        if let term = SolarTerm.term(on: date, calendar: calendar), part != .late, part != .night {
+            return choose(language == .chinese ? term.chineseVerses : term.englishVerses)
+        }
+        let season = SolarTerm.season(on: date, calendar: calendar)
+        let daylight: SolarTerm.Season.Daylight = (part == .late || part == .night) ? .night : (part == .dawn ? .dawn : .day)
+        let weekday = calendar.component(.weekday, from: date)
+        if mode == .automatic, weekday == 1 || weekday == 7 {
+            return choose(season.weekendVerses(chinese: language == .chinese))
+        }
+        return choose(season.verses(chinese: language == .chinese, daylight: daylight))
+    }
+
+    /// The everyday pool: the plain, familiar greetings for each band of the
+    /// day. No poetry, no weather — just the human thing a person says. The
+    /// script rotates within the hour's band; the aside is the warm extra.
+    private static func everydayLines(part: DayPart, language: Language) -> [(String, String)] {
+        if language == .chinese {
             switch part {
-            case .late: return choose([("Still up", "let tomorrow take its turn"), ("Rest a little", "you have done enough for today"), ("Sleep well", "the world can wait a little")])
-            case .night: return choose([("Wind down", "leave a little time for yourself"), ("Good night", "rest when you can"), ("Sweet dreams", "tomorrow is a fresh start")])
-            case .dawn: return choose([("Hello, sunrise", "start gently, there is no rush"), ("A new day", "a little breakfast, a little sunshine")])
-            case .morning: return choose([("Good morning", "may today be kind to you"), ("Morning, sunshine", "one small step at a time"), ("Hello, today", "make room for something lovely")])
-            case .noon: return choose([("Time for lunch", "take a proper little break"), ("Good afternoon", "don't forget to eat"), ("Pause a little", "stretch, sip, breathe")])
-            case .afternoon: return choose([("Good afternoon", "slow progress is still progress"), ("Take a breath", "a little water, a little rest"), ("Keep it gentle", "you don't have to do it all today")])
-            case .evening: return choose([("Good evening", "save some of the evening for yourself"), ("Welcome back", "something warm, something peaceful"), ("Hello, evening", "let the day soften a little")])
+            case .late, .night:
+                return [("早点休息", "夜深了，手头的事明天再说，好好睡一觉"),
+                        ("晚安好梦", "放下手机，安心休息，明天会更好"),
+                        ("早点睡呀", "再忙也别忘了照顾自己，晚安"),
+                        ("夜深了", "事情做不完没关系，先好好休息")]
+            case .dawn:
+                return [("清晨好呀", "新的一天开始了，慢慢来"),
+                        ("早上好呀", "天刚亮，先喝口水，照顾好自己"),
+                        ("醒来真好", "清晨安静，愿你今天心情好"),
+                        ("早安呀", "新的一天，愿你顺顺利利")]
+            case .morning:
+                return [("早上好呀", "新的一天，愿你顺顺利利，慢慢来"),
+                        ("早呀", "吃早饭了吗？先照顾好自己"),
+                        ("早上好", "愿你今天有好心情，事情一件件来"),
+                        ("新的一天", "深呼吸，慢慢开始今天")]
+            case .noon:
+                return [("中午好呀", "记得吃午饭，也歇一会儿"),
+                        ("午安", "忙了半天，给自己留一点时间"),
+                        ("午饭时间", "吃顿热乎的，别对付自己"),
+                        ("中午好", "放下手头的事，好好吃个饭")]
+            case .afternoon:
+                return [("下午好呀", "忙了半天，记得站起来走走"),
+                        ("下午好", "喝口水，伸个懒腰，慢慢来"),
+                        ("午后时光", "不着急，一件一件来"),
+                        ("下午好", "愿你此刻不慌不忙")]
+            case .evening:
+                return [("晚上好呀", "今天辛苦了，给自己一点放松的时间"),
+                        ("晚上好", "忙了一天，晚上好好休息"),
+                        ("辛苦了", "回家路上慢一点，晚上吃顿好的"),
+                        ("晚上好", "把今天放一放，享受夜晚的安静")]
             }
         }
         switch part {
-        case .late:
-            return choose([
-                ("夜深了", "手头的事先放一放，早点休息吧"),
-                ("早点睡呀", "明天还有新的阳光，不急在这一晚"),
-                ("该歇一歇啦", "合上电脑，也给自己一个晚安"),
-                ("晚安好梦", "愿你睡得安稳，醒来轻松一些"),
-                ("别太晚睡", "留一点精力，给明天的自己"),
-                ("辛苦啦", "这一晚已经够长了，休息也很重要"),
-                ("让夜慢下来", "喝口水，放松肩膀，再好好睡一觉"),
-                ("明天再继续", "今天做到这里，也已经很好了")])
-        case .night:
-            return choose([
-                ("早点休息呀", "忙了一天，给自己留一点安静的时间"),
-                ("晚安啦", "把今天轻轻放下，愿今晚有个好梦"),
-                ("慢慢收尾吧", "没做完的事，可以留给明天"),
-                ("今天辛苦了", "关掉一点忙碌，打开一点松弛"),
-                ("好好睡一觉", "愿明天醒来，又是轻盈的一天"),
-                ("给自己晚安", "记得放松眼睛，也放松心情"),
-                ("夜色温柔", "别忘了，你也值得被好好照顾"),
-                ("准备好梦吧", "今晚就让自己早一点休息")])
-        default: break
-        }
-        let weekday = calendar.component(.weekday, from: date)
-        if weekday == 1 || weekday == 7 {
-            return choose([("周末愉快", "愿今天有一点闲，也有一点喜欢"), ("慢一点也好", "留点时间，做一件让自己开心的事"), ("今天自在些", "不赶路的时候，也看看身边的风景"), ("给生活留白", "一顿好饭，一段散步，都很值得"), ("愿你轻松些", "忙里也记得，给自己一个小小的休息"), ("把日子过暖", "和喜欢的人，说说话，笑一笑")])
-        }
-        switch part {
+        case .late, .night:
+            return [("get some rest", "it is late; let the day go and sleep well"),
+                    ("sweet dreams", "put work down for tonight, and rest"),
+                    ("time to rest", "tomorrow can wait; take care of yourself"),
+                    ("good night", "sleep is a kind thing; go get some")]
         case .dawn:
-            return choose([("早呀", "新的一天慢慢来，先照顾好自己"), ("你好晨光", "喝口温水，让今天有个柔软的开始"), ("清晨好呀", "愿第一缕光，带来一点好心情"), ("一天刚刚好", "吃点早餐，再开始今天的旅程"), ("迎接新一天", "不必急着出发，先伸个懒腰吧"), ("早起辛苦啦", "愿今天的努力，都有温柔的回响")])
+            return [("good morning", "a new day, take it gently"),
+                    ("morning already", "start slow and be kind to yourself"),
+                    ("a quiet morning", "a fresh day, one thing at a time"),
+                    ("happy morning", "hope today treats you well")]
         case .morning:
-            return choose([("早上好呀", "愿今天顺顺利利，也有小小惊喜"), ("今天也加油", "一步一步来，慢慢也能走很远"), ("你好新一天", "吃好早餐，带着好心情出发"), ("愿你有好心情", "今天也别忘了，对自己温柔一点"), ("阳光正好", "愿你眼里有光，心里有盼望"), ("早安呀", "把今天过成，你喜欢的一小段时光"), ("好日子开始啦", "从一杯水、一个微笑开始吧"), ("新的一天啦", "愿你遇见好事，也遇见好的人")])
+            return [("good morning", "have some breakfast, take care of yourself"),
+                    ("morning", "one thing at a time, it is all fine"),
+                    ("good morning", "a new day, and there is no rush"),
+                    ("rise and shine", "breathe, and start gently")]
         case .noon:
-            return choose([("记得吃饭呀", "再忙也先好好吃一顿，别饿着自己"), ("午安呀", "吃顿热乎的饭，再歇一小会儿"), ("该歇一歇啦", "让眼睛离开屏幕，也让肩膀放松一下"), ("午饭要吃好", "照顾好胃，也照顾好今天的心情"), ("休息一会吧", "喝口水，伸个懒腰，再慢慢继续"), ("给自己充充电", "午间留一点空白，下午会轻松些"), ("好好吃饭呀", "日子再忙，一餐一饭也值得认真"), ("午间小憩吧", "闭目休息一下，不必一直绷紧")])
+            return [("good afternoon", "have some lunch, and a little break"),
+                    ("it is noon", "you have worked hard; take a rest"),
+                    ("lunch time", "eat something warm, do not skip it"),
+                    ("midday hello", "put the work down and have a meal")]
         case .afternoon:
-            return choose([("下午好呀", "喝口水，让接下来的时间轻松一点"), ("慢慢来就好", "不必一次做好所有事，先做好眼前这件"), ("休息一下吧", "看看远处，给眼睛和心情都放个小假"), ("愿你从容些", "一点一点推进，也是在向前走"), ("今天也不错", "别只盯着没做完的，也看看已经做到的"), ("给自己一点甜", "一杯喜欢的饮料，也能让下午亮起来"), ("伸个懒腰吧", "放松肩颈，再舒舒服服地继续"), ("保持好心情", "认真做事，也记得好好照顾自己")])
+            return [("good afternoon", "stand up and stretch for a moment"),
+                    ("afternoon", "some water, a little stretch, no rush"),
+                    ("hello again", "one step at a time, you are doing fine"),
+                    ("slow afternoon", "take your time, there is no hurry")]
         case .evening:
-            return choose([("晚上好呀", "把忙碌放缓一点，给自己留些时间"), ("今天辛苦了", "吃顿暖暖的晚饭，慢慢享受夜晚"), ("夜色正温柔", "愿今晚安静，也愿你心里轻松"), ("歇一歇吧", "这一天已经很努力了，也该照顾自己"), ("愿今晚轻松", "听首喜欢的歌，把心情慢慢放松"), ("让日子慢下来", "留一点夜晚，给自己和喜欢的人"), ("灯火可亲", "愿你有热饭，有陪伴，也有好心情"), ("今晚也温暖", "忙碌之外，别忘了生活的小小美好")])
-        // .late and .night returned in the first switch above, so this one only
-        // phrases the five daytime parts; the trap is what keeps every path
-        // from falling out of the end of the function.
-        default: preconditionFailure("late and night return above")
+            return [("good evening", "you have worked hard; take a little time"),
+                    ("evening", "the day is done, now let yourself rest"),
+                    ("you made it", "slow down on the way home, and eat well"),
+                    ("welcome to the evening", "put the day aside and enjoy the quiet")]
         }
     }
 

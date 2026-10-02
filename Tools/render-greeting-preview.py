@@ -103,6 +103,8 @@ source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
 source += (root / 'Sources/ClaudeBar/Utils/SkyAstronomy.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
 source += declaration('Sources/ClaudeBar/Views/Shared/WeatherReadingSky.swift', 'extension WeatherReading.Sky {')
+# The solar-term calendar the greeting draws its season verses from.
+source += (root / 'Sources/ClaudeBar/Utils/SolarTerm.swift').read_text() + '\n'
 source += (root / 'Sources/ClaudeBar/Utils/GreetingPhrase.swift').read_text() + '\n'
 source += declaration('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 source += declaration('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
