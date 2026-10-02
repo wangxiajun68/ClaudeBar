@@ -12,6 +12,8 @@ struct UsageAnalyticsSection: View {
     var onSelectDay: (Date) -> Void
     @State private var analysis: UsageAnalysis?
     @State private var sourceRows: [SourceValue] = []
+    @State private var renderedRequest: Request?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct Request: Equatable {
         let days: [DayUsage]; let stats: [ModelUsage]
@@ -33,10 +35,12 @@ struct UsageAnalyticsSection: View {
                 VStack(alignment: .leading, spacing: 14) {
                     metrics(a)
                     ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 14) {
-                            activityCard(a).frame(minWidth: 380, idealWidth: 380, maxWidth: .infinity)
-                            structureCard(a).frame(minWidth: 380, idealWidth: 380, maxWidth: .infinity)
-                        }
+                        // Measure both panels at their column width, then
+                        // propose the taller height to each card's surface.
+                        EqualRowGrid(spacing: 14, minColumnWidth: 380, fixedColumns: 2) {
+                            activityCard(a)
+                            structureCard(a)
+                        }.frame(minWidth: 774)
                         VStack(spacing: 14) { activityCard(a); structureCard(a) }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -54,7 +58,13 @@ struct UsageAnalyticsSection: View {
                 return (a, sourceValues)
             }.value
             guard !Task.isCancelled else { return }
-            analysis = result.0; sourceRows = result.1
+            // Swap the analysis and its chart inputs together, only after the
+            // cancellable computation completes. The previous report stays drawn.
+            withAnimation(reduceMotion ? nil : Theme.Animation.smooth) {
+                renderedRequest = request
+                analysis = result.0
+                sourceRows = result.1
+            }
         }
     }
 
@@ -98,6 +108,7 @@ struct UsageAnalyticsSection: View {
             }
             Text(value).font(.system(size: 25, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundColor(Theme.textPrimary).fixedSize(horizontal: true, vertical: false)
+                .contentTransition(.numericText())
             graphic().frame(height: 18).accessibilityHidden(true)
             Text(note).font(Theme.Font.micro).foregroundColor(Theme.textSecondary).lineLimit(1)
         }.frame(minWidth: 150, maxWidth: .infinity, alignment: .leading).help(help)
@@ -136,7 +147,9 @@ struct UsageAnalyticsSection: View {
                 Spacer()
                 caption("按日 · \(a.activeDays) 天有记录")
             }
-            UsageHeatmap(days: days, period: period, reference: interval.start,
+            UsageHeatmap(days: renderedRequest?.days ?? days,
+                         period: renderedRequest?.period ?? period,
+                         reference: renderedRequest?.interval.start ?? interval.start,
                          onSelectDay: onSelectDay, onSelectMonth: onSelectMonth)
             HStack(spacing: 6) {
                 caption("少")
@@ -160,7 +173,7 @@ struct UsageAnalyticsSection: View {
                     }.font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                 }
             }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .topLeading).usageFigure()
+        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).usageFigure()
     }
 
     private func structureCard(_ a: UsageAnalysis) -> some View {
@@ -189,10 +202,12 @@ struct UsageAnalyticsSection: View {
                             Text(part.name).font(Theme.Font.micro).foregroundColor(Theme.textSecondary)
                             Text(UsageStats.formatTokens(part.tokens)).font(Theme.Font.chromeEmph.monospacedDigit())
                                 .foregroundColor(Theme.textPrimary).lineLimit(1)
+                                .contentTransition(.numericText())
                         }
                         Spacer(minLength: 4)
                         Text(UsageAnalysis.share(part.tokens, of: a.total)).font(Theme.Font.microMono)
                             .foregroundColor(part.tokens > 0 ? part.color : Theme.textTertiary()).fixedSize()
+                            .contentTransition(.numericText())
                     }
                     .padding(9)
                     .background(Theme.cardFill(0.025), in: RoundedRectangle(cornerRadius: 10))
@@ -201,7 +216,7 @@ struct UsageAnalyticsSection: View {
                 }
             }
             caption("本地记录 · 各分段按真实 Token 比例绘制")
-        }.padding(16).frame(maxWidth: .infinity, alignment: .topLeading).usageFigure()
+        }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).usageFigure()
     }
 
     private func rateLabel(_ rate: Double?) -> String { rate.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }
@@ -216,9 +231,26 @@ struct UsageAnalyticsSection: View {
 
 /// Exact proportions: zero values occupy no width, including tiny
 /// nonzero shares. Labels carry the small values instead of inflating marks.
-private struct UsageCompositionBar: View {
-    let values: [Double]
+private struct UsageCompositionBar: View, Animatable {
+    var values: [Double]
     let colors: [Color]
+
+    // Four Token components, interpolated as normalized shares. Only this
+    // small Canvas redraws during the transition, not the report calculations.
+    var animatableData: AnimatablePair<AnimatablePair<Double, Double>, AnimatablePair<Double, Double>> {
+        get {
+            let total = values.reduce(0, +)
+            let shares = (0..<4).map { index in
+                total > 0 && index < values.count ? values[index] / total : 0
+            }
+            return .init(.init(shares[0], shares[1]), .init(shares[2], shares[3]))
+        }
+        set {
+            values = [newValue.first.first, newValue.first.second,
+                      newValue.second.first, newValue.second.second]
+        }
+    }
+
     var body: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.cardFill(0.06)))

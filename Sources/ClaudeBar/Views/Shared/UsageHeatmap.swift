@@ -15,6 +15,7 @@ struct UsageHeatmap: View {
     var onSelectMonth: ((Date) -> Void)? = nil
 
     @State private var hoveredDate: Date?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let cal = Calendar.current
 
     static func height(for period: UsagePeriod, compact: Bool) -> CGFloat {
@@ -40,15 +41,17 @@ struct UsageHeatmap: View {
         return Group {
             switch period {
             case .day, .custom:
-                weekStrip(by: by, peak: peak)
+                weekStrip(by: by, peak: peak).transition(.opacity)
             case .month, .year, .all:
-                contributionGrid(by: by, peak: peak)
+                contributionGrid(by: by, peak: peak).transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height(for: period, compact: compact))
         .accessibilityLabel(summary)
-        .animation(Theme.Motion.state, value: period)
+        .animation(reduceMotion ? nil : Theme.Animation.smooth, value: period)
+        .onChange(of: period) { _, _ in hoveredDate = nil }
+        .onChange(of: reference) { _, _ in hoveredDate = nil }
     }
 
     // MARK: Day — seven large cells for the week containing `reference`

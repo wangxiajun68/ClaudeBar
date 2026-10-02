@@ -8,6 +8,28 @@ struct UsageView: View {
     @State private var showCustomDatePicker = false
     @State private var officialCodexUsage: [ModelUsage] = []
     @State private var attributionInterval: DateInterval?
+    @State private var displayedAnalytics: AnalyticsSnapshot?
+
+    /// Only complete data for the selected window enters the presentation.
+    /// Keep the previous snapshot while the index answers a new period.
+    private struct AnalyticsSnapshot: Equatable {
+        let days: [DayUsage]
+        let stats: [ModelUsage]
+        let sources: [UsageSource: [ModelUsage]]
+        let period: UsagePeriod
+        let interval: DateInterval
+    }
+
+    private var readyAnalytics: AnalyticsSnapshot? {
+        let period = providerStore.usagePeriod
+        let interval = UsageStats.interval(for: period, reference: providerStore.usageReferenceDate)
+        guard providerStore.usagePublishedInterval == interval else { return nil }
+        return AnalyticsSnapshot(days: UsageStats.heatmapDays(for: period,
+                                                             periodDays: providerStore.usageDays,
+                                                             weekDays: providerStore.usageWeekDays),
+                                 stats: providerStore.usageStats, sources: providerStore.usageBySource,
+                                 period: period, interval: interval)
+    }
     private struct AttributionRequest: Equatable {
         let interval: DateInterval
         let codex: [ModelUsage]
@@ -49,7 +71,10 @@ struct UsageView: View {
                         }) {
                             Image(systemName: "arrow.clockwise").frame(width: 26, height: 26)
                         }.buttonStyle(.plain).help("重新统计本周期用量").accessibilityLabel("重新统计本周期用量")
-                        if providerStore.usageLoading { ProgressView().controlSize(.small) }
+                        ProgressView().controlSize(.small)
+                            .frame(width: 16, height: 16)
+                            .opacity(providerStore.usageLoading || providerStore.usagePublishedInterval != interval ? 1 : 0)
+                            .accessibilityHidden(!providerStore.usageLoading && providerStore.usagePublishedInterval == interval)
                     }.foregroundColor(Theme.textPrimary)
                     if showCustomDatePicker {
                         DatePicker("日期", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
@@ -57,13 +82,10 @@ struct UsageView: View {
                     }
                 }.padding(.horizontal, 14).padding(.vertical, 8).usageFigure()
 
-                if providerStore.usagePublishedInterval == interval {
-                    UsageAnalyticsSection(days: UsageStats.heatmapDays(for: providerStore.usagePeriod,
-                                                                    periodDays: providerStore.usageDays,
-                                                                    weekDays: providerStore.usageWeekDays),
-                                          stats: providerStore.usageStats,
-                                          sources: providerStore.usageBySource,
-                                          period: providerStore.usagePeriod, interval: interval,
+                if let snapshot = displayedAnalytics {
+                    UsageAnalyticsSection(days: snapshot.days, stats: snapshot.stats,
+                                          sources: snapshot.sources, period: snapshot.period,
+                                          interval: snapshot.interval,
                                           onSelectMonth: { date in
                         providerStore.usagePeriod = .month
                         providerStore.usageReferenceDate = date
@@ -74,7 +96,9 @@ struct UsageView: View {
                         showCustomDatePicker = false
                     }
 
-                    .id(interval)
+                    // Stable identity retains the last computed chart while the
+                    // next analysis task runs; there is no second loading flash.
+                    .allowsHitTesting(snapshot.interval == interval && snapshot.period == providerStore.usagePeriod)
 
                     VStack(alignment: .leading, spacing: 24) {
                         platformBreakdown
@@ -89,6 +113,9 @@ struct UsageView: View {
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)
+        .onChange(of: readyAnalytics, initial: true) { _, snapshot in
+            if let snapshot { displayedAnalytics = snapshot }
+        }
         .task(id: AttributionRequest(interval: interval, codex: providerStore.usageBySource[.codex] ?? [])) {
             let rows = await Task.detached(priority: .utility) { UsageIndex.fetchOfficialCodex(in: interval) }.value
             guard !Task.isCancelled else { return }

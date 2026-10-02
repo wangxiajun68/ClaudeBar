@@ -36,7 +36,7 @@ page = (root / 'Sources/ClaudeBar/Views/Pages/UsageView.swift').read_text()
 analytics = (root / 'Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift').read_text()
 assert 'days: UsageStats.heatmapDays(' in popup and 'periodDays: providerStore.usageDays' in popup
 assert 'days: UsageStats.heatmapDays(' in page
-assert 'UsageHeatmap(days: days' in analytics and 'trajectory(a)' not in analytics
+assert 'UsageHeatmap(days: renderedRequest?.days ?? days' in analytics and 'trajectory(a)' not in analytics
 source += r'''
 @main struct Regression {
     static func main() {
