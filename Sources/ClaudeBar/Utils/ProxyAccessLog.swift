@@ -131,7 +131,9 @@ struct ProxyLogEntry: Identifiable, Equatable {
 
 /// In-memory ring + JSONL sidecar for proxy access logs.
 /// The proxy calls `begin` / `ProxyLogTap.finish`; the UI observes `entries`.
-final class ProxyAccessLog: ObservableObject {
+/// Mutable request state is lock-guarded, disk formatting is ioQueue-only,
+/// and published state belongs to the main actor.
+final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
     static let shared = ProxyAccessLog()
 
     static let clock: DateFormatter = {
@@ -152,15 +154,21 @@ final class ProxyAccessLog: ObservableObject {
         return f
     }()
 
-    @Published private(set) var entries: [ProxyLogEntry] = []
+    @MainActor @Published private(set) var entries: [ProxyLogEntry] = []
 
     private let lock = NSLock()
     private var rows: [ProxyLogEntry] = []
     /// Streaming usage, keyed by row id — see `updateTokens`.
     private var pendingTokens: [UInt64: TokenTotals] = [:]
     private var nextID: UInt64 = 1
+    private var loaded = false
+    private let loadQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.load", qos: .utility)
     private let limit = 500
     private let iso = ISO8601DateFormatter()
+    /// Lock-guarded single-flight publication; a continuous burst still gets
+    /// a snapshot every 100 ms. The serial worker takes the lock off-main.
+    private var publishScheduled = false
+    private let publishQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.publish", qos: .utility)
 
     /// Every write to `proxyLogFile` runs here. One writer means the JSONL
     /// append and the whole-file compaction can never interleave on the same
@@ -177,18 +185,51 @@ final class ProxyAccessLog: ObservableObject {
     /// to one serial queue removes the shared reference entirely.
     private var compactWork: DispatchWorkItem?
 
-    private init() {
+    private init() {}
+
+    /// UI construction never opens the sidecar. A first request uses the same
+    /// serial loader before assigning its id; history cannot overwrite traffic.
+    func loadListIfNeeded() {
+        loadQueue.async { [weak self] in self?.loadHistory() }
+    }
+
+    /// The proxy's first request suspends while the Dispatch loader reads;
+    /// subsequent requests take only the short state check.
+    func prepareForRequests() async {
+        guard needsHistoryLoad() else { return }
+        await withCheckedContinuation { continuation in
+            loadQueue.async {
+                self.loadHistory()
+                continuation.resume()
+            }
+        }
+    }
+
+    private func needsHistoryLoad() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !loaded
+    }
+
+    private func loadHistory() {
+        guard needsHistoryLoad() else { return }
+        let history = readRecentEntries()
         lock.lock()
-        let loaded = loadLocked()
-        rows = loaded
+        // A clear during the read marks the history consumed. Never resurrect
+        // its old rows, even if new traffic has already arrived afterwards.
+        if !loaded {
+            rows = history
+            nextID = (history.map(\.id).max() ?? 0) + 1
+            loaded = true
+            schedulePublishLocked()
+        }
         lock.unlock()
-        entries = loaded
     }
 
     // MARK: - Proxy API (any thread)
 
     func begin(method: String, path: String, source: ProxyLogSource, kind: ProxyLogKind,
                provider: String, model: String, stream: Bool, bytesIn: Int) -> ProxyLogTap {
+        if needsHistoryLoad() { loadQueue.sync { loadHistory() } }
         lock.lock()
         let id = nextID
         nextID += 1
@@ -211,9 +252,8 @@ final class ProxyAccessLog: ObservableObject {
             cacheReadTokens: nil,
             cacheWriteTokens: nil)
         rows.append(entry)
-        var dropped = 0
         if rows.count > limit {
-            dropped = rows.count - limit
+            let dropped = rows.count - limit
             rows.removeFirst(dropped)
             // A row evicted here can never be sealed — `finish` bails on a
             // missing id — so its pending usage would sit in the dictionary
@@ -223,8 +263,8 @@ final class ProxyAccessLog: ObservableObject {
                 pendingTokens = pendingTokens.filter { $0.key >= first.id }
             }
         }
+        schedulePublishLocked()
         lock.unlock()
-        publishAppended(entry, droppedFirst: dropped)
         return ProxyLogTap(id: id, store: self)
     }
 
@@ -256,9 +296,11 @@ final class ProxyAccessLog: ObservableObject {
         row.status = status
         row.error = error.flatMap { Self.clip($0, 240) }.flatMap { $0.isEmpty ? nil : $0 }
         rows[idx] = row
-        lock.unlock()
-        publishUpdated(row)
+        schedulePublishLocked()
+        // Enqueue while holding the ordering lock so clear cannot get ahead
+        // of this write and then have an older finished row reappear on disk.
         scheduleWrite(row)
+        lock.unlock()
     }
 
     /// Counts that arrived while the row was still streaming, held back until
@@ -280,63 +322,76 @@ final class ProxyAccessLog: ObservableObject {
         lock.lock()
         rows = []
         pendingTokens = [:]
-        lock.unlock()
-        publish()
+        loaded = true
+        schedulePublishLocked()
         ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }
+        lock.unlock()
     }
 
     // MARK: - Internals
 
-    private func publish() {
-        DispatchQueue.main.async { [weak self] in
+    private func schedulePublishLocked() {
+        guard !publishScheduled else { return }
+        publishScheduled = true
+        publishQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self else { return }
             self.lock.lock()
             let snapshot = self.rows
+            self.publishScheduled = false
             self.lock.unlock()
-            self.entries = snapshot
-        }
-    }
-
-    /// Incremental variants. `publish()` copied the whole 500-row array under
-    /// the lock and reassigned it on every single request — two full copies
-    /// per forwarded call, plus a 500-element array diff for SwiftUI. Appending
-    /// or patching one row is all the UI actually needs.
-    private func publishAppended(_ row: ProxyLogEntry, droppedFirst: Int) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if droppedFirst > 0, self.entries.count >= droppedFirst {
-                self.entries.removeFirst(droppedFirst)
-            }
-            self.entries.append(row)
-        }
-    }
-
-    private func publishUpdated(_ row: ProxyLogEntry) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if let i = self.entries.firstIndex(where: { $0.id == row.id }) {
-                self.entries[i] = row
+            // All snapshots are dispatched by one serial worker, preserving
+            // order across concurrent begin/finish/clear calls without making
+            // the interaction thread wait on the proxy's lock.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.entries != snapshot else { return }
+                self.entries = snapshot
             }
         }
     }
 
-    private func loadLocked() -> [ProxyLogEntry] {
-        guard let data = try? Data(contentsOf: FilePaths.proxyLogFile) else { return [] }
-        // Lossy decode (see UsageJSONStore.load): the sidecar is append-only
-        // JSONL, so its last line can legitimately be half-written, and one
-        // damaged byte must not cost the whole log — the per-line `decode`
-        // below already skips anything that does not parse.
-        let text = String(decoding: data, as: UTF8.self)
+    private func readRecentEntries() -> [ProxyLogEntry] {
+        guard let handle = try? FileHandle(forReadingFrom: FilePaths.proxyLogFile) else { return [] }
+        defer { try? handle.close() }
+        let formatter = ISO8601DateFormatter()
         var rows: [ProxyLogEntry] = []
         rows.reserveCapacity(limit)
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard let row = decode(String(line)) else { continue }
-            rows.append(row)
+        func appendLines(_ data: Data.SubSequence) {
+            // Keep the prior lossy decoding and Unicode newline behavior.
+            // Assemble a whole LF-delimited record before decoding so a
+            // multibyte character straddling a read boundary stays intact.
+            for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).reversed() {
+                guard let row = decode(String(line), using: formatter) else { continue }
+                rows.append(row)
+                if rows.count == limit { break }
+            }
         }
-        if rows.count > limit {
-            rows = Array(rows.suffix(limit))
+        do {
+            var position = try handle.seekToEnd()
+            var pending = Data()
+            while position > 0 && rows.count < limit {
+                let count = Int(min(position, 64 * 1024))
+                position -= UInt64(count)
+                try handle.seek(toOffset: position)
+                var chunk = Data()
+                while chunk.count < count {
+                    guard let part = try handle.read(upToCount: count - chunk.count), !part.isEmpty else { return [] }
+                    chunk.append(part)
+                }
+                chunk.append(pending)
+                var end = chunk.endIndex
+                while let separator = chunk[..<end].lastIndex(of: 0x0A) {
+                    appendLines(chunk[(separator + 1)..<end])
+                    end = separator
+                    if rows.count == limit { break }
+                }
+                if rows.count == limit { break }
+                if position == 0 { appendLines(chunk[..<end]); break }
+                pending = Data(chunk[..<end])
+            }
+        } catch {
+            return []
         }
-        nextID = (rows.map(\.id).max() ?? 0) + 1
+        rows.reverse()
         return rows
     }
 
@@ -411,7 +466,7 @@ final class ProxyAccessLog: ObservableObject {
         return line
     }
 
-    private func decode(_ line: String) -> ProxyLogEntry? {
+    private func decode(_ line: String, using iso: ISO8601DateFormatter) -> ProxyLogEntry? {
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let id = (obj["id"] as? NSNumber)?.uint64Value ?? 0

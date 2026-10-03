@@ -66,6 +66,59 @@ struct VpnDomainConnection: Identifiable, Equatable {
     let outbound: String
     let upload: Int64
     let download: Int64
+    var host: String { VpnDomainFeed.splitHostPort(endpoint).host }
+}
+
+/// Bytes observed on proxied connections since launch or the last clear.
+struct VpnDomainTraffic: Equatable {
+    var upload: Int64 = 0
+    var download: Int64 = 0
+    var total: Int64 { VpnFormat.saturatingAdd(upload, download) }
+
+    mutating func add(upload: Int64, download: Int64) {
+        self.upload = VpnFormat.saturatingAdd(self.upload, upload)
+        self.download = VpnFormat.saturatingAdd(self.download, download)
+    }
+}
+
+/// Keep only live IDs for deduplication; closed connections leave their bytes
+/// in the totals. Snapshots cannot capture traffic after the last live sample.
+struct VpnDomainTrafficAccumulator {
+    private var previous: [String: VpnDomainConnection] = [:]
+    private(set) var totals = VpnDomainTraffic()
+    private(set) var byHost: [String: VpnDomainTraffic] = [:]
+
+    mutating func sample(_ connections: [VpnDomainConnection]) {
+        var next: [String: VpnDomainConnection] = [:]
+        for connection in connections {
+            guard next[connection.id] == nil else { continue }
+            let old = previous[connection.id]
+            next[connection.id] = VpnDomainConnection(
+                id: connection.id, endpoint: connection.endpoint, process: connection.process,
+                route: connection.route, rule: connection.rule, outbound: connection.outbound,
+                upload: max(connection.upload, old?.upload ?? 0),
+                download: max(connection.download, old?.download ?? 0))
+            guard connection.route == .proxied else { continue }
+            let upload = max(0, connection.upload)
+            let download = max(0, connection.download)
+            let deltaUp = max(0, upload - max(0, old?.upload ?? 0))
+            let deltaDown = max(0, download - max(0, old?.download ?? 0))
+            totals.add(upload: deltaUp, download: deltaDown)
+            byHost[connection.host, default: VpnDomainTraffic()].add(upload: deltaUp, download: deltaDown)
+        }
+        previous = next
+    }
+
+    mutating func retainHosts(_ hosts: Set<String>) {
+        let liveHosts = Set(previous.values.map(\.host))
+        byHost = byHost.filter { hosts.contains($0.key) || liveHosts.contains($0.key) }
+    }
+
+    mutating func clear() {
+        totals = VpnDomainTraffic()
+        byHost.removeAll(keepingCapacity: true)
+        // Retain live baselines so clearing does not recount existing bytes.
+    }
 }
 
 /// Per-domain rollup. Built from the ring by `VpnDomainLog.stat`.
@@ -81,6 +134,7 @@ struct VpnDomainLogStat: Identifiable, Equatable {
     var lastTimeText: String
     var lastOutbound: String
     var lastRoute: VpnDomainRoute
+    var traffic: VpnDomainTraffic?
 }
 
 /// Off-main half of the domain log: line buffering + parsing.
@@ -445,6 +499,9 @@ final class VpnDomainLog: ObservableObject {
 
     @Published private(set) var connections: [VpnDomainConnection] = []
     @Published private(set) var connectionRevision = 0
+    @Published private(set) var proxiedTraffic = VpnDomainTraffic()
+    private(set) var trafficByHost: [String: VpnDomainTraffic] = [:]
+    private var trafficAccumulator = VpnDomainTrafficAccumulator()
     @Published private(set) var entries: [VpnDomainEntry] = []
     /// Rows parsed this session, including ones the ring has since evicted.
     /// Session total; per-domain summaries deliberately cover retained rows only.
@@ -478,9 +535,10 @@ final class VpnDomainLog: ObservableObject {
             let destination = host.isEmpty ? (metadata["destinationIP"] as? String ?? "未知目标") : host
             let port = metadata["destinationPort"].map { String(describing: $0) } ?? ""
             let chains = item["chains"] as? [String] ?? []
+            guard !chains.isEmpty else { return nil }
             let outbound = chains.joined(separator: " → ")
             let route: VpnDomainRoute = chains.contains(where: { $0.uppercased().hasPrefix("REJECT") })
-                ? .reject : (chains.contains("DIRECT") ? .direct : .proxied)
+                ? .reject : (chains.contains(where: { $0.uppercased() == "DIRECT" }) ? .direct : .proxied)
             let name = metadata["process"] as? String ?? ""
             let path = metadata["processPath"] as? String ?? ""
             let process = name.isEmpty ? (path.isEmpty ? "进程未知" : URL(fileURLWithPath: path).lastPathComponent) : name
@@ -491,6 +549,9 @@ final class VpnDomainLog: ObservableObject {
                 upload: max(0, JSONCoerce.int64Val(item["upload"])),
                 download: max(0, JSONCoerce.int64Val(item["download"])))
         }.sorted { $0.id < $1.id }
+        trafficAccumulator.sample(next)
+        proxiedTraffic = trafficAccumulator.totals
+        trafficByHost = trafficAccumulator.byHost
         if connections != next {
             connections = next
             connectionRevision &+= 1
@@ -504,6 +565,9 @@ final class VpnDomainLog: ObservableObject {
         ring.clear()
         entries = []
         received = 0
+        trafficAccumulator.clear()
+        proxiedTraffic = trafficAccumulator.totals
+        trafficByHost = trafficAccumulator.byHost
         revision &+= 1
     }
 
@@ -583,6 +647,8 @@ final class VpnDomainLog: ObservableObject {
         guard !batch.isEmpty else { return }
         ring.append(contentsOf: batch)
         entries = ring.snapshot()
+        trafficAccumulator.retainHosts(Set(entries.map(\.host)))
+        trafficByHost = trafficAccumulator.byHost
         received += batch.count
         revision &+= 1
     }

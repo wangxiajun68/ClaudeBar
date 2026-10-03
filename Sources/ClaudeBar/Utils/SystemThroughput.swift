@@ -47,6 +47,7 @@ final class SystemThroughput: ObservableObject {
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sample() }
         }
+        timer.tolerance = 0.1
         // `.common` mode: the default mode is suspended while a menu tracks or
         // a scroll runs, which is exactly when a rate is worth reading. (The
         // same reason the battery heartbeat in `BatteryChargeController` uses

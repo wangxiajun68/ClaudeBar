@@ -1,0 +1,251 @@
+{
+  "baseline_ref": "HEAD",
+  "baseline_commit": "037dc2d4eee84a81b96de2e444dd4a11cae1d04a",
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "swift": "swift-driver version: 1.148.6 Apple Swift version 6.3.2 (swiftlang-6.3.2.1.108 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+    "optimization": "-O",
+    "visible_windows": false
+  },
+  "source_sha256": {
+    "working_tree": "8258048de6ee108a5f0db2937528225993d201d7dee27ca83b3844da23301ace",
+    "baseline": "1e984a42c738a942ca47dfa2af6c0fc54fb8d435554551bb712c83d0b2f16b1c"
+  },
+  "samples": {
+    "working_tree": [
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 0,
+          "milliseconds": 15.697002410888672,
+          "path_writes": 2,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 3.242015838623047,
+          "path_writes": 0,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 5.9250593185424805,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.13208389282226562,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      },
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 0,
+          "milliseconds": 15.317916870117188,
+          "path_writes": 2,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 3.1900405883789062,
+          "path_writes": 0,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 5.9719085693359375,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.14090538024902344,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      },
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 0,
+          "milliseconds": 15.935897827148438,
+          "path_writes": 2,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 3.139019012451172,
+          "path_writes": 0,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 5.963921546936035,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.13709068298339844,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      }
+    ],
+    "baseline": [
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 70.4500675201416,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 3998,
+          "location_writes": 3998,
+          "milliseconds": 74.86796379089355,
+          "path_writes": 3998,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 74.05102252960205,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.13399124145507812,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      },
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 69.21803951263428,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 3998,
+          "location_writes": 3998,
+          "milliseconds": 74.02706146240234,
+          "path_writes": 3998,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 72.9830265045166,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.13196468353271484,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      },
+      {
+        "appearance": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 70.77491283416748,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "pace": {
+          "color_writes": 3998,
+          "location_writes": 3998,
+          "milliseconds": 74.2110013961792,
+          "path_writes": 3998,
+          "updates": 2000
+        },
+        "path": {
+          "color_writes": 4000,
+          "location_writes": 4000,
+          "milliseconds": 74.68199729919434,
+          "path_writes": 4000,
+          "updates": 2000
+        },
+        "raster_sha256": [
+          "1f45094042d8bc1a3fd8bb5f82fff50174d76df37ba09dd9b46ef36afa09e2f9",
+          "d4c63bdbcf5f2afac2a64e92f09878c0ed35e17060dade1b0ce2ae63055f7ed4",
+          "c1531557025a359322f82fc9ec300093d12d6a35bdd6f73e7b5e11f12e9568e9",
+          "b47a1eb92f04169e237ca38d2cdc346850b962f5ae9ba788d0e3e7172dd1450b"
+        ],
+        "unchanged": {
+          "color_writes": 0,
+          "location_writes": 0,
+          "milliseconds": 0.14007091522216797,
+          "path_writes": 0,
+          "updates": 2000
+        }
+      }
+    ]
+  },
+  "medians_ms": {
+    "working_tree": {
+      "unchanged": 0.13709068298339844,
+      "pace": 3.1900405883789062,
+      "path": 5.963921546936035,
+      "appearance": 15.697002410888672
+    },
+    "baseline": {
+      "unchanged": 0.13399124145507812,
+      "pace": 74.2110013961792,
+      "path": 74.05102252960205,
+      "appearance": 70.4500675201416
+    }
+  }
+}

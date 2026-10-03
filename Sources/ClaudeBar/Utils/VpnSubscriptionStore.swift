@@ -211,6 +211,7 @@ final class VpnSubscriptionStore: ObservableObject {
                 if await self.refresh(id) { self.manager?.reloadConfig() }
             }
         }
+        refreshTimer?.tolerance = 180
     }
 
     // MARK: Download

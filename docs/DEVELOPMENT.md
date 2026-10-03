@@ -19,6 +19,12 @@ make test                  # 全部回归；CI/发布门禁
 
 测试直接编译生产 Swift 函数或控制器，在临时目录使用夹具与模拟传输运行，不需要构建或启动 App，也不访问真实网络／硬件。回归清单只在 `Makefile`，不新增测试框架。`test-fast` 是日常烟测，不替代提交前的完整回归。
 
+生产函数性能回归用 `make test TEST=module-performance`。前后对照可运行 `python3 Tests/module-performance-regressions.py --compare --baseline-ref <修改前提交>`，可加 `--output-json <输出路径>` 保存原始样本；时序与结果约束用于回归，毫秒数只作诊断，不设易受机器负载影响的硬阈值。`python3 Tools/performance-inventory.py` 只读扫描全部 Swift 性能入口；清单不代表已完成 Instruments 验证。
+
+JSON 用量后端、MCP 取消和访问日志尾部读取可运行 `make test TEST="backend-performance access-log-tail"`。夹具仅使用临时文件及自身的模拟 MCP 子进程，不启动真实客户端或 VPN。前后对照与基线重建命令见 [第二轮性能审查](reviews/apple-performance-followup-2026-10-04.md)。日志已异步载入，`module-performance` 的 `log_construct_ms` 是构造成本，`log_load_ms` 包含后台载入与发布等待，不能直接当作旧同步读取函数的耗时；单独读盘工作见 `access-log-tail`。
+
+UI 原生动效增量更新用 `make test TEST=ui-animation-performance`；前后对照运行 `python3 Tests/ui-animation-performance-regressions.py --compare --baseline-ref <修改前提交> --output-json <输出路径>`。使用生产曲线和图层代码、不可见夹具窗口，验证外观及播放生命周期。组件 CPU 时间与 model-layer 像素对照不能替代整窗口 FPS / GPU trace；详见 [UI 与动效审查](reviews/apple-ui-performance-2026-10-04.md)。
+
 ## 两个版本的隔离
 
 | 项目 | 开发测试版 dev | 正式版 release |

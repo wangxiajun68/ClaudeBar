@@ -10,6 +10,7 @@ struct VpnDomainLogSection: View {
     private let log = VpnDomainLog.shared
     @State private var historyRevision = 0
     @State private var connectionRevision = 0
+    @State private var proxiedTraffic = VpnDomainTraffic()
     @State private var page = 0
     @State private var visibleConnections: [VpnDomainConnection] = []
     /// Mirrored, not observed wholesale: `VpnManager` also publishes
@@ -89,13 +90,16 @@ struct VpnDomainLogSection: View {
         .vpnSurface()
         .foregroundColor(Theme.textPrimary)
         .task(id: requestKey) { await recompute() }
-        // Subscribe to the active stream only. Connection counters must not
-        // invalidate history, and hidden workspaces must not render either.
+        // Summary also follows sampled bytes; detail ignores connection ticks,
+        // and hidden workspaces must not render either.
         .onReceive(log.$revision) { value in
             if isVisible && mode != .connections { historyRevision = value }
         }
         .onReceive(log.$connectionRevision) { value in
-            if isVisible && mode == .connections { connectionRevision = value }
+            if isVisible && mode != .detail { connectionRevision = value }
+        }
+        .onReceive(log.$proxiedTraffic) { value in
+            if isVisible && mode == .summary { proxiedTraffic = value }
         }
         .onChange(of: isVisible) { _, visible in
             if visible { syncRevision() }
@@ -451,7 +455,7 @@ struct VpnDomainLogSection: View {
         GeometryReader { geometry in
             ScrollView([.horizontal, .vertical]) {
                 summaryTableContent
-                    .frame(width: max(640, geometry.size.width), alignment: .leading)
+                    .frame(width: max(940, geometry.size.width), alignment: .leading)
                     .frame(minHeight: geometry.size.height, alignment: .topLeading)
             }
         }
@@ -468,6 +472,16 @@ struct VpnDomainLogSection: View {
                 Spacer(minLength: 0)
             }
             .font(Theme.Font.caption)
+
+            HStack(spacing: Theme.Space.s16) {
+                tally("VPN 上传", VpnFormat.bytes(proxiedTraffic.upload), tint: Theme.Ink.claude)
+                tally("下载", VpnFormat.bytes(proxiedTraffic.download), tint: Theme.Ink.success)
+                tally("合计", VpnFormat.bytes(proxiedTraffic.total))
+                Text("采样累计").foregroundColor(Theme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .font(Theme.Font.caption)
+            .help("自应用启动或清空以来，仅累计已代理连接；不随筛选变化。短连接及最后一次采样后产生的流量可能漏计。域名流量保留至该域名的日志与活动连接均被移除。")
 
             if !visibleLeaks.isEmpty {
                 directLeakLine(visibleLeaks)
@@ -504,6 +518,9 @@ struct VpnDomainLogSection: View {
             Text("域名").frame(maxWidth: .infinity, alignment: .leading)
             Text("次数").frame(width: 44, alignment: .trailing)
             Text("路由").frame(width: 76, alignment: .leading)
+            Text("上传").frame(width: 82, alignment: .trailing)
+            Text("下载").frame(width: 82, alignment: .trailing)
+            Text("合计").frame(width: 82, alignment: .trailing)
             Text("最近").frame(width: 72, alignment: .trailing)
             Text("出口").frame(width: 180, alignment: .leading)
             Text("失败").frame(width: 44, alignment: .trailing)
@@ -531,6 +548,9 @@ struct VpnDomainLogSection: View {
                 .frame(width: 44, alignment: .trailing)
             routeChip(stat)
                 .frame(width: 76, alignment: .leading)
+            trafficCell(stat.traffic?.upload)
+            trafficCell(stat.traffic?.download)
+            trafficCell(stat.traffic?.total)
             Text(stat.lastTimeText.isEmpty ? "—" : stat.lastTimeText)
                 .font(Theme.Font.console)
                 .foregroundColor(Theme.textSecondary)
@@ -564,6 +584,15 @@ struct VpnDomainLogSection: View {
                 NSPasteboard.general.setString(stat.lastOutbound, forType: .string)
             }
         }
+    }
+
+    private func trafficCell(_ bytes: Int64?) -> some View {
+        Text(bytes.map(VpnFormat.bytes) ?? "—")
+            .font(Theme.Font.captionMono)
+            .foregroundColor(Theme.textPrimary)
+            .monospacedDigit()
+            .frame(width: 82, alignment: .trailing)
+            .help("该域名走 VPN 的采样累计流量，不含直连；不随路由或失败筛选变化。")
     }
 
     /// One micro-bar of the host's route split. A host commonly appears under
@@ -621,6 +650,7 @@ struct VpnDomainLogSection: View {
 
     private struct RequestKey: Equatable {
         let revision: Int
+        let trafficRevision: Int
         let isVisible: Bool
         let mode: Mode
         let route: RouteFilter
@@ -631,12 +661,14 @@ struct VpnDomainLogSection: View {
 
     private var requestKey: RequestKey {
         RequestKey(revision: mode == .connections ? connectionRevision : historyRevision,
+                   trafficRevision: mode == .summary ? connectionRevision : 0,
                    isVisible: isVisible, mode: mode, route: routeFilter, query: query, failedOnly: failedOnly, followTail: followTail)
     }
 
     private func syncRevision() {
         historyRevision = log.revision
         connectionRevision = log.connectionRevision
+        proxiedTraffic = log.proxiedTraffic
     }
 
     private func resetFollow() {
@@ -672,6 +704,7 @@ struct VpnDomainLogSection: View {
             return
         }
         let entries = log.entries
+        let trafficByHost = log.trafficByHost
         let worker = Task.detached(priority: .userInitiated) {
             VpnDomainQuery.run(entries: entries, query: key.query,
                                route: key.route.route, failedOnly: key.failedOnly,
@@ -690,7 +723,11 @@ struct VpnDomainLogSection: View {
             visibleRows = result.rows
         }
         lastSeenID = entries.last?.id
-        visibleStats = result.stats
+        visibleStats = result.stats.map { stat in
+            var stat = stat
+            stat.traffic = trafficByHost[stat.host]
+            return stat
+        }
         visibleLeaks = result.leaks
         page = min(page, max(0, (visibleCount - 1) / VpnDomainQuery.pageSize))
         routeCounts = result.counts
@@ -711,7 +748,7 @@ struct VpnDomainLogSection: View {
             }.joined(separator: "\n")
         case .summary:
             text = visibleStats.map {
-                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)"
+                "\($0.host)\t\($0.hits)\t\($0.lastRoute.label)\t\($0.lastTimeText)\t\($0.lastOutbound)\t↑ \($0.traffic.map { VpnFormat.bytes($0.upload) } ?? "—")\t↓ \($0.traffic.map { VpnFormat.bytes($0.download) } ?? "—")\t合计 \($0.traffic.map { VpnFormat.bytes($0.total) } ?? "—")"
             }.joined(separator: "\n")
         }
         guard !text.isEmpty else { return }

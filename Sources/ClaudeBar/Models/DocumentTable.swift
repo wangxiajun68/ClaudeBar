@@ -23,11 +23,16 @@ struct DocumentTable: Sendable {
     var attributes: [String: String] = [:]
     init(cells: [Cell], rowCount: Int, columnCount: Int) {
         self.cells = cells; self.rowCount = rowCount; self.columnCount = columnCount
+        var longest = Array(repeating: 0, count: columnCount)
+        var hasCode = Array(repeating: false, count: columnCount)
+        for cell in cells where (0..<columnCount).contains(cell.column) {
+            if cell.value.contains("```") { hasCode[cell.column] = true }
+            for line in cell.value.components(separatedBy: "\n") {
+                longest[cell.column] = max(longest[cell.column], line.count)
+            }
+        }
         columnWidths = (0..<columnCount).map { column in
-            let values = cells.filter { $0.column == column }.map(\.value)
-            if values.contains(where: { $0.contains("```") }) { return 300 }
-            let longest = values.flatMap { $0.components(separatedBy: "\n") }.map(\.count).max() ?? 0
-            return min(300, max(150, Double(longest) * 7 + 24))
+            hasCode[column] ? 300 : min(300, max(150, Double(longest[column]) * 7 + 24))
         }
         rowHeights = Array(repeating: 48, count: rowCount)
     }
@@ -41,6 +46,60 @@ struct DocumentTable: Sendable {
     }
     static func clampWidth(_ value: Double) -> Double { min(1200, max(72, value.isFinite ? value : 150)) }
     static func clampHeight(_ value: Double) -> Double { min(2000, max(32, value.isFinite ? value : 48)) }
+    struct RowCluster: Identifiable {
+        var id: Int { rows.lowerBound }
+        let rows: Range<Int>
+        let cellIndices: [Int]
+    }
+    struct Layout {
+        let rowOffsets: [Double]
+        let columnOffsets: [Double]
+        let clusters: [RowCluster]
+    }
+    /// One linear pass per layout. Lazy rows receive their own cell indices;
+    /// scrolling no longer scans every cell for each row that becomes visible.
+    func layout(measured: [UUID: Double]) -> Layout {
+        func offsets(_ sizes: [Double]) -> [Double] {
+            var result = [0.0]
+            result.reserveCapacity(sizes.count + 1)
+            for size in sizes { result.append(result.last! + size) }
+            return result
+        }
+        let columns = offsets(columnWidths)
+        var heights = rowHeights
+        var byRow = Array(repeating: [Int](), count: rowCount)
+        for index in cells.indices {
+            let cell = cells[index]
+            byRow[cell.row].append(index)
+            let content: Double
+            if let height = measured[cell.id] {
+                content = height + 24
+            } else {
+                let width = max(40, columns[cell.column + cell.columnSpan] - columns[cell.column] - 24)
+                let lines = cell.value.components(separatedBy: "\n")
+                let estimate = lines.reduce(0) { $0 + max(1, Int(ceil(Double($1.count) * 8 / width))) }
+                content = Double(estimate * 21 + 4) + 24
+            }
+            let end = cell.row + cell.rowSpan
+            let existing = heights[cell.row..<end].reduce(0, +)
+            if content > existing { heights[end - 1] += content - existing }
+        }
+        var clusters: [RowCluster] = [], row = 0
+        while row < rowCount {
+            var end = row + 1, scanning = row
+            var indices: [Int] = []
+            while scanning < end {
+                for index in byRow[scanning] {
+                    end = max(end, cells[index].row + cells[index].rowSpan)
+                    indices.append(index)
+                }
+                scanning += 1
+            }
+            clusters.append(RowCluster(rows: row..<end, cellIndices: indices))
+            row = end
+        }
+        return Layout(rowOffsets: offsets(heights), columnOffsets: columns, clusters: clusters)
+    }
     static func dimension(_ value: String, property: String) -> Double? {
         if let number = Double(value.replacingOccurrences(of: "px", with: "").trimmingCharacters(in: .whitespaces)) { return number }
         guard let range = value.range(of: "(?:^|;)\\s*" + property + ":\\s*([0-9.]+)(?:px)?(?:;|$)", options: .regularExpression) else { return nil }
@@ -128,9 +187,12 @@ struct DocumentTable: Sendable {
         var output = "<table" + attrs(tableAttrs) + "><colgroup>"
         for width in columnWidths { output += "<col width=\"\(Int(width.rounded()))\"/>" }
         output += "</colgroup><tbody>"
+        // Group once instead of filtering the full table for every output row.
+        let byRow = Dictionary(grouping: cells.indices, by: { cells[$0].row })
         for row in 0..<rowCount {
             output += "<tr height=\"\(Int(rowHeights[row].rounded()))\">"
-            for cell in cells.filter({ $0.row == row }).sorted(by: { $0.column < $1.column }) {
+            for index in (byRow[row] ?? []).sorted(by: { cells[$0].column < cells[$1].column }) {
+                let cell = cells[index]
                 let tag = cell.header ? "th" : "td"
                 var cellAttrs = cell.attributes
                 cellAttrs["rowspan"] = cell.rowSpan > 1 ? String(cell.rowSpan) : nil

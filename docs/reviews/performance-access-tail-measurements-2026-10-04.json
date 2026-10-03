@@ -1,0 +1,94 @@
+{
+  "baseline_source_sha256": "eaf0247b66f4915d18f81e83efb26c57e2a5ab8f90928883248c7a34bfc6a3e0",
+  "working_source_sha256": "5b83f905ca67b762e79157ebebeb804c2968e6aef23a3aa6729264233d27c0ea",
+  "compiler_flags": [
+    "-O",
+    "-parse-as-library"
+  ],
+  "hardware": "Apple M3 Pro",
+  "swift": "swift-driver version: 1.148.6 Apple Swift version 6.3.2 (swiftlang-6.3.2.1.108 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "fixtures": {
+    "large_valid_lines": 50000,
+    "display_limit": 500,
+    "chunk_bytes": 65536,
+    "long_damaged_tail_bytes": 180000
+  },
+  "samples": {
+    "before": [
+      {
+        "large_read_off_main": 0,
+        "log_construct_ms": 379.994041,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 25838905,
+        "log_read_work_ms": 377.293959,
+        "peak_rss_mib": 66.5625
+      },
+      {
+        "large_read_off_main": 0,
+        "log_construct_ms": 383.052458,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 25838905,
+        "log_read_work_ms": 381.418417,
+        "peak_rss_mib": 66.484375
+      },
+      {
+        "large_read_off_main": 0,
+        "log_construct_ms": 387.981666,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 25838905,
+        "log_read_work_ms": 386.8105,
+        "peak_rss_mib": 66.484375
+      }
+    ],
+    "after": [
+      {
+        "large_read_off_main": 1,
+        "log_construct_ms": 1.165291,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 262144,
+        "log_read_work_ms": 41.22675,
+        "peak_rss_mib": 13.8125
+      },
+      {
+        "large_read_off_main": 1,
+        "log_construct_ms": 1.133708,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 262144,
+        "log_read_work_ms": 41.618708,
+        "peak_rss_mib": 13.796875
+      },
+      {
+        "large_read_off_main": 1,
+        "log_construct_ms": 1.077958,
+        "log_file_bytes": 25838905,
+        "log_read_bytes": 262144,
+        "log_read_work_ms": 40.667084,
+        "peak_rss_mib": 13.84375
+      }
+    ]
+  },
+  "medians": {
+    "before": {
+      "large_read_off_main": 0,
+      "log_construct_ms": 383.052458,
+      "log_file_bytes": 25838905,
+      "log_read_bytes": 25838905,
+      "log_read_work_ms": 381.418417,
+      "peak_rss_mib": 66.484375
+    },
+    "after": {
+      "large_read_off_main": 1,
+      "log_construct_ms": 1.133708,
+      "log_file_bytes": 25838905,
+      "log_read_bytes": 262144,
+      "log_read_work_ms": 41.22675,
+      "peak_rss_mib": 13.8125
+    }
+  },
+  "limitations": [
+    "synthetic sidecar, no app launch",
+    "read byte count measures requested payload, not physical disk/cache I/O",
+    "RSS includes Foundation and boundary/lifecycle checks",
+    "legacy files with only Unicode/CR separators and oversized corrupt records may require larger reads"
+  ]
+}

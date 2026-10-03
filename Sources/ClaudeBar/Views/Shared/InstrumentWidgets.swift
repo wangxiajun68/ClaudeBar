@@ -45,11 +45,7 @@ struct CompactFanPair: View {
                             )
                             Text(shortName(fan, index: index))
                                 .font(.system(size: 8, weight: .medium, design: .rounded))
-                                // The rotor above wears `bladeTint` because it is
-                                // *shape*; this caption is *text*, so the override
-                                // amber comes in its Ink variant — the same split
-                                // `ResourceStrip.fanInk` makes.
-                                .foregroundColor(fan.mode.isAutomatic ? Theme.textTertiary() : Theme.Ink.warning)
+                                .foregroundColor(Theme.textTertiary())
                                 .lineLimit(1)
                         }
                     }
@@ -74,10 +70,8 @@ struct CompactFanPair: View {
         return "\(fan.name) 手动 \(fan.rpm) / \(fan.maxRPM) rpm · 点击恢复自动"
     }
 
-    /// Automatic cooling follows the tile's hue; an explicit override is amber.
-    /// The same amber the tile's header and wash take under an override, so the
-    /// whole card turns together rather than the blades disagreeing with the
-    /// badge above them.
+    /// Each rotor alone reflects its own override; the card and the other
+    /// fan keep their resting hue.
     private func bladeTint(_ fan: FanInfo) -> Color {
         if !fan.mode.isAutomatic { return Theme.chartAmber }
         return restingTint

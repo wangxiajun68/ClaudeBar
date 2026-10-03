@@ -258,6 +258,72 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
                 try JSONSerialization.data(withJSONObject: files).write(to: FilePaths.usageFilesJSON)
             }
             UsageIndex.updateIndex(); require(total() == 380, "legacy parser caches must be rebuilt")
+
+            // Lifetime family costs include completed children and workflow
+            // transcripts, but never siblings or proxy copies of those calls.
+            let children = claude.appendingPathComponent("family/subagents")
+            let workflow = children.appendingPathComponent("workflows/done-workflow")
+            try fm.createDirectory(at: workflow, withIntermediateDirectories: true)
+            func familyCall(_ id: String, _ input: Int, model: String = "family-model") -> String {
+                line(["type":"assistant","timestamp":"2026-09-30T12:00:00Z",
+                    "message":["id":id,"model":model,"usage":["input_tokens":input,"output_tokens":1,
+                        "cache_read_input_tokens":2,"cache_creation_input_tokens":3]]])
+            }
+            let parentCall = familyCall("family-parent",10)
+            try Data(parentCall.utf8).write(to:claude.appendingPathComponent("family.jsonl"))
+            try Data((parentCall + familyCall("family-agent",20)).utf8).write(to:children.appendingPathComponent("agent-one.jsonl"))
+            let workerURL = workflow.appendingPathComponent("agent-two.jsonl")
+            try Data(familyCall("family-worker",30,model:"workflow-model").utf8).write(to:workerURL)
+            try Data(familyCall("unrelated-family",100).utf8).write(to:claude.appendingPathComponent("family-other.jsonl"))
+            UsageIndex.updateIndex()
+            func familyTokens(_ id: String, source: UsageSource) -> Int {
+                UsageIndex.fetchSession(source:source,sessionId:id).reduce(0){$0+$1.totalTokens}
+            }
+            require(familyTokens("family",source:.claude) == 78,"Claude root + agent + workflow, deduped")
+            require(UsageIndex.fetchSession(source:.claude,sessionId:"family").count == 2,"mixed workflow models retained")
+            try append(familyCall("family-worker-next",40,model:"workflow-model"),to:workerURL)
+            UsageIndex.updateIndex()
+            require(familyTokens("family",source:.claude) == 124,"finished workflow append refreshes lifetime cost")
+            UsageIndex.reloadPersistence(); UsageIndex.updateIndex()
+            require(familyTokens("family",source:.claude) == 124,"family query survives persistence reload")
+            let batch = UsageIndex.fetchSessionFamilies(source:.claude,sessionIds:["family","family","family-other","missing"])
+            require(batch["family"]!.reduce(0){$0+$1.totalTokens} == 124 && batch["missing"]!.isEmpty)
+            require(batch["family-other"]!.reduce(0){$0+$1.totalTokens} == 106,"neighbor sessions stay separate")
+
+            func codexFamily(_ id: String, parent: String?, tokens: Int, nested: Bool = false, archived: Bool = false) throws -> URL {
+                var meta: [String:Any] = ["id":id]
+                if let parent {
+                    if nested { meta["source"] = ["subagent":["thread_spawn":["parent_thread_id":parent]]] }
+                    else { meta["parent_thread_id"] = parent }
+                }
+                let body = line(["type":"session_meta","payload":meta]) + header
+                    + (tokens > 0 ? event(tokens,tokens/10,tokens/3,day:"2026-09-30") : "")
+                let url = (archived ? archive : sessions).appendingPathComponent("rollout-"+id+".jsonl")
+                try Data(body.utf8).write(to:url)
+                return url
+            }
+            _ = try codexFamily("cx-family",parent:nil,tokens:0)
+            _ = try codexFamily("cx-middle",parent:"cx-family",tokens:0)
+            let childURL = try codexFamily("cx-child",parent:"cx-middle",tokens:10,nested:true,archived:true)
+            _ = try codexFamily("cx-grandchild",parent:"cx-child",tokens:20)
+            _ = try codexFamily("cx-unrelated",parent:nil,tokens:100)
+            _ = try codexFamily("cycle-a",parent:"cycle-b",tokens:10)
+            _ = try codexFamily("cycle-b",parent:"cycle-a",tokens:20)
+            UsageIndex.updateIndex()
+            require(familyTokens("cx-family",source:.codex) == 33,"Codex archived descendants through zero-usage parent")
+            require(familyTokens("cx-child",source:.codex) == 33,"child rows show their own subtree")
+            require(familyTokens("cycle-a",source:.codex) == 33,"cyclic metadata terminates without double counting")
+            try append(event(30,3,10,day:"2026-09-30"),to:childURL)
+            UsageIndex.updateIndex()
+            require(familyTokens("cx-family",source:.codex) == 55,"descendant growth invalidates cached header")
+            let rootBatch = UsageIndex.fetchSessionFamilies(source:.codex,sessionIds:["cx-family","cx-unrelated"])
+            require(rootBatch["cx-unrelated"]!.reduce(0){$0+$1.totalTokens} == 110)
+            // A rewritten child's parent must change attribution, not reuse a stale header.
+            _ = try codexFamily("cx-child",parent:"cx-unrelated",tokens:30,archived:true)
+            UsageIndex.updateIndex()
+            require(familyTokens("cx-family",source:.codex) == 0)
+            require(familyTokens("cx-unrelated",source:.codex) == 165)
+            require(UsageIndex.fetchSessionFamilies(source:.thirdParty,sessionIds:["family"]).isEmpty)
         }
         let a = ModelUsage(model: "shared-medium", inputTokens: 10)
         let b = ModelUsage(model: "shared", inputTokens: 100)

@@ -619,6 +619,13 @@ enum ModelPricing {
     /// upstream model arrives as `anthropic/claude-sonnet-4-6`,
     /// `claude-sonnet-4-6-20250929`, or `claude-sonnet-4-6:free`. The vendor
     /// id is the common core; everything around it is routing metadata.
+    // Shared immutable patterns: pricing and ledger matching call canonical
+    // for every recorded model. Preserve ICU's Unicode digit/$ semantics.
+    private static let snapshotSuffixes: [NSRegularExpression] = {
+        [try! NSRegularExpression(pattern: #"-\d{8}$"#),
+         try! NSRegularExpression(pattern: #"@\d{8}$"#)]
+    }()
+
     static func canonical(_ model: String) -> String {
         var name = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !name.isEmpty else { return "" }
@@ -634,8 +641,9 @@ enum ModelPricing {
             name = String(name.dropLast(suffix.count))
         }
         // A trailing `-YYYYMMDD` (or `@YYYYMMDD`) build stamp.
-        for separator in ["-", "@"] {
-            guard let range = name.range(of: separator + #"\d{8}$"#, options: .regularExpression) else { continue }
+        for pattern in snapshotSuffixes {
+            guard let match = pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+                  let range = Range(match.range, in: name) else { continue }
             name = String(name[..<range.lowerBound])
         }
         // A trailing effort / speed tier. Cursor names the *same* upstream

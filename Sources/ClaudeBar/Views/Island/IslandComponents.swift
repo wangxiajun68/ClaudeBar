@@ -197,7 +197,7 @@ struct IslandSessionRow: View {
         guard let cost else {
             return session.agent == .cursor ? "Cursor 暂无独立会话 token 用量" : "该会话暂无可计价用量"
         }
-        return cost.detailParts(includeDominant: true).joined(separator: " · ")
+        return "会话累计估算（含子代理与 workflow） · " + cost.detailParts(includeDominant: true).joined(separator: " · ")
     }
 
     @ViewBuilder private var subtitle: some View {

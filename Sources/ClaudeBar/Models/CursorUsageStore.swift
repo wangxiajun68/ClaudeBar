@@ -60,6 +60,7 @@ final class CursorUsageStore: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
+        timer?.tolerance = AppConfig.cursorQuotaPollInterval * 0.1
     }
 
     /// Stop the poll and forget the live reading — used when the switch is

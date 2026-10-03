@@ -1,0 +1,159 @@
+{
+  "baseline_ref": "037dc2d",
+  "compiler_flags": [
+    "-O",
+    "-parse-as-library"
+  ],
+  "hardware": "Apple M3 Pro",
+  "swift": "Apple Swift version 6.3.2 (swiftlang-6.3.2.1.108 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "fixtures": {
+    "table_rows": 2000,
+    "table_columns": 12,
+    "canonical_calls": 18000,
+    "rpc_messages": 2000,
+    "log_load_lines": 5000,
+    "log_burst_requests": 600,
+    "log_continuous_requests": 60
+  },
+  "export_digest": "8187192960001851734",
+  "samples": {
+    "before": [
+      {
+        "canonical_ms": 48.592125,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.88125,
+        "log_burst_publishes": 1800,
+        "log_continuous_ms": 377.898208,
+        "log_continuous_publishes": 120,
+        "log_load_ms": 351.581292,
+        "rpc_batch_ms": 4.534291,
+        "rpc_quiet_waits": 4,
+        "rpc_timeout_ms": 205.05325,
+        "table_html_ms": 1063.09,
+        "table_init_ms": 30.513834,
+        "table_layout_ms": 1063.79675,
+        "peak_rss_mib": 34.59375
+      },
+      {
+        "canonical_ms": 48.220792,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.903167,
+        "log_burst_publishes": 1800,
+        "log_continuous_ms": 376.357333,
+        "log_continuous_publishes": 120,
+        "log_load_ms": 350.588417,
+        "rpc_batch_ms": 4.664041,
+        "rpc_quiet_waits": 4,
+        "rpc_timeout_ms": 201.532791,
+        "table_html_ms": 1100.583584,
+        "table_init_ms": 24.532334,
+        "table_layout_ms": 1065.151875,
+        "peak_rss_mib": 33.609375
+      },
+      {
+        "canonical_ms": 48.110416,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.807292,
+        "log_burst_publishes": 1800,
+        "log_continuous_ms": 373.63125,
+        "log_continuous_publishes": 120,
+        "log_load_ms": 346.550792,
+        "rpc_batch_ms": 4.54325,
+        "rpc_quiet_waits": 4,
+        "rpc_timeout_ms": 204.140042,
+        "table_html_ms": 1072.080875,
+        "table_init_ms": 24.326625,
+        "table_layout_ms": 1062.945583,
+        "peak_rss_mib": 33.703125
+      }
+    ],
+    "after": [
+      {
+        "canonical_ms": 28.106,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.449416,
+        "log_burst_publishes": 1,
+        "log_continuous_ms": 424.468541,
+        "log_continuous_publishes": 4,
+        "log_load_ms": 61.803,
+        "rpc_batch_ms": 3.718791,
+        "rpc_quiet_waits": 1,
+        "rpc_timeout_ms": 36.592167,
+        "table_html_ms": 12.337875,
+        "table_init_ms": 17.778875,
+        "table_layout_ms": 6.456958,
+        "peak_rss_mib": 27.71875
+      },
+      {
+        "canonical_ms": 28.923792,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.548875,
+        "log_burst_publishes": 1,
+        "log_continuous_ms": 414.91725,
+        "log_continuous_publishes": 4,
+        "log_load_ms": 67.831208,
+        "rpc_batch_ms": 3.6565,
+        "rpc_quiet_waits": 1,
+        "rpc_timeout_ms": 40.047125,
+        "table_html_ms": 12.389167,
+        "table_init_ms": 16.73725,
+        "table_layout_ms": 6.519042,
+        "peak_rss_mib": 27.78125
+      },
+      {
+        "canonical_ms": 28.234959,
+        "checksum": 1365000,
+        "log_burst_enqueue_ms": 3.621917,
+        "log_burst_publishes": 1,
+        "log_continuous_ms": 420.498042,
+        "log_continuous_publishes": 4,
+        "log_load_ms": 52.482667,
+        "rpc_batch_ms": 3.730458,
+        "rpc_quiet_waits": 1,
+        "rpc_timeout_ms": 36.925333,
+        "table_html_ms": 12.13625,
+        "table_init_ms": 15.689958,
+        "table_layout_ms": 6.214667,
+        "peak_rss_mib": 27.859375
+      }
+    ]
+  },
+  "medians": {
+    "before": {
+      "canonical_ms": 48.220792,
+      "log_burst_enqueue_ms": 3.88125,
+      "log_burst_publishes": 1800,
+      "log_continuous_ms": 376.357333,
+      "log_continuous_publishes": 120,
+      "log_load_ms": 350.588417,
+      "rpc_batch_ms": 4.54325,
+      "rpc_quiet_waits": 4,
+      "rpc_timeout_ms": 204.140042,
+      "table_html_ms": 1072.080875,
+      "table_init_ms": 24.532334,
+      "table_layout_ms": 1063.79675,
+      "peak_rss_mib": 33.703125
+    },
+    "after": {
+      "canonical_ms": 28.234959,
+      "log_burst_enqueue_ms": 3.548875,
+      "log_burst_publishes": 1,
+      "log_continuous_ms": 420.498042,
+      "log_continuous_publishes": 4,
+      "log_load_ms": 61.803,
+      "rpc_batch_ms": 3.718791,
+      "rpc_quiet_waits": 1,
+      "rpc_timeout_ms": 36.925333,
+      "table_html_ms": 12.337875,
+      "table_init_ms": 16.73725,
+      "table_layout_ms": 6.456958,
+      "peak_rss_mib": 27.78125
+    }
+  },
+  "limitations": [
+    "synthetic production-function probes, no app launch",
+    "layout traverses every cluster; not a visible-frame measurement",
+    "RSS includes input construction, checks and Swift/Foundation runtime",
+    "after arm additionally checks merged geometry and concurrent producers"
+  ]
+}

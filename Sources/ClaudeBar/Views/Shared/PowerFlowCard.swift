@@ -589,6 +589,7 @@ private final class SankeyWaveView: NSView {
         let container = CALayer()
         let mask = CAShapeLayer()
         let gradient = CAGradientLayer()
+        var destination: PowerFlow.Node?
     }
 
     private let clock = CALayer()
@@ -668,6 +669,7 @@ private final class SankeyWaveView: NSView {
     func apply(waves: [SankeyWave], animating: Bool, travel: (from: CGFloat, to: CGFloat), pace: Int, dark: Bool) {
         let geometryChanged = travel != self.travel
         let sizeChanged = bounds.size != renderedSize
+        let appearanceChanged = dark != self.dark
         guard waves != self.waves || animating != self.animating || geometryChanged || sizeChanged
                 || pace != self.pace || dark != self.dark else { return }
         self.waves = waves
@@ -687,29 +689,42 @@ private final class SankeyWaveView: NSView {
         let gradientWidth = CGFloat(repeatCount) * wavePeriod
         let opacity: [CGFloat] = dark ? [0.02, 0.05, 0.16, 0.05] : [0.01, 0.03, 0.11, 0.03]
         let stopCount = repeatCount * opacity.count
-        let locations = (0...stopCount).map { NSNumber(value: Double($0) / Double(stopCount)) }
+        // Pace/path updates reuse the palette and gradient geometry. Only a
+        // resized sweep or a newly introduced band needs new stop locations.
+        var locations: [NSNumber]?
         for wave in waves {
             let isNew = bands[wave.id] == nil
-            let band = bands[wave.id] ?? makeBand()
-            bands[wave.id] = band
+            var band = bands[wave.id] ?? makeBand()
+            let gradientChanged = isNew || geometryChanged || sizeChanged
 
             // Outline follows the SwiftUI band's ease; a new band just appears.
-            CATransaction.begin()
-            CATransaction.setDisableActions(isNew)
-            CATransaction.setAnimationDuration(0.5)
-            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
-            band.mask.path = wave.path
-            CATransaction.commit()
+            if band.mask.path != wave.path {
+                CATransaction.begin()
+                CATransaction.setDisableActions(isNew)
+                CATransaction.setAnimationDuration(0.5)
+                CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+                band.mask.path = wave.path
+                CATransaction.commit()
+            }
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            band.gradient.colors = (0...stopCount).map { index in
-                NSColor(PowerFlow.color(wave.destination)).withAlphaComponent(opacity[index % opacity.count]).cgColor
+            if gradientChanged || appearanceChanged || band.destination != wave.destination {
+                let color = NSColor(PowerFlow.color(wave.destination))
+                let palette = opacity.map { color.withAlphaComponent($0).cgColor }
+                band.gradient.colors = (0...stopCount).map { palette[$0 % palette.count] }
+                band.destination = wave.destination
             }
-            band.gradient.locations = locations
-            band.gradient.frame = CGRect(x: -wavePeriod, y: 0,
-                                         width: gradientWidth, height: bounds.height)
+            if gradientChanged {
+                if locations == nil {
+                    locations = (0...stopCount).map { NSNumber(value: Double($0) / Double(stopCount)) }
+                }
+                band.gradient.locations = locations
+                band.gradient.frame = CGRect(x: -wavePeriod, y: 0,
+                                             width: gradientWidth, height: bounds.height)
+            }
             CATransaction.commit()
+            bands[wave.id] = band
 
             if !animating {
                 band.gradient.removeAnimation(forKey: Self.sweepKey)

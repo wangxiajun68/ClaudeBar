@@ -1,0 +1,126 @@
+--- a/ProxyAccessLog.swift
++++ b/ProxyAccessLog.swift
+@@ -161,6 +161,10 @@
+     private var nextID: UInt64 = 1
+     private let limit = 500
+     private let iso = ISO8601DateFormatter()
++    /// Lock-guarded single-flight publication; a continuous burst still gets
++    /// a snapshot every 100 ms. The serial worker takes the lock off-main.
++    private var publishScheduled = false
++    private let publishQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.publish", qos: .utility)
+ 
+     /// Every write to `proxyLogFile` runs here. One writer means the JSONL
+     /// append and the whole-file compaction can never interleave on the same
+@@ -211,9 +215,8 @@
+             cacheReadTokens: nil,
+             cacheWriteTokens: nil)
+         rows.append(entry)
+-        var dropped = 0
+         if rows.count > limit {
+-            dropped = rows.count - limit
++            let dropped = rows.count - limit
+             rows.removeFirst(dropped)
+             // A row evicted here can never be sealed — `finish` bails on a
+             // missing id — so its pending usage would sit in the dictionary
+@@ -223,8 +226,8 @@
+                 pendingTokens = pendingTokens.filter { $0.key >= first.id }
+             }
+         }
+-        lock.unlock()
+-        publishAppended(entry, droppedFirst: dropped)
++        schedulePublishLocked()
++        lock.unlock()
+         return ProxyLogTap(id: id, store: self)
+     }
+ 
+@@ -256,9 +259,11 @@
+         row.status = status
+         row.error = error.flatMap { Self.clip($0, 240) }.flatMap { $0.isEmpty ? nil : $0 }
+         rows[idx] = row
+-        lock.unlock()
+-        publishUpdated(row)
++        schedulePublishLocked()
++        // Enqueue while holding the ordering lock so clear cannot get ahead
++        // of this write and then have an older finished row reappear on disk.
+         scheduleWrite(row)
++        lock.unlock()
+     }
+ 
+     /// Counts that arrived while the row was still streaming, held back until
+@@ -280,42 +285,28 @@
+         lock.lock()
+         rows = []
+         pendingTokens = [:]
+-        lock.unlock()
+-        publish()
++        schedulePublishLocked()
+         ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }
++        lock.unlock()
+     }
+ 
+     // MARK: - Internals
+ 
+-    private func publish() {
+-        DispatchQueue.main.async { [weak self] in
++    private func schedulePublishLocked() {
++        guard !publishScheduled else { return }
++        publishScheduled = true
++        publishQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+             guard let self else { return }
+             self.lock.lock()
+             let snapshot = self.rows
++            self.publishScheduled = false
+             self.lock.unlock()
+-            self.entries = snapshot
+-        }
+-    }
+-
+-    /// Incremental variants. `publish()` copied the whole 500-row array under
+-    /// the lock and reassigned it on every single request — two full copies
+-    /// per forwarded call, plus a 500-element array diff for SwiftUI. Appending
+-    /// or patching one row is all the UI actually needs.
+-    private func publishAppended(_ row: ProxyLogEntry, droppedFirst: Int) {
+-        DispatchQueue.main.async { [weak self] in
+-            guard let self else { return }
+-            if droppedFirst > 0, self.entries.count >= droppedFirst {
+-                self.entries.removeFirst(droppedFirst)
+-            }
+-            self.entries.append(row)
+-        }
+-    }
+-
+-    private func publishUpdated(_ row: ProxyLogEntry) {
+-        DispatchQueue.main.async { [weak self] in
+-            guard let self else { return }
+-            if let i = self.entries.firstIndex(where: { $0.id == row.id }) {
+-                self.entries[i] = row
++            // All snapshots are dispatched by one serial worker, preserving
++            // order across concurrent begin/finish/clear calls without making
++            // the interaction thread wait on the proxy's lock.
++            DispatchQueue.main.async { [weak self] in
++                guard let self, self.entries != snapshot else { return }
++                self.entries = snapshot
+             }
+         }
+     }
+@@ -329,13 +320,15 @@
+         let text = String(decoding: data, as: UTF8.self)
+         var rows: [ProxyLogEntry] = []
+         rows.reserveCapacity(limit)
+-        for line in text.split(whereSeparator: \.isNewline) {
++        // Only the newest 500 valid lines can be displayed. Walk backwards
++        // and stop decoding there; corrupt tail lines still do not hide older
++        // valid entries. The file's order is restored before publication.
++        for line in text.split(whereSeparator: \.isNewline).reversed() {
+             guard let row = decode(String(line)) else { continue }
+             rows.append(row)
+-        }
+-        if rows.count > limit {
+-            rows = Array(rows.suffix(limit))
+-        }
++            if rows.count == limit { break }
++        }
++        rows.reverse()
+         nextID = (rows.map(\.id).max() ?? 0) + 1
+         return rows
+     }

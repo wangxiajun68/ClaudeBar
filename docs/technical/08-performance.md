@@ -31,6 +31,12 @@
 
 资源读数通过字段级订阅和发布前量化减少无意义失效。批量统计在后台聚合，主线程只提交已经准备好的展示数据；不要在 `body`、每帧 Canvas 或 hover 回调重新聚合历史。
 
+访问日志构造不读磁盘；`ProxyLogView` 出现时调用 `loadListIfNeeded`。读取队列以 64 KiB 块倒读 JSONL，找到最近 500 个有效记录便停止；UTF-8 跨块片段先拼接再解码。代理的首次请求通过 `prepareForRequests` 挂起等待同一加载队列，完成后才分配递增 ID，后续请求只检查锁保护的状态。读盘期间不持有请求状态锁，清空把历史标为已消费，载入结果不能恢复已清空记录。UI 快照仍按 100 ms 窗口合批发布，`entries` 由 MainActor 隔离。
+
+MCP stdio 发现的 semaphore 等待由 Dispatch 队列承接，调用任务通过 checked continuation 挂起。取消标记与进程启动/停止分别用短状态锁和进程锁保护；取消先唤醒 collector，再由独立队列停止本次发现的子进程。每条路径只恢复一次 continuation，保留逐请求预算、分页限制与禁止安装型运行器的边界。
+
+关闭 SQLite 时，`UsageJSONStore` 维护锁保护的路径到汇总键索引。会话替换/删除按该路径的键操作，单会话查询先匹配路径再聚合其记录；增量添加、载入迁移与 reset 同步维护索引。首次建索引有额外成本，文件格式及日期范围聚合规则保留。合成测量与限制见 [第二轮审查](../reviews/apple-performance-followup-2026-10-04.md)。
+
 ## 滚动更新与布局
 
 `ScrollHoverGate` 用每个滚动视图的 UUID 记录 ownership；只有最后一个 owner 释放后才 flush 延迟发布。watchdog 可取消并带 generation，连续滚动的最长延迟预算为 4 秒，阶段转换不能重新延长期限。视图拆卸也必须释放 ownership。
@@ -45,13 +51,15 @@
 
 旋翼和扫光改变速度时用 `timeOffset` 保持相位，不因每次读数重建动画。低负载、低 RPM 和减弱动效时冻结或隐藏装饰。问候时钟用秒级 periodic schedule；Metal 不可用的天气 Canvas 使用受限 animation schedule，屏外暂停。
 
+能源流的 `SankeyWaveView` 按路径、外观、几何与播放速度分别更新。速度变化只重定时共享时钟；路径变化不重建渐变色和位置节点；目的节点、明暗、尺寸或行程变化才重新准备对应图层属性。新流带须初始化全部属性，拆卸须停止播放。组件 CPU 样本和静态像素对照见 [UI 与动效审查](../reviews/apple-ui-performance-2026-10-04.md)，不代表整窗口 FPS。
+
 给持续变化的采样值绑定 `.animation(_:value:)` 可能使整个 hosting view 长期处于动画事务中。`RollingNumberText` 等读数叶子保留自己的数字转场，避免附加宽泛的隐式动画。修改动效应测量 hosting layout / display 的归属，而不是仅观察单个视图代码是否简单。
 
 `LayerShadow` 使用显式 `shadowPath`，双阴影由兄弟图层承载，避免为重复按钮创建额外 SwiftUI 合成组。图层尺寸与路径按实际边界更新，静态外观不能引入常驻计时器。
 
 ## 验证入口与测量契约
 
-回归登记在 Makefile，由 `make test` 统一运行；日常按模块使用 `make test TEST=performance`、`interaction-performance`、`rendering`、`inflight-animation`、`card-shadow` 或 `fan-rotor`。测试运行生产函数或状态机，使用临时输入和模拟传输，不启动 VPN、不写硬件、不杀进程。
+回归登记在 Makefile，由 `make test` 统一运行；日常按模块使用 `make test TEST=performance`、`module-performance`、`backend-performance`、`access-log-tail`、`ui-animation-performance`、`interaction-performance`、`rendering`、`inflight-animation`、`card-shadow` 或 `fan-rotor`。测试运行生产函数或状态机，使用临时输入和模拟传输，不启动 VPN、不写硬件、不操作真实用户进程；MCP 夹具验证自身模拟子进程的退出。
 
 天气 GPU 编码与文字栅格化用 `python3 Tools/bench-atmosphere.py --frames 120 --contrast` 验证。工具采用生产着色器，记录 drawable 尺寸、天气、预热与样本数量；缓存命中、冷启动和绘制成本分别报告。
 

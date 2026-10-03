@@ -107,6 +107,7 @@ final class MenuBarController: NSObject {
         batteryTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshMenuBarBattery() }
         }
+        batteryTimer?.tolerance = 0.8
         tickVpnRate()
         refreshMenuBarBattery()
     }

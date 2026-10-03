@@ -74,6 +74,9 @@ final class UsageJSONStore {
     private let lock = NSLock()
     private var files: [String: FileRec] = [:]
     private var rollup: [String: RollupRec] = [:]
+    /// A transcript rewrite removes only that transcript's rows, even when
+    /// the corpus holds years of other sessions. Kept under the same lock.
+    private var rollupKeysByPath: [String: Set<String>] = [:]
     private var loaded = false
     /// Set by every mutation, cleared once `persistLocked` has written the
     /// files. Index passes fire on FSEvents bursts where every transcript was
@@ -106,15 +109,15 @@ final class UsageJSONStore {
     func deletePath(_ path: String) {
         lock.lock()
         files.removeValue(forKey: path)
-        rollup = rollup.filter { $0.value.path != path }
+        removeRollupLocked(path)
         dirty = true
         lock.unlock()
     }
 
     func replaceRollup(path: String, rows: [RollupRec]) {
         lock.lock()
-        rollup = rollup.filter { $0.value.path != path }
-        for row in rows { rollup[Self.key(row)] = row }
+        removeRollupLocked(path)
+        for row in rows { insertRollupLocked(row) }
         dirty = true
         lock.unlock()
     }
@@ -131,7 +134,7 @@ final class UsageJSONStore {
                 cur.cacheCreate += row.cacheCreate
                 rollup[k] = cur
             } else {
-                rollup[k] = row
+                insertRollupLocked(row)
             }
         }
         dirty = true
@@ -172,8 +175,10 @@ final class UsageJSONStore {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var byModel: [String: ModelUsage] = [:]
-        for row in rollup.values where row.path.hasPrefix(pathPrefix) && row.path.hasSuffix(pathSuffix) {
-            Self.accumulate(row, into: &byModel)
+        for (path, keys) in rollupKeysByPath where path.hasPrefix(pathPrefix) && path.hasSuffix(pathSuffix) {
+            for key in keys {
+                if let row = rollup[key] { Self.accumulate(row, into: &byModel) }
+            }
         }
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
     }
@@ -207,6 +212,7 @@ final class UsageJSONStore {
         lock.lock()
         files = [:]
         rollup = [:]
+        rollupKeysByPath = [:]
         loaded = false
         dirty = false
         lock.unlock()
@@ -263,6 +269,27 @@ final class UsageJSONStore {
             dirty = true
             persistLocked()
         }
+        rollupKeysByPath.removeAll(keepingCapacity: true)
+        for (key, row) in rollup { rollupKeysByPath[row.path, default: []].insert(key) }
+    }
+
+    private func removeRollupLocked(_ path: String) {
+        guard let keys = rollupKeysByPath.removeValue(forKey: path) else { return }
+        for key in keys { rollup.removeValue(forKey: key) }
+    }
+
+    private func insertRollupLocked(_ row: RollupRec) {
+        let key = Self.key(row)
+        // Preserve the existing composite-key semantics, including a legacy
+        // path containing the separator that collides with another key.
+        if let previous = rollup[key], previous.path != row.path {
+            rollupKeysByPath[previous.path]?.remove(key)
+            if rollupKeysByPath[previous.path]?.isEmpty == true {
+                rollupKeysByPath.removeValue(forKey: previous.path)
+            }
+        }
+        rollup[key] = row
+        rollupKeysByPath[row.path, default: []].insert(key)
     }
 
     private func persistLocked() {

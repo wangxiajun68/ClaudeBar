@@ -106,9 +106,12 @@ async_harness = r"""
         var connections: [VpnDomainConnection] = []
         var revision = 0
         var connectionRevision = 0
+        var proxiedTraffic = VpnDomainTraffic()
+        var trafficByHost: [String: VpnDomainTraffic] = [:]
     }
     let log = Store()
     var isVisible = true
+    var proxiedTraffic = VpnDomainTraffic()
     var historyRevision = 0
     var connectionRevision = 0
     var mode: Mode = .detail
@@ -147,6 +150,8 @@ swift = r'''
 import Foundation
 
 MODELS_AND_FEED
+
+VPN_FORMAT
 
 enum DomainStat { STAT_FUNC }
 
@@ -402,6 +407,39 @@ ASYNC_HARNESS
         precondition(VpnDomainQuery.connections(connections, query: "node a", route: nil).rows.count == 1)
         precondition(VpnDomainQuery.connections(connections, query: "no-such-host", route: nil).rows.isEmpty)
 
+        var traffic = VpnDomainTrafficAccumulator()
+        traffic.sample(connections)
+        precondition(traffic.totals.upload == 1 && traffic.totals.download == 2,
+                     "direct connections must not count as VPN traffic")
+        traffic.sample(connections + connections)
+        precondition(traffic.totals.total == 3, "repeated IDs and snapshots must not double count")
+        let increased = VpnDomainConnection(id: "1", endpoint: "example.com:443", process: "Browser",
+            route: .proxied, rule: "Match", outbound: "Node A", upload: 10, download: 20)
+        traffic.sample([increased])
+        traffic.sample(connections)
+        traffic.sample([increased])
+        precondition(traffic.totals.total == 30, "regressing counters must not recount bytes")
+        precondition(traffic.byHost["example.com"]?.total == 30)
+        traffic.clear()
+        traffic.sample([increased])
+        precondition(traffic.totals.total == 0, "clear retains live counter baselines")
+        let afterClear = VpnDomainConnection(id: "1", endpoint: "example.com:443", process: "Browser",
+            route: .proxied, rule: "Match", outbound: "Node A", upload: 12, download: 23)
+        traffic.sample([afterClear])
+        precondition(traffic.totals.upload == 2 && traffic.totals.download == 3,
+                     "after clear, count only new bytes on the existing connection")
+        traffic.clear()
+        traffic.sample([])
+        precondition(traffic.totals.total == 0)
+        traffic.sample([increased])
+        traffic.sample([])
+        precondition(traffic.totals.total == 30, "closed sampled connections retain their traffic")
+        traffic.retainHosts([])
+        precondition(traffic.byHost.isEmpty && traffic.totals.total == 30)
+        var extreme = VpnDomainTraffic(upload: .max, download: .max)
+        extreme.add(upload: 1, download: 1)
+        precondition(extreme.total == .max, "totals saturate without overflowing")
+
         // Capacity, order, eviction, wraparound, and reuse after clear.
         var ring = VpnDomainRing(capacity: 2_000)
         let batch = (1...25_000).map { id -> VpnDomainEntry in
@@ -448,6 +486,17 @@ ASYNC_HARNESS
         cache.log.entries = []
         await cache.recompute()
         precondition(cache.visibleRows.isEmpty, "clear must also discard a paused snapshot")
+        cache.mode = .summary
+        cache.log.entries = entries
+        cache.log.trafficByHost = ["api2.cursor.sh": VpnDomainTraffic(upload: 100, download: 200)]
+        await cache.recompute()
+        precondition(cache.visibleStats.first?.traffic?.total == 300,
+                     "summary attaches only sampled VPN traffic to the matching host")
+        precondition(cache.visibleStats.last?.traffic == nil,
+                     "unsampled hosts must not invent a zero reading")
+        let beforeTraffic = cache.requestKey
+        cache.connectionRevision += 1
+        precondition(cache.requestKey != beforeTraffic, "live bytes refresh the summary without new log entries")
         cache.mode = .connections
         cache.log.connections = connections
         await cache.recompute()
@@ -460,6 +509,8 @@ ASYNC_HARNESS
         await cache.recompute()
         precondition(cache.visibleConnections.isEmpty)
         cache.mode = .detail
+        cache.log.entries = []
+        await cache.recompute()
         cache.query = "cursor"
         cache.log.entries = Array(batch.prefix(2_000))
         let stale = Task { await cache.recompute() }
@@ -487,6 +538,7 @@ ASYNC_HARNESS
 
 swift = (swift
          .replace('MODELS_AND_FEED', feed)
+         .replace('VPN_FORMAT', manager[manager.index('enum VpnFormat {'):manager.index('/// The core\'s log ring.')])
          .replace('STAT_FUNC', stat)
          .replace('WATCHLIST', watchlist)
          .replace('FILTER_HARNESS', filter_harness)

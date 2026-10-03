@@ -630,6 +630,7 @@ class ProviderStore: ObservableObject {
         sessionTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.refreshSessions()
         }
+        sessionTimer?.tolerance = interval * 0.1
     }
 
     /// Re-arm the poll timer when a window appears or disappears. Called once
@@ -1008,6 +1009,8 @@ class ProviderStore: ObservableObject {
     private var usageRefreshQueued = false
     private var usageRefreshQueuedRescan = false
 
+    let usageIndexDidRefresh = PassthroughSubject<Void, Never>()
+
     func refreshUsage(rescan: Bool = true) {
         if usageRefreshPending {
             usageRefreshQueued = true
@@ -1067,6 +1070,7 @@ class ProviderStore: ObservableObject {
                     // A new refresh cannot start between these operations.
                     self.publishTodayUsage(today)
                     self.publishUsage(final, finalSources, days, dailyModels: dailyModels, interval: interval)
+                    self.usageIndexDidRefresh.send()
                     if self.usageWeekDays != weekDays { self.usageWeekDays = weekDays }
                     self.writeWidgetSnapshot()
                     self.usageRefreshPending = false

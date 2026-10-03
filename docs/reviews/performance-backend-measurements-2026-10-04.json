@@ -1,0 +1,109 @@
+{
+  "baseline_source_sha256": {
+    "UsageJSONStore.swift": "d1f2815ad2b365b8178089bb02b44f3dfd80dbe79395f8e3f0bffc7bc8844a73",
+    "MCPToolDiscovery.swift": "5dbd094c51a78d97691e6c47228b8984675aa64becf19ae9f4cbe4791f38a824"
+  },
+  "working_source_sha256": {
+    "UsageJSONStore.swift": "b386435c21ed91365b477f6a7f38a9e13872c105a599daf64aee342f626263e9",
+    "MCPToolDiscovery.swift": "11dfed65c639e4de2e4abcd42f99c1097eee592e81afa5903540cab6d9cb587a"
+  },
+  "hardware": "Apple M3 Pro",
+  "swift": "Apple Swift version 6.3.2 (swiftlang-6.3.2.1.108 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "compiler_flags": [
+    "-O",
+    "-parse-as-library"
+  ],
+  "fixtures": {
+    "json_paths": 2000,
+    "rows_per_path": 32,
+    "replacements": 800,
+    "session_queries": 400,
+    "deletions": 400,
+    "mock_reply_delay_ms": 1200
+  },
+  "samples": {
+    "before": [
+      {
+        "json_delete_400_ms": 5735.769584,
+        "json_replace_800_ms": 12912.347792,
+        "json_seed_ms": 104.924167,
+        "json_session_400_ms": 1484.221875,
+        "mcp_cancel_slow-init_ms": 1201.610041,
+        "mcp_cancel_slow-page_ms": 1201.13225,
+        "peak_rss_mib": 77.328125
+      },
+      {
+        "json_delete_400_ms": 5441.525125,
+        "json_replace_800_ms": 12921.482833,
+        "json_seed_ms": 101.848708,
+        "json_session_400_ms": 1646.6675420000001,
+        "mcp_cancel_slow-init_ms": 1199.780666,
+        "mcp_cancel_slow-page_ms": 1204.6992500000001,
+        "peak_rss_mib": 77.3125
+      },
+      {
+        "json_delete_400_ms": 6427.149625,
+        "json_replace_800_ms": 12771.312083,
+        "json_seed_ms": 104.041833,
+        "json_session_400_ms": 1906.561166,
+        "mcp_cancel_slow-init_ms": 1200.6842080000001,
+        "mcp_cancel_slow-page_ms": 1202.987958,
+        "peak_rss_mib": 74.890625
+      }
+    ],
+    "after": [
+      {
+        "json_delete_400_ms": 3.998541,
+        "json_replace_800_ms": 51.197208,
+        "json_seed_ms": 140.375959,
+        "json_session_400_ms": 24.609959,
+        "mcp_cancel_slow-init_ms": 0.083625,
+        "mcp_cancel_slow-page_ms": 0.058042,
+        "peak_rss_mib": 67.3125
+      },
+      {
+        "json_delete_400_ms": 3.973459,
+        "json_replace_800_ms": 49.114625,
+        "json_seed_ms": 130.614875,
+        "json_session_400_ms": 23.690833,
+        "mcp_cancel_slow-init_ms": 0.072292,
+        "mcp_cancel_slow-page_ms": 0.080167,
+        "peak_rss_mib": 66.84375
+      },
+      {
+        "json_delete_400_ms": 3.825542,
+        "json_replace_800_ms": 50.410375,
+        "json_seed_ms": 134.23125,
+        "json_session_400_ms": 24.812166,
+        "mcp_cancel_slow-init_ms": 0.079,
+        "mcp_cancel_slow-page_ms": 0.047458,
+        "peak_rss_mib": 66.828125
+      }
+    ]
+  },
+  "medians": {
+    "before": {
+      "json_delete_400_ms": 5735.769584,
+      "json_replace_800_ms": 12912.347792,
+      "json_seed_ms": 104.041833,
+      "json_session_400_ms": 1646.6675420000001,
+      "mcp_cancel_slow-init_ms": 1200.6842080000001,
+      "mcp_cancel_slow-page_ms": 1202.987958,
+      "peak_rss_mib": 77.3125
+    },
+    "after": {
+      "json_delete_400_ms": 3.973459,
+      "json_replace_800_ms": 50.410375,
+      "json_seed_ms": 134.23125,
+      "json_session_400_ms": 24.609959,
+      "mcp_cancel_slow-init_ms": 0.079,
+      "mcp_cancel_slow-page_ms": 0.058042,
+      "peak_rss_mib": 66.84375
+    }
+  },
+  "limitations": [
+    "synthetic functions/mock children; not full-app FPS/CPU/power",
+    "RSS includes fixtures, serialization, reload and Foundation runtime",
+    "after arm additionally checks pre-cancel and launch races"
+  ]
+}

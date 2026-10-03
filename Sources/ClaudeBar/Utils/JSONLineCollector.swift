@@ -32,15 +32,19 @@ final class JSONLineCollector: @unchecked Sendable {
         lock.lock()
         buffer.append(data)
         if buffer.count > 1_048_576 { buffer.removeAll(); lock.unlock(); signal.signal(); return }
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = Data(buffer[..<newline])
-            buffer.removeSubrange(...newline)
+        var start = buffer.startIndex
+        while let newline = buffer[start...].firstIndex(of: 0x0A) {
+            let line = Data(buffer[start..<newline])
+            start = buffer.index(after: newline)
             if let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                let id = json["id"] as? Int {
                 messages[id] = json
                 signal.signal()
             }
         }
+        // Remove the consumed prefix once. Removing it for every message
+        // repeatedly shifts/copies the remaining bytes of a batched response.
+        if start != buffer.startIndex { buffer.removeSubrange(buffer.startIndex..<start) }
         lock.unlock()
     }
 
@@ -52,7 +56,11 @@ final class JSONLineCollector: @unchecked Sendable {
             lock.unlock()
             if let value { return value }
             if isClosed { throw Failure.closed }
-            _ = signal.wait(timeout: .now() + 0.2)
+            // Wake on a response/EOF or the actual request deadline, rather
+            // than polling a quiet child five times per second.
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { break }
+            _ = signal.wait(timeout: .now() + remaining)
         }
         throw Failure.timedOut
     }

@@ -214,10 +214,9 @@ final class IslandLiveModel: ObservableObject {
             .sink { [weak self] in self?.vpnRunning = $0 }
             .store(in: &cancellables)
 
-        // Republished after every index pass — exactly when the rollup
-        // under the usage queries has changed.
-        providerStore.$usageStats
-            .dropFirst()
+        // Refresh lifetime session costs after index queries, independently of
+        // whether the usage page's selected period totals have changed.
+        providerStore.usageIndexDidRefresh
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.reloadUsage()
@@ -279,9 +278,12 @@ final class IslandLiveModel: ObservableObject {
         Task { [weak self] in
             let costs = await Task.detached(priority: .utility) {
                 var result: [String: ModelPricing.Estimate] = [:]
-                for request in requests {
-                    let usage = UsageIndex.fetchSession(source: request.source, sessionId: request.sessionId)
-                    if !usage.isEmpty { result[request.id] = ModelPricing.estimate(usage) }
+                for (source, group) in Dictionary(grouping: requests, by: \.source) {
+                    let families = UsageIndex.fetchSessionFamilies(source: source, sessionIds: group.map(\.sessionId))
+                    for request in group {
+                        let usage = families[request.sessionId] ?? []
+                        if !usage.isEmpty { result[request.id] = ModelPricing.estimate(usage) }
+                    }
                 }
                 return result
             }.value
@@ -406,6 +408,7 @@ final class IslandLiveModel: ObservableObject {
         periodicTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadUsage() }
         }
+        periodicTimer?.tolerance = 60
     }
 
     nonisolated static func computeUsage(now: Date, calendar cal: Calendar = .current) -> IslandUsage {

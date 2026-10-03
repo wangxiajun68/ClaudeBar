@@ -277,7 +277,7 @@ final class CodexProxyServer: @unchecked Sendable {
     }
 
     private func denyUnauthorized(_ connection: NWConnection, request: HTTPRequest) async {
-        let miss = startLog(request, source: .codex, kind: .other, provider: "")
+        let miss = await startLog(request, source: .codex, kind: .other, provider: "")
         miss.finish(status: 401, error: "unauthorized")
         await respond(connection, status: "401 Unauthorized", contentType: "application/json",
                       body: Data(#"{"error":{"message":"missing or invalid proxy token; see ClaudeBar 设置 → 本地代理"}}"#.utf8))
@@ -317,7 +317,7 @@ final class CodexProxyServer: @unchecked Sendable {
 
         if request.method == "GET" || request.method == "HEAD" {
             if path == "/health" || path == "/v1/health" {
-                let tap = startLog(request, source: .codex, kind: .health, provider: "")
+                let tap = await startLog(request, source: .codex, kind: .health, provider: "")
                 await serveHealth(connection)
                 tap.finish(status: 200)
                 return
@@ -332,7 +332,7 @@ final class CodexProxyServer: @unchecked Sendable {
                 // so there is no token to strip from the client's headers.
                 // An empty catalog therefore reads as "no models", which is
                 // the file-missing case, not an upstream failure.
-                let tap = startLog(request, source: .codex, kind: .models, provider: "")
+                let tap = await startLog(request, source: .codex, kind: .models, provider: "")
                 await serveModels(connection)
                 tap.finish(status: 200)
                 return
@@ -345,7 +345,7 @@ final class CodexProxyServer: @unchecked Sendable {
         }
 
         guard path.contains("/responses") || path.hasSuffix("/chat/completions") else {
-            let miss = startLog(request, source: .codex, kind: .other, provider: "")
+            let miss = await startLog(request, source: .codex, kind: .other, provider: "")
             miss.finish(status: 404, error: "not found")
             await respond(connection, status: "404 Not Found", contentType: "application/json",
                     body: Data(#"{"error":{"message":"not found"}}"#.utf8))
@@ -355,7 +355,7 @@ final class CodexProxyServer: @unchecked Sendable {
         let thirdParty = CaptureSource.isThirdPartyClient(headers: request.headers)
         let openaiKind: ProxyLogKind = path.hasSuffix("/chat/completions") ? .openaiChat : .openaiResponses
         let upstream = await state.openaiUpstream(thirdParty: thirdParty)
-        let openaiTap = startLog(
+        let openaiTap = await startLog(
             request, source: .codex, kind: openaiKind,
             provider: upstream?.name ?? "")
         defer { openaiTap.finish(status: 0, error: "interrupted") }
@@ -962,7 +962,7 @@ final class CodexProxyServer: @unchecked Sendable {
     /// through so official and `/anthropic` gateways keep working.
     private func forwardAnthropic(_ connection: NWConnection, request: HTTPRequest, inspect: Bool) async {
         let thirdParty = CaptureSource.isThirdPartyClient(headers: request.headers)
-        let log = startLog(
+        let log = await startLog(
             request, source: .claude, kind: request.path.hasSuffix("/models") ? .models : .anthropic,
             provider: await state.anthropicUpstream(thirdParty: thirdParty)?.name ?? "")
         defer { log.finish(status: 0, error: "interrupted") }
@@ -1194,8 +1194,9 @@ final class CodexProxyServer: @unchecked Sendable {
 
     /// Access log only — never the request/response body, just routing metadata.
     private func startLog(_ request: HTTPRequest, source: ProxyLogSource, kind: ProxyLogKind,
-                          provider: String) -> ProxyLogTap {
+                          provider: String) async -> ProxyLogTap {
         guard shouldRecordTraffic(request.headers) else { return .noop }
+        await ProxyAccessLog.shared.prepareForRequests()
         let peek = Self.peekJSON(request.body)
         let resolved = resolveLogSource(request.headers, route: source)
         return ProxyAccessLog.shared.begin(

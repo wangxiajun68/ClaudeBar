@@ -118,30 +118,10 @@ struct ResourceStrip: View {
 
     private var fansAtMax: Bool { fanMonitor.allAtMax }
 
-    /// The fan card's hue.
-    ///
-    /// It used to be `Theme.claude` flat — the app's accent blue, the same blue
-    /// as the 连接 card next to it and the GPU tile at the top of the grid. That
-    /// made the fan the one tile whose colour said nothing: every other hue on
-    /// this strip is a signal (green = load, amber = memory, violet = disk), and
-    /// the fan's is now the card's *mode*, which is the one state this tile can
-    /// be asked to change — blue at rest, `Theme.chartAmber` the moment a fan is
-    /// held above what the system asked for.
-    ///
-    /// It is the same amber the rotors already take under an override
-    /// (`CompactFanPair.bladeTint`), so the header glyph, the card wash and the
-    /// blades flip together instead of the badge disagreeing with the rotor
-    /// underneath it.
-    private var fanTint: Color {
-        fanMonitor.fans.contains { !$0.mode.isAutomatic } ? Theme.chartAmber : Theme.Ink.claude
-    }
-
-    /// The hero figure is *text*, so it takes the `Theme.Ink` variant of the
-    /// same hue the mark takes as *shape* — the rule every other tile on the
-    /// strip follows. Two variants of one state, never two colours.
-    private var fanInk: Color {
-        fanMonitor.fans.contains { !$0.mode.isAutomatic } ? Theme.Ink.warning : Theme.Ink.claude
-    }
+    /// Keep the card and its figures stable when either fan is overridden.
+    /// CompactFanPair owns the per-fan manual-mode color feedback.
+    private var fanTint: Color { Theme.Ink.claude }
+    private var fanInk: Color { Theme.Ink.claude }
 
     /// The interface the 连接 tile draws, from the same facts the card's own
     /// `ConnectionStatus` reads. Stated here rather than inside the card so the

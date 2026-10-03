@@ -338,38 +338,109 @@ struct UsageIndex {
         return ModelUsage.merged(out + thirdParty).sorted { $0.totalTokens > $1.totalTokens }
     }
 
-    /// All-time tokens for one Claude or Codex transcript. A session may
-    /// cross midnight, so a period query cannot supply its lifetime cost.
+    /// Lifetime usage for each requested session and its descendants. Rollup
+    /// rows already own deduplicated calls; never re-add proxy traffic here.
     static func fetchSession(source: UsageSource, sessionId: String) -> [ModelUsage] {
-        guard !sessionId.isEmpty, source != .thirdParty else { return [] }
+        fetchSessionFamilies(source: source, sessionIds: [sessionId])[sessionId] ?? []
+    }
+
+    private struct SessionHeader {
+        let mtime: Double
+        let size: Int
+        let id: String
+        let parent: String?
+    }
+    private static let sessionHeaderLock = NSLock()
+    private static var sessionHeaders: [String: SessionHeader] = [:]
+
+    /// One indexed snapshot per client, rather than one corpus scan per island row.
+    static func fetchSessionFamilies(source: UsageSource, sessionIds: [String]) -> [String: [ModelUsage]] {
+        let ids = Set(sessionIds.filter { !$0.isEmpty && !$0.contains("/") })
+        guard !ids.isEmpty, source != .thirdParty else { return [:] }
         let prefix = source == .claude ? "claude:" : "codex:"
-        let suffix = (source == .claude ? "/" : "-") + sessionId + ".jsonl"
+        var byPath: [String: [ModelUsage]] = [:]
+        var fileMeta: [String: (mtime: Double, size: Int)] = [:]
         if !DiskPersistence.useDatabase {
-            return UsageJSONStore.shared.fetchSession(pathPrefix: prefix, pathSuffix: suffix)
+            byPath = UsageJSONStore.shared.fetchByPath(startDay: "", endDay: "9999-12-31", pathPrefix: prefix)
+            for (path, file) in UsageJSONStore.shared.currentFiles() where path.hasPrefix(prefix) {
+                fileMeta[path] = (file.mtime, file.size)
+            }
+        } else {
+            guard let db = connection() else { return [:] }
+            lock.lock()
+            var stmt: OpaquePointer?
+            let sql = """
+                SELECT f.path, f.mtime, f.size, r.model, sum(r.calls), sum(r.input),
+                       sum(r.output), sum(r.cache_read), sum(r.cache_create)
+                FROM files f LEFT JOIN rollup r ON r.path = f.path
+                WHERE f.path LIKE ?1 GROUP BY f.path, r.model
+                """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { lock.unlock(); return [:] }
+            sqlite3_bind_text(stmt, 1, prefix + "%", -1, SQLITE_TRANSIENT)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let path = String(cString: sqlite3_column_text(stmt, 0))
+                fileMeta[path] = (sqlite3_column_double(stmt, 1), Int(sqlite3_column_int64(stmt, 2)))
+                guard let name = sqlite3_column_text(stmt, 3) else { continue }
+                byPath[path, default: []].append(ModelUsage(model: String(cString: name),
+                    calls: Int(sqlite3_column_int64(stmt, 4)), inputTokens: Int(sqlite3_column_int64(stmt, 5)),
+                    outputTokens: Int(sqlite3_column_int64(stmt, 6)), cacheReadTokens: Int(sqlite3_column_int64(stmt, 7)),
+                    cacheCreationTokens: Int(sqlite3_column_int64(stmt, 8))))
+            }
+            sqlite3_finalize(stmt)
+            lock.unlock()
         }
-        guard let db = connection() else { return [] }
-        lock.lock(); defer { lock.unlock() }
-        var stmt: OpaquePointer?
-        let sql = """
-            SELECT model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
-            FROM rollup WHERE path LIKE ?1 AND substr(path, -?2) = ?3 GROUP BY model
-            """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, prefix + "%", -1, SQLITE_TRANSIENT)
-        sqlite3_bind_int(stmt, 2, Int32(suffix.utf8.count))
-        sqlite3_bind_text(stmt, 3, suffix, -1, SQLITE_TRANSIENT)
-        var out: [ModelUsage] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            var usage = ModelUsage(model: String(cString: sqlite3_column_text(stmt, 0)))
-            usage.calls = Int(sqlite3_column_int64(stmt, 1))
-            usage.inputTokens = Int(sqlite3_column_int64(stmt, 2))
-            usage.outputTokens = Int(sqlite3_column_int64(stmt, 3))
-            usage.cacheReadTokens = Int(sqlite3_column_int64(stmt, 4))
-            usage.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 5))
-            if usage.totalTokens > 0 { out.append(usage) }
+        var parents: [String: String] = [:], pathIDs: [String: String] = [:]
+        if source == .codex {
+            sessionHeaderLock.lock()
+            defer { sessionHeaderLock.unlock() }
+            sessionHeaders = sessionHeaders.filter { fileMeta[$0.key] != nil }
+            for (path, meta) in fileMeta {
+                var header = sessionHeaders[path]
+                if header?.mtime != meta.mtime || header?.size != meta.size {
+                    header = nil
+                    let url = URL(fileURLWithPath: String(path.dropFirst(prefix.count)))
+                    if let handle = try? FileHandle(forReadingFrom: url) {
+                        let data = try? handle.read(upToCount: 65_536)
+                        try? handle.close()
+                        if let first = data?.split(separator: 10).first,
+                           let row = try? JSONSerialization.jsonObject(with: Data(first)) as? [String: Any],
+                           row["type"] as? String == "session_meta",
+                           let payload = row["payload"] as? [String: Any],
+                           let id = payload["id"] as? String ?? payload["session_id"] as? String {
+                            let spawn = ((payload["source"] as? [String: Any])?["subagent"] as? [String: Any])?["thread_spawn"] as? [String: Any]
+                            let parent = payload["parent_thread_id"] as? String ?? spawn?["parent_thread_id"] as? String
+                            header = SessionHeader(mtime: meta.mtime, size: meta.size, id: id, parent: parent)
+                        }
+                    }
+                    sessionHeaders[path] = header
+                }
+                guard let header else { continue }
+                pathIDs[path] = header.id
+                if let parent = header.parent, !parent.isEmpty { parents[header.id] = parent }
+            }
         }
-        return out.sorted { $0.totalTokens > $1.totalTokens }
+        var result: [String: [ModelUsage]] = [:]
+        for id in ids {
+            var rows: [ModelUsage] = []
+            for (path, usage) in byPath {
+                let belongs: Bool
+                if source == .claude {
+                    belongs = path.hasSuffix("/" + id + ".jsonl") || path.contains("/" + id + "/subagents/")
+                } else {
+                    var current = pathIDs[path]
+                    var visited: Set<String> = []
+                    var matched = path.hasSuffix("-" + id + ".jsonl")
+                    while let child = current, visited.insert(child).inserted {
+                        if child == id { matched = true; break }
+                        current = parents[child]
+                    }
+                    belongs = matched
+                }
+                if belongs { rows += usage }
+            }
+            result[id] = ModelUsage.merged(rows).filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
+        }
+        return result
     }
 
     /// Per-model usage within `interval`, tagged by where it came from. Same

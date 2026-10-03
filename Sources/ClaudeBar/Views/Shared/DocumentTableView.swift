@@ -39,56 +39,33 @@ struct DocumentTableView: View {
         _controller = StateObject(wrappedValue: DocumentTableController(model))
     }
     private var model: DocumentTable { controller.model }
-    private var heights: [Double] {
-        var values = model.rowHeights
-        for cell in model.cells {
-            let width = model.columnWidths[cell.column..<(cell.column + cell.columnSpan)].reduce(0, +) - 24
-            let estimate = cell.value.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int(ceil(Double($1.count) * 8 / max(40, width)))) }
-            let content = Double(measured[cell.id] ?? CGFloat(estimate * 21 + 4)) + 24
-            let existing = values[cell.row..<(cell.row + cell.rowSpan)].reduce(0, +)
-            if content > existing { values[cell.row + cell.rowSpan - 1] += content - existing }
-        }
-        return values
-    }
-    /// Keep merged row clusters together while virtualizing large tables.
-    private var clusters: [Range<Int>] {
-        let byRow = Dictionary(grouping: model.cells, by: \.row)
-        var result: [Range<Int>] = [], row = 0
-        while row < model.rowCount {
-            var end = row + 1, scanning = row
-            while scanning < end {
-                for cell in byRow[scanning] ?? [] { end = max(end, cell.row + cell.rowSpan) }
-                scanning += 1
-            }
-            result.append(row..<end); row = end
-        }
-        return result
-    }
     var body: some View {
-        let actualHeights = heights
+        let layout = model.layout(measured: measured.mapValues { Double($0) })
+        let columns = layout.columnOffsets, heights = layout.rowOffsets
         return ScrollView(.horizontal) {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(clusters, id: \.lowerBound) { rows in
+                ForEach(layout.clusters) { cluster in
+                    let rows = cluster.rows
                     ZStack(alignment: .topLeading) {
-                        ForEach(model.cells.filter { rows.contains($0.row) }) { cell in
+                        ForEach(cluster.cellIndices.map { model.cells[$0] }) { cell in
                             cellView(cell)
-                                .frame(width: CGFloat(model.columnWidths[cell.column..<(cell.column + cell.columnSpan)].reduce(0, +)),
-                                       height: CGFloat(actualHeights[cell.row..<(cell.row + cell.rowSpan)].reduce(0, +)), alignment: .topLeading)
-                                .offset(x: CGFloat(model.columnWidths.prefix(cell.column).reduce(0, +)), y: CGFloat(actualHeights[rows.lowerBound..<cell.row].reduce(0, +)))
+                                .frame(width: CGFloat(columns[cell.column + cell.columnSpan] - columns[cell.column]),
+                                       height: CGFloat(heights[cell.row + cell.rowSpan] - heights[cell.row]), alignment: .topLeading)
+                                .offset(x: CGFloat(columns[cell.column]), y: CGFloat(heights[cell.row] - heights[rows.lowerBound]))
                         }
                         if editable {
                             ForEach(0..<model.columnCount, id: \.self) { column in
                                 resizeHandle(column: column, row: nil)
-                                    .frame(width: 7, height: CGFloat(actualHeights[rows].reduce(0, +)))
-                                    .offset(x: CGFloat(model.columnWidths.prefix(column + 1).reduce(0, +)) - 3)
+                                    .frame(width: 7, height: CGFloat(heights[rows.upperBound] - heights[rows.lowerBound]))
+                                    .offset(x: CGFloat(columns[column + 1]) - 3)
                             }
                             ForEach(rows, id: \.self) { row in
                                 resizeHandle(column: nil, row: row)
-                                    .frame(width: CGFloat(model.columnWidths.reduce(0, +)), height: 7)
-                                    .offset(y: CGFloat(actualHeights[rows.lowerBound...row].reduce(0, +)) - 3)
+                                    .frame(width: CGFloat(columns.last!), height: 7)
+                                    .offset(y: CGFloat(heights[row + 1] - heights[rows.lowerBound]) - 3)
                             }
                         }
-                    }.frame(width: CGFloat(model.columnWidths.reduce(0, +)), height: CGFloat(actualHeights[rows].reduce(0, +)), alignment: .topLeading)
+                    }.frame(width: CGFloat(columns.last!), height: CGFloat(heights[rows.upperBound] - heights[rows.lowerBound]), alignment: .topLeading)
                 }
             }.padding(.trailing, 4).padding(.bottom, 4)
         }
@@ -237,7 +214,11 @@ struct DocumentTableView: View {
                     // A border can be the first click in the table. Give its native
                     // editor focus so the window undo manager also owns this drag.
                     if let view = navigator.activeView ?? navigator.firstView { view.window?.makeFirstResponder(view) }
-                    dragBefore = model; dragStart = column.map { model.columnWidths[$0] } ?? row.map { heights[$0] }
+                    dragBefore = model
+                    dragStart = column.map { model.columnWidths[$0] } ?? row.map { row in
+                        let offsets = model.layout(measured: measured.mapValues { Double($0) }).rowOffsets
+                        return offsets[row + 1] - offsets[row]
+                    }
                 }
                 if let column { controller.model.columnWidths[column] = DocumentTable.clampWidth((dragStart ?? 150) + value.translation.width) }
                 if let row { controller.model.rowHeights[row] = DocumentTable.clampHeight((dragStart ?? 48) + value.translation.height) }

@@ -92,7 +92,7 @@ struct ProxyLogView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgPrimary)
-        .onAppear { recomputeFiltered() }
+        .onAppear { log.loadListIfNeeded(); recomputeFiltered() }
         .onChange(of: log.entries) { _, rows in
             // `@Published` emits before assignment for the incremental
             // publishers, and the pass is only worth running when it would read

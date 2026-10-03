@@ -10,6 +10,45 @@ struct MCPToolSummary: Identifiable, Sendable {
 /// Discovers metadata only. It never sends tools/call. Each request is bounded,
 /// and the child process is closed when the detail view no longer needs it.
 enum MCPToolDiscovery {
+    private static let stdioQueue = DispatchQueue(label: "com.claudebar.mcp-discovery", qos: .utility,
+                                                  attributes: .concurrent)
+    private static let cancellationQueue = DispatchQueue(label: "com.claudebar.mcp-discovery.cancel", qos: .utility)
+
+    /// Cancellation wakes the collector immediately. Process launch/stop are
+    /// serialized so cancellation before, during or after launch cannot lose
+    /// the child or terminate it twice. No process work runs on the UI caller.
+    private final class StdioSession: @unchecked Sendable {
+        let collector = JSONLineCollector()
+        private let lock = NSLock()
+        private let processLock = NSLock()
+        private var cancelled = false
+        private var process: Process?
+
+        func checkCancellation() throws {
+            lock.lock(); let value = cancelled; lock.unlock()
+            if value { throw CancellationError() }
+        }
+
+        func start(_ child: Process) throws {
+            processLock.lock(); defer { processLock.unlock() }
+            try checkCancellation()
+            try child.run()
+            process = child
+        }
+
+        func cancel() {
+            lock.lock(); cancelled = true; lock.unlock()
+            collector.finish()
+            cancellationQueue.async { self.stop() }
+        }
+
+        func stop() {
+            processLock.lock(); defer { processLock.unlock() }
+            if let process, process.isRunning { process.terminate() }
+            process = nil
+        }
+    }
+
     enum DiscoveryError: LocalizedError {
         case unavailable, unsupportedRunner, timedOut, invalidResponse, serverError
         var errorDescription: String? {
@@ -25,15 +64,26 @@ enum MCPToolDiscovery {
 
     static func list(connection: MCPConnection, from config: URL) async throws -> [MCPToolSummary] {
         if let url = connection.url { return try await listHTTP(connection: connection, url: url) }
-        // A detached task carries no cancellation, so forward the caller's by
-        // hand: the child must not outlive the view that asked for it.
-        let worker = Task.detached(priority: .utility) {
-            try listSync(connection: connection, from: config)
-        }
+        let session = StdioSession()
         return try await withTaskCancellationHandler {
-            try await worker.value
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                // response() waits on a semaphore. Dispatch owns that blocking
+                // work; the Swift task suspends without occupying its pool.
+                stdioQueue.async {
+                    do {
+                        let tools = try listSync(connection: connection, from: config, session: session)
+                        try session.checkCancellation()
+                        continuation.resume(returning: tools)
+                    } catch {
+                        do { try session.checkCancellation() }
+                        catch { continuation.resume(throwing: error); return }
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
         } onCancel: {
-            worker.cancel()
+            session.cancel()
         }
     }
 
@@ -113,7 +163,9 @@ enum MCPToolDiscovery {
         }
     }
 
-    private static func listSync(connection: MCPConnection, from config: URL) throws -> [MCPToolSummary] {
+    private static func listSync(connection: MCPConnection, from config: URL,
+                                 session: StdioSession) throws -> [MCPToolSummary] {
+        try session.checkCancellation()
         let command = connection.command
         let name = URL(fileURLWithPath: command).lastPathComponent
         guard !["npx", "pnpm", "yarn", "bunx", "uvx"].contains(name) else {
@@ -126,7 +178,7 @@ enum MCPToolDiscovery {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
-        let collector = JSONLineCollector()
+        let collector = session.collector
         process.executableURL = executable
         process.arguments = connection.arguments
         process.environment = environment
@@ -152,9 +204,10 @@ enum MCPToolDiscovery {
         defer {
             output.fileHandleForReading.readabilityHandler = nil
             try? input.fileHandleForWriting.close()
-            if process.isRunning { process.terminate() }
+            session.stop()
         }
-        try process.run()
+        try session.start(process)
+        try session.checkCancellation()
         // **One budget per request, not one for the session.** A single
         // session-wide deadline covered `initialize` *and* up to ten
         // `tools/list` pages, so a server that answers every request briskly
@@ -168,21 +221,20 @@ enum MCPToolDiscovery {
             "clientInfo": ["name": "ClaudeBar", "version": "1.0"]
         ]], to: input)
         let initialized: [String: Any]
-        do { initialized = try response(collector, id: 1, until: Date().addingTimeInterval(10)) }
-        catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
+        initialized = try response(session, id: 1, until: Date().addingTimeInterval(10))
+        try session.checkCancellation()
         guard initialized["error"] == nil else { throw DiscoveryError.serverError }
         guard initialized["result"] as? [String: Any] != nil else { throw DiscoveryError.invalidResponse }
         try send(["jsonrpc": "2.0", "method": "notifications/initialized"], to: input)
         var tools: [MCPToolSummary] = []
         var cursor: String?
         for page in 0..<10 {
-            if Task.isCancelled { return [] }
+            try session.checkCancellation()
             let id = page + 2
             let params: [String: String] = cursor.map { ["cursor": $0] } ?? [:]
             try send(["jsonrpc": "2.0", "id": id, "method": "tools/list", "params": params], to: input)
             let message: [String: Any]
-            do { message = try response(collector, id: id, until: Date().addingTimeInterval(10)) }
-            catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
+            message = try response(session, id: id, until: Date().addingTimeInterval(10))
             guard message["error"] == nil else { throw DiscoveryError.serverError }
             guard let result = message["result"] as? [String: Any],
                   let entries = result["tools"] as? [[String: Any]] else { throw DiscoveryError.invalidResponse }
@@ -201,11 +253,14 @@ enum MCPToolDiscovery {
 
     /// The collector reports transport failures generically; this is the one
     /// place they take on the error enum the connector sheet presents.
-    private static func response(_ collector: JSONLineCollector, id: Int,
+    private static func response(_ session: StdioSession, id: Int,
                                  until deadline: Date) throws -> [String: Any] {
-        do { return try collector.response(id: id, until: deadline) }
-        catch JSONLineCollector.Failure.timedOut { throw DiscoveryError.timedOut }
-        catch { throw DiscoveryError.serverError }
+        do { return try session.collector.response(id: id, until: deadline) }
+        catch {
+            try session.checkCancellation()
+            if case JSONLineCollector.Failure.timedOut = error { throw DiscoveryError.timedOut }
+            throw DiscoveryError.serverError
+        }
     }
 
     private static func resolve(_ command: String, config: URL, environment: [String: String]) -> URL? {
