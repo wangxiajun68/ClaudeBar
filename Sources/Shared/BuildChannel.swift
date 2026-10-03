@@ -6,17 +6,18 @@ import Foundation
 #error("Choose exactly one ClaudeBar build channel")
 #endif
 
+/// Which build this is. `Sources/build-config.sh` always passes exactly one of
+/// `CLAUDEBAR_DEV` / `CLAUDEBAR_RELEASE` to both targets' `swiftc`; **no macro
+/// at all falls back to dev** — deliberately, and it is the one asymmetry here
+/// worth stating. Every gate below is a restriction that only fails safe in
+/// that direction: a build whose author believed it was a development build but
+/// which claimed the release identity would start the VPN, rewrite system
+/// proxy/DNS, install helpers and write durable TCC grants the user cannot tell
+/// came from a throwaway build; the reverse mislabelling only disables
+/// features. An unlabelled compile — a stray `swiftc` of this file, a future
+/// tool that forgets the flags — must therefore land on dev.
 enum BuildChannel {
-#if CLAUDEBAR_DEV
-    static let name = "dev"
-    static let appName = "ClaudeBar Dev"
-    static let bundleID = "com.claudebar.app.dev"
-    static let urlScheme = "claudebar-dev"
-    static let proxyPort = 15722
-    static let vpnMixedPort = 17890
-    static let vpnControllerPort = 19097
-    static let allowsSystemIntegration = false
-#else
+#if CLAUDEBAR_RELEASE
     static let name = "release"
     static let appName = "ClaudeBar"
     static let bundleID = "com.claudebar.app"
@@ -25,6 +26,16 @@ enum BuildChannel {
     static let vpnMixedPort = 7890
     static let vpnControllerPort = 9097
     static let allowsSystemIntegration = true
+#else
+    /// `CLAUDEBAR_DEV`, or no macro at all (see above).
+    static let name = "dev"
+    static let appName = "ClaudeBar Dev"
+    static let bundleID = "com.claudebar.app.dev"
+    static let urlScheme = "claudebar-dev"
+    static let proxyPort = 15722
+    static let vpnMixedPort = 17890
+    static let vpnControllerPort = 19097
+    static let allowsSystemIntegration = false
 #endif
     static let widgetBundleID = bundleID + ".widget"
     static let appGroupID = widgetBundleID

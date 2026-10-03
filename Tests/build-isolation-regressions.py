@@ -92,29 +92,87 @@ identities = []
 executables = []
 installs = []
 names = []
-for channel, flag in [('dev', 'CLAUDEBAR_DEV'), ('release', 'CLAUDEBAR_RELEASE')]:
-    env = dict(os.environ, CLAUDEBAR_CHANNEL=channel, CLAUDEBAR_SKIP_INSTALL='1', CLAUDEBAR_PACKAGE='0')
+# `BuildChannel` asks "is the release macro defined", not "is dev defined", so
+# a compile with **no** channel macro lands on dev. That default is the whole
+# fail-safe direction of every gate in the file (`allowsSystemIntegration`,
+# `promptsForSystemPermissions`, the data directories): a build whose author
+# forgot the flags, or a stray `swiftc` of the file, must restrict itself —
+# never start the VPN, rewrite proxy/DNS, install helpers or write durable TCC
+# grants. The list below is therefore (channel, macro) pairs, with the macro
+# omitted for the unlabelled compile; `None` is a label, not a flag.
+for channel, flag in [('dev', 'CLAUDEBAR_DEV'), ('release', 'CLAUDEBAR_RELEASE'), ('dev', None)]:
+    # An unlabelled compile still has to name a real identity for the fixture's
+    # path assertions; it is the dev identity because that is the claim under
+    # test, not because the config defines it.
+    config_channel = channel if flag else 'dev'
+    env = dict(os.environ, CLAUDEBAR_CHANNEL=config_channel, CLAUDEBAR_SKIP_INSTALL='1', CLAUDEBAR_PACKAGE='0')
     result = subprocess.run(['bash', '-c', 'PROJECT_DIR="$PWD"; source Sources/build-config.sh; printf "%s\\n" "$APP_NAME" "$BUNDLE_ID" "$WIDGET_ID" "$APP_BUNDLE" "$APP_EXECUTABLE" "${SWIFT_FLAGS[*]}" "$INSTALL_DIR"'], cwd=root, env=env, check=True, capture_output=True, text=True)
     config = result.stdout.splitlines()
     identities.append(config[1])
     executables.append(config[4])
     installs.append(config[6])
     names.append(config[0])
-    assert flag in config[5]
-    assert f'.build/{channel}/' in config[3]
+    if flag:
+        assert flag in config[5]
+    else:
+        # The real build path always names a channel macro — asserted here for
+        # the unlabelled iteration too, so `build-config.sh` losing a flag
+        # cannot make this case pass by accident. The harness compile below is
+        # the only place both macros are dropped, which is the stray-`swiftc`
+        # shape the case exists to cover.
+        assert ('CLAUDEBAR_DEV' in config[5]) != ('CLAUDEBAR_RELEASE' in config[5]), (
+            f'the build config must name exactly one channel macro: {config[5]}')
+    assert f'.build/{config_channel}/' in config[3]
     assert config[2] == config[1] + '.widget'
     assert '-O' in config[5]
-    assert ('-incremental' in config[5]) == (channel == 'dev')
+    assert ('-incremental' in config[5]) == (config_channel == 'dev')
     with tempfile.TemporaryDirectory(prefix=f'claudebar-isolation-{channel}-') as tmp:
         tmp = Path(tmp)
         source = tmp / 'Regression.swift'
         source.write_text(shared + '\n' + paths + '\n' + proxy + '\n' + helpers + '\n' + stubs)
         binary = tmp / 'regression'
-        subprocess.run(['swiftc', '-parse-as-library', '-D', flag, str(source), '-o', str(binary)], check=True)
+        command = ['swiftc', '-parse-as-library']
+        if flag:
+            command += ['-D', flag]
+        command += [str(source), '-o', str(binary)]
+        compile = subprocess.run(command, capture_output=True, text=True)
+        assert compile.returncode == 0, (
+            f'{channel} identity failed to compile{"" if flag else " with no channel macro"}: '
+            f'{compile.stderr.strip()}')
         subprocess.run([str(binary), str(tmp / 'home'), config[1]], check=True)
+        # Printed, not assumed: this is where the measured channel lands on the
+        # record even when every precondition above happened to pass.
+        probe = f'''import Foundation
+let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])
+let fixtureSupport = fixtureHome.appendingPathComponent("Library/Application Support")
+@main struct Probe {{
+    static func main() {{
+        print("BuildChannel=\\(BuildChannel.name) integration=\\(BuildChannel.allowsSystemIntegration) "
+            + "prompts=\\(BuildChannel.promptsForSystemPermissions) bundle=\\(BuildChannel.bundleID) "
+            + "support=\\(FilePaths.appSupportDir.lastPathComponent) group=\\(FilePaths.appGroupID) "
+            + "claude=\\(FilePaths.claudeDir.lastPathComponent)")
+    }}
+}}
+'''
+        probe_source = tmp / 'Probe.swift'
+        probe_source.write_text(shared + '\n' + paths + '\n' + probe)
+        probe_binary = tmp / 'probe'
+        command = ['swiftc', '-parse-as-library']
+        if flag:
+            command += ['-D', flag]
+        command += [str(probe_source), '-o', str(probe_binary)]
+        subprocess.run(command, check=True)
+        measured = subprocess.run([str(probe_binary), str(tmp / 'home')], check=True, capture_output=True, text=True)
+        print(measured.stdout.strip())
         if channel != 'release':
             assert not (tmp / 'home/.claude/settings.json').exists()
             assert not (tmp / 'home/.codex/config.toml').exists()
+# The unlabelled compile's identity was measured above; assert it equals the
+# labelled dev identity field-by-field rather than trusting the prose.
+assert names[2] == names[0] and identities[2] == identities[0], (
+    f'an unlabelled compile does not claim the dev identity: {names[2]}/{identities[2]} '
+    f'vs dev {names[0]}/{identities[0]}')
+assert identities[2] != identities[1], 'an unlabelled compile must never claim the release bundle id'
 # Channel identity is not only the bundle id: `Tools/check-bundle.py` pins
 # CFBundleExecutable per channel at package time, but the installer path and the
 # app name have no other check anywhere, and a dev build that shares any of
