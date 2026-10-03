@@ -684,13 +684,21 @@ final class ProxyCaptureStore {
         // the freelist and two live rows. auto_vacuum cannot be enabled on an
         // existing database, so reclaim opportunistically — VACUUM is a
         // full-file rewrite, so only run it when a real amount is reclaimable.
+        //
+        // The count has to be read into a local and the statement finalized
+        // *before* the VACUUM: sqlite refuses `VACUUM` with "SQL statements in
+        // progress" while any statement is still open (`nVdbeActive > 1`), and
+        // `execRaw` discards the return code, so leaving the pragma inside its
+        // own `defer` scope made every one of these a silent no-op.
+        var reclaimable: Int64 = 0
         var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, "PRAGMA freelist_count", -1, &stmt, nil) == SQLITE_OK {
-            defer { sqlite3_finalize(stmt) }
-            if sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_int64(stmt, 0) > Self.vacuumThresholdPages {
-                sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
-                execRaw("VACUUM")
-            }
+        if let db, sqlite3_prepare_v2(db, "PRAGMA freelist_count", -1, &stmt, nil) == SQLITE_OK {
+            if sqlite3_step(stmt) == SQLITE_ROW { reclaimable = sqlite3_column_int64(stmt, 0) }
+            sqlite3_finalize(stmt)
+        }
+        if let db, reclaimable > Self.vacuumThresholdPages {
+            sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+            execRaw("VACUUM")
         }
         if let db { sqlite3_exec(db, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil) }
     }
