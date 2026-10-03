@@ -118,8 +118,17 @@ enum MigrationCursorHistory {
             guard type == 1 || type == 2 else {
                 omissions.append("Cursor 的非正文记录未迁移。"); continue
             }
-            if let attachments = bubble["attachedFiles"] as? [Any], !attachments.isEmpty {
-                throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，首版暂不迁移。")
+            for key in ["attachedFiles", "images"] {
+                if let attachments = bubble[key] as? [Any], !attachments.isEmpty {
+                    throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。")
+                }
+            }
+            if let context = bubble["context"] as? [String: Any] {
+                for key in ["selectedImages", "selectedDocuments", "selectedVideos"] {
+                    if let attachments = context[key] as? [Any], !attachments.isEmpty {
+                        throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。")
+                    }
+                }
             }
             if let text = bubble["text"] as? String, !text.isEmpty {
                 messages.append(.init(role: type == 1 ? .user : .assistant, text: text))
@@ -202,8 +211,8 @@ enum MigrationCursorHistory {
         return output
     }
 
-    static func writeCLI(_ messages: [MigrationMessage], sessionID: String, cwd: String, to path: URL) throws {
-        guard !FileManager.default.fileExists(atPath: path.path) else { throw MigrationFailure.storage }
+    static func payload(_ messages: [MigrationMessage], cwd: String, mode: UInt64) throws
+        -> (root: Data, rootID: String, blobs: [String: Data]) {
         var blobs: [String: Data] = [:]
         func store(_ data: Data) -> Data {
             let id = MigrationHistory.fingerprint(data)
@@ -233,8 +242,14 @@ enum MigrationCursorHistory {
         for hash in messageHashes { root += field(1, hash) }
         for hash in turnHashes { root += field(8, hash) }
         root += field(9, Data(URL(fileURLWithPath: try MigrationPath.canonical(cwd), isDirectory: false).absoluteString.utf8))
-        root += varint(10 << 3) + varint(2) // Ask mode; native CLI decides its permissions.
+        root += varint(10 << 3) + varint(mode)
         let rootHash = store(root).map { String(format: "%02x", $0) }.joined()
+        return (root, rootHash, blobs)
+    }
+
+    static func writeCLI(_ messages: [MigrationMessage], sessionID: String, cwd: String, to path: URL) throws {
+        guard !FileManager.default.fileExists(atPath: path.path) else { throw MigrationFailure.storage }
+        let encoded = try payload(messages, cwd: cwd, mode: 2) // Ask mode.
         var db: OpaquePointer?
         guard sqlite3_open_v2(path.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXCLUSIVE, nil) == SQLITE_OK,
               let db else { sqlite3_close(db); throw MigrationFailure.storage }
@@ -254,8 +269,8 @@ enum MigrationCursorHistory {
             }
             guard sqlite3_step(stmt) == SQLITE_DONE else { throw MigrationFailure.storage }
         }
-        for (key, data) in blobs { try insert("INSERT INTO blobs VALUES (?, ?)", key: key, data: data) }
-        let meta = try MigrationHistory.json(["agentId": sessionID, "latestRootBlobId": rootHash,
+        for (key, data) in encoded.blobs { try insert("INSERT INTO blobs VALUES (?, ?)", key: key, data: data) }
+        let meta = try MigrationHistory.json(["agentId": sessionID, "latestRootBlobId": encoded.rootID,
             "name": "ClaudeBar · 迁移会话", "mode": "search", "isRunEverything": false,
             "createdAt": Int(Date().timeIntervalSince1970 * 1000)])
         let hex = meta.map { String(format: "%02x", $0) }.joined()

@@ -5,6 +5,7 @@ struct MigrationLocations: Sendable {
     let codex: URL
     let cursorCLI: URL
     let records: URL
+    var cursorDesktop: URL? = nil
 
     func nativeURL(client: MigrationClient, sessionID: String, cwd: String, now: Date = Date()) throws -> URL {
         guard UUID(uuidString: sessionID) != nil else { throw MigrationFailure.invalidHistory }
@@ -31,7 +32,9 @@ struct MigrationLocations: Sendable {
             return cursorCLI.appendingPathComponent("chats")
                 .appendingPathComponent(try MigrationCursorHistory.workspaceHash(cwd))
                 .appendingPathComponent(sessionID).appendingPathComponent("store.db")
-        case .cursorDesktop: throw MigrationFailure.unsupported("首版不向 Cursor 桌面数据库写入。")
+        case .cursorDesktop:
+            guard let cursorDesktop else { throw MigrationFailure.missing }
+            return cursorDesktop
         }
     }
 
@@ -41,7 +44,10 @@ struct MigrationLocations: Sendable {
         case .claude: root = claude.appendingPathComponent("projects")
         case .codex: root = codex.appendingPathComponent("sessions")
         case .cursorCLI: root = cursorCLI.appendingPathComponent("chats")
-        case .cursorDesktop: return false
+        case .cursorDesktop:
+            guard let cursorDesktop, let candidate = try? MigrationPath.canonical(path.path),
+                  let expected = try? MigrationPath.canonical(cursorDesktop.path) else { return false }
+            return candidate == expected
         }
         guard let resolved = try? MigrationPath.canonical(path.path),
               let prefix = try? MigrationPath.canonical(root.path) else { return false }
@@ -91,13 +97,21 @@ enum MigrationStorage {
                         locations: MigrationLocations) throws -> MigrationRecord {
         guard !preview.source.isBusy else { throw MigrationFailure.busy }
         guard !preview.source.isSubagent else { throw MigrationFailure.unsupported("首版不迁移子代理会话。") }
+        let desktopProfile: MigrationCursorDesktop.Profile?
+        if target == .cursorDesktop {
+            guard let database = locations.cursorDesktop else { throw MigrationFailure.missing }
+            let profile = try MigrationCursorDesktop.profile(database, cwd: preview.source.cwd)
+            guard profile.modelName == route.model,
+                  try profile.fingerprint() == route.configurationFingerprint else { throw MigrationFailure.changed }
+            desktopProfile = profile
+        } else { desktopProfile = nil }
         let old = try records(at: locations.records)
         if let reused = old.first(where: {
             $0.source.id == preview.source.id && $0.sourceFingerprint == preview.fingerprint && $0.target == target
                 && $0.model == route.model && $0.providerKey == route.providerKey
-                && $0.configurationFingerprint == route.configurationFingerprint
+                && $0.configurationFingerprint == route.configurationFingerprint && $0.executablePath == route.executablePath
         }), locations.containsNative(URL(fileURLWithPath: reused.nativePath), client: reused.target.client),
-           FileManager.default.fileExists(atPath: reused.nativePath) {
+           try exists(reused) {
             return reused
         }
         try Task.checkCancellation()
@@ -105,6 +119,26 @@ enum MigrationStorage {
         let targetPath = try locations.nativeURL(client: target.client, sessionID: targetID,
                                                  cwd: preview.source.cwd, now: now)
         guard locations.containsNative(targetPath, client: target.client) else { throw MigrationFailure.storage }
+        let parent = old.first { $0.target.client == preview.source.client && $0.targetSessionID == preview.source.sessionID }
+        let record = MigrationRecord(id: id, logicalConversationID: parent?.logicalConversationID ?? id,
+            createdAt: now, source: preview.source, sourceFingerprint: preview.fingerprint,
+            target: target, targetSessionID: targetID, nativePath: targetPath.path,
+            messageCount: preview.messages.count, omissions: preview.omissions, model: route.model,
+            providerKey: route.providerKey, configurationFingerprint: route.configurationFingerprint,
+            executablePath: route.executablePath)
+        let manifest = locations.records.appendingPathComponent(id.uuidString + ".json")
+        if let profile = desktopProfile {
+            try directory(locations.records)
+            do {
+                try MigrationCursorDesktop.insert(preview.messages, record: record, profile: profile, database: targetPath) {
+                    try PrivateFileWriter.write(JSONEncoder().encode(record), to: manifest)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: manifest)
+                throw error
+            }
+            return record
+        }
         let staging = locations.records.appendingPathComponent(".staging-" + id.uuidString)
         try directory(staging)
         defer { try? FileManager.default.removeItem(at: staging) }
@@ -118,15 +152,8 @@ enum MigrationStorage {
                 cwd: preview.source.cwd, providerKey: route.providerKey), to: staged)
         case .cursorCLI:
             try MigrationCursorHistory.writeCLI(preview.messages, sessionID: targetID, cwd: preview.source.cwd, to: staged)
-        case .cursorDesktop: throw MigrationFailure.unsupported("首版不向 Cursor 桌面数据库写入。")
+        case .cursorDesktop: throw MigrationFailure.invalidHistory // Handled transactionally above.
         }
-        let parent = old.first { $0.target.client == preview.source.client && $0.targetSessionID == preview.source.sessionID }
-        let record = MigrationRecord(id: id, logicalConversationID: parent?.logicalConversationID ?? id,
-            createdAt: now, source: preview.source, sourceFingerprint: preview.fingerprint,
-            target: target, targetSessionID: targetID, nativePath: targetPath.path,
-            messageCount: preview.messages.count, omissions: preview.omissions, model: route.model,
-            providerKey: route.providerKey, configurationFingerprint: route.configurationFingerprint,
-            executablePath: route.executablePath)
         try Task.checkCancellation()
         try directory(targetPath.deletingLastPathComponent())
         // Reject replacement, including a race with another creator.
@@ -142,6 +169,14 @@ enum MigrationStorage {
         }
         return record
     }
+
+    static func exists(_ record: MigrationRecord) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: record.nativePath) else { return false }
+        if record.target == .cursorDesktop {
+            return try MigrationCursorDesktop.contains(URL(fileURLWithPath: record.nativePath), sessionID: record.targetSessionID)
+        }
+        return true
+    }
 }
 
 enum MigrationCommand {
@@ -152,6 +187,7 @@ enum MigrationCommand {
         switch record.target {
         case .claude: return ["--resume", record.targetSessionID]
         case .cursorCLI: return ["--workspace", record.source.cwd, "--mode", "ask", "--model", "auto", "--resume", record.targetSessionID]
+        case .cursorDesktop: throw MigrationFailure.unsupported("Cursor 桌面通过项目窗口打开。")
         case .codexCurrent:
             return ["-c", "model_provider=" + toml(record.providerKey)] +
                 (record.model.isEmpty ? [] : ["-m", record.model]) + ["resume", record.targetSessionID]

@@ -127,8 +127,8 @@ enum TerminalLauncher {
                                 configuration: NSWorkspace.OpenConfiguration())
     }
 
-    /// New migration targets always go through the terminal route. A newly
-    /// materialized Codex rollout may not yet be in the desktop index.
+    /// New Codex rollouts may not be in the desktop index; resume through the
+    /// terminal. Cursor desktop targets open their existing project window.
     @MainActor
     static func openMigratedSession(_ record: MigrationRecord, command: String) throws {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
@@ -136,7 +136,11 @@ enum TerminalLauncher {
               !command.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
             throw MigrationFailure.invalidHistory
         }
-        launch(command: command, cwd: record.source.cwd, sessionId: record.targetSessionID)
+        if record.target == .cursorDesktop {
+            openInCursor(cwd: record.source.cwd)
+        } else {
+            launch(command: command, cwd: record.source.cwd, sessionId: record.targetSessionID)
+        }
     }
 
     // MARK: - Routing

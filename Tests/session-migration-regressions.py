@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Production migration logic, temporary native stores, fake version clients."""
 from pathlib import Path
-import json, os, shlex, sqlite3, subprocess, tempfile, stat
+import json, os, shlex, sqlite3, subprocess, tempfile, stat, plistlib
 
 root = Path(__file__).resolve().parents[1]
 sources = [
     root / 'Sources/Shared/BuildChannel.swift',
     root / 'Sources/ClaudeBar/Models/SessionMigration.swift',
     *[root / ('Sources/ClaudeBar/Utils/' + name + '.swift') for name in
-      ['MigrationHistory', 'MigrationCursorHistory', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote']]
+      ['MigrationHistory', 'MigrationCursorHistory', 'MigrationCursorDesktop', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote']]
 ]
 with tempfile.TemporaryDirectory(prefix='claudebar-migration-') as folder:
     work = Path(folder)
@@ -53,11 +53,11 @@ with tempfile.TemporaryDirectory(prefix='claudebar-migration-') as folder:
     for index, row in enumerate(codex_rows): row['ordinal'] = index
     desktop = work/'desktop.sqlite'
     db = sqlite3.connect(desktop)
-    db.executescript('CREATE TABLE composerHeaders(composerId TEXT, value TEXT); CREATE TABLE cursorDiskKV(key TEXT PRIMARY KEY,value TEXT)')
+    db.executescript('CREATE TABLE composerHeaders(composerId TEXT PRIMARY KEY,workspaceId TEXT,createdAt INTEGER,lastUpdatedAt INTEGER,isArchived INTEGER,isSubagent INTEGER,recency INTEGER,checkpointAt INTEGER,value TEXT,subagentTypeName TEXT); CREATE TABLE cursorDiskKV(key TEXT UNIQUE ON CONFLICT REPLACE,value BLOB)')
     user_bubble = '93f90eb8-9f69-4e31-97ed-3342a675db1e'
     answer_bubble = 'cc94bd41-5e8a-4101-91a8-5ba3a879ed7b'
-    db.execute('INSERT INTO composerHeaders VALUES (?,?)',(source_id,json.dumps({'workspaceIdentifier':{'uri':{'fsPath':str(cwd)}}})))
-    composer = {'composerId':source_id,'status':'completed','fullConversationHeadersOnly':[{'bubbleId':user_bubble},{'bubbleId':answer_bubble}]}
+    db.execute('INSERT INTO composerHeaders(composerId, value, isSubagent, lastUpdatedAt) VALUES (?, ?, 0, 1)',(source_id,json.dumps({'workspaceIdentifier':{'id':'fixture-workspace','uri':{'fsPath':str(cwd)}}})))
+    composer = {'_v':18,'modelConfig':{'modelName':'grok-fixture','accessToken':'PRIVATE_MODEL_SECRET'},'blobEncryptionKey':'PRIVATE_KEY','composerId':source_id,'status':'completed','fullConversationHeadersOnly':[{'bubbleId':user_bubble},{'bubbleId':answer_bubble}]}
     db.execute('INSERT INTO cursorDiskKV VALUES (?,?)',('composerData:'+source_id,json.dumps(composer)))
     for bubble_id, typ, text in [(user_bubble,1,facts),(answer_bubble,2,'ACK')]:
         db.execute('INSERT INTO cursorDiskKV VALUES (?,?)',('bubbleId:'+source_id+':'+bubble_id,json.dumps({'type':typ,'text':text})))
@@ -100,12 +100,15 @@ func mustFail(_ body: () throws -> Void) {
     stubs = stubs.replace('__OFFICIAL_LOGIN_PREDICATE__', predicate)
     service = (root/'Sources/ClaudeBar/Utils/SessionMigrationService.swift').read_text()
     service = service.replace('FileManager.default.homeDirectoryForCurrentUser.path', 'fixtureHome.path')
+    service = service.replace('URL(fileURLWithPath: "/Applications/Cursor.app")', 'fixtureRoot.appendingPathComponent("Cursor.app")')
     (work/'Service.swift').write_text(service)
     terminal = (root/'Sources/ClaudeBar/Utils/TerminalLauncher.swift').read_text()
     entry = terminal[terminal.index('    @MainActor\n    static func openMigratedSession'):terminal.index('    // MARK: - Routing')]
     validation = terminal[terminal.index('    private static func isSafePath'):terminal.index('    /// Run an AppleScript')]
     (work/'Stubs.swift').write_text(stubs + '\n@MainActor enum TerminalLauncher {\n' + entry + validation + r'''
     static var calls = 0
+    static var desktopCalls = 0
+    static func openInCursor(cwd: String) { desktopCalls += 1 }
     private static func launch(command: String, cwd: String, sessionId: String) { calls += 1 }
 }
 ''')
@@ -166,6 +169,32 @@ import SQLite3
         for invalid in [Data([0x0a,0xff]), Data(repeating:0xff,count:12), Data([0x00])] {
             mustFail { _ = try MigrationCursorHistory.fields(invalid) }
         }
+
+        var toolRows = try MigrationHistory.rows(ccData)
+        toolRows.append(["type":"assistant","uuid":"call-row","parentUuid":"a","sessionId":sourceID,
+            "message":["role":"assistant","content":[["type":"tool_use","id":"foreign-call-private-1","name":"Bash","input":["command":"fixture"]]]]])
+        toolRows.append(["type":"user","uuid":"result-row","parentUuid":"call-row","sessionId":sourceID,
+            "message":["role":"user","content":[["type":"tool_result","tool_use_id":"foreign-call-private-1","content":"TOOL_FACT-only-in-result","is_error":true]]]])
+        toolRows.append(["type":"assistant","uuid":"final-row","parentUuid":"result-row","sessionId":sourceID,
+            "message":["role":"assistant","content":"Completed"]])
+        let withTools = try MigrationHistory.claude(data(toolRows),source:ccSource,includeCompletedTools:true)
+        let textOnly = try MigrationHistory.claude(data(toolRows),source:ccSource)
+        precondition(withTools.completedToolCount == 1 && withTools.messages.count == 4)
+        precondition(withTools.fingerprint != textOnly.fingerprint)
+        let toolText = withTools.messages.map(\.text).joined()
+        precondition(toolText.contains("TOOL_FACT-only-in-result") && toolText.contains("\"is_error\":true"))
+        precondition(!toolText.contains("foreign-call-private-1") && !toolText.contains("PRIVATE_THOUGHT"))
+        precondition(!textOnly.messages.map(\.text).joined().contains("TOOL_FACT-only-in-result"))
+        var partialTools = toolRows; partialTools.remove(at:partialTools.count-2)
+        mustFail { _ = try MigrationHistory.claude(data(partialTools),source:ccSource,includeCompletedTools:true) }
+        var legacyTools = try MigrationHistory.rows(MigrationHistory.codexData(cc.messages,sessionID:sourceID,cwd:cwd,providerKey:"fixture"))
+        legacyTools.append(["type":"response_item","payload":["type":"custom_tool_call","call_id":"foreign-call","name":"exec_command","input":"fixture"]])
+        legacyTools.append(["type":"response_item","payload":["type":"custom_tool_call_output","call_id":"foreign-call","output":"TOOL_FACT-only-in-result"]])
+        legacyTools.append(["type":"response_item","payload":["type":"message","role":"assistant","content":[["type":"output_text","text":"Completed"]]]])
+        let cxTools = try MigrationHistory.codex(data(legacyTools),source:cxSource,includeCompletedTools:true)
+        precondition(cxTools.completedToolCount == 1 && cxTools.messages.count == 4)
+        precondition(cxTools.messages.map(\.text).joined().contains("TOOL_FACT-only-in-result"))
+        precondition(!cxTools.messages.map(\.text).joined().contains("foreign-call"))
 
         let physicalCwd = try MigrationPath.canonical(cwd)
         let logicalAlias = fixtureRoot.appendingPathComponent("project-alias")
@@ -262,6 +291,69 @@ import SQLite3
         let original = try Data(contentsOf:fixtureRoot.appendingPathComponent("cc.jsonl"))
         precondition(original == ccData && tryRecords(locations.records).count == 3)
 
+        let desktopFingerprint = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB,cwd:cwd).fingerprint()
+        let desktopRoute = MigrationRoute(model:"grok-fixture",providerKey:"",configurationFingerprint:desktopFingerprint,
+            executablePath:fixtureRoot.appendingPathComponent("Cursor.app/Contents/MacOS/Cursor").path)
+        let desk = try MigrationStorage.prepare(cc,target:.cursorDesktop,route:desktopRoute,locations:locations)
+        let deskAgain = try MigrationStorage.prepare(cc,target:.cursorDesktop,route:desktopRoute,locations:locations)
+        precondition(desk == deskAgain)
+        let deskRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:desk.targetSource)
+        precondition(deskRead.messages == cc.messages)
+        let originalDesk = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:desktopSource)
+        precondition(originalDesk.messages == desktop.messages)
+        // An exception during manifest publication rolls back all native rows.
+        let profile = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB,cwd:cwd)
+        precondition((profile.workspace["uri"] as? [String:Any])?["fsPath"] as? String == cwd)
+        let aliasProfile = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB,cwd:logicalAlias.path)
+        precondition((aliasProfile.workspace["uri"] as? [String:Any])?["fsPath"] as? String == cwd)
+        let rejected = MigrationRecord(id:UUID(),logicalConversationID:UUID(),createdAt:Date(),source:ccSource,
+            sourceFingerprint:cc.fingerprint,target:.cursorDesktop,targetSessionID:UUID().uuidString.lowercased(),
+            nativePath:FilePaths.cursorStateDB.path,messageCount:2,omissions:[],model:profile.modelName,
+            providerKey:"",configurationFingerprint:nil,executablePath:desktopRoute.executablePath)
+        mustFail { try MigrationCursorDesktop.insert(cc.messages,record:rejected,profile:profile,database:FilePaths.cursorStateDB) {
+            throw MigrationFailure.storage
+        } }
+        let rejectedExists = try MigrationStorage.exists(rejected)
+        precondition(!rejectedExists)
+        // A colliding session identity must not replace the existing target.
+        mustFail { try MigrationCursorDesktop.insert(cc.messages,record:desk,profile:profile,database:FilePaths.cursorStateDB) {} }
+        let deskUnchanged = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:desk.targetSource)
+        precondition(deskUnchanged.messages == deskRead.messages)
+        var collisionDB: OpaquePointer?
+        precondition(sqlite3_open(FilePaths.cursorStateDB.path,&collisionDB) == SQLITE_OK)
+        // Same model name with changed maxMode must not reuse a stale target.
+        let composerKey = "composerData:" + desk.targetSessionID
+        let composerBytes = try MigrationCursorHistory.value(collisionDB!,sql:"SELECT value FROM cursorDiskKV WHERE key = ?",key:composerKey)
+        var changedComposer = try MigrationCursorHistory.object(composerBytes)
+        var changedModel = changedComposer["modelConfig"] as! [String:Any]
+        changedModel["maxMode"] = true; changedComposer["modelConfig"] = changedModel
+        let changedHex = try MigrationHistory.json(changedComposer).map { String(format:"%02x",$0) }.joined()
+        precondition(sqlite3_exec(collisionDB,"UPDATE cursorDiskKV SET value = CAST(X'" + changedHex + "' AS TEXT) WHERE key = '" + composerKey + "'",nil,nil,nil) == SQLITE_OK)
+        mustFail { _ = try MigrationStorage.prepare(cc,target:.cursorDesktop,route:desktopRoute,locations:locations) }
+        let composerHex = composerBytes.map { String(format:"%02x",$0) }.joined()
+        precondition(sqlite3_exec(collisionDB,"UPDATE cursorDiskKV SET value = CAST(X'" + composerHex + "' AS TEXT) WHERE key = '" + composerKey + "'",nil,nil,nil) == SQLITE_OK)
+        let orphanKey = "composerData:" + rejected.targetSessionID
+        precondition(sqlite3_exec(collisionDB,"INSERT INTO cursorDiskKV VALUES ('" + orphanKey + "', '{\"unrelated\":true}')",nil,nil,nil) == SQLITE_OK)
+        mustFail { try MigrationCursorDesktop.insert(cc.messages,record:rejected,profile:profile,database:FilePaths.cursorStateDB) {} }
+        let orphanPreserved = try MigrationCursorHistory.value(collisionDB!,sql:"SELECT value FROM cursorDiskKV WHERE key = ?",key:orphanKey)
+        precondition(String(decoding:orphanPreserved,as:UTF8.self) == "{\"unrelated\":true}")
+        precondition(sqlite3_exec(collisionDB,"DELETE FROM cursorDiskKV WHERE key = '" + orphanKey + "'",nil,nil,nil) == SQLITE_OK)
+        let shared = try MigrationHistory.json(["role":"user","content":[["type":"text","text":facts]]])
+        let sharedKey = "agentKv:blob:" + MigrationHistory.fingerprint(shared)
+        precondition(sqlite3_exec(collisionDB,"UPDATE cursorDiskKV SET value = X'636f7272757074' WHERE key = '" + sharedKey + "'",nil,nil,nil) == SQLITE_OK)
+        mustFail { try MigrationCursorDesktop.insert(cc.messages,record:rejected,profile:profile,database:FilePaths.cursorStateDB) {} }
+        let hex = shared.map { String(format:"%02x",$0) }.joined()
+        precondition(sqlite3_exec(collisionDB,"UPDATE cursorDiskKV SET value = X'" + hex + "' WHERE key = '" + sharedKey + "'",nil,nil,nil) == SQLITE_OK)
+        precondition(sqlite3_exec(collisionDB,"BEGIN IMMEDIATE",nil,nil,nil) == SQLITE_OK)
+        mustFail { try MigrationCursorDesktop.insert(cc.messages,record:rejected,profile:profile,database:FilePaths.cursorStateDB) {} }
+        precondition(sqlite3_exec(collisionDB,"ROLLBACK",nil,nil,nil) == SQLITE_OK)
+        sqlite3_close(collisionDB)
+        mustFail { _ = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB,cwd:fixtureRoot.path) }
+        let toolsTarget = try MigrationStorage.prepare(withTools,target:.codexCurrent,route:route,locations:locations)
+        precondition(toolsTarget.targetSessionID != a.targetSessionID)
+        let toolsReRead = try MigrationHistory.codex(Data(contentsOf:URL(fileURLWithPath:toolsTarget.nativePath)),source:toolsTarget.targetSource)
+        precondition(toolsReRead.messages == withTools.messages)
+
         let service = SessionMigrationService.shared
         if BuildChannel.allowsSystemIntegration {
             let project = locations.claude.appendingPathComponent("projects/fixture")
@@ -269,6 +361,21 @@ import SQLite3
             let path = project.appendingPathComponent(sourceID+".jsonl")
             try PrivateFileWriter.write(ccData,to:path)
             let live = try await service.preview(ccSource)
+            try PrivateFileWriter.write(data(toolRows),to:path)
+            let toolsLive = try await service.preview(ccSource,includeCompletedTools:true)
+            do { _ = try await service.prepare(source:ccSource,target:.codexCurrent,fingerprint:toolsLive.fingerprint,
+                officialModel:"",includeCompletedTools:false); preconditionFailure("tool mode mismatch") }
+            catch MigrationFailure.changed {}
+            try PrivateFileWriter.write(ccData,to:path)
+            let desktopPrepared = try await service.prepare(source:ccSource,target:.cursorDesktop,
+                fingerprint:live.fingerprint,officialModel:"")
+            precondition(desktopPrepared == desk)
+            let desktopCommand = try await service.command(for:desktopPrepared)
+            precondition(desktopCommand.isEmpty)
+            try TerminalLauncher.openMigratedSession(desktopPrepared,command:desktopCommand)
+            precondition(TerminalLauncher.desktopCalls == 1 && TerminalLauncher.calls == 0)
+            do { _ = try await service.command(for:rejected); preconditionFailure("crash-orphan native identity") }
+            catch MigrationFailure.missing {}
             let record = try await service.prepare(source:ccSource,target:.codexCurrent,
                 fingerprint:live.fingerprint,officialModel:"gpt-test")
             let shell = try await service.command(for:record)
@@ -310,6 +417,8 @@ import SQLite3
             } catch MigrationFailure.restricted {}
             do { _ = try await service.command(for:a); preconditionFailure("dev launch command") }
             catch MigrationFailure.restricted {}
+            do { _ = try await service.prepare(source:invalid,target:.cursorDesktop,fingerprint:"",officialModel:"")
+                preconditionFailure("dev desktop write") } catch MigrationFailure.restricted {}
             mustFail { try TerminalLauncher.openMigratedSession(a,command:"codex") }
             precondition(TerminalLauncher.calls == 0)
         }
@@ -325,11 +434,29 @@ import SQLite3
             (channel_root/name).write_bytes((work/name).read_bytes())
         (channel_root/'home/.local').mkdir(parents=True)
         os.symlink(cli,channel_root/'home/.local/bin')
+        app = channel_root/'Cursor.app/Contents'
+        (app/'MacOS').mkdir(parents=True)
+        (app/'Info.plist').write_bytes(plistlib.dumps({'CFBundleShortVersionString':'3.23.12'}))
+        (app/'MacOS/Cursor').write_text('#!/bin/sh\nexit 98\n')
+        (app/'MacOS/Cursor').chmod(0o700)
         binary = work / ('regression-'+channel)
         flags = [] if channel == 'unlabelled' else ['-D','CLAUDEBAR_'+channel.upper()]
         subprocess.run(['swiftc','-O',*flags,*map(str,sources),str(work/'Service.swift'),
                         str(work/'Stubs.swift'),str(work/'Main.swift'),'-lsqlite3','-o',str(binary)],check=True)
         subprocess.run([str(binary),str(channel_root),str(cwd),facts],check=True)
+        desktop_db = sqlite3.connect(channel_root/'desktop.sqlite')
+        for key, value in desktop_db.execute("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'"):
+            composer = json.loads(value)
+            if key == 'composerData:'+source_id: continue
+            assert isinstance(composer['codeBlockData'],dict)
+            assert isinstance(composer['originalFileStates'],dict)
+            assert isinstance(composer['usageData'],dict)
+            assert composer['addedFiles'] == 0 and composer['removedFiles'] == 0
+            assert 'PRIVATE' not in value
+            assert 'accessToken' not in composer['modelConfig']
+            assert composer['conversationState'].startswith('~')
+            assert len(composer['fullConversationHeadersOnly']) == 2
+        desktop_db.close()
         db_path = next((channel_root/'cursor/chats').glob('*/*/store.db'))
         db = sqlite3.connect(db_path)
         value,kind = db.execute("SELECT value, typeof(value) FROM meta WHERE key='0'").fetchone()

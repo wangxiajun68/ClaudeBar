@@ -1,0 +1,185 @@
+{
+  "desktop": [
+    {
+      "message_count": 6,
+      "source_id": "c2e53978-9e17-4cf2-9cd2-c85aa5ce4464",
+      "source": "cc",
+      "model": "grok-4.7",
+      "expected": {
+        "marker": "MIGRATE-bc4cde261f12",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "answers": [
+        "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+        "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}"
+      ],
+      "all_matches": true,
+      "ui_history_visible": true,
+      "ui_submit_and_reply_verified": true,
+      "cold_reload_second_reply_verified": true,
+      "cold_reload_tested": true
+    },
+    {
+      "message_count": 4,
+      "source_id": "69ef6484-98e5-47e9-bcf2-a86622df2db7",
+      "source": "codex-official",
+      "model": "grok-4.7",
+      "expected": {
+        "marker": "MIGRATE-5f44f4266d2b",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "answers": [
+        "{\"marker\": \"MIGRATE-5f44f4266d2b\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}"
+      ],
+      "all_matches": true,
+      "ui_history_visible": true,
+      "ui_submit_and_reply_verified": true,
+      "cold_reload_second_reply_verified": false,
+      "cold_reload_tested": false
+    },
+    {
+      "message_count": 4,
+      "source_id": "8189ca85-8642-48ec-a172-4857d5e23b51",
+      "source": "codex-custom",
+      "model": "grok-4.7",
+      "expected": {
+        "marker": "MIGRATE-773b6da47f58",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "answers": [
+        "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}"
+      ],
+      "all_matches": true,
+      "ui_history_visible": true,
+      "ui_submit_and_reply_verified": true,
+      "cold_reload_second_reply_verified": false,
+      "cold_reload_tested": false,
+      "source_model": "kimi-k3"
+    }
+  ],
+  "reverse": [
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 0.92,
+      "label": "reverse-cc",
+      "source": "cursorDesktop",
+      "source_id": "c2e53978-9e17-4cf2-9cd2-c85aa5ce4464",
+      "target": "claude",
+      "target_id": "39e11236-39b2-4045-a765-0728f7bfce1f",
+      "import_message_count": 6,
+      "expected": {
+        "marker": "MIGRATE-bc4cde261f12",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 18.55,
+      "label": "reverse-codex-custom",
+      "source": "cursorDesktop",
+      "source_id": "8189ca85-8642-48ec-a172-4857d5e23b51",
+      "target": "codexOfficial",
+      "target_id": "e27fdaa8-0c86-4d23-bee7-206f2510383e",
+      "import_message_count": 4,
+      "expected": {
+        "marker": "MIGRATE-773b6da47f58",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "exact_match": true
+    }
+  ],
+  "initial_failures": [
+    {
+      "session_id": "9d9f91a3-f106-4f72-a52b-668e85dda45a",
+      "initial_result": "sidebar visible; superseded before UI continuation test",
+      "recoverably_archived": true,
+      "composer_loading_tested": false
+    },
+    {
+      "session_id": "8d2ea343-d536-42ab-b2cf-7cfeaf74c591",
+      "initial_result": "sidebar visible; superseded before UI continuation test",
+      "recoverably_archived": true,
+      "composer_loading_tested": false
+    },
+    {
+      "session_id": "1afbc3f2-b56d-424d-bdfa-4a99a339b1ac",
+      "initial_result": "sidebar visible; composer failed to load in UI",
+      "recoverably_archived": true,
+      "composer_loading_tested": true
+    }
+  ],
+  "date": "2026-10-03",
+  "production_base_commit": "39c6c2f",
+  "versions": {
+    "cursorDesktop": "3.23.12",
+    "claude": "2.1.288",
+    "codex": "0.159.0-alpha.12.1"
+  },
+  "question": "From our previous conversation, return only a JSON object with keys marker, constraint, next_step, decision and their exact remembered values. Do not use tools or read files. If a fact is absent, use \"unknown\".",
+  "method": "Production Swift adapters compiled as independent executable; synthetic native histories; actual Cursor desktop UI submissions and isolated native CLI resumes. ClaudeBar App was not launched.",
+  "completed_tool_checks": [
+    {
+      "include_completed_tools": true,
+      "tool_count": 2,
+      "message_count": 7,
+      "exit": 0,
+      "seconds": 1.19,
+      "answer": "{\"chunk_id\":\"b1b719\"}",
+      "expected_chunk_id": "b1b719",
+      "fact_match": true,
+      "unknown_control": false
+    },
+    {
+      "include_completed_tools": false,
+      "tool_count": 0,
+      "message_count": 5,
+      "exit": 0,
+      "seconds": 1.19,
+      "answer": "{\"chunk_id\": \"unknown\"}",
+      "expected_chunk_id": "b1b719",
+      "fact_match": false,
+      "unknown_control": true
+    }
+  ],
+  "tool_question": "From the previous conversation, return only a JSON object with key chunk_id for the first shell command result chunk_id in our earlier tool results. If absent use \"unknown\". Do not call tools or read files.",
+  "verification": {
+    "full_regression_suites": 52,
+    "full_regression_seconds": 220.26,
+    "dev_build_identity_widget_signature": "passed",
+    "release_build_identity_widget_signature": "passed"
+  },
+  "final_profile_fingerprint_smoke": {
+    "source": "cc",
+    "target": "cursorDesktop",
+    "session_id": "224f920f-4982-4827-a2a9-db15915c6ff2",
+    "profile_fingerprint": "cafe72724df4303f053a5b867b109427f59b437a81963d12faae1742baeadb6c",
+    "model": "grok-4.7",
+    "message_count": 4,
+    "ui_history_visible": true,
+    "ui_submit_and_reply_verified": true,
+    "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+    "expected": {
+      "marker": "MIGRATE-bc4cde261f12",
+      "constraint": "never edit VERSION",
+      "next_step": "verify parser regression",
+      "decision": "keep original session"
+    },
+    "exact_match": true,
+    "method": "Final production desktop adapter and storage compiled after profile fingerprint hardening; actual UI reply and production desktop reader verification."
+  }
+}

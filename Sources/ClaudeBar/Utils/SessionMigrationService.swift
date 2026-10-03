@@ -7,12 +7,13 @@ actor SessionMigrationService {
 
     static var locations: MigrationLocations {
         .init(claude: FilePaths.claudeDir, codex: FilePaths.codexDir,
-              cursorCLI: FilePaths.cursorCLIConfigDir, records: FilePaths.sessionMigrationsDir)
+              cursorCLI: FilePaths.cursorCLIConfigDir, records: FilePaths.sessionMigrationsDir,
+              cursorDesktop: FilePaths.cursorStateDB)
     }
 
     func records() throws -> [MigrationRecord] { try MigrationStorage.records(at: Self.locations.records) }
 
-    func preview(_ source: MigrationSource) throws -> MigrationPreview {
+    func preview(_ source: MigrationSource, includeCompletedTools: Bool = false) throws -> MigrationPreview {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         try Task.checkCancellation()
         guard UUID(uuidString: source.sessionID) != nil, !source.cwd.isEmpty,
@@ -36,7 +37,7 @@ actor SessionMigrationService {
             let paths = files.map { $0.appendingPathComponent(source.sessionID + ".jsonl") }
                 .filter { FileManager.default.fileExists(atPath: $0.path) }
             guard paths.count == 1, locations.containsNative(paths[0], client: .claude) else { throw MigrationFailure.missing }
-            return try MigrationHistory.claude(MigrationStorage.readBounded(paths[0]), source: source)
+            return try MigrationHistory.claude(MigrationStorage.readBounded(paths[0]), source: source, includeCompletedTools: includeCompletedTools)
         case .codex:
             let root = locations.codex.appendingPathComponent("sessions")
             guard let enumerator = FileManager.default.enumerator(at: root,
@@ -52,14 +53,9 @@ actor SessionMigrationService {
                 try Task.checkCancellation()
             }
             guard let found else { throw MigrationFailure.missing }
-            return try MigrationHistory.codex(MigrationStorage.readBounded(found), source: source)
+            return try MigrationHistory.codex(MigrationStorage.readBounded(found), source: source, includeCompletedTools: includeCompletedTools)
         case .cursorDesktop:
-            let plist = URL(fileURLWithPath: "/Applications/Cursor.app/Contents/Info.plist")
-            guard let data = try? Data(contentsOf: plist),
-                  let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  info["CFBundleShortVersionString"] as? String == "3.23.12" else {
-                throw MigrationFailure.unsupported("Cursor 桌面版本尚未验证，首版仅支持 3.23.12 的正文导出。")
-            }
+            _ = try cursorApplication()
             return try MigrationCursorHistory.desktop(FilePaths.cursorStateDB, source: source)
         case .cursorCLI:
             let path = try locations.nativeURL(client: .cursorCLI, sessionID: source.sessionID, cwd: source.cwd)
@@ -69,12 +65,13 @@ actor SessionMigrationService {
     }
 
     func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
-                 officialModel: String) throws -> MigrationRecord {
+                 officialModel: String, includeCompletedTools: Bool = false) throws -> MigrationRecord {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
-        let latest = try preview(source)
+        let latest = try preview(source, includeCompletedTools: includeCompletedTools)
         guard latest.fingerprint == fingerprint else { throw MigrationFailure.changed }
         let executable = try runtime(target.client)
         let configuration: URL?
+        var desktopFingerprint: String?
         let model: String, provider: String
         switch target {
         case .claude:
@@ -82,6 +79,12 @@ actor SessionMigrationService {
             model = "当前 Claude Code 配置"; provider = ""
         case .cursorCLI:
             configuration = nil; model = "Auto"; provider = ""
+        case .cursorDesktop:
+            configuration = nil
+            let profile = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB, cwd: source.cwd)
+            model = profile.modelName
+            desktopFingerprint = try profile.fingerprint()
+            provider = ""
         case .codexCurrent:
             configuration = FilePaths.codexConfigFile
             guard let selected = CodexConfigWriter.readSelection() else {
@@ -100,9 +103,9 @@ actor SessionMigrationService {
         }
         let configHash = try configuration.map { try configurationHash($0) }
         let route = MigrationRoute(model: model, providerKey: provider,
-            configurationFingerprint: configHash, executablePath: executable.path)
+            configurationFingerprint: desktopFingerprint ?? configHash, executablePath: executable.path)
         // Version probing can take time; source must still be a complete unchanged snapshot.
-        let checked = try preview(source)
+        let checked = try preview(source, includeCompletedTools: includeCompletedTools)
         guard checked.fingerprint == latest.fingerprint else { throw MigrationFailure.changed }
         return try MigrationStorage.prepare(checked, target: target, route: route, locations: Self.locations)
     }
@@ -110,11 +113,16 @@ actor SessionMigrationService {
     func command(for record: MigrationRecord) throws -> String {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         guard Self.locations.containsNative(URL(fileURLWithPath: record.nativePath), client: record.target.client),
-              FileManager.default.fileExists(atPath: record.nativePath),
+              try MigrationStorage.exists(record),
               FileManager.default.fileExists(atPath: record.source.cwd) else { throw MigrationFailure.missing }
         if record.target == .codexOfficial { try requireOfficialLogin() }
         let executable = try runtime(record.target.client)
         guard executable.path == record.executablePath else { throw MigrationFailure.changed }
+        if record.target == .cursorDesktop {
+            // Validate native identity and cwd, including crash-before-commit records.
+            _ = try MigrationCursorHistory.desktop(URL(fileURLWithPath: record.nativePath), source: record.targetSource)
+            return ""
+        }
         if let expected = record.configurationFingerprint {
             let configuration = record.target == .claude ? FilePaths.settingsFile : FilePaths.codexConfigFile
             guard try configurationHash(configuration) == expected else {
@@ -153,7 +161,10 @@ actor SessionMigrationService {
         case .claude: name = "claude"; expected = "2.1.288 (Claude Code)"
         case .codex: name = "codex"; expected = "codex-cli 0.159.0-alpha.12.1"
         case .cursorCLI: name = "agent"; expected = "2026.06.19-20-24-33-653a7fb"
-        case .cursorDesktop: throw MigrationFailure.unsupported("首版不向 Cursor 桌面写入。")
+        case .cursorDesktop:
+            let executable = try cursorApplication().appendingPathComponent("Contents/MacOS/Cursor")
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw MigrationFailure.unavailable(client.label) }
+            return executable
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var candidates = [home + "/.local/bin/" + name, "/opt/homebrew/bin/" + name, "/usr/local/bin/" + name]
@@ -167,6 +178,17 @@ actor SessionMigrationService {
             throw MigrationFailure.unsupported(client.label + " 版本尚未验证（" + version + "），首版不会写入其会话。")
         }
         return executable
+    }
+
+    private func cursorApplication() throws -> URL {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        let application = URL(fileURLWithPath: "/Applications/Cursor.app")
+        guard let data = try? Data(contentsOf: application.appendingPathComponent("Contents/Info.plist")),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              info["CFBundleShortVersionString"] as? String == "3.23.12" else {
+            throw MigrationFailure.unsupported("Cursor 桌面版本尚未验证，当前支持 3.23.12。")
+        }
+        return application
     }
 
     private func version(_ executable: URL) throws -> String {

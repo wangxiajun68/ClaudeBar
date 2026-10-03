@@ -24,13 +24,14 @@ struct MigrationSource: Identifiable, Codable, Equatable, Sendable {
 }
 
 enum MigrationTarget: String, Codable, CaseIterable, Identifiable, Sendable {
-    case claude, codexCurrent, codexOfficial, cursorCLI
+    case claude, codexCurrent, codexOfficial, cursorCLI, cursorDesktop
     var id: String { rawValue }
     var client: MigrationClient {
         switch self {
         case .claude: return .claude
         case .codexCurrent, .codexOfficial: return .codex
         case .cursorCLI: return .cursorCLI
+        case .cursorDesktop: return .cursorDesktop
         }
     }
     var label: String {
@@ -39,6 +40,7 @@ enum MigrationTarget: String, Codable, CaseIterable, Identifiable, Sendable {
         case .codexCurrent: return "Codex · 当前配置"
         case .codexOfficial: return "Codex · 官方登录"
         case .cursorCLI: return "Cursor CLI · Auto"
+        case .cursorDesktop: return "Cursor 桌面 · 项目模型"
         }
     }
 }
@@ -54,6 +56,7 @@ struct MigrationPreview: Sendable {
     let messages: [MigrationMessage]
     let fingerprint: String
     let omissions: [String]
+    var completedToolCount = 0
     var textBytes: Int { messages.reduce(0) { $0 + $1.text.utf8.count } }
 }
 
@@ -75,6 +78,8 @@ struct MigrationRecord: Codable, Identifiable, Equatable, Sendable {
     let configurationFingerprint: String?
     let executablePath: String
     var formatVersion = 1
+
+    var desktopTitle: String { "ClaudeBar · 迁移 · " + String(targetSessionID.prefix(8)) }
 
     var targetSource: MigrationSource {
         .init(client: target.client, sessionID: targetSessionID,

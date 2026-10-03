@@ -30,7 +30,8 @@ extension MigrationSource {
 
     init(_ session: CursorSessionInfo) {
         self.init(client: .cursorDesktop, sessionID: session.composerId, cwd: session.cwd,
-                  title: session.displayTitle, isBusy: session.isBusy || session.isWaiting)
+                  title: session.displayTitle, isBusy: session.isBusy || session.isWaiting
+                    || session.subagents.contains { $0.status == .running })
     }
 
     init(_ session: ExternalSessionInfo, hasRunningChildren: Bool = false) {
@@ -74,6 +75,7 @@ private struct SessionMigrationDialog: View {
     @State private var preview: MigrationPreview?
     @State private var error: String?
     @State private var preparing = false
+    @State private var includeCompletedTools = false
     @State private var work: Task<Void, Never>?
 
     private var targets: [MigrationTarget] {
@@ -97,13 +99,29 @@ private struct SessionMigrationDialog: View {
             }
             Text("正文历史转入新会话，在原项目目录继续，使用目标客户端的账号与权限。")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
+            if source.client == .claude || source.client == .codex {
+                Toggle("包含已完成工具的输入与结果", isOn: $includeCompletedTools)
+                    .font(Theme.Font.bodySmall).disabled(preparing)
+                if includeCompletedTools {
+                    Text("工具记录会随历史发送给目标模型；原工具不会重新执行。")
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                }
+            }
             if target == .cursorCLI {
-                Text("将在终端打开 Cursor CLI。Cursor 桌面接收尚未接入。")
+                Text("将在终端打开 Cursor CLI。")
                     .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+            }
+            if target == .cursorDesktop {
+                Text("使用 Cursor 此项目已有聊天的模型设置。创建后打开项目，在聊天历史搜索「ClaudeBar · 迁移」。已打开的窗口可能需手动重载。")
+                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
             }
             if let preview {
                 Text("\(preview.messages.count) 条消息 · \(max(1, preview.textBytes / 1024)) KB")
                     .font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
+                if preview.completedToolCount > 0 {
+                    Text("包含 \(preview.completedToolCount) 项已完成工具记录")
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                }
                 ForEach(preview.omissions, id: \.self) {
                     Text($0).font(Theme.Font.caption).foregroundColor(Theme.Ink.warning)
                 }
@@ -133,6 +151,7 @@ private struct SessionMigrationDialog: View {
             load()
         }
         .onDisappear { work?.cancel() }
+        .onChange(of: includeCompletedTools) { load() }
     }
 
     private func load() {
@@ -140,7 +159,7 @@ private struct SessionMigrationDialog: View {
         error = nil; preview = nil
         work = Task {
             do {
-                let result = try await SessionMigrationService.shared.preview(source)
+                let result = try await SessionMigrationService.shared.preview(source, includeCompletedTools: includeCompletedTools)
                 try Task.checkCancellation()
                 preview = result
             } catch is CancellationError {} catch { self.error = error.localizedDescription }
@@ -154,7 +173,7 @@ private struct SessionMigrationDialog: View {
             defer { preparing = false }
             do {
                 let record = try await SessionMigrationService.shared.prepare(source: source, target: target,
-                    fingerprint: preview.fingerprint, officialModel: officialModel)
+                    fingerprint: preview.fingerprint, officialModel: officialModel, includeCompletedTools: includeCompletedTools)
                 try Task.checkCancellation()
                 await migrations.refresh()
                 try await migrations.open(record)
@@ -180,6 +199,10 @@ struct SessionMigrationHistoryView: View {
                                 .font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(1)
                             Text(record.source.cwd).font(Theme.Font.captionMono)
                                 .foregroundColor(Theme.textTertiary()).lineLimit(1).truncationMode(.middle)
+                            if record.target == .cursorDesktop {
+                                Text("聊天历史：" + record.desktopTitle + "；未出现时手动重载窗口")
+                                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                            }
                         }
                         Spacer(minLength: 4)
                         SessionMigrationButton(source: record.targetSource)

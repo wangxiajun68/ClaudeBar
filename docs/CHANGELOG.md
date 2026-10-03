@@ -10,7 +10,7 @@
 
 ### 新增
 
-- **会话正文迁移首版**：会话卡片可把已结束的 Claude Code、Codex 或 Cursor 桌面正文创建为 Claude Code、Codex 当前配置/官方登录、Cursor CLI 的新原生会话，通过终端在原项目继续；迁移记录关联来源及再次迁移。固定已验证客户端版本，未知版本、压缩、子代理、附件及不完整历史明确拒绝。开发版保持系统集成禁用；Cursor 桌面接收、同模型跨协议接入未实现。见 [会话迁移契约](technical/session-migration.md) 与 [实现验收](reviews/session-migration-implementation-2026-10-03.md)。
+- **会话迁移**：会话卡片可把已结束的 Claude Code、Codex 或 Cursor 正文创建为 Claude Code、Codex 当前配置/官方登录、Cursor CLI 或 Cursor 桌面的新原生会话；迁移记录关联来源及再次迁移。Claude Code / Codex 可选择携带已完成工具的输入与结果作为历史资料。Cursor 桌面跟随项目已有模型，打开项目后从聊天历史选择迁移会话，必要时手动重载。固定已验证客户端版本，未知版本、压缩、子代理、附件及不完整历史明确拒绝。开发版保持系统集成禁用；同模型跨协议接入未实现。见 [会话迁移契约](technical/session-migration.md) 与 [第二阶段验收](reviews/session-migration-phase2-implementation-2026-10-03.md)。
 
 ## [1.15.0] — 2026-10-03
 
