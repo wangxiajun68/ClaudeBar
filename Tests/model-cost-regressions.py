@@ -454,6 +454,32 @@ struct ModelUsage {
         precondition(ModelPricing.resolve(bundled.slug, on: "2026-10-02")?.rate == bundledRate,
                      "clearing overrides restores the bundled rate")
 
+        // Day-segmented pricing: one model, one month, a price change mid-way.
+        // The days before the change must bill the old rate and only the later
+        // days the new one — the property that lets a price change happen
+        // without rewriting a month of recorded spend. A single-date estimate
+        // is the flat behaviour and must differ; the difference is the reason
+        // this path exists.
+        let cost = ModelUsage(model: bundled.slug, inputTokens: 1_000_000,
+                              outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+        let raised = ModelPricing.PriceOverride(slug: bundled.slug,
+            rate: .init(currency: bundledRate!.currency, input: 99, output: 99, cacheRead: 9, cacheWrite: 9),
+            unpriced: nil, effectiveFrom: "2026-10-02", source: .manual)
+        ModelPricing.replaceOverrides([bundled.slug: [raised]])
+        let segmented = ModelPricing.estimate(days: ["2026-10-01": [cost], "2026-10-02": [cost]])
+        let flat = ModelPricing.estimate([cost], on: "2026-10-02")
+        precondition(segmented.lines.count == 1, "day segmentation must not split the model into two lines")
+        // Exact arithmetic, not just "different": one of the two days bills the
+        // bundled rate and the other bills the override.
+        let bundledCost = ModelPricing.cost(of: cost, on: "2026-10-01")!
+        let raisedCost = ModelPricing.cost(of: cost, on: "2026-10-02")!
+        precondition(segmented.cost.cny == bundledCost.cny + raisedCost.cny
+                     && segmented.cost.usd == bundledCost.usd + raisedCost.usd,
+                     "the segmented total must be the two days at their own prices")
+        precondition(flat.cost == raisedCost && raisedCost != bundledCost,
+                     "the flat estimate must bill both days at the later price")
+        ModelPricing.replaceOverrides([:])
+
         print("PASS: slug canonicalization, longest-match, disjoint currency buckets, "
               + "\(ModelPriceTable.entries.count) rate cards + \(ModelPriceTable.unpriced.count) stated-unpriced, "
               + "grouped formatting, opt-in conversion with no silent rate")
