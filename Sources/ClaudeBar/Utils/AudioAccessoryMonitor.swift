@@ -587,25 +587,50 @@ private enum LogSource {
 
     private static let lock = NSLock()
     private static var store: OSLogStore?
+    /// When `store` was built. A store is a snapshot — see `entries(since:)`.
+    private static var storeBuiltAt: Date?
 
     /// Everything both subsystems logged since `since`, oldest first.
+    ///
+    /// **A store is a fixed range of entries.** `Store.h` says so and it is
+    /// true in fact: entries written after `OSLogStore.local()` returned are
+    /// invisible to it, whether this process wrote them or another one did.
+    /// Holding one forever therefore froze the meter at whatever it read first
+    /// — measured on this machine, a held store stayed at 8 matches while a
+    /// freshly built one went 8 → 9 → 10 over the same interval.
+    ///
+    /// So the store is rebuilt as soon as the request window starts after it was
+    /// built. With the poller's 90 s overlap that settles at one rebuild per
+    /// poll *window* rather than one per poll: the overlap exists to catch
+    /// late-written entries, and it doubles as the rebuild period. Creating one
+    /// costs ~0.65 s against ~0.15 s to reuse it, so a rebuild every 5 s poll
+    /// would be ~4× the necessary work for no extra freshness.
     static func entries(since: Date) -> [Entry]? {
         lock.lock()
         defer { lock.unlock() }
-        let logStore: OSLogStore
-        if let cached = store {
-            logStore = cached
-        } else {
-            guard let fresh = try? OSLogStore.local() else { return nil }
-            store = fresh
-            logStore = fresh
-        }
-        guard let position = logStore.position(date: since) as OSLogPosition?,
-              let sequence = try? logStore.getEntries(at: position, matching: predicate) else {
+        if let held = store, let built = storeBuiltAt, since <= built {
+            if let out = query(held, since: since) { return out }
             // A store that has gone bad stays bad; drop it so the next call
             // builds a new one. The pid-based local store can be invalidated
             // when the log daemon rotates.
             store = nil
+            storeBuiltAt = nil
+            return nil
+        }
+        guard let fresh = try? OSLogStore.local() else { return nil }
+        store = fresh
+        storeBuiltAt = Date()
+        guard let out = query(fresh, since: since) else {
+            store = nil
+            storeBuiltAt = nil
+            return nil
+        }
+        return out
+    }
+
+    private static func query(_ logStore: OSLogStore, since: Date) -> [Entry]? {
+        guard let position = logStore.position(date: since) as OSLogPosition?,
+              let sequence = try? logStore.getEntries(at: position, matching: predicate) else {
             return nil
         }
         var out: [Entry] = []
@@ -908,16 +933,24 @@ private enum BatteryCenterLogParser {
         var accessory = AudioAccessoryMonitor.Accessory(id: identifier, name: name)
         let reading = AudioAccessoryMonitor.Reading(percent: percent, charging: charging)
 
-        // This subsystem also reports the Mac's own battery under the same
-        // identifier domain, and it has a combined percentage just like the
-        // buds do. `internal` / a non-Bluetooth transport is what separates
-        // them; the per-part records (`Part Identifier = Left`) are always
-        // accessories and skip the check.
-        let transport = value("Transport Type", "transportType") ?? ""
-        let isInternal = (value("internal") ?? "NO") == "YES" || transport.caseInsensitiveCompare("Internal") == .orderedSame
-        let describesComponent = parts.contains("case") || parts.contains("left-right")
-            || !part.isEmpty || LogText.isAudio(category: category)
-        if isInternal && !describesComponent { return nil }
+        // **This subsystem is not audio-only.** It answers for every battery the
+        // system knows: the Mac's own (category `Unknown`, `internal = YES`), a
+        // Bluetooth keyboard or mouse, the Trackpad. A keyboard's record has a
+        // name and a `percentCharge` like a headset's, so nothing but an
+        // explicit audio claim separates them — and without one the meter
+        // showed the keyboard's charge where the headset's belongs.
+        //
+        // The claim is either the category the system assigns (`Headphone`,
+        // `Headset`) or a shape only a headset has: the bud/case parts, their
+        // identifiers, or the per-bud charge fields. Every headset record
+        // carries one of the two.
+        let isHeadset = LogText.isAudio(category: category)
+            || parts.contains("case") || parts.contains("left-right")
+            || part.caseInsensitiveCompare("Left") == .orderedSame
+            || part.caseInsensitiveCompare("Right") == .orderedSame
+            || part.caseInsensitiveCompare("Case") == .orderedSame
+            || value("leftPercentCharge") != nil || value("rightPercentCharge") != nil
+        guard isHeadset else { return nil }
 
         // `parts` is the record's scope, and it is the field that decides which
         // slot a reading belongs in: `case`, `left-right` (the combined row), or
@@ -1064,6 +1097,22 @@ private enum ProfilerSource {
                                      charging: fields["device_batteryLevelMainCharging"]
                                          ?? fields["device_batteryLevelCharging"])
         guard accessory.hasAnyReading else { return nil }
+
+        // **A paired keyboard has a battery too.** `device_connected` lists
+        // every connected Bluetooth device, so a Magic Keyboard or a mouse
+        // arrives here with a charge level and was drawn as a headset. The
+        // profiler classifies each device in `device_minorType` (`Headphones`,
+        // `Headset`, `Mouse`, `Keyboard`), which is the field the two log
+        // sources' category checks are the equivalent of.
+        //
+        // Read separately from the accessory's own fields — the key sits
+        // beside them, not among them — and only the audio values pass. A
+        // device that omits the field is kept: this is a filter, and a missing
+        // classification is not evidence of being a keyboard.
+        if let minor = fields["device_minorType"] as? String, !minor.isEmpty,
+           !LogText.isAudio(category: minor) {
+            return nil
+        }
 
         // `system_profiler` hands back the whole headset at once, so the case
         // is a *field* here rather than its own announcement. Emitting it under
