@@ -653,6 +653,27 @@ final class ProcessSampler {
 
     // MARK: - CPU / memory
 
+    /// Nanoseconds per `pti_total_*` tick.
+    ///
+    /// `proc_taskinfo`'s CPU totals are in **mach absolute-time ticks**, not
+    /// nanoseconds, so dividing them by 1e9 is only correct on a machine whose
+    /// timebase happens to be 1:1 (Intel). On Apple silicon it is 125/3 —
+    /// 41.67 ns per tick — and the naive division under-reported every process
+    /// figure by 41.7×: a child pegged at 100% CPU read as 2.4%. The botched
+    /// number is not just small, it is *wrong in a way that looks plausible*,
+    /// which is why the session chips and the claudeBar share read as idle
+    /// while the machine is busy.
+    ///
+    /// `mach_timebase_info` is a constant for the life of the process, so it is
+    /// read once here. The host-wide counters in `hostCPUPercent` are **not**
+    /// affected — `HOST_CPU_LOAD_INFO` is counts, and only the ratio of counts
+    /// is used.
+    private static let nanosecondsPerTick: Double = {
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.denom != 0 else { return 1 }
+        return Double(info.numer) / Double(info.denom)
+    }()
+
     private func cpuPercent(pid: pid_t, now: TimeInterval) -> Double {
         var info = proc_taskinfo()
         let sz = Int32(MemoryLayout<proc_taskinfo>.stride)
@@ -662,7 +683,8 @@ final class ProcessSampler {
         guard let prev = lastCPU[pid], now > prev.at else { return 0 }
         let dt = now - prev.at
         let dTicks = ticks &- prev.ticks
-        return (Double(dTicks) / 1_000_000_000 / dt) * 100
+        let seconds = Double(dTicks) * Self.nanosecondsPerTick / 1_000_000_000
+        return (seconds / dt) * 100
     }
 
     private func hostCPUPercent() -> Double {
