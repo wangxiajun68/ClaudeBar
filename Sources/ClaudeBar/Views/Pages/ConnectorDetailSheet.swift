@@ -232,6 +232,12 @@ struct ConnectorDetailSheet: View {
     }
 
     private func loadTools() async {
+        // One exit point for the flag, including the cancellation returns
+        // below: a sheet dismissed mid-read leaves the task cancelled, and a
+        // later `return` that skipped this would leave `toolsLoading` true for
+        // the *next* presentation of the same record — the panel would sit on
+        // its spinner with the 重新读取 button hidden by `!toolsLoading`.
+        defer { toolsLoading = false }
         guard let connection = record.mcpConnection else {
             toolsError = "当前配置没有可识别的本地启动命令或 HTTP 地址；请在原客户端查看工具。"
             return
@@ -249,7 +255,6 @@ struct ConnectorDetailSheet: View {
             guard !Task.isCancelled else { return }
             toolsError = error.localizedDescription
         }
-        toolsLoading = false
     }
 
     private func loadPluginInfo() async {

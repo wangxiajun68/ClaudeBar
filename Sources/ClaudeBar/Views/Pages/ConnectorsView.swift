@@ -541,8 +541,8 @@ struct ConnectorsView: View {
                         .help("选择整个清单里的\(item.title)，并清除搜索与平台筛选")
                 }
                 Spacer(minLength: Theme.Space.s8)
-                ChipButton("全选本页", symbol: "checkmark.square", on: false) { selection = targets }
-                    .disabled(selected.count == all.count)
+                ChipButton("全选本页", symbol: "checkmark.square", on: false) { selection.formUnion(targets) }
+                    .disabled(all.allSatisfy { selection.contains($0.id) })
                 ChipButton("清空", symbol: "xmark.square", on: false) { selection.removeAll() }
                     .disabled(selection.isEmpty)
                 Spacer(minLength: Theme.Space.s8)
@@ -681,6 +681,12 @@ struct ConnectorsView: View {
     }
 
     private func chooseProject() {
+        // Same gate as `FeishuOperationSheet.chooseLocal`. An `NSOpenPanel`
+        // writes no TCC grant, so this is not a privacy matter — it is that a
+        // dev build must not put up a system panel the release build's
+        // equivalent entry point does not, and the two pickers should not
+        // disagree about which channel may open one.
+        guard BuildChannel.promptsForSystemPermissions else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true

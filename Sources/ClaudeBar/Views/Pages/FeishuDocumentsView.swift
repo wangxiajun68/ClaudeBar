@@ -16,7 +16,6 @@ struct FeishuDocumentsView: View {
     @State private var draftHeadings: [DocumentMarkup.Heading] = []
     @State private var editorJump: FeishuEditorJump?
     @State private var draftPreview = true
-    @State private var previewText = ""
     @State private var confirmDiscard = false
     @FocusState private var titleFocused: Bool
 
@@ -48,7 +47,6 @@ struct FeishuDocumentsView: View {
             do {
                 try await Task.sleep(for: .milliseconds(350)); try Task.checkCancellation()
                 let text = store.activeDraft?.text ?? ""
-                previewText = text
                 guard text.utf8.count <= 512_000 else { draftHeadings = []; return }
                 let worker = Task.detached(priority: .utility) { try DocumentMarkup.parse(text) }
                 let blocks = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
@@ -329,7 +327,7 @@ struct FeishuDocumentsView: View {
                 } else { Text(draft.title).font(.system(size: 14, weight: .semibold)).lineLimit(1) }
                 Spacer(minLength: 8)
                 Text(store.preview ? "示例草稿" : draft.text == draft.original && !draft.isNew ? "尚无修改" : "未保存").font(Theme.Font.micro).foregroundStyle(Theme.textSecondary)
-                ActionIcon(symbol: draftPreview ? "chevron.left.forwardslash.chevron.right" : "doc.text", tint: Theme.Ink.claude) { previewText = draft.text; draftPreview.toggle() }
+                ActionIcon(symbol: draftPreview ? "chevron.left.forwardslash.chevron.right" : "doc.text", tint: Theme.Ink.claude) { draftPreview.toggle() }
                     .documentHelp(draftPreview ? "编辑整篇 Markdown 源码" : "返回排版与就地编辑")
                 ActionIcon(symbol: "doc.on.doc", tint: Theme.textSecondary) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(draft.text, forType: .string) }.documentHelp("复制草稿 Markdown")
                 ActionIcon(symbol: "trash", tint: Theme.Ink.error) { confirmDiscard = true }.documentHelp("丢弃草稿").disabled(store.working)
