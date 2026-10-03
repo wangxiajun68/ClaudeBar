@@ -539,6 +539,10 @@ source += require_file('Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift')
 source += require('Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift', 'struct WeatherDay: Equatable, Identifiable {')
 source += require_file('Sources/ClaudeBar/Views/Shared/WeatherReadingSky.swift')
 source += require_file('Sources/ClaudeBar/Utils/GreetingPhrase.swift')
+# `GreetingPhrase` names `SolarTerm` (the solar-term table is committed data,
+# not computed), so the fixture takes its own production file rather than a
+# stub that would freeze the term dates the greeting reads.
+source += require_file('Sources/ClaudeBar/Utils/SolarTerm.swift')
 source += require('Sources/ClaudeBar/Utils/WeatherFetcher.swift', 'struct WeatherReading: Equatable {')
 # `SkyAstronomy` comes in with the rest of the value types below; it is only
 # named here so the sheet's `WeatherBackdrop` has its sun path.
@@ -851,6 +855,10 @@ final class ProviderStore: ObservableObject {
     @Published var expandedSessionPIDs: Set<Int> = []
     @Published var usageStats: [ModelUsage] = []
     @Published var usageDays: [DayUsage] = []
+    /// The heatmap's surrounding week for day mode; both usage surfaces read it
+    /// (`UsageStats.heatmapDays`'s `weekDays:` argument), so the stand-in has to
+    /// publish the same shape the store does.
+    @Published var usageWeekDays: [DayUsage] = []
     @Published var usageBySource: [UsageSource: [ModelUsage]] = [:]
     @Published var usageLoading = false
     @Published var usagePeriod: UsagePeriod = .month
@@ -1335,6 +1343,10 @@ source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'struct Sessio
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SessionStatus: String {')
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SubagentStatus: String {')
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'struct SubagentInfo: Identifiable, Equatable {')
+# `WorkflowInfo.status` is typed by the workflow monitor's enum; the slice is
+# value-only, so the production declaration comes along rather than a stub
+# whose cases could drift from the lifecycle the sessions view reads.
+source += require('Sources/ClaudeBar/Utils/WorkflowMonitor.swift', 'enum WorkflowStatus: String {')
 source += require('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'struct WorkflowInfo: Identifiable, Equatable {')
 source += require('Sources/ClaudeBar/Utils/CursorSessionMonitor.swift', 'struct CursorSessionInfo: Identifiable, Equatable {')
 source += require('Sources/ClaudeBar/Utils/CursorSessionMonitor.swift', 'enum CursorStatus: String {')
@@ -1378,6 +1390,10 @@ final class ProxyCaptureStore {
 }
 '''
 source += require_file('Sources/ClaudeBar/Utils/StreamAssembler.swift')
+# `CursorLedger` routes its numeric coercions through the repo's one conversion
+# helper, so the fixture takes `JSONCoerce` whole (it is 17 lines, Foundation
+# only) rather than restating the range checks beside the slice.
+source += require_file('Sources/ClaudeBar/Utils/JSONCoerce.swift')
 _fetcher = require_file('Sources/ClaudeBar/Utils/CursorUsageFetcher.swift')
 _fetcher = _fetcher.replace('CursorDB.readCredentials()', 'nil as CursorCredentials?')
 source += _fetcher
@@ -1843,6 +1859,9 @@ source += r'''
         let models = Fixture.usageModels()
         store.usageStats = models
         store.usageDays = Fixture.usageDays(days: 30)
+        // The day-mode week the heatmap falls back to; built from the same
+        // synthetic days so the two strips cannot disagree.
+        store.usageWeekDays = store.usageDays
         store.usageBySource = [
             .claude: models.filter { $0.model.hasPrefix("claude") },
             .codex: models.filter { $0.model.hasPrefix("gpt") },

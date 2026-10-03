@@ -86,6 +86,7 @@ source += "import Combine\n"
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'extension Color {')
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'enum UsageSource: String, CaseIterable, Identifiable {')
+source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'struct DayUsage: Identifiable, Equatable {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'struct ModelUsage: Identifiable, Hashable {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'enum UsagePeriod: String, CaseIterable, Identifiable {')
 source += declaration('Sources/ClaudeBar/Models/Provider.swift', 'struct ModelConfig')
@@ -278,7 +279,7 @@ struct IslandProbe: View {
     var body: some View {
         NotchIslandView(state: state, model: model,
                         actions: IslandActions(openSession: { _ in }, openMainWindow: {},
-                                               expandFromAlert: {}))
+                                               expandFromAlert: {}, dismissAlert: {}))
             // Crop to the black shape: the PNG should be the surface, not the
             // fixed transparent panel it morphs inside.
             .frame(width: target.width, height: target.height, alignment: .top)

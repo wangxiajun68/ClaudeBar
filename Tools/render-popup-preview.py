@@ -109,6 +109,7 @@ source += declaration('Sources/ClaudeBar/Models/CodexProvider.swift', 'struct Co
 source += declaration('Sources/ClaudeBar/Models/CodexProvider.swift', 'struct CodexProvider: Codable, Identifiable, Equatable {')
 
 # --- Sessions (values) -------------------------------------------------------
+source += declaration('Sources/ClaudeBar/Utils/WorkflowMonitor.swift', 'enum WorkflowStatus: String {')
 source += declaration('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'struct SessionInfo: Identifiable, Equatable {')
 source += declaration('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SessionStatus: String {')
 source += declaration('Sources/ClaudeBar/Utils/SessionMonitor.swift', 'enum SubagentStatus: String {')
