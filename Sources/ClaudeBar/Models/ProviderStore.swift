@@ -1158,12 +1158,6 @@ class ProviderStore: ObservableObject {
         return UsageIndex.fetchDaily(in: week)
     }
 
-    /// Cursor's actual charges for whatever window that store currently has,
-    /// plus the window and truncation flag. Read from memory (the ledger store
-    /// keeps its reading and rehydrates it from disk at launch) — **no network
-    /// here.** The usage page must render from cache instantly; the ledger
-    /// store does its own reading behind it and publishes when it lands.
-    @MainActor
     /// Ask the ledger for the window the period chips currently describe.
     ///
     /// **Fire-and-forget and not awaited** — the page renders from whatever
