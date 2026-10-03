@@ -122,6 +122,6 @@ chore(ci): 升级 release workflow
 | 缺陷报告 | 崩溃、数据错误、构建失败 |
 | 功能建议 | 新能力、交互改进 |
 
-请提供 macOS 版本、ClaudeBar 版本（设置 → 关于）、复现步骤。**切勿粘贴 API key、token 或完整配置文件。**
+请提供 macOS 版本、ClaudeBar 版本（设置页左下角页脚显示版本号）、复现步骤。**切勿粘贴 API key、token 或完整配置文件。**
 
 安全问题请走 [SECURITY.md](SECURITY.md)，不要开公开 Issue。
