@@ -449,8 +449,18 @@ struct FeishuDraft: Identifiable, Equatable {
         defer { working = false }
         do {
             let data = try await FeishuCLI.run(args + ["--as", "user"], input: input)
-            if !data["task_id"].text.isEmpty && data["status"].text != "done" {
-                // Async Drive tasks are not proof that a move/delete completed.
+            // Async Drive tasks are not proof that a move/delete/import
+            // completed. Three shapes say so, and only the first is a
+            // `task_id`: a status-bearing task row, the import/export
+            // shortcut's own `ready`/`timed_out` pair (`+import` returns
+            // `ready=false`, `timed_out=true`, a `ticket` and a
+            // `next_command` when its polling window closes, with no `status`
+            // and no `document`), and any explicit `finished: false`.
+            let pendingTask = !data["task_id"].text.isEmpty && data["status"].text != "done"
+                || data["ready"] == .bool(false)
+                || data["timed_out"] == .bool(true)
+                || data["finished"] == .bool(false)
+            if pendingTask {
                 notice = "飞书已受理任务，请刷新列表核对结果。"
             } else { notice = "操作已完成。" }
             if (args.contains("+create") || args.contains("+copy") || args.contains("+import")),
@@ -459,8 +469,30 @@ struct FeishuDraft: Identifiable, Equatable {
                 if let created = FeishuDocument.parse(result) {
                     let titleIndex = args.firstIndex(of: "--title")
                     let fallbackTitle = titleIndex.map { args[$0 + 1] } ?? created.title
+                    let requestedType: String
+                    if args.contains("+create") || args.contains("+import") {
+                        // Both commands are asked for a docx; the response has
+                        // no type key at all.
+                        requestedType = "docx"
+                    } else if args.contains("+copy") {
+                        // `+copy` reports the new resource as `file_token` /
+                        // `file_type` and the source as `source_type`, with no
+                        // `type`/`doc_type` key — so `parse` leaves the type
+                        // "file", and a docx copy then failed `isDocument`: the
+                        // pane refused to read something it *can* read, and the
+                        // follow-up refresh could not re-bind the row
+                        // (`file:<token>` never matches `docx:<token>`). A wiki
+                        // source is copied as its underlying Drive resource, so
+                        // `file_type` — then `source_type` — is the type the
+                        // copy really has; `--type wiki` names the *source* and
+                        // would not be reopenable.
+                        requestedType = [data["file_type"].text, data["source_type"].text]
+                            .first { !$0.isEmpty } ?? created.type
+                    } else {
+                        requestedType = created.type
+                    }
                     let normalized = FeishuDocument(token: created.token, title: created.title.isEmpty ? fallbackTitle : created.title,
-                                                    type: args.contains("+create") || args.contains("+import") ? "docx" : created.type,
+                                                    type: requestedType,
                                                     url: created.url, modified: created.modified)
                     select(normalized, force: true)
                 }
@@ -482,7 +514,20 @@ struct FeishuDraft: Identifiable, Equatable {
         }
         activeDraftID = doc.id
     }
+    /// Start a new document draft at the current location.
+    ///
+    /// Refuses a wiki space: `FeishuDraft.arguments()` emits `--parent-token`
+    /// only from `location.folder`, and a space has no folder token, so `docs
+    /// +create` would fall back to the caller's Drive **root** while the draft
+    /// footer still read 创建于 <空间名>. The header button already guards this;
+    /// the guard belongs here so every entry point — including the detail
+    /// pane's empty state — behaves the same rather than depending on each
+    /// caller remembering.
     func newDocument() {
+        guard location.space.isEmpty else {
+            error = "知识库空间不能直接新建文档，请先在云空间新建后移入，或选择云空间文件夹。"
+            return
+        }
         guard reserveDraft() else { return }
         let id = UUID().uuidString
         drafts[id] = FeishuDraft(id: id, document: nil, location: location.isRecent ? .root : location,

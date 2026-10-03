@@ -243,7 +243,11 @@ struct FeishuDocumentsView: View {
                                       symbol: "doc.text.image", tint: Theme.Ink.claude,
                                       caption: store.connection.ready || store.preview ? "展开顶部文档列表，或新建一篇文档。" : "在浏览器授权后，回到这里继续。", block: true)
                     if store.connection.ready || store.preview {
+                        // Disabled where the header's is: a wiki space has no
+                        // folder token to create into. The store refuses too —
+                        // this is the visible half of the same rule.
                         ActionButton("新建文档", symbol: "plus", tone: .accent) { store.newDocument() }
+                            .disabled(!store.location.space.isEmpty || store.working)
                     } else { ActionButton("连接飞书", tone: .accent) { showSetup = true } }
                 }.frame(maxWidth: .infinity)
                 Spacer()

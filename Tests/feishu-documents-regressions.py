@@ -550,6 +550,44 @@ transport_probe = sources[0].read_text() + '\n' + transport + '\n' + sources[2].
         let created = await store.saveDraft()
         precondition(created && store.selected?.token == "created" && store.selected?.isDocument == true)
         try await settled { !store.loading && !store.detailLoading }
+
+        // A copy reopens as the type it really is. The CLI reports
+        // `file_token`/`file_type` and no `type`, so without the normalization
+        // the selection carries "file": the pane refuses to read a docx it can
+        // read, and the follow-up refresh cannot re-bind the row.
+        let copied = await store.perform(["drive", "+copy", "--token", "a", "--type", "docx",
+                                          "--name", "First · 副本", "--folder-token", "mock-folder"],
+                                         input: nil, refreshList: false)
+        precondition(copied && store.selected?.token == "copied-token")
+        precondition(store.selected?.type == "docx" && store.selected?.isDocument == true,
+                     "a copied docx must reopen as a document, got \(store.selected?.type ?? "nil")")
+        try await settled { !store.loading && !store.detailLoading }
+
+        // An import whose polling window closed is *accepted*, not finished —
+        // the CLI returns ready=false with a ticket and no status at all.
+        let imported = await store.perform(["drive", "+import", "--file", "/tmp/mock.docx",
+                                            "--type", "docx"], input: nil, refreshList: false)
+        precondition(imported, "an accepted import is not a failure")
+        precondition(store.notice?.contains("已受理") == true,
+                     "a timed-out import must read as accepted, not 已完成; got \(store.notice ?? "nil")")
+
+        // And the wiki-space guard: every entry point refuses, not just the
+        // header button — `docs +create` would otherwise land in the Drive root
+        // while the draft footer names the space.
+        store.navigate(FeishuLocation(title: "空间", folder: "", space: "space-1"))
+        try await settled { !store.loading }
+        let draftsBefore = store.drafts.count
+        store.newDocument()
+        precondition(store.activeDraftID == nil && store.drafts.count == draftsBefore,
+                     "a wiki space must refuse a new document")
+        precondition(store.error?.contains("知识库") == true,
+                     "the refusal must say why; got \(store.error ?? "no error")")
+
+        store.navigate(.recentlyOpened())
+        try await settled { !store.loading && store.documents.count == 2 }
+        store.select(first)
+        try await settled { !store.detailLoading && store.selected?.id == first.id }
+
         store.beginEditing(); store.updateDraft(text: "Belongs to account A")
         let ownedDraft = store.activeDraftID!
         try "user-b".write(to: state.appendingPathComponent("account"), atomically: true, encoding: .utf8)
@@ -599,6 +637,20 @@ if mode == 'auth':
     emit({'ok': True})
 if mode == 'wiki': emit({'items': []})
 if mode == 'drive':
+    command = sys.argv[2] if len(sys.argv) > 2 else ''
+    if command == '+import':
+        # `drive +import`'s own shape when its polling window closes: `ready=false`,
+        # `timed_out=true`, a `ticket` and a `next_command` — no `task_id`, no
+        # `status`, and no document yet.
+        emit({'ready': False, 'timed_out': True, 'ticket': 'mock-ticket',
+              'next_command': 'lark-cli drive +task_result --scenario import --ticket mock-ticket'})
+    if command == '+copy':
+        # `drive +copy`'s shape (lark-cli 1.0.95, `references/lark-drive-copy.md`):
+        # the new resource is `file_token` / `file_type`, the source is
+        # `source_type`, and there is no `type`/`doc_type` key at all.
+        emit({'copied': True, 'file_token': 'copied-token', 'file_type': 'docx',
+              'name': 'First · 副本', 'url': 'https://mock.feishu.cn/docx/copied-token',
+              'source_file_token': 'a', 'source_type': 'docx', 'folder_token': 'mock-folder'})
     count('search-count')
     rows = [{'token': 'a', 'name': 'First', 'type': 'docx'}, {'token': 'b', 'name': 'Second', 'type': 'docx'}]
     more = '--page-token' not in sys.argv
