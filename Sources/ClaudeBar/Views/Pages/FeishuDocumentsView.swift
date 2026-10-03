@@ -216,7 +216,9 @@ struct FeishuDocumentsView: View {
 
                 Divider()
                 if tab == "正文" {
-                    if store.detailLoading && store.content.isEmpty {
+                    if doc.isDocument && store.activeDraft == nil && store.drafts[doc.id] == nil && !showSource {
+                        FeishuOfficialDocumentView(document: doc)
+                    } else if store.detailLoading && store.content.isEmpty {
                         Spacer(); HStack { Spacer(); ProgressView("正在读取文档…"); Spacer() }; Spacer()
                     } else if doc.isDocument {
                         if let draft = store.activeDraft, !draftPreview {
