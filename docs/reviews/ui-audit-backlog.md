@@ -400,10 +400,12 @@ by getting the answer wrong first.
 
 - **One instance, or the numbers are meaningless.** Several copies of a rebuild
   under different paths were running at once early in this pass (left by
-  earlier work), and `killall` / `pgrep -f` match the shell command that runs
-  them. Every sampling round here asserts `instances == 1` on the exact binary
-  path before it takes a sample, and the arms are interleaved (old / new / old /
-  new) so a machine that drifts between rounds cannot bias one side.
+  earlier work), and a blanket kill-by-name or match-by-command-line sweep also
+  hits the shell command that runs it. Every sampling round here asserts
+  `instances == 1` on the exact binary path before it takes a sample, and the
+  arms are interleaved (old / new / old / new) so a machine that drifts between
+  rounds cannot bias one side. (Per the repo rule, instances are quit normally
+  rather than terminated by name.)
 - **The metric is the share of main-thread `sample`s inside a named frame**
   (`sum of the counts of every matching line ÷ the main thread's total`).
   `ps -p PID -o time=` deltas swing 10–27 % between 20 s windows on this machine

@@ -1,14 +1,15 @@
-# Greeting Atmosphere — 问候卡重构设计
+# Greeting Atmosphere — 问候卡天空实现说明
 
-Scope：`Views/Shared/GreetingCard.swift` 与其 Metal 大气
-（`Views/Shared/Atmosphere/`）、`Views/Shared/GreetingInstruments.swift`、
-`Views/Shared/SettingsControls.swift`
-（Dashboard 顶部卡片）。本文是重构目标规格，取代 [DESIGN.md › Greeting sky window](../../DESIGN.md)
-中"信息面板"式布局；数据层（`WeatherReading`、`SkyAstronomy`、`GreetingPhrase`、
-`MachineIdentity`）保持不变。`SkyGreeting.swift` 与 `WeatherBackdrop.swift` 的
-Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop.swift` 只留下
-`SkyPalette`（金属视图不可用时的回落调色板），旧实现的验证背景见
-[weather-observatory.md](weather-observatory.md)。
+Scope：问候卡（`Views/Shared/GreetingCard.swift`）与它的 Metal 大气
+（`Views/Shared/Atmosphere/`：`AtmosphereView` / `AtmosphereRenderer` /
+`AtmosphereShader` / `SkyScene` / `GreetingScript`）、
+`Views/Shared/GreetingInstruments.swift`、`Views/Shared/SettingsControls.swift`
+（Dashboard 顶部卡片）。设计验收在 [DESIGN.md › Greeting sky window](../../DESIGN.md)。
+本文只记录**已实现**的机制与常量，不写未落地的设计构想。
+数据层（`WeatherReading`、`SkyAstronomy`、`GreetingPhrase`、`MachineIdentity`）保持不变。
+`SkyGreeting.swift` 与 `WeatherBackdrop.swift` 的 Canvas 天空是这一轮取代掉的实现：
+前者已删除，`WeatherBackdrop.swift` 只留下 `SkyPalette` 供金属视图不可用时的回落调色板，
+旧实现的验证背景见 [weather-observatory.md](weather-observatory.md)。
 
 ---
 
@@ -20,12 +21,12 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 | 取舍 | 选择 | 放弃 | 理由 |
 | --- | --- | --- | --- |
-| 信息密度 vs 氛围 | 首屏只保留问候 + 一行气象 + 一条窗台 | 常驻 6 日预报、大号温度、三块 dock 卡 | 细节全部可通过悬停 / 点击展开，首屏不需要 |
-| 手写体 vs 编辑体 | 问候用 **New York Italic**（编辑感衬线斜体），名字用 **Snell Roundhand** 做签名 | 整句手写体 | 整句 Snell 偏婚礼请柬，不"前沿"；衬线斜体 + 手写签名形成"杂志封面 + 亲笔"的反差 |
-| 渲染技术 | SwiftUI 内嵌 Metal 着色器（`layerEffect` / `colorEffect`）+ 少量 `Canvas` | SceneKit / RealityKit | 与 SwiftUI 文字同一渲染通道，问候语可以"折射天空"；SceneKit 已被软弃用，RealityKit 过重 |
+| 信息密度 vs 氛围 | 首屏问候 + 一行气象 + 一条窗台 | 常驻 6 日预报、大号温度、三块 dock 卡 | 细节全部可通过悬停 / 点击展开，首屏不需要 |
+| 手写体 vs 编辑体 | 问候由 `GreetingScript` 用 **CoreText 轮廓**写出所选字体（默认寒蝉圆黑 · 粗体，共 53 款） | 算法生成单线字形 | Apple 发布会的 "hello" 是人工为单个词画的矢量作品，不是字体；见 §3.1 |
+| 渲染技术 | **运行时编译的 MSL 片元着色器（`MTKView` + `AtmosphereShader`）** | SceneKit / RealityKit | 与 SwiftUI 文字同一渲染通道，问候语可以折射天空；SceneKit 已被软弃用，RealityKit 过重 |
 | 3D 真实感 | 体积云用 2.5D 光线步进（fBm 密度场 + Beer-Lambert 向光采样） | 真 3D 模型 | 卡片是固定视角，2.5D 视差即可给出纵深，成本低一个数量级 |
-| 陀螺仪 | macOS 无可用陀螺仪 → 指针 + 窗口位置视差 | CoreMotion | 如未来移植 iOS Widget/App，接口预留 `TiltSource` |
-| 失败态 | 天气失败时仍渲染"按时间推算的晴空"，仅在气象行标注"离线" | 灰白中性底 | 截图中的灰白失败态是当前最大的氛围断点；天体位置不依赖网络（只要有坐标缓存或时区推算） |
+| 视差输入 | 指针（`AtmosphereMTKView` 自带跟踪区） | 陀螺仪 / 窗口位置 | macOS 无可用陀螺仪；窗口位置会让"天空"随窗口移动而漂移，实测不自然 |
+| 失败态 | 天气失败时 `FallbackSky` 仍按太阳高度画推算晴空（金属视图可用时 `SkyScene` 一直有值） | 灰白中性底 | 天体位置不依赖网络（只要有坐标缓存或时区推算） |
 
 ---
 
@@ -33,62 +34,35 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 ### 2.1 尺寸比例
 
+`GreetingCard.Metrics` 的真实取值：
+
 | 项 | 值 |
 | --- | --- |
-| 卡片宽 `W` | 自适应 640 – 1280pt |
-| 天空区高 `H` | `clamp(W × 0.34, 248, 400)`；W=1100 时 ≈ 374pt |
-| 窗台（Sill）高 | 56pt（折叠）/ 172pt（展开） |
-| 整卡比例 | W=1100 时约 1100 × 430，≈ **2.56 : 1**（宽银幕） |
+| 卡片宽 `W` | 自适应（窗口宽减页面内边距） |
+| 天空区高 `sky` | `min(430, max(380, W × 0.38))` |
+| 窗台（Sill）高 | `sill = 56`（固定，`total = sky + sill`） |
+| 安全边距 | `W ≥ 900`：32pt；否则 24pt |
 | 外圆角 | 32pt continuous |
-| 安全边距 | 宽 ≥ 900：32pt；640–900：24pt；窗台内边距 12pt |
-| 网格 | 12 列，列间距 16pt；天空区纵向三分线 `H × 0.18 / 0.62 / 0.88` 作为锚线 |
+| 顶 / 底让位 | `topClear = top + (W ≥ 900 ? nowHeight : 156) + 6`；`bottomClear = chartTop - 6`（问候语在两块仪表之间的自由带里排版） |
 
-### 2.2 模块定位（W=1100）
+### 2.2 模块定位
 
 ```
 ┌──────────────────────────────────────────────────────────────── 32pt 圆角 ┐
-│ 16:15  9月28日 周一                           广州 · 29° 多云   ◐ ☼     │ ← y = H×0.10，辅层
+│ 16:15  9月28日 周一                           广州 · 29° 多云   ◐ ☼     │ ← 左上时钟，右上实时天气
 │                                               体感 32° · 湿 78% · 东南 3级│
 │                                                                          │
-│   Good afternoon,                                                         │ ← 基线 y = H×0.62，主层
-│                                  𝒳𝒾𝒶𝒿𝓊𝓃 𝒲𝒶𝓃𝑔 ~~                           │ ← 签名，次层，右对齐到 col 9
-│ ☀ 日落 18:21 · 拖动天空，漫游一天                                           │ ← y = H×0.92，辅层
+│   good afternoon,                                                         │ ← 问候语在 topClear/bottomClear 之间
+│                                  Xiajun Wang                              │ ← 名字，右对齐到问候语右端，可下落到下一行
+│ ☀ 日落 18:21 · 拖动天空，漫游一天 / 手动控制台                              │ ← 左下日轨；手动时换成控制台
 ├──────────────────────────────────────────────────────────────────────────┤
-│ [Λ ds-v4.1] [◎ gpt-6] [▣ ◔Cursor 48% ◔Other 60%] [◎ ◔5小时 18% ◔7天 50%]  7.7亿 ↑33% │ ← 窗台 56pt
+│ [Λ ds-v4.1] [◎ gpt-6] [▣ Cursor 48% · Other 60%] [◎ 5小时 18% · 7天 50%]  7.7亿 ↑33% │ ← 窗台 56pt
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- 问候语：col 1–9 起笔，左对齐，基线落在 0.62 锚线；**唯一允许跨越 ≥ 60% 宽度的元素**。
-- 气象铭文：右上 col 9–12，右对齐。
-- 时钟：左上 col 1–4，与气象铭文同一基线（对称的"窗框铭文"）。
-- 窗台：原 dock 的三块内容压成一行胶囊；悬停 0.35s 或点击向上展开为原详细视图。
-
-### 2.3 信息合并策略
-
-| 合并前 | 合并后 | 原因 |
-| --- | --- | --- |
-| 大号温度 43pt + 图标 27pt + 状况 + 高低温 + 温度条 | **一行**：`广州 · 29° 多云` | 天气本身已由背景"画出来"，大号温度重复表达 |
-| 体感 / 湿度 / 风（原无或散落） | **第二行**：`体感 32° · 湿 78% · 东南 3级` | 同属"体感舒适度"语义，用 `·` 串成一句 |
-| 6 日预报条 | 悬停气象铭文时从右上浮出的玻璃气泡 | 是"未来"信息，不属于"此刻" |
-| 时钟 44pt + 秒 + 日期 | `16:15` 22pt + `9月28日 周一` 同行 | 时钟不再是第二主角 |
-| 日落时间 + 交互提示 | 左下一行 | 天体信息与天空交互同属"天空"语义 |
-| CC / Codex / Cursor / 今日用量 | 窗台胶囊，悬停展开完整读数 | 工具信息属于"功能层"，不属于"氛围层" |
-| Cursor / Codex 额度 | 与弹窗切换行同一读法：显示**剩余**百分比，弧线随剩余量增长，≤ 25% 琥珀色、≤ 10% 红色；Cursor 分 Cursor / Other 两个池（悬停显示花费与重置），Codex 分 5 小时 / 7 天两个窗口（悬停显示各自重置）；窄卡片只留第一个 | 同一份额度在弹窗和卡片上读法不同，会被当成两个数 |
-| Codex Credits 余额 | 删除 | 官方账号几乎总是 `0 Credits`，不是用户会据此行动的读数 |
-| "获取失败 · 点击重试" | 气象铭文尾部 6pt 橙点 + tooltip | 错误不该占据视觉面积 |
-
-### 2.4 视觉层级（三层）
-
-| 层 | 元素 | 字号 | 字重 | 不透明度 | 位置 |
-| --- | --- | --- | --- | --- | --- |
-| **主** | 问候语 | `clamp(W×0.112, 64, 148)`，W=1100 → 123pt | Regular Italic | 100%（材质见 §3） | 左，基线 H×0.62 |
-| **次** | 签名名字 | 主字号 × 0.30 → 37pt | Snell Roundhand Bold | 88% | 问候语下方右侧，基线 +0.36em |
-| **次** | 气象首行 / 时钟 | 22pt（温度数字）/ 13pt（文字） | Light / Medium | 90% / 78% | 右上 / 左上 |
-| **辅** | 气象次行、日期、日落 | 11pt | Medium | 60% | 紧随次层 |
-| **辅** | 窗台胶囊 | 11pt 文字 / 10pt 数字 mono | Semibold / Medium | 72% | 底部 |
-| **辅** | 交互提示 | 10pt | Medium | 45%（悬停 70%） | 左下 |
-
-权重自检：主层面积 ≈ 次层 × 6、辅层 × 12；任何时刻辅层对比度都不超过主层的 50%。
+- 问候语由 `GreetingTypesetter.layout` 在自由带内最大化排布（短句按高度增长、长句按宽度收缩），名字可落在问候语下方。
+- 气象铭文右上，时钟左上，两者共享同一条边距。
+- 窗台胶囊悬停有一个 140ms 的驻留再展开（`SillChip`），避免指针扫过时依次弹开。
 
 ---
 
@@ -100,68 +74,69 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 | 用途 | 字体 | 理由 |
 | --- | --- | --- |
-| 问候 | 默认 **Borel**（SIL OFL 1.1，随包 `Resources/Fonts`），全小写；设置 → 通用 → 天气与问候 → 问候字体可在 53 款间切换（`GreetingTypeface`：14 款中文 + 39 款拉丁，其中 49 款随包、SignPainter / Snell Roundhand / Savoye LET / Zapfino 四款系统字体） | 在候选字体的同屏对比中，Borel 是唯一单线、圆头、连笔宽松的——最接近 "hello"，所以作为默认。只有单线字体在填充外加圆角描边（Borel `0.012em × 2`，Playwrite `0.008em`，Sacramento `0.01em` 等），均匀加粗而不填死 a / e / o 的字腔；粗细对比强的字体不描，以免糊掉发丝线。设置页默认折起，只留当前这一款的字样；展开后每张卡片用该字体、同一套轮廓与加粗写出当前问候语；切换后问候卡重写一遍。系统字体按 PostScript 名查找，找不到的卡片置灰 |
-| 签名 | SF Pro Semibold，全大写，字距 0.16em | 与手写体对比，安静的第二声部 |
+| 问候 | 默认 **寒蝉圆黑 · 粗体（`chillRoundBold`，`GreetingTypeface.standard`）**，全小写（`computeLayout` 对文案 `lowercased()`）；设置 → 通用 → 天气与问候 → 问候字体可在 53 款间切换（`GreetingTypeface.allCases`：`chineseFaces` 14 款中文 + 39 款拉丁，其中 49 款随包、SignPainter / Snell Roundhand / Savoye LET / Zapfino 四款系统字体） | 圆头、笔画均匀，适合手写问候。只有单线字体在填充外加圆角描边（`outlineWidth = fontSize × typeface.weight × 2`；Borel `weight = 0.012`、Playwrite `0.008`、Sacramento `0.01` 等，其余为 0），均匀加粗而不填死 a / e / o 的字腔；粗细对比强的字体不描，以免糊掉发丝线。设置页默认折起，只留当前这一款的字样；展开后每张卡片用该字体写出当前问候语，可移除 / 恢复随包字体；切换后问候卡重写一遍（`controller.rewrite()`）。系统字体按 PostScript 名查找，找不到的卡片置灰 |
+| 名字 | 圆角系统字体 Medium，`nameSize = min(28, max(18, 0.18 × size))`，字距 0.015em | 与手写体对比，安静的第二声部；名字是 `MachineIdentity.greetingName`（拼音化的机型名） |
 | 回落 | Snell Roundhand Bold | 系统必备；仅在资源缺失时使用 |
 
-书写入场：纹理 G 通道为从左到右的书写时刻（问候 0…0.86、签名 0.90…1），着色器以约 2% 行宽的柔边推进，笔尖后方的墨带"未干"的高光——像墨迹跟着笔走，而非硬切的擦除。点击问候语或按空格重写一遍。
+书写入场：纹理 G 通道为从左到右的书写时刻（问候 0…`phraseShare` = 0.86、名字 `nameStart` = 0.90…1），着色器以约 2% 行宽的柔边推进，笔尖后方的墨带"未干"的高光——像墨迹跟着笔走，而非硬切的擦除。书写时长 `writeDuration = min(2.8, max(1.6, 0.9 + advance × 0.2))` 秒（约 0.2 s/em）。点击问候语（`rewrite()`）或按空格重写一遍。
 
 ### 3.2 排版参数
 
+`GreetingTypesetter.computeLayout` 不套固定字号公式：在 `topClear` / `bottomClear` 之间的自由带里，对字号做 24 次二分，取「问候语宽度 + 描边」与「名字宽度」都不超过可用宽度、且两行总高（含名字下落）不超过带高的最大值。
+
 | 参数 | 值 |
 | --- | --- |
-| 字号 | `clamp(W × 0.112, 64, 148)` |
-| 字距 | −1.8%（`tracking(-size × 0.018)`） |
-| 行高 | 0.92（单行；超长节日文案如 "Happy Mid-Autumn" 允许断两行，第二行缩进 0.6em） |
-| 对齐 | 左对齐，光学左边距 −0.04em（抵消斜体首字母的视觉内缩） |
-| 标点 | 结尾加一个逗号 `,` 以 40% 不透明度连接签名——形成"一句话写给你" |
+| 字号 | 二分求解（高度或宽度先触边）；问候语按 `size` 排，名字按 0.18 × size 排 |
+| 追踪 | 仅名字有：`nameTracking = size × 0.015`；问候语轮廓本身无额外字距 |
+| 对齐 | 左对齐，起点 `margin + size × weight - line.bounds.minX × size`（描边光学外扩） |
+| 名字 | 右对齐到问候语墨迹右端（`ink.maxX - size × 0.05`，不超过卡片右边距）；`nameInline = false`，名字落在问候语下方 |
+| 描边 | `fontSize × typeface.weight × 2`（仅单线字体，见 §3.1） |
+| 纹理 | 问候与名字的墨迹并集外扩 `padding = size × 0.3`，整体 `integral` 对齐 |
 
-### 3.3 颜色与材质："天光玻璃字"
+`layout` 按参数记忆最近 8 个结果（`LayoutCache`，超过就丢最旧的一条），body 每帧命中缓存不再构建 `CTLine`。
 
-问候语不是一层实色文字，而是 **四层合成**：
+### 3.3 问候语的绘制："天光玻璃字"
 
-1. **折射体**（Metal `layerEffect`，`maxSampleOffset: 14`）：以文字作为遮罩，采样背后天空并做 `offset = normal(sdf) × 6pt` 的折射偏移，再施加 `saturation ×1.15、exposure +0.35EV`。字形像一块厚玻璃，天空透过字形变亮、变形。
-2. **填充**：竖向渐变 `ink(0.96) → horizonTint.mix(white, 0.7)(0.90)`；夜间 `#EEF2FF → #BFCBFF`。与折射体 `plusLighter` 合成，占比 55%。
-3. **边缘光**：0.6pt 内描边，只在朝向太阳 / 月亮方位的一侧可见——`dot(glyphNormal, lightDir)` 截断到 0…1，颜色取天体色温（见 §5.5），强度 0.8 × 天体可见度。
-4. **光晕**：`shadow(color: glow, radius: size × 0.18)`，glow 取地平线色，不透明度：晴日 0.18、日落 0.34、夜 0.22、雨雾 0.08。另加一道 `shadow(.black.opacity(0.22), radius: 24, y: 10)` 作为落影，保证浅色天空下的可读性。
+问候语不是 SwiftUI 文本，而是 `GreetingTypesetter` 用 CoreText 取出的字形轮廓，填色 + 描边后按**覆盖度 / 书写时刻**双通道烘成一张 `rg16Unorm` 纹理（G 通道是从左到右的书写时刻，见 §3.1），交给同一条 Metal 通道着色。着色器合成的是：
 
-降级：Reduce Transparency 或低电量时关闭第 1 层，只保留 2–4 层（纯 SwiftUI）。
+1. **填充**：`glass` 取自问候语位置背后的天空渐变（`skyGradient(u, uv.y + nrm.y × 0.08)`，`×1.15 + 0.1`），与 `inkLight` 混合（0.9 归向白墨，夜里转冷色）；整天没有独立折射层——字形本身是墨，不是玻璃（早先 36% 的折射率会被描边吃掉，整行读成空心管）。
+2. **落影与光晕**：字形覆盖度的高等级 mip 采样作柔影，随天空亮度 `shadeAmt = 0.18 + 0.35 × smoothstep(0.25, 0.6, lum)` 加深；`u.glow` 取地平线色，写入 `textGlow`（随 twilight 增强）。
+3. **边缘光**：按字形法线 `nrm` 朝光源方向的 `dot` 截断到 0…1，白色或天体色温，强度取 `rimStrength = max(sunVisibility × (0.55 + 0.45 × lowSun), moonVisibility × 0.55)`。
+4. **笔尖湿墨**：书写推进时笔尖后的墨迹 `exp(-(front - g.y) × 30)` 短暂提亮。
 
-### 3.4 文案策略（沿用 `GreetingPhrase` 的时段划分，追加天气修饰）
+没有 `layerEffect` / `maxSampleOffset` / SwiftUI `shadow` 路径——这些是实现前的候选，最终没有采用。
 
-| 时段 | 主句 | 天气修饰（aside，11pt，60%） |
-| --- | --- | --- |
-| 00–05 late | Still up, | 晴：`the stars are out` · 雨：`listen to the rain` |
-| 05–07 dawn | Morning, | 晴：`first light at 06:02` · 雾：`the city is still asleep` |
-| 07–11 morning | Good morning, | 雨：`take an umbrella` · 雪：`it's snowing` |
-| 11–14 noon | Good afternoon, | 晴 & ≥ 32°：`stay in the shade` |
-| 14–18 afternoon | Good afternoon, | 日落前 30 分钟：`golden hour in 24 min` |
-| 18–22 evening | Good evening, | 满月：`full moon tonight` |
-| 22–24 night | Good evening, | `rest when you can` |
-| 节日 | 节日名 | 维持现有 `festivalPhrase` |
+### 3.4 文案策略（`GreetingPhrase`，与代码同构）
 
-规则：主句**不随天气变**（保持稳定，入场动画才有意义）；天气只影响 aside，且同一小时内不变。
+问候语由 `GreetingPhrase.resolve(_:custom:date:calendar:language:context:)` 在三档模式里生成，文案本身带 aside：
+
+- **Selection**：`automatic`（默认，看日期与天气）/ `everyday`、`verse`、`hello` / `morning` / `afternoon` / `evening` / `night` / `welcome` / `gentle` / `monthly` / `custom`（固定文案，中文 / 英文各一套）。
+- **`automatic` 的优先序**（`forDate(..., mode: .automatic)`）：节日 → 深夜 / 夜间不套天气 → 有天气则 `weatherPhrase` → 节气诗词 → 周末诗词 → 当季诗词。同一天同一小时文案稳定（用「era 内第几天 + 小时」作种子的确定性选择），不是每次重绘都换一句。
+- **`verse`** 跳过节日与天气，只用节气 / 季节的诗词；**`everyday`** 是「早上好呀」「早点休息」这一类不带诗也不带天气的日常问候。
+- **语言**：`GreetingPhrase.Language.chinese` / `.english`（默认中文），aside 与主句同语言。
+- **天气只修饰**：`Context(weather:temperature:windKph:)` 只影响 aside 与 `weatherPhrase` 的选用，不改 `everyday` 池里的主句——主句在一小时内稳定。
+
+问候语与 aside 都由上面这一步产出，排版再按所选字体的真实轮廓测量（`GreetingScript.line(text, typeface:)`）：问候卡只画 `Phrase.salutation` 与名字（`GreetingPhrase` 里另一条 `aside` 供弹窗等别处使用），文案层与字形层各管一段。
 
 ---
 
 ## 4. 次要信息设计
 
-统一图标规范：SF Symbols，`weight: .light`、`scale: .small`、线宽视觉 ≈ 1pt，`symbolRenderingMode(.hierarchical)`；自绘图形线宽 1pt、端点 round、圆角 2pt。
+统一图标规范：SF Symbols，`weight: .light`、`scale: .small`，视觉线宽 ≈ 1pt；自绘图形线宽 1pt、端点 round。
 
 | 元素 | 字体 | 字号 / 字重 | 不透明度 | 间距 |
 | --- | --- | --- | --- | --- |
 | 时钟 `16:15` | SF Pro Display，`monospacedDigit` | 22 / Light | 90% | 与日期间距 8pt |
 | 秒点 | 1.5pt 圆点，每秒呼吸一次 | — | 40% ↔ 80% | 位于分钟右上 2pt |
-| 日期 `9月28日 周一` | SF Pro Text | 11 / Medium，tracking +0.4 | 60% | 与时钟同基线 |
+| 日期 `9月28日 周一` | SF Pro Text | 11 / Medium | 60% | 与时钟同基线 |
 | 位置 `广州` | SF Pro Text + `location` 符号 8pt | 11 / Medium | 70% | 符号与文字 3pt |
 | 温度 `29°` | SF Pro Display，`numericText` | 22 / Light | 92% | 与位置 6pt |
 | 状况 `多云` | SF Pro Text | 13 / Medium | 78% | 与温度 4pt |
-| 次行 `体感 32° · 湿 78% · 东南 3级` | SF Pro Text，数字 `monospacedDigit` | 11 / Regular | 58% | 与首行行距 4pt；`·` 为 40% |
-| 日落 / 提示 | SF Pro Text | 10 / Medium | 45% | 左下，距底 14pt |
-| 窗台胶囊 | 文字 SF Pro Text 11 / Semibold；数字 SF Mono 10 / Medium | — | 72% | 胶囊高 30pt，内边距 10 × 6，间距 8pt |
-| 今日用量 `7.7亿` | SF Pro Rounded | 17 / Semibold | 92% | 窗台右端，`↑368%` 10pt 64% |
+| 次行 `体感 32° · 湿 78% · 东南 3级` | SF Pro Text，数字 `monospacedDigit` | 11 / Regular | 58% | 与首行行距 4pt |
+| 日落 / 提示 | SF Pro Text | 10 / Medium | 45% | 左下 |
+| 窗台胶囊 | 文字 11 / Semibold；数字 `monospacedDigit` | — | — | 胶囊高 30pt，内边距 10 × 6，间距 8pt |
 
-风力显示为蒲福风级（`windKph` → 级数），湿度 ≥ 85% 或体感与实温差 ≥ 4° 时对应片段提升到 78% 不透明，作为"值得注意"的唯一强调方式（不用颜色）。
+风力显示为蒲福风级（`windKph` → 级数），湿度 ≥ 85% 或体感与实温差 ≥ 4° 时对应片段提升不透明度，作为"值得注意"的唯一强调方式（不用颜色）。
 
 ---
 
@@ -171,130 +146,140 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 | 方案 | 结论 | 用途 / 理由 |
 | --- | --- | --- |
-| **运行时编译的 MSL 片元着色器（`MTKView` + `AtmosphereShader`）** | ✅ 主力 | 天空渐变 / 体积云 / 雾 / 降水 / 天体 / 闪电 / 问候语 / 玻璃雨滴在同**一条**渲染通道里按远近分层；着色器在启动时编译（随系统编译器），见 §5.7 |
-| `CADisplayLink`（`FrameTicker`） | ✅ 驱动时钟 | 时刻缓动与拖动预览；与显示器刷新率同步，不像 `Task.sleep` 那样与刷新率拍频成顿挫 |
+| **运行时编译的 MSL（`MTKView` + `AtmosphereShader`）** | ✅ 主力 | 天空渐变 / 体积云 / 雾 / 降水 / 天体 / 闪电 / 问候语 / 玻璃雨滴在**一条**渲染通道里按远近分层；着色器以 `device.makeLibrary(source:options:)` 在首次使用时编译（随系统编译器），见 §5.7 |
+| `NSViewRepresentable`（`AtmosphereMetal`） | ✅ 承载 | 把 `AtmosphereMTKView` 挂进 SwiftUI；`MTKView` 自带指针跟踪区，视差与"擦掉"雨滴不会让 SwiftUI 的视图图失效 |
+| `CADisplayLink`（`FrameTicker`） | ✅ 时钟 | 时刻缓动与拖动预览；与显示器刷新率同步，不像 `Task.sleep` 那样与刷新率拍频成顿挫 |
 | `CAGradientLayer` | ✅ 辅助 | 扫光（`ReadingSweep`）——渲染服务器插值，不重算 SwiftUI body |
-| `MeshGradient`（macOS 15） | ✅ 降级 | Reduce Motion / 低电量下的静态天空：4×3 网格点直接取 §6 色值 |
+| `AtmosphereStill` | ✅ 静帧 | Reduce Motion、预览工具与 `ImageRenderer`：同一渲染器 `snapshot()` 一次出新图的 `CGImage`，输入 / 尺寸 / 缩放不变就不重绘 |
 | `.periodic(by: 1)` | ✅ 时钟 | 问候卡那一枚秒点，一秒一次；**`.animation` 调度不用**（见 [技术 §8](../technical/08-performance.md)） |
-| `NSViewRepresentable` | ✅ 视差 | `MTKView` 自带指针跟踪区，视差与"擦掉"雨滴不会让 SwiftUI 的视图图失效 |
+| `Canvas` + `TimelineView`（`WeatherBackdrop`） | ⚠️ 回落 | 只在 Metal 视图不可用（构不出 `AtmosphereGPU`）时画的旧 Canvas 天空；`GreetingCard.makeScene()` 的金属路径是常走的 |
 | SceneKit | ❌ | 2025 年起软弃用；与 SwiftUI 文字无法同通道合成 |
 | RealityKit `RealityView` | ❌ | 需要独立渲染循环和实体系统，对固定视角的卡片是过度设计，内存 +40–80MB |
+| MeshGradient | ❌ | 曾作为 Reduce Motion 降级方案评估，最终用同一渲染器的静帧代替 |
 
-构建影响：**没有**离线 Metal 编译步骤。构建走裸 `swiftc`（无 Xcode 工程、无 `default.metallib`），所以片元着色器以字符串形式随包分发、在 `AtmosphereRenderer` 首次使用时用 `device.makeLibrary(source:options:)` 运行时编译——运行时编译器随系统，版本与当前 OS 一致。
+构建影响：**没有**离线 Metal 编译步骤。构建走裸 `swiftc`（无 Xcode 工程、无 `default.metallib`），所以着色器以字符串形式随包分发、运行时编译——运行时编译器随系统，版本与当前 OS 一致。
 
 ### 5.2 图层结构（远 → 近）
 
-| # | 层 | 实现 | 视差系数 | 景深模糊 |
-| --- | --- | --- | --- | --- |
-| L0 | 天空渐变 + 大气散射 | shader：三段渐变 + Rayleigh/Mie 近似地平线光晕 | 0 | — |
-| L1 | 星空 / 月亮 / 太阳 | shader：星点（`SkyAstronomy.stars` 位置 + 哈希补充暗星 400 颗） | 0.05 | 0 |
-| L2 | 远云层（高积云 / 卷云） | shader：fBm 4 octave，尺度 1.0 | 0.12 | 1.5px |
-| L3 | 中云层（主体积云） | shader：fBm 5 octave + 向光步进 5 次 | 0.25 | 0 |
-| L4 | 远降水 / 雾带 | shader | 0.35 | 2px |
-| L5 | **问候语** | SwiftUI Text + layerEffect | 0.40 | 0（焦平面） |
-| L6 | 近降水 / 前景雾絮 | shader | 0.70 | 4px（虚焦） |
-| L7 | 卡片玻璃（雨滴、霜、雾气） | Canvas + distortionEffect | 1.0（随卡片） | — |
-| L8 | 窗台 + 铭文 | SwiftUI | 0.9 | — |
+真实顺序就是 `scene()` 与 `foreground()` 两个函数里的书写顺序，视差系数是该处乘的常数（`par × 系数`）：
 
-问候语刻意放在 L4 与 L6 之间——**近景雨丝会从字的前方划过**，这是纵深感的关键来源。
+| 层 | 绘制内容 | 视差 | 所在函数 |
+| --- | --- | --- | --- |
+| 天空渐变 + 大气散射 | 三段 `skyGradient` + 地平线光晕 | 0 | `scene()` |
+| 星空 / 太阳 / 月亮 | 星点（`SkyAstronomy.stars` 投影 + `s.xy` 位置）与两个天体盘 | 0.05 | `scene()` |
+| 卷云 | 单层 fBm | 0.12 | `scene()` |
+| 体积云 | fBm 5 octave + 4 次向光步进 | 0.25 | `scene()` |
+| 雾 | fBm 3 octave | — | `scene()` |
+| 闪电照亮云底 | 击发时按到闪点的距离提亮 | — | `scene()` |
+| **问候语** | 纹理采样 + 边缘光（见 §3.3） | 0.4 | `foreground()` |
+| 远降水 | 细底片滚动 | 0.35 | `foreground()` |
+| 雪 | 细底片滚动 | 0.3 | `foreground()` |
+| 闪电通道 | 屏幕空间折线，只算击发列 | — | `foreground()` |
+| 彩虹 / 流星 | 弧带 / 拖尾，`effects.z` / `meteorInfo` 触发 | — | `foreground()` |
+| 近降水 / 冰雹 | 粗底片滚动 | 0.7 / 0.6 | `foreground()` |
+| 玻璃雨滴 | `glassDrops()`：静态水珠 + 每车道下滑的一颗 | 随卡片 | `atmosphere_fragment`（合成前） |
+| 窗台 + 铭文 | SwiftUI，不是 shader 层 | — | `GreetingCard` |
+
+问候语刻意夹在云层与近降水之间——**近景雨丝会从字的前方划过**，这是纵深感的关键来源。
 
 ### 5.3 体积云与光照模型
 
-- 密度：`d(p) = saturate(fbm(p × scale + wind × t) − coverage)`，coverage：晴 0.78、多云 0.52、阴 0.18、雨 0.10、雷暴 0.04。
-- 光照：对每个像素沿 `lightDir`（屏幕空间，由天体方位角/高度角投影）步进 5 次累积光学厚度 τ，透射 `T = exp(−τ × 1.8)`（Beer-Lambert），加 "powder" 项 `1 − exp(−2τ)` 让云体边缘亮、中心暗。
-- 相位函数：Henyey-Greenstein，g = 0.6（前向散射），天体在云后时出现**银边**（silver lining）。
-- 云色：`mix(cloudShadow, sunColor × 1.2, T × phase)`；`cloudShadow` 取当前天空 55% 节点色 × 0.55。
-- **天体遮挡**：天体亮度 × `exp(−τ_at_body × 2.4)`；τ 在 0.3–1.2 之间时用 `discBlur = τ × 18px` 做"透光模糊盘"，并在其周围 `radius 60–140px` 绘制 Mie 光晕（强度 ∝ 1 − T）。
-- **God rays**：太阳高度 < 20° 且 coverage 0.3–0.7 时启用，屏幕空间径向模糊 16 采样，衰减 0.96，强度 0.22。
+真实常量（`AtmosphereShader.swift`）：
+
+- 密度：`cloudField` 在透视天花板上跑 fBm，阈值 `mix(0.64, 0.20, cover)`；`cover` 来自 `SkyScene` 的天气查询表（`look.cover`，晴 0.10 / 多云 0.46 / 阴 0.88 / 小雨 0.92 / 大雨 0.97 / 雷暴 1.0 / 雪 0.86 / 雾 0.40）。
+- 光照：从云点朝光源（太阳 or 月亮，`light()` 统一选择）步进 **4** 次，步长 `i² × 7 pt` 累积 τ，透射 `T = exp(-τ × 0.42)`（Beer-Lambert），powder 项 `1 - exp(-dens × 2.5)`。
+- 银边：光源附近 `prox = exp(-length(kp - lightPt) / 170)`，乘以 `(1 - dens) × 3.2 × lightVis`——天体被云挡时出现。
+- 云色：`belly`（阴影）与 `crown`（受光）按 `shadeT = clamp(T × 0.85 + (1 - dens) × 0.35)` 混合；雷暴把两者都压暗。
+- **没有** god rays、Henyey-Greenstein 相位函数或单独的天体遮挡盘——这些是设计前的候选，实现里没有。
 
 ### 5.4 各天气实现与粒子参数
 
-| 天气 | 视觉思路 | 粒子 / 参数 |
-| --- | --- | --- |
-| 晴 | 干净渐变 + 地平线光晕 + 极淡卷云 (coverage 0.78) | 日间尘埃微粒 60 颗，1–2px，速度 3pt/s，不透明度 0.08–0.2，只在逆光方向可见 |
-| 多云 | 两层体积云错速漂移，太阳时隐时现 | 远层风速 4pt/s，中层 9pt/s；每 40–90s 一次"云遮日"事件，亮度 1 → 0.55，过渡 6s |
-| 阴 | 整片低云层，底部有波状纹理（层积云），无直射光 | coverage 0.18；天体仅留 5% 漫射亮斑；全局对比度 × 0.8 |
-| 小雨 | 远层细雨丝 + 近层稀疏虚焦雨滴 + 地平线雾化 | 远层 220 条，长 14pt，宽 0.6，速 620pt/s，α 0.22；近层 30 条，长 38pt，宽 1.4，α 0.35，模糊 4px；倾角 = 风速 × 0.6°，上限 18° |
-| 大雨 | 同上加密 + 雨幕（带状密度波）+ 溅射 | 远层 520，近层 90；每 1.6–3s 一道雨幕横扫（亮度 −12%）；卡片底边溅射 12 个/秒，寿命 0.28s |
-| 雷暴 | 厚云 + 大雨 + 闪电 | 成簇出现：1/3 概率 1.1–2.5 s 后紧跟下一次，否则 2.5–8 s。60% 为云地闪：主通道由三级尺度的直段折线构成（周期 46 / 15 / 4.5 pt），3–5 条分叉向下外侧逐渐变细变暗，白热核心 + 紫蓝光晕 + 触地辉光；同一通道 2–3 次回击，间隔 40–130 ms，每次约 30 ms 峰值后快衰减。40% 为无通道的云内闪。云底按闪电位置径向照亮，厚云处最亮。只有细通道闪烁；云层每次闪电只亮一次（首击升起、回击期间保持、随后衰减，中间不回暗），相邻两次间隔 ≥ 1.1 s，任何一秒内闪烁 ≤ 3 次（WCAG 2.3.1）。预览：`render-greeting-preview.py` 的雷暴档 |
-| 雪 | 三层深度雪花，布朗漂移 + 风向偏移 | 远 180（1–1.5px，速 18pt/s，模糊 1px）、中 90（2–3px，32pt/s）、近 16（5–8px，54pt/s，模糊 5px，带六角微光）；水平漂移 `sin(t×0.7 + seed) × 12pt`；地面 12pt 渐积白边 |
-| 雾 | 分层高度雾 + 缓慢流动的雾絮，远景完全溶解 | 三层雾带，密度 `exp(−y × k)`，k = 2.2 / 3.4 / 5.0；流速 2/5/9 pt/s；天体变成无边缘的柔光斑（半径 ×3，亮度 ×0.35） |
-| 毛毛雨 / 雨夹雪 / 冰雹 | 小雨参数 ×0.5 / 雨丝与雪花 6:4 混合 / 雷暴 + 1.5px 白色高速颗粒 | — |
+粒子全部在 shader 里按格子哈希生成，雨雪是启动时烘焙的平铺底片（`precip_bake` / `makePlate`：`rainFine`、`rainCoarse`、`snowFine`、`snowCoarse`），播放只是按风滚动，没有 CPU 粒子数组。
 
-雨雪的光线散射：降水越密，L0 地平线节点向 `horizon.mix(skyMid, 0.5)` 靠拢（透视消光），并对 L1–L3 施加 `contrast × (1 − 0.35 × density)`。
+| 天气 | 关键量（`SkyScene` 的 `weather` 查询表） |
+| --- | --- |
+| 晴 / 多云 | `rain = snow = fog = thunder = drops = 0`，只有云量与风 |
+| 阴 | `fog = 0.12` |
+| 小雨 / 毛毛雨 | `rain = 0.38 + chance × 0.18`（毛毛雨 0.22）；雨夹雪 `snow = 0.45`；`fog = 0.28`；`drops = 0.3 / 0.55` |
+| 大雨 | `rain = 0.78 + chance × 0.22`；`fog = 0.42`；`drops = 1` |
+| 雷暴 | `rain = 0.96`；`fog = 0.3`；`thunder = 1`；`drops = 1` |
+| 雪 | `snow = 0.85`；`fog = 0.3` |
+| 雾 | `fog = 1` |
+| 冰雹 | `hail = true`（在雪的底片上叠 `snowCoarse` 高速格子） |
+
+雨丝倾角 `slant = min(18, windKph × 0.6)°`（按风向取符号）；雷暴雨速 `mix(210, 340, amt) × (1 + thunder × 0.16)`。闪电：`nextFlash` 以 1/3 概率紧跟 1.1–2.5 s、否则 2.5–8 s；`bolt` 占 60%，通道周期 `(46, 15, 4.5) pt`，2–3 次回击间隔 40–130 ms，每次约 30 ms 峰值后 `exp(-(a - 0.03) × 22)` 衰减；云底照亮 `sky = (bolt ? 1 : 0.75) × min(1, age / 0.02)`，保持到末次回击后按 `exp(-(age - hold) × 6)` 衰减——闪间不回暗，相邻两次 ≥ 1.1 s，一秒内 ≤ 3 次闪烁（WCAG 2.3.1）。预览：`Tools/render-greeting-preview.py` 的雷暴档。
 
 ### 5.5 天体随时间联动
 
-- **位置**：沿用 `SkyAstronomy.snapshot`；投影 `x = azimuthMapped(az)`（以当前时段太阳方位为中心 ±110° 映射到画布宽），`y = H × (0.92 − altitude/90 × 0.95)`。
-- **大小**：太阳盘 `r = 22pt × (1 + 0.35 × smoothstep(15°, 0°, alt))`（地平线月亮/太阳错觉放大）；月亮 `r = 16pt × 同系数`。
-- **色温**：太阳按高度角插值——`alt ≥ 40°: #FFF6E0 (≈5800K)`、`15°: #FFE3A8`、`5°: #FFB86B`、`0°: #FF8A4C (≈2200K)`、`<0°: 仅保留光晕 #F37A5C`。月亮：`#F4F7FF`，低空时 `#FFE7C2`。
-- **月相**：`moonPhase` 驱动明暗分界椭圆（终结线），暗面保留 6% 地照（earthshine）；满月 ±1 天加 1.3 倍光晕。
-- **星空**：`sun.altitude` 从 −6° 到 −18° 期间星星数量从 0 线性增至 100%；星等决定大小 0.6–2.2px；闪烁 `α × (0.75 + 0.25 × sin(t × f + seed))`，f 随机 0.6–2.4Hz，且**只让 12% 的星闪烁**（全部闪烁会显得廉价）；低电量关闭闪烁。
-- **连续性**：`skyDate` 每分钟刷新，但着色器中太阳位置用 `mix(prev, next, frac)` 在分钟内线性插值，太阳不会跳动。
+- **位置**：`SkyScene.project(position, center:)`：方位角相对当天中心方位折叠到 ±180°，除以 `fieldOfView = 220°` 映射到 x；高度角按 `y = horizonLine(0.80) - altitude / 90 × altitudeSpan(0.72)` 映射。
+- **大小**：太阳 `sunRadius = 19 × (1 + 0.35 × lowSun)`；月亮 `moonRadius = 15 × (1 + 0.3 × lowMoon)`；`lowSun` / `lowMoon` 是高度角 15° → 0° 的 smooth 放大（地平线错觉）。
+- **色温**：`sunColor` 带宽按高度角插值——`−2° #F37A5C`、`0° #FF8A4C`、`5° #FFB86B`、`15° #FFE3A8`、`40° #FFF6E0`。月亮盘 0.96–1.0 的近白，接近地平线时转 `#FFE7C2`。
+- **月相**：`moonPhase`（轨道角 `sky.x × 2π`）驱动 `dot(n, L)` 明暗分界，月海用 fBm 加暗，边缘 `smoothstep(1.0, 0.93, r²)`；无云的满月附近有一圈 `exp(…× 1.3)` 光晕。
+- **星空**：`starVisibility = smooth(-5, -15, sunAlt) × look.starClarity`；星点大小 0.6–2.2px（`s.z`），只有 `fract(s.w × 7.13) > 0.86`（约 **14%**）的这一部分星在闪烁，闪烁频率 0.8–2.4 Hz；`sky.z` 的星野旋转由 `SkyAstronomy.sidereal` 提供。
+- **连续性**：`skyDate` 每分钟刷新一次，`SkyScene.mix` 对连续量做 smoothstep 淡变（见 §5.6），太阳不跳（`clock` 由 `SkyTimeline` 平滑推进）。
 
 ---
 
 ### 5.6 手动天空（自动 / 手动）
 
-时钟下方的分段按钮在 **自动**（跟随实时天气与时间）和 **手动** 之间切换。进入手动时，从当前天空出发（切换本身画面不变）；回到自动时，时刻先缓动回"现在"，天气由渲染器交叉淡变。
+时钟下方的 `SkyModeToggle` 在 **自动**（跟随实时天气与时间）和 **手动** 之间切换；天气渲染关掉时第一格变成 **贴图**（点一下重新打开渲染）。进入手动时，从当前天空出发（切换本身画面不变）；回到自动时，时刻先经 `returnToNow()`（0.75 s 三次缓出，`FrameTicker` 驱动）缓动回"现在"，天气由渲染器交叉淡变。
 
-时钟下方是**自动 / 手动**（实时天气关掉后多一格**贴图**，见上）的切换；手动时，左下日轨就地换成控制台（窄卡片同时让出预报区），不遮挡问候语：
+手动时，左下日轨就地换成控制台（窄卡片同时让出预报区），不遮挡问候语：
 
-- **天气**：晴 / 少云 / 阴 / 小雨 / 大雨 / 雷雨 / 雪 / 雾，八个图标，每个图标下写着自己的名字（只有图标时，紧挨在下面、同列对齐的时段行会被读成它们的说明），选中项以滑动圆角块标示（夜间自动换月亮版图标）。
-- **时段**：黎明 / 日出 / 上午 / 正午 / 下午 / 日落 / 黄昏 / 夜晚，放在一条分段轨道里，读作独立的一组控件。点选后时刻以缓入缓出滑到该时段的典型时刻（按当天真实日出日落推算，"日落"就是本地的日落），最长 1.4 s，走钟面上较短的一侧；高亮随实际所处时段实时变化。
-- **时间轴**：24 小时，轨道用所选天气下当天每小时的天空色绘制，刻度标出日出 / 日落，滑块带太阳 / 月亮与时刻，5 分钟吸附，←/→ 每次 15 分钟；直接拖动天空也能调整时刻，整点有触感反馈。
+- **天气**：晴 / 少云 / 阴 / 小雨 / 大雨 / 雷雨 / 雪 / 雾（`SkyConsole.weathers`），图标经 `PinnedSky` 取自 `WeatherReading.Sky.symbol(night:)`，选中项以滑动圆角块标示。
+- **时段**：黎明 / 日出 / 上午 / 正午 / 下午 / 日落 / 黄昏 / 夜晚（`SkyConsole.bands` 的 `SkyScene.Band` 八档），放在一条分段轨道里。点选后经 `glide(to:)` 滑到该时段的代表时刻（按当天真实日出日落推算），走钟面上较短的一侧，时长 `min(1.4, 0.45 + |Δ| / 720 × 0.95)` 秒、三次缓入缓出。
+- **时间轴**：24 小时（`SkyTimeline`），轨道用所选天气下当天每小时的天空色绘制，刻度标出日出 / 日落，滑块带太阳 / 月亮与时刻，`snap` 5 分钟吸附，←/→ 每次 15 分钟；直接拖动天空也能调整时刻。
 
-平滑渲染：时刻连续变化时天空按太阳高度连续插值；天气切换时 `SkyScene.mix` 在 1.2 s 内对调色、云量、降水、雾、星光等连续量做 smoothstep 淡变，连续多次切换从屏幕上的当前状态起步，淡变期间 Metal 视图以显示器满帧率运行。
+平滑渲染：时刻连续变化时天空按太阳高度连续插值；天气切换时 `AtmosphereRenderer` 记下 `fadeFrom` / `shownScene`，在 `weatherFade = 1.2` 秒内对调色、云量、降水、雾、星光等连续量做 smoothstep 淡变（`SkyScene.mix`），连续多次切换从屏幕上的当前状态起步，淡变期间 `AtmosphereView.boost(for:)` 让 Metal 视图按显示器满帧率运行。
 
 **天气渲染关掉后（`AppPreferences.greetingWeatherRendering`）**，`GreetingCard.makeScene()` 改画一层按太阳高度连续插值的晴空——调色、日月与云量都在，只是没有雨雪、雾、闪电和玻璃雨滴，星层收掉（星点从真实坐标投影，而这一档不再声称那是所在与此刻）。这不是「另一种天气」，所以右侧不再读实时天气（`liveWeather == false` 时右上、预报带与体感行都让位，日轨改从本机时区推算），`WeatherStore` 也不再被这张卡刷新。
 
-### 5.7 性能预算与帧率策略
+### 5.7 帧率与主线程策略
 
-天空是三张缓存的画面合成出来的，不是一次把云和雨都重算的着色器。云层（渐变、天体、卷云、体积云、雾）画在半分辨率上，30 Hz 更新。雨雪是启动时烘焙的平铺底片，播放就是按风滚动；底片里的雨丝已经拉长，所以静止的卡停在 30 Hz 也是连续的。笔、淡变、视差和拖动时刻才跟显示器刷新率，那些帧只做合成，不重走云。实测（M3 Pro，1100 pt 卡片 @2x = 2200×948 px，`python3 Tools/bench-atmosphere.py`）：大雨含云层 0.40 ms、只合成 0.31 ms；雪 0.32 / 0.23 ms；雷暴 0.41 / 0.31 ms；晴天云层帧 0.25–0.39 ms。CPU 编码约 7–15 µs。
+天空是同一渲染通道里的两次绘制：云层（渐变、天体、卷云、体积云、雾）先画进半分辨率的 `skyTexture`（`skyPixelFormat = .rgba16Float`），合成帧再把这张纹理与雨雪底片、问候语纹理、玻璃雨滴合成到屏幕上。云层按 `skyDue` 走 30 Hz（低电量 / 热压力 15 Hz，闪电或截图时立即重画）；雨雪是启动时烘焙的平铺底片（`makePlate`），播放就是按风滚动，所以静止的卡停在 30 Hz 也是连续的。实测量（`Tools/bench-atmosphere.py`，M3 Pro）与帧率策略见下。
 
-| 场景 | 帧率 |
+| 场景 | 帧率（`AtmosphereMTKView.retime()`） |
 | --- | --- |
-| 书写中、天气淡变、指针在天空上（视差）、拖动漫游 | 显示器上限（ProMotion 120 Hz）。云层仍是 30 Hz，只有合成在跟手 |
-| 静止的雨 / 雪 / 冰雹 / 雷暴 / 晴天 | 30 Hz。闪电照亮云底的那一下，云层跟着走 |
-| 低电量模式 / 热压力 | 书写时 30 Hz，否则 15 Hz；云层同样不超过这个速率 |
-| 不可见、被遮挡、Reduce Motion | 不绘制（Reduce Motion 用静帧） |
+| 书写中、天气淡变、指针在天空上（视差）、拖动漫游 | 显示器上限（`boostedUntil` / `writing`）。云层仍是 30 Hz，只有合成在跟手；指针视差最高 60 Hz |
+| 静止的雨 / 雪 / 冰雹 / 雷暴（`restingRate` 判 falling） | 30 Hz。闪电照亮云底的那一下，云层跟着走 |
+| 静止的晴 / 多云 / 雾（非 falling） | 15 Hz——云飘、星呼吸、流星都远小于每帧 1px，画两倍频率没有画面对应 |
+| 低电量模式 / 热压力（`constrained`） | 交互（笔 / 淡变）时 30 Hz，否则 `min(resting, 15)` |
+| 不可见、被遮挡、Reduce Motion | `isPaused`；Reduce Motion 走 `AtmosphereStill` 的一次性快照 |
 
 主线程约束：
 
-- **问候语纹理离主线程栅格化**（约 7 ms）。串行队列一次一件，窗口缩放时只做"正在做的 + 最新的"，中间尺寸不做；新纹理就绪前旧纹理按它自己的 frame 继续画，不会被拉伸到新位置。静帧（Reduce Motion、预览工具）仍同步生成。
-- **时间动画与显示器同步**：回到现在（0.75 s 三次缓出）与手动时段滑动（≤ 1.4 s 缓入缓出）由 `FrameTicker`（`CADisplayLink`，common 模式，拖动跟踪中也走）驱动，不再用 `Task.sleep` 的 25 / 16 ms 步进（会与刷新率拍频成顿挫）。
-- **拖动 / 滑动时只重算随时间变化的部分**：天空、时钟、日轨 / 控制台。窗台、预报带、右上"此刻"用 `Unchanged(key:)` + `.equatable()` 固定，key 必须覆盖其读取的全部值；三者带闭包，SwiftUI 自己无法判等。每步 SwiftUI 更新（body + 布局）从 1.06 ms 降到 0.52 ms（`BENCH_PACE=0 python3 Tools/render-greeting-preview.py --bench`；`--bench-baseline` 为未固定时的对照）。
-- `GreetingTypesetter.layout` 按参数记忆最近 8 个结果，body 每帧调用不再构建 CTLine。
-- 着色器只省必然为零的计算：星点距像素 > 24 pt 直接跳过（核与星芒此时都 < 1/255），地平线以下不采样卷云 / 云层噪声（原本采样后乘 0）。64 张预览逐像素对比，除随机闪电外最大差 1/255。
-- 设置页字体：24 个字样在后台加载字体与轮廓后淡入，首次打开不在主线程读 24 个字体文件。
+- **问候语纹理离主线程栅格化**。`rasterQueue` 是串行队列，一次一件；窗口缩放时只做"正在做的 + 最新的"，中间尺寸不做；新纹理就绪前旧纹理按它自己的 frame 继续画，不会被拉伸到新位置。静帧（Reduce Motion、预览工具）仍同步生成。
+- **时间动画与显示器同步**：回到现在（0.75 s，`pow(1 - p, 3)`）与手动时段滑动（`min(1.4, 0.45 + |Δ| / 720 × 0.95)` 秒，三次缓入缓出）由 `FrameTicker`（`CADisplayLink`）驱动；`Task.sleep` 会与刷新率拍频成顿挫。
+- **拖动 / 滑动时只重算随时间变化的部分**：天空、时钟、日轨 / 控制台。窗台、预报带、右上"此刻"用 `Unchanged(key:)` + `.equatable()` 固定，key 必须覆盖其读取的全部值；三者带闭包，SwiftUI 自己无法判等。
+- `GreetingTypesetter.layout` 按参数记忆最近 8 个结果，body 每帧调用不再构建 CTLine（`LayoutCache`）。
+- 着色器只省必然为零的计算：星点距像素 > 24 pt 直接跳过（核与星芒此时都 < 1/255），地平线以下不采样卷云 / 云层噪声（原本采样后乘 0）。
 - **问候卡不在概览的显示周期里**：时钟是 `.periodic(by: 1)`，概览页上**没有** `.animation` 调度的时间线（见 [技术 §8](../technical/08-performance.md) 的 2026-09-29 记录）。天空是 `MTKView`，自带渲染循环与帧率策略、不经过 SwiftUI 的布局——所以卡片再贵也只在它自己的线程上贵。
+- **设置页字体预览在后台加载**：折叠时不读字体文件、不构造预览（`fontBrowserExpanded`），展开后才 `await prefs.prepareGreetingFonts()`。
 
 页面滚动：
 
 - **滚动时天空定帧**。概览页的 `onScrollPhaseChange` 在滚动（拖动、惯性、动画）期间让天空停在当前帧，合成器只平移一张静止图层，不再每个滚动步都混合新帧、重新模糊上面的玻璃窗台。卡片滚出视口（`onScrollVisibilityChange`）后同样定帧。停下后从当前时刻继续。
 - **不经 SwiftUI 传递**：滚动状态放在 `PageScrollActivity` 这个引用里，直接通知 `MTKView`。每次滚动的开始和结束都会变，若经 `@State` / 环境值传递，就会在滚动最需要主线程的那一刻重算整个概览页和卡片的闭包。
-- **不在主线程等 drawable**：`currentDrawable` 在所有 drawable 都被占用时会阻塞主线程（最长 1 s），而这恰好发生在合成器落后的滚动中。现在最多一帧待呈现（加上屏幕上的一帧，第三个总是空闲），否则跳过这一帧；若 presented 回调意外未到，0.25 s 后自动复位。
-- 截图（预览工具、`AtmosphereStill`）用固定闪电，不再取实时随机闪电，雷暴静帧每次一致。
+- **不在主线程等 drawable**：`currentDrawable` 在所有 drawable 都被占用时会阻塞主线程，而这恰好发生在合成器落后的滚动中。现在最多两帧在途（`pending >= 2`）就跳过一帧；若 presented 回调超过 0.25 s 未到，则复位计数以免天空永久停住。
+- 静帧（预览工具、`AtmosphereStill`）与截图用固定闪电（`lightning(still:)` 直接返回一个定值），雷暴静帧每次一致。
 
 ## 6. 配色系统
 
 ### 6.1 天空渐变（时段 × 天气）
 
-- 方向：**竖直线性渐变，从上（0%，天顶）到下（100%，地平线）**，中间节点 55%。
-- 叠加：以天体方位为圆心、半径 `0.9W` 的径向地平线光晕，颜色 = 100% 节点色提亮 12%，不透明度 晴 0.35 / 多云 0.22 / 其他 0.08。
-- 时段按**太阳高度角**划分而非钟点，保证不同纬度、季节下都正确；相邻时段之间按高度角线性插值（沿用 `SkyPalette.daybreak` 的插值方式）。
-- 生成规则：`stop = exposure × mix(clearStop, mix(nightTint, dayTint, dayness), amount[stop])`。其中 dayness：深夜 0、黎明 0.2、日出 0.55、上午 / 正午 / 午后 1、日落 0.55、黄昏 0.2。地平线节点的 amount 较小，所以阴雨天在日出日落时仍会**透出暖色**。
+- 方向：**竖直线性渐变，天顶 → 地平线**，中间节点 55%（`skyGradient`：`t < 0.55` 时 zenith→mid，之后 mid→horizon）。
+- 时段按**太阳高度角**划分而非钟点（`SkyScene.band(altitude:rising:)`）：
 
-| 时段 | 太阳高度角 |
+| 时段（Band） | 太阳高度角 |
 | --- | --- |
-| 深夜 | < −18° |
-| 黎明 | −18° ~ −4°，上升 |
-| 日出 | −4° ~ 8°，上升 |
-| 上午 | 8° ~ 35°，上升 |
-| 正午 | > 35° |
-| 午后 | 35° ~ 8°，下降 |
-| 日落 | 8° ~ −4°，下降 |
-| 黄昏 | −4° ~ −18°，下降 |
+| `night` | < −18° |
+| `dawn` / `dusk` | −18° ~ −4°（上升 / 下降） |
+| `sunrise` / `sunset` | −4° ~ 8°（上升 / 下降） |
+| `morning` / `afternoon` | 8° ~ 35°（上升 / 下降） |
+| `noon` | ≥ 35° |
+
+- 相邻关键帧之间按高度角平滑插值（`interpolate`，`t²(3−2t)`），关键帧是 `risingKeys` / `settingKeys` 各 5 档（−18° / −11° / 2° / 20° / 42°），`dayness` 同表插值。
+- 颜色生成：每个时段一组三段停靠色（`clearBands`，见下方逐时段表），天气再叠加自己的 `dayTint` / `nightTint` 与 `amount[0/55/100]`：`stop = exposure × mix(clearStop, mix(nightTint, dayTint, dayness), amount)`。地平线节点的 amount 较小，所以阴雨天在日出日落时仍会**透出暖色**。
 
 | 天气 | dayTint | nightTint | amount（0% / 55% / 100%） | exposure |
 | --- | --- | --- | --- | --- |
@@ -440,11 +425,9 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 | 部件 | 材质 | 模糊 | 填充 | 描边 | 阴影 | 圆角 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 卡片外壳 | 无（天空即内容） | — | — | 1pt 渐变描边（§6.2）+ 内侧 0.5pt `#FFFFFF @ 10%` 内框（inset 1pt） | 浅：`#1B2A4A @ 14%, r 40, y 18` + `@ 8%, r 8, y 2`；深：`#000 @ 45%, r 48, y 20` | 32pt continuous |
-| 窗台 | macOS 26：`.glassEffect(.regular.tint(...))`；macOS 15：`.ultraThinMaterial` | 系统（等效 ≈ 30pt） | 浅 `#FFFFFF @ 38%`；深 `#0A1426 @ 42%` | 顶部 0.5pt `#FFFFFF @ 35%` 高光线 | 无（依附于卡片） | 与卡片共享下圆角 32pt，上边直角 |
-| 窗台胶囊 | 无额外材质 | — | 浅 `#1B2331 @ 6%`；深 `#FFFFFF @ 8%`；悬停 +4% | 无 | 无 | 15pt（胶囊） |
-| 预报气泡（悬停展开） | 玻璃 | 24pt | `#0A1426 @ 28%` | 0.5pt `#FFFFFF @ 28%` | `#000 @ 22%, r 24, y 12` | 18pt |
-| 卡片表面雨滴 | 折射（`distortionEffect`） | — | 高光点 `#FFFFFF @ 70%` | — | 底部 1px `#000 @ 18%` 接触阴影 | — |
-| 问候语玻璃 | 见 §3.3 | 折射偏移 6pt | — | 0.6pt 方向性边缘光 | 光晕 + 落影 | — |
+| 窗台 | macOS 26：`.glassEffect(.regular.tint(...))`；macOS 15：`.ultraThinMaterial` | 系统 | 浅 `#FFFFFF @ 38%`；深 `#0A1426 @ 42%` | 顶部 0.5pt `#FFFFFF @ 35%` 高光线 | 无（依附于卡片） | 与卡片共享下圆角 32pt，上边直角 |
+| 卡片表面雨滴 | 折射（`glassDrops()`，shader 内） | — | 高光点 `#FFFFFF @ 70%` | — | 底部 1px `#000 @ 18%` 接触阴影 | — |
+| 问候语 | 见 §3.3 | — | — | 方向性边缘光 | 落影 + 光晕 | — |
 
 深度规则：离观察者越近 → 模糊越少、描边越亮、阴影越短。卡片内部**只允许一层玻璃**（窗台），不再有嵌套卡片。
 
@@ -452,170 +435,114 @@ Canvas 天空是这一轮取代掉的实现，两者已删除；`WeatherBackdrop
 
 ## 8. 动效设计
 
-全局曲线定义：
+### 8.1 入场（`rewrite` / `replayEntrance`）
 
-| 名称 | 参数 |
+没有分层编排。入场的全部状态是 `AtmosphereRenderer` 里的三个时钟：
+
+- `entrance = min(1, (now - sinceAppear) / 0.9)`：合成时对整幅画面做 `mix(0.3, 1.0, entrance)` 的曝光渐显（0.9 s）。
+- `writeStart = appeared + 0.45`：笔落下前留 0.45 s 的天空显影时间；`rewrite()`（点问候语 / 空格 / 换字体）只把 `writeStart` 拨到 `now + 0.08`，天空不动。
+- 书写推进由纹理 G 通道驱动（见 §3.1）：`reveal = (now - writeStart) / writeDuration` 对应 `0…phraseShare`（问候）与 `nameStart…1`（名字）——**没有逐字形动画、没有 `TextRenderer`、没有描边扫光**。
+
+入场频率：`AtmosphereController.lastEntrance` 记录上次播放，30 分钟（1800 s）内切回页面只显示已完成的问候语（`skipEntrance()`）。
+
+### 8.2 天气切换过渡
+
+`Input.scene` 变化时，`AtmosphereRenderer` 把上一帧的场景记为 `fadeFrom`、新场景记为 `shownScene`，在 `weatherFade = 1.2 s` 内用 `SkyScene.mix`（对每个连续量做 smoothstep）插值；淡变期间 `boost(for:)` 让视图回到显示器满帧率。时刻变化不需要淡变——它本来就是连续量。
+
+### 8.3 问候语常驻微动效
+
+- **云影**：问候语着色直接乘 `(1 - cloud × 0.10)`，云层在字上留 10% 的影（§3.3）。
+- **笔尖湿墨**：书写推进时笔后墨迹短暂提亮（`exp(-(front - g.y) × 30)`）。
+- 换成字体时 `controller.rewrite()` 重写一遍（`typeface` 的 `.onChange`）。
+
+### 8.4 视差（指针）
+
+- 输入：`AtmosphereMTKView` 的指针跟踪区，归一化到 `pointerNormalized ∈ [−1, 1]²`（`Input.pointerNormalized`）。
+- 偏移：`target = SIMD2(-x × 24, -y × 14)` pt，每帧平滑 `parallax += (target - parallax) × (1 - exp(-dt × 7))`——一阶低通，等价于约 0.14 s 的时间常数。
+- 各层的视差系数见 §5.2；问候语取 `par × 0.4`，玻璃雨滴用指针位置做"擦掉"（`wipe = smoothstep(36, 80, length(pt - pointer))`）。
+
+### 8.5 点击与键盘
+
+| 手势 | 行为 |
 | --- | --- |
-| `sky.slow` | `.timingCurve(0.4, 0, 0.2, 1, duration:)`（电影式缓入缓出） |
-| `ink.spring` | `.spring(response: 0.55, dampingFraction: 0.82)` |
-| `snap.spring` | `.spring(response: 0.32, dampingFraction: 0.72)` |
-| `soft.bounce` | `.spring(response: 0.6, dampingFraction: 0.62)` |
+| 点击问候语 / 空格 | `rewrite()`：把笔重新落下写一遍；`sensoryFeedback(.alignment)` |
+| 点击天空其余位置 | `controller.ripple(at:)`：一圈光的涟漪（着色器里 `exp(-((d - R)/16)²)` 的环形偏移 + 提亮，`age` 超过 1.1 s 结束），涟漪的光色按场景（雨 / 雪 / 夜 / 日间）取一档 |
+| ← / → | `adjustSky(by: ∓3600)`（自动）或 `nudgeManual(∓60)`（手动），`sensoryFeedback(.levelChange)` 按跨过的小时触发 |
+| Esc | 清除 pinned day / `returnToNow()` |
+| 拖动天空 | ±12 h 预览（见 §5.6），松手后 `returnToNow()` 0.75 s 三次缓出 |
 
-### 8.1 入场编排（首次出现 / 页面切回）
-
-| t (ms) | 事件 | 时长 | 曲线 |
-| --- | --- | --- | --- |
-| 0 | 天空从 `exposure 0.4, blur 20` 显影到正常（像睁眼） | 900 | `sky.slow` |
-| 150 | 云层从 1.08 倍缩放回 1.0（镜头推近后回拉） | 1400 | `sky.slow` |
-| 300 | 天体从地平线下方 12pt 升到当前位置，光晕半径从 0 展开 | 1100 | `ink.spring` |
-| 450 | 问候语逐字形入场（`TextRenderer`）：每个字形 `blur 12→0、y +18→0、opacity 0→1`，字间延迟 35ms | 每字 700 | `ink.spring` |
-| 450 + n×35 + 200 | 问候语边缘光从左到右扫过一次 | 600 | easeOut |
-| 1100 | 签名用 Snell 描边书写（沿用 `ScriptOutline.trim`），结尾尾迹（`SignatureRibbon`） | 1200 | easeInOut |
-| 1300 | 铭文（时钟、气象）淡入 `opacity 0→1, y −6→0`，左右两组相隔 80ms | 500 | `snap.spring` |
-| 1500 | 窗台从下方 16pt 升起，胶囊依次亮起（间隔 40ms） | 600 | `ink.spring` |
-| 1700 | 降水 / 粒子从 0 密度渐入满密度 | 1500 | linear |
-
-同一会话中切页返回时只播放 0 / 1300 / 1500 三步（≤ 600ms），完整入场每天只播一次，保持"事件感"。
-
-### 8.2 天气切换过渡（数据刷新导致天气变化）
-
-1. 旧粒子密度 → 0（800ms，linear），同时新 coverage 开始插值；
-2. 天空色 12 个节点逐个插值（2400ms，`sky.slow`），由天体一侧向对侧推进（shader 中 `mix(old, new, saturate(progress × 1.6 − distanceFromBody))`），形成"天气从远处移过来"的锋面感；
-3. 新粒子从风的上游方向进入（1200ms 延迟后，1500ms 渐入）；
-4. 晴 → 雨时，问候语边缘光 800ms 熄灭，光晕减弱；雨 → 晴时，问候语做一次 600ms 的"放晴"高光扫过。
-
-### 8.3 问候语微动效（常驻，极克制）
-
-- **呼吸光**：边缘光强度 `0.8 ± 0.08`，周期 7s，sin 曲线；只在晴 / 多云 / 夜晚开启。
-- **云影掠过**：中云层的密度场在问候语上投下阴影，文字亮度随之 `−0 ~ −14%` 变化（由 shader 采样同一密度场，不额外计算）。
-- **字形追光**：指针悬停在问候语上时，边缘光方向在 400ms 内（`ink.spring`）从天体方向转向指针方向，离开后 900ms 回归。
-- **时段换句**：如 17:59 → 18:00，旧句逐字向上 `blur 0→10、opacity 1→0`（字间 25ms），新句按入场方式写入，总时长 ≈ 1.6s。
-
-### 8.4 视差（替代陀螺仪）
-
-- 输入源：`onContinuousHover` 的归一化指针 `p ∈ [−0.5, 0.5]²`，以及窗口在屏幕中的位置（`NSWindow.frame` 中心相对屏幕中心，权重 0.3，拖动窗口时天空轻微移动，像透过真实窗户看天）。
-- 平滑：一阶低通 `v += (target − v) × 0.12` 每帧；指针离开后 `ink.spring` 回零。
-- 偏移：每层 `offset = p × (24pt, 14pt) × 视差系数`（§5.2）；问候语另加 `rotation3DEffect(±1.2°)`，`perspective 0.4`。
-- 接口：`protocol TiltSource { var tilt: CGVector { get } }`，macOS 实现为 `PointerTiltSource`；如移植 iOS，接入 `CMMotionManager.deviceMotion`（60Hz，`attitude.roll/pitch` 限幅 ±12°）。
-
-### 8.5 雨滴打在卡片上
-
-- 雨天时 L7 层每 0.4–1.2s 生成一颗"卡片玻璃上的雨滴"（大雨时 0.15–0.5s），上限 48 颗。
-- 雨滴：半径 2–7pt，落点随机；落下时 120ms 从 0 放大到 1.0（`snap.spring`）+ 一圈 0.5pt 环形涟漪（260ms 扩散到 3×半径并淡出）。
-- 半径 > 5pt 的雨滴在 2–6s 后开始下滑，速度 12–40pt/s，路径加 `sin` 抖动，身后留下 1.2s 衰减的湿痕（折射强度 0.3）。
-- 折射：`distortionEffect` 以雨滴为透镜，采样偏移 `−normal × r × 0.6`，所以透过雨滴看到的天空是**倒影**。
-- 交互：指针划过雨滴时雨滴被"拨开"（沿指针方向 80pt/s 滑走）；点击卡片空白处，点击点 60pt 半径内的雨滴合并成一颗大滴并立刻下滑。
-
-### 8.6 点击与长按
-
-| 手势 | 反馈 | 参数 |
-| --- | --- | --- |
-| 点击天空空白处 | 点击点产生一圈光的涟漪（晴：金色；夜：星尘向四周散开 12 颗；雨：雨滴合并；雪：雪花被吹开） | 700ms，`soft.bounce`；触控板震动 `.sensoryFeedback(.alignment)` |
-| 点击问候语 | 问候语整体 `scale 1 → 0.985 → 1`，边缘光闪亮一次；aside 切换到"今日天文小事"（如"今日白昼 12h04m，比昨天短 1m51s"） | `snap.spring` |
-| 长按天空（≥ 0.45s） | 进入"时光漫游"：卡片略微压暗（−8%），窗台沉下 8pt，出现一条细时间轴；水平拖动预览 ±12h（复用现有 `timeOffset` 逻辑） | 进入 350ms `ink.spring`；过程中每跨过 1 小时 `.sensoryFeedback(.levelChange)` |
-| 松开 | 天空"倒带"回现在（现有 0.75s 立方缓出），天体沿真实轨迹返回而非直线 | 750ms |
-| 悬停气象铭文 | 预报气泡从右上浮出 `scale 0.94→1, opacity 0→1, y −6→0` | 280ms `snap.spring`，延迟 250ms 防误触 |
-| 悬停窗台 | 窗台展开为完整 dock | 420ms `ink.spring`，延迟 350ms；离开 600ms 后收回 |
-
-### 8.7 数值变化动画
-
-- 温度、Token、百分比：`.contentTransition(.numericText(value:))` + `ink.spring`；数字上升时从下滚入，下降时从上滚入。
-- Token 大幅增长（≥ 5%）：数字右侧 `↑` 做一次 `symbolEffect(.bounce)`，不重复。
-- 温度变化 ≥ 1°：温度数字颜色短暂偏暖 / 偏冷 600ms（`#FFD58A` / `#A9D4FF` @ 40% 混合）再回归。
-- 额度环：`trim` 插值 900ms `sky.slow`。
+预报表的悬停（`hoveredDay`）与窗台胶囊的展开各自有独立的短延迟（`SillChip` 140 ms 驻留），不在 Metal 层。
 
 ---
 
 ## 9. 状态矩阵（时段 × 天气）
 
-表内记号：☀ 太阳可见度、☾ 月亮与星空可见度、☁ 云覆盖、⚡ 特效、✎ 问候语材质变化。
+表内记号：☀ 太阳可见度、☾ 月亮与星空可见度、☁ 云覆盖、✎ 问候语材质变化。每格只写实现里能指到机制的事（`SkyScene.looks` 的 cover / darkness / clarity 与 `weather` 的降水表、`sunColor` 的色温、云层的光照模型、`glassDrops` / 底片）。
 
 | 时段 \ 天气 | 晴 | 多云 | 阴 | 小雨 | 大雨 | 雷暴 | 雪 | 雾 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **深夜** | ☾ 满星空 + 月相；✎ 月光冷边缘光 | ☾ 星空 50%，月亮在云隙间透光 | 无天体，云底被城市光映成 `#2A2438` | 远雨丝，玻璃雨滴；✎ 光晕 0.08 | 雨幕 + 溅射，天空几乎全黑 | 闪电照亮云体结构；✎ 闪电时被照亮 | 雪地反光，天空偏亮；✎ 霜边 | 月亮成柔光斑，雾在底部流动 |
-| **黎明** | 星星渐隐，东方地平线紫粉 | 云底被下方染成粉紫 | 灰紫，无天体 | 冷灰蓝雨丝 | 深灰，雨幕 | 远处无声的云内闪 | 蓝调雪景 | 高度雾最浓，天体不可见 |
-| **日出** | ☀ 放大 1.35×、2200K；god rays；✎ 金色边缘光 | 云边银边 + god rays（最佳画面） | 地平线一道暖缝 | 暖色被雨雾化成柔光 | 仅地平线 5% 暖色 | 暗色云底 + 暖色缝隙对比 | 雪花被逆光照亮成金色 | 太阳成橙色圆盘（无光晕，可直视感） |
-| **上午** | ☀ 5000K，尘埃粒子逆光可见 | 两层云漂移，云遮日事件 | 均匀漫射，对比 × 0.8 | 近景虚焦雨滴从字前划过 | 雨幕横扫 | 闪电 + 雷暴云砧 | 三层雪花，最大密度 | 雾开始"抬升"，远景渐显 |
-| **正午** | ☀ 最小最亮、5800K；✎ 边缘光在顶部 | 云影掠过问候语最明显 | 最亮的灰 | 雨丝最透明 | — | — | 高光雪 | 雾最薄 |
-| **午后** | ☀ 色温渐暖，地平线米色 | 积云体积感最强（光线侧射） | 暖灰 | 雨后可能出现彩虹（彩蛋 3） | — | 下午雷暴高发，闪电频率 ×1.3 | — | — |
-| **日落** | ☀ 放大、2200K；天空粉橙；✎ 光晕 0.34 最强 | 云被染成橙红（火烧云） | 地平线一道暗红 | 暖色雾化 | 地平线暗橙 | 橙色闪电背光 | 粉紫雪 | 太阳成暗红圆盘 |
-| **黄昏** | 金星（最亮星）先出现，蓝紫 | 云转为深紫剪影 | 深灰紫 | 城市光反射 | 深 | 闪电在紫色天空中 | 蓝紫雪景 | 雾反射城市光，偏橙灰 |
+| **深夜** | 满星空 + 月相；问候语按 `prefersDarkInk` 取白墨 | 星空按 `starClarity = 0.65` 减半，月亮在云隙间透光 | 无天体，云底取 `nightBellyTop` 的冷灰 | 细底片雨，玻璃雨滴 `drops = 0.55` | 粗底片 + 玻璃雨滴 `drops = 1` | 闪电照亮云体（`lit = 0.08 + …`），云底提亮 | 雪底片在暗夜空反出微光 | 月亮成柔光斑（`u.moon.w` 低），雾在下半部最浓 |
+| **黎明** | 关键帧在 `night`→`dawn`（−18°→−11°）之间，地平线转紫粉 | 同关键帧，另叠 `dayTint` | 灰紫，天体被 `clarity = 0.28` 压低 | 冷灰蓝雨丝 | 深灰，雨速 `mix(210, 340, amt)` | 远处云内闪（`bolt` 未抽中 60% 时） | 雪 + 冷调地平线 | 高度雾（`fog = 1`）最浓 |
+| **日出** | 太阳半径 ×(1 + 0.35 × lowSun)、色温 `#FF8A4C`→`#FFB86B`；边缘光最强 | 云边银边（`proxy` 项） | 地平线透出 `mix` 后的暖色 | 暖色被雾化（雾 0.28） | 仅地平线保留一丝暖色 | 暗色云底 + 暖色缝隙对比 | 雪花被低角度光染暖 | 太阳成橙色圆盘、无盘面细节（雾 1） |
+| **上午** | 关键帧 `morning`，太阳 `#FFE3A8`→`#FFF6E0` | 云层按 5 octave 步进，银边随 `lightVis` | 均匀漫射（`darkness = 0.42`） | 近景虚焦雨丝从字前划过 | 雨速更快（`speed × (1 + thunder × 0.16)`） | 闪电通道 + 云底照亮 | 三层底片雪，`snow = 0.85` | 雾开始变薄（`fog` 由天气决定） |
+| **正午** | 太阳最小最亮、`#FFF6E0`；`prefersDarkInk` 可能翻到深墨 | 云影在问候语上留 10% 影 | 最亮的灰（`exposure = 0.92`） | 雨丝最透明（细底片 α 低） | — | — | 高光雪（`exposure = 1.04`） | 雾最薄 |
+| **午后** | 关键帧 `afternoon`，地平线米色 | 积云体积感最强（光线侧射） | 暖灰 | 雨后可能出现彩虹（§11） | — | 闪电通道频率与其余天气一致（无 ×1.3 一类加成） | — | — |
+| **日落** | 太阳半径放大、色温 `#FFB86B`；天空粉橙 | 云被 `sunColor` 染成橙红 | 地平线一道暗红 | 暖色被雾化 | 地平线暗橙 | 橙色闪电背光 | 粉紫雪 | 太阳成暗红圆盘 |
+| **黄昏** | 关键帧 `dusk`，蓝紫 | 云转为深紫剪影 | 深灰紫 | 城市光在湿底片上的冷反射 | 深 | 闪电在紫色天空中 | 蓝紫雪景 | 雾反射城市光，偏橙灰 |
 
 ---
 
 ## 10. 性能与无障碍
 
-### 10.1 帧率与预算
+### 10.1 帧率与手段
 
-| 场景 | 目标帧率 | GPU 预算 / 帧（M1，1100×430 @2x） |
-| --- | --- | --- |
-| 晴 / 夜空 | 30 fps（无粒子时天空变化慢，30 足够） | ≤ 1.2 ms |
-| 多云 / 雾 | 30 fps | ≤ 2.0 ms |
-| 雨 / 雪 / 雷暴 | 静止 30 fps；底片滚动，云层半分辨率（见 §5.7） | 含云 ≤ 0.45 ms，只合成 ≤ 0.35 ms（M3 Pro 实测） |
-| 交互中（拖动、视差、书写） | 显示器刷新率（见 §5.7） | 前景通道；云层见 §5.7 |
-| 闲置（窗口在后台 / 不可见） | 0（`paused: true`） | 0 |
+帧率策略（`retime()` / `restingRate` / `skyDue`）见 §5.7。手段：
 
-手段：着色器内体积云以 **半分辨率** 计算后双线性放大（`layerEffect` 外包一层 `.drawingGroup()` + 缩放）；fBm 用预烘焙的 256² 噪声纹理替代实时哈希；雨丝完全程序化（按列哈希），不存在 CPU 粒子数组；卡片玻璃雨滴是唯一 CPU 状态，≤ 48 个。
+- 体积云画在**半分辨率**的 `skyTexture` 上，合成时由线性采样放大（同一 `MTKView` 的第二次绘制，不是 `.drawingGroup()`）。
+- fBm 用预烘焙的 **256²** 可平铺噪声纹理（64 格）替代实时哈希；雨雪是启动时烘焙的底片；没有 CPU 粒子数组，玻璃雨滴也只是 shader 里的格子哈希（`glassDrops()`），没有每滴状态。
+- 着色器只省必然为零的计算：星点距像素 > 24 pt 直接跳过，地平线以下不采样卷云 / 云层噪声。
 
 ### 10.2 降级梯度
 
 | 条件 | 措施 |
 | --- | --- |
-| 窗口不可见（`surfaceIsVisible == false`） | 天空不绘制，天文任务退出（已有） |
-| 窗口非活跃（后台） | 帧率 ÷ 2，关闭卡片雨滴与 god rays |
-| 低电量模式（`isLowPowerModeEnabled`，监听 `NSProcessInfoPowerStateDidChange`） | 最高 15 fps；云只保留 1 层、步进 5→2；关闭星星闪烁、玻璃字折射层、卡片雨滴；粒子数 × 0.4 |
-| `thermalState ≥ .serious` | 同低电量 + 降水 8 fps |
-| 电池供电且未插电 | 降水上限 30 fps |
+| 窗口不可见（`occlusionState` 不含 `.visible`）或不在活跃页 | `isPaused`、`enableSetNeedsDisplay`，不绘制 |
+| 低电量模式 / 热压力（`isLowPowerModeEnabled`、`thermalState ≥ .serious`） | 云层 15 Hz；交互（笔 / 淡变）时 30 Hz；静止帧率 `min(resting, 15)` |
+| Reduce Motion | 走 `AtmosphereStill`（`snapshot()` 的一次性 `CGImage`，输入 / 尺寸 / 缩放不变就不重绘） |
 
 ### 10.3 Reduce Motion
 
-- 天空改为 `MeshGradient` 静态画面，云、雾冻结在固定相位（已有逻辑沿用）；降水以**静止的斜线纹理**表达，不下落。
-- 入场动画替换为 250ms 整体淡入；逐字入场、书写签名、涟漪、雨滴全部关闭。
-- 视差、字形追光关闭；数值变化改为直接替换（`.identity`）。
-- 闪电改为**无闪烁**的云体局部 1.5s 缓亮缓暗（避免光敏风险），同时遵守 WCAG 2.3.1：任何情况下闪烁 ≤ 3 次/秒，大面积闪光亮度变化 ≤ 20%——雷暴主闪只提亮云底区域，不做全卡片白闪。
+- 天空改为 `AtmosphereStill` 的静帧（同一渲染器的快照，`lightning(still:)` 用固定闪电，雷暴静帧每次一致）。
+- 书写入场、涟漪、视差不播放：`Input.reduceMotion` 为真是 `writing` 恒 false，`rewrite()` / `ripple()` 的调用点也先看 `reduceMotion`。
+- 数字与图形过渡：`reduceMotion ? nil : …` 的 `withAnimation` 直接落到终值（`UsageAnalyticsSection` 与 `SunPath` 等同一约定）。
 
 ### 10.4 Reduce Transparency / 对比度
 
-- Reduce Transparency：问候语关闭折射，改为实色 `#FFFFFF` + 落影；窗台改不透明 `#EEF3F8` / `#1C222B`。
-- Increase Contrast：辅层不透明度 58% → 80%，问候语局部遮罩强制开启且强度 × 1.6，外框描边 1pt → 1.5pt。
-- 对比度校验：运行时对问候语包围盒区域的天空平均亮度采样（取 §6.1 渐变在该位置的解析值，无需读回 GPU），保证问候语 ≥ 4.5:1、辅层 ≥ 3:1（大号文字标准），不足时按差值提升局部遮罩强度。
+- Reduce Transparency：`SillGlass` 改不透明填充 `#141B28`（窗台与右上 HUD）。
+- 问候语的可读性由 shader 自身的遮罩（§3.3 的 `shadeAmt` 与 `darkInk` 切换）保证：`prefersDarkInk` 在天空亮度越过 0.18 时把墨色从白转为深海军蓝（`inkDark = (0.08, 0.12, 0.2)`），不是靠外部遮罩层。
 
-### 10.5 Dynamic Type / 缩放
+### 10.5 缩放
 
-macOS 没有 Dynamic Type，但尊重 **系统设置 › 辅助功能 › 显示 › 文字大小** 与 App 内缩放：辅层字号以 `@ScaledMetric(relativeTo: .caption)` 定义；主层问候语由卡片宽度决定，不随文字大小放大，但辅层放大导致铭文行宽超过 col 9–12 时，铭文自动换为两行 → 仍超出则问候语字号按比例让出（下限 64pt）。
+macOS 没有 Dynamic Type。问候语字号由 `GreetingTypesetter` 在自由带里二分求解（§3.2），卡片变窄时字号随之收缩；名字 18–28pt。文字大小辅助设置不改变这张卡的字号——它是按可用的几何空间排的。
 
 ### 10.6 VoiceOver
 
-- 背景全部 `accessibilityHidden(true)`。
-- 读序：问候语 + 名字（一句话："Good afternoon，Xiajun Wang"）→ 时间日期 → 天气（"广州，29 度，多云，体感 32 度，湿度 78%，东南风 3 级"）→ 窗台各项。
-- 时光漫游保留现有 `accessibilityAction`（前一小时 / 后一小时 / 回到现在）。
+- 背景全部 `accessibilityHidden(true)`（`AtmosphereSurface` 与 `FallbackSky` 都如此）。
+- 读序：问候语 + 名字 → 时间日期 → 天气 → 窗台各项。
+- 天空上的拖动/键盘操作保留 `accessibilityAction`（"前一小时" / "后一小时" / "回到现在"，`scrub` 为真时可用）。
 
 ---
 
-## 11. 亮点与彩蛋
+## 11. 场景联动（读数据触发的天象）
 
-1. **字在天空里，雨在字前面。** 问候语是一块会折射天空的玻璃，处在云层和近景雨丝之间：云影从字面掠过，雨丝从字前划过，日落时字的一侧被染成橙色边缘光。多数天气卡是"天气图 + 文字贴片"，这张卡里文字本身就是场景的一部分。
-2. **窗户玻璃上的雨。** 下雨时，卡片表面会积起真实折射的雨滴（透过雨滴看到倒过来的天空），大滴会带着湿痕滑落，用指针可以把它们拨开。这是整张卡最有"触感"的地方。
-3. **稀有天象。** 基于真实数据触发，不随机：
-   - **彩虹**：午后、太阳高度 < 42°、刚从雨转晴（上次读数是雨、这次是晴或多云），在太阳对侧画一道 42° 半径的彩虹弧，持续到下次刷新；
-   - **满月夜**：月相 0.48–0.52，月亮带 22° 月晕环，aside 显示 `full moon tonight`；
-   - **流星雨**：英仙座（8/12–13）、双子座（12/13–14）、象限仪座（1/3–4）峰值夜，晴夜每 20–60s 划过一颗流星；
-   - **初雪**：当季第一次出现雪，问候语上方凝一层 1.5s 的霜花，然后化开。
-4. **一日预演。** 长按拖动天空时，太阳和月亮沿**真实轨迹**弧线移动，星空随恒星时旋转；拖到日落可以提前看到今天的晚霞配色（晴天时由 §6.1 推算）。配合每小时一次的触控板震动，像在转动一台天象仪。
-5. **书写与落款。** 每天第一次打开时，问候语逐字"显影"，签名用手写笔迹写出，最后在签名尾部落一枚 8pt 的"印章"：当天农历日期（如"八月初七"），宋体，天光金色，55% 不透明。每天只出现一次。
-6. **声音（默认关闭）。** 设置中可开启极轻的环境声，雨声、雷声的音量与粒子密度同步，最大 −28 LUFS；窗口失焦时 1.2s 淡出。
+三件按真实数据 / 日期触发的事，都不是随机：
 
----
+1. **彩虹**：`GreetingCard` 的 `.onChange(of: reading?.sky)` 在「上一次是雨 / 毛毛雨 / 雷暴，这一次是晴 / 少云」时置 `rainbowUntil = now + 1800`（30 分钟）；`rainbowVisible` 再要求太阳高度在 3°–42° 且当前 `scene.rain == 0`。着色器把弧心放在太阳的反方向（`anti = (1 - sun.x, …)`），主带在离弧心 `40.3°` 处（`band = (rr - 40.3) / 2.4`），只画地平线以上（`uv.y < HORIZON`）。
+2. **流星雨**：`SkyEvents.meteorShower(on:in:)` 认象限仪座（1/3–4）、英仙座（8/11–13）、双子座（12/13–14）的峰值夜；命中时流星间隔从 `70–160 s` 收紧到 `12–40 s`，其余条件（晴夜、`starVisibility > 0.5`）不变。
+3. **月相**：`SkyScene.moonPhase` 直接来自 `SkyAstronomy.snapshot`，驱动月亮盘的明暗分界（§5.5）；没有单独的月晕 / 满月彩蛋——`GreetingPhrase` 里 `full moon` 只作为中秋等节日的文案存在。
 
-## 12. 实施顺序与验收
+## 12. 实现状态
 
-| 阶段 | 内容 | 验收 |
-| --- | --- | --- |
-| P1 布局 | 信息合并、层级、窗台折叠 / 展开；失败态改为推算晴空 | `Tools/render-greeting-preview.py` 生成的 1100 / 620 宽预览中，问候语是唯一的大字元素 |
-| P2 配色 | `SkyPalette` 改为 §6.1 参数化公式（8 时段 × 8 天气） | 回归测试覆盖 64 组节点色值 |
-| P3 着色器 | `Sky.metal`：渐变、散射、体积云、天体遮挡；build.sh 增加 metallib 编译步骤 | 在 M1 上用 Instruments（Metal System Trace）实测每帧耗时不超过 §10.1 的预算 |
-| P4 降水 / 雾 / 雷暴 | 着色器粒子 + Canvas 闪电 + 卡片雨滴 | Reduce Motion、低电量两种降级截图对照 |
-| P5 问候语材质 | TextRenderer 入场 + layerEffect 玻璃字 | 对比度采样在 64 组配色下全部 ≥ 4.5:1 |
-| P6 动效 / 彩蛋 | §8、§11 | 手动检查清单：指针、键盘、VoiceOver、可见性 |
+本文只覆盖已在 `Sources/ClaudeBar/Views/Shared/Atmosphere/` 与 `GreetingCard.swift` 中可验证的机制。设计早期提出但没有进入实现、也不再计划的内容——问候语印章、环境声、初雪的霜花、"时光漫游"的长按时间轴、`MeshGradient` 降级、god rays、`TiltSource` / CoreMotion 预留、逐字形入场——已从本文移除；如未来要做，应以新的设计说明重新提出。
 
-预览中的"符合预算"只代表在测试机上满足；帧耗时以真机 Instruments 数据为准，本文不承诺未经测量的性能。
+预览验证：`Tools/render-greeting-preview.py`（静态预览，参数见脚本）与 `Tools/bench-atmosphere.py`（帧耗时）。预览只覆盖渲染出的记录与窗口尺寸，不执行应用生命周期或真实天气刷新。

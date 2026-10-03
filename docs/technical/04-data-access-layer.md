@@ -16,13 +16,11 @@
 
 ## `SettingsManager` — settings.json 读写
 
-**读**：`JSONSerialization` 解析为 `[String: Any]`，取 `env` 字典构造 `EnvConfig`（缺字段默认 `""`）。返回 `EnvConfig?`（B11 简化：原先返回 `(env, raw)` 元组，但 `raw` 通道无调用方使用，已删除；`writeSettings` 内部自行重读文件取 raw）。
+**读**：`readSettings()` 用 `JSONSerialization` 解析为 `[String: Any]`，取 `env` 字典构造 `EnvConfig`（缺字段默认 `""`）。返回 `EnvConfig?`（B11 简化：原先返回 `(env, raw)` 元组，但 `raw` 通道无调用方使用，已删除；`writeSettings` 内部经 `readDocument()` 自行重读整份 JSON 以保留其他顶层字段）。
 
-**写**：关键在于**不破坏用户手改的配置**：
-1. 先 `readSettings()` 取旧 env。
-2. `preserve(newValue, existing)`：新值非空用新值，否则保留旧值，都空则空。这避免空字段覆盖用户已有 token。
-3. 保留 settings.json 的其他顶层字段（`permissions`、`enabledPlugins` 等）——先读现有 JSON 再替换 `env` 键。
-4. `JSONSerialization` 会把 URL 中的 `/` 转义成 `\/`，写回前字符串替换修复，保证 URL 可读。
+**写** `writeSettings(env:)`：先 `readDocument()` 取现有 JSON，`environment(in:)` 取出 `env` 子字典；`EnvConfig` 经 `JSONEncoder` → `JSONDecoder` 折成 `[String: String]` 后，**先按 `managedEnvKeys` 逐键删除旧值，再把非空的新值写回**——空值就是清掉上一个供应商的凭据与开关，不保留旧值；`permissions` 等顶层字段原样保留。随后 `backUpOnce()`（只在第一次写时留一份 `.bak`，已存在则不覆盖），`writeDocument` 用 `JSONSerialization.data(withJSONObject:options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])` 序列化——`.withoutEscapingSlashes` 让 URL 里的 `/` 保持可读，不需要写回前的字符串替换——再交给 `PrivateFileWriter.write`（0600 暂存文件 + `rename` 原子替换）。
+
+`restoreOfficial()` 走同一条链：删掉全部 `managedEnvKeys`，`env` 剩空则整个键移除。
 
 ## `writeWidgetSnapshot()` — 四路冗余写入 + diff（B6）
 
@@ -70,7 +68,7 @@
 
 **数据源**：Cursor 的 `state.vscdb`（SQLite，WAL 模式），表 `composerHeaders`（含 `composerId`、`recency`、`value` JSON、`isArchived`、`isSubagent`）。DB 约 6.5GB，但 `(recency, composerId)` 有索引。
 
-**打开方式**：经共享的 `CursorDB.open()`（`Utils/CursorDB.swift`）——`sqlite3_open_v2` + `SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX`，`busy_timeout 2000`。WAL 允许并发读，不阻塞 Cursor 的写入。`CursorDB` 同时提供 `textColumn` 文本读取与 `cString` helper，供 `CursorSessionMonitor` 与 `CursorUsageStats` 复用（D2 去重；并消除 B3 的 `map[key]!` force-unwrap）。
+**打开方式**：经共享的 `CursorDB.open()`（`Utils/CursorDB.swift`）——`sqlite3_open_v2` + `SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX`，`busy_timeout 2000`。WAL 允许并发读，不阻塞 Cursor 的写入。`CursorDB` 同时提供 `textColumn` 文本读取与 `cString` helper，供 `CursorSessionMonitor`、`CursorUsageFetcher` 与 `CursorLedgerStore` 复用（D2 去重；并消除 B3 的 `map[key]!` force-unwrap）。
 
 **查询**：读取 `isArchived=0 AND isSubagent=0` 且 `recency` 或 `checkpointAt` 在最近 3 天的 header。先解析运行状态再按忙碌优先排序，列表通常保留 14 个，但全部运行会话必须保留。取消查询前 80 条的硬截断，避免较早提交的长任务被新会话挤掉。查询只扫描小型 `composerHeaders` 索引表，不读取大型 `cursorDiskKV` 消息正文。
 
@@ -91,28 +89,37 @@
 
 本次实机漏报证据与验证范围见 [Cursor 会话监控排查](cursor-session-monitor-investigation.md)。
 
-## `UsageStats` — token 用量扫描
+## `UsageIndex` — token 用量索引
 
-**数据源**：`~/.claude/projects/**/*.jsonl` 的 assistant 消息 `message.usage`。
+**数据源**：Claude Code 的 `~/.claude/projects/**/*.jsonl`（assistant 消息 `message.usage`）与 Codex 的 `sessions` 及 `archived_sessions`（每轮 `last_token_usage`）。第三方（代理）流量不在这里，见下文 `ProxyUsageStore`。
 
-**三级过滤**（性能关键，`~/.claude/projects` 可达数千文件、数百 MB）：
-1. **文件 mtime 预筛**：`contentModificationDate < interval.start` 直接跳过整个文件（消息按时间追加，mtime = 最后写入）。
-2. **UTC 日期字符串粗筛**：ISO 时间戳零填充，前 10 字符字典序 == 时间序。取 `[interval.start-1d, interval.end+1d]`（±1 天 slack 容时区），行首日期不在窗口则跳过，避免 JSON 解析。
-3. **精确解析**：`ISO8601DateFormatter`（线程安全，`DateFormatter` 不是）解析后 `interval.contains`。
+**不再现扫**。旧实现是每次查询用 mtime 预筛 + UTC 日期粗筛 + `concurrentPerform` 并行解析整个项目树；现在每个 transcript 只解析一次，落成 (file, day, model) 汇总行，查询退化为一次 `GROUP BY`。两个后端二选一（设置 → 开启数据库），互不迁移：SQLite `usage-index.db`，或 JSON 的 `logs/usage-files.json` + `usage-rollup.jsonl`。`rollup` 按用户本地时区的日期键记录 `calls` / `input` / `output` / `cache_read` / `cache_create`。
 
-**并行**：`DispatchQueue.concurrentPerform(iterations: n)` 每文件独立解析为 `[String: ModelUsage]`，再合并。`ModelUsage` 累加 `calls`、`inputTokens`、`outputTokens`、`cacheReadTokens`、`cacheCreationTokens`，`totalTokens = 三者输入 + 输出`。
+**增量维护 `updateIndex()`**：`collectTranscripts()` 用 `FileManager.enumerator`（`.skipsPackageDescendants`）一次目录列举取回 mtime/size，逐文件与索引中的记录比较——
 
-**格式化**：`formatTokens` → `38.7M` / `318K` / `942`。
+- mtime + size 都没变：整个跳过。
+- 只追加：从记录的字节 `offset` 起只解析新块（Codex），新行 upsert-with-add；`offset` 停在上一个完整换行，未终止的半行留给下次。
+- 变小或改写：从 0 全量重解析并替换该文件的 rollup，旧数据不会残留；`headHash`（文件头 256 字节的 FNV-1a）用来识别「size 相同但首部已被改写」。
+- 文件消失（含 `archived_sessions` 归档后）：连 rollup 一起删除。
 
-## `CursorUsageStats` — Cursor 历史 token
+**查询与更新的分工**：`fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` / `fetchOfficialCodex` 只查索引，都不走 transcript；`ProviderStore` 先发布缓存结果，再 `updateIndex()`，再发布最终值（`hasCachedData` / `needsInitialBuild` 只用来决定是否显示 spinner）。schema 版本由 `PRAGMA user_version` 管理（当前 10，`migrateIfNeeded`；v7/v8/v10 各重建过一次 Codex 行）。
 
-**数据源**：同一 `state.vscdb` 的 `cursorDiskKV` 表，键 `bubbleId:<composerId>:<bubbleId>`，值 JSON 的 `tokenCount.inputTokens/outputTokens`。
+**两个来源语义**：Claude 的同一个 `message.id` 会分多次追加（partial → final），索引按 message.id 最后一次为准；Codex 的 `token_count` 是累计快照，按事件去重、并用 `turn_context` 的模型 slug 归属到具体模型。
 
-**限制**（经验证）：Cursor 自 ~2026-03 起停止写 token 计数，故近期月无数据；无 per-bubble model 字段。按设计决策，聚合为单条 `ModelUsage(model: "Cursor")`，作为全量值追加到所有周期。
+**格式化**：`UsageStats.formatTokens` → `38.7M` / `318K` / `942`；`UsageStats` 现在只剩周期区间、标签与格式化函数，没有扫描逻辑。
 
-**这条路已经废弃。** 本次实测抽查 `bubbleId:*` 最近 2 万条，`tokenCount` **全部为 0**；
-`~/.cursor/ai-tracking/ai-code-tracking.db` 的 `ai_code_hashes` 只有 model 与行数、**没有 token**。
-Cursor 侧的 token 事实**只能联网拿**，local-first 在这里不成立。
+## `ProxyUsageStore` — 第三方（代理）用量
+
+代理请求的 token 只落在 `ProxyCaptureStore` 的抓包行上，而抓包行按最近 120 条滚动（见下），不能当账本。`ProxyUsageStore` 因此是第三方流量的持久 (day, model) 汇总：`record(model:at:input:output:cacheRead:cacheWrite:)` 在每次代理请求结束时累加，`input` 是扣除了缓存命中后的新输入（`TokenTotals` 先把上游 prompt 数里的命中折出去），查询走 `fetch(startDay:endDay:)`。后端与 `UsageIndex` 同为 SQLite（`proxy-usage.db`）或 JSONL（`logs/usage-third-party.jsonl`）。`UsageIndex.fetch` 会把它的结果并入模型汇总，所以用量环的第三方切片是真实的 token 份额，而不是从被截断的列表上估的。**这份汇总不裁剪**——它就是要留住比抓包窗口更长的历史。
+
+## 抓包留存 — `ProxyCaptureStore` / `CaptureJSONStore`
+
+「流量」页的抓包记录是滚动窗口，不是完整账本：
+
+- **列表上限 `listLimit = 120`**：两个后端都保留最近 120 条；SQLite 侧 `pruneLocked()` 先按 `capture_id NOT IN (最新 120)` 显式删除 payload 行，再删 capture 行（不依赖 `ON DELETE CASCADE`——`foreign_keys` is per-connection，实测关掉时 payload 会永远留下）。
+- **空闲页回收**：`PRAGMA freelist_count` 超过 `vacuumThresholdPages = 8_192`（4096 字节页 → 约 32 MB）才 `VACUUM`，因为 VACUUM 是整文件重写。
+- **孤儿媒体清扫**：每 `300` 秒一次 `sweepOrphanMedia()`，`logs/captures/<id>/` 中既无对应行、mtime 又早于 `-86_400` 秒的目录才删除——间隔内刚创建的目录会被留下。
+- `CaptureJSONStore` 在 `prune()` 里做同样的 120 条截断；`ProxyCaptureStore.loadListIfNeeded()` 把列表读放在后台队列、幂等，只在首次挂载流量页时触发。
 
 ## `CursorLedger` / `CursorLedgerStore` — Cursor 的真实用量与金额
 

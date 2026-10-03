@@ -34,11 +34,14 @@ drawing; it is not a consumer of this language and is not covered by it.
 
 Claude / Cursor / Codex hues remain for identity chips only.
 
-Usage analysis reserves a sequential **viridis** ramp for ordered daily token
-values. Source comparisons and token composition use fixed categorical plot
-colors rather than the heatmap ramp; zero-record days use the neutral well.
-The calendar legend uses the same viridis samples as the cells. See
-[the usage brief](docs/design/surfaces/usage.md) for normalization and data scope.
+Usage analysis keeps a categorical plot palette for its five metrics and the
+Token-composition bar — `UsagePlotPalette` for the metrics, `UsageReportPalette`
+for the bar's four parts (`Views/Shared/UsageAnalytics.swift`) — and the heatmap
+ramp is a single hue's opacity ladder (`Theme.chartPurple`, keyed by opacity
+samples 0.16 / 0.4 / 0.7 / 1.0), not a multi-stop scale: the page uses fixed
+categorical colors, not a sequential ramp. Zero-record days use the neutral well.
+See [the usage brief](docs/design/surfaces/usage.md) for normalization and data
+scope.
 
 Every signal hue has two variants and they are not interchangeable: `Theme.Ink.*`
 is the **text** version (mixed until it clears 4.5:1 on the ice canvas) and the
@@ -119,7 +122,7 @@ ornament is one shape rather than a stack of views.
 | --- | --- | --- |
 | `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
 | `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that travels on the state change. Backs all 16 toggles in the app. The handle **does not stretch** toward its destination on hover — that is geometry moving because the pointer arrived, and the control already states its state; the hover is a lit rim instead. |
-| `ActionButton` | reference CSS pill + `ultimate-3d-btn` | **the one push button**, named by *intent* rather than appearance: `tone:` (`.sparkle` the default, `.neutral` / `.accent` / `.destructive`), `emphasis:` (`.primary` fills solid — one per page at most), `metrics:` (`.regular` / `.large`). Every labelled action in the app is this. `.sparkle` is the **dark plate** (`SparklePlate`): a near-black pill whose identity *is* its own surface, so it does not tint from the caller's hue — it was ported from a reference CSS button (`#1C1A1C`, hover gradient `#A47CF3 → #683FEA`, glow `#9917FF`, 450 ms ease-in-out, hence `Theme.Animation.sparkle`). `.neutral` draws the quiet machined plate instead, for a button that must not punch a dark hole in a card. |
+| `ActionButton` | reference CSS pill + `ultimate-3d-btn` | **the one push button**, named by *intent* rather than appearance: `tone:` (`.neutral` is the default; `.accent` / `.destructive` / `.sparkle` are opted into), `emphasis:` (`.primary` fills solid — one per page at most), `metrics:` (`.regular` / `.large`). Every labelled action in the app is this. `.neutral` (the default) draws the quiet machined plate — a light fill with a hairline — for a button that must not punch a dark hole in a card. `.sparkle` is the **dark plate** (`SparklePlate`): a near-black pill whose identity *is* its own surface, so it does not tint from the caller's hue — it was ported from a reference CSS button (`#1C1A1C`, hover gradient `#A47CF3 → #683FEA`, glow `#9917FF`, 450 ms ease-in-out, hence `Theme.Animation.sparkle`). |
 | `ProviderActionStyle` | `ultimate-3d-btn` | a **historical spelling** of the same button, kept because those call sites pass it positionally. It forwards to `ActionPlateButtonStyle`, so a connector button, a provider card's button and a native `ActionButton` are the same plate and cannot drift. `adaptiveGlassButton()` and `InstrumentButtonStyle` are gone — see the note below the table. |
 | `ChipButton` | `mymiamo` glass menu | a compact *selectable* chip — a state you flip, not an action you fire. Radius 8 rather than a capsule, so a filter row does not read as a row of buttons. |
 | `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
@@ -127,7 +130,7 @@ ornament is one shape rather than a stack of views.
 | `InstrumentMenuLabel` | `mymiamo` glass menu | the same well for a `Menu`'s own label (settings 打开方式, proxy upstream). It is a *label*: the native menu inside a machined tile is Aqua chrome, so this draws the well, the hover rim and the chevron and leaves the press state to the `Menu` that owns the button. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
-| `SourceTriad` / `UsageDaySpark` / `TokenMixStrip` | `NK2552003` stat card | the usage page's three cards, one shape family. `UsageDaySpark` is the **rhythm** chart: one column per bucket at the grain of the selected range (日 → that week by day, 月 → each calendar day, 年 → twelve months, 全部 → months, or years past a two-year span), keeping the reference's two-stop gradient, its top cap dot on the peak and its dashed average guide. `SourceTriad` is the **share** track — one full-width segmented bar where a segment's width *is* its share of the period, with the absolute count on a row beneath (free-floating meters let a 99/1 split and a 50/50 split draw the same picture). `TokenMixStrip` is the stacked input/hit/write/output track. All three spring once when the range changes and stay put when a total ticks inside it. |
+| `TokenMixStrip` | `NK2552003` stat card | the usage page's stacked input / hit / write / output track (`Views/Shared/UsageViz.swift`), also used inside every model card. |
 | `StandbyEmptyState` | — | the one empty state: an inline row, or a centred block with a caption and an action. Replaced five different empty states. |
 
 Two reference elements are deliberately **not** translated, and the reason is
@@ -224,8 +227,9 @@ a slim live bar. Menu-bar status item is a template **ring + bar**.
    its reading in the *shape* of the hardware — a per-core die, per-sub-unit GPU
    columns, capacity wells. See **Machine marks** above.
 3. **Sessions** — popup is one full-width column. Empty tool families omit.
-4. **Usage** — model tokens only (heatmap, source triad, token mix, daily
-   spark, model bars). VPN quota stays on the VPN page.
+4. **Usage** — local model tokens only (a period heatmap, five inline metrics,
+   a token-composition card, then platform / provider / model breakdowns). VPN
+   quota stays on the VPN page.
 5. **VPN CTA** — dark sparkle pill. Live outbound path is a `›` breadcrumb,
    not a decorative metro line.
 6. **Settings** — six purpose-based categories, sidebar navigation and grouped rows; explicit Save / Apply for credentials and ports.
@@ -330,20 +334,24 @@ in an atmospheric sky, with corner instruments and one glass dock along the
 bottom.
 
 - **Typography:** the greeting is drawn from CoreText glyph outlines by
-  `GreetingScript`, in one of **24 selectable script faces** (设置 → 通用 →
-  天气与问候 → 问候字体). Twenty are bundled in `Resources/Fonts` (SIL OFL 1.1 /
-  Apache 2.0, each licence beside its file — see `ASSET-LICENSES.md`); four
-  are the Mac's own (SignPainter, Snell Roundhand, Savoye LET, Zapfino) and
-  are looked up by PostScript name, greyed out when absent. The default,
-  **Borel**, is the only monoline, round-capped face among them, which is what
-  a handwritten greeting is supposed to read as. Monoline faces get an even
+  `GreetingScript`, in one of **53 selectable script faces** (`GreetingTypeface.allCases`;
+  设置 → 通用 → 天气与问候 → 问候字体). **49 are bundled** under the local
+  face library (`FilePaths.greetingFontsDir`; SIL OFL 1.1 / Apache 2.0, each
+  licence beside its file — see `ASSET-LICENSES.md`) and seeded into it by
+  `AppPreferences.prepareGreetingFonts()`; **four are the Mac's own**
+  (SignPainter, Snell Roundhand, Savoye LET, Zapfino) and are looked up by
+  PostScript name, removed/restored only for the bundled ones. The Chinese /
+  Latin split is `GreetingTypeface.chineseFaces` (14 Chinese faces + 39 Latin).
+  The default is **寒蝉圆黑 · 粗体 (chillRoundBold)**, whose rounded, soft
+  strokes sit right for a handwritten greeting. Monoline faces get an even
   round-joined stroke outside the fill — a uniform weight increase that does
   not close the counters of a / e / o; high-contrast faces are not stroked,
   since a hairline plus a stroke is a smudge. Falls back to
   `SnellRoundhand-Bold` if the resources are missing. The name beside it is
   rounded system medium at 18–28pt, with natural 0.015em tracking and the
   authored case preserved; already Latinised pinyin by `MachineIdentity`
-  (`Xiajun Wang`). Long names may drop below the phrase; both clear the instruments. The clock, weather, models and usage keep system type and
+  (`Xiajun Wang`). Long names may drop below the phrase; both clear the
+  instruments. The clock, weather, models and usage keep system type and
   monospaced figures.
 - **Composition:** a 272 / 300pt sky band leaves room around the greeting. The
   clock sits at the upper left with the auto / manual sky toggle under it; the
@@ -359,8 +367,8 @@ bottom.
   continuous quantities (palette, cloud cover, precipitation, fog, starlight)
   over 1.2 s when the weather changes. Ink over the sky does not follow the app
   theme: legibility comes from the shader's own masks and the glyph's drop
-  shadow. `DaybreakGlass` uses native tinted glass on macOS 26 and an
-  `ultraThinMaterial` layer, tint and hairline on macOS 15. Reduce Transparency
+  shadow. `SillGlass` uses native tinted glass on macOS 26 (`glassEffect`) and an
+  `ultraThinMaterial` stack, tint and hairline on macOS 15. Reduce Transparency
   replaces both dock and weather HUD material with an opaque light or dark
   fill.
 - **Readings and actions:** model rows open model management. The dock's Cursor
@@ -428,8 +436,8 @@ The implementation reuses Open-Meteo weather and its wttr.in fallback, plus
 local low-precision astronomy for sun, moon and bright-star placement. Weather
 motion is illustrative. The earlier Canvas implementation and its verification
 background remain in [Weather observatory](docs/design/weather-observatory.md);
-the current specification, including the manual-sky console and the performance
-budget, is [Greeting atmosphere](docs/design/greeting-atmosphere.md).
+the current specification, including the manual-sky console and the frame-rate
+policy, is [Greeting atmosphere](docs/design/greeting-atmosphere.md).
 
 ## Client marks
 
@@ -520,44 +528,37 @@ names, and asserts the drawn name carries no surviving ideograph.
 ## Usage analysis
 
 Usage is a compact Operate surface for exploring recorded token totals. A single
-period toolbar leads into five inline 17pt metrics, then two analytical panels.
-Explanations move into native help rather than permanent metric captions. Panels
-use 14pt padding and 10pt gaps within the existing neutral surface language.
-The initially collapsed 记录明细 disclosure retains platform, provider, model and
-official billing actions.
+period toolbar leads into five inline metrics (`UsageAnalyticsSection.metrics`),
+then two cards. Explanations move into native help rather than permanent metric
+captions. Cards use 16pt padding and 12pt gaps within the existing neutral
+surface language. Below them, 按平台 / 按供应商 / 按模型 lists the details;
+there is no collapsing disclosure.
 
-The activity panel links a dated trajectory to an empirical cumulative
-distribution. Points use viridis for prompt-side cache percentage, with gray
-for an undefined rate; connecting lines link observed statistical buckets and
-imply no hourly sampling. The default long-tail coordinate is asinh(Token / c),
-where c is the positive bucket median, at least 1. It retains zero observations;
-axis labels invert the transform back to Token. 原值 switches to a zero-based
-original-value scale. Both plots are 166pt tall. The alternative daily calendar
-is 174pt tall, retains the latest 366 elapsed dates and uses its own shared
-log1p total-value legend. ECDF percentages include ties and zero buckets at the
-current daily / monthly / yearly grain; hover links both plots.
+The activity card is the **period heatmap** (`UsageHeatmap`): a seven-cell week
+strip for 日, a contribution grid for 月 / 年 / 全部, sized per grain (60 / 132 /
+108pt at page width, 28 / 56 / 56pt compact) and colored as an opacity ladder of
+one hue (`Theme.chartPurple`). Its caption carries the recorded-day count; hover
+reads a day and a click drills down. A source row beneath the grid shows each
+source's brand mark and its share.
 
-The structure panel pairs an annotated Top 8 source-by-model matrix with a
-Lorenz concentration curve. Matrix cells show actual source/model token totals
-under one log1p viridis scale; zero cells are gray. Model shares use all model
-tokens as denominator. The Lorenz curve includes every positive model sorted
-ascending; a dashed equality diagonal and shaded deviation describe concentration.
-Effective model count is inverse Simpson, 1 / sum(p²), across every positive
-model, independent of the Top 8 display cutoff. Viridis authorship and CC0
-color-data credits live in `Sources/ClaudeBar/Resources/ASSET-LICENSES.md`.
+The structure card is the **token composition**: a 12pt segmented bar over
+input / cache read / cache write / output (`UsageCompositionBar` in
+`Views/Shared/UsageAnalytics.swift`), with the cache-hit rate in its header and
+a two-column grid of the four parts beneath, each with its token total and
+share. Zero values keep their label and number on a neutral track.
 
 Day, month and custom periods retain daily observations; year and all-history
 periods aggregate monthly, with all-history switching to years beyond 730 elapsed
 dates. Daily P50 / P95 include elapsed zero-record days and exclude future dates.
 Cache reads divide by input + cache read + cache write; output is excluded.
-Estimated costs and Cursor charges remain separately labelled inside details.
+Estimated costs and Cursor charges remain separately labelled in the model cards.
 No hourly profile, billing history, forecast, savings, density estimate or
 confidence band is inferred.
 
-Ground truth, research sources and interactions live in
-[the usage brief](docs/design/surfaces/usage.md). Verification of this denser
-trajectory / ECDF / matrix / Lorenz implementation is ongoing; earlier successful
-checks of the superseded stacked-bar version do not validate this revision.
+`UsageAnalysis` still computes the distribution, density, calendar, Lorenz and
+effective-model-count series; the current two cards draw none of them, so they
+are not described here. Ground truth and research sources live in
+[the usage brief](docs/design/surfaces/usage.md).
 
 ## Settings
 

@@ -47,7 +47,7 @@ swiftc -o "$MACOS_DIR/ClaudeBar" \
   $(find Sources/ClaudeBar -name '*.swift')
 ```
 
-`-lsqlite3` 用于 `CursorSessionMonitor` / `CursorUsageStats` / `CursorUsageFetcher`（凭据行）直接调用的 C SQLite API。
+`-lsqlite3` 供直接调用 C SQLite API 的文件使用：`CursorDB`（`CursorSessionMonitor` 与 `CursorLedgerStore` / `CursorUsageFetcher` 的 `readCredentials()` 都经它）、`ExternalSessionMonitor`、`UsageIndex`、`ProxyUsageStore`、`ProxyCaptureStore`。
 
 **Widget appex 编译（摘录）：**
 

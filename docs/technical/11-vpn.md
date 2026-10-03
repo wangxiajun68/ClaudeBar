@@ -99,11 +99,18 @@ status item 上三种读数都**不依赖隧道**：电池是这台机器的电�
 
 ## 构建
 
-见 `Sources/build.sh`：`vendor/mihomo/` 拉取 darwin-arm64，打成 `.xz` 拷进包内。压缩档同时**提交在仓库里**
-（`Sources/ClaudeBar/Resources/mihomo-core.xz` 与同目录的 `.version`），发布构建直接复用、不再跑一遍 LZMA；
-版本对不上时自动重打（打出来的一定是当前 vendored 的内核），打完会提示提交。没有 `xz` 且没有归档时退化为内置原始二进制（文件名不带 `.xz`，`VpnManager` 会按扩展名走直接复制那条路径）。
+见 `Sources/build.sh`：默认**不联网**，`build.sh` 直接把提交在仓库里的压缩档
+（`Sources/ClaudeBar/Resources/mihomo-core.xz` 与同目录的 `mihomo-core.version`，当前 `v1.19.31`）
+拷进包内；`VpnManager` 首次运行时经 `XZArchive` 解包，用 `core.stamp` 记大小，避免重复解压。
+`vendor/mihomo/mihomo` 只有显式更新时才拉取：`MIHOMO_UPDATE=1` 从 GitHub 取 darwin-arm64，
+版本对不上时用 `xz` 重打归档（`-9 --lzma2=dict=16MiB`）并提示提交新旧两个文件；
+没有 `xz` 且没有归档时才退化为内置原始二进制（文件名不带 `.xz`，`VpnManager` 会按扩展名走直接复制那条路径）。
+原始内核 54 MB（deflate 压不动），`.xz` 后 13 MB，是包内最大的单个文件。
 
 | 变量 | 行为 |
 |------|------|
-| （默认） | 尝试下载最新 / 钉版本内核 |
-| `MIHOMO_SKIP_DOWNLOAD=1` | 不访问 GitHub，使用已有 `vendor/mihomo/mihomo` |
+| （默认 / `MIHOMO_UPDATE=0`） | 使用提交的 `mihomo-core.xz`，不访问 GitHub |
+| `MIHOMO_UPDATE=1` | 维护者显式更新：访问 GitHub 取最新 / 钉版本内核，重打归档并提示提交（见 [DEVELOPMENT.md](../DEVELOPMENT.md)） |
+| `MIHOMO_UPDATE=1 MIHOMO_SKIP_DOWNLOAD=1` | 更新流程但不下载：用已有 `vendor/mihomo/mihomo` 重打归档；单独设 `MIHOMO_SKIP_DOWNLOAD=1` 而不设 `MIHOMO_UPDATE=1` 没有效果 |
+
+`MIHOMO_UPDATE=1` 还会跳过一次「无变更即复用已验证包」的快速路径（`build.sh` 第 107 行同时看 `CLAUDEBAR_FORCE_REBUILD` 与 `MIHOMO_UPDATE`），确保新内核真的被压包。

@@ -57,7 +57,16 @@ ClaudeBar 是**纯本地**应用：读取本机配置与会话文件，**不上�
 
 ### 特权辅助工具
 
-风扇调速与 TUN 下的 DNS 需要 root，走 `claudebar-fanctl`（setuid root）。安装时会先 `codesign --verify --strict` 校验待安装的内置副本，校验失败即拒绝安装 —— 应用包可被当前用户写入，不校验就等于把「用户可写文件 → root 执行」当成特性。helper 自身启动即校验 `geteuid() == 0`，并把风扇编号钳制到 SMC 上报的 `FNum` 范围内。
+只有两件事需要 root，各走一个专用 setuid helper：
+
+- **风扇写入**：`claudebar-fanctl`（`/usr/local/bin/claudebar-fanctl`，mode 4755）。SMC 读取由 `SMCController` 在进程内只读完成、不需要特权；每一次风扇写入（`FanHelperInstaller.setFanSpeed` / `setAutomatic` / `resetAll`）都交给出这个 helper。
+- **电池充电控制**：`claudebar-batteryctl`（`/Library/PrivilegedHelperTools/com.claudebar.batteryctl`，mode 4755）。
+
+两者都只在用户显式操作时安装一次（管理员授权）：先把内置副本拷进 root 拥有的暂存目录，先校验 SHA-256、再 `codesign --verify --strict` 暂存副本，通过后才 `chown root:wheel` + `chmod 4755` 移入目标路径，校验失败即拒绝安装 —— 应用包可被当前用户写入，不校验就等于把「用户可写文件 → root 执行」当成特性。helper 自身启动即校验 `geteuid() == 0`，并把风扇编号钳制到 SMC 上报的 `FNum` 范围内。
+
+**TUN 下的 DNS 不需要 root**：`VpnSystemProxyController.setSystemDNSNow()` 以当前用户调 `/usr/sbin/networksetup -setdnsservers <service> 223.5.5.5 119.29.29.29`，改之前先把各服务的原值快照进 `.original_dns`，停止时按快照恢复；全程不经过任何特权 helper。
+
+**开发测试版这三样都不做**：DNS 覆盖与两个 helper 的安装 / 探测都在真正触发系统调用的函数里以 `BuildChannel.allowsSystemIntegration` 为第一道闸（dev 为 `false`，release 为 `true`；见 `Sources/Shared/BuildChannel.swift`、`VpnSystemProxyController.setSystemDNSNow()`、`FanHelperInstaller`、`BatteryHelperInstaller`），不是靠 UI 开关或默认偏好。
 
 ---
 

@@ -7,12 +7,12 @@
 
 1. 用户点击供应商瓦片内模型行（或编辑器）→ `ProviderStore.activateModel(providerID:modelID:)`。
 2. `buildEnv()` 用所选 Provider + Model 构造完整 `EnvConfig`。
-3. `SettingsManager.writeSettings(env:)` 读旧 env，用 `preserve()` 合并（空值不覆盖已有值），保留 `permissions` 等顶层字段，写回 `~/.claude/settings.json`（并修复 JSONSerialization 转义的 `\/`）。
+3. `SettingsManager.writeSettings(env:)` 读现有 JSON，按 `managedEnvKeys` 删掉旧值、再把非空的 `EnvConfig` 值写回（空值即清除，不保留），`permissions` 等顶层字段原样保留，`PrivateFileWriter` 0600 暂存 + `rename` 写回 `~/.claude/settings.json`；URL 的可读斜杠靠 `JSONSerialization` 的 `.withoutEscapingSlashes`，不是写后替换（机制见技术文档 [§4](../technical/04-data-access-layer.md)）。
 4. 更新 `activeProviderID` / `activeModelID`，持久化 `providers.json`，刷新余额。
 5. popup 供应商区显示 `FeedbackToast`（如 "DeepSeek / deepseek-v4-pro"，2 秒后淡出）。
 6. Claude Code 与 Codex 独立激活：切换一侧只写该侧配置。共享代理会刷新上游状态，但不会选择另一侧的供应商或模型。
 
-> **设计取舍（`preserve()` 不清空字段，B4）**：`writeSettings` 的 `preserve(newValue, existing)` 在新值为空且旧值非空时保留旧值，目的是"空预设不冲掉用户手填的 settings"。副作用是：从一个有 token 的 Provider 切到另一个未配置 token 的 Provider 时，旧 token 会残留在 `settings.json`。当前通过 `buildEnv()` 在切换时显式写入新 Provider 的 token 来覆盖此风险（激活的 Provider 总是把它的 token 写进去）。若未来需要"切换 Provider 必清旧 token"，需单独引入显式清除逻辑，而非改 `preserve()` 语义（那会破坏手填配置不被冲掉的承诺）。
+> **设计取舍（`managedEnvKeys` 的清除语义，B4）**：`writeSettings` 先删掉全部 `managedEnvKeys`、只把非空的新值写回，所以切换 Provider 时上一个 Provider 的 token / 模型变量会被清掉，而用户手填的**非托管**变量原样保留。已经过时的旧说法是「空值不覆盖旧值、旧 token 会残留」——现在的方向相反：托管的空值就是删除。若以后要保留某一项手填值，应把它移出 `managedEnvKeys`，而不是恢复「空值不覆盖」的语义。
 
 ## 会话监控（2.5s 轮询 + 心跳 + 空闲通知）
 
@@ -27,10 +27,9 @@
 
 ## 用量统计
 
-1. `UsageStats.fetch(in: interval)` 扫描 `~/.claude/projects/**/*.jsonl`。
-2. **三级过滤优化**：① 文件 mtime 早于区间起点则跳过；② 行首 ISO 日期字符串粗筛（±1 天 slack 容错时区）；③ 精确解析时间戳并 `interval.contains`。
-3. 用 `DispatchQueue.concurrentPerform` 并行解析各文件，合并为按模型聚合的 `ModelUsage`（input/output/cacheRead/cacheCreation）。
-4. 追加 `CursorUsageStats.fetch()` 的全量 Cursor token，按总量降序排序。
+1. `ProviderStore.refreshUsage(rescan:)` 在 detached task 上跑：先发布索引里的缓存结果（有缓存时立刻可读），再 `UsageIndex.updateIndex()`，最后再查一遍索引并发布最终值。
+2. `UsageIndex` 是持久化索引，不做现扫：每个 transcript 只解析一次，按 (文件, 天, 模型) 落成汇总行（SQLite `usage-index.db`，或 JSON 后端 `logs/usage-files.json` + `usage-rollup.jsonl`），查询即一次 `GROUP BY`。增量维护按 mtime + size 跳过未变文件、只从字节 `offset` 解析追加块——细节见技术文档 [§4](../technical/04-data-access-layer.md)。
+3. 查询 `UsageIndex.fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` 聚合 `ModelUsage`（input/output/cacheRead/cacheCreation）与按日 `DayUsage`；第三方（代理）流量由 `ProxyUsageStore` 的独立汇总并入，见技术文档 §4。
 
 ## 编辑 Provider（独立窗口 / 主窗口页面）
 

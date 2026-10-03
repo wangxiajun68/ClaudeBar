@@ -252,7 +252,7 @@ ClaudeBar 对 **Wi-Fi / 以太网** 写 `127.0.0.1` + mixed-port（默认 7890�
 
 想看一段时间内真正走了多少字节，用「流量」页的抓包记录，那是本机代理自己的计数。
 
-时间戳只到秒、排序用到达序（跨午夜不会让昨天的行排到今天后面），环形保留最近 1000 行，**只在内存里**——磁盘上的完整记录仍是 `~/Library/Application Support/ClaudeBar/logs/core.log`。
+时间戳只到秒、排序用到达序（跨午夜不会让昨天的行排到今天后面），环形保留最近 2000 行（`VpnDomainLog.limit = 2_000`），**只在内存里**——磁盘上的完整记录仍是 `~/Library/Application Support/ClaudeBar/logs/core.log`。
 
 ---
 
@@ -294,12 +294,9 @@ ClaudeBar 运行时会占用该组合。关掉设置里的「区域截图」即�
 
 ### 改了代码但界面没变？
 
-旧进程仍在运行：
+旧进程仍在运行。**正常退出**该版本（菜单栏图标 → 退出），再 `make run` / `open` 新的构建；不要按进程名整体终止或强制结束进程——安装脚本发现对应版本在运行时会拒绝替换，也是靠用户正常退出完成 VPN 清理。完整流程见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
-```bash
-killall ClaudeBar
-open /Applications/ClaudeBar.app
-```
+若改动的是源文件而 `.build` 里没变化，先确认没有把构建输出当成了安装的目标：`make build` 只构建、不安装、不启动（默认 `dev` 身份，产物在 `.build/dev/`），`make run` 才会启动。
 
 ---
 

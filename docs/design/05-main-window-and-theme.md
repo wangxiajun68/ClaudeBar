@@ -45,7 +45,7 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 ## 共享交互层（`Views/Shared/`）
 
 - `Tile.swift`：`TileGrid` + `.tile()` / `.hoverTile()` modifier。表面本身（底 + 强调水洗 + 内嵌白环 + 角上深度环 + 悬停描边与抬升）定义在 `Views/Shared/UiverseSurfaces.swift`，`panelCard()` 与 `.tile()` 是同一套的两种密度；与 `panelCard()` 同族的半透明表面，密度更高。
-- `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep` + `.depthTilt()`（只给单张 hero 卡）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
+- `UiverseSurfaces.swift`：表面语言的单点 —— `InnerFrameRing`、`DepthLens`（**不同心**的三层角环，一个 `Canvas`，不画字形）、`SegmentedCapsule`（唯一的筛选 / 分段控件：连接器类型与平台、供应商客户端与分类、用量周期、VPN 分组）、`OrbitGauge`、`ConveyorBelt`、`ShineSweep`（+ `shineOnHover`；`depthTilt` 已删除）。**角上已有内容的瓦片（会话瓦片的子 agent 簇）只取 `tint`，不加 `lens`**；`Theme.Ink.*` 是信号色的文字版，原信号色只画形状。口径见 [DESIGN.md](../../DESIGN.md)。
 - `ConnectionCard.swift` / `MachineKpiStrip.swift` / `HardwareDetailPanel.swift`：连接与电量 mark 行、仪表盘磁贴、硬件细节面板（`UsageModelTile` / `UsageStackBar` 已并入）。
 - `ProviderTile`（`ProviderRow.swift`）**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），已删除；目录宫格那颗瓦片由 `ProviderDirectoryCard` 承担。同一轮里 `ProviderEditorView` / `CodexProviderEditorView` / `ProviderEditorSidebar` 也没有挂载点，已删除（[审查证据](../reviews/ui-audit-backlog.md) §3）。
 - `CodexModelMark.swift`：popup 头部 chip 的客户端 **mark 本身**——`ProductBrandMark` 的真实品牌图形（Claude 放射星 / Codex 扇贝终端 / Cursor 立方体），13pt，**不再并排画家族名**（chip 自己已经写了那个词，同一格曾把家族说两遍）。**那一版「增长图形 + Codex 额度 lane」的合并 mark 已删**：它唯一的 `.tile` 调用点随概览状态单重做而消失，额度改由 chip 自己的行承载（`QuotaSwayGauge`），lane 那份绘制、`flow:` 扫光与两个 `TimelineView` 站点一并退场。

@@ -28,6 +28,7 @@
 | 15 | [model-cost.md](15-model-cost.md) | 模型花费估算、刊例价表与来源、slug 匹配规则 | 改价格 / 加模型 |
 | 16 | [connectors.md](16-connectors.md) | 连接器页：Skills / MCP / 插件扫描、详情与启停机制 | 改连接器 / MCP 发现 |
 | 18 | [weather-and-atmosphere.md](18-weather-and-atmosphere.md) | 天气数据、真实日出日落、天空引擎、文字布局与性能边界 | 改天气 / 问候卡 |
+| — | [cursor-session-monitor-investigation.md](cursor-session-monitor-investigation.md) | 排查记录：Cursor 长轮次被判「闲置」的实测证据与残留边界 | 改 Cursor 运行判据 |
 
 ---
 

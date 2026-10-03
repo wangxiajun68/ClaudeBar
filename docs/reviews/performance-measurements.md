@@ -13,7 +13,7 @@
 | Cursor 实际扣费 | `CursorLedgerStore` 只在窗口变化 / 手动刷新 / 读数超过 6 h 时才发一次网络请求（单次 1.5–3.6 s），在 detached task 上跑。**用量页从不等待它**：瓦片读的是内存里那份读数（启动时由 `cursor-ledger.json` 反序列化），落地后发通知再重发一次 `rescan: false` 的用量刷新。失败保留旧值。不做历史回填——12×30 天分块实测 306 s 且仍有块失败 |
 | transcript 扫描 | 只读尾部 96KB（会话）/ 32KB（子 agent），不全读 |
 | 索引扫描 | 目录用 `FileManager.enumerator` 一次取回属性（`contentModificationDate` / `fileSize`），不再对每个命中文件单独 `attributesOfItem`（后者每个文件多走两次 `getxattr`；本机 1250 个 transcript × 每次重扫） |
-| 用量统计 | `Task.detached` + 三级过滤 + `concurrentPerform` 并行解析；`UsageStats` 文件缓存带容量上限（4000）与驱逐，防项目树收缩后无限滞留 |
+| 用量统计 | 持久化索引（`UsageIndex`）：每个 transcript 只解析一次，增量维护按 mtime + size 跳过未变文件；查询是一次 `GROUP BY`，不再现扫项目树。历史记录（三级过滤 + `concurrentPerform` 现扫）见下方 2026-09 条目 |
 | 主线程 | 所有 `@Published` 更新经 `MainActor.run { [weak self] in }` / 主线程回调 |
 | 快照写入 | `WidgetSnapshotWriter` diff 后写四路（B6：仅数据变化时写文件 + `reloadAllTimelines()`，避免每 2.5s 空转） |
 | 动画 | **没有常驻的 SwiftUI 时间线**。装饰动效全部走 `NSViewRepresentable` + Core Animation（`DecorativeMotion`、`LucideRotor`/`RotorLayerView`、`UiverseKit` 的 shine/conveyor），渲染服务器插值、不重算 body，并各自再查一次 `window?.occlusionState.contains(.visible)`；调用侧由 `UIWakePolicy` 的 `surfaceIsVisible` + 「减弱动效」双重门控。**按读数调速的那一类（`LucideRotor`）用 `timeOffset` 冻结相位后就地改 `speed`**，所以采样器每 1–2 s 推一次新 rpm 不会重建图层、也不会让扇叶跳回起点；`rpm < 80` 时速率**恰为 0**（扇叶停在原地，图层不消失）。`LucideRotor` 以角速度驱动（没有 `paused:` 参数，也不该有）。`DecorativeMotion.kind == .loadRing` 已随视图删除。全仓现有 **3 处** `TimelineView`。其中一处是 `.animation(...)` 调度、也就是**每帧重新校验 body** 的那一类：`WeatherBackdrop` 的天空（1/30–1/12，按天气分层，只作金属视图不可用时的回落）。问候卡的时钟是 `.periodic(by: 1)`，一秒钟一次，不占显示周期；硬件读数的扫光不再走时间线，改由 `ReadingSweep` 的 `CAGradientLayer` 按 `0.35 + load × 1.35` 周/秒平移（2026-09-29，见下文）。剩下那处 `.periodic` 是灵动岛会话行的「N 分钟前」（30s）。**关掉天气渲染之后这项开销整块消失**：卡片改画晴空（`GreetingCard.makeScene()` 在 `liveWeather == false` 时不读 `reading.sky`）——按太阳高度插值，没有云、没有降水底片、没有雾与闪电，也没有玻璃雨滴，`WeatherStore` 这张卡也不再刷新（`Sources/ClaudeBar/Views/Shared/GreetingCard.swift` 的 `liveWeather`）。问候卡的天空本身**不在这张表里**——它是 `MTKView`，自带渲染循环与帧率策略（见 [Greeting atmosphere](../design/greeting-atmosphere.md) §5.7），不经过 SwiftUI 的显示周期。**`.animation` 的 `paused:` 不是省钱的挡板**：paused 为真时确实不跑，但为假时它让整个 hosting view 每个显示周期重跑一次 layout —— 2026-09-28 实测（见 [UI 审计待办](ui-audit-backlog.md) §11）：把它删掉、只留一条画纯色矩形的 30 Hz 时间线，一个 `topBar` 空壳就从中位数 4.0% 涨到 14.7%，两条涨到 17.2%；而把帧率从 30 降到 15 / 8 几乎不动（43.2 / 43.5 / 41.5%）。**新增动画前先确认门控边界**：漏一个就是常驻 display link，每 tick 一次全主线程布局 |
@@ -52,7 +52,7 @@
 
 连接器清单是上一轮量过的最重页面（深滚约 68 fps，p50 16.4 ms，和指针在不在卡片上无关）。两处结构和那组数字对得上。每张卡都挂着 `rotation3DEffect`，角度为 0 也留在树上，滚动时整份网格逐帧重新光栅化。网格又套在普通 `VStack` 里，`ScrollView` 按理想高度问它，懒网格会把全部卡片排出来。模型目录是同一种嵌套，分组更少，上一轮约 88 fps。
 
-- `DepthTiltModifier` 只在这张卡被悬停、且没有减弱动效时才装上 3D 和一次扫光。抬起仍由 `.tile()` 负责。扫光在出现时就开始，因为覆盖层是连同悬停一起创建的。
+- `DepthTiltModifier` 只在这张卡被悬停、且没有减弱动效时才装上 3D 和一次扫光。抬起仍由 `.tile()` 负责。扫光在出现时就开始，因为覆盖层是连同悬停一起创建的。（2026-10-02 连接器卡去掉 3D 倾斜，`DepthTiltModifier` / `.depthTilt()` 随之删除，`ShineSweep` 与 `shineOnHover` 保留并改挂在分段胶囊上。）
 - 有卡片时，`LazyVGrid` 是 `ScrollView` 的直接内容，标题、筛选和提示放在 `Section` 的 header 里，横向内边距只加一次。空列表和扫描中仍是普通栈。
 - 模型目录的分组从 `VStack` 改成 `LazyVStack`，滚出屏幕的分类不再构建。组内网格仍是该分类的那几张卡。
 - `scrollHoverGate()` 接到会话、连接器、用量、流量、VPN、设置、帮助和模型目录的滚动上。概览仍自己写滚动阶段，因为它还要同时停住天空；两边都走 `ScrollHoverGate.set`。
