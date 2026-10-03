@@ -29,6 +29,12 @@ final class VpnNetProbe: ObservableObject {
     @Published var ipLoading = false
     @Published var testingAll = false
 
+    /// The lookup in flight, if any — the single-flight guard.
+    private var ipLookup: Task<Void, Never>?
+    /// Identity of the newest lookup; an older one that completes must not
+    /// publish over it. See `refreshIP`.
+    private var ipGeneration = UUID()
+
     static let defaultSites: [VpnSiteProbe] = [
         VpnSiteProbe(id: "apple", name: "Apple", url: "https://www.apple.com"),
         VpnSiteProbe(id: "github", name: "GitHub", url: "https://www.github.com"),
@@ -43,6 +49,11 @@ final class VpnNetProbe: ObservableObject {
 
     func reset() {
         sites = Self.defaultSites
+        // The in-flight lookup is dropped with its reading: its result
+        // describes a tunnel this reset has just said nothing about.
+        ipLookup?.cancel()
+        ipLookup = nil
+        ipGeneration = UUID()
         ipInfo = nil
         ipError = nil
         ipLoading = false
@@ -73,7 +84,29 @@ final class VpnNetProbe: ObservableObject {
     /// `afterNodeSwitch` waits for the tunnel to actually move before the
     /// first attempt — otherwise ipify/ip-api race the old exit or fail
     /// while CONNECT is resetting.
+    ///
+    /// **One lookup at a time, and only the newest one publishes.** Callers
+    /// overlap by design — `VpnManager.waitUntilReady` and the VPN page's
+    /// `onChange(of: isRunning)` both fire when the tunnel comes up, and every
+    /// node tap starts another — and each lookup walks up to seven endpoints
+    /// over ~12 s. With no guard the published IP was simply whichever task
+    /// finished last, so switching nodes could leave the *old* exit's IP on
+    /// screen. `generation` closes the other half: a lookup that was already
+    /// awaiting its endpoints when the next one started must not overwrite the
+    /// newer answer when it finally lands.
     func refreshIP(afterNodeSwitch: Bool = false) async {
+        guard ipLookup == nil else { return }
+        let generation = UUID()
+        ipGeneration = generation
+        let task = Task { @MainActor [weak self] in
+            defer { self?.ipLookup = nil }
+            await self?.performIPLookup(afterNodeSwitch: afterNodeSwitch, generation: generation)
+        }
+        ipLookup = task
+        await task.value
+    }
+
+    private func performIPLookup(afterNodeSwitch: Bool, generation: UUID) async {
         ipLoading = true
         ipError = nil
         if afterNodeSwitch {
@@ -86,12 +119,17 @@ final class VpnNetProbe: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
             }
             if let info = await Self.fetchIP(proxyPort: port) {
+                // A newer lookup took over while this one was in flight: its
+                // answer is the one that describes the tunnel now.
+                guard generation == ipGeneration else { return }
                 ipInfo = info
                 ipError = nil
                 ipLoading = false
                 return
             }
+            guard generation == ipGeneration else { return }
         }
+        guard generation == ipGeneration else { return }
         if ipInfo == nil {
             ipError = port == nil ? "内核未运行" : "无法取得出口 IP"
         }

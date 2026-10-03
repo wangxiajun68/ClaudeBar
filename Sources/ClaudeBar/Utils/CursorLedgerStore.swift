@@ -110,6 +110,19 @@ final class CursorLedgerStore: ObservableObject {
     /// `force` skips both the freshness window and the coalescing check — that
     /// is the manual refresh button, where the whole point is a new reading.
     func refresh(window: DateInterval, billingCycle: DateInterval? = nil, force: Bool = false) {
+        // Same switch as the allowance store, same reason: this read opens
+        // Cursor's `state.vscdb` and sends the account token to cursor.com.
+        guard PermissionGate.allows(.cursorData) else {
+            task?.cancel()
+            task = nil
+            loading = false
+            self.rows = [:]
+            self.window = nil
+            truncated = false
+            fetchedAt = nil
+            note = nil
+            return
+        }
         let plan = CursorLedger.plan(for: window, billingCycle: billingCycle)
         guard !plan.window.duration.isZero else { return }
 

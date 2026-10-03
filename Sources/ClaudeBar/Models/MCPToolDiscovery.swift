@@ -155,16 +155,23 @@ enum MCPToolDiscovery {
             if process.isRunning { process.terminate() }
         }
         try process.run()
-        let deadline = Date().addingTimeInterval(10)
+        // **One budget per request, not one for the session.** A single
+        // session-wide deadline covered `initialize` *and* up to ten
+        // `tools/list` pages, so a server that answers every request briskly
+        // but needs a moment to start (an `npx` shim, a cold JVM) got cut off
+        // mid-pagination with 服务没有及时回应 — even though nothing ever
+        // stalled. Ten seconds is what the HTTP transport in this file gives
+        // each request (`timeoutIntervalForRequest`), and the doc above says
+        // "each request is bounded"; the stdio path now means the same thing.
         try send(["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [
             "protocolVersion": "2025-06-18", "capabilities": [:] as [String: String],
             "clientInfo": ["name": "ClaudeBar", "version": "1.0"]
         ]], to: input)
         let initialized: [String: Any]
-        do { initialized = try response(collector, id: 1, until: deadline) }
+        do { initialized = try response(collector, id: 1, until: Date().addingTimeInterval(10)) }
         catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
         guard initialized["error"] == nil else { throw DiscoveryError.serverError }
-        guard initialized["result"] is [String: Any] else { throw DiscoveryError.invalidResponse }
+        guard initialized["result"] as? [String: Any] != nil else { throw DiscoveryError.invalidResponse }
         try send(["jsonrpc": "2.0", "method": "notifications/initialized"], to: input)
         var tools: [MCPToolSummary] = []
         var cursor: String?
@@ -174,7 +181,7 @@ enum MCPToolDiscovery {
             let params: [String: String] = cursor.map { ["cursor": $0] } ?? [:]
             try send(["jsonrpc": "2.0", "id": id, "method": "tools/list", "params": params], to: input)
             let message: [String: Any]
-            do { message = try response(collector, id: id, until: deadline) }
+            do { message = try response(collector, id: id, until: Date().addingTimeInterval(10)) }
             catch JSONLineCollector.Failure.closed where Task.isCancelled { return [] }
             guard message["error"] == nil else { throw DiscoveryError.serverError }
             guard let result = message["result"] as? [String: Any],

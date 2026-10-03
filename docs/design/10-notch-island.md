@@ -189,7 +189,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | 蓝牙与耳机电量 | 蓝牙 | 不读蓝牙控制器、不跑 `system_profiler SPBluetoothDataType` |
 | Wi-Fi 名称 | 定位服务 | 不读 SSID，网络卡片显示"在设置中开启" |
 | 当前位置 | 定位服务 | 问候卡按「天气城市」取名，不读坐标 |
-| 读取 Cursor 会话 | 无系统弹窗（默认开） | 不读 Cursor 数据库 |
+| 读取 Cursor 会话 | 无系统弹窗（默认开） | 不读 Cursor 数据库：会话列表、额度（`CursorUsageStore`）与实扣（`CursorLedgerStore`）三条读路径都在入口按这个开关短路；重新打开时由 `.permissionDidChange` 就地恢复轮询，不必重启 |
 
 实现：`AppPermission` 清单 + `PermissionGate.allows(_:)`（直接读 `UserDefaults`，任意线程可调）+
 `PermissionCenter`（系统授权状态，应用激活时刷新；开关变化广播 `.permissionDidChange`）。
