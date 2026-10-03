@@ -148,10 +148,6 @@ final class ModelPriceCatalog: ObservableObject {
         return overrides[slug]?.last { $0.effectiveFrom <= today }
     }
 
-    /// All override rows for a slug, oldest first — the edit sheet shows the
-    /// history so a past change is visible rather than silent.
-    func history(for slug: String) -> [ModelPricing.PriceOverride] { overrides[slug] ?? [] }
-
     /// What the app resolves for a slug today, override or bundled.
     func resolution(for slug: String) -> ModelPricing.Resolution? {
         ModelPricing.resolve(slug)
