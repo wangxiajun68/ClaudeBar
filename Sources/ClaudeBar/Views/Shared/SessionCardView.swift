@@ -35,12 +35,17 @@ struct SessionCardView: View {
                     .frame(width: 6, height: 6)
                 SessionTitleLine(label: label)
                 Spacer()
+                if !session.workflows.isEmpty {
+                    SessionHierarchyTag(title: "工作流", icon: "gearshape",
+                                        count: session.workflows.count,
+                                        active: session.workflows.contains { $0.status == .running },
+                                        ink: Theme.Ink.claude)
+                }
                 if agentTotals.total > 0 {
-                    Label("\(agentTotals.total)", systemImage: "point.3.connected.trianglepath.dotted")
-                        .rollingNumber("\(agentTotals.total)")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(agentTotals.running > 0 ? Theme.statusBusy : Theme.textTertiary())
-                        .labelStyle(.titleAndIcon)
+                    SessionHierarchyTag(title: "子 agent", icon: "person.2",
+                                        count: agentTotals.total, active: agentTotals.running > 0,
+                                        ink: Theme.Ink.claude)
+                        .help("包含工作流内的 agent，共 \(agentTotals.total) 个，\(agentTotals.running) 个运行中")
                 }
                 StatusPill(
                     label: status.label,
@@ -81,6 +86,7 @@ struct SessionCardView: View {
                     HeartbeatSparkline(trail: heartbeat)
                 }
             }
+
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -99,7 +105,7 @@ struct SessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label.accessibilityText)，\(status.label)，上下文 \(contextLabel)")
+        .accessibilityLabel("\(label.accessibilityText)，\(status.label)，上下文 \(contextLabel)，工作流 \(session.workflows.count)，子 agent \(agentTotals.total)")
         .accessibilityHint("连按在终端中恢复会话")
         .onTapGesture(count: 2) { onDoubleTap?() }
     }
@@ -122,6 +128,30 @@ struct SessionCardView: View {
             running += workflow.runningCount
         }
         return (total, running)
+    }
+}
+
+/// Read-only hierarchy labels for the dense popup; counts never expand rows.
+struct SessionHierarchyTag: View {
+    let title: String
+    let icon: String
+    let count: Int
+    let active: Bool
+    let ink: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text(title)
+            RollingNumberText("\(count)").monospacedDigit()
+        }
+        .font(Theme.Font.micro)
+        .foregroundColor(active ? ink : Theme.textSecondary)
+        .fixedSize()
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background((active ? ink : Theme.textSecondary).opacity(0.08), in: Capsule())
+        .accessibilityLabel("\(title) \(count)")
     }
 }
 

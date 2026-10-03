@@ -39,11 +39,9 @@ struct CursorSessionCardView: View {
                 SessionTitleLine(label: label)
                 Spacer()
                 if agentCount > 0 {
-                    Label("\(agentCount)", systemImage: "point.3.connected.trianglepath.dotted")
-                        .rollingNumber("\(agentCount)")
-                        .font(Theme.Font.micro)
-                        .foregroundColor(running > 0 ? Theme.statusBusy : Theme.textTertiary())
-                        .labelStyle(.titleAndIcon)
+                    SessionHierarchyTag(title: "子 agent", icon: "person.2",
+                                        count: agentCount, active: running > 0, ink: Theme.Ink.cursor)
+                        .help("共 \(agentCount) 个子 agent，\(running) 个运行中")
                 }
                 StatusPill(label: status.label, tint: status.tint, ink: status.ink)
             }
@@ -80,6 +78,7 @@ struct CursorSessionCardView: View {
                                            : (isActive ? Theme.textPrimary.opacity(0.7)
                                                        : Theme.textTertiary()))
                 .lineLimit(1)
+
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -88,7 +87,7 @@ struct CursorSessionCardView: View {
         .hoverState($isHovered)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label.accessibilityText)，\(status.label)")
+        .accessibilityLabel("\(label.accessibilityText)，\(status.label)，子 agent \(agentCount)")
         .accessibilityHint("连按在 Cursor 中打开")
         .onTapGesture(count: 2) { onDoubleTap?() }
     }

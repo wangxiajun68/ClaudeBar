@@ -99,9 +99,19 @@ struct SessionsView: View {
             if alive.isEmpty {
                 emptyHint("暂无 Claude Code 会话")
             } else {
-                TileGrid(.pageSession) {
-                    ForEach(alive) { session in
-                        SessionTileFull(session: session, store: providerStore, isExpanded: providerStore.expandedSessionPIDs.contains(session.pid))
+                let workflowSessions = alive.filter { !$0.workflows.isEmpty }
+                let regularSessions = alive.filter { $0.workflows.isEmpty }
+                VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                    ForEach(workflowSessions) { session in
+                        SessionTileFull(session: session, store: providerStore, isExpanded: true)
+                    }
+                    if !regularSessions.isEmpty {
+                        TileGrid(.pageSession) {
+                            ForEach(regularSessions) { session in
+                                SessionTileFull(session: session, store: providerStore,
+                                                isExpanded: providerStore.expandedSessionPIDs.contains(session.pid))
+                            }
+                        }
                     }
                 }
             }
@@ -296,6 +306,45 @@ private struct SessionTileFull: View {
     @State private var isHovered = false
 
     var body: some View {
+        Group {
+            if session.workflows.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                    sessionOverview
+                    agentDisclosure
+                }
+            } else {
+                // A workflow owns a full row. Its task lanes have stable
+                // viewports, so a new agent never changes the band's height.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: Theme.Space.s24) {
+                        sessionOverview.frame(width: 280)
+                        workflowWorkspace
+                            .frame(minWidth: session.subagents.isEmpty ? 240 : 440)
+                    }
+                    VStack(alignment: .leading, spacing: Theme.Space.s16) {
+                        sessionOverview
+                        HairlineDivider()
+                        workflowWorkspace
+                    }
+                }
+            }
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        // Hue is information here, not decoration: three agent families share
+        // this grid, and the card's own accent is what makes a page of them
+        // scannable by row. Busy-ness stays with the dot and the capsule, so
+        // the wash never moves under the pointer.
+        .tile(tint: Theme.claude, hovered: isHovered,
+              lens: session.workflows.isEmpty ? DepthLensSpec(tint: Theme.claude, size: 132) : nil,
+              lift: session.workflows.isEmpty)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { resume() }
+        .hoverState($isHovered)
+        .help("\(session.cwd)\n双击以在终端继续")
+    }
+
+    private var sessionOverview: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             HStack(spacing: 8) {
                 PulsingStatusDot(isOn: isBusy, color: isWaiting ? Theme.statusWarning : Theme.statusBusy, big: true)
@@ -343,16 +392,6 @@ private struct SessionTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
-                // Expand chevron stays always-on when there are subagents;
-                // action chips slide in only while hovered.
-                if !session.subagents.isEmpty || !session.workflows.isEmpty {
-                    Button(action: { toggle() }) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(Theme.Font.micro)
-                            .foregroundColor(Theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                }
                 SessionActionChips(isHovered: isHovered) {
                     SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "play.fill", tint: Theme.accent, help: "在终端恢复") {
@@ -364,27 +403,82 @@ private struct SessionTileFull: View {
                 }
             }
 
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(session.subagents) { subagentRow($0) }
-                    ForEach(session.workflows) { workflowRow($0) }
+        }
+    }
+
+    @ViewBuilder
+    private var agentDisclosure: some View {
+        if !session.subagents.isEmpty {
+            Button(action: toggle) {
+                HStack(spacing: Theme.Space.s8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(Theme.Font.micro)
+                        .frame(width: 12)
+                    Text("子任务 \(session.subagents.count)")
+                        .font(Theme.Font.caption)
+                    Spacer(minLength: 0)
                 }
-                .padding(.top, 2)
+                .foregroundColor(Theme.textSecondary)
+                .padding(.vertical, Theme.Space.s4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "收起子任务" : "展开子任务")
+            .accessibilityValue("子任务 \(session.subagents.count)")
+
+            if isExpanded {
+                HairlineDivider()
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        ForEach(session.subagents) { subagentRow($0) }
+                    }
+                }
+                // Bound the viewport, not the data: every task remains reachable.
+                .frame(height: min(CGFloat(session.subagents.count) * 52 - 4, 156))
                 .transition(.opacity)
             }
         }
-        .padding(Theme.Space.s12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Hue is information here, not decoration: three agent families share
-        // this grid, and the card's own accent is what makes a page of them
-        // scannable by row. Busy-ness stays with the dot and the capsule, so
-        // the wash never moves under the pointer.
-        .tile(tint: Theme.claude, hovered: isHovered,
-              lens: DepthLensSpec(tint: Theme.claude, size: 132))
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { resume() }
-        .hoverState($isHovered)
-        .help("\(session.cwd)\n双击以在终端继续")
+    }
+
+    private var workflowWorkspace: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s24) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                detailHeading("工作流", icon: "gearshape", count: session.workflows.count)
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        ForEach(session.workflows) { workflowRow($0) }
+                    }
+                }
+                .frame(height: 148)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            if !session.subagents.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                    detailHeading("子任务", icon: "person.2", count: session.subagents.count)
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                            ForEach(session.subagents) { subagentRow($0) }
+                        }
+                    }
+                    .frame(height: 148)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private func detailHeading(_ title: String, icon: String, count: Int) -> some View {
+        HStack(spacing: Theme.Space.s8) {
+            Label(title, systemImage: icon)
+                .font(Theme.Font.section)
+            Text("\(count)")
+                .font(Theme.Font.caption)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .foregroundColor(Theme.textSecondary)
+        .frame(height: 20)
     }
 
     private func toggle() {
@@ -405,49 +499,55 @@ private struct SessionTileFull: View {
                                              pid: session.isAlive ? session.pid : nil)
     }
 
-    @ViewBuilder
     private func subagentRow(_ agent: SubagentInfo) -> some View {
-        let running = agent.status == .running
-        HStack(spacing: 6) {
-            Circle().fill(running ? Theme.statusBusy : Theme.textTertiary()).frame(width: 4, height: 4)
-            Text(agent.agentType).font(Theme.Font.bodySmall).foregroundColor(running ? Theme.textPrimary.opacity(0.85) : Theme.textTertiary())
-                .lineLimit(1)
-            if !agent.description.isEmpty {
-                Text("· \(agent.description)").font(Theme.Font.bodySmall).foregroundColor(Theme.textTertiary())
-                    .lineLimit(1).truncationMode(.tail)
-            }
-            Spacer(minLength: 8)
-            if !agent.activity.isEmpty {
-                Text("↳ \(agent.activity)").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-        }
+        SessionAgentDetailRow(type: agent.agentType, description: agent.description,
+                              activity: agent.activity, status: agent.status,
+                              tint: Theme.statusBusy, ink: Theme.Ink.claude)
     }
 
-    @ViewBuilder
     private func workflowRow(_ wf: WorkflowInfo) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "gearshape").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
-            Text(wf.name.isEmpty ? wf.workflowId : wf.name).font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
-                .lineLimit(1).truncationMode(.middle)
-            Text(wf.status.label).font(Theme.Font.caption)
-                .foregroundColor(wf.status == .failed ? Theme.Ink.error : wf.status == .running ? Theme.Ink.claude : Theme.textTertiary())
-            if !wf.phase.isEmpty {
-                Text(wf.phase).font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
-                    .lineLimit(1).truncationMode(.tail)
+        let name = wf.name.isEmpty ? wf.workflowId : wf.name
+        let ink = wf.status == .failed ? Theme.Ink.error
+            : wf.status == .running ? Theme.Ink.claude : Theme.textSecondary
+        let progress = "\(wf.completedCount)/\(wf.totalCount)"
+            + (wf.runningCount > 0 ? " · \(wf.runningCount) 运行" : "")
+            + (wf.failedCount > 0 ? " · \(wf.failedCount) 失败" : "")
+        return HStack(alignment: .top, spacing: Theme.Space.s8) {
+            Image(systemName: "gearshape")
+                .font(Theme.Font.caption)
+                .foregroundColor(ink)
+                .frame(width: 12, height: 18)
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack(spacing: Theme.Space.s8) {
+                    Text(name)
+                        .font(Theme.Font.bodySmall)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Text(wf.status.label)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(ink)
+                        .fixedSize()
+                }
+                HStack(spacing: Theme.Space.s8) {
+                    Text(wf.phase.isEmpty ? "工作流" : wf.phase)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text(progress)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .foregroundColor(wf.failedCount > 0 ? Theme.Ink.error : Theme.textSecondary)
+                }
+                .font(Theme.Font.caption)
+                .foregroundColor(Theme.textSecondary)
             }
-            RollingNumberText("· \(wf.completedCount)/\(wf.totalCount) agents").font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
-                .lineLimit(1)
-            if wf.runningCount > 0 {
-                Text("(\(wf.runningCount)●)").rollingNumber("(\(wf.runningCount)●)").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
-            }
-            if wf.failedCount > 0 {
-                Text("\(wf.failedCount) 失败").font(Theme.Font.caption).foregroundColor(Theme.Ink.error)
-            }
-            Spacer()
         }
+        .frame(height: 48, alignment: .center)
+        .help("\(name)\n\(wf.status.label) · \(wf.phase)\n\(progress) agents")
     }
+
 }
 
 /// A Cursor session tile. Same hover-reveal pattern as the Claude tile:
@@ -531,15 +631,18 @@ private struct CursorTileFull: View {
                     }
                 }
             }
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(session.subagents) { cursorAgentRow($0) }
+            if isExpanded && !session.subagents.isEmpty {
+                HairlineDivider()
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        ForEach(session.subagents) { cursorAgentRow($0) }
+                    }
                 }
-                .padding(.top, 2)
+                .frame(height: min(CGFloat(session.subagents.count) * 52 - 4, 220))
             }
         }
         .padding(Theme.Space.s12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .tile(tint: Theme.cursor, hovered: isHovered,
               lens: DepthLensSpec(tint: Theme.cursor, size: 132))
         .contentShape(Rectangle())
@@ -556,22 +659,65 @@ private struct CursorTileFull: View {
     }
 
     private func cursorAgentRow(_ agent: CursorSubagentInfo) -> some View {
-        let running = agent.status == .running
-        return HStack(spacing: 6) {
-            Circle().fill(running ? Theme.cursorAccent : Theme.textTertiary()).frame(width: 4, height: 4)
-            Text(agent.agentType).font(Theme.Font.bodySmall)
-                .foregroundColor(running ? Theme.textPrimary.opacity(0.85) : Theme.textTertiary())
-                .lineLimit(1)
-            if !agent.description.isEmpty {
-                Text("· \(agent.description)").font(Theme.Font.bodySmall).foregroundColor(Theme.textTertiary())
-                    .lineLimit(1).truncationMode(.tail)
-            }
-            Spacer(minLength: 8)
-            if !agent.activity.isEmpty {
-                Text("↳ \(agent.activity)").font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
-                    .lineLimit(1).truncationMode(.tail)
+        SessionAgentDetailRow(type: agent.agentType, description: agent.description,
+                              activity: agent.activity, status: agent.status == .running ? .running : .done,
+                              tint: Theme.cursorAccent, ink: Theme.Ink.cursor)
+    }
+
+}
+
+/// A stable two-line hierarchy shared by Claude and Cursor's child tasks.
+private struct SessionAgentDetailRow: View {
+    let type: String
+    let description: String
+    let activity: String
+    let status: SubagentStatus
+    let tint: Color
+    let ink: Color
+
+    private var statusLabel: String {
+        switch status {
+        case .running: return "运行中"
+        case .done: return "空闲"
+        case .unknown: return "状态未知"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s8) {
+            Circle()
+                .fill(status == .running ? tint : Theme.statusIdle)
+                .frame(width: 5, height: 5)
+                .frame(width: 12, height: 18)
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                HStack(spacing: Theme.Space.s8) {
+                    Text(description.isEmpty ? type : description)
+                        .font(Theme.Font.bodySmall)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text(statusLabel)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(status == .running ? ink : Theme.textSecondary)
+                        .fixedSize()
+                }
+                HStack(spacing: Theme.Space.s8) {
+                    Text(type)
+                        .font(Theme.Font.caption)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if !activity.isEmpty {
+                        Text(activity)
+                            .font(Theme.Font.captionMono)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .foregroundColor(Theme.textSecondary)
             }
         }
+        .frame(height: 48, alignment: .center)
+        .help("\(description.isEmpty ? type : description)\n\(type) · \(statusLabel)\n\(activity)")
     }
 }
 
