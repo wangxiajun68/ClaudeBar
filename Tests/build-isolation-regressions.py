@@ -17,11 +17,13 @@ paths = paths.replace('FileManager.default.urls(for: .applicationSupportDirector
 proxy = (root / 'Sources/ClaudeBar/Utils/VpnSystemProxyController.swift').read_text()
 # Replace only the external-process transport. All system-write entry guards are real.
 proxy = proxy[:proxy.index('// MARK: - Process helper')]
-# The installers' one shared dependency is spliced too: their privileged
-# scripts build `ShellQuote.single(...)`, and a stub here would be a stub of
-# the escaping under test.
+# The installers' shared dependencies are spliced too: their privileged
+# scripts build `ShellQuote.single(...)`, and the signature question both
+# answer is `HelperSignature`'s. A stub for either would be a stub of the
+# escaping and the anchor parsing under test.
 helpers = '\n'.join((root / 'Sources/ClaudeBar/Utils' / name).read_text() for name in
-                    ['ShellQuote.swift', 'FanHelperInstaller.swift', 'BatteryHelperInstaller.swift'])
+                    ['ShellQuote.swift', 'HelperSignature.swift',
+                     'FanHelperInstaller.swift', 'BatteryHelperInstaller.swift'])
 stubs = r'''
 struct AppPreferences {
     static let shared = AppPreferences()

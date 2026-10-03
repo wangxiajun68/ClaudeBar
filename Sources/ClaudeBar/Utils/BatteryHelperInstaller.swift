@@ -28,6 +28,13 @@ enum BatteryHelperInstaller {
     }
 
     private static func codeIdentity(_ url: URL) -> [String: String]? {
+        // "Consistent signature" is not "our signature": an ad-hoc re-sign of a
+        // replaced helper passes `--verify --strict` (measured, exit 0), and
+        // the bundle this app reads it from is writable by the logged-in user.
+        // The anchor requirement is what makes the two copies comparable at
+        // all — without it the CDHash comparison below is between two files
+        // the same attacker could have replaced.
+        guard HelperSignature.verify(url.path) else { return nil }
         guard command("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", url.path]) != nil,
               let details = command("/usr/bin/codesign", ["-d", "--verbose=4", url.path]),
               let format = details.split(separator: "\n").first(where: { $0.hasPrefix("Format=Mach-O") }),
@@ -68,7 +75,14 @@ enum BatteryHelperInstaller {
     static func installIfNeeded() -> String? {
         guard BuildChannel.allowsSystemIntegration else { return BuildChannel.restrictionMessage }
         if isInstalled() { return nil }
-        guard let source = bundledURL, let hash = digest(source) else { return "缺少电池辅助工具，请重新构建或安装应用。" }
+        guard let source = bundledURL, let hash = digest(source),
+              let requirement = HelperSignature.anchorRequirement() else { return "缺少电池辅助工具，请重新构建或安装应用。" }
+        // A tampered bundle gets this instead of a password prompt: the runtime
+        // identity check above is a CDHash *comparison*, which says nothing
+        // about who signed the bytes being compared.
+        guard HelperSignature.verify(source.path, against: requirement) else {
+            return "内置的电池辅助工具未通过代码签名校验，已拒绝安装。这通常意味着应用包被改动过；请重新安装 ClaudeBar。"
+        }
         let directory = "/Library/PrivilegedHelperTools"
         let shell = """
         set -eu
@@ -80,7 +94,7 @@ enum BatteryHelperInstaller {
         trap '/bin/rm -f "$stage"' EXIT
         /bin/cp \(ShellQuote.single(source.path)) "$stage"
         test "$(/usr/bin/shasum -a 256 "$stage" | /usr/bin/cut -d ' ' -f 1)" = \(ShellQuote.single(hash))
-        /usr/bin/codesign --verify --strict "$stage"
+        /usr/bin/codesign --verify --strict -R=\(ShellQuote.single(requirement)) "$stage"
         /usr/sbin/chown root:wheel "$stage"
         /bin/chmod 4755 "$stage"
         /bin/mv -f "$stage" \(ShellQuote.single(path))
