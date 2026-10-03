@@ -127,6 +127,18 @@ enum TerminalLauncher {
                                 configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// New migration targets always go through the terminal route. A newly
+    /// materialized Codex rollout may not yet be in the desktop index.
+    @MainActor
+    static func openMigratedSession(_ record: MigrationRecord, command: String) throws {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        guard isSafePath(record.source.cwd), isSafeSessionId(record.targetSessionID),
+              !command.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
+            throw MigrationFailure.invalidHistory
+        }
+        launch(command: command, cwd: record.source.cwd, sessionId: record.targetSessionID)
+    }
+
     // MARK: - Routing
 
     private static func launch(command: String, cwd: String, sessionId: String) {

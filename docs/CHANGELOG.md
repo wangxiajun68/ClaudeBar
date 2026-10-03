@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **会话正文迁移首版**：会话卡片可把已结束的 Claude Code、Codex 或 Cursor 桌面正文创建为 Claude Code、Codex 当前配置/官方登录、Cursor CLI 的新原生会话，通过终端在原项目继续；迁移记录关联来源及再次迁移。固定已验证客户端版本，未知版本、压缩、子代理、附件及不完整历史明确拒绝。开发版保持系统集成禁用；Cursor 桌面接收、同模型跨协议接入未实现。见 [会话迁移契约](technical/session-migration.md) 与 [实现验收](reviews/session-migration-implementation-2026-10-03.md)。
+
 ## [1.15.0] — 2026-10-03
 
 新增飞书文档工作区；Claude Code workflow 状态进入会话页；问候语支持诗词、日常问候与节气；模型可配置 Claude Code 并发上限。

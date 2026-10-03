@@ -1,0 +1,511 @@
+{
+  "date": "2026-10-03",
+  "versions": {
+    "claude_code": "2.1.288",
+    "codex_cli": "0.159.0-alpha.12.1",
+    "cursor_cli": "2026.06.19-20-24-33-653a7fb",
+    "cursor_desktop": "3.23.12"
+  },
+  "scope": "synthetic real-provider sessions; text history; private temporary workspaces",
+  "question": "From our previous conversation, return only a JSON object with keys marker, constraint, next_step, decision and their exact remembered values. Do not use tools or read files. If a fact is absent, use \"unknown\".",
+  "sources": {
+    "cc": {
+      "session_id": "a2b24bca-187b-4094-9340-9b16dd13d8f3",
+      "expected": {
+        "marker": "MIGRATE-bc4cde261f12",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "success": true,
+      "model": "deepseek-v4.1-flash"
+    },
+    "codex-official": {
+      "session_id": "01a0ffb4-7c1b-7f31-b05b-dbf765231381",
+      "expected": {
+        "marker": "MIGRATE-5f44f4266d2b",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "success": true,
+      "model": "gpt-6.1-sol",
+      "provider": "migration_official_http"
+    },
+    "cursor": {
+      "session_id": "aa6e3020-a873-43c5-a522-f3cf14459a8e",
+      "expected": {
+        "marker": "MIGRATE-e1df98e1278e",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "success": true,
+      "model": "auto"
+    },
+    "codex-custom": {
+      "session_id": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "expected": {
+        "marker": "MIGRATE-773b6da47f58",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "success": true,
+      "model": "kimi-k3",
+      "provider": "migration_custom",
+      "seconds": 6.82
+    },
+    "cursor-desktop": {
+      "expected": {
+        "marker": "GUI-80e6f77b7b7b",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "model": "Grok 4.7 Medium",
+      "success": true,
+      "session_id": "ca768548-d464-407a-b085-f7218c540d30"
+    }
+  },
+  "checks": [
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 2.67,
+      "label": "codex-official-to-cc",
+      "source": "codex-official",
+      "target": "cc",
+      "session_id": "b0904bcf-1982-476a-8e76-4a9cf90f8185",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 15.61,
+      "label": "cc-to-codex",
+      "source": "cc",
+      "target": "codex",
+      "session_id": "1feebf12-deb5-4303-a3c2-9aa502f8e042",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\": \"MIGRATE-e1df98e1278e\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 0.65,
+      "label": "cursor-to-cc",
+      "source": "cursor",
+      "target": "cc",
+      "session_id": "7bbe922b-60a1-4330-921c-44651dd835e2",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 32.55,
+      "label": "cc-to-cursor",
+      "source": "cc",
+      "target": "cursor",
+      "session_id": "e7c9df25-7ce0-4a85-a1f3-50eff9246aa1",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-e1df98e1278e\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 15.84,
+      "label": "cursor-to-codex",
+      "source": "cursor",
+      "target": "codex",
+      "session_id": "8d106d4b-7ba3-412b-8c3b-cc89b11fdfd0",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 31.55,
+      "label": "codex-official-to-cursor",
+      "source": "codex-official",
+      "target": "cursor",
+      "session_id": "04aad247-d742-4f0b-bb24-a7fabda379a2",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "label": "codex-official-native-fork-to-custom",
+      "source": "codex-official",
+      "target": "codex-custom",
+      "method": "native-fork-provider-override",
+      "session_id": "01a0ffbd-e16f-7c10-8040-6b74e9492de3",
+      "parent_session_id": "01a0ffb4-7c1b-7f31-b05b-dbf765231381",
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "exit": 0,
+      "exact_match": true,
+      "seconds": 19.81,
+      "source_unchanged": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "er\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 1.2,
+      "label": "codex-custom-to-cc",
+      "source": "codex-custom",
+      "target": "cc",
+      "session_id": "0f7bdbee-d723-4a4b-8d8b-0ca94fa8a218",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "label": "codex-custom-native-fork-to-official",
+      "source": "codex-custom",
+      "target": "codex-official",
+      "method": "native-fork-provider-override",
+      "session_id": "01a0ffbe-6938-7ce3-803e-841d121b0b18",
+      "parent_session_id": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "answer": "",
+      "exit": 1,
+      "exact_match": false,
+      "seconds": 32.59,
+      "source_unchanged": true,
+      "failure_category": "foreign_reasoning_item_reference",
+      "http_status": 404,
+      "error_summary": "Item with id rs_… not found"
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 14.88,
+      "label": "codex-custom-to-codex",
+      "source": "codex-custom",
+      "target": "codex",
+      "session_id": "9cd10fa1-d861-4958-9c42-d13b4bbf7e95",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 31.33,
+      "label": "codex-custom-to-cursor",
+      "source": "codex-custom",
+      "target": "cursor",
+      "session_id": "336b5481-62ee-48c1-97db-bc62bebfee1f",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"GUI-80e6f77b7b7b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 1.33,
+      "label": "cursor-desktop-to-cc",
+      "source": "cursor-desktop",
+      "target": "cc",
+      "session_id": "133a51d4-5f0a-489f-a1ed-f1ea23cf419f",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"GUI-80e6f77b7b7b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 15.11,
+      "label": "cursor-desktop-to-codex",
+      "source": "cursor-desktop",
+      "target": "codex",
+      "session_id": "8ac3f881-b7ba-4b1d-8796-fb158381b0d1",
+      "message_count": 2,
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 0.84,
+      "label": "codex-official-to-cc-cold-resume",
+      "source": "codex-official",
+      "target": "cc",
+      "session_id": "b0904bcf-1982-476a-8e76-4a9cf90f8185",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 14.96,
+      "label": "cc-to-codex-cold-resume",
+      "source": "cc",
+      "target": "codex",
+      "session_id": "1feebf12-deb5-4303-a3c2-9aa502f8e042",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "er\": \"MIGRATE-e1df98e1278e\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 1.99,
+      "label": "cursor-to-cc-cold-resume",
+      "source": "cursor",
+      "target": "cc",
+      "session_id": "7bbe922b-60a1-4330-921c-44651dd835e2",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 29.13,
+      "label": "cc-to-cursor-cold-resume",
+      "source": "cc",
+      "target": "cursor",
+      "session_id": "e7c9df25-7ce0-4a85-a1f3-50eff9246aa1",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-e1df98e1278e\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 15.62,
+      "label": "cursor-to-codex-cold-resume",
+      "source": "cursor",
+      "target": "codex",
+      "session_id": "8d106d4b-7ba3-412b-8c3b-cc89b11fdfd0",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 26.36,
+      "label": "codex-official-to-cursor-cold-resume",
+      "source": "codex-official",
+      "target": "cursor",
+      "session_id": "04aad247-d742-4f0b-bb24-a7fabda379a2",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": " \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 1.8,
+      "label": "codex-custom-to-cc-cold-resume",
+      "source": "codex-custom",
+      "target": "cc",
+      "session_id": "0f7bdbee-d723-4a4b-8d8b-0ca94fa8a218",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 16.86,
+      "label": "codex-custom-to-codex-cold-resume",
+      "source": "codex-custom",
+      "target": "codex",
+      "session_id": "9cd10fa1-d861-4958-9c42-d13b4bbf7e95",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 25.46,
+      "label": "codex-custom-to-cursor-cold-resume",
+      "source": "codex-custom",
+      "target": "cursor",
+      "session_id": "336b5481-62ee-48c1-97db-bc62bebfee1f",
+      "method": "second-native-resume-new-process",
+      "exact_match": true
+    },
+    {
+      "label": "codex-custom-to-cc-same-kimi-via-relay",
+      "source": "codex-custom",
+      "target": "cc",
+      "method": "text-only-responses-anthropic-relay",
+      "model": "kimi-k3",
+      "exit": 0,
+      "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 4.6,
+      "exact_match": true,
+      "upstream_requests": [
+        {
+          "model": "kimi-k3",
+          "roles": [
+            "user",
+            "assistant",
+            "user"
+          ],
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "tools_present": false,
+          "real_upstream": true
+        }
+      ]
+    }
+  ],
+  "desktop_imports": [
+    {
+      "source": "cc",
+      "session_id": "ed6b8c73-30a7-43d6-9cd5-c2104c4e1a5d",
+      "expected": {
+        "marker": "MIGRATE-bc4cde261f12",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "message_count": 2,
+      "method": "current-desktop-header-bubbles-agentKv-root",
+      "name": "MIGRATION cc",
+      "success": true,
+      "answer": "{\"marker\": \"MIGRATE-bc4cde261f12\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "ui_history_visible": true,
+      "ui_answer_verified": true
+    },
+    {
+      "source": "codex-official",
+      "session_id": "aacfe531-ac0a-4958-bc91-60cc344da9fe",
+      "expected": {
+        "marker": "MIGRATE-5f44f4266d2b",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "message_count": 2,
+      "method": "current-desktop-header-bubbles-agentKv-root",
+      "name": "MIGRATION codex-official",
+      "success": true,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "ui_history_visible": true,
+      "ui_answer_verified": true
+    },
+    {
+      "source": "codex-custom",
+      "session_id": "6c481c0b-a60c-4385-90db-ea2d7164487a",
+      "expected": {
+        "marker": "MIGRATE-773b6da47f58",
+        "constraint": "never edit VERSION",
+        "next_step": "verify parser regression",
+        "decision": "keep original session"
+      },
+      "message_count": 2,
+      "method": "current-desktop-header-bubbles-agentKv-root",
+      "name": "MIGRATION codex-custom",
+      "success": true,
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "ui_history_visible": true,
+      "ui_answer_verified": true
+    }
+  ],
+  "controls": [
+    {
+      "label": "negative-control-cc",
+      "target": "cc",
+      "method": "fresh-session-without-history",
+      "answer": "er\":\"unknown\",\"constraint\":\"unknown\",\"next_step\":\"unknown\",\"decision\":\"unknown\"}",
+      "exit": 0,
+      "pass": true,
+      "seconds": 0.79
+    },
+    {
+      "label": "negative-control-codex",
+      "target": "codex",
+      "method": "fresh-session-without-history",
+      "answer": "{\"marker\":\"unknown\",\"constraint\":\"unknown\",\"next_step\":\"unknown\",\"decision\":\"unknown\"}",
+      "exit": 0,
+      "pass": true,
+      "seconds": 15.24
+    },
+    {
+      "label": "negative-control-cursor",
+      "target": "cursor",
+      "method": "fresh-session-without-history",
+      "answer": "```json\n{\"marker\":\"unknown\",\"constraint\":\"unknown\",\"next_step\":\"unknown\",\"decision\":\"unknown\"}\n```",
+      "exit": 0,
+      "pass": true,
+      "seconds": 32.67
+    }
+  ],
+  "coding_checks": [
+    {
+      "label": "cc-to-codex-real-coding-handoff",
+      "method": "native-history-import-then-tools",
+      "source": "cc",
+      "target": "codex-official",
+      "source_session_id": "ccf0f3bf-a3e4-4bbe-ae00-da91673d58e6",
+      "session_id": "f0ba2c38-2bdc-406b-9289-c747fd83baaf",
+      "exit": 0,
+      "source_answer": " Plan: `count_items`\n\n**Goal:** Count non-empty comma-separated fields; empty fields ignored; empty input → 0.\n\n**Approach:**\n1. Read `test_count.py` first to confirm exact expectations (already exists — it's the source of truth).\n2. Replace the body of `count_items` with logic that:\n   - Splits `text` on `\",\"`.\n   - Counts only fields that are non-empty.\n   - Equivalent shapes: `sum(1 for f in text.split(\",\") if f)` or `len([f for f in text.split(\",\") if f])`.\n3. Verify edge cases manually against the spec:\n   - `\"\"` → `[\"\"]` → 0 ✓\n   - `\"a,,b,\"` → `[\"a\",\"\",\"b\",\"\"]` → 2 ✓\n   - `\"a,b\"` → 2 ✓\n   - `\",\"` → `[\"\",\"\"]` → 0 ✓\n\n**Open question to resolve next turn:** whether whitespace-only fields (e.g. `\"a, ,b\"`) count as empty. The spec says \"empty,\" so default to treating only `\"\"` as empty — but let the existing tests decide.\n\n**Constraints:**\n- Only edit `count.py`. Do not touch `VERSION` or `test_count.py`.\n- Run the existing tests to confirm green before finishing.\n\n**Next turn:** inspect `test_count.py`, implement, run tests.",
+      "code": "def count_items(text):\n    return sum(1 for field in text.split(\",\") if field)\n",
+      "test_exit": 0,
+      "test_stdout": "PARSER_REGRESSION_OK",
+      "VERSION_unchanged": true,
+      "tool_item_types": [
+        "agent_message",
+        "command_execution",
+        "file_change",
+        "command_execution",
+        "agent_message"
+      ],
+      "seconds": 35.01,
+      "pass": true
+    }
+  ],
+  "desktop_cold_checks": [
+    {
+      "source": "codex-custom",
+      "target": "cursor-desktop",
+      "session_id": "6c481c0b-a60c-4385-90db-ea2d7164487a",
+      "method": "reload-window-then-new-question",
+      "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "pass": true,
+      "ui_answer_verified": true
+    }
+  ],
+  "official_public_probe": {
+    "case": "existing-native-codex-token-public-models",
+    "new_oauth_registration": false,
+    "native_scope_mentions_subscription_sharing": false,
+    "native_scope_mentions_responses": false,
+    "http_status": 403,
+    "catalog_received": false
+  },
+  "exact_match_definition": "All four remembered facts; parsed JSON comparison when possible, otherwise all complete expected strings. Not strict JSON compliance.",
+  "validation": {
+    "project_regression": {
+      "command": "make test",
+      "exit": 0,
+      "suites": 51,
+      "seconds": 153.06
+    },
+    "app_source_changed": false,
+    "app_built_or_launched": false,
+    "production_ui_implemented": false,
+    "research_script_checks": {
+      "python_sources": 12,
+      "ast_parse": "pass",
+      "default_live_gate": "pass",
+      "artifact_links": "pass",
+      "sanitized_evidence": "pass"
+    }
+  }
+}

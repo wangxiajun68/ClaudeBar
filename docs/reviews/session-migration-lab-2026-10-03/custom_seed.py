@@ -1,0 +1,6 @@
+import graft_probe as g,uuid,json,pathlib,time,subprocess
+kind='codex-custom';o=g.load();cwd=g.ROOT/'workspace-codex-custom';cwd.mkdir(exist_ok=True);expected={'marker':'MIGRATE-'+uuid.uuid4().hex[:12],'constraint':'never edit VERSION','next_step':'verify parser regression','decision':'keep original session'};prompt='Isolated continuity test. No tools, file reads or edits. Remember '+json.dumps(expected)+'. Reply only ACK.';a,e=g.codex_args(cwd,custom=True);a+=['--json',prompt];start=time.monotonic();r=subprocess.run(a,env=e,cwd=cwd,capture_output=True,text=True,timeout=170);(g.ROOT/'source-codex-custom-stdout.txt').write_text(r.stdout);(g.ROOT/'source-codex-custom-stderr.txt').write_text(r.stderr);es=[]
+for line in r.stdout.splitlines():
+ try:es.append(json.loads(line))
+ except ValueError:pass
+sid=next((v.get('thread_id') for v in es if v.get('type')=='thread.started'),None);answer='\n'.join(v.get('item',{}).get('text','') for v in es if v.get('type')=='item.completed' and v.get('item',{}).get('type')=='agent_message');s={'session_id':sid,'cwd':str(cwd),'native_home':e['CODEX_HOME'],'expected':expected,'success':r.returncode==0 and answer=='ACK','model':a[a.index('-m')+1],'provider':'migration_custom','seconds':round(time.monotonic()-start,2)};o=g.load();o['sources'][kind]=s;g.save(o);print(json.dumps({**s,'answer':answer,'exit':r.returncode}))
