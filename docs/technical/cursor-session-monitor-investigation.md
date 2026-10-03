@@ -32,7 +32,7 @@
 
 `python3 Tests/cursor-turn-regressions.py` 通过 Swift 解释器直接运行完整生产 `CursorSessionMonitor`、`CursorDB` 和路径逻辑。只将 home 目录重定向到临时文件夹，SQLite 与 JSONL 都是合成数据，不修改用户数据库。
 
-25 项检查全部通过，覆盖：checkpoint 更新但 JSONL 滞后或缺失、首 token 等待、8 分钟静默工具、过期中断、成功与错误终止、旧答案与新提交、归档、80 条以外的运行会话、超过 14 个并发会话、3 天以前提交但 checkpoint 仍活跃的任务，以及子 Agent 路径、根父级、checkpoint 与过期行为。
+32 项检查全部通过，覆盖：checkpoint 更新但 JSONL 滞后或缺失、首 token 等待、8 分钟静默工具、过期中断、成功与错误终止、旧答案与新提交、归档、80 条以外的运行会话、超过 14 个并发会话、3 天以前提交但 checkpoint 仍活跃的任务，以及子 Agent 路径、根父级、checkpoint 与过期行为。
 
 实机只读对照运行了修改前与修改后的生产监控代码。单次耗时分别为 33 ms 和 19 ms；这是一次采样，不是性能基准。
 
@@ -41,4 +41,3 @@
 - 已确认下游 `ProviderStore → IslandLiveModel → NotchIslandView` 根据发布的 `status/toolPending` 显示状态；列表本身可滚动，不会再截断为前几个会话。
 - 现有轮询间隔：界面可见时忙碌 2.5 秒、闲置 5 秒；界面隐藏或灵动岛收起时 8 秒。因此状态变化仍有轮询延迟。
 - 为避免崩溃或中断会话永久显示运行，保留 10 分钟写入过期边界。真实任务若 SQLite 和 JSONL 都停止写入超过该窗口，仍可能被判闲置；单靠当前持久化信号无法可靠区分这种情况与已中断任务。
-- 按用户要求，没有执行应用 build、安装或重启。独立监控回归已验证；新应用的灵动岛端到端显示需在用户允许 build 后验证。

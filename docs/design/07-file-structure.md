@@ -7,10 +7,13 @@
 ClaudeBar/
 ├── Sources/
 │   ├── build.sh                          ← 开发者 / CI 构建脚本（非终端用户安装器）
+│   ├── build-config.sh                   ← 构建身份 / 通道 / 输出与安装路径的单点
+│   ├── Shared/BuildChannel.swift         ← 主应用与 Widget 共享的编译期版本身份与系统集成策略
 │   ├── AppIcon.icns / AppIcon-1024.png   ← 应用图标（dev 通道另有 AppIcon-Dev.icns / AppIcon-Dev-1024.png）
 │   ├── ProviderIcons/                    ← 厂商品牌图标（LobeHub Icons，随包内置；见其 README）
 │   ├── BrandAssets/                      ← 三家客户端 + ClaudeBar 自己的图标底片（由 Tools/gen-brand-marks.py 生成）
 │   ├── batteryctl/                       ← 电池控制 C 辅助进程（`batteryctl.c` + `policy.h`）
+│   ├── fanctl/                           ← 风扇控制 C 辅助进程（`fanctl.c`）
 │   ├── ClaudeBar/                        ← 主 app 源码
 │   │   ├── ClaudeBarApp.swift            ← AppDelegate（.regular 激活策略；@main App 壳）
 │   │   ├── MenuBarController.swift       ← NSStatusItem + NSPanel（菜单栏 popup）
@@ -59,7 +62,7 @@ ClaudeBar/
 │   │       └── Popup/                    ← PanelHeader / SessionsPanel / UsagePanel / PanelState
 │   ├── Fonts/                             ← 问候的 49 款随包手写体（SIL OFL / Apache 2.0）+ 各自的许可证；build.sh 复制进 Resources/Fonts
 │   └── Widget/
-├── vendor/mihomo/                        ← `.version` + README；二进制由 build.sh 下载
+├── vendor/mihomo/                        ← `.version` + README；原始二进制不进 Git，由 build.sh 按 `.version` 拉取
 ├── docs/
 │   ├── README.md
 │   ├── design/                           ← 产品设计文档（本目录）

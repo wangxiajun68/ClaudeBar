@@ -46,6 +46,20 @@ final class MainWindowController {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        if let window, window.isMiniaturized {
+            // A miniaturized window is *not* visible — AppKit documents that
+            // `isVisible` is false for it — but its content is still mounted.
+            // Falling through to the reuse branch below would install a second
+            // `NSHostingView` over a live one: the old graph is never torn down
+            // (`releaseContent` only runs from `willClose`), so its
+            // `@StateObject` stores — the settings drafts docs promise survive
+            // until the window is closed — and every scroll position go with
+            // it, plus a full SwiftUI rebuild. Bring it back instead.
+            window.deminiaturize(nil)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         if let window {
             // Reused shell: the AppKit window (and its autosaved frame)
             // survives the close, only the SwiftUI content is remade.

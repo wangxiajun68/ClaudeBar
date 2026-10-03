@@ -5,7 +5,7 @@
 
 ## 设计原则
 
-ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐、层级由字重与排版驱动、色彩用于产品线身份（Claude 蓝 / Cursor 紫 / Codex 瓷白）与状态（busy / warning / error）。动效全部状态驱动（hover 反馈、busy 脉冲、页面淡入），不存在不承载数据的装饰性视觉。
+ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐、层级由字重与排版驱动、色彩用于产品线身份（Claude 蓝 / Cursor 紫 / Codex 瓷白）与状态（busy / warning / error）。动效全部状态驱动（hover 反馈、页面淡入），不存在不承载数据的装饰性视觉。
 
 ### 表面策略
 
@@ -14,13 +14,13 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 | 内容卡 / 瓦片 | `panelCard()`、`.tile()` | 扁平半透明填充 + 发丝线描边，**非** `glassEffect`；避免主窗口全幅 live blur 的 GPU 纹理开销（约 100 MB 量级） |
 | 工具栏按钮 | `ActionButton` | 按**用途**命名而不是按长相：`tone:` 说这是什么控件（`.neutral` 铣削凹槽，默认 / `.sparkle` 深色板 / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。`.sparkle` 是一块近黑的板（`SparklePlate`，来自一个参考 CSS 药丸：hover 渐变 + 紫色辉光，450ms ease-in-out，即 `Theme.Animation.sparkle`）；`.neutral` 是铣削凹槽，也是不说 tone 时的默认（约 19 处裸调用点都是它）；`.sparkle` 要按名字要。`ProviderActionStyle` 是同一块板的历史名字，`adaptiveGlassButton()` 与 `InstrumentButtonStyle` 都已删除 |
 | 页头带控件 | `headerControl()` | 页头带里自己的控件：就是 `ActionPlateButtonStyle` 按这条带的尺寸画一遍，安静调。连接器与模型共用，两条带子读作同一个物件 |
-| 命令面板 | `GlassEffectContainer` | **仅 macOS 26+** 且**仅**用于 ⌘K `CommandPalette` 结果列表的玻璃容器；其余表面不使用 |
+| 命令面板 | `GlassEffectContainer` | **仅 macOS 26+** 且**仅**用于 ⌘K `CommandPalette` 结果列表的玻璃容器；其余表面不使用（问候卡窗台胶囊的 `SillGlass` 是另一处原生 glass，见 [greeting-atmosphere](greeting-atmosphere.md)） |
 
-主窗口背景为 `.underWindowBackground` vibrancy；侧边栏与内容区依靠 token 色阶与发丝线分区，而非连续玻璃 morph 或背景光斑。
+主窗口整体是不透明的：`isOpaque = true` + `Theme.windowNSColor` 实填（不做窗口级 vibrancy）；侧边栏与内容区依靠 token 色阶与发丝线分区，而非连续玻璃 morph 或背景光斑。
 
 ## 主窗口（`MainWindowController` + `MainWindowView`）
 
-1120×720 `NSWindow`（`.underWindowBackground` vibrancy + `fullSizeContentView` + 透明标题栏），顶栏 tabs + detail：
+1120×720 `NSWindow`（不透明 `Theme.windowNSColor` 实填 + `fullSizeContentView` + 透明标题栏），顶栏 tabs + detail：
 
 - **topBar**：冰色画布贯穿顶部，导航标签收在居中的白色悬浮圆角容器中，brand 与实时状态留在两侧；容器使用轻阴影与发丝线，不使用全幅模糊。导航包含概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置；选中项使用浅蓝填充，右侧问号进入「帮助」。窗口收窄时 `ViewThatFits` 先丢掉每项的图标，保留文字与原有键盘可达性。
 - **Detail**：按 `selectedPage`（`AppPage`）切换；流量页首次打开后保持挂载，避免检查器重建卡顿。
@@ -34,12 +34,12 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 |------|------|
 | **DashboardView** | 画布上的标题（会话数 + 刷新控件，**不**包进页头带）→ 资源条（CPU / GPU / 内存 / 磁盘 / 连接 / 双风扇）→ 能源流向 → 活跃会话总览（网格 + 「查看全部 N 个会话」）。用量对照与用量分布日历已移到用量页 |
 | **SessionsView** | CLAUDE CODE / CURSOR / CODEX 频道 section |
-| **ProvidersView** | 标题「模型工作台」；供应商品牌大标 + 「当前连接」+ 搜索框 / 「仅当前」筛选；`ProviderDirectoryHost` 渲染供应商目录（Claude + Codex 两栈），配置走 `ProviderConnectionEditor` 弹窗。页头带是「`PageTitle` + 副标题」一列 + 右侧 `headerControl()` 的「自定义」按钮，两侧 `alignment: .top` |
+| **ProvidersView** | 标题「模型」+ 副标题「发现模型平台，为你的编程工具接入新能力。」；`ProviderDirectoryHost` 渲染供应商目录（Claude + Codex 两栈），配置走 `ProviderConnectionEditor` 弹窗。页头带是「`PageTitle` + 副标题」一列 + 右侧 `headerControl()` 的「导入另一侧 / 自定义」按钮，两侧 `alignment: .top`。状态行给出当前连接、已保存配置数与「仅显示已配置」开关 |
 | **ConnectorsView** | 连接器：三家客户端的本机 Skills / MCP / 插件，左侧客户端筛选 + 「本机共享」，详情页渲染 SKILL.md、MCP `tools/list` 与插件组成；见 [technical/16](../technical/16-connectors.md) |
 | **UsageView** | 周期条（日 / 月 / 年 / **全部** / 自定）+ 热力图 + 三张图：来源（占这一时段全部 token 的分段条）、节奏（热力图 + 活动剖面，刻度随范围换）、构成（`TokenMixStrip` 带缓存命中率）+ 用量模型瓦片（每块带自己的估算金额）。「全部」不显示上一周期 / 下一周期 |
 | **TrafficView** | 只在选中时挂载；昂贵状态由 `MainWindowController` 持有的 `TrafficPageState` 承载，重进无需重建 |
 | **VPNView** | mihomo 开关、节点、订阅、日志；见 [technical/11](../technical/11-vpn.md) |
-| **SettingsView** | 固定顶部分类「通用 / 灵动岛 / 权限与隐私 / 本地代理」；内容最大宽 800pt，设置组采用中性列表，标签在左、控件在右。删除重复工具与开发实现开关，第三方代理接入按需展开。见 [设置页](surfaces/settings.md) |
+| **SettingsView** | 分类侧栏六个：「通用 / 外观与天气 / 灵动岛 / 用量与计费 / 权限与隐私 / 本地代理」；容器 ≥860pt 用 200pt 固定侧栏，内容最大宽 900pt，低于 860pt 收成顶部分类菜单。设置组采用中性列表，标签在左、控件在右。见 [设置页](surfaces/settings.md) |
 | **HelpView** | 左侧目录 + 右侧全文；右上角问号进入，不进顶栏 tab |
 
 ## 共享交互层（`Views/Shared/`）
@@ -52,15 +52,15 @@ ClaudeBar 的界面以**信息可视化**为唯一目标：数字 tabular 对齐
 - `ProductBrandMark.swift` / `LucideHardwarePaths.swift` / `HardwareIllustration.swift`：供应商品牌图形、Lucide 硬件矢量、硬件 mark。`ProductBrandMark` 画的是**四家客户端的真实品牌图形** —— Anthropic 的 `A\`、OpenAI 的花结、**Cursor 的立方体**（LobeHub 1.97.1，Cursor 原先画的是 `cursorarrow.rays`，那是一支指针而不是这家的 mark），以及 **ClaudeBar 自己的 mark**（从 `Sources/AppIcon-1024.png` 由 `Tools/make-claudebar-mark.py` 推出，给用量图例里的「第三方」用 —— 一个四项图例里三项有图形、第四项只有文字，读起来是一行没画完）。外面套一层 `Theme.bgSecondary` 圆角方块——白标在浅色面上、黑标在深色面上都会消失，所以底色是图形的**可读性**前提，不是装饰。哪一层由 `page:` 决定而不是 `Theme.isDark`：灵动岛在两种主题下都是黑的。图形由 `Tools/gen-brand-marks.py` 归一化到画布 90%（`Sources/BrandAssets/`）：原始 PNG 各自带着到画布边缘的留白，实测在 13pt 的 header 块里 Anthropic 只剩 65%、OpenAI 更小，读起来是一团糊；归一化**按宽度**定标（Cursor 的立方体比宽高，按共享边长会被画小 12%），于是一行里并排的三家看起来是同一个尺寸。`HardwareIllustration` 分两条 lane：上层是 Lucide 官方图标（`LucideHardwareGeometry.swift`，生成自上游 SVG，说明这是哪个部件），下层是**实时读数条** —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，**条的高度就是它自己的读数**（12 核就是 12 条，6 核忙就是 6 条满格）；另有按读数调速的扫光（<4% 或减弱动效时静止）。图标与读数分两条 lane，是因为把读数塞进图形里会互相打架。
 - `Theme.Ink`（`Theme/Theme.swift`）：信号色的**文字版**（light/dark 各一套，对 `bgPrimary` / `cardSurface` / `bgOverlay` 均 ≥4.5:1）。字与图标用 `Ink`，形状（条、点、弧、胶囊底）用原信号色；`StatusPill` / `SectionHeader` 的 `ink:` 参数即此。
 - `ResourceStrip`：本机 CPU / GPU / 内存与 SMC 风扇。小图标只负责标注瓦片（背后没有 `LoadRing`，也没有取代它的 `InstrumentRing`——弧与环在这个尺寸都读作「转圈等待」，且复述下方数字）；实时读数由右侧的大 mark 承担，**尺寸常量是 `ResourceStrip.markSlot`（176×130），四格与 popover 共用**。`连接` 与 `风扇` 两张卡整格可点：连接弹出 `ConnectionDetailPanel`（**网络 / 本机代理 / 附近与设备三段**：网络段是链路本身的状态与一根标定过的 RSSI 尺，代理段是这台机器上唯一由本应用拥有的一条连接，设备段是挂在上面的耳机与隔空投送入口；MAC / IP / DNS 归档进底部的「复制诊断」。卡片与面板共用同一个 `ConnectionStatus` 词汇表和同一根 `ConnectionSignalScale`，两处不会对同一条链路说两个词；且两处都写明「接入」与「可用」是两件事，结构由 `Tests/connection-panel-regressions.py` 锁定），风扇弹出 `FanInternalsPanel`（随包 `macbook-internals-illustration.png` 机身插画，两个涡轮按插画坐标裁切（`FanArtwork`），插画缺失时退回 `laptopcomputer` SF 符号）。风扇调速只在概览页的资源条与菜单栏 KPI 上；设置页不再有风扇模块。
-- 风扇使用 精细涡轮插画、中性仪表环及随 RPM 连续旋转的 Core Animation。点击风扇直接切换最大 / 自动；点击卡片其余区域打开详情，详情保留独立调速按钮。机内结构使用高清矢量风格概念插画，不代表精确机型图。
+- 风扇使用精细涡轮插画、转速弧及随 RPM 连续旋转的 Core Animation。资源条上每个转子本身是按钮，直接切换该风扇的最大 / 自动；点击卡片其余区域打开详情。机内结构使用高清矢量风格概念插画，不代表精确机型图。
 - `VpnTopChrome.swift`：`VpnStatusPill`（popup 状态行的节点 / 延迟药丸，点击切到主窗口 VPN 页选节点、测速）、`CursorUsagePanel`（Cursor chip 的面板：月度 + Grok 两条额度）、`VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除；`GlassCard` 本身也已删除，文件只剩 `selectionTint`。
 - `SectionHeader`、`PulsingStatusDot` / `OverviewStatusDot`（`SessionStatusViews.swift`）、`ProviderStatusBadge`、`HeartbeatSparkline`。
 - `SessionCardView` / `CursorSessionCardView` / `ExternalSessionCardView`（popup 紧凑会话卡）。
 - `Interaction.swift`：`PressableStyle`、`HoverState`、`ActionChip`、`IconChip`、`rollingNumber()`。下压按钮曾在这里（`adaptiveGlassButton()`），现已移到 `InstrumentControls.swift` 的 `ActionButton`。
-- `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
+- `InstrumentControls.swift`：控件语言单点 —— 唯一的字段凹槽（`InstrumentField` / `InstrumentWell`）、唯一的开关（`InstrumentToggleStyle`）、页头带控件（`headerControl()`）、唯一的下压按钮（`ActionButton` + `ActionPlateButtonStyle` + `ControlPlate`；`ProviderActionStyle` 是同一块板的历史名字）、菜单凹槽（`InstrumentMenuLabel`）、`PerimeterSweep` / `GroundShadow`。`InstrumentFieldStyle`（唯一的 TextField 凹槽）在 `Views/Shared/InstrumentSearchField.swift`。表面文件（`UiverseSurfaces.swift`）说卡片*是什么*，这个文件说控件被碰到时*做什么*。
 - `GlassCard.swift`：只剩 `selectionTint(_:color:corner:)`（选中行的强调水洗，非系统玻璃）。
 - `FeedbackToast`、`StandbyEmptyState`、**`CommandPalette`**（⌘K；macOS 26+ 结果区 `GlassEffectContainer`）。
-- `ProxyCurlExample`：第三方接入中的一行，按需查看并复制 curl 示例；连通性检测保留在供应商相关界面。
+- `ProxyCurlExample`：第三方接入中的一行，按需查看并复制 curl 示例。
 - 设置页采用 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`，统一行内对齐与细分隔线，使用原生 macOS 开关和选择器；不再使用每项一张卡片的宫格。布局与精简明细见 [设置页](surfaces/settings.md)。
 - `CodeBlock` 只画内嵌代码井，自己不带 `panelCard()`；帮助页的代码块也复用它。
 - `PermissionsSection.swift`：设置页「权限与隐私」——逐项开关、系统授权状态、跳转系统设置（见 [§10](10-notch-island.md)）。

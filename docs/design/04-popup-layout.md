@@ -15,7 +15,7 @@
 ├─────────────────────────────────────────────────────┤
 │ PowerFlowCard(compact)  能源流向（有内置电池时）       │
 ├─────────────────────────────────────────────────────┤
-│ PROVIDERS … Sessions … Usage（固定区高，见 MenuBarView）│
+│ SessionsPanel（撑满剩余高度） · UsagePanel（固定 244pt）│
 ├─────────────────────────────────────────────────────┤
 │ [刷新][主窗口][帮助][还原官方][管理模型][settings.json][🔔][◐]  [退出] │
 └─────────────────────────────────────────────────────┘
@@ -25,9 +25,9 @@
 
 **status item** 本身常驻「图标 + 双行 ↓/↑ + 电池格」（`VpnMenuBarRateView`），不占用 popup 高度。三种读数都不需要隧道：电池是机器的电量，速率是机器的吞吐（`SystemThroughput`）；隧道开着时速率换成 mihomo 自己的计数并画成**绿色**（绿=走隧道），关掉时是系统总吞吐的静息白色。popup 内的 VPN 入口是**状态行的 VPN 药丸**（`VpnStatusPill`，切到主窗口 VPN 页）——它是一条连接状态，不是一种模型，所以住状态行而不占切换行的第三格；那一格现在给 Cursor 额度。
 
-> settings.json 缺失且 Codex 列表为空时，供应商/会话/用量替换为「未找到 settings.json」警告卡；资源条与 VPN 页头仍在。
+> settings.json 缺失且 Codex 列表为空时，会话与用量两区替换为「未找到 settings.json」警告卡（副行「请先运行 Claude Code，然后刷新。」）；状态行、切换行与资源条仍在。
 
-会话区不再按固定上限裁高（此前 190pt / 280pt 两个硬编码上限），改为按内容撑开、外壳用 `maxHeight: .infinity` 顶对齐；`fittingSize` 不再参与定位，面板高度固定取屏幕可见区 -8（上限 820pt）。
+会话区撑满剩余高度、外壳顶对齐；面板高度固定取屏幕可见区 -8（上限 820pt），`fittingSize` 不参与定位。
 
 ## 会话卡片信息
 
@@ -69,7 +69,7 @@ Cursor chip 的两个 gauge 是 Cursor 自己命名的两个池：**Cursor**（`
 
 `UsagePanel` 固定 244pt 高，只放三样东西：
 
-- 顶部 `日 / 月 / 年 / 全部 / 自定` 周期切换 chips + 「重新统计」按钮。选「指定」时日期选择器走 **popover**（`.graphical`），不再内联展开把面板撑高。
+- 顶部 `日 / 月 / 年 / 全部 / 自定` 周期切换 chips + 「重新统计」按钮。选「自定」时日期选择器走 **popover**（`.graphical`），不再内联展开把面板撑高。
 - 两列汇总：**「Token 用量」**（副行「所选时段累计」）与 **「花费」**（按刊例价估算；副行「另有 $43.20」/「N 个未计价」/「暂无用量」）。
 - 热力图，然后是**最多 3 行纯文字**的模型行（模型名 + token 量），不再画每模型的占比条 —— 完整的分布与金额在主窗口用量页。
 
@@ -77,6 +77,6 @@ Cursor 历史用量作为一条 `Cursor` 行附加到所有周期（因其 token
 
 ## 底部操作栏
 
-`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、帮助（先开窗口再 post `.openHelpPage`）、还原官方配置（带二次确认，可选只还原 Claude Code 或 Codex）、管理模型、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、深浅色切换、退出。
+`MenuBarView` 内联的 icon 按钮行：刷新、打开主窗口（post `.showMainWindow` 通知）、帮助（同一条通知带上目的地 `page: .help`）、还原官方配置（带二次确认，可选只还原 Claude Code 或 Codex）、管理模型、打开 settings.json、空闲通知开关（铃铛，切换 `AppPreferences.idleNotifyEnabled`）、深浅色切换、退出。
 
 popup 只订阅「是否有 settings.json」「Codex 供应商是否为空」两个外壳状态，会话与用量由各自面板观察，避免心跳牵动整个外层重算。

@@ -41,7 +41,7 @@ CC Switch 中部分平台仍被列为 Chat Completions；预设协议以当前�
 
 ## 模型拉取与凭据输入
 
-快速配置和已有配置详情共用 `ProviderModelFetchButton`，导入之前必须勾选确认，已存在的模型不重复添加。URL、Key 或协议变更时取消旧请求并清除旧结果。原有高级编辑器也使用同一拉取器。
+快速配置和已有配置详情共用 `ProviderModelFetchButton`，导入之前必须勾选确认，已存在的模型不重复添加。URL、Key 或协议变更时取消旧请求并清除旧结果。
 
 `ModelListFetcher` 保留当前产品路径，去掉 `/messages`、`/responses`、`/chat/completions` 等完整方法后缀后请求模型列表。[DeepSeek 模型列表](https://api-docs.deepseek.com/api/list-models/) 使用显式 `/models` 地址。其余未配置专用列表的接口尝试当前基址的 `/models`（Anthropic 必要时 `/v1/models`），失败后提示手工填写，不跨套餐尝试其他产品地址。支持 `data`、`models` 两种常见返回结构；列表接口不代表所有模型都可用于当前协议或套餐。
 
@@ -53,10 +53,12 @@ Codex 的 Chat 上游必须经过现有本地 Responses → Chat 转换，不依
 
 是否要求 Key 由 **Base URL 的主机**决定，与供应商名称无关：`ProviderCatalogEntry.isLocalEndpoint(_:)` 判定 `localhost` / `127.0.0.0/8` / `::1` / `0.0.0.0` / `.local` / `10/8` / `192.168/16` / `172.16/12`。
 
-- 本机端点：Key 可留空，快速配置与已有配置详情都不再报「请填写 API Key」，Key 控件转为「本机服务无需 Key（留空即可）」；「检测连通性」不再把空 Key 判为失败，而用占位串发出探测请求。
-- 远程端点：Key 仍为必填，连通性检测照旧要求非空。
+- 本机端点：Key 可留空，快速配置与已有配置详情都不再报「请填写 API Key」，Key 控件转为「本机服务无需 Key（留空即可）」。
+- 远程端点：Key 仍为必填。
 - 之所以不能按供应商名判定：Ollama 与 LM Studio 默认无鉴权，但套了公网反代之后就是真需要 Key；`Ollama` 这个名字无法区分这两种情况，主机可以。
 - 边界用例（`localhost.evil.com`、`127.0.0.2.example.com`、`172.15/172.32`、`192.169` 等）由 `Tests/local-endpoint-regressions.py` 锁定。
+
+供应商侧的「连通性检测」按钮与其探测路径已随旧编辑界面删除；现存的连通性检测只有连接卡 popover 里的「检测代理」，探测本机代理端口是否响应。
 
 ## 图标与验证范围
 
@@ -65,8 +67,6 @@ Codex 的 Chat 上游必须经过现有本地 Responses → Chat 转换，不依
 图标必须在自己主题的垫底上可见：`ProviderIdentityMark` 把 PNG 画在 `Theme.bgSecondary` 上，`Tests/provider-icon-regressions.py` 要求每个资源的实心像素对对应主题垫底的对比度 ≥ 3:1。纯白或荧光色的 `-color` 变体在浅色主题下会渲染成一块空白，因此 Kimi、NVIDIA、OpenRouter、硅基流动、火山方舟改用单色变体；Ollama 与 LM Studio 补上了厂商图标。新增图标前先跑该测试。
 
 目录内所有平台均为文档核查，不是使用真实 Key 的付费端到端验证；模型可用性由账号、区域和套餐决定。
-
-按用户要求，本轮只修改代码，未构建、未运行需要 Swift 编译的测试、未使用用户 Key 请求供应商。仅做差异空白检查、构建脚本语法与资源完整性静态检查。既有 Codex 会话回归测试保留，供后续构建验证使用。
 
 ## 会话显示
 

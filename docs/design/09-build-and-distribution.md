@@ -12,7 +12,7 @@ CI (tag v*)       →  release.yml  →  DMG + zip + GitHub Release
 ```
 
 - **用户不运行 build.sh**。DMG 内含 `ClaudeBar.app` 与 `Applications` 快捷方式，拖放安装。
-- **开发构建**：`make build` 默认 dev，生成独立身份的 ClaudeBar Dev，只编译、不安装。
+- **开发构建**：`make build` 默认 dev（`CLAUDEBAR_SKIP_INSTALL=1`），生成独立身份的 ClaudeBar Dev，只编译、不安装。
 - **CI 构建**：分别编译 dev / release，只构建；dev job 运行回归。
 - **发版打包**：`make package` 使用 release 身份， 额外产出 `.build/dist/*.dmg`、`.zip` 及 `.sha256`。
 - **GitHub Release**：`main` 上打 tag `vMAJOR.MINOR.PATCH`；[release.yml](../../.github/workflows/release.yml) 自动上传。版本号约定见 [VERSIONING.md](../VERSIONING.md)，步骤见 [RELEASING.md](../RELEASING.md)。
@@ -26,9 +26,9 @@ CI (tag v*)       →  release.yml  →  DMG + zip + GitHub Release
 ## 平台
 
 - **最低系统**：macOS 15，arm64 only
-- **macOS 26+**：命令面板结果区启用 Liquid Glass 容器；按钮不分系统版本，一律走 `ActionButton`（`InstrumentControls.swift`）
+- **macOS 26+**：命令面板结果区启用 Liquid Glass 容器（`GlassEffectContainer`，`#available(macOS 26.0, *)`）；按钮不按系统版本分支，一律走自绘的 `ActionButton`（`InstrumentControls.swift`）
 - **Widget**：安装后 `lsregister` + `pluginkit`；桌面右键添加 ClaudeBar 小组件
 - **VPN 内核**：构建脚本把 mihomo 打成 `Resources/mihomo-core.xz`（13 MB，首次启动在应用内解压成 `mihomo`）；见 [technical/11](../technical/11-vpn.md)
-- **签名**：本机构建用自签 `ClaudeBar Dev`；CI 用 ad-hoc。两者都无公证，适合本机或受信任环境
+- **签名**：本机构建用 ensure-dev-cert 生成并信任的自签 `ClaudeBar Dev` 证书（不带是 ad-hoc 证书的退化路径——ad-hoc 的 designated requirement 是整包 hash，每次重建都会被 TCC 当成新应用重复索要屏幕录制权限）；CI 与显式 `CODESIGN_IDENTITY` 用 ad-hoc。两者都无公证，适合本机或受信任环境
 
 详细签名与 Widget 注册见 [构建与签名](../technical/07-build-and-signing.md)。

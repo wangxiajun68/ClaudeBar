@@ -4,8 +4,8 @@
 > 相关：技术文档 [数据访问层](04-data-access-layer.md) · [视图层](05-view-layer.md)
 
 ## 新增一个 env 字段
-1. `Preset.swift` 的 `EnvConfig` 加属性 + `CodingKeys` + 两个 `init`。
-2. `SettingsManager.swift` 的 `readSettings` 加读取、`writeSettings` 加 `preserve` 行。
+1. `Preset.swift` 的 `EnvConfig` 加属性（合成 `Codable`，无手写 `CodingKeys`；字段多了要同时改 `init` 与 `SettingsManager.readSettings`）。
+2. `SettingsManager.swift` 的 `readSettings` 加读取（`writeSettings` 走 `managedEnvKeys` + 非空写回，新键要加进 `managedEnvKeys` 才会被清除语义覆盖）。
 3. `ProviderStore.buildEnv` 赋值。
 4. 若需 UI 编辑，加在用户真正会打开的编辑器上：`ProviderConnectionModel`（`Views/Shared/ProviderConnectionEditor.swift`）+ `ProviderConnectionDraft` 的读写、`ProvidersView.connectionDraft` / `saveConnection` 的往返。**只改这条路** —— 源码里曾有一套同名近似的 `ProviderEditorModel` / `ProviderEditorView`（无挂载点），已删除，见 [17](../reviews/ui-audit-backlog.md) §3。
 

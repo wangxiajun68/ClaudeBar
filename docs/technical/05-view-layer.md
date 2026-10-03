@@ -3,7 +3,7 @@
 > ClaudeBar 技术文档 · §5
 > 相关：设计文档 [主窗口与设计系统](../design/05-main-window-and-theme.md) · [Popup 布局](../design/04-popup-layout.md) · 技术文档 [启动与窗口](02-app-launch-and-windows.md)
 
-ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，460pt，`.menu` vibrancy）与主窗口（`MainWindowView` + 9 Pages，1120×720，`.underWindowBackground` vibrancy）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。
+ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，460pt）与主窗口（`MainWindowView` + 9 Pages，1120×720）。两者共享 `Theme/Theme.swift` 与 `Views/Shared/`。两处都不加窗口级 vibrancy：popup 在 `applyPanelAppearance` 里把 `NSPanel` 设成非不透明、内容视图铺满 `Theme.windowNSColor`（22pt 连续圆角），主窗口 `isOpaque = true` 并用同一个颜色作底色。
 
 ## `Theme` — 设计 token 单点
 
@@ -11,7 +11,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 - **颜色**：基底四层 `bgPrimary`（浅 `#EEF3F8` / 深 `#16181C`）、`bgSecondary`、`bgOverlay`、`cardSurface`；信号色 `claude` 0x3D7DFF / `claudeHi` · `cursor` 0x8B7CFF · `codex` 0x6B7280 · `chartGreen`/`chartBlue`/`chartAmber`/`chartPurple` · `external`；语义色 `statusBusy`=claude、`statusIdle`、`statusWarning`、`statusError`、`statusSuccess`；文字 `textPrimary` / `textSecondary` / `textTertiary()`，以及 **`Theme.Ink.*`** —— 同一组信号色按明暗两套调到 ≥4.5:1 的**文字版**（形状用前者，字和字形用后者）。
 - **间距/圆角/字距/字体**：`Space`（s2/s4/s6/s8/s10/s12/s14/s16/s24 + `gridGap`/`gridGapPage`）、`Radius`（sm 8 / md 12 / lg 16 / xl 20）、`Tracking`（titleSmall / caption）、`Font` —— 系统字阶（`titleSmall`/`bodyLarge`/`body`/`bodySmall`/`caption`/`captionMono`/`labelSection`）+ 显示字阶（`displayMetric`/`displayMetricSmall`/`displayHero`）+ popup 密度别名（`rowTitle`/`micro*`/`badgeMono`/`console`）+ 界面字阶（`chrome`/`chromeEmph`/`brand`/`section`/`eyebrow`/`meta`/`kpi`/`pill`）+ 瓦片字阶（`tileValue`/`tileValueSmall`/`tileMicroValue`/`tileLabel`/`tileDetail`）。
-- **宫格**：`GridLayout.Preset`（`pageSession`·`pageUsage` 自适应 → `TileGrid`；`mosaic(columns:)` 是 VPN 页等宽铺满的变体）。**设置页不再走这条路径**：它整片换成了 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`（`Views/Shared/SettingsControls.swift`）——一组一张中性面板、行内标签左对齐控件右对齐、原生 macOS 开关与选择器，不再有每项一张卡、彩色图标井、深度环与悬停抬升。口径见 [设置页](../design/surfaces/settings.md)。**副作用**：`pageMetric` / `pageProvider` / `pageSetting` / `pageSettingDense` / `popupSession` / `popupProvider` / `popupUsage` 这七个枚举值随这一轮**失去了全部调用点**（设置页是最后的使用者，popup 的三个从来只有定义），目前仍留在 `Preset` 里以免在这次改动里顺手动到 `Tile.swift` 与 `Theme.swift` 的排布分支；下一次动 `TileGrid` 时应当连同 `equalRow` 的分支一起删掉。
+- **宫格**：`GridLayout.Preset`（`pageSession`·`pageUsage` 自适应 → `TileGrid`；`mosaic(columns:)` 是 VPN 页等宽铺满的变体）。**设置页不再走这条路径**：它整片换成了 `SettingsGroup` / `SettingsRow` / `SettingsToggleRow`（`Views/Shared/SettingsControls.swift`）——一组一张中性面板、行内标签左对齐控件右对齐、原生 macOS 开关与选择器，不再有每项一张卡、彩色图标井、深度环与悬停抬升。口径见 [设置页](../design/surfaces/settings.md)。`pageSession` / `pageUsage` 仍在概览、会话与用量页使用；设置页迁走后 `pageMetric` / `pageProvider` / `pageSetting` / `pageSettingDense` / `popupSession` / `popupProvider` / `popupUsage` 这七个枚举值只剩 `Tile.swift` / `Theme.swift` 内部的排布分支，没有外部调用点；下一次动 `TileGrid` 时应当连同 `equalRow` 的分支一起删掉。
 - **动画**：`Animation`（bouncy/smooth/snappy/sparkle/roll）、`Motion.page`/`Motion.state`——全部状态驱动，无常驻时间线。
 - **表面/Helper**：`panelCard()`（半透明白填充 + 发丝线描边的扁平卡片，**非** `glassEffect`——主窗口大面积玻璃曾占用约 100 MB GPU 纹理）、`.tile()`（宫格瓦片表面，与 `panelCard` 同族、更密更浅，实现在 `Views/Shared/Tile.swift` 的 `TileSurface`）、`shadowCard()`、`cardFill(_:)`、`divider`/`hairline`、`contextColor(ratio)`（blue/warning/red）、`barColor(for:)` + `djb2`（跨进程稳定 hash 调色板）、`HairlineDivider`（去卡片化的发丝线分区）、`Theme.Ink.*`（信号色的文字版）/ 原信号色（形状版）。下压按钮是 `ActionButton`（`InstrumentControls.swift`）：`tone:` 说这个控件**是什么**（`.neutral` 铣削凹槽，默认 / `.sparkle` 深色板 / `.accent` / `.destructive`），`emphasis:` 说它是不是本页的默认动作。历史名字 `ProviderActionStyle` 是同一块板的转发，`adaptiveGlassButton()` 已删除——旧写法用 `prominent:` / `filled:` / `ink:` 描述**长相**而不表态**用途**，同一页因此会出现两种按钮语言。
 
@@ -25,10 +25,10 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - **2pt 抬升是网格卡片的行为，不是页头的**：抬升会移动卡片自己的 frame，而 hover 热区跟着它走——指针停在卡片下缘 2pt 内时，会被抬升"送出"卡片、落下时又"接回"，于是每帧来回翻转，看起来就是页头在抖。所以：`TileSurface` 的 `.contentShape` 钉在**未抬升**的几何上（modifier 顺序上先于 `.offset`），命中区不随位移走；整宽的**页头带**另外显式关掉抬升（`PageHeaderCard` 传 `lift: false`），它只保留水洗、白环与描边点亮。页头带**不**画角上的深度环，也**不**画 `OrbitGauge`：一条只有一个控件高的带子裁出来的圆，读起来是残缺的装饰，还会压住按钮和构成条。概览不用这条带，标题直接落在画布上。`Tests/inflight-animation-regressions.py` 把抬升这两条源码性质都钉住了。
 - **页头带只有一种解剖**（`PageHeaderCard`）：左半是 `PageTitle` + 紧随其下的副标题，右半是这条带自己的控件（`.headerControl()`），两侧都 `alignment: .top`。副标题**永远在标题下面**，绝不和控件叠在同一列里——把「副标题 + 按钮」竖着摞在右下角，会让这条带成为全应用最高的一条（74pt vs 68pt），按钮底边还会压进内嵌白环，就是「模型」页那个错乱的样子。标题一律走 `PageTitle`（22pt bold + 34pt `GlyphWell`，字形与色相由 `PageIdentity` 决定），不要再手写字号 / 字重 / 井的大小——「连接器」页曾自己画 `GlyphWell(size: 38)` + 22pt **semibold**，和隔壁「模型」页并排就是两个字形、两个井。
 - **带里控件的按钮必须 `.buttonStyle(.plain)`**：`headerControl()` 的井与描边就是控件的全部表面，默认 macOS 按钮样式会在胶囊井**内部**再画一个灰色圆角矩形，两层灰叠起来就读成「禁用」。
-- **控件语言不在这个文件里**：按钮、字段、开关与页头带控件的单点是 `Views/Shared/InstrumentControls.swift`（`InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` / `InstrumentToggleStyle` / `PerimeterSweep` / `GroundShadow` / `headerControl()` / `ActionButton` + `ActionPlateButtonStyle` + `ControlPlate` / `InstrumentMenuLabel` / `ProviderActionStyle`）。表面文件说卡片*是什么*，控制文件说控件被碰到时*做什么*，两者守同两条性能规则。深色「sparkle」板的口径（`SparklePlate`、`Theme.Animation.sparkle` 的 450ms）见 [DESIGN.md](../../DESIGN.md) 的 Controls 表。
+- **控件语言不在这个文件里**：按钮、字段、开关与页头带控件的单点是 `Views/Shared/InstrumentControls.swift`（`InstrumentField` / `InstrumentWell` / `InstrumentToggleStyle` / `PerimeterSweep` / `GroundShadow` / `headerControl()` / `ActionButton` + `ActionPlateButtonStyle` + `ControlPlate` / `InstrumentMenuLabel` / `ProviderActionStyle`）；唯一的字段凹槽 `InstrumentFieldStyle` 在 `InstrumentSearchField.swift`。表面文件说卡片*是什么*，控制文件说控件被碰到时*做什么*，两者守同两条性能规则。深色「sparkle」板的口径（`SparklePlate`、`Theme.Animation.sparkle` 的 450ms）见 [DESIGN.md](../../DESIGN.md) 的 Controls 表。
 - `OrbitGauge`（额度表盘：trim 弧 + 沿弧走的圆点）、`ConveyorBelt`（扫描中那种"正在持续做事"的走带，`DecorativeMotion.kind == .conveyor`）、`ShineSweep`（悬停开始时的一次性扫光，由 `shineOnHover` 装在分段胶囊上）。`depthTilt` / `DepthTiltModifier` 已删除（2026-10-02 连接器卡去掉 3D 倾斜后没有调用方）。这里**已经没有 `LoadRing`，也没有取代它的 `InstrumentRing`**：两者都曾是按读数调速的装饰（一条光的弧 / 一圈 conic 环绕在机器图标背后，转速 ∝ 读数，<5% 完全静止，读数变化时用 `timeOffset` 就地重定时），但弧与环在 20–28pt 上读起来都是「转圈 = 等待」，而且它们复述了下方三行已经印出的数字 —— 视图、`DecorativeMotion.loadRing` 与 `InstrumentRing` 一并删除。
 
-实时读数改由右侧的 mark 承担：**上层是 Lucide 官方图标（`cpu` / `gpu` / `memory-stick` / `hard-drive`，由 `Tools/gen-lucide-hardware.py` 生成到 `LucideHardwareGeometry.swift`；同一脚本还生成 `laptop-minimal` 与 `fan`），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，条高即读数**，另有一条按读数调速的扫光（`ReadingSweep`：每个忙柱一条 `CAGradientLayer`，按 `0.35 + load × 1.35` 周/秒平移，<4%、减弱动效或不可见时速率为 0；**不再是 `TimelineView`** —— 那一条调度的代价是每个显示周期重排整个 hosting view，见 [技术 §8](08-performance.md) 的 2026-09-29 一节）（见 `HardwareIllustration` 与 [DESIGN.md](../../DESIGN.md) 的 Machine marks）。mark 的尺寸是 `ResourceStrip.markSlot`（176×130），瓦片与 popover 共用同一个常量。
+实时读数改由右侧的 mark 承担：**上层是 Lucide 官方图标（`cpu` / `gpu` / `memory-stick` / `hard-drive` 四枚，由 `Tools/gen-lucide-hardware.py` 生成到 `LucideHardwareGeometry.swift`；`laptop-minimal` 与 `fan` 曾由同一脚本生成，风扇卡改画随包插画后已从生成集移除），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存按页类别、硬盘按已用/空闲，条高即读数**，另有一条按读数调速的扫光（`ReadingSweep`：每个忙柱一条 `CAGradientLayer`，按 `0.35 + load × 1.35` 周/秒平移，<4%、减弱动效或不可见时速率为 0；**不再是 `TimelineView`** —— 那一条调度的代价是每个显示周期重排整个 hosting view，见 [技术 §8](08-performance.md) 的 2026-09-29 一节）（见 `HardwareIllustration` 与 [DESIGN.md](../../DESIGN.md) 的 Machine marks）。mark 的尺寸是 `ResourceStrip.markSlot`（176×130），瓦片与 popover 共用同一个常量。
 
 风扇使用共享结构插画的涡轮区域，缺失时回退到 SF Symbols `fanblades.fill`（`LucideRotor.swift` 保留旧文件名）。Core Animation 按 RPM 就地重定时，低于 80 RPM、窗口不可见或减弱动效时停转。详情使用随包分发的高清矢量风格概念插画，保留电路、散热管、电池细节；图中双风扇按各自 RPM 动画，按钮独立控制风速。
 - 成本口径：装饰是几何而不是动画（每个 `Canvas` 只画一次）；两处会动的东西（扫光、走带）都由 `surfaceIsVisible` + 减弱动效双重门控。见 [DESIGN.md](../../DESIGN.md) 的 Motion / performance。
@@ -63,7 +63,7 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 **视觉规范**：
 - 配色统一 `Theme` token（`textPrimary`/`textSecondary`/`textTertiary()`/`accent`/`statusBusy`/`cursorAccent`/`divider` 等）。
 - 上下文健康：`ratio < 0.6` 蓝、`< 0.85` 黄、否则红（`Theme.contextColor`）。
-- busy/active 的状态点是静态实心 + 光晕环（`BusyPulseRing` 不再脉冲；`Theme.Animation.pulse` 当前无调用点）。
+- busy/active 的状态点是静态实心 + 光晕环（`BusyPulseRing` 现在是一个静态 `Circle`，早先的脉冲与 display link 已去除）。
 - 反馈 toast（`PanelState.showFeedback` + `FeedbackToast`）2 秒淡出。
 
 **双击行为**（经共享 `TerminalLauncher`，先把活会话的宿主窗口带到前台；见 [§9](09-file-index.md) 的 `SessionHost` / `OttyBridge`）：
@@ -74,9 +74,9 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 
 ## `ProviderTile` — deleted
 
-- `ProviderTile`（`Views/ProviderRow.swift`）自 `2fd24f7` 起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30 随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [审查证据](../reviews/ui-audit-backlog.md) §9。
+- `ProviderTile`（`Views/ProviderRow.swift`）自 2026-09-24 的供应商目录重构起**没有挂载点**（`ProvidersView` 走 `ProviderDirectoryHost` + `ProviderConnectionEditor`），2026-09-30（`776f3b7`）随同一批无调用点视图删除。目录宫格那颗瓦片现在由 `ProviderDirectoryCard` 承担；理由与结果见 [审查证据](../reviews/ui-audit-backlog.md) §9。
 - `popup` 的模型切换走 `PanelHeader` 的 chip → `ModelSwitchList`，不用瓦片网格；`PopupModelTile` 已删除。
-- `formatContext`：`200000 → 200K`、`1000000 → 1M`。
+- `formatContext`：`n < 1000` 原样输出，否则折成小写 `k`（`k ≥ 10` 或接近整数时取整、其余保留一位小数）：`999 → 999`、`200000 → 200k`、`1000000 → 1000k`。
 
 ## `ProviderEditorView` — 已删除
 
@@ -96,8 +96,8 @@ ClaudeBar 有两个 UI 面：菜单栏 popup（`MenuBarView` + `Views/Popup/`，
 - Header：ClaudeBar + 大号 token 总数 + 余额（两者都走 `.widgetRollingNumber()` —— widget 是独立编译目标，看不到 app 的 `View.rollingNumber()`，所以这里有一份同 transition 的私有副本，`.numericText(countsDown: true)`，同样**不**配隐式 `.animation(value:)`）。
 - Provider + Model + 相对时间。
 - 模型分布条（多个模型按 ratio 横向拼接）+ 图例。
-- 活跃会话列表（最多 3 条 Claude + 3 条 Cursor），每行状态点 + 项目 + 活动 + 上下文条。
-- 空态显示 "等待数据..."。
-- 点击整个 Widget 触发 `claudebar://` 唤起主面板。
+- 活跃会话列表（三家客户端的 section 各最多 3 条：Claude / Cursor / Codex，每行状态点 + 项目 + 活动 + 上下文条）。
+- 空态显示 "暂无数据"。
+- 点击整个 Widget 触发 `claudebar://`（`ClaudeBarWidget.swift` 的 `.widgetURL`）唤起主面板。
 
-`WidgetProvider.getTimeline`：读快照（四路回退），30s 后刷新；读失败返回 `diagnosticEntry`（把诊断字符串塞进 `activeProviderName` 显示，如 `UD:2048B F:Y/2048B`）。
+`WidgetProvider.getTimeline`：四路回退读快照（App Group `UserDefaults` → App Group 文件 → `~/.claude`（仅 `BuildChannel.allowsSystemIntegration`）→ Widget 自身沙箱容器），30s 后刷新。四路都拿不到或解码失败时返回 nil，视图回退到 `WidgetEntry.placeholder`（空快照）并显示「暂无数据」。

@@ -79,9 +79,9 @@ Apple M3 Pro，1100×474 pt 卡片，2200×948 px，11 种日间/夜间/降水�
 - JSON 与 Markdown worker 取消；Markdown 基本文案/代码块不变。
 - 原生能源流/旋翼遮挡、detach、恢复时相位连续；1000 次相同更新不重建能源图层。
 
-`fan-rotor`、`rendering`、`machine-mark` 与 `inflight-animation` 继续验证像素、图层稳定性及高频读数不持有连续 SwiftUI 动画事务。
+`fan-rotor`、`rendering`、`machine-mark` 与 `inflight-animation` 继续验证像素、图层稳定性及高频读数不持有连续 SwiftUI 动画事务（2026-10-02 又新增 `widget-tint`、`icon-minimal`）。
 
-最终执行 `make test`、`make build`、`make release`。构建只输出 dev/release 包，不安装或启动正式版；包身份、Widget、URL scheme、entitlements 与签名由构建门禁校验。正式版使用本地 ad-hoc 签名，不是发行公证产物。
+最终执行 `make test`、`make build`、`make release`。构建只输出 dev/release 包，不安装或启动正式版；包身份、Widget、URL scheme、entitlements 与签名由构建门禁校验。本次审查时本地正式版构建还是 ad-hoc 签名；此后本地构建（两个版本）改为使用 `ClaudeBar Dev` 自签身份以稳定 TCC，不再是审查时的签名形态，也不是发行公证产物。
 
 ## 验收边界
 
@@ -91,7 +91,7 @@ Apple M3 Pro，1100×474 pt 卡片，2200×948 px，11 种日间/夜间/降水�
 
 ## 组件静态扫描清单
 
-下表覆盖 `Sources/ClaudeBar/Views` 全部 96 个 Swift 文件。标记只列出命中的持续调度、后台任务、原生桥接和观察订阅入口；空标记不代表组件运行耗时已被证明为零。所有文件都检查了这些入口及滚动/状态更新信号，重点命中路径的结果见上文。
+以下是该轮审查时按 `git ls-tree` 记下的 96 个文件中的 95 个；2026-10-02 删除 `Shared/ConnectivityProbeButton.swift` 后本表同步删行（其组件仍在别处使用，本表已不再逐文件枚举）。标记只列出命中的持续调度、后台任务、原生桥接和观察订阅入口；空标记不代表组件运行耗时已被证明为零。所有文件都检查了这些入口及滚动/状态更新信号，重点命中路径的结果见上文。此后新增的视图（飞书文档与表格编辑、会话状态视图等）未再逐个补入本表。
 
 | 文件（相对于 Views） | 静态检查标记 |
 | --- | --- |

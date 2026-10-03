@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchIslandController: NotchIslandController?
     private var providerStore: ProviderStore?
     private var codexProviderStore: CodexProviderStore?
+    /// A widget tap that arrived before the menu-bar controller existed (see
+    /// `application(_:open:)`). Replayed at the end of launch.
+    private var pendingOpenURL = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // .regular: the app has a Dock icon, standard app menu, and proper
@@ -14,6 +17,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         AppearanceSync.apply()
         BatteryChargeController.shared.probe()
+        // Touch the notification service before launch returns so its
+        // `UNUserNotificationCenter` delegate is installed in time. The
+        // singleton registers the delegate in its `init`, and nothing else here
+        // reaches it synchronously: the first `post(...)` rides the async
+        // session scan, whose main-actor publish cannot run before this method
+        // returns. Apple's contract is explicit — a delegate assigned after
+        // launch "might cause you to miss incoming notifications" — and the one
+        // that matters is the banner tap that *launches* the app
+        // (在终端继续 / 去确认 → `.resumeSession`), whose response would arrive
+        // before the service existed. Creating it installs the delegate; the
+        // authorization prompt stays behind its own build-channel gate.
+        _ = NotificationService.shared
 
         let store = ProviderStore()
         providerStore = store
@@ -94,6 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a change made in System Settings shows up on return.
         LaunchAtLogin.shared.refresh()
 
+        // A widget tap that launched this process was delivered before
+        // `menuBarController` existed; open the panel now that it does.
+        if pendingOpenURL {
+            pendingOpenURL = false
+            menuBarController?.showPanel()
+        }
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(fanPermissionNeeded),
             name: .fanPermissionNeeded, object: nil)
@@ -171,11 +193,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Handle widget tap → show the menu panel.
+    ///
+    /// Launch Services can deliver this **before** `applicationDidFinishLaunching`
+    /// returns — AppKit's own documentation on the delegate ordering says so for
+    /// the file-open form, and a widget tap is exactly the cold start that hits
+    /// it. At that moment `menuBarController` does not exist yet, and the
+    /// optional chain made the tap a silent no-op; the user's second tap
+    /// worked, which is what made it look like the first one "didn't register".
+    /// Park the request instead and replay it once the controller is up.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls {
-            if url.scheme == BuildChannel.urlScheme {
-                menuBarController?.showPanel()
+        for url in urls where url.scheme == BuildChannel.urlScheme {
+            guard let menuBarController else {
+                pendingOpenURL = true
+                continue
             }
+            menuBarController.showPanel()
         }
     }
 

@@ -284,8 +284,6 @@ models.dev 在这张表里只用于 **Anthropic 与 OpenAI 两家**（`ModelPric
 
 补充模型完整性：平台按客户端来源归属，Codex 自定义模型与官方模型都在 Codex 平台内。模型清单改为本地与 Cursor 窗口记录的集合，不设数量上限；本地别名合并，Cursor 数量与账单日期独立显示，避免遗漏 Cursor-only 模型或把不同窗口加总。缺失模型标识保留 `unknown` 用量。模型卡片改用真实 Token 分量条，并明确标注本地估算及 Cursor 实扣。
 
-验证边界：前一阶段全量 38 组回归及 dev/release 构建通过；模型清单、观察域和平台口径的最终补充按用户要求仅修改源码及回归用例，未再次编译、执行测试或启动应用。
-
 口径边界：Token 是每次请求处理的输入、缓存和输出累计量，同一段上下文被多次使用会多次计入，并非独立文本的字数。金额仍是按价目表/用户覆盖价估算；错峰、上下文阶梯、缓存 TTL、代理折扣与订阅实际扣费不由日级 rollup 还原。Cursor 的窗口、截断和官方聚合覆盖限制见本页既有说明。
 
 上游字段语义可核对 [OpenAI 的 Codex token accounting 文档](https://github.com/openai/symphony/blob/main/elixir/docs/token_accounting.md) 和 [Anthropic prompt caching 文档](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)。

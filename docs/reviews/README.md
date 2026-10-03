@@ -10,3 +10,5 @@
 - [电池控制审查](battery-control-audit-2026-09-27.md)
 - [问候字体研究](greeting-font-research-2026-10-01.md)
 - [灵动岛会话监控审查](island-session-monitor-audit-2026-10-01.md)（复现脚本 [island-session-monitor-repro-2026-10-01.py](island-session-monitor-repro-2026-10-01.py)）
+- [Codex / Claude Code 会话迁移调研](session-migration-research-2026-10-03.md)（隔离复现脚本与结果，包含当前 paginated 会话格式边界）
+- [Codex / Cursor / CC 六方向深度调研与真实验证](session-migration-deep-research-2026-10-03.md)（[真实结果](session-migration-live-results-2026-10-03.json)、[嫁接原型](session-migration-lab-2026-10-03/README.md)；含官方/自定义模型切换与失败对照）

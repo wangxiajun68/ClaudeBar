@@ -1,0 +1,58 @@
+{
+  "claude_version": "2.1.288",
+  "provider": "loopback mock only",
+  "real_model_used": false,
+  "cases": [
+    {
+      "name": "baseline",
+      "success": true,
+      "request_roles": [
+        "user"
+      ],
+      "request_contains_source_marker": false
+    },
+    {
+      "name": "converted-resume",
+      "success": true,
+      "request_roles": [
+        "user",
+        "assistant",
+        "user"
+      ],
+      "request_contains_source_marker": true
+    },
+    {
+      "name": "second-resume",
+      "success": true,
+      "request_roles": [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user"
+      ],
+      "request_contains_source_marker": true
+    },
+    {
+      "name": "tool-evidence-text",
+      "success": true,
+      "request_roles": [
+        "user",
+        "assistant",
+        "assistant",
+        "user"
+      ],
+      "request_contains_source_marker": true
+    },
+    {
+      "name": "paginated-canonical-text",
+      "success": true,
+      "request_roles": [
+        "user",
+        "assistant",
+        "user"
+      ],
+      "request_contains_source_marker": false
+    }
+  ]
+}

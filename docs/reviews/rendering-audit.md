@@ -1,6 +1,5 @@
 # 桌面、Popup 与灵动岛性能审查
 
-> ClaudeBar 技术文档 · §14
 > 相关：技术文档 [性能策略](../technical/08-performance.md) · 设计文档 [刘海灵动岛](../design/10-notch-island.md)
 
 审查日期：2026-09-24。基于当前工作区（包含原有未提交功能），不是仅审查 HEAD。
@@ -67,4 +66,4 @@
 5. 主窗口遮挡/最小化，同时展开 popup 或灵动岛；关闭后检查 CPU/GPU 回落。
 6. 浅色/深色、Reduce Motion、60 Hz 与 ProMotion、低电量模式。
 
-记录主线程与渲染耗时的 p50/p95/p99、hitch 次数、峰值内存、关闭后 CPU。60 Hz 每帧预算约 16.67 ms，120 Hz 约 8.33 ms；数据更新 10 Hz 不等于显示刷新 10 FPS。装饰动效现在没有 12/20 Hz 的 `TimelineView` 采样了（`LoadRing` 与灵动岛轮播卡都已删除）：装饰一律走 `NSViewRepresentable` + Core Animation，由渲染服务器插值。`HardwareIllustration` 的读数扫光也已离开时间线（2026-09-29 改为 `ReadingSweep` 的 `CAGradientLayer`，见 [§8](../technical/08-performance.md)）。全仓**只剩两处** `TimelineView`：问候卡的时钟（`.periodic(by: 1)`）与灵动岛会话行的 30 秒周期相对时间——都是周期调度，不是每帧。这两处（以及扫光那条图层的相位连续性）仍应单独验收，不能用页面平均 FPS 掩盖。
+记录主线程与渲染耗时的 p50/p95/p99、hitch 次数、峰值内存、关闭后 CPU。60 Hz 每帧预算约 16.67 ms，120 Hz 约 8.33 ms；数据更新 10 Hz 不等于显示刷新 10 FPS。装饰动效不依赖 12/20 Hz 的 `TimelineView` 采样（`LoadRing` 与灵动岛轮播卡已删除），改走 `NSViewRepresentable` + Core Animation，由渲染服务器插值；`HardwareIllustration` 的读数扫光也已离开时间线（2026-09-29 改为 `ReadingSweep` 的 `CAGradientLayer`，见 [§8](../technical/08-performance.md)）。全仓 `TimelineView` 实际是**三处**，不是本文早先写下的两处：问候卡的时钟（`.periodic(by: 1)`）、灵动岛会话行的 30 秒周期相对时间，以及 `WeatherBackdrop` 的天气 Canvas 回退 `.animation` 档位（12 / 16 / 30 Hz，随天气变化，Reduce Motion、屏外与低电量模式暂停）。三者都是周期或受限调度，不是每帧；仍应单独验收，不能用页面平均 FPS 掩盖。

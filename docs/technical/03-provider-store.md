@@ -14,11 +14,11 @@
 | `currentEnv` | `EnvConfig?` | 当前 settings.json 的 env |
 | `hasSettingsFile` | `Bool` | settings.json 是否存在 |
 | `errorMessage` | `String?` | 写 settings 失败等错误信息 |
-| `balanceText` / `balanceLoading` | `String?` / `Bool` | DeepSeek 余额（`balanceText` 含币种，B10） |
+| `balanceText` / `balanceLoading` | `String?` / `Bool` | 各家官方余额读数（DeepSeek / Kimi / 硅基流动 / OpenRouter；`balanceText` 含币种，B10） |
 | `sessions` / `expandedSessionPIDs` | `[SessionInfo]` / `Set<Int>` | Claude Code 活跃会话 / 展开的会话（显示子 Agent） |
 | `heartbeats` | `[Int: [Bool]]` | 每会话最近 `AppConfig.heartbeatLength`（24）个 busy/idle 采样，驱动心跳 sparkline |
 | `anySessionBusy` | `Bool` | 是否有任一会话 busy（驱动菜单栏图标脉冲） |
-| `cursorSessions` / `cursorExpanded` | `[CursorSessionInfo]` / `Set<String>` | Cursor 活跃会话 / 展开的会话 |
+| `cursorSessions` | `[CursorSessionInfo]` | Cursor 活跃会话（展开态与 Claude 共用 `expandedSessionPIDs`） |
 | `usageStats` / `usageLoading` | `[ModelUsage]` / `Bool` | token 用量 |
 | `usagePeriod` / `usageReferenceDate` | `UsagePeriod` / `Date` | 用量周期，变化即重算 |
 | `collapsedProviderIDs` | `Set<UUID>` | 折叠的 Provider |
@@ -31,7 +31,7 @@
 
 ## 非路径配置（`AppConfig.swift`）
 
-`sessionPollInterval`（2.5s）、`heartbeatLength`（24）、`widgetSnapshotDefaultsKey`、`widgetBundleID`、`widgetSnapshotFileName`——轮询节奏与 Widget 快照键名的单点定义。
+`sessionPollInterval`（2.5s）、`sessionPollIdleInterval`（5s）、`sessionPollHiddenInterval`（8s）、`heartbeatLength`（24）、`widgetSnapshotDefaultsKey`、`widgetBundleID`、`widgetSnapshotFileName`——轮询节奏与 Widget 快照键名的单点定义。可见且忙走 2.5s、可见但闲置走 5s、界面隐藏或灵动岛收起走 8s。
 
 ## 刷新管线 `refresh()`
 
@@ -39,11 +39,15 @@
 refresh()
   ├── hasSettingsFile = ...
   ├── currentEnv = SettingsManager.readSettings()       ← 返回 EnvConfig?（B11 简化）
-  ├── loadProviders()          ← 含旧格式迁移 + 当前 Provider 探测
-  ├── refreshBalance()         ← async, DeepSeek API（balanceText 含币种，B10）
-  ├── refreshUsage()           ← Task.detached 扫描 jsonl（weak self，B2）
+  ├── loadProviders()          ← 读 providers 文件 + 当前 Provider 探测（旧字段兼容在 `Provider.init(from:)`）
+  ├── ProviderProfileSync.reconcile(claude:codex:)     ← 经 peer 对齐两侧
+  ├── refreshBalance()         ← async, `BalanceFetcher` 支持的官方余额端点（balanceText 含币种，B10）
+  ├── peer?.refreshQuota()
+  ├── refreshUsage(rescan: true)   ← Task.detached 扫描 jsonl（weak self，B2）
+  ├── requestSettlement()      ← 交给 CursorLedgerStore 按当前周期取一次实扣
   ├── refreshSessions()        ← detached task 扫描 → 心跳 → 空闲检测 → refreshCursorSessions()
   ├── startSessionPolling()    ← 2.5s 定时器（deinit 释放，B1）
+  ├── observeVisibility() / startUsageWatcher() / observeAppearance()
   └── writeWidgetSnapshot()    ← diff 后推送 Widget（B6）
 ```
 
@@ -55,24 +59,27 @@ refresh()
 ## 空闲通知
 
 - `AppPreferences`（`Models/AppPreferences.swift`）：`@Published var idleNotifyEnabled`（UserDefaults 持久化，**默认关**——与截图热键一起在「权限与隐私」里逐项 opt-in，见设计 §01），开启时向系统请求通知授权。
-- `NotificationService`（`Utils/NotificationService.swift`）：封装 UNUserNotificationCenter——授权、注册 `IDLE_SESSION` category（含 "在终端恢复" 动作）、`notifyIdle(session:)` / `notifyIdle(cursor:)` / `notifyIdle(external:)` 构建「Claude / Cursor / <客户端> 已完成」+「<项目> · 最终答复已就绪」的通知。
-- 点按通知或 Resume 动作 → post `.resumeSession`（userInfo 携带 pid）→ `AppDelegate` 用 `TerminalLauncher.resumeClaudeSession` 在 Warp/Terminal 恢复会话。
+- `NotificationService`（`Utils/NotificationService.swift`）：封装 UNUserNotificationCenter——授权、注册 `IDLE_SESSION` 与 `NEEDS_INPUT` 两个 category（前者含 "在终端恢复" 动作，后者用于停在用户身上的会话）、`notifyIdle(session:)` / `notifyIdle(cursor:)` / `notifyIdle(external:)` 构建「Claude / Cursor / <客户端> 已完成」+「<项目> · 最终答复已就绪」的通知。
+- 点按通知或 Resume 动作 → post `.resumeSession`（`userInfo` 携带 `agent` / `sessionId` / `cwd` / `pid` / `inDesktop`）→ `AppDelegate` 按 agent 分派到 `TerminalLauncher` 的 Claude / Codex / Cursor 入口。
 
 ## `loadProviders()` 的当前态探测
 
-加载 providers.json 后，用 `currentEnv.ANTHROPIC_BASE_URL`（trim `/` 后）匹配出当前激活 Provider，再用 case-insensitive 匹配 `ANTHROPIC_MODEL` 定位其 `activeModelID`，并立即 `saveProviders()` 持久化探测结果。这使得用户在 Claude Code 外手改 settings.json 后，ClaudeBar 能识别当前态。
+加载 providers 文件（`FilePaths.presetsFile`，即 `claude-bar-providers.json`）后，若 `currentEnv` 的 `ANTHROPIC_BASE_URL` 指向回环代理但当前供应商并没有开启「流量记录」，会把该供应商的原始地址重新激活写回；否则用 baseURL（trim `/` 后）匹配出当前激活 Provider，再用 case-insensitive 匹配 `ANTHROPIC_MODEL` 定位其 `activeModelID`，并立即 `saveProviders()` 持久化探测结果。这使得用户在 Claude Code 外手改 settings.json 后，ClaudeBar 能识别当前态。
 
 ## `activateModel` 写入流程
 
 ```
 activateModel(providerID, modelID)
+  ├── guard 找到 provider + model，否则直接返回
   ├── buildEnv(from: provider, model:)  ← 构造完整 EnvConfig
   ├── SettingsManager.writeSettings(env)   ← 合并写回 settings.json
+  │     └── 抛错时：currentEnv = readSettings()，errorMessage = "写入设置失败：…"，中止（不激活）
   ├── activeProviderID = providerID
   ├── currentEnv = env
   ├── providers[idx].activeModelID = modelID
   ├── saveProviders()
-  └── refreshBalance()
+  ├── refreshBalance()
+  └── refreshSharedProxy()
 ```
 
 `buildEnv` 把所选 `model.name` 同时写入 `ANTHROPIC_MODEL` 与 8 个 `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL[_NAME]`，确保 Claude Code 内部按 tier 路由时一致。

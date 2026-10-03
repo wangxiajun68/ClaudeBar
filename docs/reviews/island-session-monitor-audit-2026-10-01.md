@@ -13,7 +13,7 @@ make test TEST="completion-notify session-waiting island-session-alert waiting-n
 .venv/bin/python docs/reviews/island-session-monitor-repro-2026-10-01.py
 ```
 
-现有 6 组回归全部通过，耗时 10.02 秒。新增脚本从当前生产文件提取 Swift 函数，在临时目录编译并执行，成功复现 10 个问题场景。脚本成功代表缺陷仍可复现，不代表修复通过；因此没有把它作为正常回归加入 Makefile。修复时应把这些场景改成正确行为断言，加入已有对应测试组。
+现有 6 组回归全部通过，耗时 10.02 秒。新增脚本从当时的生产文件提取 Swift 函数，在临时目录编译并执行，复现了 10 个问题场景。脚本成功代表缺陷仍可复现，不代表修复通过；因此没有把它作为正常回归加入 Makefile。修复时应把这些场景改成正确行为断言，加入已有对应测试组。该脚本按 2026-10-01 的源码切片固定，其依赖的私有签名（如 `ProviderStore.transcriptStamp`、`ExternalSessionMonitor.recoverBeforeTail`）在 2026-10-02 的修复中已改名或改变形态，现在直接运行会在编译期失败，需按当时代码回看或改写后才能复现；下面各条目的行号也只是当时的定位。
 
 未执行全回归、App 构建或运行时端到端测试。这次交付是审查，没有生产改动。macOS 实际通知展示、全屏可见性、终端焦点恢复，以及当前安装版本的客户端事件格式，仍需后续受控验证。
 
@@ -80,11 +80,11 @@ Claude 也只读取最近 assistant usage，不识别压缩边界；压缩期间
 
 ### 5. [P1] Cursor / Codex 系统通知的“继续”和“去确认”没有功能
 
-位置：`Sources/ClaudeBar/Utils/NotificationService.swift:103`、`:125`、`:137`、`:158`、`:179`，`Sources/ClaudeBar/ClaudeBarApp.swift:120`。
+位置：`Sources/ClaudeBar/Utils/NotificationService.swift:103`、`:125`、`:137`、`:158`、`:179`，`Sources/ClaudeBar/ClaudeBarApp.swift:120`。（2026-10-02 起路由通过 `ResumeRoute` 传递，行号已变。）
 
 两种客户端调用 `post` 都传 pid: nil，通知 userInfo 因而为空。通知响应只转发 PID；App 接收函数没有 PID 就立即返回。按钮看起来可用，但代码链路无法定位或打开对应会话。Claude 也只保存 PID，没有 sessionId；旧通知若遇到 PID 复用，可能定位到另一会话。
 
-修复方向：通知 payload 保存客户端类型、稳定 sessionId、cwd 和宿主信息，以统一路由打开；校验当前会话身份。Cursor 目前 `openInCursor` 只打开目录，不定位具体 composer，修复时应明确其可支持的定位范围，不能宣称已经跳到特定问题。
+修复方向：通知 payload 保存客户端类型、稳定 sessionId、cwd 和宿主信息，以统一路由打开；校验当前会话身份。Cursor 目前 `openInCursor` 只打开目录，不定位具体 composer，修复时应明确其可支持的定位范围，不能宣称已经跳到特定问题。这条已在 2026-10-02 修复：横幅改为携带 `ResumeRoute`（agent / sessionId / cwd / pid / inDesktop），但 Cursor 的 “去确认” 仍然只打开项目目录。
 
 ### 6. [P1] 开发版通知授权入口没有系统权限闸门
 
@@ -92,7 +92,7 @@ Claude 也只读取最近 assistant usage，不识别压缩边界；压缩期间
 
 实际调用 `requestAuthorization` 的函数没有 `BuildChannel.promptsForSystemPermissions` 判断。开启通知或产生系统提醒都能进入该路径。违反 AGENTS.md 第 6 条“所有请求入口”及“真正触发系统 API 的函数”必须加闸的规定。通知权限的底层存储是否属于 TCC 不影响本仓库禁止 dev 弹出系统授权的明确边界。
 
-修复方向：在授权函数入口加编译期身份闸门，并补覆盖 NotificationService 的隔离检查。本次没有调用该 API，没有触发授权弹窗。
+修复方向：在授权函数入口加编译期身份闸门，并补覆盖 NotificationService 的隔离检查。本次没有调用该 API，没有触发授权弹窗。该闸门已在 2026-09-30 的 `promptsForSystemPermissions` 工作中补上，`requestAuthorizationIfNeeded()` 现在第一行就检查构建身份。
 
 ### 7. [P1] 子代理刷新被父会话缓存短路，监控树会冻结
 
@@ -170,7 +170,7 @@ IslandSession 没有 failed、cancelled、disconnected、unknown；所有非 bus
 
 waiting-notify 测试替换了真实 `state?.mode` 为 bool，再手写 BannerProbe 复制文案。虽然注释称测试生产通知 builder，实际没有执行 NotificationService，也没有验证响应路由、state 为 nil、多提醒覆盖、授权或投递错误。codex-session / island-session-alert 还直接断言 Codex 永远不 waiting，证明的是当前缺失被固定下来，不是需求已实现。其他组对正常 busy → waiting → busy 的测试没有覆盖轮询跳过中间状态。
 
-修复方向：用模拟通知中心驱动实际 payload / 响应 / 投递代码；按 requestId 确认或明确处理失败。让测试验证人工请求能被可靠看见，而不是仅验证代码当前的布尔规则。
+修复方向：用模拟通知中心驱动实际 payload / 响应 / 投递代码；按 requestId 确认或明确处理失败。让测试验证人工请求能被可靠看见，而不是仅验证代码当前的布尔规则。`waiting-notify` 在 2026-10-02 已改为切片生产 `post` 载荷与标题/正文/副标题来断言，不再自行复制文案。
 
 ## 建议修复顺序与验收
 

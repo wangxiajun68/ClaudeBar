@@ -23,7 +23,7 @@ CLI 关联能力按**显式来源**归属：Skill 的 `SKILL.md` 前言 `require
 
 | 平台 | Skills | MCP | 插件 |
 | --- | --- | --- | --- |
-| Claude Code | 平台视图与全部平台视图都采用可逆移库（见下）。插件内 Skills 应随插件管理。 | `/mcp` 的开关按项目写入 `~/.claude.json` 的 `disabledMcpServers`；`.mcp.json` 还有独立的批准/拒绝机制。本页只展示来源并指引到 `/mcp`，避免改写整个状态文件。 | `claude plugin enable/disable` 是官方 CLI。本页只对用户级已安装插件调用 CLI；项目、组织和云同步插件交还客户端。 |
+| Claude Code | 平台视图与全部平台视图都采用可逆移库（见下）。插件内 Skills 应随插件管理。 | `/mcp` 的开关按项目写入 `~/.claude.json` 的 `disabledMcpServers`；`.mcp.json` 还有独立的批准/拒绝机制。本页把它标为「客户端管理」并只展示来源，避免改写整个状态文件。 | `claude plugin enable/disable` 是官方 CLI。本页只对用户级已安装插件调用 CLI；项目、组织和云同步插件交还客户端。 |
 | Codex | 从 `.codex/skills`、`.agents/skills` 等目录发现；启停同样采用可逆移库。卡片上的平台状态来自目录本身是否在原位，不读取也不写入 `config.toml`。 | `config.toml` 的 `[mcp_servers.<id>] enabled = false` 可停用，`true` 可恢复。本页只改对应表的一行。 | 本地市场插件可用 `[plugins."name@marketplace"] enabled = false` 配置。本页只管理配置文件中可见的插件表；其余本机缓存标记为「状态待确认」，不当作已安装。云端或管理员分发的不在本机目录内。 |
 | Cursor | 从 `.cursor/skills`、`.agents/skills` 等位置发现，也兼容 Claude / Codex 的 Skills 目录；启停同样是可逆移库。`disable-model-invocation` 仅关闭自动调用，仍可手动调用，因此不能当作完整停用。 | `agent mcp enable/disable <identifier>` 是官方 CLI；本页调用它处理本机 JSON 中可见的 MCP，状态仍以 Cursor 为准。 | Customize 是官方管理入口。本页展示本地插件和缓存来源，并明确标注缓存不代表已安装，不直接改写私有安装状态。 |
 

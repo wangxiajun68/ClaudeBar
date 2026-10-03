@@ -38,9 +38,11 @@
 
 `EnvConfig` 是 Claude Code `settings.json` 中 `env` 字段的 Swift 镜像，包含全部受支持的键：
 
-`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`DISABLE_COMPACT`、`GITHUB_PERSONAL_ACCESS_TOKEN`、`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`、`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL[_NAME]`、`CLAUDE_CODE_AUTO_COMPACT_WINDOW`。
+`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`DISABLE_COMPACT`、`GITHUB_PERSONAL_ACCESS_TOKEN`、`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`、`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL[_NAME]`、`CLAUDE_CODE_AUTO_COMPACT_WINDOW`、`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`、`CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS`。
 
 切换模型时，`buildEnv()` 会把所选模型的 `name` 同时写入 `ANTHROPIC_MODEL` 与全部 8 个 `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL[_NAME]`，使 Claude Code 内部按 tier 选择时一致指向该模型（见技术文档 [状态中枢](../technical/03-provider-store.md)）。
+
+`EnvConfig` 是普通的合成 `Codable`（字段带默认值但**没有**自定义 `init(from:)`），所以写进 `settings.json` 的 `env` 块必须键完整、可解码；`writeSettings` 只写非空值、缺的键视为空。旧文件里缺字段的 `env` 块不在兼容范围内。
 
 ## 旧格式兼容（`Provider.init(from:)`）
 
@@ -49,8 +51,6 @@
 - `models`：先试 `[ModelConfig]`，失败再试旧 `[String]`（此时读 provider 级的 `contextTokens`/`disableCompact`/`disableExperimentalBetas`/`autoCompactWindow` 动态键套到每个模型上）。
 - `activeModelID`：先试 `UUID`，失败用旧 `activeModel`（String 模型名）匹配。
 - `id` / `authToken` / `baseURL`：`decodeIfPresent` 缺失则取默认（id 自动生成 UUID）。
-
-`EnvConfig.init(from:)` 全字段 `decodeIfPresent`，缺字段默认 `""`，保证向后兼容。
 
 > 历史版本（≤1.4）的扁平 `Preset` 列表与 `claude-bar-presets.json` 自动迁移逻辑（`MigrationHelper`）已随代码清理移除；现仅保留上述 provider 文件内的旧字段解码兼容。
 
@@ -61,6 +61,7 @@
 ```json
 {
   "todayTotalTokens": 38690638,
+  "usagePeriodLabel": "9月",
   "modelBreakdown": [{"model": "kimi-k2.6", "totalTokens": 30000000}],
   "activeProviderName": "Kimi Local",
   "activeModelName": "kimi-k2.6",
@@ -69,9 +70,12 @@
   "busySessionCount": 1,
   "sessions": [/* SessionSummary, 最多 5 条 */],
   "cursorSessions": [/* CursorSessionSummary, 最多 5 条 */],
+  "externalSessions": [/* ExternalSessionSummary（Codex 等），最多 5 条、只含主会话不含子代理 */],
   "updatedAt": "2026-08-01T12:00:00Z"
 }
 ```
+
+`usagePeriodLabel` / `unitStyle` / `isDark` 与 summary 里的 `waiting` 都是可选字段，旧快照缺了也能解码（见 `WidgetSnapshot` 的字段注释）。
 
 ## VPN 订阅（本机）
 

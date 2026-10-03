@@ -30,19 +30,20 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 b
 
 安装到 /Applications 后**再次** `xattr -cr`（`cp` 会重新引入扩展属性）。
 
-电池辅助进程用 `clang -Wall -Wextra -Werror -O2` 编译为 universal（arm64 + x86_64），**编译失败会中断整个构建**——它是安全相关组件，不允许静默缺失。安装时 `BatteryHelperInstaller` 会再校验安装副本的 SHA-256 与代码签名，与当前包一致才使用。详见 [§12](12-battery-control.md)。
+电池辅助进程用 `clang -Wall -Wextra -Werror -O2` 编译为 universal（arm64 + x86_64），**编译失败会中断整个构建**——它是安全相关组件，不允许静默缺失。风扇辅助进程同样编译为 universal，但只带 `-O2`，没有 `-Werror`。安装时 `BatteryHelperInstaller` 会再校验安装副本的 SHA-256 与代码签名，与当前包一致才使用。详见 [§12](12-battery-control.md)。
 
 ## Entitlements
 
 **Widget appex**（沙盒开）：
 - `app-sandbox: true`
-- `application-groups: ["com.claudebar.app.widget"]`
+- `application-groups: ["com.claudebar.app.widget"]`（release；dev 为各自隔离的 App Group ID）
 - `network.client: true`
 
 **主 app**（沙盒关）：
 - `app-sandbox: false`（需读 `~/.claude`、`~/.cursor`、调 osascript/Process）
-- `application-groups: ["com.claudebar.app.widget"]`
-- `network.client: true`
+- `application-groups: ["com.claudebar.app.widget"]`（release；dev 为各自隔离的 App Group ID）
+- `network.client: true` / `network.server: true`（本机代理要监听回环端口）
+- `personal-information.location: true`（问候卡的「当前位置」开关）
 - `files.user-selected.read-write: true`
 
 ## 签名陷阱（踩坑记录）
@@ -79,9 +80,11 @@ zip 由 `ditto -c -k` 生成，供脚本化下载或校验；**终端用户首�
 
 ## Widget 注册
 
+`build.sh` 只在**显式安装**（`CLAUDEBAR_SKIP_INSTALL=0`）完成 `cp -R` + `xattr -cr` 之后执行这两条：
+
 ```bash
-lsregister -f "$INSTALLED_APP"                  # 重新索引 LaunchServices
-pluginkit -e use -i com.claudebar.app.widget    # 强制启用扩展
+"$LSREGISTER" -f "$INSTALLED_APP"               # 重新索引 LaunchServices
+pluginkit -e use -i "$WIDGET_ID"                # 强制启用扩展（各自 bundle ID）
 
 # 不重启共享 widgetkitd；开发测试版安装使用各自 bundle ID。
 ```

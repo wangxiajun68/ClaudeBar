@@ -7,8 +7,8 @@ SF typography and semantic ink colors. This page uses stationary neutral surface
 ## Structure
 
 A full-width connection band sits above a viewport-sized workspace. At widths
-of 900pt and above, subscriptions occupy 34% of the workspace (300–400pt) and
-traffic takes the remainder. Each column scrolls independently. Narrow windows
+of 900pt and above, subscriptions occupy a 340–380pt column (28% of the
+workspace) and traffic takes the remainder. Each column scrolls independently. Narrow windows
 use a native segmented switch between traffic and subscriptions. The page never
 forces a minimum content width or a horizontal page scroll.
 
@@ -79,9 +79,7 @@ compact-workspace switches, preserving search, mode and position.
 Build the complete native app with `CLAUDEBAR_SKIP_INSTALL=1` (do not restart the
 user's VPN for visual verification). Parser/query/ring regression suite:
 `python3 Tests/vpn-domain-log-regressions.py`. Synthetic preview uses 1,500 nodes
-and 12,000 input records. Current retention is 2,000; those earlier visual checks
-used 10,000. The pagination changes have query/cache regressions and compiled
-bundle checks; interactive visual verification remains pending. Earlier checks verified desktop and narrow-window geometry, complete cumulative readings
+and 12,000 input records; retention is 2,000. Earlier checks verified desktop and narrow-window geometry, complete cumulative readings
 (2.0 GB download / 258.9 MB upload), current-node latency, always-visible probes,
 and native drag selection of log text. Also verified node search, Escape dismissal,
 retained-record search and domain summary. Resizing preserves search and mode.

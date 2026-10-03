@@ -15,7 +15,7 @@
 - `activeModelID`：先试 `UUID`，失败用旧 `activeModel`（String 模型名）匹配。
 - `id` / `authToken` / `baseURL`：`decodeIfPresent` 缺失则取默认（id 生成新 UUID）。
 
-`EnvConfig.init(from:)` 全字段 `decodeIfPresent`，缺字段默认 `""`，保证向后兼容。
+`EnvConfig` 是普通的合成 `Codable`，**没有**自定义 `init(from:)`——它进不了这条兼容路径：写出的 `env` 块必须键完整，缺键的旧块解码时抛 `keyNotFound`（`SettingsManager.writeSettings` 只写非空值，不影响读回自身写出的完整字典）。
 
 ## 若需重新引入迁移
 
