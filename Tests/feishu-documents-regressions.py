@@ -47,6 +47,27 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         let page = FeishuPage.parse(drive)
         precondition(page.documents.count == 1 && page.cursor == "next")
         precondition(page.documents[0].isDocument && page.documents[0].webURL != nil)
+        // `drive files list` is the one command whose continuation token is
+        // `next_page_token` (the raw Drive body passes through unchanged),
+        // while search/wiki/comments answer with `page_token`. Reading only
+        // the latter silently emptied the cursor on every folder listing —
+        // `has_more` true, 加载更多 never drawn, no error — so both names have
+        // to reach the same field. Verified against lark-cli 1.0.95, whose
+        // drive.files.list response schema has no `page_token` key at all.
+        let driveToken = try json("""
+        {"files":[{"token":"test-doc","name":"方案","type":"docx"}],"has_more":true,"next_page_token":"drive-next"}
+        """)
+        precondition(FeishuPage.parse(driveToken).cursor == "drive-next",
+                     "a folder listing's next_page_token must become the cursor")
+        let bothNames = try json("""
+        {"files":[{"token":"test-doc","name":"方案","type":"docx"}],"has_more":true,"page_token":"first","next_page_token":"second"}
+        """)
+        precondition(FeishuPage.parse(bothNames).cursor == "first",
+                     "page_token stays the primary when both are present")
+        let done = try json("""
+        {"files":[{"token":"test-doc","name":"方案","type":"docx"}],"has_more":false,"next_page_token":"ignored"}
+        """)
+        precondition(FeishuPage.parse(done).cursor.isEmpty, "has_more false ends the run")
         let search = try json("""
         {"results":[{"title_highlighted":"<h>项目</h><hb>计划</hb>","result_meta":{"doc_types":"DOCX","url":"https://team.feishu.cn/docx/abc","update_time_iso":"2026-10-02"}}],"has_more":false}
         """)
@@ -370,6 +391,17 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         }
         let comment = try CommandFixture(request: .init(kind: .comment, document: node)).arguments()
         precondition(comment.contains("doc") && comment.suffix(2) == ["--type", "docx"] && !comment.contains("wiki"))
+        // The stdin body the CLI actually validates. `text_run` — the shape
+        // the API renders — is rejected before any HTTP call ("unsupported
+        // type \"text_run\"; allowed values: text, mention_user, link",
+        // reproduced against lark-cli 1.0.95), which made every 添加评论 fail
+        // on the generic CLI error. The suite only ever checked `arguments()`,
+        // so the payload was untested.
+        let commentBody = try FeishuCommentBody.json("你好\n第二行")
+        let decoded = try JSONSerialization.jsonObject(with: Data(commentBody.utf8)) as? [[String: Any]]
+        precondition(decoded?.first?["type"] as? String == "text", "reply_elements take type `text`")
+        precondition(decoded?.first?["text"] as? String == "你好\n第二行", "the comment text is the element's own field")
+        precondition(decoded?.first?["text_run"] == nil, "text_run is exactly what the CLI rejects")
         let overwrite = try CommandFixture(request: .init(kind: .edit, document: sourceDoc, revision: "42"), mode: "overwrite").arguments()
         precondition(overwrite.contains("overwrite") && overwrite.suffix(2) == ["--revision-id", "42"] && overwrite.contains("-"))
         let member = try CommandFixture(request: .init(kind: .member, document: node), text: "reader@example.test").arguments()

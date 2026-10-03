@@ -18,6 +18,26 @@ struct FeishuOperation: Identifiable {
     var format = "pdf"
 }
 
+struct FeishuCommentBody {
+    /// The stdin payload for `drive +add-comment --content -`.
+    ///
+    /// The CLI validates `reply_elements` before its HTTP call and accepts
+    /// only `text` / `mention_user` / `link`; the RichText-ish `text_run`
+    /// object the API renders is rejected outright — "unsupported type
+    /// \"text_run\"", exit 2, verified against lark-cli 1.0.95 — so every
+    /// 添加评论 used to end on the generic CLI failure. `{"type":"text",
+    /// "text":…}` serializes to the same `[{text, type:text}]` body the
+    /// endpoint expects.
+    static func json(_ text: String) throws -> String {
+        let elements: [[String: Any]] = [["type": "text", "text": text]]
+        guard let data = try? JSONSerialization.data(withJSONObject: elements),
+              let body = String(data: data, encoding: .utf8) else {
+            throw FeishuCLIError.failed("无法编码评论内容。")
+        }
+        return body
+    }
+}
+
 struct FeishuOperationSheet: View {
     let request: FeishuOperation
     @ObservedObject var store: FeishuDocumentStore
@@ -191,8 +211,7 @@ struct FeishuOperationSheet: View {
                 let stdin: String?
                 if request.kind == .create || request.kind == .edit { stdin = text }
                 else if request.kind == .comment {
-                    let elements: [[String: Any]] = [["type": "text_run", "text_run": ["text": text]]]
-                    stdin = String(data: try JSONSerialization.data(withJSONObject: elements), encoding: .utf8)
+                    stdin = try FeishuCommentBody.json(text)
                 } else { stdin = nil }
                 if await store.perform(command, input: stdin, refreshList: ![.comment, .member, .removeMember, .export].contains(request.kind)) {
                     if request.kind == .edit { store.select(request.document, force: true) }

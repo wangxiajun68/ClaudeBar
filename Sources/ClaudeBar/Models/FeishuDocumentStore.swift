@@ -70,8 +70,18 @@ struct FeishuPage: Sendable {
     static func parse(_ data: FeishuJSON) -> FeishuPage {
         let keys = ["files", "nodes", "results", "items"]
         let rows = keys.map { data[$0] }.first { if case .array = $0 { return true }; return false }?.items ?? []
+        // The continuation token has two names in this API surface and the
+        // command picks which one it returns: `drive files list` answers with
+        // `next_page_token` (the raw Drive body passed through), while
+        // `drive +search` / `docs +search` / `wiki +node-list` /
+        // `+list-comments` answer with `page_token`. Reading only the latter
+        // cleared the cursor on every folder listing even with `has_more`
+        // true, so 加载更多 never appeared and a folder stopped at its first
+        // page with no error (verified against lark-cli 1.0.95, whose
+        // `drive.files.list` response schema has no `page_token` key at all).
+        let next = data["page_token"].text
         return FeishuPage(documents: rows.compactMap(FeishuDocument.parse),
-                          cursor: data["has_more"].flag ? data["page_token"].text : "")
+                          cursor: data["has_more"].flag ? (next.isEmpty ? data["next_page_token"].text : next) : "")
     }
 }
 
