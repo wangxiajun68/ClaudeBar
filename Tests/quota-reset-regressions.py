@@ -60,8 +60,11 @@ swift = r'''
 import Foundation
 
 /// Minimal stand-in for the production `CodexQuotaWindow` — only the fields
-/// the detector reads.
+/// the detector reads. `slot` mirrors the production identity: the key the
+/// detector must use instead of the label.
 struct CodexQuotaWindow: Equatable {
+    var slot: String = ""
+    var id: String { slot.isEmpty ? label : slot }
     let label: String
     let usedPercent: Double
     let resetsAt: Date?
@@ -74,9 +77,9 @@ DETECTOR
         let t0 = Date(timeIntervalSince1970: 1_700_000_000)
         let t5h = t0.addingTimeInterval(5 * 3600)
 
-        func window(_ used: Double, resets: Date? = nil, label: String = "5 小时")
-            -> CodexQuotaWindow {
-            CodexQuotaWindow(label: label, usedPercent: used, resetsAt: resets)
+        func window(_ used: Double, resets: Date? = nil, label: String = "5 小时",
+                    slot: String = "primary") -> CodexQuotaWindow {
+            CodexQuotaWindow(slot: slot, label: label, usedPercent: used, resetsAt: resets)
         }
 
         // 1. Launch must not announce whatever state it inherits. A window
@@ -129,12 +132,26 @@ DETECTOR
         // 6. Independent per-window state: the weekly window must not be
         //    dragged along by the 5-hour one.
         d = QuotaResetDetector()
-        _ = d.record([window(95, resets: t5h, label: "5 小时"),
-                      window(80, resets: t0.addingTimeInterval(7 * 86_400), label: "7 天")])
-        let mixed = d.record([window(0, resets: t5h.addingTimeInterval(5 * 3600), label: "5 小时"),
-                              window(80, resets: t0.addingTimeInterval(7 * 86_400), label: "7 天")])
+        _ = d.record([window(95, resets: t5h, label: "5 小时", slot: "primary"),
+                      window(80, resets: t0.addingTimeInterval(7 * 86_400), label: "7 天", slot: "secondary")])
+        let mixed = d.record([window(0, resets: t5h.addingTimeInterval(5 * 3600), label: "5 小时", slot: "primary"),
+                              window(80, resets: t0.addingTimeInterval(7 * 86_400), label: "7 天", slot: "secondary")])
         precondition(mixed.count == 1, "only the rolled window may fire; got \(mixed.count)")
         precondition(mixed[0].label == "5 小时", "the wrong window fired: \(mixed[0].label)")
+
+        // 6b. Two windows whose payload omitted `windowDurationMins` share one
+        //     label （「额度」）but differ in slot. Keyed by label the secondary's
+        //     first sighting was diffed against the primary's percentage and
+        //     alerted on the spot, and afterwards neither window's rollover was
+        //     seen at all — the collision the slot exists to remove.
+        d = QuotaResetDetector()
+        let t7d = t0.addingTimeInterval(7 * 86_400)
+        precondition(d.record([window(95, resets: t5h, label: "额度", slot: "primary"),
+                               window(10, resets: t7d, label: "额度", slot: "secondary")]).isEmpty,
+                     "duration-less windows must both seed, not alert against each other")
+        precondition(d.record([window(95, resets: t5h.addingTimeInterval(5 * 3600), label: "额度", slot: "primary"),
+                               window(10, resets: t7d, label: "额度", slot: "secondary")]).count == 1,
+                     "the primary's rollover must still fire when both labels collide")
 
         // 7. A vanished window (account or provider swap) must not leave state
         //    behind that fires on its return.
@@ -237,13 +254,13 @@ DETECTOR
         // 15. The nearest instant wins, and a shared one is a single look:
         //     asking about either is asking about the same moment.
         plan = s.nextInterval(now: t0,
-                              windows: [window(30, resets: soon, label: "5 小时"),
-                                        window(30, resets: soon, label: "7 天")],
+                              windows: [window(30, resets: soon, label: "5 小时", slot: "primary"),
+                                        window(30, resets: soon, label: "7 天", slot: "secondary")],
                               previous: [:])
         precondition(plan == 17, "a shared instant must be aimed at once; got \(plan)")
         plan = s.nextInterval(now: t0,
-                              windows: [window(30, resets: t0.addingTimeInterval(60), label: "7 天"),
-                                        window(30, resets: soon, label: "5 小时")],
+                              windows: [window(30, resets: t0.addingTimeInterval(60), label: "7 天", slot: "secondary"),
+                                        window(30, resets: soon, label: "5 小时", slot: "primary")],
                               previous: [:])
         precondition(plan == 17, "the nearest instant wins; got \(plan)")
 

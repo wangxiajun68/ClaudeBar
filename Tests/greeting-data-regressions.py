@@ -42,7 +42,42 @@ probe = r'''
         precondition(creditOnly.note != nil)
         let failure = CodexQuotaFetcher.parseResponse(["error": ["message": "auth expired"]], authMode: nil)
         precondition(failure.creditBalance == nil && failure.windows.isEmpty)
-        print("PASS: credits, zero, unknown, unlimited, invalid values, credit-only accounts, legacy payloads, auth failures")
+
+        // A failed read is flagged, an authoritative "no windows" answer is
+        // not. The reader keys off the flag to decide between keeping the last
+        // good reading on screen and clearing the row.
+        precondition(failure.failed, "a JSON-RPC error must be marked as a failure")
+        precondition(!creditOnly.failed, "an account with no windows answered; it did not fail")
+
+        // Slot, not label, is the window identity: a payload that omits
+        // `windowDurationMins` labels both windows 「额度」and they must still be
+        // distinguishable — the whole reason the slot exists.
+        let both: [String: Any] = [
+            "primary": ["usedPercent": 95.0, "resetsAt": 1_900_000_000],
+            "secondary": ["usedPercent": 10.0, "windowDurationMins": 10_080, "resetsAt": 1_900_000_000],
+        ]
+        let labelled = parse(both)
+        precondition(labelled.windows.count == 2, "both windows must parse")
+        precondition(labelled.windows[0].label == "额度" && labelled.windows[1].label == "7 天")
+        precondition(labelled.windows[0].id == "primary" && labelled.windows[1].id == "secondary",
+                     "identity must come from the slot, not the label")
+        precondition(Set(labelled.windows.map(\.id)).count == 2, "the two windows must not collide")
+        precondition(labelled.windows[0].durationMinutes == 0, "a missing duration stays 0 (unknown)")
+
+        // Windows that arrived but could not be read (a malformed payload —
+        // `usedPercent` missing entirely) must read as a failure, not as an
+        // account without an allowance: the row would otherwise go blank and
+        // the detector's per-window state would be wiped.
+        let malformed = parse(["primary": ["resetsAt": 1_900_000_000],
+                               "secondary": ["windowDurationMins": 10_080]])
+        precondition(malformed.windows.isEmpty)
+        precondition(malformed.failed, "windows that will not parse are a failed read")
+        let noWindows = parse(["credits": ["balance": "3"]])
+        precondition(noWindows.windows.isEmpty && !noWindows.failed,
+                     "a payload with no window keys is an empty answer, not a failure")
+
+        print("PASS: credits, zero, unknown, unlimited, invalid values, credit-only accounts, legacy payloads, "
+              + "auth failures, failure flagging, slot identity, malformed windows")
     }
 }
 '''

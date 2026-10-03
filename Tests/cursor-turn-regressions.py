@@ -214,16 +214,36 @@ try runTests()
 
 with tempfile.TemporaryDirectory(prefix='claudebar-cursor-monitor-') as folder:
     folder = Path(folder)
-    file_paths = (utils / 'FilePaths.swift').read_text().replace(
+    support = folder / 'support'
+    support.mkdir()
+    # **Both** roots have to be redirected. `homeDirectoryForCurrentUser` covers
+    # the release paths; `applicationSupportDirectory` covers the dev ones —
+    # since the channel split, `FilePaths.cursorStateDB` / `cursorProjectsDir`
+    # resolve under the app's own Application Support directory when the channel
+    # is dev, which is what an unlabelled compile of this slice is. Without the
+    # second substitution the fixture writes its SQLite file into the *real*
+    # `~/Library/Application Support/ClaudeBar Dev/` and the next run fails on
+    # `CREATE TABLE` (the table is still there) — the test was both leaking a
+    # file out of its temporary directory and not idempotent.
+    file_paths = (utils / 'FilePaths.swift').read_text()
+    file_paths = file_paths.replace(
         'FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
+    file_paths = file_paths.replace(
+        'FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]',
+        'fixtureSupport')
     source = folder / 'Regression.swift'
     source.write_text('\n'.join([
         (root / 'Sources/Shared/BuildChannel.swift').read_text(),
         file_paths,
+        # Declared here rather than at the top: `import Foundation` and the
+        # sliced sources come first, and the fixture's own `fixtureHome` (from
+        # `CommandLine.arguments[1]`) is declared further down with the rest of
+        # the probe.
+        'let fixtureSupport = URL(fileURLWithPath: CommandLine.arguments[2])',
         (utils / 'SessionTitle.swift').read_text(),
         (utils / 'CursorDB.swift').read_text(),
         (utils / 'CursorSessionMonitor.swift').read_text(),
         swift,
     ]))
     # Run a standalone fixture with Swift's interpreter; never build the app.
-    subprocess.run(['swift', str(source), str(folder / 'home')], check=True)
+    subprocess.run(['swift', str(source), str(folder / 'home'), str(support)], check=True)

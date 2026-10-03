@@ -42,9 +42,17 @@ struct QuotaSwayGauge: View {
     struct Metric: Identifiable {
         var label: String
         var usedPercent: Double
+        /// Stable per-window identity for `ForEach`.
+        ///
+        /// The label is a *presentation* of the window's duration, and the API
+        /// may omit that field — a payload without it names both Codex windows
+        /// 「额度」, and two cells sharing one identity is a `ForEach` whose rows
+        /// replace each other. Empty (Cursor's pools, which have no payload
+        /// slot) falls back to the label.
+        var identity: String = ""
         /// Short trailing text under the arc (a reset time, "—", …).
         var resetCompact: String = ""
-        var id: String { label }
+        var id: String { identity.isEmpty ? label : identity }
     }
 
     let metrics: [Metric]

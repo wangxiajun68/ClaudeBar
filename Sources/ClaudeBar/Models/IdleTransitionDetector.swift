@@ -73,7 +73,15 @@ struct ConfirmedCompletionDetector<ID: Hashable> {
 ///     drop by a large margin — a small dip is provider rounding, not a reset,
 ///   * the reset time moving *forward* also counts, because Codex rolls the
 ///     window over before the percentage always updates,
-///   * the same rollover is never announced twice.
+///   * the same rollover is never announced twice,
+///   * a window is tracked by its **own identity** (`CodexQuotaWindow.id`, the
+///     payload slot), never by its label. The label is derived from
+///     `windowDurationMins`, which the API may omit, and a payload without it
+///     labels both windows 「额度」: keyed by label the two impersonate each
+///     other — the first sighting of the secondary would be diffed against the
+///     primary's percentage and alert on the spot, every later rollover of the
+///     5-hour window would be compared against the 7-day window's history, and
+///     the rollover this type exists for would never be announced.
 struct QuotaResetDetector {
     private struct Seen {
         var usedPercent: Double
@@ -81,8 +89,8 @@ struct QuotaResetDetector {
     }
 
     private var seen: [String: Seen] = [:]
-    /// Windows already announced, keyed by label + the reset instant, so a
-    /// rollover is reported once even if the percentage stays near zero.
+    /// Windows already announced, keyed by window identity + the reset instant,
+    /// so a rollover is reported once even if the percentage stays near zero.
     private var announced: Set<String> = []
 
     /// A drop this large means the allowance refreshed rather than ticked.
@@ -100,9 +108,10 @@ struct QuotaResetDetector {
         var live: Set<String> = []
 
         for window in windows {
-            live.insert(window.label)
-            let key = "\(window.label)|\(window.resetsAt?.timeIntervalSince1970 ?? -1)"
-            let previous = seen[window.label]
+            let identity = window.id
+            live.insert(identity)
+            let key = "\(identity)|\(window.resetsAt?.timeIntervalSince1970 ?? -1)"
+            let previous = seen[identity]
 
             let dropped = previous.map { $0.usedPercent - window.usedPercent >= Self.dropThreshold } ?? false
             let wasUsed = previous.map { $0.usedPercent >= Self.usedFloor } ?? false
@@ -123,17 +132,17 @@ struct QuotaResetDetector {
                 announced.insert(key)
                 reset.append(window)
             }
-            seen[window.label] = Seen(usedPercent: window.usedPercent, resetsAt: window.resetsAt)
+            seen[identity] = Seen(usedPercent: window.usedPercent, resetsAt: window.resetsAt)
         }
 
         // A window that vanished (account change, provider swap) must not keep
         // stale state around and fire on its return.
         seen = seen.filter { live.contains($0.key) }
         announced = announced.filter { entry in
-            // Entries are "label|instant"; keep one whose label stage is live
-            // so a window that is still present is not re-announced.
-            guard let label = entry.split(separator: "|").first.map(String.init) else { return false }
-            return live.contains(label)
+            // Entries are "<identity>|<instant>"; keep one whose identity is
+            // live so a window that is still present is not re-announced.
+            guard let identity = entry.split(separator: "|").first.map(String.init) else { return false }
+            return live.contains(identity)
         }
         return reset
     }

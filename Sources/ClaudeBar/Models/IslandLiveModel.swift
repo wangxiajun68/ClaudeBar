@@ -22,7 +22,7 @@ enum IslandAlert: Equatable, Identifiable {
         switch self {
         case .finished(let session): return "finished:\(session.id)"
         case .needsInput(let session): return "needsInput:\(session.id)"
-        case .quotaReset(let window): return "quota:\(window.label)"
+        case .quotaReset(let window): return "quota:\(window.id)"
         }
     }
 

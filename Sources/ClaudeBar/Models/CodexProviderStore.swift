@@ -19,6 +19,9 @@ final class CodexProviderStore: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var proxyRunning: Bool = false
     @Published var importSummary: String? = nil
+    /// ChatGPT subscription windows (5 小时 / 7 天), read through the
+    /// authenticated Codex App Server account API. The *last good reading*: a
+    /// failed poll leaves it alone (see `refreshQuota`).
     @Published var quotaWindows: [CodexQuotaWindow] = []
     @Published var quotaLoading = false
     @Published var quotaNote: String? = nil
@@ -66,9 +69,10 @@ final class CodexProviderStore: ObservableObject {
     /// window's reset instant is near — see that type for why. Invalidated on
     /// deinit.
     private var quotaTimer: Timer?
-    /// The instant each window named at the *previous* reading, keyed by label.
-    /// What tells a reading that "the window was due to reset here and did not
-    /// move" from one whose schedule merely advanced.
+    /// The instant each window named at the *previous* reading, keyed by window
+    /// identity (`CodexQuotaWindow.id`, the payload slot). What tells a reading
+    /// that "the window was due to reset here and did not move" from one whose
+    /// schedule merely advanced.
     private var quotaPreviousResets: [String: Date?] = [:]
     /// Weak back-ref so proxy lifecycle can see Claude capture flags.
     weak var claudePeer: ProviderStore?
@@ -347,8 +351,6 @@ final class CodexProviderStore: ObservableObject {
         syncProxyRuntime()
     }
 
-    /// ChatGPT subscription windows (5 小时 / 7 天), read through the
-    /// authenticated Codex App Server account API.
     /// Re-read the ChatGPT allowance windows.
     ///
     /// `manual` is the difference between "the user pressed refresh" and "a
@@ -372,11 +374,25 @@ final class CodexProviderStore: ObservableObject {
             guard let self else { return }
             defer { self.quotaTask = nil }
             let snapshot = await CodexQuotaFetcher.fetch()
-            self.quotaWindows = snapshot.windows
+            // A failure is not an answer. Publishing its empty window list would
+            // blank the allowance row and — worse — feed `QuotaResetDetector` an
+            // empty record, which prunes all of its per-window state: the next
+            // successful reading would only *seed*, and a rollover that happened
+            // across the failure would never be announced. Keep the last good
+            // windows on screen (Cursor's store does the same) and let `note`
+            // carry the failure.
+            if !snapshot.failed {
+                self.quotaWindows = snapshot.windows
+                self.creditBalance = snapshot.creditBalance
+            }
             self.quotaNote = snapshot.note
-            self.creditBalance = snapshot.creditBalance
             self.quotaLoading = false
-            self.applyQuotaSchedule()
+            // The schedule is rebuilt from the *reading*, not from what is on
+            // screen: a failure names no reset instants, and letting the
+            // scheduler plan around windows it cannot confirm is the trap the
+            // empty `previous` below exists for. A failure therefore lands on
+            // the heartbeat, exactly as it did when it blanked the row.
+            self.applyQuotaSchedule(from: snapshot.windows)
         }
     }
 
@@ -396,11 +412,17 @@ final class CodexProviderStore: ObservableObject {
     /// replaces the old "a manual refresh re-arms the timer" patch: the
     /// schedule is simply rebuilt from the newest reading, so a poll can never
     /// land seconds behind a manual press.
-    private func applyQuotaSchedule() {
+    ///
+    /// `windows` is the reading, which is not always what is displayed: a
+    /// failure publishes none (the last good ones stay on screen), so it plans
+    /// from the heartbeat and leaves `previous` empty — the state that keeps a
+    /// stored reading from re-aiming the poll at an instant that has already
+    /// passed (`Tests/quota-reset-regressions.py` #13).
+    private func applyQuotaSchedule(from windows: [CodexQuotaWindow]) {
         let interval = Self.quotaScheduler.nextInterval(
-            now: Date(), windows: quotaWindows, previous: quotaPreviousResets)
+            now: Date(), windows: windows, previous: quotaPreviousResets)
         quotaPreviousResets = Dictionary(
-            quotaWindows.map { ($0.label, $0.resetsAt) }, uniquingKeysWith: { _, last in last })
+            windows.map { ($0.id, $0.resetsAt) }, uniquingKeysWith: { _, last in last })
 
         quotaTimer?.invalidate()
         // One-shot, re-armed by the next reading — a repeating timer could not

@@ -539,6 +539,7 @@ private struct HeaderSwitchChip<Popover: View>: View {
                 metrics: quotaWindows.map {
                     QuotaSwayGauge.Metric(label: $0.label,
                                           usedPercent: $0.usedPercent,
+                                          identity: $0.id,
                                           resetCompact: $0.resetCompact)
                 },
                 width: contentWidth

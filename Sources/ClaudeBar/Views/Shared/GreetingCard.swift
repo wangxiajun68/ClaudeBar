@@ -1191,7 +1191,7 @@ struct GreetingStatusSheet: View {
     // MARK: Codex allowance — the popup's two rate-limit windows ("5 小时" / "7 天")
 
     private var codexMetrics: [SillGauge.Metric] {
-        windows.map { SillGauge.Metric(label: $0.label, usedPercent: $0.usedPercent) }
+        windows.map { SillGauge.Metric(label: $0.label, usedPercent: $0.usedPercent, identity: $0.id) }
     }
 
     /// Hover line: when each window comes back.

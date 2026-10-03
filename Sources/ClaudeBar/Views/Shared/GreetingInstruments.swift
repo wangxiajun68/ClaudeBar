@@ -502,7 +502,10 @@ struct SillGauge: View {
     struct Metric: Equatable, Identifiable {
         var label: String
         var usedPercent: Double
-        var id: String { label }
+        /// Stable per-window identity for `ForEach`; see
+        /// `QuotaSwayGauge.Metric.identity`. Empty falls back to the label.
+        var identity: String = ""
+        var id: String { identity.isEmpty ? label : identity }
         var remaining: Double { min(100, max(0, 100 - usedPercent)) }
     }
 

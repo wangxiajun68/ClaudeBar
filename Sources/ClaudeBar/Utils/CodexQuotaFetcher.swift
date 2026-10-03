@@ -4,7 +4,23 @@ import os
 
 /// One ChatGPT Codex rate-limit window returned by Codex App Server.
 struct CodexQuotaWindow: Equatable, Identifiable {
-    var id: String { label }
+    /// Where the window sits in the account payload — `primary` / `secondary`
+    /// for Codex — and the key everything that tracks a window per-window
+    /// uses.
+    ///
+    /// The label cannot serve as that key: it is derived from
+    /// `windowDurationMins`, which the API is free to omit, and a payload
+    /// without it gives **both** windows the same 「额度」. Keyed by label the
+    /// two impersonate each other — `QuotaResetDetector` read the secondary
+    /// window's first sighting against the primary's percentage and fired a
+    /// rollover alert on the spot, every later real rollover of the 5-hour
+    /// window was compared against the 7-day window, and the popup's gauge row
+    /// built two cells with one identity. The slot is stable across readings
+    /// whatever the payload says about durations.
+    var slot: String = ""
+    /// Window identity: the slot when there is one, the label otherwise (a
+    /// window a caller builds without a slot to give — Cursor's pools).
+    var id: String { slot.isEmpty ? label : slot }
     var label: String
     var usedPercent: Double
     var resetsAt: Date?
@@ -105,6 +121,18 @@ enum CodexQuotaFetcher {
         var note: String? = nil
         /// Account credits have no currency guarantee; preserve the API unit.
         var creditBalance: String? = nil
+        /// The reading is a *failure*, not an answer — every window field is
+        /// empty because the read did not happen, not because the account has
+        /// no allowance.
+        ///
+        /// The distinction is load-bearing for the reader: `CodexProviderStore`
+        /// keeps the last good windows on screen when a poll fails (an empty
+        /// list would blank the allowance row and, worse, feed
+        /// `QuotaResetDetector` an empty record that prunes all of its
+        /// per-window state — the next success would then only seed, and a
+        /// rollover that happened across the failure would never be announced).
+        /// An authoritative empty answer, by contrast, must clear the row.
+        var failed: Bool = false
     }
 
     /// How long a snapshot is considered fresh enough to serve without asking
@@ -163,7 +191,7 @@ enum CodexQuotaFetcher {
         // Two rounds, not three. A failed attempt already cost a full network
         // round trip (2.6–6.5 s measured), so the old third try could leave the
         // spinner up for ~20 s before showing the same failure.
-        var last = Snapshot(note: "Codex 额度查询失败")
+        var last = Snapshot(note: "Codex 额度查询失败", failed: true)
         for attempt in 1...2 {
             guard !Task.isCancelled else { return last }
             let snapshot = await Task.detached(priority: .utility) {
@@ -224,10 +252,10 @@ enum CodexQuotaFetcher {
     /// web endpoint directly. App Server owns token refresh and keeps this
     /// integration on Codex's documented account API.
     private static func fetchFromAppServer() -> Snapshot {
-        guard BuildChannel.allowsSystemIntegration else { return Snapshot(note: BuildChannel.restrictionMessage) }
+        guard BuildChannel.allowsSystemIntegration else { return Snapshot(note: BuildChannel.restrictionMessage, failed: true) }
         guard let executable = CodexRuntime.executable() else {
             logger.error("Codex executable not found")
-            return Snapshot(note: "未找到 Codex，请先安装或打开 Codex")
+            return Snapshot(note: "未找到 Codex，请先安装或打开 Codex", failed: true)
         }
 
         let process = Process()
@@ -248,7 +276,7 @@ enum CodexQuotaFetcher {
             try process.run()
         } catch {
             logger.error("Failed to start app-server: \(error.localizedDescription, privacy: .public)")
-            return Snapshot(note: "无法启动 Codex 额度服务")
+            return Snapshot(note: "无法启动 Codex 额度服务", failed: true)
         }
 
         // Was 20 s. The measured round trip is 2.6–6.5 s, so 20 s only ever
@@ -288,7 +316,7 @@ enum CodexQuotaFetcher {
             }
         } catch {
             finish(process, input: input, timeout: timeout)
-            return Snapshot(note: "Codex 额度请求生成失败")
+            return Snapshot(note: "Codex 额度请求生成失败", failed: true)
         }
 
         var pending = Data()
@@ -322,7 +350,7 @@ enum CodexQuotaFetcher {
             ? "Codex 额度查询超时"
             : "Codex 额度服务未返回数据"
         logger.error("\(note, privacy: .public)")
-        return Snapshot(note: note)
+        return Snapshot(note: note, failed: true)
     }
 
     private static func parseResponse(_ json: [String: Any], authMode: String?) -> Snapshot {
@@ -330,13 +358,13 @@ enum CodexQuotaFetcher {
             let message = diagnosticText(error["message"] as? String ?? "未知错误")
             logger.error("JSON-RPC error: \(message, privacy: .public)")
             if message.localizedCaseInsensitiveContains("auth") {
-                return Snapshot(note: "Codex 登录已过期，请重新登录")
+                return Snapshot(note: "Codex 登录已过期，请重新登录", failed: true)
             }
-            return Snapshot(note: "Codex 额度查询失败：\(message)")
+            return Snapshot(note: "Codex 额度查询失败：\(message)", failed: true)
         }
 
         guard let result = json["result"] as? [String: Any] else {
-            return Snapshot(note: "Codex 额度响应无效")
+            return Snapshot(note: "Codex 额度响应无效", failed: true)
         }
         let rate: [String: Any]?
         if let buckets = result["rateLimitsByLimitId"] as? [String: Any],
@@ -356,9 +384,17 @@ enum CodexQuotaFetcher {
             return Snapshot(note: "当前账户没有 Codex 额度窗口")
         }
 
-        let windows = [rate["primary"], rate["secondary"]]
-            .compactMap { $0 as? [String: Any] }
-            .compactMap(parseWindow)
+        let raw = [("primary", rate["primary"]), ("secondary", rate["secondary"])]
+            .compactMap { slot, value in (value as? [String: Any]).map { (slot, $0) } }
+        let windows = raw.compactMap { parseWindow($0.1, slot: $0.0) }
+        // Windows arrived and none of them could be read: that is a malformed
+        // response, not an account without an allowance, and it must not be
+        // published as the latter (the reader keeps the last good reading for a
+        // failure, and clears the row for an authoritative empty answer).
+        if !raw.isEmpty && windows.isEmpty {
+            logger.error("rateLimits carried \(raw.count) window(s), none parseable")
+            return Snapshot(note: "Codex 额度响应无效", failed: true)
+        }
         let credits = creditBalance(rate["credits"] as? [String: Any])
         return Snapshot(windows: windows,
                         note: windows.isEmpty ? "当前账户没有 Codex 额度窗口" : nil,
@@ -375,10 +411,11 @@ enum CodexQuotaFetcher {
         return value.formatted(.number.precision(.fractionLength(0...2))) + " Credits"
     }
 
-    private static func parseWindow(_ window: [String: Any]) -> CodexQuotaWindow? {
+    private static func parseWindow(_ window: [String: Any], slot: String) -> CodexQuotaWindow? {
         guard let used = number(window["usedPercent"]) else { return nil }
         let minutes = JSONCoerce.intVal(window["windowDurationMins"])
         return CodexQuotaWindow(
+            slot: slot,
             label: label(forMinutes: minutes),
             usedPercent: min(100, max(0, used)),
             resetsAt: epoch(window["resetsAt"] ?? window["resets_at"]),
