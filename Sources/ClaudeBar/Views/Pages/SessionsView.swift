@@ -52,6 +52,7 @@ struct SessionsView: View {
     /// both the tile and the grid card, so it lives on the page rather than on
     /// each of them.
     @State private var pendingCleanup: ExternalSessionInfo?
+    @StateObject private var migrations = SessionMigrationModel()
 
     var body: some View {
         ScrollView {
@@ -60,6 +61,7 @@ struct SessionsView: View {
             // them (plus every section header) on every poll.
             LazyVStack(alignment: .leading, spacing: Theme.Space.s24) {
                 titleBar
+                SessionMigrationHistoryView()
                 claudeSection
                 cursorSection
                 externalSections
@@ -69,6 +71,14 @@ struct SessionsView: View {
         .scrollHoverGate()
         .resourceMonitorScope(.sessions)
         .background(Theme.bgPrimary)
+        .environmentObject(migrations)
+        .task { await migrations.refresh() }
+        .alert("会话迁移", isPresented: Binding(get: { migrations.error != nil },
+                                             set: { if !$0 { migrations.error = nil } })) {
+            Button("知道了") { migrations.error = nil }
+        } message: {
+            Text(migrations.error ?? "")
+        }
     }
 
     private var titleBar: some View {
@@ -344,6 +354,7 @@ private struct SessionTileFull: View {
                     .buttonStyle(.plain)
                 }
                 SessionActionChips(isHovered: isHovered) {
+                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "play.fill", tint: Theme.accent, help: "在终端恢复") {
                         resume()
                     }
@@ -510,6 +521,7 @@ private struct CursorTileFull: View {
                     .help(isExpanded ? "收起子 agent" : "展开子 agent")
                 }
                 SessionActionChips(isHovered: isHovered) {
+                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "cursorarrow",
                                tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -739,6 +751,7 @@ private struct ExternalSessionTile: View {
                     .foregroundColor(running > 0 ? Theme.externalHi : Theme.textTertiary())
             }
             SessionActionChips(isHovered: isHovered) {
+                SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0))
                 ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
                     TerminalLauncher.resumeCodexSession(cwd: session.cwd, sessionId: session.sessionId,
                                                         pid: session.holderPID,
@@ -864,6 +877,7 @@ private struct ExternalSessionGridCard: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
                 SessionActionChips(isHovered: isHovered) {
+                    SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0))
                     ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
                         TerminalLauncher.resumeCodexSession(cwd: session.cwd,
                                                             sessionId: session.sessionId,

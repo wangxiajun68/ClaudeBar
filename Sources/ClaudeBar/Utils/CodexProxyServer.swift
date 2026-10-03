@@ -18,6 +18,7 @@ import Darwin
 final class CodexProxyServer: @unchecked Sendable {
 
     private let port: UInt16
+    var listeningPort: UInt16 { port }
     private let state: CodexProxyState
     private let queue = DispatchQueue(label: "claudebar.proxy")
     private var listener: NWListener?
@@ -122,7 +123,7 @@ final class CodexProxyServer: @unchecked Sendable {
         self.tokenPath = tokenPath
     }
 
-    func start() throws {
+    func start(healConfigurations: Bool = true) throws {
         guard listener == nil else { return }
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
@@ -141,8 +142,10 @@ final class CodexProxyServer: @unchecked Sendable {
         // token requirement (or by a build that has since moved which table it
         // manages) leaves threads pinned to a proxy table holding
         // `PROXY_MANAGED` — every turn 401s until the file is rewritten.
-        for table in CodexConfigWriter.healProxyTokens(proxyBaseURL: "http://127.0.0.1:\(port)/v1") {
-            print("[CodexProxy] refreshed proxy token in [\(table)]")
+        if healConfigurations {
+            for table in CodexConfigWriter.healProxyTokens(proxyBaseURL: "http://127.0.0.1:\(port)/v1") {
+                print("[CodexProxy] refreshed proxy token in [\(table)]")
+            }
         }
         let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [weak self] connection in
@@ -155,6 +158,19 @@ final class CodexProxyServer: @unchecked Sendable {
         }
         listener.start(queue: queue)
         self.listener = listener
+    }
+
+    func waitUntilReady() async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            guard let listener else { throw MigrationFailure.storage }
+            if case .ready = listener.state { return }
+            if case .failed = listener.state { throw MigrationFailure.storage }
+            if case .cancelled = listener.state { throw MigrationFailure.storage }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        throw MigrationFailure.storage
     }
 
     func stop() {
@@ -287,6 +303,11 @@ final class CodexProxyServer: @unchecked Sendable {
 
         // 2. Route.
         let path = request.path.split(separator: "?").first.map(String.init) ?? request.path
+
+        if path.hasPrefix("/migration/") {
+            await forwardMigration(connection, request: request, path: path)
+            return
+        }
 
         let isAnthropicPath = path.contains("/messages") || path.contains("/complete")
         let hasAnthropicHeaders = request.headers["anthropic-version"] != nil
@@ -744,6 +765,106 @@ final class CodexProxyServer: @unchecked Sendable {
                 statusCode = Self.statusFromProxyError(error)
             }
             throw error
+        }
+    }
+
+    // MARK: - Per-conversation model bridge
+
+    private func forwardMigration(_ connection: NWConnection, request: HTTPRequest, path: String) async {
+        guard BuildChannel.allowsSystemIntegration,
+              let route = MigrationBridgeConfiguration.route(path), request.method == "POST",
+              let endpoint = await state.migrationEndpoint(for: route.id) else {
+            await respond(connection, status: "404 Not Found", contentType: "application/json",
+                body: Data(#"{"error":{"type":"not_found_error","message":"迁移连接不可用，请从 ClaudeBar 迁移记录重新打开会话。"}}"#.utf8))
+            connection.cancel(); return
+        }
+        var headWritten = false
+        var upstreamTask: URLSessionDataTask?
+        var upstreamStarted = false
+        defer { upstreamTask?.cancel(); connection.cancel() }
+        do {
+            guard let bodyData = request.body else { throw AgentProtocolBridge.Failure.malformed }
+            guard bodyData.count <= AgentProtocolBridge.maxBytes else { throw AgentProtocolBridge.Failure.tooLarge }
+            guard let body = (try? JSONSerialization.jsonObject(with: bodyData)) as? [String: Any] else {
+                throw AgentProtocolBridge.Failure.malformed
+            }
+            if route.countTokens {
+                // The upstream Responses API has no Anthropic token-count endpoint.
+                // Conservative local estimate, never represented as vendor billing.
+                let count = max(1, bodyData.count / 2 + 1)
+                await respond(connection, status: "200 OK", contentType: "application/json",
+                    body: try JSONSerialization.data(withJSONObject: ["input_tokens": count]))
+                return
+            }
+            var responses = try AgentProtocolBridge.request(body, model: endpoint.model)
+            if !endpoint.reasoningEffort.isEmpty { responses["reasoning"] = ["effort": endpoint.reasoningEffort] }
+            var registry = CodexProxyTransform.ToolRegistry()
+            let outbound = endpoint.wireAPI == "chat"
+                ? CodexProxyTransform.responsesToChatRequest(responses, registry: &registry) : responses
+            let outData = try JSONSerialization.data(withJSONObject: outbound)
+            guard let url = endpoint.wireAPI == "chat" ? chatCompletionsURL(endpoint.baseURL)
+                : MigrationBridgeConfiguration.responsesURL(endpoint.baseURL) else { throw AgentProtocolBridge.Failure.malformed }
+            let (lines, task) = try await streamSSE(url: url, apiKey: endpoint.apiKey, body: outData)
+            upstreamTask = task
+            upstreamStarted = true
+            let wantsStream = body["stream"] as? Bool ?? false
+            if wantsStream { try await writeMigration(connection, data: sseHead()); headWritten = true }
+            var stream = AgentProtocolBridge.Stream(model: endpoint.model)
+            var chat = AgentProtocolBridge.ChatStream(stream: .init(model: endpoint.model))
+            var accumulated = AgentProtocolBridge.MessageAccumulator()
+            func deliver(_ events: [[String: Any]]) async throws {
+                for event in events {
+                    try Task.checkCancellation()
+                    if wantsStream { try await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
+                    else { try accumulated.apply(event) }
+                }
+            }
+            for try await line in lines {
+                try Task.checkCancellation()
+                if Self.wasInterrupted() { throw CancellationError() }
+                guard line.hasPrefix("data:") else { continue }
+                let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                if payload == "[DONE]" { break }
+                guard payload.utf8.count <= AgentProtocolBridge.maxBytes,
+                      let data = payload.data(using: .utf8),
+                      let event = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw AgentProtocolBridge.Failure.malformed
+                }
+                if endpoint.wireAPI == "chat" { try await deliver(chat.apply(event)) }
+                else {
+                    try await deliver(stream.apply(event))
+                    if stream.terminal { break }
+                }
+            }
+            if endpoint.wireAPI == "chat" { try await deliver(chat.finish()) }
+            else if !stream.terminal { throw AgentProtocolBridge.Failure.incomplete }
+            if !wantsStream {
+                await respond(connection, status: "200 OK", contentType: "application/json",
+                    body: try JSONSerialization.data(withJSONObject: accumulated.result()))
+            }
+        } catch {
+            // Do not expose the upstream error body, URL or credentials, and
+            // never write a second HTTP status line after a streaming head.
+            let inputFailure = !upstreamStarted && error is AgentProtocolBridge.Failure
+            let tooLarge = !upstreamStarted && (error as? AgentProtocolBridge.Failure) == .tooLarge
+            let status = tooLarge ? "413 Payload Too Large" : (inputFailure ? "400 Bad Request" : "502 Bad Gateway")
+            let event: [String: Any] = ["type": "error", "error": ["type": inputFailure ? "invalid_request_error" : "api_error",
+                "message": inputFailure ? "请求包含暂不支持的工具或附件格式，请调整模型与工具配置。"
+                    : "模型请求失败或响应中断，请重试或选择兼容模型。"]]
+            if headWritten { try? await writeMigration(connection, data: AgentProtocolBridge.sse(event)) }
+            else {
+                await respond(connection, status: status, contentType: "application/json",
+                    body: (try? JSONSerialization.data(withJSONObject: event)) ?? Data())
+            }
+        }
+    }
+
+    private func writeMigration(_ connection: NWConnection, data: Data) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            })
         }
     }
 

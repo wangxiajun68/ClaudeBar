@@ -99,6 +99,14 @@ enum FilePaths {
     /// whole corpus, not once per file.
     static var usageClaimsJSONL: URL { logsDir.appendingPathComponent("usage-claims.jsonl") }
 
+    /// Private migration manifests and staging, isolated by build channel.
+    static var sessionMigrationsDir: URL { appSupportDir.appendingPathComponent("SessionMigrations") }
+
+    /// Fix the CLI's config root for migrated sessions; no credential copying.
+    static var cursorCLIConfigDir: URL {
+        BuildChannel.allowsSystemIntegration ? cursorDir : appSupportDir.appendingPathComponent(".cursor")
+    }
+
     // MARK: - VPN (mihomo core)
 
     /// `~/Library/Application Support/ClaudeBar/vpn` — mihomo working dir.

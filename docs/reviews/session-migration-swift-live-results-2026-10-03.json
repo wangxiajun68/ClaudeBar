@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-03",
+  "scope": "standalone production Swift adapters; isolated synthetic sessions; native real model calls; no app launch",
+  "checks": [
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 15.62,
+      "source": "cc",
+      "target": "codex",
+      "session_id": "3873c5f3-6b4c-48a1-88c5-6cdae51a02f4",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": true,
+      "post_resume_message_count": 4,
+      "post_resume_preserves_original_and_new_turn": true,
+      "facts_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "er\": \"MIGRATE-5f44f4266d2b\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 2.76,
+      "source": "codex-official",
+      "target": "cc",
+      "session_id": "a84e3627-6a35-4a62-abf1-df72ca77f5b9",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": true,
+      "post_resume_message_count": 4,
+      "post_resume_preserves_original_and_new_turn": true,
+      "facts_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 34.51,
+      "source": "cc",
+      "target": "cursor",
+      "session_id": "4195ffc2-577a-4c86-a4e4-bd2c7c7bd941",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": false,
+      "persistence_note": "Immediate and intermediate rereads failed. A later final-reader snapshot succeeded with all six messages; see supplementary checks. A bounded retry does not guarantee native persistence completes within 3.1 seconds.",
+      "facts_match": true,
+      "intermediate_native_reread": false
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "\": \"MIGRATE-e1df98e1278e\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "seconds": 0.97,
+      "source": "cursor",
+      "target": "cc",
+      "session_id": "82f4bed2-de9a-46f5-98c6-5d210f25af93",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": true,
+      "post_resume_message_count": 4,
+      "post_resume_preserves_original_and_new_turn": true,
+      "facts_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-e1df98e1278e\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 16.35,
+      "source": "cursor",
+      "target": "codex",
+      "session_id": "6fb4a104-7660-495a-9932-641e6aba49e6",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": true,
+      "post_resume_message_count": 4,
+      "post_resume_preserves_original_and_new_turn": true,
+      "facts_match": true
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 34.45,
+      "source": "codex-official",
+      "target": "cursor",
+      "session_id": "e577c4af-5f2a-4264-9eb1-e201e8d4ed53",
+      "message_count": 2,
+      "method": "production-swift-native-adapter-then-real-native-resume",
+      "post_resume_readable": false,
+      "persistence_note": "Immediate and intermediate rereads failed. A later final-reader snapshot succeeded with all six messages; see supplementary checks. A bounded retry does not guarantee native persistence completes within 3.1 seconds.",
+      "facts_match": true,
+      "intermediate_native_reread": false
+    }
+  ],
+  "cold_cursor_checks": [
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-5f44f4266d2b\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 37.99,
+      "label": "swift-cursor-cold-codex-official",
+      "source": "codex-official",
+      "target": "cursor",
+      "method": "new-native-process-cold-resume",
+      "pass": true,
+      "immediate_production_reread": false
+    },
+    {
+      "exit": 0,
+      "is_error": false,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "seconds": 26.6,
+      "label": "swift-cursor-cold-cc",
+      "source": "cc",
+      "target": "cursor",
+      "method": "new-native-process-cold-resume",
+      "pass": true,
+      "immediate_production_reread": false
+    }
+  ],
+  "matching_policy": "Four exact remembered fact strings, parsing JSON first and falling back to complete string containment for malformed responses. facts_match does not mean strict JSON format compliance.",
+  "supplementary_checks": [
+    {
+      "case": "cursor-delayed-native-reread",
+      "source": "cc",
+      "message_count": 6,
+      "preserves_original_and_two_new_turns": true,
+      "pass": true
+    },
+    {
+      "case": "cursor-delayed-native-reread",
+      "source": "codex-official",
+      "message_count": 6,
+      "preserves_original_and_two_new_turns": true,
+      "pass": true
+    },
+    {
+      "case": "official-codex-to-cc-unicode-cwd",
+      "exit": 0,
+      "is_error": false,
+      "seconds": 1.13,
+      "answer": "{\"marker\": \"MIGRATE-5f44f4266d2b\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+      "cwd_contains": [
+        "Chinese",
+        "emoji",
+        "space",
+        "dollar",
+        "single-quote"
+      ],
+      "pass": true,
+      "post_resume_message_count": 4
+    },
+    {
+      "case": "production-official-route-with-existing-custom-config",
+      "exit": 0,
+      "is_error": false,
+      "seconds": 23.17,
+      "answer": "{\"marker\":\"MIGRATE-bc4cde261f12\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+      "uses_production_MigrationCommand_arguments": true,
+      "ignore_user_config": false,
+      "pass": true
+    }
+  ],
+  "production_source_files": [
+    "Models/SessionMigration.swift",
+    "Utils/MigrationHistory.swift",
+    "Utils/MigrationCursorHistory.swift",
+    "Utils/MigrationStorage.swift",
+    "Utils/MigrationStorage.swift:MigrationCommand"
+  ],
+  "boundaries": [
+    "Standalone production Swift adapters compiled from the worktree; no ClaudeBar application launch or installation.",
+    "Controlled native CLI model calls with isolated synthetic workspaces and existing native authentication; proxy 127.0.0.1:17890.",
+    "Prepared native files only contain user/assistant text. Original user chats were not sent.",
+    "Most Codex calls ignored user config for isolation; the supplementary official route retained the existing custom user configuration.",
+    "Terminal UI dispatch is covered by mocked transport regressions, not a manually launched App.",
+    "Cursor desktop source has temporary SQLite fixture coverage in this implementation; real desktop UI evidence belongs to the earlier Python research report."
+  ]
+}

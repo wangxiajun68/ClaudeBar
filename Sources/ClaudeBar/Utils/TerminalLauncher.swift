@@ -127,6 +127,24 @@ enum TerminalLauncher {
                                 configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// New Codex rollouts may not be in the desktop index; resume through the
+    /// terminal. Fixed-version Cursor targets select their native chat ID.
+    @MainActor
+    static func openMigratedSession(_ record: MigrationRecord, command: String) throws {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        guard isSafePath(record.source.cwd), isSafeSessionId(record.targetSessionID),
+              !command.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else {
+            throw MigrationFailure.invalidHistory
+        }
+        if record.target == .cursorDesktop {
+            guard NSWorkspace.shared.open(try MigrationCommand.desktopURL(for: record)) else {
+                throw MigrationFailure.unavailable("Cursor")
+            }
+        } else {
+            launch(command: command, cwd: record.source.cwd, sessionId: record.targetSessionID)
+        }
+    }
+
     // MARK: - Routing
 
     private static func launch(command: String, cwd: String, sessionId: String) {
