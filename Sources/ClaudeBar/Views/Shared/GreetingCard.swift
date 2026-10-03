@@ -236,6 +236,18 @@ struct GreetingStatusSheet: View {
         if manual {
             return scene(for: manualWeather)
         }
+        // 天气渲染关掉时天空改要求按太阳高度连续插值的晴空：调色、日月与云量
+        // 都还在，但没有雨雪、雾、闪电和玻璃雨滴——设置里那一项的说明是
+        // 「保留日照天空」，而只要还画 `reading.sky`，关掉之后卡片仍旧在下雨。
+        // 星点从真实坐标与星历投影，关掉天气后那串坐标既不是所在也不是此刻，
+        // 所以这一档收掉星层（日月只跟太阳高度角走，保留）。
+        if !liveWeather {
+            var pinned = SkyScene.make(sky: .clear, rainChance: 0, windKph: 6, windDirection: "",
+                                       astronomy: astronomy)
+            pinned.stars = []
+            pinned.starVisibility = 0
+            return pinned
+        }
         return SkyScene.make(sky: reading?.sky, rainChance: reading?.rainChance ?? 0, windKph: reading?.windKph ?? 6,
                              windDirection: reading?.windDirection ?? "", astronomy: astronomy)
     }
@@ -548,7 +560,10 @@ struct GreetingStatusSheet: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         } else {
-            FallbackSky(scene: scene, reading: reading, astronomy: astronomy, layout: layout)
+            // 关掉天气渲染后天空已经钉在晴空，回调层再画一次 `reading.sky` 会
+            // 把雨云画回来；读数本身仍有内容（温度、日出日落），所以这一路把
+            // 天空那一层让给场景，只保留它的文字部分。
+            FallbackSky(scene: scene, reading: liveWeather ? reading : nil, astronomy: astronomy, layout: layout)
                 .frame(width: m.width, height: m.total)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
