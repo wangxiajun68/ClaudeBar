@@ -40,7 +40,7 @@ import AppKit
         // Synthetic half: the tree's own contract, independent of any machine.
         let store = ProviderStore()
         func row(_ id: String, parent: String?, active: Bool, updated: Double, sub: Bool) -> ExternalSessionInfo {
-            ExternalSessionInfo(kind: .codex, sessionId: id, cwd: "/tmp/p", startedAt: updated,
+            ExternalSessionInfo(kind: .codex, sessionId: id, cwd: "/tmp/p",
                                 updatedAt: updated, model: "gpt-6", isAlive: true, isActive: active,
                                 completionID: nil, contextTokens: 10, contextLimit: 100,
                                 parentThreadId: parent, threadSource: sub ? "subagent" : "user",

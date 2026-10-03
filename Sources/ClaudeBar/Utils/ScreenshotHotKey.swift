@@ -103,7 +103,7 @@ final class ScreenshotHotKey: ObservableObject {
             // -9878 means another app holds the exclusive registration; our
             // event tap still swallows and fires, so treat as degraded, not dead.
             lastError = err == -9878 ? nil : Self.describe(err)
-            hotKeyRef = err == noErr ? ref : nil
+            hotKeyRef = nil
             return
         }
         hotKeyRef = ref

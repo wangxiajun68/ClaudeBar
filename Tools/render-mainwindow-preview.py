@@ -966,11 +966,8 @@ source += r'''
 struct VpnProxy: Identifiable, Equatable {
     var id: String { name }
     let name: String
-    let type: String
     let server: String
-    let port: Int
     var delay: Int?
-    var isCurrent: Bool = false
 }
 struct VpnGroup: Identifiable, Equatable {
     var id: String { name }
@@ -980,7 +977,7 @@ struct VpnGroup: Identifiable, Equatable {
     var current: String
 }
 struct VpnTrafficSnapshot: Equatable {
-    var up: Int64 = 0, down: Int64 = 0, totalUp: Int64 = 0, totalDown: Int64 = 0
+    var totalUp: Int64 = 0, totalDown: Int64 = 0
     var activeConnections: Int = 0
 }
 enum VpnFormat {
@@ -1053,7 +1050,6 @@ struct VpnSubscription: Identifiable, Equatable {
     var download: Int64 = 0
     var total: Int64 = 0
     var expires: Date?
-    var lastUpdated: Date?
     var nodeCount: Int = 0
     var homeURL: String?
     var usedBytes: Int64 { upload + download }
@@ -1072,7 +1068,7 @@ final class VpnLiveRates: ObservableObject {
     var speedHistory: [(down: Int64, up: Int64)] = []
     var speedDown: Int64 = 3_140_000
     var speedUp: Int64 = 412_000
-    var traffic = VpnTrafficSnapshot(up: 0, down: 0, totalUp: 4_820_000_000, totalDown: 31_600_000_000, activeConnections: 128)
+    var traffic = VpnTrafficSnapshot(totalUp: 4_820_000_000, totalDown: 31_600_000_000, activeConnections: 128)
 }
 
 final class VpnNetProbe: ObservableObject {
@@ -1676,7 +1672,7 @@ source += r'''
     static func codexSession(id: String, cwd: String, title: String, active: Bool,
                              nickname: String = "", parent: String? = nil,
                              tokens: Int = 0, limit: Int = 0) -> ExternalSessionInfo {
-        ExternalSessionInfo(kind: .codex, sessionId: id, cwd: cwd, startedAt: 1_789_990_000_000,
+        ExternalSessionInfo(kind: .codex, sessionId: id, cwd: cwd,
                             updatedAt: 1_789_999_000_000, model: "gpt-6-astra", isAlive: true,
                             isActive: active, contextTokens: tokens, contextLimit: limit,
                             parentThreadId: parent, threadSource: parent == nil ? "user" : "subagent",
@@ -1734,8 +1730,8 @@ source += r'''
 
     static func vpnProxies(_ names: [String]) -> [VpnProxy] {
         names.enumerated().map { index, name in
-            VpnProxy(name: name, type: "ss", server: "203.0.113.\(index + 11)", port: 443,
-                     delay: index == 0 ? 42 : 38 + index * 27, isCurrent: index == 0)
+            VpnProxy(name: name, server: "203.0.113.\(index + 11)",
+                     delay: index == 0 ? 42 : 38 + index * 27)
         }
     }
 
@@ -1939,7 +1935,7 @@ source += r'''
                                   upload: 61_000_000_000, download: 214_000_000_000,
                                   total: 500_000_000_000,
                                   expires: Fixture.now.addingTimeInterval(24 * 86400),
-                                  lastUpdated: Fixture.now, nodeCount: names.count,
+                                  nodeCount: names.count,
                                   homeURL: "https://example.invalid")
         VpnSubscriptionStore.shared.subscriptions = [sub]
         VpnSubscriptionStore.shared.activeID = sub.id

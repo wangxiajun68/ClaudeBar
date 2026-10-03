@@ -61,15 +61,12 @@ struct CursorCredentials: Equatable {
     /// `sub` from the JWT payload, e.g. `google-oauth2|user_01…`. Only the
     /// cookie-authenticated web endpoints need it, and only percent-encoded.
     var subject: String?
-
-    /// Whether there is enough here to call the usage API at all.
-    var canQueryUsage: Bool { accessToken?.isEmpty == false }
 }
 
 extension CursorDB {
     /// Read the account row set. Returns `nil` when the DB is missing, so the
     /// caller can tell "no Cursor installed" from "installed but signed out"
-    /// (which comes back as an all-optional, `canQueryUsage == false` value).
+    /// (which comes back as an all-optional value with no `accessToken`).
     ///
     /// Read **fresh every time**: Cursor rotates the access token in place
     /// while the IDE runs, so a cached token goes stale within the hour and the

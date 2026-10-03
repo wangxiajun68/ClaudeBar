@@ -141,7 +141,7 @@ func run() throws {
                                    status: .idle, isAlive: true)
     cursor.hasPendingDecision = true
     let codex = ExternalSessionInfo(kind: .codex, sessionId: "x-1", cwd: "/tmp/proj",
-                                    startedAt: 1, updatedAt: nowMs, model: "gpt",
+                                    updatedAt: nowMs, model: "gpt",
                                     isAlive: true, isActive: true)
     let all = IslandLiveModelProbe.flatten(claude: [], cursor: [cursor], external: [codex])
     let cursorFlat = all.first { $0.agent == .cursor }

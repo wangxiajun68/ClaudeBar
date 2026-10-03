@@ -8,9 +8,7 @@ import Darwin
 struct VpnProxy: Identifiable, Equatable {
     var id: String { name }
     let name: String
-    let type: String
     let server: String
-    let port: Int
     /// ms; nil = not tested / timeout.
     var delay: Int?
 }
@@ -24,8 +22,6 @@ struct VpnGroup: Identifiable, Equatable {
 }
 
 struct VpnTrafficSnapshot: Equatable {
-    var up: Int64 = 0
-    var down: Int64 = 0
     var totalUp: Int64 = 0
     var totalDown: Int64 = 0
     var activeConnections: Int = 0
@@ -900,7 +896,7 @@ final class VpnManager: ObservableObject {
         guard let all = root["proxies"] as? [String: Any] else { return ([], []) }
         var groupsOut: [VpnGroup] = []
         var nodeNames = Set<String>()
-        var details: [String: (type: String, server: String, port: Int, history: [Int])] = [:]
+        var details: [String: (server: String, history: [Int])] = [:]
         let groupTypes = ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"]
         for (name, raw) in all {
             guard let obj = raw as? [String: Any] else { continue }
@@ -911,12 +907,11 @@ final class VpnManager: ObservableObject {
                 groupsOut.append(VpnGroup(name: name, type: type, nodes: nodes, current: current))
             } else if type != "Direct" && type != "Reject" && type != "Compatible" && type != "Pass" {
                 let server = obj["server"] as? String ?? ""
-                let port = obj["port"] as? Int ?? 0
                 let history = ((obj["history"] as? [[String: Any]]) ?? []).compactMap { h -> Int? in
                     guard h["delay"] != nil else { return nil }
                     return JSONCoerce.intVal(h["delay"])
                 }
-                details[name] = (type, server, port, history)
+                details[name] = (server, history)
                 nodeNames.insert(name)
             }
         }
@@ -924,7 +919,7 @@ final class VpnManager: ObservableObject {
         let proxiesOut: [VpnProxy] = nodeNames.sorted().map { name in
             let d = details[name]!
             return VpnProxy(
-                name: name, type: d.type, server: d.server, port: d.port,
+                name: name, server: d.server,
                 delay: d.history.last)
         }
         return (groupsOut, proxiesOut)

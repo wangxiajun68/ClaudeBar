@@ -423,7 +423,7 @@ source += '''
     ]
     store.externalSessions = [
         ExternalSessionInfo(kind: .codex, sessionId: "9c1d", cwd: "/Users/x/Project/api",
-                            startedAt: 0, updatedAt: Date().timeIntervalSince1970 * 1000 - 12_000,
+                            updatedAt: Date().timeIntervalSince1970 * 1000 - 12_000,
                             model: "gpt-6-astra", isAlive: true, isActive: true,
                             contextTokens: 60_000, contextLimit: 400_000, title: "给我一个 hello"),
     ]

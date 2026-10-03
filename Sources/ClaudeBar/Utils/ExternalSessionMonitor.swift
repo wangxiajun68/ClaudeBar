@@ -18,7 +18,6 @@ struct ExternalSessionInfo: Identifiable, Equatable {
     let kind: ExternalAgentKind
     let sessionId: String
     let cwd: String
-    let startedAt: Double        // epoch ms (index row's created_at; else file mtime)
     let updatedAt: Double        // epoch ms (file mtime)
     let model: String            // model declared by the tool ("" if unknown)
     /// Retained in the unarchived thread index; in the legacy fallback, live.
@@ -392,7 +391,6 @@ struct ExternalSessionMonitor {
                             kind: .codex,
                             sessionId: sessionId,
                             cwd: parsed.cwd,
-                            startedAt: meta.mtime * 1000,
                             updatedAt: meta.mtime * 1000,
                             model: parsed.model,
                             isAlive: alive,
@@ -423,7 +421,6 @@ struct ExternalSessionMonitor {
         let id: String
         let path: String
         let cwd: String
-        let created: Double
         let updated: Double
         let title: String
         let source: String
@@ -504,7 +501,7 @@ struct ExternalSessionMonitor {
             let info = ExternalSessionInfo(
                 kind: .codex, sessionId: row.id,
                 cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
-                startedAt: row.created * 1000, updatedAt: updated * 1000,
+                updatedAt: updated * 1000,
                 model: parsed?.model ?? "", isAlive: true,
                 isActive: running,
                 hasStalledTurn: parsed?.hasOpenTask == true && !running,
@@ -544,7 +541,7 @@ struct ExternalSessionMonitor {
         let hasThreadSource = columns.contains("thread_source")
         var stmt: OpaquePointer?
         let sql = """
-        SELECT id, rollout_path, cwd, created_at, updated_at, source, title\
+        SELECT id, rollout_path, cwd, updated_at, source, title\
         \(hasThreadSource ? ", thread_source" : "") \
         FROM threads WHERE archived = 0 ORDER BY updated_at DESC
         """
@@ -557,13 +554,13 @@ struct ExternalSessionMonitor {
         }
         var step = sqlite3_step(stmt)
         while step == SQLITE_ROW {
-            let source = string(5)
-            let threadSource = hasThreadSource ? string(7) : ""
+            let source = string(4)
+            let threadSource = hasThreadSource ? string(6) : ""
             let kind = threadKind(source: source, threadSource: threadSource)
             if kind != .excluded {
                 rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
-                                          created: sqlite3_column_double(stmt, 3), updated: sqlite3_column_double(stmt, 4),
-                                          title: string(6), source: source, threadSource: threadSource))
+                                          updated: sqlite3_column_double(stmt, 3),
+                                          title: string(5), source: source, threadSource: threadSource))
             }
             step = sqlite3_step(stmt)
         }

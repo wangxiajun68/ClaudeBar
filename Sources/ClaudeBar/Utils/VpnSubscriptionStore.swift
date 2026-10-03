@@ -13,7 +13,6 @@ struct VpnSubscription: Codable, Identifiable, Equatable {
     var download: Int64 = 0
     var total: Int64 = 0
     var expires: Date? = nil
-    var lastUpdated: Date? = nil
     var nodeCount: Int = 0
     /// Airport web console, from `profile-web-page-url`.
     var homeURL: String? = nil
@@ -92,7 +91,6 @@ final class VpnSubscriptionStore: ObservableObject {
             try? FileManager.default.createDirectory(at: FilePaths.vpnProfilesDir, withIntermediateDirectories: true)
             try? text.write(to: profileURL(sub.id), atomically: true, encoding: .utf8)
             var stored = sub
-            stored.lastUpdated = Date()
             Self.applyUserInfo(headers: headers, body: text, to: &stored)
             if stored.name == Self.defaultName(from: url),
                let filename = Self.filename(from: headers), !filename.isEmpty {
@@ -141,7 +139,6 @@ final class VpnSubscriptionStore: ObservableObject {
             try? text.write(to: profileURL(id), atomically: true, encoding: .utf8)
             if let idx = subscriptions.firstIndex(where: { $0.id == id }) {
                 Self.applyUserInfo(headers: headers, body: text, to: &subscriptions[idx])
-                subscriptions[idx].lastUpdated = Date()
             }
             save()
             return true
@@ -177,7 +174,6 @@ final class VpnSubscriptionStore: ObservableObject {
             let (body, headers) = try await downloadProfile(url: sub.url)
             if let idx = subscriptions.firstIndex(where: { $0.id == id }) {
                 Self.applyUserInfo(headers: headers, body: body, to: &subscriptions[idx])
-                subscriptions[idx].lastUpdated = Date()
                 if subscriptions[idx].total == 0 && subscriptions[idx].expires == nil {
                     await updateError("未返回流量/有效期。确认链接可用，且机场对 clash-verge UA 下发 subscription-userinfo。")
                     save()

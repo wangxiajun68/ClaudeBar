@@ -115,9 +115,6 @@ enum FilePaths {
     static var vpnSubscriptionsFile: URL { vpnDir.appendingPathComponent("subscriptions.json") }
     /// Where users drop the mihomo binary (or where VpnCoreInstaller puts it).
     static var vpnCoreBin: URL { vpnDir.appendingPathComponent("mihomo") }
-    /// Self-owned "DNS overridden" flag: written when the TUN DNS override is
-    /// applied, removed on restore. Nothing reads it today.
-    static var vpnTunMarker: URL { vpnDir.appendingPathComponent("tun-enabled") }
     /// VPN event + core stderr log.
     static var vpnLogFile: URL { vpnDir.appendingPathComponent("vpn.log") }
     /// Raw mihomo stdout/stderr stream (append-only).

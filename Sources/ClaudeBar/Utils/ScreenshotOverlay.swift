@@ -1277,5 +1277,3 @@ private extension NSScreen {
         (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 }
-
-private let kVK_Space: Int = 0x31

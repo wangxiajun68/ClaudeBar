@@ -156,14 +156,8 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
     }
 
     var identityURLs: [String] {
-        let urls = [claude?.baseURL, codex?.baseURL, codex?.chatBaseURL].compactMap { $0 } + legacyURLs
+        let urls = [claude?.baseURL, codex?.baseURL, codex?.chatBaseURL].compactMap { $0 }
         return urls.map { Self.identityURL($0) }.filter { !$0.isEmpty }
-    }
-    private var legacyURLs: [String] {
-        switch id {
-        case "glm": return ["https://open.bigmodel.cn/api/paas/v4"]
-        default: return []
-        }
     }
     static func identityURL(_ raw: String) -> String {
         guard var url = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -242,7 +236,7 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
         }
     }
 
-    static func supportsNativeResponses(baseURL: String, model: String) -> Bool {
+    static func supportsNativeResponses(baseURL: String) -> Bool {
         all.contains { entry in
             guard let endpoint = entry.codex, endpoint.wireAPI == "responses" else { return false }
             return identityURL(endpoint.baseURL) == identityURL(baseURL)

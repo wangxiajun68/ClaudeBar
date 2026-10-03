@@ -244,7 +244,6 @@ enum VpnTunDnsHelper {
         for service in VpnSystemProxyController.networkServices() {
             _ = Process.runAndRead("/usr/sbin/networksetup", args: ["-setdnsservers", service, "223.5.5.5", "119.29.29.29"])
         }
-        try? "set".write(to: FilePaths.vpnTunMarker, atomically: true, encoding: .utf8)
     }
 
     static func restoreSystemDNSIfNeeded() {
@@ -270,7 +269,6 @@ enum VpnTunDnsHelper {
         // Removed even when the marker could not be decoded (e.g. one written
         // by an older build): leaving it would re-run this restore on exit.
         try? FileManager.default.removeItem(at: dnsMarker)
-        try? FileManager.default.removeItem(at: FilePaths.vpnTunMarker)
     }
 
     nonisolated private static func saveOriginalDNSIfNeeded() {
