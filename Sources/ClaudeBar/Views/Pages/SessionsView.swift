@@ -47,7 +47,7 @@ private struct SessionActionChips<Content: View>: View {
 /// double-click-to-resume, and the Codex tiles carrying their sub-agent swarm.
 /// Mirrors the menu-bar popup's sessions at full width.
 struct SessionsView: View {
-    @ProviderState([.sessions, .expansion]) var providerStore: ProviderStore
+    @ProviderState([.sessions]) var providerStore: ProviderStore
     /// The session a stuck-thread cleanup was confirmed for. One dialog serves
     /// both the tile and the grid card, so it lives on the page rather than on
     /// each of them.
@@ -90,6 +90,8 @@ struct SessionsView: View {
     private var claudeSection: some View {
         let alive = providerStore.aliveSessions
         let busy = providerStore.busySessionCount
+        let live = alive.filter(Self.claudeHasLiveWork)
+        let resting = alive.filter { !Self.claudeHasLiveWork($0) }
         return sectionContainer(
             title: "Claude Code",
             icon: "rectangle.connected.to.line.below",
@@ -99,23 +101,28 @@ struct SessionsView: View {
             if alive.isEmpty {
                 emptyHint("暂无 Claude Code 会话")
             } else {
-                let workflowSessions = alive.filter { !$0.workflows.isEmpty }
-                let regularSessions = alive.filter { $0.workflows.isEmpty }
                 VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                    ForEach(workflowSessions) { session in
-                        SessionTileFull(session: session, store: providerStore, isExpanded: true)
+                    // A session with work in flight leaves the 宫格. Stretching
+                    // one cell used to drag every sibling in the row with it.
+                    ForEach(live) { session in
+                        SessionTileFull(session: session)
                     }
-                    if !regularSessions.isEmpty {
+                    if !resting.isEmpty {
                         TileGrid(.pageSession) {
-                            ForEach(regularSessions) { session in
-                                SessionTileFull(session: session, store: providerStore,
-                                                isExpanded: providerStore.expandedSessionPIDs.contains(session.pid))
+                            ForEach(resting) { session in
+                                SessionTileFull(session: session)
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// Any workflow or running direct subagent gives the session its own row.
+    private static func claudeHasLiveWork(_ session: SessionInfo) -> Bool {
+        session.subagents.contains { $0.status == .running }
+            || !session.workflows.isEmpty
     }
 
     // MARK: Cursor
@@ -288,14 +295,13 @@ private struct ActivityLine: View {
     }
 }
 
-/// A Claude Code session tile with subagent expansion. On hover the tile
-/// lifts and trailing action chips (resume / reveal cwd) slide in — the
-/// affordances emerge from the tile instead of being hidden behind a
-/// double-click.
+/// Claude Code sessions with workflows or running agents own a full row.
+/// Task lanes use bounded viewports; migration stays visible on every card.
 private struct SessionTileFull: View {
     let session: SessionInfo
-    let store: ProviderStore
-    let isExpanded: Bool
+    private var hasTaskWorkspace: Bool {
+        !session.workflows.isEmpty || session.subagents.contains { $0.status == .running }
+    }
     private var isBusy: Bool { session.isBusy }
     private var isWaiting: Bool { session.isWaiting }
     /// The tile's three-state capsule; see `Theme.sessionStatus`.
@@ -307,10 +313,9 @@ private struct SessionTileFull: View {
 
     var body: some View {
         Group {
-            if session.workflows.isEmpty {
+            if !hasTaskWorkspace {
                 VStack(alignment: .leading, spacing: Theme.Space.s8) {
                     sessionOverview
-                    agentDisclosure
                 }
             } else {
                 // A workflow owns a full row. Its task lanes have stable
@@ -319,7 +324,7 @@ private struct SessionTileFull: View {
                     HStack(alignment: .top, spacing: Theme.Space.s24) {
                         sessionOverview.frame(width: 280)
                         workflowWorkspace
-                            .frame(minWidth: session.subagents.isEmpty ? 240 : 440)
+                            .frame(minWidth: session.subagents.isEmpty || session.workflows.isEmpty ? 240 : 440)
                     }
                     VStack(alignment: .leading, spacing: Theme.Space.s16) {
                         sessionOverview
@@ -336,8 +341,8 @@ private struct SessionTileFull: View {
         // scannable by row. Busy-ness stays with the dot and the capsule, so
         // the wash never moves under the pointer.
         .tile(tint: Theme.claude, hovered: isHovered,
-              lens: session.workflows.isEmpty ? DepthLensSpec(tint: Theme.claude, size: 132) : nil,
-              lift: session.workflows.isEmpty)
+              lens: !hasTaskWorkspace ? DepthLensSpec(tint: Theme.claude, size: 132) : nil,
+              lift: !hasTaskWorkspace)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { resume() }
         .hoverState($isHovered)
@@ -392,8 +397,14 @@ private struct SessionTileFull: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
+                if !hasTaskWorkspace, let note = settledWorkNote {
+                    Text(note)
+                        .font(Theme.Font.caption)
+                        .foregroundColor(Theme.textTertiary())
+                        .lineLimit(1)
+                }
+                SessionMigrationButton(source: MigrationSource(session), labeled: true)
                 SessionActionChips(isHovered: isHovered) {
-                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "play.fill", tint: Theme.accent, help: "在终端恢复") {
                         resume()
                     }
@@ -406,59 +417,27 @@ private struct SessionTileFull: View {
         }
     }
 
-    @ViewBuilder
-    private var agentDisclosure: some View {
-        if !session.subagents.isEmpty {
-            Button(action: toggle) {
-                HStack(spacing: Theme.Space.s8) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(Theme.Font.micro)
-                        .frame(width: 12)
-                    Text("子任务 \(session.subagents.count)")
-                        .font(Theme.Font.caption)
-                    Spacer(minLength: 0)
-                }
-                .foregroundColor(Theme.textSecondary)
-                .padding(.vertical, Theme.Space.s4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "收起子任务" : "展开子任务")
-            .accessibilityValue("子任务 \(session.subagents.count)")
-
-            if isExpanded {
-                HairlineDivider()
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                        ForEach(session.subagents) { subagentRow($0) }
-                    }
-                }
-                // Bound the viewport, not the data: every task remains reachable.
-                .frame(height: min(CGFloat(session.subagents.count) * 52 - 4, 156))
-                .transition(.opacity)
-            }
-        }
-    }
-
     private var workflowWorkspace: some View {
         HStack(alignment: .top, spacing: Theme.Space.s24) {
-            VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                detailHeading("工作流", icon: "gearshape", count: session.workflows.count)
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                        ForEach(session.workflows) { workflowRow($0) }
+            if !session.workflows.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                    detailHeading("工作流", icon: "gearshape", count: session.workflows.count)
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                            ForEach(Self.runningFirst(session.workflows) { $0.status == .running }) { workflowRow($0) }
+                        }
                     }
+                    .frame(height: 148)
                 }
-                .frame(height: 148)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             if !session.subagents.isEmpty {
                 VStack(alignment: .leading, spacing: Theme.Space.s8) {
                     detailHeading("子任务", icon: "person.2", count: session.subagents.count)
                     ScrollView(.vertical) {
                         VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                            ForEach(session.subagents) { subagentRow($0) }
+                            ForEach(Self.runningFirst(session.subagents) { $0.status == .running }) { subagentRow($0) }
                         }
                     }
                     .frame(height: 148)
@@ -481,9 +460,13 @@ private struct SessionTileFull: View {
         .frame(height: 20)
     }
 
-    private func toggle() {
-        if isExpanded { store.expandedSessionPIDs.remove(session.pid) }
-        else { store.expandedSessionPIDs.insert(session.pid) }
+    private var settledWorkNote: String? {
+        guard !session.subagents.isEmpty else { return nil }
+        return "\(session.subagents.count) 个子 agent"
+    }
+
+    private static func runningFirst<T>(_ items: [T], isRunning: (T) -> Bool) -> [T] {
+        items.filter(isRunning) + items.filter { !isRunning($0) }
     }
 
     /// The reason line while the turn is parked on the user.
@@ -620,8 +603,8 @@ private struct CursorTileFull: View {
                     .buttonStyle(.plain)
                     .help(isExpanded ? "收起子 agent" : "展开子 agent")
                 }
+                SessionMigrationButton(source: MigrationSource(session), labeled: true)
                 SessionActionChips(isHovered: isHovered) {
-                    SessionMigrationButton(source: MigrationSource(session))
                     ActionChip(systemImage: "cursorarrow",
                                tint: Theme.cursorAccent, help: "在 Cursor 打开") {
                         openCursor()
@@ -1022,8 +1005,8 @@ private struct ExternalSessionGridCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
+                SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0), labeled: true)
                 SessionActionChips(isHovered: isHovered) {
-                    SessionMigrationButton(source: MigrationSource(session, hasRunningChildren: node.activeDescendantCount > 0))
                     ActionChip(systemImage: "play.fill", tint: tint, help: "在 Codex 中打开") {
                         TerminalLauncher.resumeCodexSession(cwd: session.cwd,
                                                             sessionId: session.sessionId,
