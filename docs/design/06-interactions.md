@@ -18,7 +18,7 @@
 
 1. `ProviderStore.refresh()` → `startSessionPolling()` 启动 2.5s 定时器（间隔定义在 `AppConfig.sessionPollInterval`）；定时器只触发，扫描在 detached task 中离主线程执行。
 2. `SessionMonitor.fetchActive()`：扫描 `~/.claude/sessions/*.json`，解析 PID/cwd/status，用 `kill(pid, 0)` 判活，按 recency 排序。
-3. 对每个活跃会话 `fetchContext()`：读其 transcript `*.jsonl` 的**尾部 ~96KB**，取最后一条 assistant 消息的 `input + cache_read + cache_creation` 作为当前上下文 token，并从最近的 `tool_use` 推断当前活动；若 `tool_use` 后无 `tool_result` 则标记 `toolPending = true`（busy）。
+3. 对每个活跃会话 `fetchContext()`：读其 transcript `*.jsonl` 的**尾部 ~96KB**，取最后一条 assistant 消息的 `input + cache_read + cache_creation` 作为当前上下文 token，并从最近的 `tool_use` 推断当前活动；`toolPending` 按 `tool_use` 的 **id** 判定——最新一批调用里还有谁没被 `tool_result` 的 `tool_use_id` 点名，就算仍在跑（Claude Code 会把并行调用塞进同一条 assistant 记录、每次调用写一条结果记录，只按行号判会在批次里第一个结果落地时就误判「没有待办」）。
 4. `fetchSubagents()`：扫描会话目录的 `subagents/*.meta.json` 与 `subagents/workflows/<id>/`，聚合子 Agent 与 Workflow。
 5. 每轮把 busy/idle 采样追加进 `heartbeats[pid]`（长度 `AppConfig.heartbeatLength`，默认 2.5s×24 ≈ 最近一分钟），驱动瓦片上的 `HeartbeatSparkline`。
 6. `ConfirmedCompletionDetector` 判定「这一轮真的交付了答案」：该会话的轮次键变了 + 它自己的文件刚写过（60 s 内）+ 当前不忙（三条同见 [§03-provider-store](../technical/03-provider-store.md)）。命中且 `AppPreferences.idleNotifyEnabled` 开启时，经 `NotificationService` 发系统通知（"最终答复已就绪"，附 Resume 动作）；点按通知经 `.resumeSession` 通知回 AppDelegate 用 `TerminalLauncher` 恢复会话。Cursor / Codex 同一条规则，只是轮次键取各自的本机字段（Cursor 用 transcript 字节偏移 `turn-<offset>`、Codex 用 `task_complete.turn_id`，文案随各自客户端）。

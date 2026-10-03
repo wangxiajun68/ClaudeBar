@@ -275,7 +275,17 @@ struct SessionMonitor {
             guard let data = try? Data(contentsOf: fileURL),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
-            guard let pid = (obj["pid"] as? Int) ?? Int((obj["pid"] as? String) ?? "") else { continue }
+            // The liveness probe needs a real pid, not just an Int: `pid_t` is
+            // 32-bit, and `pid_t(pid)` **traps** on anything that does not fit
+            // (verified: a compiled -O binary dies with SIGTRAP), so a session
+            // file carrying `"pid": 4294967296` — or any other out-of-range
+            // value — would crash the app on every poll until the file was
+            // removed by hand. The files are re-read each scan, so the crash
+            // repeats. `<= 0` is the other half: `kill(0, 0)` and `kill(-1, 0)`
+            // both succeed (they address process groups), so a fabricated
+            // `"pid": 0` would be reported as a live session.
+            guard let rawPID = (obj["pid"] as? Int) ?? Int((obj["pid"] as? String) ?? ""),
+                  let pid = Int32(exactly: rawPID), pid > 0 else { continue }
             let sessionId = (obj["sessionId"] as? String) ?? ""
             let cwd = (obj["cwd"] as? String) ?? ""
             let startedAt = (obj["startedAt"] as? Double) ?? (obj["startedAt"] as? Int).map(Double.init) ?? 0
@@ -289,10 +299,10 @@ struct SessionMonitor {
             let updatedAt = (obj["updatedAt"] as? Double) ?? (obj["updatedAt"] as? Int).map(Double.init) ?? startedAt
 
             // Liveness check: kill(pid, 0) returns 0 if process exists.
-            let alive = kill(pid_t(pid), 0) == 0
+            let alive = kill(pid, 0) == 0
 
             sessions.append(SessionInfo(
-                pid: pid,
+                pid: Int(pid),
                 sessionId: sessionId,
                 cwd: cwd,
                 startedAt: startedAt,
@@ -325,13 +335,52 @@ struct SessionMonitor {
     /// Measured on 40 local transcripts: 35 yield a clean first prompt, and the
     /// 5 that do not (`/clear`-only sessions, `<history>` injections) fall back
     /// to the folder name via `SessionTitle`.
+    ///
+    /// **The read extends until a candidate parses.** One fixed window is not
+    /// enough, and the failure is silent: a first prompt that *starts* inside
+    /// the window but ends past it arrives as a truncated line, fails
+    /// `JSONSerialization`, and is skipped — so a session whose opening prompt
+    /// was a long paste (or which was preceded by a large preamble) reported no
+    /// title at all and every surface fell back to the folder name. The window
+    /// therefore grows while no candidate has been found, up to a bound that is
+    /// already far past any plausible prompt, and the trailing partial line is
+    /// carried into the next chunk instead of being parsed.
     private static func firstHumanPrompt(for session: SessionInfo) -> String {
         guard let handle = try? FileHandle(forReadingFrom: transcriptURL(for: session)) else { return "" }
         defer { try? handle.close() }
         // Prompts live well inside the first few records; 16KB covers the
-        // session preamble at a fraction of a full read.
-        guard let data = try? handle.read(upToCount: 16_000), !data.isEmpty else { return "" }
-        let head = String(decoding: data, as: UTF8.self)
+        // session preamble at a fraction of a full read. `maximumHead` is the
+        // bound for the pathological case (every record before the first human
+        // prompt is a long injected preamble): the reads stay sequential and
+        // bounded, and past it the folder-name fallback is the right answer.
+        let chunkSize = 16_000
+        let maximumHead = 512_000
+        var carried = Data()
+        var read = 0
+        while read < maximumHead {
+            guard let data = try? handle.read(upToCount: chunkSize), !data.isEmpty else { break }
+            read += data.count
+            var buffer = carried
+            buffer.append(data)
+            // A line is complete only once its newline has arrived; the tail of
+            // the last chunk is held back rather than parsed truncated.
+            guard let lastBreak = buffer.lastIndex(of: 0x0A) else {
+                carried = buffer
+                continue
+            }
+            let complete = buffer[..<lastBreak]
+            carried = Data(buffer[buffer.index(after: lastBreak)...])
+            let head = String(decoding: complete, as: UTF8.self)
+            if let prompt = firstHumanPrompt(in: head) { return prompt }
+        }
+        // The final chunk may end without a newline on a file whose last record
+        // is still being written.
+        let head = String(decoding: carried, as: UTF8.self)
+        return firstHumanPrompt(in: head) ?? ""
+    }
+
+    /// The first usable human prompt among `head`'s complete lines.
+    private static func firstHumanPrompt(in head: String) -> String? {
         for line in head.split(separator: "\n", omittingEmptySubsequences: true) {
             // Substring check first: only user-shaped lines pay for a parse.
             guard line.contains("\"type\":\"user\"") else { continue }
@@ -357,7 +406,7 @@ struct SessionMonitor {
             let cleaned = SessionTitle.condense(text)
             if !cleaned.isEmpty { return cleaned }
         }
-        return ""
+        return nil
     }
 
     /// Scan a session's transcript for context-window usage. Reads only the
@@ -404,8 +453,24 @@ struct SessionMonitor {
         // repeat a key, never regress one.
         var turnCount = 0
         var stepCount = 0
-        // Track positions (line index within the tail) of the most recent
-        // tool_use and tool_result to decide whether a tool is still pending.
+        // Pending-tool state, tracked by **tool_use id**, not by line order.
+        //
+        // Line order is only correct for one call at a time. Claude Code packs
+        // parallel calls into one assistant record (91 of 125 local transcripts
+        // hold such a record) and writes **one result record per call** (0 of
+        // 42,084 local result records carried more than one block), so the
+        // moment the first result of a batch lands the last `tool_result` line
+        // is already past the last `tool_use` line — and a session with four
+        // tools still executing was reported as having nothing pending, which
+        // is what every busy/idle surface and the waiting reason read.
+        //
+        // The rule instead is: the newest assistant record that called tools
+        // holds the batch, and a call is outstanding until a later result names
+        // its id. `lastToolUseLine` / `lastToolResultLine` survive only as the
+        // fallback for a payload whose blocks carry no ids (an older CLI).
+        var stepTools: [(id: String, name: String)] = []
+        var resolvedToolIDs: Set<String> = []
+        var stepUsesAllIdentified = false
         var lastToolUseLine = -1
         var lastToolResultLine = -1
         var lineIndex = 0
@@ -443,7 +508,8 @@ struct SessionMonitor {
                 }
             }
             // Track the latest tool_use → activity, and keep the bare tool name
-            // so a *waiting* turn can name what it is waiting for.
+            // so a *waiting* turn can name what it is waiting for. The record's
+            // own calls replace the previous batch: this is the newest step.
             if line.contains("\"type\":\"tool_use\""),
                let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let message = obj["message"] as? [String: Any] {
@@ -452,13 +518,38 @@ struct SessionMonitor {
                     lastActivity = activity
                     lastToolUseLine = lineIndex
                 }
-                if let name = (message["content"] as? [[String: Any]])?
-                    .last(where: { ($0["type"] as? String) == "tool_use" })?["name"] as? String {
+                let uses = (message["content"] as? [[String: Any]])?
+                    .filter { ($0["type"] as? String) == "tool_use" } ?? []
+                var batch: [(id: String, name: String)] = []
+                var allIdentified = !uses.isEmpty
+                for use in uses {
+                    guard let id = use["id"] as? String, !id.isEmpty else {
+                        allIdentified = false
+                        continue
+                    }
+                    batch.append((id, (use["name"] as? String) ?? "tool"))
+                }
+                if !batch.isEmpty {
+                    stepTools = batch
+                    stepUsesAllIdentified = allIdentified
+                    // A later step's results say nothing about this batch.
+                    resolvedToolIDs.removeAll()
+                }
+                if let name = uses.last?["name"] as? String {
                     lastToolName = name
                 }
             }
-            // A tool_result following a tool_use means that call completed.
-            if line.contains("\"type\":\"tool_result\"") {
+            // A tool_result means that *named* call completed. One result
+            // record per call is what Claude Code writes, but a record holding
+            // several blocks is handled either way.
+            if line.contains("\"type\":\"tool_result\""),
+               let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                let results = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                for result in results where (result["type"] as? String) == "tool_result" {
+                    if let id = result["tool_use_id"] as? String, !id.isEmpty {
+                        resolvedToolIDs.insert(id)
+                    }
+                }
                 lastToolResultLine = lineIndex
             }
             // Substring check first: only assistant usage lines pay for a
@@ -474,13 +565,25 @@ struct SessionMonitor {
             lastContext = input + cacheRead + cacheCreate
             lastModel = (message["model"] as? String) ?? lastModel
         }
-        // A tool is pending if the last tool_use appears after the last
-        // tool_result (i.e. it has no following result yet).
-        let pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
+        // A tool is pending while any call of the newest batch has no result
+        // naming it. `stepUsesAllIdentified` guards the fallback: a batch whose
+        // blocks carry no ids cannot be resolved by id, so it falls back to the
+        // line-order rule — the honest answer there is "still running" until a
+        // later result record arrives, which is exactly what line order says.
+        let pending: Bool
+        let outstandingTool: String
+        if stepUsesAllIdentified {
+            let outstanding = stepTools.filter { !resolvedToolIDs.contains($0.id) }
+            pending = !outstanding.isEmpty
+            outstandingTool = outstanding.last?.name ?? ""
+        } else {
+            pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
+            outstandingTool = pending ? lastToolName : ""
+        }
         return ContextScan(tokens: lastContext, model: lastModel, count: msgCount,
                            activity: lastActivity, toolPending: pending, completionID: completionID,
                            turnCount: turnCount + stepCount,
-                           pendingTool: pending ? lastToolName : "",
+                           pendingTool: pending ? outstandingTool : "",
                            title: firstHumanPrompt(for: session))
     }
 
@@ -551,7 +654,10 @@ struct SessionMonitor {
     }
 
     /// Read the tail of an agent transcript and return (latest activity,
-    /// toolPending). Mirrors the pending-tool logic in `fetchContext`.
+    /// toolPending). The pending rule is `fetchContext`'s — tracked by
+    /// `tool_use` id, with the line-order test kept for a payload whose blocks
+    /// carry no ids; see there for why one-at-a-time line order misreports a
+    /// parallel batch.
     private static func scanAgentActivity(transcript: URL) -> (activity: String, pending: Bool) {
         guard let handle = try? FileHandle(forReadingFrom: transcript) else {
             return ("", false)
@@ -568,6 +674,9 @@ struct SessionMonitor {
         let tail = String(decoding: tailData, as: UTF8.self)
 
         var lastActivity = ""
+        var stepTools: [(id: String, name: String)] = []
+        var resolvedToolIDs: Set<String> = []
+        var stepUsesAllIdentified = false
         var lastToolUseLine = -1
         var lastToolResultLine = -1
         var lineIndex = 0
@@ -581,13 +690,38 @@ struct SessionMonitor {
                     lastActivity = activity
                     lastToolUseLine = lineIndex
                 }
+                let uses = (message["content"] as? [[String: Any]])?
+                    .filter { ($0["type"] as? String) == "tool_use" } ?? []
+                var batch: [(id: String, name: String)] = []
+                var allIdentified = !uses.isEmpty
+                for use in uses {
+                    guard let id = use["id"] as? String, !id.isEmpty else {
+                        allIdentified = false
+                        continue
+                    }
+                    batch.append((id, (use["name"] as? String) ?? "tool"))
+                }
+                if !batch.isEmpty {
+                    stepTools = batch
+                    stepUsesAllIdentified = allIdentified
+                    resolvedToolIDs.removeAll()
+                }
             }
-            if line.contains("\"type\":\"tool_result\"") {
+            if line.contains("\"type\":\"tool_result\""),
+               let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                let results = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+                for result in results where (result["type"] as? String) == "tool_result" {
+                    if let id = result["tool_use_id"] as? String, !id.isEmpty {
+                        resolvedToolIDs.insert(id)
+                    }
+                }
                 lastToolResultLine = lineIndex
             }
         }
-        let pending = lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0
-        return (lastActivity, pending)
+        if stepUsesAllIdentified {
+            return (lastActivity, stepTools.contains { !resolvedToolIDs.contains($0.id) })
+        }
+        return (lastActivity, lastToolUseLine > lastToolResultLine && lastToolUseLine >= 0)
     }
 
     // MARK: - Path helpers

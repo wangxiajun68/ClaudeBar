@@ -41,17 +41,17 @@
 
 **数据源**：`~/.claude/sessions/<pid>.json`，每个文件含 `pid`、`sessionId`、`cwd`、`startedAt`、`status`、`updatedAt` 等字段。
 
-**判活**：`kill(pid_t(pid), 0) == 0`（信号 0 探测进程存在），死进程沉底。
+**判活**：`kill(pid, 0) == 0`（信号 0 探测进程存在），死进程沉底。`pid` 必须是合法的 `pid_t` 且大于 0 才参与探测：`pid_t` 是 32 位，超出范围的值会在转换时直接 trap（整个 App 崩在每轮扫描上），而 `kill(0, 0)` / `kill(-1, 0)` 会成功——它们面向的是进程组，把伪造的 `"pid": 0` 读成活着。二者都按「这条记录不可用」跳过。
 
 **上下文扫描 `fetchContext`**：读 transcript `projects/<encoded-cwd>/<sessionId>.jsonl` 的**尾部 96KB**（`FileHandle.seekToEnd` 后回退）：
 - 只处理含 `"usage"` 且 `"type":"assistant"` 的行。
 - `lastContext = input_tokens + cache_read_input_tokens + cache_creation_input_tokens`（最新一条）。
 - 从最后一条 `tool_use` 提取活动描述（`describeActivity`：`Bash · build.sh`、`Read · File.swift`、`Agent · Explore` 等）。
-- `toolPending`：若最后 `tool_use` 的行号 > 最后 `tool_result` 的行号 → 该工具调用尚未返回 → busy。
+- `toolPending` **按 `tool_use` 的 id 记**，不按行号：最新一条带工具的 assistant 记录就是当前这批调用，某次调用在被后续 `tool_result` 的 `tool_use_id` 点名之前一直算未完成。行号规则（最后 `tool_use` 行号 > 最后 `tool_result` 行号）只对「一次一个工具」成立——本机 125 份 transcript 里有 91 份存在一条记录带多个 `tool_use`，而 42,084 条 `tool_result` 记录**没有一条**带多个结果块（Claude Code 每次调用写一条结果记录），所以批次里第一个结果一落地，行号规则就判定「没有待办」，剩下的工具明明还在跑。块里没有 id 的旧格式回落到行号规则。`scanAgentActivity` 用同一条判据。
 
 **transcript 路径编码**：`/Users/wangxiajun/Project/ClaudeBar` → `projects/-Users-wangxiajun-Project-ClaudeBar`。规则是 Claude Code 自己的 `cwd.replace(/[^a-zA-Z0-9]/g, "-")`：**除 `[A-Za-z0-9]` 外的每个字符**都换成 `-`（不只是 `/`），前导 `/` 变成前导 `-`——含点号的路径（`…/helix/.helix/agents/…` → `…-helix--helix-…`）靠这条才对得上，与 Cursor 编码不同。超过 200 字符的 slug 客户端会再缀一段哈希，本应用无法镜像，`SessionMonitor.locateTranscript` 按 `<sessionId>.jsonl` 全树兜底（每个 session 只扫一次并缓存）。
 
-**标题 `firstHumanPrompt`**：读 transcript **头部 16KB** 找第一条人类 prompt（Claude Code 没有标题字段）。`user` 流里绝大多数记录不是人打的字，必须按顺序排除：
+**标题 `firstHumanPrompt`**：读 transcript 头部找第一条人类 prompt（Claude Code 没有标题字段）。**起始 16KB，找不到就继续往后读**（上限 512KB），并且只解析已经收到换行的完整行——固定窗口下，一条**起于窗口内、止于窗口外**的 prompt 会以截断形态到达、`JSONSerialization` 失败、被静默跳过，于是整条会话没有标题，所有卡片都回退成目录名。`user` 流里绝大多数记录不是人打的字，必须按顺序排除：
 
 - `isMeta == true` —— 注入的 `<local-command-caveat>` 提示
 - `isSidechain == true` —— 子 agent 流量
