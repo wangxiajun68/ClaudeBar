@@ -792,7 +792,7 @@ struct GreetingStatusSheet: View {
     }
 
     private func bigTemperature(_ value: Double, ink: Color) -> some View {
-        Text("\(Int(value.rounded()))°")
+        Text(WeatherReading.degreeText(value))
             .font(.system(size: 40, weight: .thin))
             .monospacedDigit()
             .contentTransition(reduceMotion ? .identity : .numericText(value: value))
@@ -808,10 +808,10 @@ struct GreetingStatusSheet: View {
                 .lineLimit(1)
             HStack(spacing: 6) {
                 if let high {
-                    Label { Text("\(Int(high.rounded()))°") } icon: { Image(systemName: "arrow.up") }
+                    Label { Text(WeatherReading.degreeText(high)) } icon: { Image(systemName: "arrow.up") }
                 }
                 if let low {
-                    Label { Text("\(Int(low.rounded()))°") } icon: { Image(systemName: "arrow.down") }
+                    Label { Text(WeatherReading.degreeText(low)) } icon: { Image(systemName: "arrow.down") }
                 }
             }
             .labelStyle(CompactLabelStyle())
@@ -854,7 +854,7 @@ struct GreetingStatusSheet: View {
                     }
                 }
             } else if let reading {
-                let feels = Int(reading.feelsLikeC.rounded())
+                let feels = WeatherReading.wholeNumber(reading.feelsLikeC.rounded())
                 InstrumentMetric(value: "\(feels)°", help: "体感 \(feels)°", ink: ink) {
                     Image(systemName: feels >= 30 ? "thermometer.high" : feels <= 5 ? "thermometer.low" : "thermometer.medium")
                         .font(.system(size: 10, weight: .medium))
@@ -897,7 +897,7 @@ struct GreetingStatusSheet: View {
         // 中国天气网 already sends "北风", and appending again read "北风风".
         let point = WindDial.name(reading.windDirection)
         let direction = point.map { $0 + "风 " } ?? (reading.windDirection.isEmpty ? "" : reading.windDirection + " ")
-        return "\(direction)\(level) 级 · \(Int(reading.windKph.rounded())) km/h"
+        return "\(direction)\(level) 级 · \(WeatherReading.wholeNumber(reading.windKph.rounded())) km/h"
     }
 
     private func clock(_ date: Date) -> String {
@@ -923,7 +923,7 @@ struct GreetingStatusSheet: View {
         let place = [placeParts.city, placeParts.district].compactMap { $0 }.joined(separator: "，")
         guard let reading else { return "\(place)，暂无天气，\(weatherLoading ? "正在更新" : weatherNote ?? "")" }
         let level = Self.beaufort(reading.windKph)
-        return "\(place)，\(Int(reading.temperatureC.rounded()))度，\(reading.skyLabel)，体感 \(Int(reading.feelsLikeC.rounded()))度，湿度 \(reading.humidity)%，\(windHelp(reading, level: level))"
+        return "\(place)，\(WeatherReading.wholeNumber(reading.temperatureC.rounded()))度，\(reading.skyLabel)，体感 \(WeatherReading.wholeNumber(reading.feelsLikeC.rounded()))度，湿度 \(reading.humidity)%，\(windHelp(reading, level: level))"
     }
 
     static func beaufort(_ kph: Double) -> Int {

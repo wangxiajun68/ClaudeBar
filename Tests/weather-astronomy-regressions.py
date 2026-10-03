@@ -150,6 +150,17 @@ source += r'''
         precondition(cn.temperatureC == 25.4 && cn.humidity == 68 && cn.sky == .cloudy)
         precondition(cn.forecast.count == 2 && cn.forecast[0].sky == .drizzle && cn.forecast[1].sky == .clear)
         precondition(cn.place == "上海" && cn.source == "中国天气网" && cn.timezone == "Asia/Shanghai")
+        // `rain` is millimetres, not a probability. The live payload writes
+        // "0" on a dry hour and a small number like "2.7" during a shower —
+        // the old `rain * 100` read 2.7 mm as 270 % and capped it at 100, so
+        // every shower painted a full umbrella regardless of intensity.
+        var raining = dataSK
+        raining["rain"] = "2.7"
+        raining["weather"] = "小雨"
+        let wet = DomesticWeatherParser.reading(dataSK: raining, forecast: fc)!
+        precondition(wet.rainChance == DomesticWeatherParser.rainChance(fromText: "小雨"))
+        precondition(wet.rainChance == 35)
+        precondition(cn.rainChance == 0)
         let noPercent: [String: Any] = ["cityname": "上海", "temp": "25", "SD": "68%", "weathercode": "d02"]
         precondition(DomesticWeatherParser.reading(dataSK: noPercent, forecast: nil)!.humidity == 68)
         let script = #"var dataSK ={"temp":"25"};var fc ={"f":[{"fa":"d7","fb":"n7"}]};var alarmDZ ={"w":[]};"#
@@ -220,6 +231,64 @@ source += r'''
         precondition(hourlyReading.hourMetric(at: now) == .probability)
         precondition(hourlyReading.hourMetric(at: now.addingTimeInterval(7 * 3600)) == nil)
         precondition(WeatherForecastFetcher.parseHours([:]).isEmpty)
+
+        // An out-of-range network value must not reach a trapping `Int(Double)`.
+        // `Int(1e300.rounded())` aborts the process, and the greeting card is
+        // where these values are *rendered* — its `degreeText` is the guard's
+        // only caller in this slice, so the probe drives it directly rather
+        // than hoping a payload reaches a view.
+        precondition(WeatherReading.wholeNumber(1e300) == 0 && WeatherReading.wholeNumber(-1e300) == 0)
+        precondition(WeatherReading.wholeNumber(Double.nan) == 0)
+        precondition(WeatherReading.degreeText(1e300) == "0°" && WeatherReading.degreeText(26.4) == "26°")
+        // The parse itself has to survive the same payload: a wttr.in
+        // `temp_C` of "1e300" is a string it accepts, and `maxtempC` has no
+        // bounds check at all.
+        let huge = """
+        {"current_condition":[{"temp_C":"1e300","weatherCode":"113","humidity":"1e300",
+          "windspeedKmph":"1e300","winddir16Point":"N","weatherDesc":[{"value":"晴"}]}],
+         "weather":[{"maxtempC":"1e300","mintempC":"-1e300","hourly":[]}]}
+        """
+        if let wild = WeatherFetcher.parse(Data(huge.utf8)) {
+            precondition(wild.temperatureC == 1e300 && wild.humidity == 0)
+            precondition(WeatherReading.degreeText(wild.temperatureC) == "0°")
+            precondition(WeatherReading.degreeText(wild.highC) == "0°")
+        }
+        // A numeric (not string) out-of-range value must be *rejected*, not
+        // saturated: `NSNumber.intValue` would have turned 1e300 into
+        // `Int.max` and printed 9223372036854775807% as the humidity.
+        let numericHuge = """
+        {"current_condition":[{"temp_C":25,"weatherCode":113,"humidity":1e300,
+          "windspeedKmph":10,"winddir16Point":"N","weatherDesc":[{"value":"晴"}]}]}
+        """
+        precondition(WeatherFetcher.parse(Data(numericHuge.utf8))?.humidity == 0)
+        // The bucket window follows the clock, not the array's start. The
+        // buckets are the location's local hours and always begin at local
+        // midnight, so reading the first four at 15:00 quotes a morning that
+        // has already fallen — the reading the "next few hours" wording exists
+        // to prevent. (`observation_time` cannot supply the hour: it is UTC in
+        // every city — 04:11 for Shanghai while London read 04:04 at the same
+        // instant — so the caller passes its own hour.)
+        let buckets: [[String: Any]] = [("0", "90"), ("300", "90"), ("600", "80"), ("900", "70"),
+                                        ("1200", "60"), ("1500", "10"), ("1800", "20"), ("2100", "30")]
+            .map { ["time": $0.0, "chanceofrain": $0.1] }
+        precondition(WeatherFetcher.upcomingRainChance(buckets: buckets, localHour: 15) == 30,
+                     "a 15:00 read must cover 15:00–24:00, not 00:00–09:00")
+        precondition(WeatherFetcher.upcomingRainChance(buckets: buckets, localHour: 1) == 90)
+        precondition(WeatherFetcher.upcomingRainChance(buckets: buckets, localHour: 12) == 60)
+        precondition(WeatherFetcher.upcomingRainChance(buckets: buckets, localHour: 23) == 30)
+        precondition(WeatherFetcher.upcomingRainChance(buckets: [], localHour: 15) == 0)
+        let hourly = """
+        {"current_condition":[{"temp_C":25,"weatherCode":113,"humidity":60,"windspeedKmph":10,
+          "winddir16Point":"N","weatherDesc":[{"value":"晴"}]}],
+         "weather":[{"maxtempC":"28","mintempC":"20","astronomy":[{"sunrise":"05:49 AM","sunset":"05:37 PM"}],
+          "hourly":[{"time":"0","chanceofrain":"90"},{"time":"300","chanceofrain":"90"},
+                    {"time":"600","chanceofrain":"80"},{"time":"900","chanceofrain":"70"},
+                    {"time":"1200","chanceofrain":"60"},{"time":"1500","chanceofrain":"10"},
+                    {"time":"1800","chanceofrain":"20"},{"time":"2100","chanceofrain":"30"}]}]}
+        """
+        let parsedHourly = WeatherFetcher.parse(Data(hourly.utf8))!
+        let systemHour = Calendar.current.component(.hour, from: Date())
+        precondition(parsedHourly.rainChance == WeatherFetcher.upcomingRainChance(buckets: buckets, localHour: systemHour))
         print("PASS: equinox, east/west, polar day/night, moon phase, sidereal stars, 10 weather families, day+5, timezone, null/partial data, domestic sources")
     }
 }

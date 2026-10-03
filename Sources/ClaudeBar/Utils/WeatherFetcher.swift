@@ -224,14 +224,23 @@ struct WeatherReading: Equatable {
     /// the whole app down inside a refresh instead of leaving the last good
     /// reading on screen. `WeatherForecastFetcher` keeps the same guard for the
     /// same reason.
+    ///
+    /// The greeting card renders these values directly, so the guard has to be
+    /// at the conversion rather than at the parse: `WeatherReading` carries
+    /// whatever the source sent, and a consumer that says `Int(value.rounded())`
+    /// reintroduces the trap the parsers were fixed for.
     static func wholeNumber(_ value: Double) -> Int {
         guard value >= Double(Int.min), value < Double(Int.max) else { return 0 }
         return Int(value)
     }
 
-    /// The temperature the card prints, rounded — one decimal of a degree is
-    /// noise on a tile that is read at a glance.
-    var temperatureText: String { "\(WeatherReading.wholeNumber(temperatureC.rounded()))°" }
+    /// A temperature as the card prints it — one decimal of a degree is noise
+    /// on a tile read at a glance. Every label that shows a temperature goes
+    /// through here, so the guard above cannot be bypassed by a consumer that
+    /// rounds first and converts second.
+    static func degreeText(_ value: Double) -> String {
+        "\(wholeNumber(value.rounded()))°"
+    }
 }
 
 /// Open-Meteo current + six-day weather, with wttr.in as a current-only fallback.
@@ -270,7 +279,15 @@ enum WeatherFetcher {
             return nil
         }
         func int(_ key: String) -> Int? {
-            if let n = current[key] as? NSNumber { return n.intValue }
+            // `NSNumber.intValue` *saturates*: a numeric `1e300` becomes
+            // `Int.max` and prints as 9223372036854775807% instead of being
+            // rejected, which is a worse failure than a missing reading. Keep
+            // the same bounded conversion the parsers elsewhere use.
+            if let n = current[key] as? NSNumber {
+                let d = n.doubleValue
+                guard d >= Double(Int.min), d < Double(Int.max) else { return nil }
+                return n.intValue
+            }
             if let s = current[key] as? String { return Int(s) }
             return nil
         }
@@ -292,8 +309,8 @@ enum WeatherFetcher {
         // clear afternoon, and the hourly buckets are what the source knows.
         var rainChance = 0
         if let hours = today?["hourly"] as? [[String: Any]] {
-            let soon = hours.prefix(4)
-            rainChance = soon.compactMap { ($0["chanceofrain"] as? String).flatMap(Int.init) }.max() ?? 0
+            rainChance = upcomingRainChance(
+                buckets: hours, localHour: Calendar.current.component(.hour, from: Date()))
         }
 
         let description = ((current["weatherDesc"] as? [[String: Any]])?.first?["value"] as? String) ?? ""
@@ -319,6 +336,34 @@ enum WeatherFetcher {
             latitude: ((root["nearest_area"] as? [[String: Any]])?.first?["latitude"] as? String).flatMap(Double.init),
             longitude: ((root["nearest_area"] as? [[String: Any]])?.first?["longitude"] as? String).flatMap(Double.init)
         )
+    }
+
+    /// The highest rain chance in the three-hour window starting at `localHour`.
+    ///
+    /// A wttr.in bucket's `time` is the hour as `HHMM` without the minutes
+    /// ("300" = 03:00) **in the location's local time**, and the array always
+    /// starts at local midnight — so reading the first four quotes midnight to
+    /// 09:00 no matter what the clock says, and by the afternoon the card is
+    /// showing a morning that has already fallen. Which is exactly the failure
+    /// the "next few hours" wording exists to prevent.
+    ///
+    /// `localHour` is the caller's own clock. That is a deliberate, bounded
+    /// approximation: the endpoint publishes no timezone, `observation_time`
+    /// is UTC (Shanghai, London and Los Angeles all read ~04:00 while Auckland
+    /// read 05:07 — the same instant, not their local clocks), and synthesising
+    /// a zone from coordinates puts a mainland IP's city in the wrong one
+    /// entirely. For the place a person watches, the device clock and the
+    /// location clock agree; when they do not, the window is off by the zone
+    /// offset, which is the same error the old code made unconditionally.
+    static func upcomingRainChance(buckets: [[String: Any]], localHour: Int) -> Int {
+        let mark = max(0, localHour) * 100
+        var start = 0
+        for (index, entry) in buckets.enumerated() {
+            if ((entry["time"] as? String).flatMap(Int.init) ?? 0) <= mark { start = index } else { break }
+        }
+        return buckets[start...].prefix(4)
+            .compactMap { ($0["chanceofrain"] as? String).flatMap(Int.init) }
+            .max() ?? 0
     }
 
     /// `nearest_area` → "上海 · 浦东新区". The region is dropped when it merely
@@ -567,11 +612,15 @@ enum DomesticWeatherParser {
     static func reading(dataSK: [String: Any], forecast: [String: Any]?) -> WeatherReading? {
         guard let temperature = number(dataSK["temp"]) else { return nil }
         let weatherText = (dataSK["weather"] as? String) ?? ""
-        let rain = number(dataSK["rain"])
 
         let days = cnForecastDays(forecast)
         let today = days.first
-        let rainChance = rain.map { WeatherReading.wholeNumber(min(100, max(0, $0 * 100))) } ?? self.rainChance(fromText: weatherText)
+        // `rain` is millimetres of precipitation, not a probability — a live
+        // reading carries "0" on a dry hour and "2.7" in a shower, so the old
+        // `rain * 100` painted a 3 mm hour as 270 % and the umbrella at 100 %.
+        // The field's own probability is the forecast cells' business; for the
+        // live hour the condition word is the only probability there is.
+        let rainChance = rainChance(fromText: weatherText)
         return WeatherReading(
             place: (dataSK["cityname"] as? String) ?? "",
             temperatureC: temperature,

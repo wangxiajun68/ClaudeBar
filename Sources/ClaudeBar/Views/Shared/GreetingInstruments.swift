@@ -182,13 +182,13 @@ struct ForecastRibbon: View {
                     WeatherGlyph(symbol: day.sky.symbol(), size: focused ? 15 : 13, ink: ink, vivid: vivid)
                         .frame(width: column, height: 16)
                         .position(x: x, y: Self.glyphRow)
-                    Text("\(Int(day.high.rounded()))°")
+                    Text(WeatherReading.degreeText(day.high))
                         .font(.system(size: focused ? 10 : 9, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(ink.opacity(focused ? 1 : 0.86))
                         .fixedSize()
                         .position(x: x, y: points[index].high.y - 8)
                     if focused {
-                        Text("\(Int(day.low.rounded()))°")
+                        Text(WeatherReading.degreeText(day.low))
                             .font(.system(size: 9, weight: .medium)).monospacedDigit()
                             .foregroundStyle(ink.opacity(0.86))
                             .fixedSize()
@@ -341,7 +341,7 @@ struct ForecastRibbon: View {
     private var accessibilityValue: String {
         guard let day = days.first(where: { $0.date == focus }) ?? days.first else { return "" }
         let index = days.firstIndex(of: day) ?? 0
-        return "\(weekday(day.date, index: index))，\(day.sky.caption)，\(Int(day.low.rounded()))到\(Int(day.high.rounded()))度"
+        return "\(weekday(day.date, index: index))，\(day.sky.caption)，\(WeatherReading.wholeNumber(day.low.rounded()))到\(WeatherReading.wholeNumber(day.high.rounded()))度"
             + (day.rainChance.map { "，降水概率 \($0)%" } ?? "")
     }
 }
