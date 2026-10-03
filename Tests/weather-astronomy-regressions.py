@@ -85,6 +85,16 @@ source += r'''
         precondition(DomesticWeatherParser.windKph(fromBeaufort: "1-3") == 8)
         precondition(DomesticWeatherParser.windKph(fromBeaufort: "4") == 24)
         precondition(DomesticWeatherParser.windKph(fromBeaufort: nil) == 0)
+        // Two-digit levels are one number, not two digits: a typhoon-force
+        // "10" read digit-by-digit lands on level 1 and draws 3 km/h.
+        precondition(DomesticWeatherParser.beaufortLevel("10") == 10)
+        precondition(DomesticWeatherParser.beaufortLevel("10级") == 10)
+        precondition(DomesticWeatherParser.beaufortLevel("11") == 11)
+        precondition(DomesticWeatherParser.beaufortLevel("11-12") == 12)
+        precondition(DomesticWeatherParser.beaufortLevel("12级") == 12)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "10") == 99)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "12级") == 131)
+        precondition(DomesticWeatherParser.windKph(fromBeaufort: "10-11") == 115)
         precondition(DomesticWeatherParser.rainChance(fromText: "阵雨") > 0)
         precondition(DomesticWeatherParser.rainChance(fromText: "晴") == 0)
         precondition(DomesticWeatherParser.placeName(city: [], province: "上海市", district: "浦东新区") == "上海 · 浦东新区")

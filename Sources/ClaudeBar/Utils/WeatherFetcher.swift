@@ -388,11 +388,16 @@ enum DomesticWeatherParser {
 
     /// The level a power string states: the mean of an open range ("1-3" → 2,
     /// "4-5" → 4) and the value itself for "≤3" / "3级" / "3".
+    ///
+    /// The tokens are split, not the characters: taking the digits one by one
+    /// reads "10" as [1, 0] → level 1 → 3 km/h, so a typhoon-force observation
+    /// renders as a breeze on the dial and in the VoiceOver string. AMap's
+    /// `windpower` goes up to 12 and 中国天气网's `WS` spells the same scale as
+    /// "10级".
     static func beaufortLevel(_ text: String?) -> Int? {
         guard let text, !text.isEmpty else { return nil }
-        let digits = text.filter { $0.isNumber }
-        guard !digits.isEmpty else { return nil }
-        let parts = digits.map { Int(String($0)) ?? 0 }
+        let parts = text.split { !$0.isNumber }.compactMap { Int($0) }
+        guard !parts.isEmpty else { return nil }
         if parts.count >= 2 { return (parts[0] + parts[1] + 1) / 2 }
         return parts[0]
     }
