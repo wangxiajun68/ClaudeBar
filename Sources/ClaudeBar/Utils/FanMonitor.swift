@@ -137,6 +137,32 @@ final class FanMonitor {
         }
     }
 
+    /// Hand every fan back to the SMC on the way out.
+    ///
+    /// A fan pinned at max writes `F%dTg` / `F%dMd` and the SMC keeps that
+    /// target after the process is gone, so quitting with the rotors held left
+    /// the machine louder and hotter until something else reset it — the app
+    /// was the only thing that knew the fans had been taken. `resetAll()` is
+    /// synchronous on the command queue and idempotent, and a quit with every
+    /// fan already automatic costs one `fanctl autoall` that writes the values
+    /// the SMC already holds.
+    ///
+    /// Run before the reader timer is stopped: `fans` is how the call knows
+    /// whether anything needs handing back, and it is the same list the UI's
+    /// 拉满/恢复自动 toggles wrote through.
+    func adoptSystemControlOnQuit() {
+        guard BuildChannel.allowsSystemIntegration else { return }
+        guard fans.contains(where: { !$0.mode.isAutomatic }) else { return }
+        pendingSpeedTasks.values.forEach { $0.cancel() }
+        pendingSpeedTasks.removeAll()
+        // Synchronous on the command queue: `applicationWillTerminate` is
+        // racing process exit, so a queue hop would be cut off before it ran.
+        // `resetAll()` carries the helper's own 10 s timeout.
+        commandQueue.sync {
+            _ = FanHelperInstaller.resetAll()
+        }
+    }
+
     private func submit(_ command: @escaping @Sendable () -> String?) {
         lastError = nil
         // Re-stat before deciding: `helperInstalled` is written in `start()`

@@ -200,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         BatteryChargeController.shared.shutdown()
         SystemThroughput.shared.stop()
+        // Fans pinned at max keep that target in the SMC after the process is
+        // gone, and this app is the only thing that knows they were taken.
+        FanMonitor.shared.adoptSystemControlOnQuit()
         // Detach the rate accessory first: it hangs off the status-bar button
         // and its `objectWillChange` sink can fire during the rest of teardown.
         menuBarController?.teardownVpnRateDisplay()
