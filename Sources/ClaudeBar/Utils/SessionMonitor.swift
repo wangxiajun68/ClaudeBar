@@ -684,13 +684,6 @@ struct SessionMonitor {
         }
     }
 
-    static func transcriptSize(for session: SessionInfo) -> UInt64 {
-        let path = transcriptURL(for: session).path
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let n = attrs[.size] as? NSNumber else { return 0 }
-        return n.uint64Value
-    }
-
     /// The session's directory (holding subagents/), named after the sessionId
     /// and sibling to the transcript file.
     static func sessionDirURL(for session: SessionInfo) -> URL {

@@ -18,6 +18,16 @@ root = Path(__file__).resolve().parents[1]
 suite_name = 'claudebar.battery.tests.' + uuid.uuid4().hex.upper()
 suite_plist = Path.home() / 'Library/Preferences' / (suite_name + '.plist')
 source = (root / 'Sources/Shared/BuildChannel.swift').read_text() + '\n' + (root / 'Sources/ClaudeBar/Models/BatteryChargeController.swift').read_text()
+# The slice must compile as the **release** channel. `BatteryChargeController`
+# gates its *entry points* on `BuildChannel.allowsSystemIntegration` — the dev
+# hard stop the isolation work added — and so do the helper installers. This
+# fixture drives the controller's real request/reply/lifecycle logic with its
+# transport replaced, which is release-build behaviour; compiled unlabelled (as
+# it was, when `BuildChannel` fell back to release) it ran that logic. Labelling
+# it release is the same explicit choice `build-isolation` makes when it pins
+# release behaviour, and it is a compile-time flag here, not a runtime bypass:
+# no environment variable can flip a built binary's channel.
+source = '#if !CLAUDEBAR_RELEASE\n#error("this suite drives the release-channel controller")\n#endif\n' + source
 source = source.replace('private(set) ', '').replace('private ', '')
 source = source.replace('UserDefaults.standard', 'testDefaults')
 source = source.replace('import Observation', f'''import Observation
@@ -238,7 +248,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-charge-tests-') as folder:
     path.write_text(source)
     binary = Path(folder) / 'regression'
     try:
-        subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
+        subprocess.run(['swiftc', '-parse-as-library', '-D', 'CLAUDEBAR_RELEASE', str(path), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
         c_binary = Path(folder) / 'battery-control'
         subprocess.run(['clang', '-Wall', '-Wextra', '-Werror', str(root / 'Tests/battery-control.c'),

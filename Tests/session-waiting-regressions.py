@@ -190,13 +190,23 @@ try runWaitingChecks()
 with tempfile.TemporaryDirectory(prefix='claudebar-session-waiting-') as folder:
     folder = Path(folder)
     # FilePaths is the only thing redirected; the monitor, the status enum and
-    # the derived properties are the shipped ones.
+    # the derived properties are the shipped ones. Both redirected roots are
+    # pinned at the fixture home, `~/.claude` **and** `appSupportDir`: a slice
+    # that only replaces the former still writes `…/Application Support/
+    # ClaudeBar Dev/.claude/sessions/1001.json` (the non-production
+    # `FilePaths.claudeDir`) into the real user's data directory and leaves it
+    # there. The suite asserts on the files it just wrote, so its own temp home
+    # is the only place they may land.
     file_paths = (utils / 'FilePaths.swift').read_text().replace(
         'FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
+    file_paths = file_paths.replace(
+        'FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]',
+        'fixtureSupport')
     source = folder / 'Regression.swift'
     source.write_text('\n'.join([
         'import Foundation',
         'let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])',
+        'let fixtureSupport = fixtureHome.appendingPathComponent("Library/Application Support")',
         (root / 'Sources/Shared/BuildChannel.swift').read_text(),
         file_paths,
         (utils / 'SessionTitle.swift').read_text(),

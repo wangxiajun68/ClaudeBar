@@ -189,62 +189,6 @@ enum LensPlacement {
     }
 }
 
-// MARK: - Depth card
-
-/// The 3D card's *gesture* — a 1pt lift plus a small tilt — layered on top of
-/// `.tile()`, which already owns the surface (base, wash, lens, frame).
-///
-/// Split this way deliberately: `.tile()` is the one card surface in the app
-/// and must stay cheap enough for a 200-card inventory grid, where nothing
-/// larger than a 2pt lift is affordable. The tilt is a *hero* treatment, so it
-/// lives in its own modifier that page-level cards opt into.
-///
-/// The reference tilts 30°. At card density 2.2° reads as the same gesture with
-/// the text still on its baseline, and it is applied only while one card is
-/// hovered, so at most one subtree is ever rasterised in 3D.
-private struct DepthTiltModifier: ViewModifier {
-    var corner: CGFloat
-    var shine: Bool
-    var hovered: Bool
-    var reduceMotion: Bool
-
-    @ViewBuilder func body(content: Content) -> some View {
-        // The transform exists only while this one card is hovered. Leaving
-        // `rotation3DEffect` in the tree at 0° still promotes the card to a
-        // compositing layer, and a scrolling grid then re-rasterises every
-        // card on every frame — the connector inventory's steady 60 Hz.
-        // The lift stays on `.tile()`; this adds the tilt and the one-shot
-        // shine on top of it, for the card under the pointer only.
-        if hovered, !reduceMotion {
-            content
-                .rotation3DEffect(.degrees(2.2), axis: (x: 1, y: 1, z: 0), perspective: 0.6)
-                .overlay {
-                    if shine {
-                        ShineSweep(active: true,
-                                   tint: Theme.isDark ? .white : .white.opacity(0.9))
-                            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-                    }
-                }
-        } else {
-            content
-        }
-    }
-}
-
-extension View {
-    /// The hero-card gesture. Pair it with `.tile(tint:lens:hovered:)` — this
-    /// adds only the transform and the one-shot shine, never the surface.
-    ///
-    /// Safe on a scrolling grid: the 3D transform is absent until the card is
-    /// the one under the pointer. A transform left at rest on every card
-    /// re-rasterises the grid on every scroll frame.
-    func depthTilt(corner: CGFloat = 22, shine: Bool = true,
-                   hovered: Bool, reduceMotion: Bool = false) -> some View {
-        modifier(DepthTiltModifier(corner: corner, shine: shine,
-                                   hovered: hovered, reduceMotion: reduceMotion))
-    }
-}
-
 // MARK: - One-shot shine (`view-status-btn::before`)
 
 /// A soft highlight that crosses the control once when the pointer enters.

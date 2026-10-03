@@ -93,3 +93,43 @@ struct WidgetSnapshot: Codable {
         var waiting: Bool?
     }
 }
+
+/// The hand-written half of `Codable`.
+///
+/// A property's default value is invisible to the synthesized decoder — it is
+/// an initializer's promise, not a payload's — so every field added after the
+/// first snapshot shipped has to be read with `decodeIfPresent ?? default` or
+/// the widget fails on the *old* payload still sitting in the App Group
+/// container after an app update (it shows its empty state until the host app
+/// happens to write a fresh one). `externalSessions` is the one that actually
+/// got out: it was added non-optional while the fields added beside it
+/// (`usagePeriodLabel`, `unitStyle`, `isDark`) were optional, and a payload
+/// written before that commit decodes as a `keyNotFound` throw — the widget
+/// has no second reader to fall back to. This initializer pins the whole
+/// contract: a key present but null and a key absent both take the default.
+///
+/// The encoder stays synthesized, so the on-disk shape is unchanged: no format
+/// version or bump is needed. A bump would not help either — it is the *old*
+/// payload that has to decode — and nothing reads one.
+extension WidgetSnapshot {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        todayTotalTokens = try c.decode(Int.self, forKey: .todayTotalTokens)
+        usagePeriodLabel = try c.decodeIfPresent(String.self, forKey: .usagePeriodLabel)
+        unitStyle = try c.decodeIfPresent(String.self, forKey: .unitStyle)
+        isDark = try c.decodeIfPresent(Bool.self, forKey: .isDark)
+        modelBreakdown = try c.decode([ModelTokenUsage].self, forKey: .modelBreakdown)
+        activeProviderName = try c.decode(String.self, forKey: .activeProviderName)
+        activeModelName = try c.decode(String.self, forKey: .activeModelName)
+        balanceText = try c.decodeIfPresent(String.self, forKey: .balanceText)
+        totalSessionCount = try c.decode(Int.self, forKey: .totalSessionCount)
+        busySessionCount = try c.decode(Int.self, forKey: .busySessionCount)
+        sessions = try c.decode([SessionSummary].self, forKey: .sessions)
+        cursorSessions = try c.decode([CursorSessionSummary].self, forKey: .cursorSessions)
+        // Absent in snapshots written before the Codex half was carried
+        // across: the app listed the user's sessions while the widget said
+        // "暂无数据". Empty is that older snapshot's honest reading.
+        externalSessions = try c.decodeIfPresent([ExternalSessionSummary].self, forKey: .externalSessions) ?? []
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+}

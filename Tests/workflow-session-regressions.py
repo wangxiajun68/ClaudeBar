@@ -150,9 +150,22 @@ try run()
 with tempfile.TemporaryDirectory(prefix='claudebar-workflow-') as folder:
     folder = Path(folder)
     paths = (utils / 'FilePaths.swift').read_text().replace('FileManager.default.homeDirectoryForCurrentUser', 'fixtureHome')
+    # The pinned inspection root below `.claude` belongs to whoever this slice
+    # compiles as. `WorkflowMonitor.enrich` keys its incremental cache by path
+    # and keeps it across a *process* lifetime only, so each run starts fresh —
+    # but the fixture writes a journal that a previous run's file left behind
+    # at a shared `fixtureHome` would be read as pre-existing state. Pinning
+    # `appSupportDir` at the fixture home (like `cursor-usage` does) keeps the
+    # whole tree temporary and per-run instead of falling through to the real
+    # `~/Library/Application Support`.
+    paths = paths.replace(
+        'FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]',
+        'fixtureSupport')
     source = folder / 'Regression.swift'
     source.write_text('\n'.join([
-        'import Foundation', 'let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])',
+        'import Foundation',
+        'let fixtureHome = URL(fileURLWithPath: CommandLine.arguments[1])',
+        'let fixtureSupport = fixtureHome.appendingPathComponent("Library/Application Support")',
         (root / 'Sources/Shared/BuildChannel.swift').read_text(), paths,
         (utils / 'SessionTitle.swift').read_text(),
         'enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }',
