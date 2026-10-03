@@ -36,8 +36,10 @@ enum VpnFormat {
     /// `"   0.0 KB/s"` — always 11 characters (`bytes`'s 9 + `"/s"`).
     static func rate(_ bytesPerSec: Int64) -> String { bytes(bytesPerSec) + "/s" }
 
-    /// `"   0.0 KB"` — always 9 characters (`%6.1f` + space + 2-letter unit).
-    /// `%6.1f` covers `1023.9` so KB→MB never adds a digit.
+    /// `"   0.0 KB"` — 9 characters across the range the core can report:
+    /// `%6.1f` covers `1023.9`, so KB→MB never adds a digit, and the same holds
+    /// at each step up to TB. Past ~1 EB (a corrupt counter, not a reading) the
+    /// scaled value outgrows the field on its own.
     static func bytes(_ b: Int64) -> String {
         let (n, unit) = scaled(b)
         return String(format: "%6.1f %@", n, unit)
@@ -48,8 +50,29 @@ enum VpnFormat {
         String(format: "%4d", min(max(n, 0), 9999))
     }
 
+    /// `a + b`, clamped instead of trapping.
+    ///
+    /// The counters this is used on come straight out of the core's JSON as
+    /// `Int64`, so their extremes are reachable from a payload this app does not
+    /// control — and Swift's `+` traps on overflow even under -O.
+    static func saturatingAdd(_ a: Int64, _ b: Int64) -> Int64 {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        return overflow ? (b > 0 ? .max : .min) : sum
+    }
+
+    /// `a - b`, clamped instead of trapping (same reachability as above).
+    static func saturatingSub(_ a: Int64, _ b: Int64) -> Int64 {
+        let (difference, overflow) = a.subtractingReportingOverflow(b)
+        return overflow ? (b < 0 ? .max : .min) : difference
+    }
+
     private static func scaled(_ b: Int64) -> (Double, String) {
-        let n = Double(abs(b))
+        // `Double(b.magnitude)` rather than `abs(b)`: `abs(Int64.min)` traps,
+        // and `Int64.min` is reachable from the core's own JSON — the
+        // connection counters are read as `Int64` straight out of it, and a
+        // malformed or hostile /connections payload carrying
+        // -9223372036854775808 would crash the app while painting the strip.
+        let n = Double(b.magnitude)
         let kb = 1024.0
         if n < kb * kb { return (n / kb, "KB") }
         if n < kb * kb * kb { return (n / (kb * kb), "MB") }
@@ -1372,10 +1395,15 @@ extension VpnManager {
             totalDown = JSONCoerce.int64Val(c["downloadTotal"])
             totalUp = JSONCoerce.int64Val(c["uploadTotal"])
         } else {
+            // Saturating accumulation: the per-connection counters come out of
+            // the core's JSON as `Int64`, so a malformed payload full of
+            // extreme values could overflow the sum — and Swift's `+` traps
+            // even under -O. The clamp is the honest reading anyway: a total
+            // in the exabyte range is a broken payload, not a measurement.
             var up: Int64 = 0, down: Int64 = 0
             for conn in conns {
-                down += JSONCoerce.int64Val(conn["download"])
-                up += JSONCoerce.int64Val(conn["upload"])
+                down = VpnFormat.saturatingAdd(down, JSONCoerce.int64Val(conn["download"]))
+                up = VpnFormat.saturatingAdd(up, JSONCoerce.int64Val(conn["upload"]))
             }
             totalDown = down
             totalUp = up
@@ -1388,8 +1416,14 @@ extension VpnManager {
         if streamStale, let prev = lastConnTotals {
             let dt = Date().timeIntervalSince(prev.at)
             if dt >= 0.5 {
-                let derivedDown = Int64(Double(totalDown - prev.down) / dt)
-                let derivedUp = Int64(Double(totalUp - prev.up) / dt)
+                // The difference is clamped before the divide: `totalDown - prev.down`
+                // traps on overflow too, and a counter that appears to jump
+                // backwards (a restarted core, a wrapped 64-bit total) would
+                // otherwise report a negative rate or a crash.
+                let deltaDown = VpnFormat.saturatingSub(totalDown, prev.down)
+                let deltaUp = VpnFormat.saturatingSub(totalUp, prev.up)
+                let derivedDown = Int64(Double(deltaDown) / dt)
+                let derivedUp = Int64(Double(deltaUp) / dt)
                 VpnLiveRates.shared.applyStream(
                     up: max(0, derivedUp), down: max(0, derivedDown))
             }

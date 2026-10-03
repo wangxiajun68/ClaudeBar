@@ -103,10 +103,23 @@ struct CodexQuotaWindow: Equatable, Identifiable {
         }
         // Midnight-to-midnight day difference, not a 24h span: "明天" has to mean
         // the next calendar day, because that is what a person reads it as.
+        //
+        // Every branch below one day is false for a reset that is *today* and
+        // for a stale instant that has already passed, so `<= 1` used to print
+        // 明天 for both — the same window whose tooltip `resetClock` says
+        // "HH:mm 重置". 0 is today (the clock is the honest form, exactly as a
+        // short window prints it) and anything already past belongs to the
+        // current cycle, which is also today or earlier.
         let days = Calendar.current.dateComponents([.day],
                                                    from: Calendar.current.startOfDay(for: Date()),
                                                    to: Calendar.current.startOfDay(for: resetsAt)).day ?? 0
-        if days <= 1 { return "明天" }
+        if days <= 0 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.dateFormat = "HH:mm"
+            return formatter.string(from: resetsAt)
+        }
+        if days == 1 { return "明天" }
         return "\(days)天"
     }
 }

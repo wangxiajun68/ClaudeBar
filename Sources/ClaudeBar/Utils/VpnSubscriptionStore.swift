@@ -17,8 +17,8 @@ struct VpnSubscription: Codable, Identifiable, Equatable {
     /// Airport web console, from `profile-web-page-url`.
     var homeURL: String? = nil
 
-    var usedBytes: Int64 { upload + download }
-    var remainingBytes: Int64 { max(0, total - usedBytes) }
+    var usedBytes: Int64 { max(0, VpnFormat.saturatingAdd(upload, download)) }
+    var remainingBytes: Int64 { max(0, VpnFormat.saturatingSub(total, usedBytes)) }
     var usedRatio: Double {
         guard total > 0 else { return 0 }
         return min(1, Double(usedBytes) / Double(total))
@@ -395,10 +395,22 @@ final class VpnSubscriptionStore: ObservableObject {
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             }
             guard parts.count == 2 else { continue }
+            // The header is whatever the airport's server sends, and the model
+            // does trapping arithmetic on these three fields while drawing the
+            // subscription card — `upload + download` and `total - used` at
+            // `VpnSubscription.usedBytes` / `remainingBytes`. A negative or
+            // absurd value therefore has to be refused here, at the parse
+            // boundary, rather than trusted and added: non-negative and inside
+            // a bound no real subscription can exceed (2^53 bytes, past which
+            // `Double` stops being exact and `VpnFormat` is meaningless anyway).
+            func traffic(_ text: String) -> Int64? {
+                guard let value = Int64(text), value >= 0, value <= (1 << 53) else { return nil }
+                return value
+            }
             switch parts[0].lowercased() {
-            case "upload": sub.upload = Int64(parts[1]) ?? sub.upload
-            case "download": sub.download = Int64(parts[1]) ?? sub.download
-            case "total": sub.total = Int64(parts[1]) ?? sub.total
+            case "upload": sub.upload = traffic(parts[1]) ?? sub.upload
+            case "download": sub.download = traffic(parts[1]) ?? sub.download
+            case "total": sub.total = traffic(parts[1]) ?? sub.total
             case "expire":
                 if var t = TimeInterval(parts[1]), t > 0 {
                     if t > 10_000_000_000 { t /= 1000 } // milliseconds

@@ -37,21 +37,36 @@ struct UsageStats {
     ///
     /// Formatters are cached: this is called from `body` (dashboard, usage page
     /// and the popup header), so building one per call allocated on every
-    /// layout pass of the densest views in the app. They are only ever touched
-    /// on the main actor, which is where every caller renders.
+    /// layout pass of the densest views in the app.
+    ///
+    /// The cache is keyed by pattern **and zone**, and guarded: read off-main by
+    /// `ExchangeRate.note` and `CursorLedgerStore`, which is why the lock is
+    /// here rather than an actor hop. The zone is part of the key because a
+    /// formatter's `timeZone` is captured when it is built, so a machine that
+    /// changes zone (`TimeZone.current` moves, DST rules are updated) would keep
+    /// rendering old-zone dates from the cache while freshly parsed rows — which
+    /// bucket days with `Calendar.current` — already use the new one. Day
+    /// captions and the heatmap would then disagree with the rollup keys for the
+    /// rest of the process's life.
+    private static let formatterLock = NSLock()
     private static var labelFormatters: [String: DateFormatter] = [:]
 
     /// Cached `DateFormatter` for a fixed pattern, in the app's zh_CN locale.
     /// Shared with the heatmap tooltips, which build one per cell.
     static func formatter(_ format: String) -> DateFormatter {
-        labelFormatters[format] ?? {
-            let made = DateFormatter()
-            made.locale = Locale(identifier: "zh_CN")
-            made.timeZone = TimeZone.current
-            made.dateFormat = format
-            labelFormatters[format] = made
-            return made
-        }()
+        let zone = TimeZone.current.identifier
+        let key = format + "\u{1}" + zone
+        formatterLock.lock(); defer { formatterLock.unlock() }
+        if let cached = labelFormatters[key] { return cached }
+        let made = DateFormatter()
+        made.locale = Locale(identifier: "zh_CN")
+        // Resolved by identifier so the formatter shares the process's own
+        // `TimeZone.current` instance rather than falling back to the system
+        // default; the zone is in the key precisely so this stays current.
+        made.timeZone = TimeZone(identifier: zone) ?? .current
+        made.dateFormat = format
+        labelFormatters[key] = made
+        return made
     }
 
     static func label(for period: UsagePeriod, reference: Date) -> String {
