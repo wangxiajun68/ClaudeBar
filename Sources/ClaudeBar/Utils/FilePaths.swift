@@ -93,6 +93,11 @@ enum FilePaths {
     static var proxyLogFile: URL { logsDir.appendingPathComponent("proxy.jsonl") }
     static var usageFilesJSON: URL { logsDir.appendingPathComponent("usage-files.json") }
     static var usageRollupJSONL: URL { logsDir.appendingPathComponent("usage-rollup.jsonl") }
+    /// Claude message ids and the transcript that books them. See
+    /// `UsageIndex.claimClaudeIDs` — a resumed session copies the parent's
+    /// assistant records verbatim, so an id has to be claimed once for the
+    /// whole corpus, not once per file.
+    static var usageClaimsJSONL: URL { logsDir.appendingPathComponent("usage-claims.jsonl") }
 
     // MARK: - VPN (mihomo core)
 

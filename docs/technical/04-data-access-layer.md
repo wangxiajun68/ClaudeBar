@@ -102,9 +102,13 @@
 - 变小或改写：从 0 全量重解析并替换该文件的 rollup，旧数据不会残留；`headHash`（文件头 256 字节的 FNV-1a）用来识别「size 相同但首部已被改写」。
 - 文件消失（含 `archived_sessions` 归档后）：连 rollup 一起删除。
 
-**查询与更新的分工**：`fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` / `fetchOfficialCodex` 只查索引，都不走 transcript；`ProviderStore` 先发布缓存结果，再 `updateIndex()`，再发布最终值（`hasCachedData` / `needsInitialBuild` 只用来决定是否显示 spinner）。schema 版本由 `PRAGMA user_version` 管理（当前 10，`migrateIfNeeded`；v7/v8/v10 各重建过一次 Codex 行）。
+**查询与更新的分工**：`fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` / `fetchOfficialCodex` 只查索引，都不走 transcript；`ProviderStore` 先发布缓存结果，再 `updateIndex()`，再发布最终值（`hasCachedData` / `needsInitialBuild` 只用来决定是否显示 spinner）。schema 版本由 `PRAGMA user_version` 管理（当前 11，`migrateIfNeeded`；v7/v8/v10 各重建过一次 Codex 行，v11 重建过 Claude 行）。JSON 后端用 `FileRec.parserVersion` 表达同一件事。
 
-**两个来源语义**：Claude 的同一个 `message.id` 会分多次追加（partial → final），索引按 message.id 最后一次为准；Codex 的 `token_count` 是累计快照，按事件去重、并用 `turn_context` 的模型 slug 归属到具体模型。
+**两个来源语义**：Claude 的同一个 `message.id` 会分多次追加（partial → final），索引按 `message.id` 最后一次为准，并且**整个语料只记一次**（见下）；Codex 的 `token_count` 是累计快照，按事件去重、并用 `turn_context` 的模型 slug 归属到具体模型。
+
+**`message.id` 全局唯一归属（`UsageClaims`）**：`message.id` 只在一次*对话*内唯一。会话被 `--resume`／fork 成新 transcript 时，Claude Code 会把父会话的 assistant 记录逐字复制进新文件——同一个 id、同一个 `message.uuid`、同样的 usage 出现在两份文件里（本机实测 417 个 id 跨文件重复，两天内 1.03 亿 token 被记了两遍）。原先的去重只在**单个文件内**做 last-wins，看不到这一点，两份都会被计入。
+
+现在每个 id 只有一个归属文件：`updateIndex()` 开头 `UsageClaims.begin(owners:)` 把不属于本轮候选文件的归属全部释放（文件被删即归还），解析时已归属他处的 id 直接不计入本文件，本文件不再打印的 id 归还。Claude 文件的 rollup 每次都是**整份替换**，所以丢掉一条就等于不写它，不会留下旧行。账本落在 `logs/usage-claims.jsonl`（追加写，死行超过半数时整份重写）：丢了或读不了只意味着下次解析找不到归属、按老办法认领，不会凭空多记。
 
 **格式化**：`UsageStats.formatTokens` → `38.7M` / `318K` / `942`；`UsageStats` 现在只剩周期区间、标签与格式化函数，没有扫描逻辑。
 

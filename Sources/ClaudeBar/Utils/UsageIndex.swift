@@ -177,6 +177,20 @@ struct UsageIndex {
             _ = exec(db, "DELETE FROM files WHERE path LIKE 'codex:%';")
             _ = exec(db, "PRAGMA user_version = 10")
         }
+        if version < 11 {
+            // v11 claims each Claude `message.id` once for the whole corpus
+            // (see `UsageClaims`). Rows written before it hold both copies of
+            // every resumed or forked transcript — measured 103M tokens on the
+            // two days that produced them on this machine — and no repair can
+            // separate them: the duplication is spread across (path, day,
+            // model) rows that are individually correct per file. Delete the
+            // Claude file rows so the next pass re-parses the corpus under the
+            // new rule. Claude files are small and re-parsed on every change
+            // anyway; the rebuild is one full corpus read, once.
+            _ = exec(db, "DELETE FROM rollup WHERE path LIKE 'claude:%';")
+            _ = exec(db, "DELETE FROM files WHERE path LIKE 'claude:%';")
+            _ = exec(db, "PRAGMA user_version = 11")
+        }
     }
 
     // MARK: - Public API
@@ -193,6 +207,7 @@ struct UsageIndex {
         openFailed = false
         lock.unlock()
         UsageJSONStore.shared.reset()
+        UsageClaims.reset()
         flagLock.lock()
         _hasCachedData = nil
         _initialBuildDone = false
@@ -241,6 +256,8 @@ struct UsageIndex {
         defer { lock.unlock() }
 
         let known = currentFiles(db)
+        let live = Set(candidates.map(\.key))
+        UsageClaims.begin(owners: live)
 
         _ = exec(db, "BEGIN")
         var seen = Set<String>()
@@ -254,6 +271,7 @@ struct UsageIndex {
             delete(db, "DELETE FROM files WHERE path = ?", key)
         }
         _ = exec(db, "COMMIT")
+        UsageClaims.flush()
         sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
         flagLock.lock()
         _initialBuildDone = true
@@ -264,6 +282,7 @@ struct UsageIndex {
     private static func updateIndexJSON(_ candidates: [Candidate]) {
         UsageJSONStore.shared.load()
         let known = knownFromJSON()
+        UsageClaims.begin(owners: Set(candidates.map(\.key)))
         var seen = Set<String>()
         for file in candidates {
             guard !seen.contains(file.key) else { continue }
@@ -274,6 +293,7 @@ struct UsageIndex {
             UsageJSONStore.shared.deletePath(key)
         }
         UsageJSONStore.shared.save()
+        UsageClaims.flush()
         flagLock.lock()
         _initialBuildDone = true
         _hasCachedData = true
@@ -673,7 +693,11 @@ struct UsageIndex {
                        cxTotal: last?.total ?? 0,
                        cxModel: parsed.model)
         } else {
-            replaceRollup(backend, file.key, parse(kind, lines))
+            // Claude: one claim per `message.id` for the whole corpus, so a
+            // resumed or forked transcript cannot book its parent's calls a
+            // second time. The file's rollup is replaced in full, so dropping
+            // a duplicate entry is enough — no stale row survives.
+            replaceRollup(backend, file.key, claimClaude(parseClaude(lines), path: file.key))
             upsertFile(backend, file, consumed, cxIn: 0, cxOut: 0, cxCached: 0)
         }
     }
@@ -939,6 +963,21 @@ struct UsageIndex {
         var output = 0
         var cacheRead = 0
         var cacheCreate = 0
+        /// Claude `message.id`, empty for a record that carries none (or for
+        /// a source that has no such key). The claim ledger keys on it.
+        var id = ""
+
+        /// The same entry with every counter flipped, for retiring a booking
+        /// another transcript made (see `claimClaude`).
+        func negated() -> ParsedEntry {
+            var e = self
+            e.calls = -calls
+            e.input = -input
+            e.output = -output
+            e.cacheRead = -cacheRead
+            e.cacheCreate = -cacheCreate
+            return e
+        }
 
         /// Collapse per-record entries into one per (day, model). The rollup
         /// table's PK is (path, day, model), so writing per-record rows with
@@ -1084,12 +1123,6 @@ struct UsageIndex {
         (any as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    private static func parse(_ kind: Substring, _ lines: [Data]) -> [ParsedEntry] {
-        switch kind {
-        case "claude": return parseClaude(lines)
-        default: return []
-        }
-    }
 
     /// Local-timezone "yyyy-MM-dd" for a date (matching how the user reads
     /// the panel). Built from calendar components — no DateFormatter on the
@@ -1122,18 +1155,56 @@ struct UsageIndex {
                   let usage = message["usage"] as? [String: Any],
                   let date = isoDate(obj["timestamp"]) else { continue }
             let create = JSONCoerce.intVal(usage["cache_creation_input_tokens"])
-            let e = record(dayString(date), model,
+            var e = record(dayString(date), model,
                            input: JSONCoerce.intVal(usage["input_tokens"]),
                            output: JSONCoerce.intVal(usage["output_tokens"]),
                            read: JSONCoerce.intVal(usage["cache_read_input_tokens"]),
                            create: create)
             if let id = message["id"] as? String, !id.isEmpty {
+                e.id = id
                 lastByID[id] = e
             } else {
                 anonymous.append(e)
             }
         }
         return Array(lastByID.values) + anonymous
+    }
+
+    /// Parse one Claude transcript and hand every `message.id` printed in it to
+    /// `UsageClaims`, which books each API call exactly once across the whole
+    /// corpus. A resumed or forked session copies its parent's assistant
+    /// records verbatim into a new file, so the ids in this parse may already
+    /// be booked by the transcript that recorded them first.
+    ///
+    /// Returns only the entries this file books. An id another transcript owns
+    /// is dropped — the copy is not a call. Nothing else is needed here: a
+    /// Claude path's rollup is *replaced* in full on every parse (unlike
+    /// Codex's append path), so a dropped entry leaves no stale row behind,
+    /// and an id this file stops printing simply stops being replaced into it.
+    ///
+    /// Ids the file no longer prints are released so another transcript can
+    /// take them. Records without an id are not claims and always book.
+    private static func claimClaude(_ parsed: [ParsedEntry], path: String) -> [ParsedEntry] {
+        var booked = Set<String>()
+        var out: [ParsedEntry] = []
+        out.reserveCapacity(parsed.count)
+        for e in parsed where !e.id.isEmpty {
+            switch UsageClaims.owner(of: e.id) {
+            case nil:
+                UsageClaims.record(e.id, owner: path)
+                booked.insert(e.id)
+                out.append(e)
+            case path:
+                booked.insert(e.id)
+                out.append(e)
+            default:
+                continue    // another transcript books this call
+            }
+        }
+        for id in UsageClaims.owned(by: path) where !booked.contains(id) {
+            UsageClaims.release(id)
+        }
+        return out + parsed.filter { $0.id.isEmpty }
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {

@@ -25,7 +25,12 @@ final class UsageJSONStore {
         /// append boundary. Mirrors the SQLite `cx_total` column.
         var cxTotal: Int
         var cxModel: String
-        var parserVersion: Int = 10
+        /// Parser generation of the rows this record produced. 10 introduced
+        /// per-turn Codex deltas; 11 claims each Claude `message.id` once for
+        /// the whole corpus (`UsageClaims`). A rec stamped below the current
+        /// generation is dropped by `loadLocked`, so the next pass re-parses
+        /// it under the current rules.
+        var parserVersion: Int = 11
 
         init(mtime: Double, size: Int, offset: Int, headHash: Int64,
              cxIn: Int, cxOut: Int, cxCached: Int, cxTotal: Int = 0, cxModel: String = "") {
@@ -237,9 +242,24 @@ final class UsageJSONStore {
                 && (rec.cxIn + rec.cxOut + rec.cxCached) > 0
         }
         let oldParser = files.contains { $0.key.hasPrefix("codex:") && $0.value.parserVersion < 10 }
-        if stale || unprefixed || oldParser {
-            files = files.filter { !$0.key.hasPrefix("codex:") }
-            rollup = rollup.filter { !$0.value.path.hasPrefix("codex:") }
+        // v11 claims each Claude `message.id` once for the whole corpus, so
+        // rows written before it hold both copies of a resumed or forked
+        // transcript. SQLite rebuilds the same rows on its `user_version` 11
+        // step; this is the JSON backend's half of that migration, and it
+        // reads `parserVersion` rather than a stamp of its own because the
+        // tried-and-true shape of a rebuild already lives here.
+        let oldClaude = files.contains { $0.key.hasPrefix("claude:") && $0.value.parserVersion < 11 }
+        if stale || unprefixed || oldParser || oldClaude {
+            files = files.filter { key, _ in
+                guard key.hasPrefix("codex:") || key.hasPrefix("claude:") else { return true }
+                if key.hasPrefix("codex:") { return !(stale || unprefixed || oldParser) }
+                return !oldClaude
+            }
+            rollup = rollup.filter { row in
+                guard row.value.path.hasPrefix("codex:") || row.value.path.hasPrefix("claude:") else { return true }
+                if row.value.path.hasPrefix("codex:") { return !(stale || unprefixed || oldParser) }
+                return !oldClaude
+            }
             dirty = true
             persistLocked()
         }

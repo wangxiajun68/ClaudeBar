@@ -31,6 +31,7 @@ enum FilePaths {
     static var logsDir: URL { root }
     static var usageFilesJSON: URL { root.appendingPathComponent("files.json") }
     static var usageRollupJSONL: URL { root.appendingPathComponent("rollup.jsonl") }
+    static var usageClaimsJSONL: URL { root.appendingPathComponent("usage-claims.jsonl") }
 }
 enum ExternalAgentKind {
     case codex
@@ -41,6 +42,7 @@ let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 '''
 source += (utils / 'JSONCoerce.swift').read_text()
 source += declaration((utils / 'UsageJSONStore.swift').read_text(), 'final class UsageJSONStore') + '\n'
+source += declaration((utils / 'UsageClaims.swift').read_text(), 'enum UsageClaims') + '\n'
 for filename, marker, name in [
     ('UsageIndex.swift', 'struct UsageIndex', 'index.db'),
     ('ProxyUsageStore.swift', 'final class ProxyUsageStore', 'proxy.db')]:
@@ -177,6 +179,19 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             }
             try Data((assistant(1) + assistant(10)).utf8).write(to: claude.appendingPathComponent("session.jsonl"))
             UsageIndex.updateIndex(); require(total() == 290) // last-wins message ID
+            // A resumed session copies the parent's assistant records verbatim
+            // into a new transcript: same `message.id`, same usage, second
+            // path. The id is one API call, so whichever file is indexed first
+            // books it and the copy books nothing — a per-file dedupe cannot
+            // see this, which is why 103M tokens were counted twice on this
+            // machine's own corpus. The reverse order must give the same total.
+            let fork = claude.appendingPathComponent("fork.jsonl")
+            try Data(assistant(10).utf8).write(to: fork)
+            UsageIndex.updateIndex()
+            require(total() == 290, "a resumed transcript re-booked its parent's message id: \(total())")
+            try fm.removeItem(at: fork)
+            UsageIndex.updateIndex()
+            require(total() == 290, "releasing a fork's claim changed the total: \(total())")
             let date = ISO8601DateFormatter().date(from: "2026-10-01T12:00:00Z")!
             ProxyUsageStore.shared.record(model: "audit-model", at: date, input: 30, output: 10,
                                           cacheRead: 40, cacheWrite: 10)
