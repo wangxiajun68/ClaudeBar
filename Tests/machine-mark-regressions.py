@@ -117,7 +117,7 @@ paths = (shared / 'LucideHardwarePaths.swift').read_text()
 glyph = (shared / 'InstrumentGlyph.swift').read_text()
 
 probe = (root / 'Tests/fixtures/machine-mark-probe.swift').read_text()
-for token, body in (('<<<LUCIDE_GEOMETRY>>>', geometry),
+for token, _ in (('<<<LUCIDE_GEOMETRY>>>', geometry),
                     ('<<<LUCIDE_PATHS>>>', paths),
                     ('<<<INSTRUMENT_GLYPH>>>', glyph),
                     ('<<<HARDWARE_ILLUSTRATION>>>', illustration),
@@ -143,7 +143,6 @@ with tempfile.TemporaryDirectory(prefix='claudebar-machine-mark-') as folder:
     import numpy as np
 
     SCALE = 8.0
-    FRAME_H = 104.0
     BADGE = 26.0
 
     # The lane and bar rects come from the probe's own run of

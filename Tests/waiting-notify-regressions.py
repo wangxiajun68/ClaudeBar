@@ -57,12 +57,7 @@ predicate = slice_method(
  .replace('prefs.notchIslandAlertsEnabled', 'alertsOn').replace('state?.mode != .expanded', '!expanded')
 
 harness = '''
-// The two preference flags and the strip mode, reduced to what the predicate
-// reads — the rule under test is the production one, spliced in below.
-struct Prefs { let notchIslandEnabled: Bool; let notchIslandAlertsEnabled: Bool }
-enum Mode { case collapsed, alert, expanded }
-struct State { let mode: Mode }
-
+// The predicate under test is the production one, spliced in below.
 func run() {
     var checks = 0
     var failures: [String] = []

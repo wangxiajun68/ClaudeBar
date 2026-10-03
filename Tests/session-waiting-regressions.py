@@ -46,7 +46,6 @@ What this file pins, against the production monitor with a redirected home:
      raw `dialog:` prefix into the user-facing reason.
 """
 from pathlib import Path
-import json
 import subprocess
 import tempfile
 

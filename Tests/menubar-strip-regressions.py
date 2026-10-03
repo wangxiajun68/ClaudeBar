@@ -29,7 +29,6 @@ connects them — adding the battery to the layout without adding it to
 Parses the production constants and asserts the geometry, no app launch.
 """
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 
