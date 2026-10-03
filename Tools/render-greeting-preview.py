@@ -11,6 +11,56 @@ root = Path(__file__).resolve().parents[1]
 out = root / '.build/greeting-preview'
 out.mkdir(parents=True, exist_ok=True)
 
+
+def sweep_stale_outputs():
+    """Delete PNGs this run's naming scheme will not overwrite.
+
+    The images are named after the pass that produced them — `auto-light-1100-fog`,
+    `auto-light-1100-face-<typeface>`, `ribbon-…` — so a renamed scene, a dropped
+    mode or a changed prefix leaves its predecessors on disk forever. The
+    directory had accumulated 115 files / 185 MB from earlier namings
+    (`pinned-…`, a differently-shaped `auto-…`), and `ls` over the output then
+    lies about what the current renderer produces.
+
+    The expected set is computed from this run's own parameters — the same scene
+    list and widths the probe is handed — so it cannot drift from what is about
+    to be written. Only `*.png` directly under `out` is touched: `Probe.swift` /
+    `probe` are this tool's build inputs. `--weather-review` and the benchmarks
+    render a different, smaller matrix into the same directory, so nothing is
+    swept while one of them is running.
+    """
+    if '--bench' in sys.argv or '--bench-baseline' in sys.argv or '--weather-review' in sys.argv:
+        return
+    import re
+    script = (root / 'Sources/ClaudeBar/Views/Shared/Atmosphere/GreetingScript.swift').read_text()
+    block = script[script.index('enum GreetingTypeface'):]
+    faces = [f"face-{case}" for case in re.findall(r'^    case (\w+)', block, re.M)]
+    scenes = ["sun", "rain", "heavy", "thunder", "night", "cloud", "snow", "fog", "empty"]
+    expected = set()
+    for mode in ("auto", "manual", "bare"):
+        for dark in ("light", "dark"):
+            for width in (1100, 620):
+                for scene in (["sun"] if mode == "manual" else scenes):
+                    expected.add(f"{mode}-{dark}-{width}-{scene}.png")
+                    # The typeface sweep is the light auto pass, one render per
+                    # face at each width, labelled by the face.
+                    if mode == "auto" and dark == "light":
+                        for face in faces:
+                            expected.add(f"{mode}-{dark}-{width}-{face}.png")
+    for dark in ("light", "dark"):
+        for width in (1100, 620):
+            expected.add(f"ribbon-{dark}-{width}.png")
+    removed = 0
+    for png in out.glob('*.png'):
+        if png.name not in expected:
+            png.unlink()
+            removed += 1
+    if removed:
+        print(f"Swept {removed} PNG(s) from an earlier naming scheme in {out}")
+
+
+sweep_stale_outputs()
+
 def interaction_slices():
     """Regenerate `greeting-preview-support.swift` from `Interaction.swift`.
 
