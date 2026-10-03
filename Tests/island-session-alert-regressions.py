@@ -194,6 +194,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-island-') as folder:
         # `ExternalSessionInfo.contextLabel` reaches for `UsageStats`; the
         # instance is only used for its flags, so a stub is enough.
         'enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }',
+        # `ExternalAgentKind.rootDir` now resolves through the build channel
+        # (`FilePaths.appSupportDir` on dev). The flatten path this suite drives
+        # never calls it — the kind is only carried as a value on the info
+        # struct — so the two are stubbed rather than sliced. Stated as release,
+        # the channel whose behaviour the rest of this fixture carries.
+        'enum BuildChannel { static let allowsSystemIntegration = true }',
+        'enum FilePaths { static let appSupportDir = URL(fileURLWithPath: "/nonexistent"); static let codexDir = appSupportDir }',
         island_agent,
         island_session,
         'struct IslandLiveModelProbe {',

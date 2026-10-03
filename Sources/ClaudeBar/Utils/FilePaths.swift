@@ -123,17 +123,32 @@ enum FilePaths {
     // MARK: - Cursor
 
     /// `~/.cursor` — Cursor's user-data root (projects/, ai-tracking/, …).
+    ///
+    /// Channel-split like `claudeDir` / `codexDir`, and for the same reason:
+    /// a dev build must not read the user's real Cursor data. Cursor was the
+    /// one client left pointing at the real tree after 5e7157f wired the
+    /// channel into `FilePaths`, so a dev build read the real `~/.cursor`
+    /// projects and the real `state.vscdb` on every poll.
     static var cursorDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cursor")
+        BuildChannel.allowsSystemIntegration
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cursor")
+            : appSupportDir.appendingPathComponent(".cursor")
     }
 
     /// Cursor's global VS Code state DB. Holds `composerHeaders` (the session
     /// index table) and `cursorDiskKV` (per-message bubbles). Cursor keeps it
     /// open in WAL mode while running; we open it read-only.
+    ///
+    /// Unlike `cursorDir` this one cannot live under `appSupportDir`: the
+    /// release path is Cursor's own Application Support directory. The dev
+    /// branch points at a file inside the app's own directory that does not
+    /// exist, so `CursorDB.open()` fails and every Cursor reader returns
+    /// empty — the isolated no-op, rather than a copy of real data.
     static var cursorStateDB: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        BuildChannel.allowsSystemIntegration
+            ? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+            : appSupportDir.appendingPathComponent("cursor-state.vscdb")
     }
 
     /// `~/.cursor/projects` — each subdirectory is a workspace, named after

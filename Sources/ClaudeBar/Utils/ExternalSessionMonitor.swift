@@ -149,6 +149,16 @@ enum ExternalAgentKind: String, CaseIterable {
     var brand: Bool { true }
 
     var rootDir: String {
+        // Channel-split like the paths `FilePaths` hands out. Codex is the one
+        // client whose root is not read from `FilePaths` — `CODEX_HOME` comes
+        // first, which is how the CLI itself is relocated — so the gate has to
+        // live here, and it defers to the same `codexDir` the rest of the app
+        // uses. On dev that directory is inside the app's own support folder
+        // and does not exist, so the scan finds nothing rather than reading the
+        // user's real sessions.
+        guard BuildChannel.allowsSystemIntegration else {
+            return FilePaths.codexDir.appendingPathComponent("sessions").path
+        }
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"]
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
         return URL(fileURLWithPath: home).appendingPathComponent("sessions").path

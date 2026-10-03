@@ -61,6 +61,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
     harness = work / 'Main.swift'
     harness.write_text('''import Foundation
     enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }
+    // `ExternalAgentKind.rootDir` gates on the build channel. Every fixture in
+    // this file drives the *release* shape — it points `CODEX_HOME` at its own
+    // tree and expects `rootDir` to honour it — so the channel is stated as
+    // release rather than sliced. `FilePaths` is named by the other branch and
+    // must resolve for the file to compile.
+    enum BuildChannel { static let allowsSystemIntegration = true }
+    enum FilePaths { static let codexDir = URL(fileURLWithPath: "/nonexistent") }
     @main struct Regression {
         static func main() {
             let sessions = ExternalSessionMonitor.fetchActive()
@@ -183,6 +190,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-legacy-') as legacy_fol
     harness = legacy / 'Main.swift'
     harness.write_text('''import Foundation
     enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }
+    // `ExternalAgentKind.rootDir` gates on the build channel. Every fixture in
+    // this file drives the *release* shape — it points `CODEX_HOME` at its own
+    // tree and expects `rootDir` to honour it — so the channel is stated as
+    // release rather than sliced. `FilePaths` is named by the other branch and
+    // must resolve for the file to compile.
+    enum BuildChannel { static let allowsSystemIntegration = true }
+    enum FilePaths { static let codexDir = URL(fileURLWithPath: "/nonexistent") }
     @main struct Regression {
         static func main() {
             let scan = ExternalSessionMonitor.scan()
@@ -220,6 +234,13 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-rule-') as folder2:
     harness = work2 / 'Main.swift'
     harness.write_text('''import Foundation
     enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }
+    // `ExternalAgentKind.rootDir` gates on the build channel. Every fixture in
+    // this file drives the *release* shape — it points `CODEX_HOME` at its own
+    // tree and expects `rootDir` to honour it — so the channel is stated as
+    // release rather than sliced. `FilePaths` is named by the other branch and
+    // must resolve for the file to compile.
+    enum BuildChannel { static let allowsSystemIntegration = true }
+    enum FilePaths { static let codexDir = URL(fileURLWithPath: "/nonexistent") }
     @main struct Regression {
         static func main() {
             let now = Date().timeIntervalSince1970
