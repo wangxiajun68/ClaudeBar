@@ -229,7 +229,13 @@ struct FeishuOperationSheet: View {
             return args
         case .rename: return ["drive", "+update-title"] + target + ["--title", trimmedTitle]
         case .copy: return ["drive", "+copy"] + target + ["--name", trimmedTitle, "--folder-token", folderToken.isEmpty ? "my_space" : folderToken]
-        case .move: return ["drive", "+move", "--file-token", doc?.token ?? "", "--type", doc?.type ?? "", "--folder-token", folderToken]
+        // An omitted flag is "root folder" for this CLI; an empty value is not.
+        // `--folder-token ""` is a malformed argument (`1061002 params error`
+        // on upload; move has the same contract), so the flag is dropped
+        // entirely when no destination was typed.
+        case .move:
+            return ["drive", "+move", "--file-token", doc?.token ?? "", "--type", doc?.type ?? ""]
+                + (folderToken.isEmpty ? [] : ["--folder-token", folderToken])
         case .delete: return ["drive", "+delete", "--file-token", doc?.token ?? "", "--type", doc?.type ?? "", "--yes"]
         case .edit:
             return ["docs", "+update", "--doc", doc?.documentReference ?? "", "--command", mode, "--doc-format", "markdown", "--content", "-"] + (request.revision.isEmpty ? [] : ["--revision-id", request.revision])
@@ -240,9 +246,18 @@ struct FeishuOperationSheet: View {
         case .removeMember:
             return ["drive", "+member-remove"] + target + ["--member-type", request.member["member_type"].text, "--member-id", request.member["member_id"].text, "--yes"] + (doc?.type == "wiki" ? ["--perm-type", request.member["perm_type"].text] : [])
         case .export: return ["drive", "+export", "--token", doc?.token ?? "", "--doc-type", doc?.type ?? "", "--file-extension", exportFormat, "--output-dir", localURL?.path ?? ""]
-        case .upload: return ["drive", "+upload", "--file", localURL?.path ?? "", "--folder-token", request.location.folder]
-        case .importDocument: return ["drive", "+import", "--file", localURL?.path ?? "", "--type", "docx", "--folder-token", request.location.folder]
+        case .upload: return ["drive", "+upload", "--file", localURL?.path ?? ""] + folderArgument(request.location.folder)
+        case .importDocument: return ["drive", "+import", "--file", localURL?.path ?? "", "--type", "docx"] + folderArgument(request.location.folder)
         case .history: throw FeishuCLIError.failed("历史版本仅供阅读。")
         }
+    }
+
+    /// `lark-cli` reads an omitted `--folder-token` as "the caller's Drive
+    /// root", while an explicitly empty value is a parameter error. The upload
+    /// target is therefore absent from the argument list when there is no
+    /// folder — not present and empty.
+    private func folderArgument(_ folder: String) -> [String] {
+        let trimmed = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? [] : ["--folder-token", trimmed]
     }
 }

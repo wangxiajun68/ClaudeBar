@@ -413,9 +413,19 @@ struct ProvidersView: View {
         return nil
     }
     private func deleteConnection(_ id: UUID) {
+        // Deleting the configuration the client is *currently pointed at* has
+        // to take the client off it, exactly like the sibling select/activate
+        // paths (`onUseOfficial`, `activate`). Removing only the row left
+        // settings.json / config.toml pointing at a vendor that no longer
+        // exists in the list — and, because no row carries the id any more,
+        // nothing could ever activate it back off. The store keeps the list
+        // entry while the delete path may fail, so the row is only removed
+        // here once the client is back on the official connection.
         if client == .claude, let provider = providerStore.providers.first(where: { $0.id == id }) {
+            if providerStore.activeProviderID == id { providerStore.restoreOfficial() }
             providerStore.deleteProvider(provider)
         } else if let provider = codexStore.providers.first(where: { $0.id == id }) {
+            if codexStore.activeProviderID == id { codexStore.restoreOfficial() }
             codexStore.deleteProvider(provider)
         }
         if selectedID == id { selectedID = nil }

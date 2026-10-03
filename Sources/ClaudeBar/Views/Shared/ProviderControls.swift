@@ -5,10 +5,24 @@ import AppKit
 enum ProviderCardState: Equatable {
     case unconfigured, incomplete, ready, active
 
+    /// A saved record is ready when the client could actually be pointed at it.
+    ///
+    /// The key requirement is the *editors'* rule, not a second, stricter one
+    /// invented here: a loopback/private endpoint serves with no authentication
+    /// at all, so `ProviderSetupDraft.validationError` and
+    /// `ProviderConnectionDraft.validationError` both let an empty key through
+    /// for it. Demanding a key anyway made exactly those records — Ollama,
+    /// LM Studio, a local LiteLLM — permanently 待完善: their model picker and
+    /// activation button stayed disabled even though activation itself never
+    /// reads the key (`activateModel` / `activate` write the base URL and the
+    /// model name, nothing else).
     static func isReady(_ provider: Provider) -> Bool {
-        !provider.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !provider.authToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        provider.models.contains { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let base = provider.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty,
+              provider.models.contains(where: { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        else { return false }
+        return !provider.authToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || ProviderCatalogEntry.isLocalEndpoint(base)
     }
     static func model(_ provider: Provider) -> ModelConfig? {
         if let model = provider.activeModel, !model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return model }

@@ -28,7 +28,8 @@ struct ModelPriceCard: View {
     /// word excludes. `editing` alone cannot express it: the editor mounts
     /// *inside a row* (`ForEach(rows) → PriceRow → if editing == slug`), so a
     /// slug in no visible row would set state that nothing drew. The draft is
-    /// rendered as its own row above the table until its editor closes.
+    /// rendered as its own row above the table while `shouldDrawDraft` holds,
+    /// and retired once the table draws the slug itself.
     @State private var draftSlug: String?
     @State private var showReport = false
     @State private var addSlug = ""
@@ -247,14 +248,15 @@ struct ModelPriceCard: View {
     private func startAdding() {
         let typed = addSlug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !typed.isEmpty else { return }
-        let canonical = ModelPricing.canonical(typed)
-        let name = canonical.isEmpty ? typed : canonical
-        editing = name
-        // A slug whose row is on screen gets its editor mounted in place;
-        // anything else — a brand-new id, or a known one the current search
-        // word hid — is the draft row above the table, which lives outside the
-        // filter so the editor that was just opened cannot be swallowed by it.
-        draftSlug = rows.contains(name) ? nil : name
+        let name = ModelPricing.canonical(typed)
+        let slug = name.isEmpty ? typed : name
+        editing = slug
+        // A slug with no row anywhere gets the draft row above the table,
+        // which lives outside the filter so the editor just opened cannot be
+        // swallowed by a search word. A slug the catalog already knows opens
+        // the table's own row instead — `allSlugs`, not the filtered `rows`, or
+        // a live search word would point at a row the table is not drawing.
+        draftSlug = catalog.allSlugs.contains(slug) ? nil : slug
         adding = false
         addSlug = ""
     }
@@ -270,15 +272,13 @@ struct ModelPriceCard: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                if let draftSlug, !rows.contains(draftSlug) {
-                    // The row 编辑价格 just opened, for a slug the table below is
-                    // not drawing: either one the catalog has never heard of, or
-                    // a known one the search word excludes. Living outside the
-                    // filter is what stops that word from hiding the editor that
-                    // was just opened; as soon as `rows` lists the slug the row
-                    // below mounts the editor instead. Closing the editor either
-                    // way retires this draft — a save has made the slug a real
-                    // row, a cancel leaves no phantom behind.
+                if let draftSlug, shouldDrawDraft(draftSlug) {
+                    // The row 编辑价格 just opened, for a slug with no row on
+                    // screen. It lives outside the filter so the search word
+                    // cannot swallow the editor that was just opened, and it is
+                    // drawn only while its editor is actually open — closing it
+                    // (save or cancel) retires the draft. A save puts the slug
+                    // into `allSlugs`, and the row below takes the editor over.
                     PriceRow(slug: draftSlug,
                              editing: $editing,
                              sourceURL: sourceURL(for: draftSlug),
@@ -286,14 +286,16 @@ struct ModelPriceCard: View {
                         .padding(.horizontal, 20)
                     SettingsDivider()
                 }
-                if rows.isEmpty && draftSlug == nil {
+                if rows.isEmpty && !(draftSlug.map { shouldDrawDraft($0) } ?? false) {
                     StandbyEmptyState(label: "没有匹配的模型", symbol: "magnifyingglass")
                         .padding(.vertical, 20)
                 }
                 ForEach(rows, id: \.self) { slug in
+                    let isDraft = draftSlug == slug
                     PriceRow(slug: slug,
                              editing: $editing,
-                             sourceURL: sourceURL(for: slug))
+                             sourceURL: sourceURL(for: slug),
+                             onRowAppeared: { if isDraft { self.draftSlug = nil } })
                         .padding(.horizontal, 20)
                     SettingsDivider()
                 }
@@ -301,6 +303,17 @@ struct ModelPriceCard: View {
         }
         .frame(height: Self.listHeight)
         .scrollHoverGate()
+    }
+
+    /// The draft is an *editor host*: drawn only while an edit of the slug is
+    /// genuinely in progress. That second term is what keeps it from becoming a
+    /// ghost row — the row's own collapse chip sets `editing = nil` without
+    /// closing through `PriceEditor.onDone`, so a draft left by that path would
+    /// otherwise sit above the table editing nothing, for the rest of the
+    /// session. A draft the table draws itself is not drawn twice: once `rows`
+    /// lists the slug, the table's row mounts the editor instead.
+    private func shouldDrawDraft(_ slug: String) -> Bool {
+        !rows.contains(slug) && editing == slug
     }
 
     /// The vendor's own pricing page for a row, when we know one. Only vendors
@@ -344,6 +357,13 @@ private struct PriceRow: View {
     /// Called when this row's editor closes, so the card can retire the draft
     /// row of a slug that never made it into the catalog. Nil for table rows.
     var onDraftEnded: (() -> Void)? = nil
+    /// Called once this row is actually on screen. The draft row uses it to
+    /// hand its slug over: once the table draws the slug, the draft is no
+    /// longer what hosts the editor and must be retired. Relying on the
+    /// editor's own close for that was not enough — saving writes the override
+    /// *while the editor stays mounted*, so the draft would sit there beside
+    /// the row that now owns it (the ghost row).
+    var onRowAppeared: (() -> Void)? = nil
 
     @ObservedObject private var catalog = ModelPriceCatalog.shared
 
@@ -372,6 +392,7 @@ private struct PriceRow: View {
             }
         }
         .padding(.vertical, 8)
+        .onAppear { onRowAppeared?() }
     }
 
     @ViewBuilder

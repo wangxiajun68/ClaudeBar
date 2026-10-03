@@ -336,6 +336,32 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         precondition(deletion == ["drive", "+delete", "--file-token", "test-doc", "--type", "docx", "--yes"])
         let move = try CommandFixture(request: .init(kind: .move, document: sourceDoc), destination: "https://team.feishu.cn/drive/folder/folder-target").arguments()
         precondition(move.suffix(2) == ["--folder-token", "folder-target"])
+        // An omitted `--folder-token` means "the caller's root folder" to the
+        // CLI; an explicitly empty one is a malformed argument (upload's
+        // `1061002 params error`, and move carries the same contract). So a
+        // move/upload/import with no destination must not send the flag at all.
+        let rootMove = try CommandFixture(request: .init(kind: .move, document: sourceDoc)).arguments()
+        precondition(rootMove == ["drive", "+move", "--file-token", "test-doc", "--type", "docx"],
+                     "a move with no destination must omit --folder-token, got \(rootMove)")
+        let rootUpload = try CommandFixture(request: .init(kind: .upload, location: .root)).arguments()
+        precondition(rootUpload == ["drive", "+upload", "--file", "/tmp/mock-input.md"],
+                     "an upload to the root must omit --folder-token, got \(rootUpload)")
+        let rootImport = try CommandFixture(request: .init(kind: .importDocument, location: .root)).arguments()
+        precondition(rootImport == ["drive", "+import", "--file", "/tmp/mock-input.md", "--type", "docx"],
+                     "an import to the root must omit --folder-token, got \(rootImport)")
+        let folderUpload = try CommandFixture(request: .init(kind: .upload, location: .init(title: "folder", folder: "folder-id"))).arguments()
+        precondition(folderUpload.suffix(2) == ["--folder-token", "folder-id"])
+        let folderImport = try CommandFixture(request: .init(kind: .importDocument, location: .init(title: "folder", folder: "folder-id"))).arguments()
+        precondition(folderImport.suffix(2) == ["--folder-token", "folder-id"])
+        // The create-folder and create-doc paths already guard this; assert the
+        // whole sheet rather than the three cases that were just fixed, so a
+        // fourth one cannot reintroduce the empty value.
+        for kind in [FeishuOperation.Kind.folder, .create] {
+            let args = try CommandFixture(request: .init(kind: kind, location: .root)).arguments()
+            precondition(!args.contains("--folder-token") && !args.contains("--parent-token"),
+                         "\(kind) at the root must not name an empty parent")
+            precondition(!args.contains(""), "\(kind) must not carry an empty argument")
+        }
         let copy = try CommandFixture(request: .init(kind: .copy, document: sourceDoc)).arguments()
         precondition(copy.suffix(2) == ["--folder-token", "my_space"])
         for target in ["https://evil.test/drive/folder/a", "https://team.feishu.cn/docx/a"] {

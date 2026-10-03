@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""CC model concurrency defaults, editor validation and production env persistence."""
+"""CC model concurrency defaults, editor validation, provider readiness and
+production env persistence."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,10 +15,17 @@ end = store.index('\n    }', start) + len('\n    }')
 build_env = store[start:end].replace('private func', 'func', 1)
 editor = read('Views/Shared/ProviderConnectionEditor.swift')
 editor = editor[editor.index('struct ProviderConnectionRoute'):editor.index('struct ProviderConnectionEditor: View')]
+# `ProviderCardState.isReady` gates the activation control and the model
+# picker. It is pure (no Theme, no Bundle), so it is compiled here against the
+# same catalog that decides whether an empty key is legal.
+controls = read('Views/Shared/ProviderControls.swift')
+start = controls.index('    static func isReady(')
+end = controls.index('\n    }\n', start) + len('\n    }\n')
+is_ready = 'enum ProviderCardState {\n' + controls[start:end].replace('static func isReady', 'static func isReady', 1) + '\n}\n'
 swift = '\n'.join(read(path) for path in [
     'Models/Preset.swift', 'Models/Provider.swift', 'Models/CodexProvider.swift',
     'Models/ProviderCatalog.swift', 'Models/SettingsManager.swift', 'Utils/PrivateFileWriter.swift',
-]) + '\n' + editor + '\nstruct EnvFixture {\n' + build_env + '\n}\n'
+]) + '\n' + editor + '\n' + is_ready + '\nstruct EnvFixture {\n' + build_env + '\n}\n'
 swift += r'''
 enum FilePaths {
     static let claudeDir = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -54,6 +62,23 @@ enum CodexProxyServer { static let configuredToken = "fixture-proxy-token" }
             draft.models[0].workflowMaxConcurrentAgents = value
             precondition(draft.validationError == nil)
         }
+        // Readiness is the editors' rule, not a stricter second one. A loopback
+        // endpoint serves unauthenticated, so an empty key is a valid record —
+        // it must be ready (activation never reads the key); a public endpoint
+        // with no key is not.
+        let readyModel = ModelConfig(name: "local-model")
+        let local = Provider(name: "Ollama", authToken: "", baseURL: "http://localhost:11434", models: [readyModel])
+        precondition(ProviderCardState.isReady(local), "a keyless loopback provider must be ready")
+        precondition(ProviderCardState.isReady(Provider(name: "Ollama", authToken: "", baseURL: "http://127.0.0.1:11434", models: [readyModel])),
+                     "every loopback spelling is ready without a key")
+        precondition(ProviderCardState.isReady(Provider(name: "Ollama", authToken: "", baseURL: "http://192.168.1.9:11434", models: [readyModel])),
+                     "a private-network endpoint is ready without a key")
+        precondition(!ProviderCardState.isReady(Provider(name: "Gateway", authToken: "", baseURL: "https://gateway.example", models: [readyModel])),
+                     "a public endpoint with no key is still incomplete")
+        precondition(ProviderCardState.isReady(Provider(name: "Gateway", authToken: "k", baseURL: "https://gateway.example", models: [readyModel])))
+        precondition(!ProviderCardState.isReady(Provider(name: "Ollama", authToken: "", baseURL: "http://localhost:11434")),
+                     "a keyless loopback provider with no model is incomplete")
+        precondition(!ProviderCardState.isReady(Provider(name: "Ollama", authToken: "", baseURL: "  ", models: [readyModel])))
         let provider = Provider(name: "fixture", authToken: "fixture-key", baseURL: "https://gateway.example")
         let fixture = EnvFixture()
         let defaults = fixture.buildEnv(from: provider, model: legacy)
@@ -75,7 +100,7 @@ enum CodexProxyServer { static let configuredToken = "fixture-proxy-token" }
         precondition(env["CUSTOM_VALUE"] as? Int == 7 && saved["permissions"] != nil)
         precondition(env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == nil)
         precondition(env["CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS"] == nil)
-        print("PASS: CC concurrency defaults, legacy decoding, round trip, editor bounds, production env mapping, switching and official restore")
+        print("PASS: CC concurrency defaults, legacy decoding, round trip, editor bounds, keyless-loopback readiness, production env mapping, switching and official restore")
     }
 }
 '''
