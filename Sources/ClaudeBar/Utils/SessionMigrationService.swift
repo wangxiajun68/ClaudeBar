@@ -13,7 +13,8 @@ actor SessionMigrationService {
 
     func records() throws -> [MigrationRecord] { try MigrationStorage.records(at: Self.locations.records) }
 
-    func preview(_ source: MigrationSource, includeCompletedTools: Bool = false) throws -> MigrationPreview {
+    func preview(_ source: MigrationSource, includeCompletedTools: Bool = false,
+                 includeImages: Bool = false) throws -> MigrationPreview {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         try Task.checkCancellation()
         guard UUID(uuidString: source.sessionID) != nil, !source.cwd.isEmpty,
@@ -37,7 +38,8 @@ actor SessionMigrationService {
             let paths = files.map { $0.appendingPathComponent(source.sessionID + ".jsonl") }
                 .filter { FileManager.default.fileExists(atPath: $0.path) }
             guard paths.count == 1, locations.containsNative(paths[0], client: .claude) else { throw MigrationFailure.missing }
-            return try MigrationHistory.claude(MigrationStorage.readBounded(paths[0]), source: source, includeCompletedTools: includeCompletedTools)
+            return try MigrationHistory.claude(MigrationStorage.readBounded(paths[0], maxBytes: MigrationHistory.maxSourceFileBytes), source: source,
+                                               includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         case .codex:
             let root = locations.codex.appendingPathComponent("sessions")
             guard let enumerator = FileManager.default.enumerator(at: root,
@@ -53,10 +55,13 @@ actor SessionMigrationService {
                 try Task.checkCancellation()
             }
             guard let found else { throw MigrationFailure.missing }
-            return try MigrationHistory.codex(MigrationStorage.readBounded(found), source: source, includeCompletedTools: includeCompletedTools)
+            return try MigrationHistory.codex(MigrationStorage.readBounded(found, maxBytes: MigrationHistory.maxSourceFileBytes), source: source,
+                                              includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         case .cursorDesktop:
             _ = try cursorApplication()
-            return try MigrationCursorHistory.desktop(FilePaths.cursorStateDB, source: source)
+            return try MigrationCursorHistory.desktop(FilePaths.cursorStateDB, source: source,
+                                                      includeCompletedTools: includeCompletedTools,
+                                                      includeImages: includeImages)
         case .cursorCLI:
             let path = try locations.nativeURL(client: .cursorCLI, sessionID: source.sessionID, cwd: source.cwd)
             guard locations.containsNative(path, client: .cursorCLI) else { throw MigrationFailure.invalidHistory }
@@ -65,9 +70,10 @@ actor SessionMigrationService {
     }
 
     func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
-                 officialModel: String, includeCompletedTools: Bool = false, bridgeProviderID: UUID? = nil, bridgeModel: String = "") throws -> MigrationRecord {
+                 officialModel: String, includeCompletedTools: Bool = false, includeImages: Bool = false,
+                 bridgeProviderID: UUID? = nil, bridgeModel: String = "") throws -> MigrationRecord {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
-        let latest = try preview(source, includeCompletedTools: includeCompletedTools)
+        let latest = try preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         guard latest.fingerprint == fingerprint else { throw MigrationFailure.changed }
         let executable = try runtime(target.client)
         let configuration: URL?
@@ -113,7 +119,7 @@ actor SessionMigrationService {
             configurationFingerprint: routeFingerprint ?? configHash, executablePath: executable.path,
             bridgeProviderID: target == .claudeCodexModel ? bridgeProviderID : nil)
         // Version probing can take time; source must still be a complete unchanged snapshot.
-        let checked = try preview(source, includeCompletedTools: includeCompletedTools)
+        let checked = try preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         guard checked.fingerprint == latest.fingerprint else { throw MigrationFailure.changed }
         return try MigrationStorage.prepare(checked, target: target, route: route, locations: Self.locations)
     }

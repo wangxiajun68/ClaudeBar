@@ -136,6 +136,7 @@ class CodexProxyServer: @unchecked Sendable {
     (folder/'State.swift').write_text('import Foundation\n'+local+catalog+state[state.index('actor CodexProxyState'):])
     sources = [ROOT/'Sources/Shared/BuildChannel.swift', ROOT/'Sources/ClaudeBar/Models/SessionMigration.swift',
         ROOT/'Sources/ClaudeBar/Utils/MigrationBridgeConfiguration.swift',
+        ROOT/'Sources/ClaudeBar/Utils/ConversationMedia.swift',
         ROOT/'Sources/ClaudeBar/Utils/AgentProtocolBridge.swift',
         ROOT/'Sources/ClaudeBar/Utils/CodexProxyTransform.swift',folder/'State.swift',folder/'Harness.swift']
     binary = folder/'bridge-server'

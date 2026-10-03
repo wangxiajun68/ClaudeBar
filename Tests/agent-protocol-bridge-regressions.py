@@ -21,6 +21,16 @@ import Foundation
         precondition(input.count == 3 && input[1]["call_id"] as? String == "call_one")
         precondition((input[2]["output"] as! String).contains("permission denied") && (input[2]["output"] as! String).contains("true"))
         precondition(out["parallel_tool_calls"] as? Bool == false)
+        var priced = request
+        priced["temperature"] = 0.2
+        priced["top_p"] = 0.9
+        priced["previous_response_id"] = "resp_previous"
+        mustFail { _ = try AgentProtocolBridge.siwcRequest(priced, model:"gpt") }
+        priced.removeValue(forKey: "previous_response_id")
+        let siwc = try AgentProtocolBridge.siwcRequest(priced, model:"gpt")
+        precondition(siwc["store"] as? Bool == false && siwc["stream"] as? Bool == true)
+        precondition(siwc["max_output_tokens"] == nil && siwc["temperature"] == nil && siwc["top_p"] == nil)
+        precondition(siwc["model"] as? String == "gpt")
         var runtimeSystem = request
         var nativeMessages = request["messages"] as! [[String:Any]]
         nativeMessages.append(["role":"system","content":"runtime system"])
@@ -88,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-agent-bridge-') as folder:
     folder=Path(folder)
     main=folder/'Regression.swift';main.write_text(SWIFT)
     binary=folder/'regression'
-    subprocess.run(['swiftc','-O','-parse-as-library',str(ROOT/'Sources/ClaudeBar/Utils/AgentProtocolBridge.swift'),str(main),'-o',str(binary)],check=True)
+    subprocess.run(['swiftc','-O','-parse-as-library',str(ROOT/'Sources/ClaudeBar/Utils/ConversationMedia.swift'),str(ROOT/'Sources/ClaudeBar/Utils/AgentProtocolBridge.swift'),str(main),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
     # Use a synthetic HTTP upstream. Captures are memory-only and contain no real credentials.
     received=[]

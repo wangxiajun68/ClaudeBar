@@ -46,28 +46,52 @@ extension MigrationSource {
     }
 }
 
-/// Shared affordance for all four page card shapes and prepared target rows.
+/// Shared affordance for session cards and prepared migration cards.
+///
+/// Session cards pass `labeled` so the control stays on the card surface.
+/// Migration cards label this「再次迁移」beside their「打开会话」action.
 struct SessionMigrationButton: View {
     let source: MigrationSource
+    var labeled: Bool = false
+    var actionTitle = "迁移会话"
     @EnvironmentObject private var migrations: SessionMigrationModel
     @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showing = false
 
+    private var available: Bool {
+        BuildChannel.allowsSystemIntegration && !source.isBusy && !source.isSubagent
+    }
+
     var body: some View {
         Button { showing = true } label: {
-            Image(systemName: "arrow.triangle.branch")
-                .font(Theme.Font.caption)
-                .foregroundColor(Theme.textSecondary)
-                .frame(width: 24, height: 24)
+            if labeled {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(Theme.Font.micro)
+                    Text(actionTitle)
+                        .font(Theme.Font.caption)
+                }
+                .foregroundColor(available ? Theme.Ink.claude : Theme.textTertiary())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill((available ? Theme.claude : Theme.statusIdle).opacity(0.12)))
+            } else {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 24, height: 24)
+            }
         }
         .buttonStyle(.plain)
-        .disabled(!BuildChannel.allowsSystemIntegration || source.isBusy || source.isSubagent)
+        .disabled(!available)
         .help(!BuildChannel.allowsSystemIntegration ? "会话迁移在正式版启用"
-              : source.isBusy ? "等待当前回合结束后迁移" : "继续于其他客户端")
-        .accessibilityLabel("继续于其他客户端")
+              : source.isBusy ? "等待当前回合结束后迁移"
+              : source.isSubagent ? "请从父会话迁移" : "将会话历史迁移到所选客户端的新会话")
+        .accessibilityLabel(actionTitle)
         .sheet(isPresented: $showing) {
             SessionMigrationDialog(source: source)
                 .environmentObject(migrations)
+                .environmentObject(codexStore)
         }
     }
 }
@@ -85,6 +109,7 @@ private struct SessionMigrationDialog: View {
     @State private var error: String?
     @State private var preparing = false
     @State private var includeCompletedTools = false
+    @State private var includeImages = false
     @State private var work: Task<Void, Never>?
 
     private var targets: [MigrationTarget] {
@@ -93,12 +118,12 @@ private struct SessionMigrationDialog: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s16) {
-            Text("继续于…").font(Theme.Font.rowTitle).foregroundColor(Theme.textPrimary)
+            Text("迁移会话").font(Theme.Font.rowTitle).foregroundColor(Theme.textPrimary)
             Text(source.title.isEmpty ? source.client.label : source.title)
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary).lineLimit(2)
             Text(source.cwd).font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
                 .lineLimit(2).truncationMode(.middle)
-            Picker("目标", selection: $target) {
+            Picker("迁移到", selection: $target) {
                 ForEach(targets) { Text($0.label).tag($0) }
             }
             .disabled(preparing)
@@ -122,13 +147,21 @@ private struct SessionMigrationDialog: View {
                 TextField("官方模型名称", text: $officialModel)
                     .textFieldStyle(.roundedBorder).disabled(preparing)
             }
-            Text("正文历史转入新会话，在原项目目录继续，使用目标客户端的账号与权限。")
+            Text("将会话历史复制到目标客户端的新会话，保留原会话。新会话沿用原项目目录，使用目标客户端的账号与权限。")
                 .font(Theme.Font.bodySmall).foregroundColor(Theme.textSecondary)
-            if source.client == .claude || source.client == .codex {
+            if source.client == .claude || source.client == .codex || source.client == .cursorDesktop {
                 Toggle("包含已完成工具的输入与结果", isOn: $includeCompletedTools)
                     .font(Theme.Font.bodySmall).disabled(preparing)
                 if includeCompletedTools {
                     Text("工具记录会随历史发送给目标模型；原工具不会重新执行。")
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                }
+                Toggle("包含用户图片", isOn: $includeImages)
+                    .font(Theme.Font.bodySmall).disabled(preparing)
+                if includeImages {
+                    Text(target.client == .cursorCLI
+                         ? "Cursor CLI 还不能写入图片。请改选 Claude Code、Codex 或 Cursor 桌面，或关闭此选项。"
+                         : "图片写入目标会话的对应图片字段，并会发送给目标模型。文档、音频和 Cursor 的 attachedFiles 仍不迁移。工具结果里的图片只在同时包含已完成工具时携带。")
                         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                 }
             }
@@ -147,6 +180,10 @@ private struct SessionMigrationDialog: View {
                     Text("包含 \(preview.completedToolCount) 项已完成工具记录")
                         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                 }
+                if preview.imageCount > 0 {
+                    Text("包含 \(preview.imageCount) 张图片")
+                        .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+                }
                 ForEach(preview.omissions, id: \.self) {
                     Text($0).font(Theme.Font.caption).foregroundColor(Theme.Ink.warning)
                 }
@@ -157,14 +194,16 @@ private struct SessionMigrationDialog: View {
                 Text(error).font(Theme.Font.bodySmall).foregroundColor(Theme.Ink.error)
             }
             HStack {
-                Button("取消") { work?.cancel(); dismiss() }
+                ActionButton("取消") { work?.cancel(); dismiss() }
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 if error != nil && preview == nil {
-                    Button("重试") { load() }
+                    ActionButton("重新读取") { load() }
                 }
-                Button(preparing ? "正在准备…" : "创建并打开") { prepare() }
-                    .buttonStyle(.borderedProminent)
+                ActionButton(preparing ? "正在迁移…" : "迁移并打开", tone: .accent, emphasis: .primary) { prepare() }
+                    .keyboardShortcut(.defaultAction)
                     .disabled(preview == nil || preparing || source.isBusy
+                              || (target.client == .cursorCLI && includeImages)
                               || (target == .codexOfficial && officialModel.trimmingCharacters(in: .whitespaces).isEmpty)
                               || (target == .claudeCodexModel && (bridgeProviderID == nil || bridgeModel.isEmpty)))
             }
@@ -178,6 +217,7 @@ private struct SessionMigrationDialog: View {
         }
         .onDisappear { work?.cancel() }
         .onChange(of: includeCompletedTools) { load() }
+        .onChange(of: includeImages) { load() }
         .onChange(of: bridgeProviderID) { bridgeModel = "" }
     }
 
@@ -186,7 +226,7 @@ private struct SessionMigrationDialog: View {
         error = nil; preview = nil
         work = Task {
             do {
-                let result = try await SessionMigrationService.shared.preview(source, includeCompletedTools: includeCompletedTools)
+                let result = try await SessionMigrationService.shared.preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
                 try Task.checkCancellation()
                 preview = result
             } catch is CancellationError {} catch { self.error = error.localizedDescription }
@@ -201,6 +241,7 @@ private struct SessionMigrationDialog: View {
             do {
                 let record = try await SessionMigrationService.shared.prepare(source: source, target: target,
                     fingerprint: preview.fingerprint, officialModel: officialModel, includeCompletedTools: includeCompletedTools,
+                    includeImages: includeImages,
                     bridgeProviderID: bridgeProviderID, bridgeModel: bridgeModel)
                 try Task.checkCancellation()
                 await migrations.refresh()
@@ -213,40 +254,104 @@ private struct SessionMigrationDialog: View {
 
 struct SessionMigrationHistoryView: View {
     @EnvironmentObject private var migrations: SessionMigrationModel
-    @EnvironmentObject private var codexStore: CodexProviderStore
 
     var body: some View {
         if !migrations.records.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Space.s8) {
-                Text("迁移记录").font(Theme.Font.rowTitle).foregroundColor(Theme.textPrimary)
-                ForEach(migrations.records.prefix(12)) { record in
-                    HStack(spacing: Theme.Space.s12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(record.source.client.label + " → " + record.target.label)
-                                .font(Theme.Font.bodySmall).foregroundColor(Theme.textPrimary)
-                            Text(record.source.title + " · " + record.model + " · 已准备")
-                                .font(Theme.Font.caption).foregroundColor(Theme.textSecondary).lineLimit(1)
-                            Text(record.source.cwd).font(Theme.Font.captionMono)
-                                .foregroundColor(Theme.textTertiary()).lineLimit(1).truncationMode(.middle)
-                            if record.target == .cursorDesktop {
-                                Text("直接打开聊天；历史名称：" + record.desktopTitle)
-                                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
-                            }
-                        }
-                        Spacer(minLength: 4)
-                        SessionMigrationButton(source: record.targetSource)
-                        Button("继续") {
-                            Task {
-                                do { try await migrations.open(record, codexStore: codexStore) }
-                                catch { migrations.error = error.localizedDescription }
-                            }
-                        }
-                            .disabled(migrations.opening != nil || !BuildChannel.allowsSystemIntegration)
+            VStack(alignment: .leading, spacing: Theme.Space.s12) {
+                SectionHeader(icon: "arrow.triangle.branch", title: "迁移会话",
+                              tint: Theme.claude, ink: Theme.Ink.claude,
+                              count: migrations.records.count)
+                TileGrid(.pageSession) {
+                    ForEach(migrations.records.prefix(12)) { record in
+                        SessionMigrationHistoryCard(record: record)
                     }
-                    .padding(Theme.Space.s12)
-                    .tile(tint: Theme.claude)
                 }
             }
         }
+    }
+}
+
+private struct SessionMigrationHistoryCard: View {
+    let record: MigrationRecord
+    @EnvironmentObject private var migrations: SessionMigrationModel
+    @EnvironmentObject private var codexStore: CodexProviderStore
+    @State private var isHovered = false
+
+    private var tint: Color {
+        switch record.target.client {
+        case .claude: return Theme.claude
+        case .codex: return Theme.external
+        case .cursorCLI, .cursorDesktop: return Theme.cursor
+        }
+    }
+
+    private func clientMark(_ client: MigrationClient) -> ProductBrandMark.Brand {
+        switch client {
+        case .claude: return .claude
+        case .codex: return .codex
+        case .cursorCLI, .cursorDesktop: return .cursor
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+            Text(record.source.title.isEmpty ? record.source.client.label : record.source.title)
+                .font(Theme.Font.rowTitle).foregroundColor(Theme.textPrimary)
+                .lineLimit(1).help(record.source.title)
+            HStack(spacing: Theme.Space.s6) {
+                GlyphWell(name: "", size: 20, mark: clientMark(record.source.client))
+                Text(record.source.client.label)
+                Image(systemName: "arrow.right")
+                    .font(Theme.Font.micro).foregroundColor(Theme.textTertiary())
+                    .accessibilityHidden(true)
+                GlyphWell(name: "", size: 20, mark: clientMark(record.target.client))
+                Text(record.target.client.label)
+            }
+            .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+            .lineLimit(1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(record.source.client.label + "迁移到" + record.target.label)
+            .help(record.source.client.label + " → " + record.target.label)
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                Label(record.model, systemImage: "cpu")
+                    .font(Theme.Font.captionMono).foregroundColor(Theme.textSecondary)
+                    .lineLimit(1).help(record.model)
+                Label(record.source.cwd, systemImage: "folder")
+                    .font(Theme.Font.captionMono).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1).truncationMode(.middle).help(record.source.cwd)
+                HStack(spacing: Theme.Space.s12) {
+                    Label("\(record.messageCount) 条消息", systemImage: "text.bubble")
+                    Spacer(minLength: 0)
+                    Label {
+                        Text(record.createdAt, style: .relative)
+                    } icon: {
+                        Image(systemName: "clock")
+                    }
+                }
+                .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                .lineLimit(1)
+            }
+            HStack(spacing: Theme.Space.s8) {
+                Text(record.target.label.components(separatedBy: " · ").last ?? record.target.label)
+                    .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                SessionMigrationButton(source: record.targetSource, labeled: true, actionTitle: "再次迁移")
+                ActionButton(migrations.opening == record.id ? "正在打开…" : "打开会话") {
+                    Task {
+                        do { try await migrations.open(record, codexStore: codexStore) }
+                        catch { migrations.error = error.localizedDescription }
+                    }
+                }
+                .disabled(migrations.opening != nil || !BuildChannel.allowsSystemIntegration)
+                .help(record.target == .cursorDesktop
+                      ? "打开迁移聊天；历史名称：" + record.desktopTitle
+                      : "打开迁移后的会话")
+            }
+        }
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile(tint: tint, hovered: isHovered)
+        .hoverState($isHovered)
     }
 }

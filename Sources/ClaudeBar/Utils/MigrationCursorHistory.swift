@@ -87,14 +87,16 @@ enum MigrationCursorHistory {
         return object
     }
 
-    static func desktop(_ path: URL, source: MigrationSource) throws -> MigrationPreview {
+    static func desktop(_ path: URL, source: MigrationSource, includeCompletedTools: Bool = false,
+                        includeImages: Bool = false) throws -> MigrationPreview {
         let db = try readOnly(path)
         defer { sqlite3_close(db) }
         let data = try value(db, sql: "SELECT value FROM cursorDiskKV WHERE key = ?", key: "composerData:" + source.sessionID)
         let header = try object(value(db, sql: "SELECT value FROM composerHeaders WHERE composerId = ?", key: source.sessionID))
         guard let workspace = header["workspaceIdentifier"] as? [String: Any],
               let uri = workspace["uri"] as? [String: Any], let cwd = uri["fsPath"] as? String,
-              try MigrationPath.canonical(cwd) == MigrationPath.canonical(source.cwd) else {
+              try MigrationPath.canonical(cwd) == MigrationPath.canonical(source.cwd),
+              let workspaceID = workspace["id"] as? String else {
             throw MigrationFailure.invalidHistory
         }
         let composer = try object(data)
@@ -106,6 +108,7 @@ enum MigrationCursorHistory {
               headers.count <= MigrationHistory.maxMessages else { throw MigrationFailure.invalidHistory }
         var messages: [MigrationMessage] = [], snapshot = data, seen: Set<String> = []
         var omissions = ["Cursor 的文件上下文和非正文工具细节不迁移。"]
+        var completedTools = 0
         for header in headers {
             guard let id = header["bubbleId"] as? String, UUID(uuidString: id) != nil,
                   seen.insert(id).inserted else { throw MigrationFailure.invalidHistory }
@@ -118,24 +121,37 @@ enum MigrationCursorHistory {
             guard type == 1 || type == 2 else {
                 omissions.append("Cursor 的非正文记录未迁移。"); continue
             }
-            for key in ["attachedFiles", "images"] {
-                if let attachments = bubble[key] as? [Any], !attachments.isEmpty {
-                    throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。")
-                }
+            if let attachments = bubble["attachedFiles"] as? [Any], !attachments.isEmpty {
+                throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。")
             }
             if let context = bubble["context"] as? [String: Any] {
-                for key in ["selectedImages", "selectedDocuments", "selectedVideos"] {
+                for key in ["selectedDocuments", "selectedVideos"] {
                     if let attachments = context[key] as? [Any], !attachments.isEmpty {
                         throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。")
                     }
                 }
             }
+            let images = try bubbleImages(bubble, database: path, workspaceID: workspaceID, includeImages: includeImages)
             if let text = bubble["text"] as? String, !text.isEmpty {
-                messages.append(.init(role: type == 1 ? .user : .assistant, text: text))
+                messages.append(.init(role: type == 1 ? .user : .assistant, text: text, images: type == 1 ? images : []))
+                if type != 1, !images.isEmpty {
+                    throw MigrationFailure.unsupported("助手消息里的图片暂不迁移。")
+                }
+            } else if !images.isEmpty {
+                guard type == 1 else { throw MigrationFailure.unsupported("助手消息里的图片暂不迁移。") }
+                messages.append(.init(role: .user, text: "", images: images))
             }
-            if bubble["toolFormerData"] != nil { omissions.append("历史工具调用未重放；请在来源查看完整工具结果。") }
+            if let tool = try cursorTool(bubble["toolFormerData"], includeCompletedTools: includeCompletedTools, omissions: &omissions) {
+                messages.append(tool)
+                completedTools += 1
+            }
         }
-        return try MigrationHistory.preview(source: source, messages: messages, snapshot: snapshot, omissions: omissions)
+        if completedTools > 0 { omissions.append("已完成工具的输入与结果作为历史资料携带，不会重新执行。") }
+        if messages.contains(where: { $0.carriedImageCount > 0 }) {
+            omissions.append("已携带用户图片，写入目标会话的对应图片字段。")
+        }
+        return try MigrationHistory.preview(source: source, messages: messages, snapshot: snapshot,
+                                            omissions: omissions, completedToolCount: completedTools)
     }
 
     static func cli(_ path: URL, source: MigrationSource) throws -> MigrationPreview {
@@ -200,6 +216,153 @@ enum MigrationCursorHistory {
         return try MigrationHistory.preview(source: source, messages: messages, snapshot: snapshot, omissions: omissions)
     }
 
+    /// Production state lives in `User/globalStorage`. Tests keep images beside the database.
+    static func imageDirectory(database: URL, workspaceID: String) -> URL {
+        let parent = database.deletingLastPathComponent()
+        let user = parent.lastPathComponent == "globalStorage" ? parent.deletingLastPathComponent() : parent
+        return user.appendingPathComponent("workspaceStorage").appendingPathComponent(workspaceID)
+            .appendingPathComponent("images")
+    }
+
+    static func storedImage(database: URL, workspaceID: String, image: MigrationImage, loadedAt: Int64) throws
+        -> (bubble: [String: Any], selected: [String: Any]) {
+        guard image.dataURL.hasPrefix("data:") else {
+            throw MigrationFailure.unsupported("Cursor 只接受已验证的本地图片，暂不写入图片地址。")
+        }
+        let source = try MigrationHistory.imageSource(image)
+        guard source["type"] as? String == "base64", let encoded = source["data"] as? String,
+              let bytes = Data(base64Encoded: encoded), !bytes.isEmpty else {
+            throw MigrationFailure.unsupported("这张图片的格式尚未验证，暂不迁移。")
+        }
+        let size = try pixelSize(bytes, mediaType: image.mediaType)
+        let ext: String
+        switch image.mediaType {
+        case "image/png": ext = "png"
+        case "image/jpeg": ext = "jpg"
+        case "image/webp": ext = "webp"
+        case "image/gif": ext = "gif"
+        default: throw MigrationFailure.unsupported("这张图片的格式尚未验证，暂不迁移。")
+        }
+        let directory = imageDirectory(database: database, workspaceID: workspaceID)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let uuid = UUID().uuidString.lowercased()
+        let file = directory.appendingPathComponent(uuid + "." + ext)
+        try PrivateFileWriter.write(bytes, to: file)
+        let dimension: [String: Any] = ["width": size.0, "height": size.1]
+        return (["uuid": uuid, "dimension": dimension],
+                ["uuid": uuid, "path": file.path, "dimension": dimension, "loadedAt": NSNumber(value: loadedAt)])
+    }
+
+    private static func bubbleImages(_ bubble: [String: Any], database: URL, workspaceID: String,
+                                     includeImages: Bool) throws -> [MigrationImage] {
+        let listed = bubble["images"] as? [[String: Any]] ?? []
+        let selected = (bubble["context"] as? [String: Any])?["selectedImages"] as? [[String: Any]] ?? []
+        guard !listed.isEmpty || !selected.isEmpty else { return [] }
+        guard includeImages else { throw MigrationFailure.unsupported("这段 Cursor 会话包含附件，暂不迁移。") }
+        let sources = selected.isEmpty ? listed : selected
+        guard sources.count <= 32, listed.isEmpty || selected.isEmpty || listed.count == selected.count else {
+            throw MigrationFailure.unsupported("这张 Cursor 图片的格式尚未验证，暂不迁移。")
+        }
+        let root = try MigrationPath.canonical(imageDirectory(database: database, workspaceID: workspaceID).path)
+        var images: [MigrationImage] = []
+        for item in sources {
+            guard let path = item["path"] as? String else {
+                throw MigrationFailure.unsupported("这张 Cursor 图片的格式尚未验证，暂不迁移。")
+            }
+            let file = try MigrationPath.canonical(path)
+            guard file == root || file.hasPrefix(root + "/") else {
+                throw MigrationFailure.unsupported("这张 Cursor 图片不在已验证的图片目录里，暂不迁移。")
+            }
+            let ext = URL(fileURLWithPath: file).pathExtension.lowercased()
+            let media: String
+            switch ext {
+            case "png": media = "image/png"
+            case "jpg", "jpeg": media = "image/jpeg"
+            case "webp": media = "image/webp"
+            case "gif": media = "image/gif"
+            default: throw MigrationFailure.unsupported("这张 Cursor 图片的格式尚未验证，暂不迁移。")
+            }
+            let bytes = try Data(contentsOf: URL(fileURLWithPath: file))
+            guard bytes.count <= ConversationMedia.maxBytes, !bytes.isEmpty else { throw MigrationFailure.tooLarge }
+            images.append(try MigrationHistory.parseImageBlock([
+                "image_url": "data:" + media + ";base64," + bytes.base64EncodedString()
+            ]))
+        }
+        return images
+    }
+
+    private static func cursorTool(_ raw: Any?, includeCompletedTools: Bool,
+                                   omissions: inout [String]) throws -> MigrationMessage? {
+        guard let data = raw as? [String: Any] else { return nil }
+        guard includeCompletedTools else {
+            omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
+            return nil
+        }
+        let status = data["status"] as? String ?? ""
+        if status == "loading" { throw MigrationFailure.busy }
+        guard ["completed", "error"].contains(status), let name = data["name"] as? String,
+              let code = data["tool"] as? Int, (0..<256).contains(code) else {
+            omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
+            return nil
+        }
+        guard let result = data["result"] as? String ?? data["error"] as? String else {
+            omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
+            return nil
+        }
+        let rawArgs = data["rawArgs"] as? String ?? ""
+        let input: Any
+        if (rawArgs.hasPrefix("{") || rawArgs.hasPrefix("[")),
+           let parsed = try? JSONSerialization.jsonObject(with: Data(rawArgs.utf8)) {
+            input = parsed
+        } else {
+            input = rawArgs
+        }
+        return try MigrationHistory.toolContext(name: name, input: input, output: result, kind: "cursor",
+                                                cursorTool: code, cursorStatus: status)
+    }
+
+    private static func pixelSize(_ data: Data, mediaType: String) throws -> (Int, Int) {
+        let bytes = [UInt8](data)
+        func pair(_ width: Int, _ height: Int) throws -> (Int, Int) {
+            guard width > 0, height > 0, width <= 16_384, height <= 16_384 else {
+                throw MigrationFailure.unsupported("这张图片的格式尚未验证，暂不迁移。")
+            }
+            return (width, height)
+        }
+        switch mediaType {
+        case "image/png":
+            guard bytes.count >= 24, bytes[0] == 0x89, bytes[1] == 0x50 else { break }
+            let width = Int(bytes[16]) << 24 | Int(bytes[17]) << 16 | Int(bytes[18]) << 8 | Int(bytes[19])
+            let height = Int(bytes[20]) << 24 | Int(bytes[21]) << 16 | Int(bytes[22]) << 8 | Int(bytes[23])
+            return try pair(width, height)
+        case "image/gif":
+            guard bytes.count >= 10, bytes[0] == 0x47, bytes[1] == 0x49 else { break }
+            return try pair(Int(bytes[6]) | Int(bytes[7]) << 8, Int(bytes[8]) | Int(bytes[9]) << 8)
+        case "image/jpeg":
+            guard bytes.count > 4, bytes[0] == 0xFF, bytes[1] == 0xD8 else { break }
+            var index = 2
+            while index + 8 < bytes.count, bytes[index] == 0xFF {
+                let marker = bytes[index + 1]
+                if marker == 0xC0 || marker == 0xC1 || marker == 0xC2 {
+                    let height = Int(bytes[index + 5]) << 8 | Int(bytes[index + 6])
+                    let width = Int(bytes[index + 7]) << 8 | Int(bytes[index + 8])
+                    return try pair(width, height)
+                }
+                let length = Int(bytes[index + 2]) << 8 | Int(bytes[index + 3])
+                guard length >= 2 else { break }
+                index += 2 + length
+            }
+        case "image/webp":
+            guard bytes.count >= 30, bytes[0] == 0x52, bytes[8] == 0x57, bytes[12] == 0x56,
+                  bytes[15] == 0x58 else { break }
+            let width = Int(bytes[24]) | Int(bytes[25]) << 8 | Int(bytes[26]) << 16
+            let height = Int(bytes[27]) | Int(bytes[28]) << 8 | Int(bytes[29]) << 16
+            return try pair(width + 1, height + 1)
+        default: break
+        }
+        throw MigrationFailure.unsupported("这张图片的格式尚未验证，暂不迁移。")
+    }
+
     static func decodeHex(_ hex: String) -> Data? {
         let bytes = Array(hex.utf8)
         guard bytes.count % 2 == 0 else { return nil }
@@ -248,6 +411,9 @@ enum MigrationCursorHistory {
     }
 
     static func writeCLI(_ messages: [MigrationMessage], sessionID: String, cwd: String, to path: URL) throws {
+        guard messages.allSatisfy({ $0.carriedImageCount == 0 }) else {
+            throw MigrationFailure.unsupported("Cursor 尚不能写入图片。请改迁到 Claude Code 或 Codex，或取消包含图片。")
+        }
         guard !FileManager.default.fileExists(atPath: path.path) else { throw MigrationFailure.storage }
         let encoded = try payload(messages, cwd: cwd, mode: 2) // Ask mode.
         var db: OpaquePointer?

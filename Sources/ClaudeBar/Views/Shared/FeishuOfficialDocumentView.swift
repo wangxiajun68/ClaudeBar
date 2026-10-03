@@ -23,7 +23,7 @@ struct FeishuOfficialDocumentView: View {
                 FeishuComponentWebView(documentURL: url, dark: colorScheme == .dark,
                                        onMounted: { mounted = true; failure = false },
                                        onFailure: { failure = true })
-                    .id(document.id + url.absoluteString + retry.uuidString + (colorScheme == .dark ? "dark" : "light"))
+                    .id(document.id + retry.uuidString + (colorScheme == .dark ? "dark" : "light"))
                 if failure {
                     VStack(spacing: 12) {
                         Text("飞书文档暂时无法加载").font(Theme.Font.section)

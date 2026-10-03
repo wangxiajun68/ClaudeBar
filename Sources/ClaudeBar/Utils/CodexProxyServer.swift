@@ -775,7 +775,7 @@ final class CodexProxyServer: @unchecked Sendable {
               let route = MigrationBridgeConfiguration.route(path), request.method == "POST",
               let endpoint = await state.migrationEndpoint(for: route.id) else {
             await respond(connection, status: "404 Not Found", contentType: "application/json",
-                body: Data(#"{"error":{"type":"not_found_error","message":"迁移连接不可用，请从 ClaudeBar 迁移记录重新打开会话。"}}"#.utf8))
+                body: Data(#"{"error":{"type":"not_found_error","message":"迁移连接不可用，请从 ClaudeBar 的迁移会话区域重新打开会话。"}}"#.utf8))
             connection.cancel(); return
         }
         var headWritten = false

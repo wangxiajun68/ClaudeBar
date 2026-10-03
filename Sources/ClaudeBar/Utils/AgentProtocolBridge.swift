@@ -19,16 +19,8 @@ enum AgentProtocolBridge {
     }
 
     static func image(_ block: [String: Any]) throws -> String {
-        guard let source = block["source"] as? [String: Any] else { throw Failure.malformed }
-        if source["type"] as? String == "base64", let mime = source["media_type"] as? String,
-           ["image/png", "image/jpeg", "image/webp", "image/gif"].contains(mime),
-           let encoded = source["data"] as? String, encoded.utf8.count < maxBytes,
-           let bytes = Data(base64Encoded: encoded), !bytes.isEmpty {
-            return "data:" + mime + ";base64," + encoded
-        }
-        if source["type"] as? String == "url", let raw = source["url"] as? String,
-           let url = URL(string: raw), ["https", "http"].contains(url.scheme) { return raw }
-        throw Failure.unsupported
+        do { return try ConversationMedia.imageURL(block).url }
+        catch { throw Failure.unsupported }
     }
 
     static func request(_ body: [String: Any], model: String) throws -> [String: Any] {
@@ -115,6 +107,19 @@ enum AgentProtocolBridge {
         }
         for key in ["temperature", "top_p"] { if let value = body[key] as? NSNumber { out[key] = value } }
         _ = try string(out)
+        return out
+    }
+
+    /// Public Responses constraints for a ChatGPT-plan token. Callers pass that
+    /// token themselves; this does not read Codex `auth.json`.
+    static func siwcRequest(_ body: [String: Any], model: String) throws -> [String: Any] {
+        guard body["previous_response_id"] == nil else { throw Failure.unsupported }
+        var out = try request(body, model: model)
+        out.removeValue(forKey: "max_output_tokens")
+        out.removeValue(forKey: "temperature")
+        out.removeValue(forKey: "top_p")
+        out["store"] = false
+        out["stream"] = true
         return out
     }
 

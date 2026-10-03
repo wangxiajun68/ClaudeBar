@@ -8,7 +8,7 @@ sources = [
     root / 'Sources/Shared/BuildChannel.swift',
     root / 'Sources/ClaudeBar/Models/SessionMigration.swift',
     *[root / ('Sources/ClaudeBar/Utils/' + name + '.swift') for name in
-      ['MigrationHistory', 'MigrationCursorHistory', 'MigrationCursorDesktop', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote', 'MigrationBridgeConfiguration']]
+      ['MigrationHistory', 'ConversationMedia', 'MigrationCursorHistory', 'MigrationCursorDesktop', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote', 'MigrationBridgeConfiguration']]
 ]
 with tempfile.TemporaryDirectory(prefix='claudebar-migration-') as folder:
     work = Path(folder)
@@ -163,6 +163,39 @@ import SQLite3
         rows = try MigrationHistory.rows(ccData)
         rows[0]["message"] = ["role":"user", "content":[["type":"image","source":["data":"NOT_AN_IMAGE"]]]]
         mustFail { _ = try MigrationHistory.claude(data(rows), source: ccSource) }
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        var imageRows = try MigrationHistory.rows(ccData)
+        imageRows[0]["message"] = ["role":"user","content":[
+            ["type":"text","text":facts],
+            ["type":"image","source":["type":"base64","media_type":"image/png","data":png]]]]
+        mustFail { _ = try MigrationHistory.claude(data(imageRows), source: ccSource) }
+        let imagePreview = try MigrationHistory.claude(data(imageRows), source: ccSource, includeImages: true)
+        precondition(imagePreview.imageCount == 1 && imagePreview.messages[0].text == facts)
+        precondition(imagePreview.messages[0].images[0].mediaType == "image/png")
+        precondition(imagePreview.messages[0].images[0].dataURL == "data:image/png;base64," + png)
+        precondition(imagePreview.fingerprint != cc.fingerprint)
+        precondition(imagePreview.omissions.contains("已携带用户图片，写入目标会话的对应图片字段。"))
+        let imageRewritten = try MigrationHistory.claudeData(imagePreview.messages, sessionID: sourceID, cwd: cwd)
+        let imageRound = try MigrationHistory.claude(imageRewritten, source: ccSource, includeImages: true)
+        precondition(imageRound.messages.map(\.text) == imagePreview.messages.map(\.text))
+        precondition(imageRound.messages[0].images == imagePreview.messages[0].images)
+        let codexImage = try MigrationHistory.codexData(imagePreview.messages, sessionID: sourceID, cwd: cwd, providerKey: "fixture")
+        precondition(String(decoding: codexImage, as: UTF8.self).contains("\"input_image\""))
+        let codexRound = try MigrationHistory.codex(codexImage, source: cxSource, includeImages: true)
+        precondition(codexRound.messages[0].images == imagePreview.messages[0].images)
+        var badImage = imageRows
+        badImage[0]["message"] = ["role":"user","content":[["type":"text","text":facts],
+            ["type":"image","source":["type":"base64","media_type":"image/svg+xml","data":png]]]]
+        mustFail { _ = try MigrationHistory.claude(data(badImage), source: ccSource, includeImages: true) }
+        var audioRows = imageRows
+        audioRows[0]["message"] = ["role":"user","content":[["type":"text","text":facts],["type":"audio","source":[:]]]]
+        mustFail { _ = try MigrationHistory.claude(data(audioRows), source: ccSource, includeImages: true) }
+        var assistantImage = imageRows
+        var assistantMessage = assistantImage[2]["message"] as! [String: Any]
+        assistantMessage["content"] = [["type":"text","text":"ACK"],
+            ["type":"image","source":["type":"base64","media_type":"image/png","data":png]]]
+        assistantImage[2]["message"] = assistantMessage
+        mustFail { _ = try MigrationHistory.claude(data(assistantImage), source: ccSource, includeImages: true) }
         rows = try MigrationHistory.rows(ccData)
         rows.append(["type":"system", "subtype":"compact_boundary"])
         mustFail { _ = try MigrationHistory.claude(data(rows), source: ccSource) }
@@ -175,11 +208,65 @@ import SQLite3
         rows = try MigrationHistory.rows(ccData)
         rows[2]["message"] = ["role":"assistant","content":[["type":"tool_use","id":"pending","name":"Bash"]]]
         mustFail { _ = try MigrationHistory.claude(data(rows), source: ccSource) }
-        let huge = [MigrationMessage(role:.user,text:String(repeating:"x",count:400_001)), .init(role:.assistant,text:"ACK")]
-        mustFail { _ = try MigrationHistory.preview(source:ccSource,messages:huge,snapshot:Data()) }
+        let atLimit = [MigrationMessage(role:.user,text:String(repeating:"x",count:MigrationHistory.maxTextBytes-3)),
+                       .init(role:.assistant,text:"ACK")]
+        _ = try MigrationHistory.preview(source:ccSource,messages:atLimit,snapshot:Data())
+        let huge = [MigrationMessage(role:.user,text:String(repeating:"x",count:MigrationHistory.maxTextBytes-2)),
+                    .init(role:.assistant,text:"ACK")]
+        do {
+            _ = try MigrationHistory.preview(source:ccSource,messages:huge,snapshot:Data())
+            preconditionFailure("text budget must remain enforced")
+        } catch MigrationFailure.sizeLimit(let reason) { precondition(reason.contains("400,000")) }
+
+        // Large source logs can mostly be omitted telemetry. The old 16 MiB
+        // read budget rejected these even when the imported body was tiny.
+        var telemetryRows = try MigrationHistory.rows(cxData)
+        telemetryRows[telemetryRows.count-1]["padding"] = String(repeating:"x",count:17*1024*1024)
+        let largeSource = try data(telemetryRows)
+        let sourceURL = fixtureRoot.appendingPathComponent("large-source.jsonl")
+        try largeSource.write(to:sourceURL)
+        mustFail { _ = try MigrationStorage.readBounded(sourceURL) }
+        let loadedSource = try MigrationStorage.readBounded(sourceURL,maxBytes:MigrationHistory.maxSourceFileBytes)
+        let largePreview = try MigrationHistory.codex(loadedSource,source:cxSource)
+        precondition(largePreview.messages == cx.messages && largePreview.fingerprint != cx.fingerprint)
+        let largeImport = try MigrationHistory.claudeData(largePreview.messages,sessionID:sourceID,cwd:cwd)
+        precondition(largeImport.count < MigrationHistory.maxFileBytes)
+        // A sparse file exercises the upper read boundary without a giant fixture.
+        let oversizedURL = fixtureRoot.appendingPathComponent("oversized-source.jsonl")
+        FileManager.default.createFile(atPath:oversizedURL.path,contents:nil)
+        let oversizedHandle = try FileHandle(forWritingTo:oversizedURL)
+        try oversizedHandle.truncate(atOffset:UInt64(MigrationHistory.maxSourceFileBytes+1))
+        try oversizedHandle.close()
+        do {
+            _ = try MigrationStorage.readBounded(oversizedURL,maxBytes:MigrationHistory.maxSourceFileBytes)
+            preconditionFailure("source budget must remain enforced")
+        } catch MigrationFailure.sizeLimit(let reason) { precondition(reason.contains("64 MiB")) }
         for invalid in [Data([0x0a,0xff]), Data(repeating:0xff,count:12), Data([0x00])] {
             mustFail { _ = try MigrationCursorHistory.fields(invalid) }
         }
+
+        // Compaction markers do not remove canonical messages from a
+        // contiguous paginated rollout. Never duplicate the replacement body.
+        var compactedRows = try MigrationHistory.rows(cxData)
+        compactedRows.insert(["type":"compacted", "payload":["message":"PRIVATE_COMPACTION",
+            "replacement_history":[["type":"message","role":"user","content":[["type":"input_text","text":"WRONG_REPLACEMENT"]]]]]],at:6)
+        compactedRows.insert(["type":"event_msg","payload":["type":"context_compacted"]],at:7)
+        for index in compactedRows.indices { compactedRows[index]["ordinal"] = index }
+        let compactedPreview = try MigrationHistory.codex(data(compactedRows),source:cxSource)
+        precondition(compactedPreview.messages == cx.messages && compactedPreview.omissions.contains(where:{ $0.contains("压缩") }))
+        precondition(!compactedPreview.messages.description.contains("PRIVATE_COMPACTION")
+                     && !compactedPreview.messages.description.contains("WRONG_REPLACEMENT"))
+        var missingPage = compactedRows; missingPage.remove(at:4)
+        mustFail { _ = try MigrationHistory.codex(data(missingPage),source:cxSource) }
+        var externalPage = compactedRows
+        externalPage.insert(["type":"history_reference","payload":["page":"missing"]],at:5)
+        for index in externalPage.indices { externalPage[index]["ordinal"] = index }
+        mustFail { _ = try MigrationHistory.codex(data(externalPage),source:cxSource) }
+        var legacyCompacted = compactedRows
+        legacyCompacted[0]["payload"] = ["id":sourceID,"cwd":cwd,"history_mode":"legacy"]
+        mustFail { _ = try MigrationHistory.codex(data(legacyCompacted),source:cxSource) }
+        var unknownCompaction = compactedRows; unknownCompaction[6]["payload"] = ["message":"PRIVATE_COMPACTION"]
+        mustFail { _ = try MigrationHistory.codex(data(unknownCompaction),source:cxSource) }
 
         var toolRows = try MigrationHistory.rows(ccData)
         toolRows.append(["type":"assistant","uuid":"call-row","parentUuid":"a","sessionId":sourceID,
@@ -236,6 +323,56 @@ import SQLite3
         precondition(cxTools.completedToolCount == 1 && cxTools.messages.count == 4)
         precondition(cxTools.messages.map(\.text).joined().contains("TOOL_FACT-only-in-result"))
         precondition(!cxTools.messages.map(\.text).joined().contains("foreign-call"))
+        let bashTool = withTools.messages.compactMap(\.tool).first
+        precondition(bashTool?.name == "Bash" && bashTool?.inputJSON == "{\"command\":\"fixture\"}", "bash input")
+        precondition(bashTool?.outputJSON.contains("TOOL_FACT-only-in-result") == true)
+        precondition(bashTool?.outputJSON.contains("\"is_error\":true") == true)
+        precondition(bashTool?.inputJSON.contains("foreign-call") != true)
+        let archivedCC = String(decoding: try MigrationHistory.claudeData(withTools.messages, sessionID: sourceID, cwd: cwd), as: UTF8.self)
+        precondition(archivedCC.contains("\"tool_use\"") && archivedCC.contains("\"tool_result\"") && archivedCC.contains("\"is_error\":true"))
+        precondition(!archivedCC.contains("迁移的已完成工具记录") && !archivedCC.contains("foreign-call-private-1"), "cc archive leaked")
+        let rereadArchived = try MigrationHistory.claude(Data(archivedCC.utf8), source: ccSource, includeCompletedTools: true)
+        precondition(rereadArchived.completedToolCount == 1, "cc reread count")
+        precondition(rereadArchived.messages.compactMap(\.tool).first?.name == "Bash", "cc reread name")
+        precondition(rereadArchived.messages.compactMap(\.tool).first?.inputJSON == bashTool?.inputJSON)
+        let execTool = cxTools.messages.compactMap(\.tool).first
+        precondition(execTool?.name == "exec_command" && execTool?.inputJSON == "\"fixture\"")
+        let archivedCodex = String(decoding: try MigrationHistory.codexData(cxTools.messages, sessionID: sourceID, cwd: cwd, providerKey: "fixture"), as: UTF8.self)
+        precondition(archivedCodex.contains("\"function_call\"") && archivedCodex.contains("\"function_call_output\""), "codex native")
+        precondition(!archivedCodex.contains("迁移的已完成工具记录") && !archivedCodex.contains("foreign-call"), "codex leaked")
+        let codexToolReread = try MigrationHistory.codex(Data(archivedCodex.utf8), source: cxSource, includeCompletedTools: true)
+        precondition(codexToolReread.completedToolCount == 1, "codex reread count")
+        precondition(codexToolReread.messages.compactMap(\.tool).first?.inputJSON == "\"fixture\"")
+        var toolImage = toolRows
+        var resultMessage = toolImage[toolImage.count - 2]["message"] as! [String: Any]
+        resultMessage["content"] = [["type":"tool_result","tool_use_id":"foreign-call-private-1","is_error":false,
+            "content":[["type":"text","text":"TOOL_FACT-only-in-result"],
+                       ["type":"image","source":["type":"base64","media_type":"image/png","data":png]]]]]
+        toolImage[toolImage.count - 2]["message"] = resultMessage
+        mustFail { _ = try MigrationHistory.claude(data(toolImage), source: ccSource, includeCompletedTools: true) }
+        let toolImages = try MigrationHistory.claude(data(toolImage), source: ccSource, includeCompletedTools: true, includeImages: true)
+        let carriedTool = toolImages.messages.compactMap(\.tool).first
+        precondition(toolImages.imageCount == 1 && carriedTool?.images.first?.dataURL == "data:image/png;base64," + png)
+        precondition(carriedTool?.outputJSON.contains(png) != true)
+        precondition(!toolImages.messages.map(\.text).joined().contains(png))
+        precondition(toolImages.fingerprint != withTools.fingerprint)
+        precondition(toolImages.omissions.contains("工具结果中的图片不放进工具输出文本，写入目标的图片字段。"))
+        let toolImageCC = String(decoding: try MigrationHistory.claudeData(toolImages.messages, sessionID: sourceID, cwd: cwd), as: UTF8.self)
+        precondition(toolImageCC.contains(png) && toolImageCC.contains("\"tool_result\"") && toolImageCC.contains("\"tool_use\""))
+        precondition(!toolImageCC.contains("迁移的已完成工具记录") && !toolImageCC.contains("foreign-call"))
+        let toolImageReread = try MigrationHistory.claude(Data(toolImageCC.utf8), source: ccSource, includeCompletedTools: true, includeImages: true)
+        precondition(toolImageReread.completedToolCount == 1 && toolImageReread.imageCount == 1)
+        precondition(toolImageReread.messages.compactMap(\.tool).first?.images.first?.dataURL == "data:image/png;base64," + png)
+        let toolImageCodex = String(decoding: try MigrationHistory.codexData(toolImages.messages, sessionID: sourceID, cwd: cwd, providerKey: "fixture"), as: UTF8.self)
+        precondition(toolImageCodex.contains("\"input_image\"") && toolImageCodex.contains(png))
+        let toolImageSkipped = try MigrationHistory.claude(data(toolImage), source: ccSource, includeImages: true)
+        precondition(toolImageSkipped.imageCount == 0 && !toolImageSkipped.messages.map(\.text).joined().contains(png))
+        var toolDocument = toolImage
+        var documentMessage = toolDocument[toolDocument.count - 2]["message"] as! [String: Any]
+        documentMessage["content"] = [["type":"tool_result","tool_use_id":"foreign-call-private-1",
+            "content":[["type":"document","source":["type":"base64","media_type":"application/pdf","data":png]]]]]
+        toolDocument[toolDocument.count - 2]["message"] = documentMessage
+        mustFail { _ = try MigrationHistory.claude(data(toolDocument), source: ccSource, includeCompletedTools: true, includeImages: true) }
 
         let physicalCwd = try MigrationPath.canonical(cwd)
         let logicalAlias = fixtureRoot.appendingPathComponent("project-alias")
@@ -363,6 +500,7 @@ import SQLite3
         var collisionDB: OpaquePointer?
         precondition(sqlite3_open(FilePaths.cursorStateDB.path,&collisionDB) == SQLITE_OK)
         // Same model name with changed maxMode must not reuse a stale target.
+        // Later image writes create newer composers, so this mutation has to run while desk is still newest.
         let composerKey = "composerData:" + desk.targetSessionID
         let composerBytes = try MigrationCursorHistory.value(collisionDB!,sql:"SELECT value FROM cursorDiskKV WHERE key = ?",key:composerKey)
         var changedComposer = try MigrationCursorHistory.object(composerBytes)
@@ -390,10 +528,38 @@ import SQLite3
         precondition(sqlite3_exec(collisionDB,"ROLLBACK",nil,nil,nil) == SQLITE_OK)
         sqlite3_close(collisionDB)
         mustFail { _ = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB,cwd:fixtureRoot.path) }
+        mustFail { _ = try MigrationStorage.prepare(imagePreview,target:.cursorDesktop,route:route,locations:locations) }
+        mustFail { _ = try MigrationStorage.prepare(imagePreview,target:.cursorCLI,route:route,locations:locations) }
+        mustFail { _ = try MigrationStorage.prepare(toolImages,target:.cursorDesktop,route:route,locations:locations) }
+        mustFail { _ = try MigrationStorage.prepare(toolImages,target:.cursorCLI,route:route,locations:locations) }
+        let cursorImage = try MigrationStorage.prepare(imagePreview,target:.cursorDesktop,route:desktopRoute,locations:locations)
+        let cursorImageRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:cursorImage.targetSource,includeImages:true)
+        precondition(cursorImageRead.imageCount == 1 && cursorImageRead.messages[0].images.first?.mediaType == "image/png")
+        let cursorToolImage = try MigrationStorage.prepare(toolImages,target:.cursorDesktop,route:desktopRoute,locations:locations)
+        let cursorToolImageRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:cursorToolImage.targetSource,includeImages:true)
+        precondition(cursorToolImageRead.imageCount == 1)
+        let cursorToolPreview = try MigrationHistory.preview(source:desktopSource,messages:[
+            .init(role:.user,text:facts),
+            .init(role:.assistant,text:"",tool:.init(name:"read_file",inputJSON:"{\"path\":\"fixture\"}",outputJSON:"\"FILE\"",outputKind:"cursor",cursorTool:40,cursorStatus:"completed"))
+        ],snapshot:Data("cursor-tool".utf8),completedToolCount:1)
+        let cursorToolTarget = try MigrationStorage.prepare(cursorToolPreview,target:.cursorDesktop,route:desktopRoute,locations:locations)
+        let cursorToolRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:cursorToolTarget.targetSource,includeCompletedTools:true)
+        precondition(cursorToolRead.completedToolCount == 1)
+        precondition(cursorToolRead.messages.compactMap(\.tool).first?.name == "read_file")
+        precondition(cursorToolRead.messages.compactMap(\.tool).first?.cursorTool == 40)
+        precondition(cursorToolRead.messages.compactMap(\.tool).first?.inputJSON == "{\"path\":\"fixture\"}")
+        let imageTarget = try MigrationStorage.prepare(imagePreview,target:.claude,route:route,locations:locations)
+        let installedImage = try MigrationHistory.claude(Data(contentsOf:URL(fileURLWithPath:imageTarget.nativePath)),
+            source:imageTarget.targetSource,includeImages:true)
+        precondition(installedImage.messages[0].images == imagePreview.messages[0].images)
         let toolsTarget = try MigrationStorage.prepare(withTools,target:.codexCurrent,route:route,locations:locations)
         precondition(toolsTarget.targetSessionID != a.targetSessionID)
-        let toolsReRead = try MigrationHistory.codex(Data(contentsOf:URL(fileURLWithPath:toolsTarget.nativePath)),source:toolsTarget.targetSource)
-        precondition(toolsReRead.messages == withTools.messages)
+        let toolsReRead = try MigrationHistory.codex(Data(contentsOf:URL(fileURLWithPath:toolsTarget.nativePath)),source:toolsTarget.targetSource,includeCompletedTools:true)
+        precondition(toolsReRead.completedToolCount == 1)
+        precondition(toolsReRead.messages.compactMap(\.tool).first?.name == "Bash")
+        precondition(toolsReRead.messages.compactMap(\.tool).first?.inputJSON == withTools.messages.compactMap(\.tool).first?.inputJSON)
+        let toolsNative = String(decoding:try Data(contentsOf:URL(fileURLWithPath:toolsTarget.nativePath)),as:UTF8.self)
+        precondition(!toolsNative.contains("foreign-call") && toolsNative.contains("\"function_call\""))
 
         let service = SessionMigrationService.shared
         if BuildChannel.allowsSystemIntegration {
@@ -538,7 +704,9 @@ import SQLite3
             assert 'PRIVATE' not in value
             assert 'accessToken' not in composer['modelConfig']
             assert composer['conversationState'].startswith('~')
-            assert len(composer['fullConversationHeadersOnly']) == 2
+            headers = composer['fullConversationHeadersOnly']
+            # Two turns, or user + assistant text + tool + image follow-up + closing assistant.
+            assert [item['type'] for item in headers] in ([1, 2], [1, 2, 2, 1, 2])
         desktop_db.close()
         db_path = next((channel_root/'cursor/chats').glob('*/*/store.db'))
         db = sqlite3.connect(db_path)

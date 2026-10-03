@@ -115,9 +115,13 @@ enum MigrationCursorDesktop {
         let state = "~" + encoded.root.base64EncodedString(), stamp = ISO8601DateFormatter().string(from: record.createdAt)
         let now = Int64(record.createdAt.timeIntervalSince1970 * 1000), sid = record.targetSessionID
         var headers: [[String: Any]] = [], rows: [(String, Data)] = []
-        for message in messages {
-            let id = UUID().uuidString.lowercased(), type = message.role == .user ? 1 : 2
-            var bubble: [String: Any] = ["_v": 3, "bubbleId": id, "type": type, "text": message.text,
+        let workspaceID = profile.workspace["id"] as? String ?? ""
+        func appendBubble(_ message: MigrationMessage, pictures: [MigrationImage]) throws {
+            let id = UUID().uuidString.lowercased()
+            let nativeTool = message.tool?.cursorTool != nil
+            let text = nativeTool ? "" : message.text
+            let type = message.role == .user ? 1 : 2
+            var bubble: [String: Any] = ["_v": 3, "bubbleId": id, "type": type, "text": text,
                 "createdAt": stamp, "conversationState": state, "richText": NSNull(), "isAgentic": false,
                 "unifiedMode": 2, "capabilities": [], "capabilityContexts": []]
             for key in ["images", "suggestedCodeBlocks", "toolResults", "allThinkingBlocks", "attachedCodeChunks",
@@ -126,9 +130,45 @@ enum MigrationCursorDesktop {
                         "workspaceUris", "todos", "supportedTools", "mcpDescriptors", "relevantFiles"] { bubble[key] = [Any]() }
             if type == 1 { bubble["agentMode"] = 1; bubble["modelInfo"] = ["modelName": profile.modelName]; bubble["context"] = emptyContext() }
             else { bubble["capabilityType"] = 30 }
+            if nativeTool, let tool = message.tool, let code = tool.cursorTool, let status = tool.cursorStatus {
+                let input = try MigrationHistory.jsonValue(tool.inputJSON)
+                let rawArgs: String
+                if let text = input as? String { rawArgs = text }
+                else { rawArgs = String(decoding: try MigrationHistory.json(input), as: UTF8.self) }
+                let output = try MigrationHistory.jsonValue(tool.outputJSON)
+                let result: String
+                if let text = output as? String { result = text }
+                else { result = String(decoding: try MigrationHistory.json(output), as: UTF8.self) }
+                bubble["toolFormerData"] = ["tool": code, "toolIndex": 0,
+                    "modelCallId": UUID().uuidString.lowercased(),
+                    "toolCallId": "toolu_migration_" + UUID().uuidString.lowercased(),
+                    "status": status, "name": tool.name, "rawArgs": rawArgs, "params": rawArgs,
+                    "result": result, "additionalData": [String: Any]()]
+            }
+            if !pictures.isEmpty {
+                guard type == 1 else { throw MigrationFailure.unsupported("助手消息里的图片暂不迁移。") }
+                var refs: [[String: Any]] = [], selected: [[String: Any]] = []
+                for image in pictures {
+                    let stored = try MigrationCursorHistory.storedImage(database: path, workspaceID: workspaceID,
+                                                                        image: image, loadedAt: now)
+                    refs.append(stored.bubble); selected.append(stored.selected)
+                }
+                bubble["images"] = refs
+                var context = emptyContext()
+                context["selectedImages"] = selected
+                bubble["context"] = context
+            }
+            let preview = text.isEmpty ? (message.tool?.name ?? "") : text
             headers.append(["bubbleId": id, "type": type, "createdAt": stamp,
-                            "grouping": ["isRenderable": true, "hasText": true, "textPreview": String(message.text.prefix(160))]])
+                            "grouping": ["isRenderable": true, "hasText": !preview.isEmpty,
+                                         "textPreview": String(preview.prefix(160))]])
             rows.append(("bubbleId:" + sid + ":" + id, try MigrationHistory.json(bubble)))
+        }
+        for message in messages {
+            try appendBubble(message, pictures: message.role == .user ? message.images : [])
+            if let images = message.tool?.images, !images.isEmpty {
+                try appendBubble(.init(role: .user, text: "", images: images), pictures: images)
+            }
         }
         var composer: [String: Any] = ["_v": 18, "composerId": sid, "name": record.desktopTitle,
             "subtitle": "来自 " + record.source.client.label, "workspaceIdentifier": profile.workspace,

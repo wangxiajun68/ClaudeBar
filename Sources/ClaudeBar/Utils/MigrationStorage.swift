@@ -85,12 +85,14 @@ enum MigrationStorage {
         return records.sorted { $0.createdAt > $1.createdAt }
     }
 
-    static func readBounded(_ file: URL) throws -> Data {
+    static func readBounded(_ file: URL, maxBytes: Int = MigrationHistory.maxFileBytes) throws -> Data {
         let handle: FileHandle
         do { handle = try FileHandle(forReadingFrom: file) } catch { throw MigrationFailure.missing }
         defer { try? handle.close() }
-        let data = try handle.read(upToCount: MigrationHistory.maxFileBytes + 1) ?? Data()
-        guard data.count <= MigrationHistory.maxFileBytes else { throw MigrationFailure.tooLarge }
+        let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+        guard data.count <= maxBytes else {
+            throw MigrationFailure.sizeLimit("源文件超过 \(maxBytes / (1024 * 1024)) MiB 读取上限，请在来源客户端整理交接上下文后迁移。")
+        }
         return data
     }
 
@@ -98,6 +100,9 @@ enum MigrationStorage {
                         locations: MigrationLocations) throws -> MigrationRecord {
         guard !preview.source.isBusy else { throw MigrationFailure.busy }
         guard !preview.source.isSubagent else { throw MigrationFailure.unsupported("首版不迁移子代理会话。") }
+        if preview.imageCount > 0, target.client == .cursorCLI {
+            throw MigrationFailure.unsupported("Cursor CLI 尚不能写入图片。请改迁到 Claude Code、Codex 或 Cursor 桌面，或取消包含图片。")
+        }
         let desktopProfile: MigrationCursorDesktop.Profile?
         if target == .cursorDesktop {
             guard let database = locations.cursorDesktop else { throw MigrationFailure.missing }
