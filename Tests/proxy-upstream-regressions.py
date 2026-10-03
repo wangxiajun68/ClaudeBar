@@ -26,6 +26,9 @@ source = '\n'.join([
 ]) + '\n' + bridge + '\n' + state[state.index('actor CodexProxyState'):]
 source += '\nenum LocalProxyAddress {\n' + state[local_start:local_end] + '\n}\n'
 store = (models / 'CodexProviderStore.swift').read_text()
+source += (models / "SessionMigration.swift").read_text() + "\n"
+source += (root / "Sources/Shared/BuildChannel.swift").read_text() + "\n"
+source += (root / "Sources/ClaudeBar/Utils/MigrationBridgeConfiguration.swift").read_text() + "\n"
 source += r'''
 final class AppPreferences {
     static let shared = AppPreferences()
@@ -43,6 +46,7 @@ final class StoreFixture {
     var claudePeer: ClaudePeer? = ClaudePeer()
     let proxyState = CodexProxyState()
     var proxyRunning = false
+    var migrationBridgeActive = false
     func startProxy() { proxyRunning = true }
     func stopProxy() { proxyRunning = false }
     func resolvedThirdPartyAnthropic() -> Provider? { claudePeer?.activeProvider }

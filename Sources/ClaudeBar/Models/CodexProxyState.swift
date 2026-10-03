@@ -69,6 +69,16 @@ actor CodexProxyState {
         var name: String
     }
 
+    private var migrationEndpoints: [UUID: MigrationBridgeEndpoint] = [:]
+
+    func setMigrationEndpoint(_ endpoint: MigrationBridgeEndpoint, for id: UUID) throws {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        guard migrationEndpoints[id] != nil || migrationEndpoints.count < 128 else { throw MigrationFailure.tooLarge }
+        migrationEndpoints[id] = endpoint
+    }
+
+    func migrationEndpoint(for id: UUID) -> MigrationBridgeEndpoint? { migrationEndpoints[id] }
+
     private(set) var upstream: UpstreamEndpoint?
     private(set) var anthropic: AnthropicUpstream?
     private(set) var thirdPartyOpenAI: UpstreamEndpoint?

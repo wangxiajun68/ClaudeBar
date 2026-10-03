@@ -60,6 +60,7 @@ final class CodexProviderStore: ObservableObject {
 
     let proxyState = CodexProxyState()
     private var proxyServer: CodexProxyServer?
+    private var migrationBridgeActive = false
     private var quotaTask: Task<Void, Never>?
     /// Background quota poll. A one-shot timer, re-armed after every reading by
     /// `QuotaPollScheduler`: the 15-minute heartbeat, plus an extra look when a
@@ -198,7 +199,7 @@ final class CodexProviderStore: ObservableObject {
         let anthropicCapture = claude?.captureEnabled ?? false
         let viaOpenAI = prefs.codexRoutingEnabled || openaiCapture || activeProvider?.wireAPI == "chat"
         let viaAnthropic = prefs.codexRoutingEnabled || anthropicCapture
-        let need = viaOpenAI || viaAnthropic
+        let need = viaOpenAI || viaAnthropic || migrationBridgeActive
 
         if need {
             startProxy()
@@ -275,11 +276,11 @@ final class CodexProviderStore: ObservableObject {
     /// at a dead loopback address with the real credentials no longer in the
     /// file, and nothing repairs it until the next `load()`.
     @discardableResult
-    func startProxy() -> Bool {
+    func startProxy(healConfigurations: Bool = true) -> Bool {
         guard proxyServer == nil else { proxyRunning = true; return true }
         let server = CodexProxyServer(port: UInt16(clamping: AppPreferences.shared.codexProxyPort), state: proxyState)
         do {
-            try server.start()
+            try server.start(healConfigurations: healConfigurations)
             proxyServer = server
             proxyRunning = true
             return true
@@ -301,6 +302,24 @@ final class CodexProviderStore: ObservableObject {
         try? CodexConfigWriter.write(provider: active, model: model,
                                      key: activeKey,
                                      proxyBaseURL: LocalProxyAddress.codexBase)
+    }
+
+    func prepareMigrationBridge(id: UUID, endpoint: MigrationBridgeEndpoint) async throws -> MigrationBridgeLaunch {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        guard startProxy(healConfigurations: false), let server = proxyServer else { throw MigrationFailure.storage }
+        do { try await server.waitUntilReady() }
+        catch {
+            if proxyServer === server { stopProxy() }
+            throw error
+        }
+        let address = URLComponents(string:endpoint.baseURL)
+        guard !(LocalProxyAddress.isLoopback(endpoint.baseURL)
+                && (address?.port ?? (address?.scheme == "https" ? 443 : 80)) == Int(server.listeningPort)) else {
+            throw MigrationFailure.unsupported("供应商地址不能指回迁移代理本身。")
+        }
+        try await proxyState.setMigrationEndpoint(endpoint, for: id)
+        migrationBridgeActive = true
+        return .init(port: Int(server.listeningPort), token: CodexProxyServer.configuredToken)
     }
 
     func stopProxy() {

@@ -65,25 +65,32 @@ actor SessionMigrationService {
     }
 
     func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
-                 officialModel: String, includeCompletedTools: Bool = false) throws -> MigrationRecord {
+                 officialModel: String, includeCompletedTools: Bool = false, bridgeProviderID: UUID? = nil, bridgeModel: String = "") throws -> MigrationRecord {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         let latest = try preview(source, includeCompletedTools: includeCompletedTools)
         guard latest.fingerprint == fingerprint else { throw MigrationFailure.changed }
         let executable = try runtime(target.client)
         let configuration: URL?
-        var desktopFingerprint: String?
+        var routeFingerprint: String?
         let model: String, provider: String
         switch target {
         case .claude:
             configuration = FilePaths.settingsFile
             model = "当前 Claude Code 配置"; provider = ""
+        case .claudeCodexModel:
+            guard let bridgeProviderID else { throw MigrationFailure.unsupported("请选择自定义供应商与模型。") }
+            let endpoint = try MigrationBridgeConfiguration.endpoint(MigrationStorage.readBounded(FilePaths.codexProvidersFile),
+                providerID: bridgeProviderID, model: bridgeModel, localProxyPort: LocalProxyAddress.port)
+            configuration = nil
+            routeFingerprint = try MigrationBridgeConfiguration.fingerprint(endpoint)
+            model = endpoint.model; provider = "migration:" + bridgeProviderID.uuidString.lowercased()
         case .cursorCLI:
             configuration = nil; model = "Auto"; provider = ""
         case .cursorDesktop:
             configuration = nil
             let profile = try MigrationCursorDesktop.profile(FilePaths.cursorStateDB, cwd: source.cwd)
             model = profile.modelName
-            desktopFingerprint = try profile.fingerprint()
+            routeFingerprint = try profile.fingerprint()
             provider = ""
         case .codexCurrent:
             configuration = FilePaths.codexConfigFile
@@ -103,14 +110,15 @@ actor SessionMigrationService {
         }
         let configHash = try configuration.map { try configurationHash($0) }
         let route = MigrationRoute(model: model, providerKey: provider,
-            configurationFingerprint: desktopFingerprint ?? configHash, executablePath: executable.path)
+            configurationFingerprint: routeFingerprint ?? configHash, executablePath: executable.path,
+            bridgeProviderID: target == .claudeCodexModel ? bridgeProviderID : nil)
         // Version probing can take time; source must still be a complete unchanged snapshot.
         let checked = try preview(source, includeCompletedTools: includeCompletedTools)
         guard checked.fingerprint == latest.fingerprint else { throw MigrationFailure.changed }
         return try MigrationStorage.prepare(checked, target: target, route: route, locations: Self.locations)
     }
 
-    func command(for record: MigrationRecord) throws -> String {
+    func command(for record: MigrationRecord, bridge: MigrationBridgeLaunch? = nil) throws -> String {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         guard Self.locations.containsNative(URL(fileURLWithPath: record.nativePath), client: record.target.client),
               try MigrationStorage.exists(record),
@@ -123,13 +131,25 @@ actor SessionMigrationService {
             _ = try MigrationCursorHistory.desktop(URL(fileURLWithPath: record.nativePath), source: record.targetSource)
             return ""
         }
-        if let expected = record.configurationFingerprint {
+        if record.target == .claudeCodexModel { _ = try bridgeEndpoint(for: record) }
+        else if let expected = record.configurationFingerprint {
             let configuration = record.target == .claude ? FilePaths.settingsFile : FilePaths.codexConfigFile
             guard try configurationHash(configuration) == expected else {
                 throw MigrationFailure.changed
             }
         }
-        return try MigrationCommand.shell(for: record, locations: Self.locations)
+        return try MigrationCommand.shell(for: record, locations: Self.locations, bridge: bridge)
+    }
+
+    func bridgeEndpoint(for record: MigrationRecord) throws -> MigrationBridgeEndpoint {
+        guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
+        guard record.target == .claudeCodexModel, let id = record.bridgeProviderID,
+              Self.locations.containsNative(URL(fileURLWithPath: record.nativePath), client: .claude),
+              try MigrationStorage.exists(record) else { throw MigrationFailure.changed }
+        let endpoint = try MigrationBridgeConfiguration.endpoint(MigrationStorage.readBounded(FilePaths.codexProvidersFile),
+            providerID: id, model: record.model, localProxyPort: LocalProxyAddress.port)
+        guard try MigrationBridgeConfiguration.fingerprint(endpoint) == record.configurationFingerprint else { throw MigrationFailure.changed }
+        return endpoint
     }
 
     private func requireOfficialLogin() throws {

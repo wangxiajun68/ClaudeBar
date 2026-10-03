@@ -60,6 +60,7 @@ struct MigrationRoute: Sendable {
     let providerKey: String
     let configurationFingerprint: String?
     let executablePath: String
+    var bridgeProviderID: UUID? = nil
 }
 
 /// Transaction over new files only: stage privately, install without replacing,
@@ -110,6 +111,7 @@ enum MigrationStorage {
             $0.source.id == preview.source.id && $0.sourceFingerprint == preview.fingerprint && $0.target == target
                 && $0.model == route.model && $0.providerKey == route.providerKey
                 && $0.configurationFingerprint == route.configurationFingerprint && $0.executablePath == route.executablePath
+                && $0.bridgeProviderID == route.bridgeProviderID
         }), locations.containsNative(URL(fileURLWithPath: reused.nativePath), client: reused.target.client),
            try exists(reused) {
             return reused
@@ -125,7 +127,7 @@ enum MigrationStorage {
             target: target, targetSessionID: targetID, nativePath: targetPath.path,
             messageCount: preview.messages.count, omissions: preview.omissions, model: route.model,
             providerKey: route.providerKey, configurationFingerprint: route.configurationFingerprint,
-            executablePath: route.executablePath)
+            executablePath: route.executablePath, bridgeProviderID: route.bridgeProviderID)
         let manifest = locations.records.appendingPathComponent(id.uuidString + ".json")
         if let profile = desktopProfile {
             try directory(locations.records)
@@ -180,12 +182,28 @@ enum MigrationStorage {
 }
 
 enum MigrationCommand {
-    static func arguments(for record: MigrationRecord) throws -> [String] {
+    /// Fixed-version local chat selection; verified against Cursor 3.23.12.
+    static func desktopURL(for record: MigrationRecord) throws -> URL {
+        guard record.target == .cursorDesktop, UUID(uuidString: record.targetSessionID) != nil,
+              record.formatVersion == 1 else { throw MigrationFailure.invalidHistory }
+        var components = URLComponents()
+        components.scheme = "cursor"; components.host = "anysphere.cursor-deeplink"
+        components.path = "/background-agent"
+        components.queryItems = [.init(name: "bcId", value: record.targetSessionID)]
+        guard let url = components.url else { throw MigrationFailure.invalidHistory }
+        return url
+    }
+
+    static func arguments(for record: MigrationRecord, bridge: MigrationBridgeLaunch? = nil) throws -> [String] {
         guard UUID(uuidString: record.targetSessionID) != nil, record.formatVersion == 1 else {
             throw MigrationFailure.invalidHistory
         }
         switch record.target {
         case .claude: return ["--resume", record.targetSessionID]
+        case .claudeCodexModel:
+            guard let bridge, record.bridgeProviderID != nil else { throw MigrationFailure.changed }
+            let settings = try bridge.settings(record: record)
+            return ["--model", record.model, "--settings", settings, "--resume", record.targetSessionID]
         case .cursorCLI: return ["--workspace", record.source.cwd, "--mode", "ask", "--model", "auto", "--resume", record.targetSessionID]
         case .cursorDesktop: throw MigrationFailure.unsupported("Cursor 桌面通过项目窗口打开。")
         case .codexCurrent:
@@ -211,7 +229,7 @@ enum MigrationCommand {
         return "\"" + escaped + "\""
     }
 
-    static func shell(for record: MigrationRecord, locations: MigrationLocations) throws -> String {
+    static func shell(for record: MigrationRecord, locations: MigrationLocations, bridge: MigrationBridgeLaunch? = nil) throws -> String {
         var environment: [String] = []
         switch record.target.client {
         case .claude: environment = ["CLAUDE_CONFIG_DIR=" + locations.claude.path]
@@ -220,6 +238,6 @@ enum MigrationCommand {
         case .cursorDesktop: throw MigrationFailure.invalidHistory
         }
         return (["env"] + environment.map(ShellQuote.single) + [ShellQuote.single(record.executablePath)]
-                + (try arguments(for: record)).map(ShellQuote.single)).joined(separator: " ")
+                + (try arguments(for: record, bridge: bridge)).map(ShellQuote.single)).joined(separator: " ")
     }
 }

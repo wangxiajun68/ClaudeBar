@@ -1,0 +1,310 @@
+{
+  "date": "2026-10-03",
+  "versions": {
+    "claude": "2.1.288",
+    "codex": "0.159.0-alpha.12.1",
+    "cursor_cli": "2026.06.19-20-24-33-653a7fb",
+    "cursor_desktop": "3.23.12"
+  },
+  "method": "Production Swift adapters / production wire and HTTP slices, synthetic owned sessions, real installed clients and vendor inference. No full ClaudeBar UI run.",
+  "positive": {
+    "live-results-full-write.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "019e1fe9-156f-43c9-b3de-7e0df277ee25",
+      "route": "74594c19-25d4-4ca9-8073-b91381310f0e",
+      "model": "kimi-k3",
+      "wire": "responses",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "seconds": 6.78
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\", \"tool_error_observed\": \"File does not exist.\", \"file_content\": \"BRIDGE-TOOL-PROOF-9157\"}",
+          "seconds": 26.84
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"file_content\": \"BRIDGE-TOOL-PROOF-9157\", \"marker\": \"MIGRATE-773b6da47f58\"}",
+          "seconds": 4.92
+        }
+      ],
+      "file_exists": true,
+      "file_content": "BRIDGE-TOOL-PROOF-9157",
+      "actual_tool_calls": [
+        "Read",
+        "Write",
+        "Read"
+      ],
+      "actual_error_results": 1
+    },
+    "live-results-chat.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "994a0c41-cd36-404d-a2e8-7dd1e0957df6",
+      "route": "d5f075e2-2462-4c03-a040-1c7e3f084bbd",
+      "model": "deepseek-v4-pro",
+      "wire": "chat",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "seconds": 5.71
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\", \"tool_error_observed\": \"File does not exist\", \"file_content\": \"BRIDGE-TOOL-PROOF-9157\"}",
+          "seconds": 22.15
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"file_content\": \"BRIDGE-TOOL-PROOF-9157\", \"marker\": \"MIGRATE-773b6da47f58\"}",
+          "seconds": 4.57
+        }
+      ],
+      "file_exists": true,
+      "file_content": "BRIDGE-TOOL-PROOF-9157",
+      "actual_tool_calls": [
+        "Read",
+        "Write",
+        "Read"
+      ],
+      "actual_error_results": 1
+    },
+    "live-results-reverse.json": {
+      "exit": 0,
+      "is_error": false,
+      "answer": "```json\n{\n  \"marker\": \"MIGRATE-773b6da47f58\",\n  \"file_content\": \"BRIDGE-TOOL-PROOF-9157\"\n}\n```",
+      "seconds": 6.67,
+      "label": "phase3-reverse",
+      "source_session": "fa6de6f5-e41c-4824-8320-f20b1668b79f",
+      "target_session": "376d8ef5-0ef9-4397-959d-346932535176",
+      "model": "kimi-k3",
+      "counts": "12 3",
+      "matched": true
+    },
+    "live-results-blind-tool.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "93b6d0db-782b-4bf6-997b-a19c96f2b707",
+      "route": "7f21d16e-52a8-4f31-8391-f25ee99495df",
+      "model": "kimi-k3",
+      "wire": "responses",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "seconds": 9.06
+        },
+        {
+          "label": "blind-read",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"nonce\": \"TOOL-ONLY-9fe6af3e4864479fb691eefd9115a1d6\"}",
+          "seconds": 12.44
+        },
+        {
+          "label": "blind-cold-resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"nonce\": \"TOOL-ONLY-9fe6af3e4864479fb691eefd9115a1d6\"}",
+          "seconds": 5.26
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\", \"tool_error_observed\": \"File does not exist. Note: your current working directory is [isolated-lab]/workspace-full-93b6d0db.\", \"file_content\": \"BRIDGE-TOOL-PROOF-9157\"}",
+          "seconds": 25.09
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"file_content\": \"BRIDGE-TOOL-PROOF-9157\", \"marker\": \"MIGRATE-773b6da47f58\"}",
+          "seconds": 5.03
+        }
+      ],
+      "blind_expected": "TOOL-ONLY-9fe6af3e4864479fb691eefd9115a1d6",
+      "file_exists": true,
+      "file_content": "BRIDGE-TOOL-PROOF-9157",
+      "actual_tool_calls": [
+        "Read",
+        "Read",
+        "Write",
+        "Read"
+      ]
+    },
+    "cursor-direct-result.json": {
+      "message_count": 4,
+      "messages": [
+        {
+          "role": "user",
+          "text": "This is an isolated session continuity research task. Do not use tools, read files, or edit anything. Remember these facts for a later question: {\"marker\": \"MIGRATE-bc4cde261f12\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}. Reply only ACK."
+        },
+        {
+          "role": "assistant",
+          "text": "ACK"
+        },
+        {
+          "role": "user",
+          "text": "Synthetic continuity check only. Do not use tools. Return the remembered marker, constraint, next_step and decision as JSON."
+        },
+        {
+          "role": "assistant",
+          "text": "{\"marker\": \"MIGRATE-bc4cde261f12\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}"
+        }
+      ],
+      "source_id": "c7411272-b5d2-4d0c-acbb-05aba16d5227",
+      "direct_url_selected": true,
+      "window_reloaded": false,
+      "visible_answer_matched": true
+    }
+  },
+  "retained_negative": {
+    "live-results.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "d6b16f02-a012-43fe-b30e-1bbe41354659",
+      "route": "fcf63e9c-0e98-4c1c-849f-8d57020db884",
+      "model": "kimi-k3",
+      "wire": "responses",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\"}",
+          "seconds": 5.01
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "No Write tool is available in this environment (only Read was provided), so I could not create proof.txt. Reporting honestly:\n\n{\"marker\":\"MIGRATE-773b6da47f58\",\"constraint\":\"never edit VERSION\",\"next_step\":\"verify parser regression\",\"decision\":\"keep original session\",\"tool_error_observed\":\"File does not exist. Note: your current working directory is [isolated-lab]/workspace.\",\"file_content\":\"unknown\"}",
+          "seconds": 24.92
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"file_content\":\"unknown\",\"marker\":\"MIGRATE-773b6da47f58\"}",
+          "seconds": 5.69
+        }
+      ],
+      "file_exists": false
+    },
+    "live-results-tools-eager.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "6ad71164-7d39-4d30-9c3c-0ba78cab8daa",
+      "route": "22820379-c592-4bcc-b285-a21b852eab64",
+      "model": "kimi-k3",
+      "wire": "responses",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "seconds": 7.69
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\", \"tool_error_observed\": \"File does not exist. Note: your current working directory is [isolated-lab]/workspace.\", \"file_content\": \"unknown — Write tool not available in this session, so proof.txt was not created; Read on proof.txt also returned 'File does not exist'\"}",
+          "seconds": 30.26
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"file_content\": \"File does not exist. Note: your current working directory is [isolated-lab]/workspace.\\n\", \"marker\": \"MIGRATE-773b6da47f58\"}",
+          "seconds": 9.38
+        }
+      ],
+      "file_exists": false
+    },
+    "live-results-coding.json": {
+      "source_session": "01a0ffbc-19b9-7803-8bcc-3970ea415dbb",
+      "target_session": "0f2a89bf-395c-48dc-98d0-5d6ba752f4e5",
+      "route": "70495011-8108-4d9e-b601-3f00dcbc6269",
+      "model": "kimi-k3",
+      "wire": "responses",
+      "messages": 2,
+      "checks": [
+        {
+          "label": "remember",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\"}",
+          "seconds": 4.85
+        },
+        {
+          "label": "tools",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"constraint\": \"never edit VERSION\", \"next_step\": \"verify parser regression\", \"decision\": \"keep original session\", \"tool_error_observed\": \"Read on missing.txt: File does not exist. Bash printf to create proof.txt: Permission denied (don't ask mode), so proof.txt was never created.\", \"file_content\": \"unavailable - proof.txt could not be created; Read on proof.txt also returned: File does not exist\"}",
+          "seconds": 24.97
+        },
+        {
+          "label": "resume",
+          "exit": 0,
+          "is_error": false,
+          "answer": "{\"marker\": \"MIGRATE-773b6da47f58\", \"file_content\": \"File does not exist. Note: your current working directory is [isolated-lab]/workspace.\"}",
+          "seconds": 7.72
+        }
+      ],
+      "file_exists": false
+    }
+  },
+  "other_failures": [
+    {
+      "case": "normal CC runtime system role",
+      "result": "initial unsupported request returned 502 and retried to 160s timeout; fixed by instruction mapping and 400 input failures; final normal-client tests passed"
+    },
+    {
+      "case": "CC parallel results reverse migration",
+      "result": "initial main-parent-only reader rejected completed history as busy; strict result-only sibling collection fixed; final reverse passed"
+    },
+    {
+      "case": "release build during source edit",
+      "result": "compiler rejected modified input; final build must be checked separately"
+    }
+  ],
+  "validation": {
+    "full_suites": 53,
+    "full_seconds": 243.5,
+    "migration_post_edit_seconds": 70.54,
+    "wire_post_edit": "passed",
+    "dev_build": "passed; bundle/widget/scheme/entitlements/signature verified, no installation",
+    "release_build": "passed; bundle/widget/scheme/entitlements/signature verified, no installation",
+    "wire_post_edit_seconds": 20.49
+  },
+  "unverified": [
+    "ClaudeBar full app UI and official installation",
+    "SIWC OAuth / official subscription inference from CC",
+    "real vision, audio, video",
+    "compacted or running sessions",
+    "arbitrary providers and MCP tool catalogs",
+    "Cursor same custom provider bridge"
+  ]
+}

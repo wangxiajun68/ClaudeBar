@@ -128,7 +128,7 @@ enum TerminalLauncher {
     }
 
     /// New Codex rollouts may not be in the desktop index; resume through the
-    /// terminal. Cursor desktop targets open their existing project window.
+    /// terminal. Fixed-version Cursor targets select their native chat ID.
     @MainActor
     static func openMigratedSession(_ record: MigrationRecord, command: String) throws {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
@@ -137,7 +137,9 @@ enum TerminalLauncher {
             throw MigrationFailure.invalidHistory
         }
         if record.target == .cursorDesktop {
-            openInCursor(cwd: record.source.cwd)
+            guard NSWorkspace.shared.open(try MigrationCommand.desktopURL(for: record)) else {
+                throw MigrationFailure.unavailable("Cursor")
+            }
         } else {
             launch(command: command, cwd: record.source.cwd, sessionId: record.targetSessionID)
         }

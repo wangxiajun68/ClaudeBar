@@ -221,7 +221,7 @@ enum MigrationHistory {
         var messages: [MigrationMessage] = [], omissions: [String] = []
         var pending: Set<String> = []
         var calls: [String: (name: String, input: Any)] = [:], completedTools = 0
-        for row in chain.reversed() {
+        for row in try claudeToolBranches(Array(chain.reversed()), records: records, source: source) {
             guard ["user", "assistant"].contains(row["type"] as? String ?? ""),
                   let message = row["message"] as? [String: Any],
                   let role = MigrationMessage.Role(rawValue: message["role"] as? String ?? "") else { continue }
@@ -263,6 +263,48 @@ enum MigrationHistory {
         guard pending.isEmpty else { throw MigrationFailure.busy }
         if completedTools > 0 { omissions.append("已完成工具的输入与结果作为历史资料携带，不会重新执行。") }
         return try preview(source: source, messages: messages, snapshot: data, omissions: omissions, completedToolCount: completedTools)
+    }
+
+    /// CC persists parallel results as siblings of streamed assistant chunks.
+    /// Include only result-only rows whose parent belongs to the chosen response;
+    /// never merge sibling assistant prose or a different conversation branch.
+    private static func claudeToolBranches(_ chain: [[String: Any]], records: [[String: Any]],
+                                          source: MigrationSource) throws -> [[String: Any]] {
+        let selected = Set(chain.compactMap { $0["uuid"] as? String })
+        var positions: [String: Int] = [:], calls: [String: (row: String, message: String?, position: Int)] = [:]
+        var parents: [String: String] = [:]
+        for (position, row) in records.enumerated() {
+            guard let id = row["uuid"] as? String else { continue }
+            positions[id] = position
+            guard selected.contains(id), row["type"] as? String == "assistant",
+                  let message = row["message"] as? [String: Any] else { continue }
+            if let responseID = message["id"] as? String { parents[id] = responseID }
+            for block in message["content"] as? [[String: Any]] ?? [] where block["type"] as? String == "tool_use" {
+                guard let callID = block["id"] as? String, calls[callID] == nil else { throw MigrationFailure.invalidHistory }
+                calls[callID] = (id, message["id"] as? String, position)
+            }
+        }
+        guard !calls.isEmpty else { return chain }
+        let last = chain.compactMap { ($0["uuid"] as? String).flatMap { positions[$0] } }.max() ?? -1
+        var additions: [[String: Any]] = []
+        for (position, row) in records.enumerated() {
+            guard let id = row["uuid"] as? String, !selected.contains(id), position <= last,
+                  row["type"] as? String == "user", row["isSidechain"] as? Bool != true,
+                  (row["sessionId"] as? String)?.lowercased() == source.sessionID.lowercased(),
+                  let parent = row["parentUuid"] as? String, selected.contains(parent),
+                  let message = row["message"] as? [String: Any], message["role"] as? String == "user",
+                  let blocks = message["content"] as? [[String: Any]], !blocks.isEmpty,
+                  blocks.allSatisfy({ block in
+                      guard block["type"] as? String == "tool_result", let callID = block["tool_use_id"] as? String,
+                            let call = calls[callID], position > call.position else { return false }
+                      return parent == call.row || (call.message != nil && parents[parent] == call.message)
+                  }) else { continue }
+            additions.append(row)
+        }
+        guard !additions.isEmpty else { return chain }
+        return (chain + additions).sorted {
+            positions[$0["uuid"] as? String ?? "", default: -1] < positions[$1["uuid"] as? String ?? "", default: -1]
+        }
     }
 
     private static func toolContext(name: String, input: Any, output: Any) throws -> MigrationMessage {

@@ -8,7 +8,7 @@ sources = [
     root / 'Sources/Shared/BuildChannel.swift',
     root / 'Sources/ClaudeBar/Models/SessionMigration.swift',
     *[root / ('Sources/ClaudeBar/Utils/' + name + '.swift') for name in
-      ['MigrationHistory', 'MigrationCursorHistory', 'MigrationCursorDesktop', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote']]
+      ['MigrationHistory', 'MigrationCursorHistory', 'MigrationCursorDesktop', 'MigrationStorage', 'PrivateFileWriter', 'ShellQuote', 'MigrationBridgeConfiguration']]
 ]
 with tempfile.TemporaryDirectory(prefix='claudebar-migration-') as folder:
     work = Path(folder)
@@ -82,6 +82,12 @@ enum FilePaths {
     static var codexProvidersFile: URL { claudeDir.appendingPathComponent("codex-providers.json") }
     static var presetsFile: URL { claudeDir.appendingPathComponent("providers.json") }
 }
+enum LocalProxyAddress {
+    static let port = 15721
+    static func isLoopback(_ value: String) -> Bool {
+        ["localhost", "127.0.0.1", "[::1]"].contains(URLComponents(string:value)?.host ?? "")
+    }
+}
 struct MockSession { let sessionId: String; let isBusy: Bool; let isWaiting: Bool; let toolPending: Bool }
 enum SessionMonitor { static func fetchActive() -> [MockSession] { [] } }
 enum CodexConfigWriter {
@@ -108,8 +114,13 @@ func mustFail(_ body: () throws -> Void) {
     (work/'Stubs.swift').write_text(stubs + '\n@MainActor enum TerminalLauncher {\n' + entry + validation + r'''
     static var calls = 0
     static var desktopCalls = 0
+    static var desktopURL: URL?
     static func openInCursor(cwd: String) { desktopCalls += 1 }
     private static func launch(command: String, cwd: String, sessionId: String) { calls += 1 }
+}
+@MainActor struct NSWorkspace {
+    static let shared = NSWorkspace()
+    func open(_ url: URL) -> Bool { TerminalLauncher.desktopURL = url; TerminalLauncher.desktopCalls += 1; return true }
 }
 ''')
     (work/'Main.swift').write_text(r'''
@@ -187,6 +198,36 @@ import SQLite3
         precondition(!textOnly.messages.map(\.text).joined().contains("TOOL_FACT-only-in-result"))
         var partialTools = toolRows; partialTools.remove(at:partialTools.count-2)
         mustFail { _ = try MigrationHistory.claude(data(partialTools),source:ccSource,includeCompletedTools:true) }
+
+        var parallel = try MigrationHistory.rows(ccData)
+        parallel += [
+            ["type":"assistant","uuid":"parallel-r","parentUuid":"a","sessionId":sourceID,
+             "message":["id":"msg_parallel","role":"assistant","content":[["type":"tool_use","id":"read-call","name":"Read","input":["file_path":"missing"]]]]],
+            ["type":"assistant","uuid":"parallel-b","parentUuid":"parallel-r","sessionId":sourceID,
+             "message":["id":"msg_parallel","role":"assistant","content":[["type":"tool_use","id":"bash-call","name":"Bash","input":["command":"fixture"]]]]],
+            ["type":"user","uuid":"parallel-read-result","parentUuid":"parallel-r","sessionId":sourceID,
+             "message":["role":"user","content":[["type":"tool_result","tool_use_id":"read-call","content":"PARALLEL_ERROR","is_error":true]]]],
+            ["type":"user","uuid":"parallel-bash-result","parentUuid":"parallel-b","sessionId":sourceID,
+             "message":["role":"user","content":[["type":"tool_result","tool_use_id":"bash-call","content":"PARALLEL_SUCCESS"]]]],
+            ["type":"assistant","uuid":"parallel-final","parentUuid":"parallel-bash-result","sessionId":sourceID,
+             "message":["role":"assistant","content":"Completed parallel"]]]
+        let parallelPreview = try MigrationHistory.claude(data(parallel),source:ccSource,includeCompletedTools:true)
+        precondition(parallelPreview.completedToolCount == 2 && parallelPreview.messages.map(\.text).joined().contains("PARALLEL_ERROR"))
+        let parallelText = try MigrationHistory.claude(data(parallel),source:ccSource)
+        precondition(!parallelText.messages.map(\.text).joined().contains("PARALLEL_ERROR"))
+        var wrongBranch = parallel
+        wrongBranch[5]["parentUuid"] = "branch-old"
+        mustFail { _ = try MigrationHistory.claude(data(wrongBranch),source:ccSource,includeCompletedTools:true) }
+        var duplicatedParallel = parallel
+        var duplicateResult = parallel[5]; duplicateResult["uuid"] = "duplicate-result"
+        duplicatedParallel.insert(duplicateResult,at:duplicatedParallel.count-1)
+        mustFail { _ = try MigrationHistory.claude(data(duplicatedParallel),source:ccSource,includeCompletedTools:true) }
+        var mixedSibling = parallel
+        var mixedMessage = mixedSibling[5]["message"] as! [String:Any]
+        var mixedBlocks = mixedMessage["content"] as! [[String:Any]]
+        mixedBlocks.append(["type":"text","text":"Do not merge unrelated sibling prose"])
+        mixedMessage["content"] = mixedBlocks; mixedSibling[5]["message"] = mixedMessage
+        mustFail { _ = try MigrationHistory.claude(data(mixedSibling),source:ccSource,includeCompletedTools:true) }
         var legacyTools = try MigrationHistory.rows(MigrationHistory.codexData(cc.messages,sessionID:sourceID,cwd:cwd,providerKey:"fixture"))
         legacyTools.append(["type":"response_item","payload":["type":"custom_tool_call","call_id":"foreign-call","name":"exec_command","input":"fixture"]])
         legacyTools.append(["type":"response_item","payload":["type":"custom_tool_call_output","call_id":"foreign-call","output":"TOOL_FACT-only-in-result"]])
@@ -374,8 +415,48 @@ import SQLite3
             precondition(desktopCommand.isEmpty)
             try TerminalLauncher.openMigratedSession(desktopPrepared,command:desktopCommand)
             precondition(TerminalLauncher.desktopCalls == 1 && TerminalLauncher.calls == 0)
+            let desktopURL = TerminalLauncher.desktopURL!
+            precondition(desktopURL.scheme == "cursor" && desktopURL.host == "anysphere.cursor-deeplink")
+            precondition(URLComponents(url:desktopURL,resolvingAgainstBaseURL:false)?.queryItems == [.init(name:"bcId",value:desktopPrepared.targetSessionID)])
             do { _ = try await service.command(for:rejected); preconditionFailure("crash-orphan native identity") }
             catch MigrationFailure.missing {}
+
+            let providerID = UUID(), fakeProvider:[String:Any] = ["id":providerID.uuidString,"name":"Fixture bridge",
+                "apiKey":"private-fixture-provider-key","baseURL":"https://upstream.example/v1","wireAPI":"responses",
+                "models":[["name":"fixture-model","reasoningEffort":"low"]]]
+            var providers:[String:Any] = ["providers":[fakeProvider],"activeProviderID":providerID.uuidString]
+            try PrivateFileWriter.write(MigrationHistory.json(providers),to:FilePaths.codexProvidersFile)
+            let bridged = try await service.prepare(source:ccSource,target:.claudeCodexModel,
+                fingerprint:live.fingerprint,officialModel:"",bridgeProviderID:providerID,bridgeModel:"fixture-model")
+            precondition(bridged.bridgeProviderID == providerID && bridged.model == "fixture-model")
+            let manifest = try Data(contentsOf:FilePaths.sessionMigrationsDir.appendingPathComponent(bridged.id.uuidString+".json"))
+            precondition(!String(decoding:manifest,as:UTF8.self).contains("private-fixture-provider-key"))
+            let bridgeLaunch = MigrationBridgeLaunch(port:32123,token:String(repeating:"a",count:64))
+            let bridgeCommand = try await service.command(for:bridged,bridge:bridgeLaunch)
+            precondition(bridgeCommand.contains("--settings"))
+            let bridgeSettings = try JSONSerialization.jsonObject(with:Data(bridgeLaunch.settings(record:bridged).utf8)) as! [String:Any]
+            precondition((bridgeSettings["env"] as! [String:String])["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:32123/migration/"+bridged.id.uuidString.lowercased())
+            precondition(!bridgeCommand.contains("private-fixture-provider-key"))
+            providers["activeProviderID"] = UUID().uuidString
+            try PrivateFileWriter.write(MigrationHistory.json(providers),to:FilePaths.codexProvidersFile)
+            _ = try await service.command(for:bridged,bridge:bridgeLaunch) // Global selection cannot retarget the record.
+            var changedProvider = fakeProvider; changedProvider["apiKey"] = "new-wallet-fixture"
+            providers["providers"] = [changedProvider]
+            try PrivateFileWriter.write(MigrationHistory.json(providers),to:FilePaths.codexProvidersFile)
+            do { _ = try await service.command(for:bridged,bridge:bridgeLaunch); preconditionFailure("bridge wallet must re-prepare") }
+            catch MigrationFailure.changed {}
+            precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/api/v3")?.path == "/api/v3/responses")
+            precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/v1")?.path == "/v1/responses")
+            var localProvider = fakeProvider; localProvider["baseURL"] = "http://127.0.0.1:15721/v1"
+            let localData = try MigrationHistory.json(["providers":[localProvider]])
+            mustFail { _ = try MigrationBridgeConfiguration.endpoint(localData,providerID:providerID,model:"fixture-model",localProxyPort:15721) }
+            _ = try MigrationBridgeConfiguration.endpoint(localData,providerID:providerID,model:"fixture-model",localProxyPort:15722)
+            precondition(MigrationBridgeConfiguration.route("/migration/"+bridged.id.uuidString+"/v1/messages")?.id == bridged.id)
+            precondition(MigrationBridgeConfiguration.route("/migration/"+bridged.id.uuidString+"/v1/messages/count_tokens")?.countTokens == true)
+            for invalid in ["/migration/../v1/messages","/migration/"+bridged.id.uuidString+"/v1/messages/extra","/migration//"+bridged.id.uuidString+"/v1/messages"] {
+                precondition(MigrationBridgeConfiguration.route(invalid) == nil)
+            }
+            try FileManager.default.removeItem(at:FilePaths.codexProvidersFile)
             let record = try await service.prepare(source:ccSource,target:.codexCurrent,
                 fingerprint:live.fingerprint,officialModel:"gpt-test")
             let shell = try await service.command(for:record)
@@ -419,6 +500,8 @@ import SQLite3
             catch MigrationFailure.restricted {}
             do { _ = try await service.prepare(source:invalid,target:.cursorDesktop,fingerprint:"",officialModel:"")
                 preconditionFailure("dev desktop write") } catch MigrationFailure.restricted {}
+            do { _ = try await service.bridgeEndpoint(for:a); preconditionFailure("dev model bridge credential read") }
+            catch MigrationFailure.restricted {}
             mustFail { try TerminalLauncher.openMigratedSession(a,command:"codex") }
             precondition(TerminalLauncher.calls == 0)
         }

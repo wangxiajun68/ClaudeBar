@@ -11,11 +11,16 @@ final class SessionMigrationModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
 
-    func open(_ record: MigrationRecord) async throws {
+    func open(_ record: MigrationRecord, codexStore: CodexProviderStore) async throws {
         guard opening == nil else { throw MigrationFailure.busy }
         opening = record.id
         defer { opening = nil }
-        let command = try await SessionMigrationService.shared.command(for: record)
+        let bridge: MigrationBridgeLaunch?
+        if record.target == .claudeCodexModel {
+            let endpoint = try await SessionMigrationService.shared.bridgeEndpoint(for: record)
+            bridge = try await codexStore.prepareMigrationBridge(id: record.id, endpoint: endpoint)
+        } else { bridge = nil }
+        let command = try await SessionMigrationService.shared.command(for: record, bridge: bridge)
         try Task.checkCancellation()
         try TerminalLauncher.openMigratedSession(record, command: command)
     }
@@ -45,6 +50,7 @@ extension MigrationSource {
 struct SessionMigrationButton: View {
     let source: MigrationSource
     @EnvironmentObject private var migrations: SessionMigrationModel
+    @EnvironmentObject private var codexStore: CodexProviderStore
     @State private var showing = false
 
     var body: some View {
@@ -69,9 +75,12 @@ struct SessionMigrationButton: View {
 private struct SessionMigrationDialog: View {
     let source: MigrationSource
     @EnvironmentObject private var migrations: SessionMigrationModel
+    @EnvironmentObject private var codexStore: CodexProviderStore
     @Environment(\.dismiss) private var dismiss
     @State private var target: MigrationTarget = .codexCurrent
     @State private var officialModel = "gpt-6.1-sol"
+    @State private var bridgeProviderID: UUID?
+    @State private var bridgeModel = ""
     @State private var preview: MigrationPreview?
     @State private var error: String?
     @State private var preparing = false
@@ -93,6 +102,22 @@ private struct SessionMigrationDialog: View {
                 ForEach(targets) { Text($0.label).tag($0) }
             }
             .disabled(preparing)
+            if target == .claudeCodexModel {
+                Picker("自定义供应商", selection: $bridgeProviderID) {
+                    Text("请选择").tag(nil as UUID?)
+                    ForEach(codexStore.providers.filter { !$0.apiKey.isEmpty }) { provider in
+                        Text(provider.name).tag(Optional(provider.id))
+                    }
+                }.disabled(preparing)
+                if let provider = codexStore.providers.first(where: { $0.id == bridgeProviderID }) {
+                    Picker("模型", selection: $bridgeModel) {
+                        Text("请选择").tag("")
+                        ForEach(provider.models) { Text($0.name).tag($0.name) }
+                    }.disabled(preparing)
+                }
+                Text("沿用所选供应商和模型。此会话通过 ClaudeBar 代理连接，继续时需保持 ClaudeBar 运行。")
+                    .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
+            }
             if target == .codexOfficial {
                 TextField("官方模型名称", text: $officialModel)
                     .textFieldStyle(.roundedBorder).disabled(preparing)
@@ -112,7 +137,7 @@ private struct SessionMigrationDialog: View {
                     .font(Theme.Font.caption).foregroundColor(Theme.textTertiary())
             }
             if target == .cursorDesktop {
-                Text("使用 Cursor 此项目已有聊天的模型设置。创建后打开项目，在聊天历史搜索「ClaudeBar · 迁移」。已打开的窗口可能需手动重载。")
+                Text("使用 Cursor 此项目已有聊天的模型设置，创建后直接打开迁移聊天。若客户端未响应，可在历史搜索「ClaudeBar · 迁移」。")
                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
             }
             if let preview {
@@ -140,7 +165,8 @@ private struct SessionMigrationDialog: View {
                 Button(preparing ? "正在准备…" : "创建并打开") { prepare() }
                     .buttonStyle(.borderedProminent)
                     .disabled(preview == nil || preparing || source.isBusy
-                              || (target == .codexOfficial && officialModel.trimmingCharacters(in: .whitespaces).isEmpty))
+                              || (target == .codexOfficial && officialModel.trimmingCharacters(in: .whitespaces).isEmpty)
+                              || (target == .claudeCodexModel && (bridgeProviderID == nil || bridgeModel.isEmpty)))
             }
         }
         .padding(Theme.Space.s24)
@@ -152,6 +178,7 @@ private struct SessionMigrationDialog: View {
         }
         .onDisappear { work?.cancel() }
         .onChange(of: includeCompletedTools) { load() }
+        .onChange(of: bridgeProviderID) { bridgeModel = "" }
     }
 
     private func load() {
@@ -173,10 +200,11 @@ private struct SessionMigrationDialog: View {
             defer { preparing = false }
             do {
                 let record = try await SessionMigrationService.shared.prepare(source: source, target: target,
-                    fingerprint: preview.fingerprint, officialModel: officialModel, includeCompletedTools: includeCompletedTools)
+                    fingerprint: preview.fingerprint, officialModel: officialModel, includeCompletedTools: includeCompletedTools,
+                    bridgeProviderID: bridgeProviderID, bridgeModel: bridgeModel)
                 try Task.checkCancellation()
                 await migrations.refresh()
-                try await migrations.open(record)
+                try await migrations.open(record, codexStore: codexStore)
                 dismiss()
             } catch is CancellationError {} catch { self.error = error.localizedDescription }
         }
@@ -185,6 +213,7 @@ private struct SessionMigrationDialog: View {
 
 struct SessionMigrationHistoryView: View {
     @EnvironmentObject private var migrations: SessionMigrationModel
+    @EnvironmentObject private var codexStore: CodexProviderStore
 
     var body: some View {
         if !migrations.records.isEmpty {
@@ -200,7 +229,7 @@ struct SessionMigrationHistoryView: View {
                             Text(record.source.cwd).font(Theme.Font.captionMono)
                                 .foregroundColor(Theme.textTertiary()).lineLimit(1).truncationMode(.middle)
                             if record.target == .cursorDesktop {
-                                Text("聊天历史：" + record.desktopTitle + "；未出现时手动重载窗口")
+                                Text("直接打开聊天；历史名称：" + record.desktopTitle)
                                     .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                             }
                         }
@@ -208,7 +237,7 @@ struct SessionMigrationHistoryView: View {
                         SessionMigrationButton(source: record.targetSource)
                         Button("继续") {
                             Task {
-                                do { try await migrations.open(record) }
+                                do { try await migrations.open(record, codexStore: codexStore) }
                                 catch { migrations.error = error.localizedDescription }
                             }
                         }

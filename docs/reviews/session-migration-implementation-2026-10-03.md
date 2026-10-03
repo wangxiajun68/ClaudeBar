@@ -1,5 +1,7 @@
 # 会话迁移首版实现与验收记录
 
+> 阶段记录保留当时的结论。直接定位 Cursor 聊天、Codex 自定义模型到 CC 的协议桥及最新真实验收已在后续完成，当前总报告见 [第三阶段完整报告](session-migration-phase3-implementation-2026-10-03.md)，产品契约见 [技术文档](../technical/session-migration.md)。
+
 > 本文保留首版验收状态。Cursor 桌面接收和可选完成工具记录已在后续实现，当前结果见 [第二阶段报告](session-migration-phase2-implementation-2026-10-03.md)，当前契约见 [技术文档](../technical/session-migration.md)。
 
 日期：2026-10-03。分支：`codex/session-migration`。独立工作树：`/Users/wangxiajun/.codex/worktrees/session-migration/ClaudeBar`。基线为 `78802d3`；原工作区的其他未提交改动未带入。
