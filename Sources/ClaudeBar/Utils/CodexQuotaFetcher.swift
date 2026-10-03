@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import os
 
 /// One ChatGPT Codex rate-limit window returned by Codex App Server.
@@ -237,6 +238,11 @@ enum CodexQuotaFetcher {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        // A write to a child that already exited raises SIGPIPE, whose default
+        // disposition terminates the whole app — app-server does exit on its
+        // own, and the `try` below must throw instead (same call as
+        // `CodexAppServerClient`).
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
         do {
             try process.run()

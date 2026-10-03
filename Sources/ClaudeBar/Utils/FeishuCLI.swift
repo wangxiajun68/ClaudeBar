@@ -124,6 +124,12 @@ enum FeishuCLI {
                         ]) { _, new in new }
                         let stdin = Pipe()
                         process.standardInput = stdin
+                        // A write to a child that already exited raises SIGPIPE, whose
+                        // default disposition terminates the whole app — a CLI that
+                        // exits without reading its body would kill ClaudeBar rather
+                        // than fail the `try?` below. Same call `MCPToolDiscovery`
+                        // makes on its child pipe.
+                        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
                         let output = FeishuOutput(), errors = FeishuOutput(), group = DispatchGroup()
                         try child.start(process)
                         defer { child.finish() }
