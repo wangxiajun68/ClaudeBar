@@ -863,32 +863,51 @@ struct ExternalSessionMonitor {
         let floor = end > Self.codexLifecycleLookback ? end - Self.codexLifecycleLookback : 0
         try? handle.seek(toOffset: floor)
         guard let data = try? handle.read(upToCount: Int(end - floor)), !data.isEmpty else { return (nil, "") }
-        var text = String(decoding: data, as: UTF8.self)
-        if floor > 0, let newline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: newline)...])
-        }
-        var open: Bool?
-        var activity = ""
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            if line.utf8.count > Self.codexLifecycleLineCap { continue }
-            guard line.contains("task_started") || line.contains("task_complete") || line.contains("turn_aborted")
-                    || line.contains("function_call") || line.contains("custom_tool_call") else { continue }
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let payload = object["payload"] as? [String: Any] else { continue }
-            if object["type"] as? String == "event_msg", let eventType = payload["type"] as? String {
-                switch eventType {
-                case "task_started": open = true
-                case "task_complete", "turn_aborted": open = false
-                default: break
-                }
-            } else if object["type"] as? String == "response_item" {
-                let kind = payload["type"] as? String ?? ""
-                if (kind == "function_call" || kind == "custom_tool_call"),
-                   let name = payload["name"] as? String, !name.isEmpty {
-                    activity = name
-                }
+        // Work on byte boundaries before decoding: a tool output can occupy
+        // almost the entire lookback, but cannot be a lifecycle record. Scan
+        // backwards and stop once both newest fields have been recovered.
+        return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            let lower: Int
+            if floor > 0, let newline = bytes.firstIndex(of: 0x0A) {
+                lower = newline + 1
+            } else {
+                lower = 0
             }
+            var open: Bool?
+            var activity = ""
+            var end = bytes.count
+            while end > lower {
+                var start = end
+                while start > lower && bytes[start - 1] != 0x0A { start -= 1 }
+                if end - start <= Self.codexLifecycleLineCap, start < end {
+                    // Decode only a bounded candidate, preserving the original
+                    // replacement behavior for malformed UTF-8. JSON also
+                    // accepts the trailing CR in a CRLF record.
+                    let line = String(decoding: bytes[start..<end], as: UTF8.self)
+                    if line.contains("task_started") || line.contains("task_complete") || line.contains("turn_aborted")
+                        || line.contains("function_call") || line.contains("custom_tool_call"),
+                       let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                       let payload = object["payload"] as? [String: Any] {
+                        if open == nil, object["type"] as? String == "event_msg",
+                           let eventType = payload["type"] as? String {
+                            switch eventType {
+                            case "task_started": open = true
+                            case "task_complete", "turn_aborted": open = false
+                            default: break
+                            }
+                        } else if activity.isEmpty, object["type"] as? String == "response_item" {
+                            let kind = payload["type"] as? String ?? ""
+                            if (kind == "function_call" || kind == "custom_tool_call"),
+                               let name = payload["name"] as? String, !name.isEmpty {
+                                activity = name
+                            }
+                        }
+                    }
+                }
+                if open != nil && !activity.isEmpty { break }
+                end = start > lower ? start - 1 : lower
+            }
+            return (open, activity)
         }
-        return (open, activity)
     }
 }

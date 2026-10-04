@@ -8,6 +8,7 @@ struct UsageView: View {
     @State private var showCustomDatePicker = false
     @State private var officialCodexUsage: [ModelUsage] = []
     @State private var attributionInterval: DateInterval?
+    @State private var providerGroups: [UsageProviderGroup] = []
     @State private var displayedAnalytics: AnalyticsSnapshot?
 
     /// Only complete data for the selected window enters the presentation.
@@ -33,6 +34,26 @@ struct UsageView: View {
     private struct AttributionRequest: Equatable {
         let interval: DateInterval
         let codex: [ModelUsage]
+    }
+
+    private struct ProviderRequest: Equatable {
+        let interval: DateInterval
+        let sources: [UsageSource: [ModelUsage]]
+        let owners: [UsageProviderInventory.Owner]
+        let official: [ModelUsage]
+        let ready: Bool
+    }
+
+    private var providerRequest: ProviderRequest {
+        let interval = UsageStats.interval(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+        let owners = providerStore.providers.map {
+            UsageProviderInventory.Owner(source: .claude, name: $0.name, models: $0.models.map(\.name))
+        } + codexStore.providers.map {
+            UsageProviderInventory.Owner(source: .codex, name: $0.name, models: $0.models.map(\.name))
+        }
+        return ProviderRequest(interval: interval, sources: providerStore.usageBySource, owners: owners,
+                               official: attributionInterval == interval ? officialCodexUsage : [],
+                               ready: providerStore.usagePublishedInterval == interval)
     }
 
     var body: some View {
@@ -115,6 +136,21 @@ struct UsageView: View {
         .background(Theme.bgPrimary)
         .onChange(of: readyAnalytics, initial: true) { _, snapshot in
             if let snapshot { displayedAnalytics = snapshot }
+        }
+        .task(id: providerRequest) {
+            let request = providerRequest
+            guard request.ready else { return }
+            let work = Task.detached(priority: .utility) {
+                UsageProviderInventory.groups(sources: request.sources, owners: request.owners,
+                                              officialCodex: request.official)
+            }
+            let groups = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
+            guard !Task.isCancelled, request == providerRequest else { return }
+            if providerGroups != groups { providerGroups = groups }
         }
         .task(id: AttributionRequest(interval: interval, codex: providerStore.usageBySource[.codex] ?? [])) {
             let rows = await Task.detached(priority: .utility) { UsageIndex.fetchOfficialCodex(in: interval) }.value
@@ -215,69 +251,6 @@ struct UsageView: View {
         }
     }
 
-    /// Usage grouped by owning provider.
-    ///
-    /// Ownership is resolved per *source*: a Claude Code model is looked up
-    /// among the Claude Code vendors, a Codex model among the Codex ones, and
-    /// only third-party traffic — which is not either platform's own — against
-    /// the union of both. Registering every configured model under
-    /// `.thirdParty` as well made one Claude model look owned by Claude *and*
-    /// by third-party, so a model with exactly one real owner produced two
-    /// groups carrying the same `name` — and `UsageProviderGroup.id` **is** the
-    /// name, which is a duplicate ForEach id (SwiftUI then reuses and drops
-    /// rows at random). A name that genuinely maps to two providers now lands
-    /// in 未归属, which is what its help text says.
-    private var providerGroups: [UsageProviderGroup] {
-        // Keyed by provider *name*, not id: the two stores hand out different
-        // ids for the same vendor (`Provider.profileID` is what links them), and
-        // all this needs is a stable label per bucket.
-        var keys: [UsageSource: [String: Set<String>]] = [:]
-        func register(_ source: UsageSource, _ provider: Provider) {
-            for model in provider.models {
-                let key = ModelPricing.canonical(model.name)
-                keys[source, default: [:]][key, default: []].insert(provider.name)
-            }
-        }
-        /// Third-party traffic has no platform of its own, so it may be served
-        /// by any vendor; a platform's own traffic only by that platform's.
-        func candidates(for source: UsageSource, key: String) -> Set<String> {
-            switch source {
-            case .claude: return keys[.claude]?[key] ?? []
-            case .codex: return keys[.codex]?[key] ?? []
-            case .thirdParty: return (keys[.claude]?[key] ?? []).union(keys[.codex]?[key] ?? [])
-            }
-        }
-
-        for provider in providerStore.providers { register(.claude, provider) }
-        for provider in codexStore.providers { register(.codex, provider.asDisplayProvider) }
-
-        var grouped: [String: [String: ModelUsage]] = [:]
-        func add(_ stat: ModelUsage, to name: String) {
-            guard stat.totalTokens > 0 else { return }
-            var model = grouped[name]?[stat.model] ?? ModelUsage(model: stat.model)
-            model.merge(stat)
-            grouped[name, default: [:]][stat.model] = model
-        }
-        let interval = UsageStats.interval(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
-        let official = Dictionary((attributionInterval == interval ? officialCodexUsage : []).map { ($0.model, $0) }, uniquingKeysWith: { first, _ in first })
-        for source in UsageSource.allCases {
-            for stat in providerStore.usageBySource[source] ?? [] {
-                let parts = UsageProviderAttribution.split(stat, official: source == .codex ? official[stat.model] : nil)
-                add(parts.official, to: "OpenAI 官方")
-                let owners = candidates(for: source, key: ModelPricing.canonical(stat.model))
-                add(parts.remaining, to: owners.count == 1 ? (owners.first ?? "未归属") : "未归属")
-            }
-        }
-        return grouped.map { name, models in
-            UsageProviderGroup(name: name, models: models.values.sorted { $0.totalTokens > $1.totalTokens })
-        }
-        .sorted { lhs, rhs in
-            if lhs.name == "未归属" { return false }
-            if rhs.name == "未归属" { return true }
-            return lhs.total.totalTokens > rhs.total.totalTokens
-        }
-    }
-
     private func selectPeriod(_ period: UsagePeriod) {
         if period == .custom {
             // Toggle, not "always open": the same chip closes the picker, and
@@ -316,12 +289,6 @@ struct UsageView: View {
 
 }
 
-private struct UsageProviderGroup: Identifiable {
-    let name: String
-    let models: [ModelUsage]
-    var id: String { name }
-    var total: ModelUsage { models.reduce(into: ModelUsage(model: name)) { $0.merge($1) } }
-}
 
 /// The 模型明细 rows and Token 构成 bar shared by the platform, provider and
 /// Cursor cards.

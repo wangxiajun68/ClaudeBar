@@ -1,0 +1,1899 @@
+{
+  "date": "2026-10-04",
+  "baseline_commit": "c708081247eaace7275a8f9e8c35c92d1ca69d1b",
+  "installed_release": {
+    "version": "1.15.0",
+    "bundle_id": "com.claudebar.app",
+    "binary_sha256": "efa154a82fbbb9d8686f6f5bb2e27a183200cd1e1bca0b452000cb9eb79bd523",
+    "preserved": true
+  },
+  "tools": {
+    "instruments": "27.0 (27A266a)",
+    "build_toolchain": "Command Line Tools Swift 6.3.2",
+    "macOS": "26.6.2"
+  },
+  "observed_project_view_types": 145,
+  "view_body_measurements": [
+    {
+      "view": "ActionButton",
+      "count": 37,
+      "max_ms": 0.073458,
+      "total_ms": 0.7271939999999999
+    },
+    {
+      "view": "ActionChip",
+      "count": 161,
+      "max_ms": 0.046541,
+      "total_ms": 0.8764089999999998
+    },
+    {
+      "view": "ActionIcon",
+      "count": 5,
+      "max_ms": 0.018041,
+      "total_ms": 0.057872
+    },
+    {
+      "view": "ActivityLine",
+      "count": 4,
+      "max_ms": 0.015875,
+      "total_ms": 0.038291
+    },
+    {
+      "view": "AppGlyph",
+      "count": 198,
+      "max_ms": 0.32725,
+      "total_ms": 1.1517709999999994
+    },
+    {
+      "view": "AtmosphereSurface",
+      "count": 5,
+      "max_ms": 0.010291,
+      "total_ms": 0.040249
+    },
+    {
+      "view": "BatteryChargeControls",
+      "count": 3,
+      "max_ms": 1.853125,
+      "total_ms": 1.857041
+    },
+    {
+      "view": "BusyPulseRing",
+      "count": 1,
+      "max_ms": 0.006166,
+      "total_ms": 0.006166
+    },
+    {
+      "view": "CacheHitBadge",
+      "count": 19,
+      "max_ms": 0.124041,
+      "total_ms": 0.600537
+    },
+    {
+      "view": "CapacityHardwareMark",
+      "count": 8,
+      "max_ms": 0.048125,
+      "total_ms": 0.181455
+    },
+    {
+      "view": "CapsuleCradle",
+      "count": 13,
+      "max_ms": 0.029833,
+      "total_ms": 0.11191300000000001
+    },
+    {
+      "view": "CodexCleanupDialog",
+      "count": 4,
+      "max_ms": 0.037666,
+      "total_ms": 0.099915
+    },
+    {
+      "view": "CompactFanPair",
+      "count": 1,
+      "max_ms": 0.00725,
+      "total_ms": 0.00725
+    },
+    {
+      "view": "ConnectInterfaceMark",
+      "count": 2,
+      "max_ms": 0.0365,
+      "total_ms": 0.0475
+    },
+    {
+      "view": "ConnectorCard",
+      "count": 140,
+      "max_ms": 0.098875,
+      "total_ms": 2.6129069999999994
+    },
+    {
+      "view": "ConnectorKindFilter",
+      "count": 3,
+      "max_ms": 0.007958,
+      "total_ms": 0.015332
+    },
+    {
+      "view": "ConnectorUtilityButtonModifier",
+      "count": 152,
+      "max_ms": 0.022083,
+      "total_ms": 0.4785329999999998
+    },
+    {
+      "view": "ConnectorsView",
+      "count": 3,
+      "max_ms": 0.423916,
+      "total_ms": 1.0749980000000001
+    },
+    {
+      "view": "ContextBar",
+      "count": 17,
+      "max_ms": 0.011125,
+      "total_ms": 0.05253500000000001
+    },
+    {
+      "view": "ControlPlate",
+      "count": 94,
+      "max_ms": 0.379916,
+      "total_ms": 1.25155
+    },
+    {
+      "view": "ControlPressModifier",
+      "count": 20,
+      "max_ms": 0.028083,
+      "total_ms": 0.168159
+    },
+    {
+      "view": "CursorTileFull",
+      "count": 8,
+      "max_ms": 0.242875,
+      "total_ms": 0.575748
+    },
+    {
+      "view": "CursorTokenUsageCard",
+      "count": 3,
+      "max_ms": 0.180291,
+      "total_ms": 0.199707
+    },
+    {
+      "view": "DashboardView",
+      "count": 5,
+      "max_ms": 0.531125,
+      "total_ms": 2.257499
+    },
+    {
+      "view": "DecorativeMotion",
+      "count": 13,
+      "max_ms": 0.009416,
+      "total_ms": 0.06961900000000001
+    },
+    {
+      "view": "DepthLens",
+      "count": 7,
+      "max_ms": 0.021166,
+      "total_ms": 0.05724799999999999
+    },
+    {
+      "view": "DisabledTreatmentModifier",
+      "count": 191,
+      "max_ms": 0.005541,
+      "total_ms": 0.3488539999999995
+    },
+    {
+      "view": "EnergySankey",
+      "count": 13,
+      "max_ms": 0.060375,
+      "total_ms": 0.350953
+    },
+    {
+      "view": "ExternalSessionGridCard",
+      "count": 24,
+      "max_ms": 0.162083,
+      "total_ms": 1.84366
+    },
+    {
+      "view": "ForecastRibbon",
+      "count": 3,
+      "max_ms": 0.071791,
+      "total_ms": 0.127915
+    },
+    {
+      "view": "GlyphWell",
+      "count": 54,
+      "max_ms": 0.290458,
+      "total_ms": 0.761066
+    },
+    {
+      "view": "GreetingCard",
+      "count": 10,
+      "max_ms": 2.083666,
+      "total_ms": 4.44733
+    },
+    {
+      "view": "GreetingClock",
+      "count": 8,
+      "max_ms": 0.52225,
+      "total_ms": 0.7380399999999999
+    },
+    {
+      "view": "GreetingStatusSheet",
+      "count": 10,
+      "max_ms": 0.504541,
+      "total_ms": 2.712079
+    },
+    {
+      "view": "HairlineDivider",
+      "count": 59,
+      "max_ms": 0.024125,
+      "total_ms": 0.31635499999999994
+    },
+    {
+      "view": "HardwareIllustration",
+      "count": 86,
+      "max_ms": 0.029416,
+      "total_ms": 0.6999289999999999
+    },
+    {
+      "view": "HardwareSiliconMark",
+      "count": 5,
+      "max_ms": 0.0405,
+      "total_ms": 0.140957
+    },
+    {
+      "view": "HeaderControlModifier",
+      "count": 3,
+      "max_ms": 0.007833,
+      "total_ms": 0.014707999999999999
+    },
+    {
+      "view": "HelpBlockView",
+      "count": 4,
+      "max_ms": 3.348958,
+      "total_ms": 6.002082
+    },
+    {
+      "view": "HelpView",
+      "count": 2,
+      "max_ms": 2.05575,
+      "total_ms": 2.573041
+    },
+    {
+      "view": "HourlyWeatherInstrument",
+      "count": 3,
+      "max_ms": 0.17775,
+      "total_ms": 0.310416
+    },
+    {
+      "view": "HoverState",
+      "count": 290,
+      "max_ms": 0.019708,
+      "total_ms": 0.6994449999999988
+    },
+    {
+      "view": "HoverTileModifier",
+      "count": 10,
+      "max_ms": 0.017208,
+      "total_ms": 0.04808000000000001
+    },
+    {
+      "view": "HumidityDrop",
+      "count": 2,
+      "max_ms": 0.0215,
+      "total_ms": 0.042290999999999995
+    },
+    {
+      "view": "InnerFrameRing",
+      "count": 95,
+      "max_ms": 0.009041,
+      "total_ms": 0.21650499999999992
+    },
+    {
+      "view": "InstrumentBadge",
+      "count": 5,
+      "max_ms": 0.007541,
+      "total_ms": 0.018665
+    },
+    {
+      "view": "InstrumentField",
+      "count": 9,
+      "max_ms": 0.818708,
+      "total_ms": 1.005957
+    },
+    {
+      "view": "InstrumentGlyph",
+      "count": 29,
+      "max_ms": 0.026458,
+      "total_ms": 0.247034
+    },
+    {
+      "view": "InstrumentMenuLabel",
+      "count": 57,
+      "max_ms": 0.112125,
+      "total_ms": 1.735232
+    },
+    {
+      "view": "InstrumentMetric",
+      "count": 4,
+      "max_ms": 0.074916,
+      "total_ms": 0.150123
+    },
+    {
+      "view": "InstrumentSearchField",
+      "count": 41,
+      "max_ms": 0.05525,
+      "total_ms": 0.8692790000000001
+    },
+    {
+      "view": "InstrumentToggleBody",
+      "count": 33,
+      "max_ms": 0.228416,
+      "total_ms": 1.0466140000000004
+    },
+    {
+      "view": "InstrumentWell",
+      "count": 23,
+      "max_ms": 0.035625,
+      "total_ms": 0.204741
+    },
+    {
+      "view": "LayerShadow",
+      "count": 225,
+      "max_ms": 0.119916,
+      "total_ms": 2.0052089999999985
+    },
+    {
+      "view": "LinkCard",
+      "count": 7,
+      "max_ms": 0.066,
+      "total_ms": 0.220957
+    },
+    {
+      "view": "LucideRotor",
+      "count": 20,
+      "max_ms": 0.075291,
+      "total_ms": 0.644826
+    },
+    {
+      "view": "MarkNudge",
+      "count": 3,
+      "max_ms": 0.011916,
+      "total_ms": 0.018248
+    },
+    {
+      "view": "ModelPriceCard",
+      "count": 3,
+      "max_ms": 1.552416,
+      "total_ms": 1.581332
+    },
+    {
+      "view": "OfficialProviderCard",
+      "count": 1,
+      "max_ms": 0.058333,
+      "total_ms": 0.058333
+    },
+    {
+      "view": "OverviewStatusDot",
+      "count": 6,
+      "max_ms": 0.018541,
+      "total_ms": 0.034415
+    },
+    {
+      "view": "OverviewTile",
+      "count": 42,
+      "max_ms": 0.08175,
+      "total_ms": 0.9409459999999998
+    },
+    {
+      "view": "PageHeaderCard",
+      "count": 4,
+      "max_ms": 0.063583,
+      "total_ms": 0.10541500000000001
+    },
+    {
+      "view": "PageTitle",
+      "count": 12,
+      "max_ms": 0.03475,
+      "total_ms": 0.130204
+    },
+    {
+      "view": "PanelCardModifier",
+      "count": 3,
+      "max_ms": 0.019125,
+      "total_ms": 0.043083
+    },
+    {
+      "view": "PerimeterSweep",
+      "count": 10,
+      "max_ms": 0.063458,
+      "total_ms": 0.15857900000000003
+    },
+    {
+      "view": "PeriodTabs",
+      "count": 3,
+      "max_ms": 0.026583,
+      "total_ms": 0.040083
+    },
+    {
+      "view": "PermissionSettingsRow",
+      "count": 8,
+      "max_ms": 0.3245,
+      "total_ms": 0.334956
+    },
+    {
+      "view": "PermissionsSection",
+      "count": 2,
+      "max_ms": 0.965166,
+      "total_ms": 0.970332
+    },
+    {
+      "view": "PowerFlowCard",
+      "count": 5,
+      "max_ms": 0.041333,
+      "total_ms": 0.148957
+    },
+    {
+      "view": "PowerFlowContent",
+      "count": 5,
+      "max_ms": 0.056625,
+      "total_ms": 0.191458
+    },
+    {
+      "view": "PriceRow",
+      "count": 42,
+      "max_ms": 0.369958,
+      "total_ms": 2.0906120000000015
+    },
+    {
+      "view": "ProductBrandMark",
+      "count": 45,
+      "max_ms": 0.011875,
+      "total_ms": 0.17144600000000004
+    },
+    {
+      "view": "ProviderActivationControl",
+      "count": 16,
+      "max_ms": 0.042416,
+      "total_ms": 0.2892860000000001
+    },
+    {
+      "view": "ProviderBalanceReadout",
+      "count": 1,
+      "max_ms": 0.004666,
+      "total_ms": 0.004666
+    },
+    {
+      "view": "ProviderCardSurface",
+      "count": 45,
+      "max_ms": 0.043958,
+      "total_ms": 0.600863
+    },
+    {
+      "view": "ProviderCatalogBrowser",
+      "count": 3,
+      "max_ms": 0.404125,
+      "total_ms": 0.40816600000000003
+    },
+    {
+      "view": "ProviderCategoryFilter",
+      "count": 3,
+      "max_ms": 0.013125,
+      "total_ms": 0.022208000000000002
+    },
+    {
+      "view": "ProviderDirectoryCard",
+      "count": 42,
+      "max_ms": 0.115791,
+      "total_ms": 0.6966529999999999
+    },
+    {
+      "view": "ProviderDirectoryHost",
+      "count": 1,
+      "max_ms": 0.040333,
+      "total_ms": 0.040333
+    },
+    {
+      "view": "ProviderDirectorySearch",
+      "count": 3,
+      "max_ms": 0.009708,
+      "total_ms": 0.015374
+    },
+    {
+      "view": "ProviderIdentityMark",
+      "count": 22,
+      "max_ms": 1.802125,
+      "total_ms": 6.91662
+    },
+    {
+      "view": "ProviderModelSelector",
+      "count": 45,
+      "max_ms": 0.064083,
+      "total_ms": 0.5784419999999998
+    },
+    {
+      "view": "ProviderStatusBadge",
+      "count": 16,
+      "max_ms": 0.014666,
+      "total_ms": 0.146035
+    },
+    {
+      "view": "ProvidersView",
+      "count": 2,
+      "max_ms": 0.83075,
+      "total_ms": 1.0711249999999999
+    },
+    {
+      "view": "PulsingStatusDot",
+      "count": 11,
+      "max_ms": 0.014458,
+      "total_ms": 0.055037
+    },
+    {
+      "view": "ResourceMonitorScope",
+      "count": 13,
+      "max_ms": 0.01875,
+      "total_ms": 0.09849500000000004
+    },
+    {
+      "view": "ResourceStrip",
+      "count": 7,
+      "max_ms": 0.619083,
+      "total_ms": 1.521206
+    },
+    {
+      "view": "RollingNumberModifier",
+      "count": 1198,
+      "max_ms": 0.429708,
+      "total_ms": 4.361109999999986
+    },
+    {
+      "view": "RollingNumberText",
+      "count": 238,
+      "max_ms": 0.013583,
+      "total_ms": 0.5848379999999994
+    },
+    {
+      "view": "ScrollHoverGateModifier",
+      "count": 31,
+      "max_ms": 0.518791,
+      "total_ms": 0.8331999999999999
+    },
+    {
+      "view": "SectionHeader",
+      "count": 12,
+      "max_ms": 0.054166,
+      "total_ms": 0.222203
+    },
+    {
+      "view": "SegmentedCapsule",
+      "count": 61,
+      "max_ms": 0.353333,
+      "total_ms": 1.7112720000000001
+    },
+    {
+      "view": "SegmentedItem",
+      "count": 283,
+      "max_ms": 0.11025,
+      "total_ms": 5.531363
+    },
+    {
+      "view": "SelectionPill",
+      "count": 11,
+      "max_ms": 0.007375,
+      "total_ms": 0.056413
+    },
+    {
+      "view": "SessionActionChips",
+      "count": 92,
+      "max_ms": 0.073416,
+      "total_ms": 1.0495119999999998
+    },
+    {
+      "view": "SessionLoadChip",
+      "count": 40,
+      "max_ms": 0.061416,
+      "total_ms": 0.7575679999999999
+    },
+    {
+      "view": "SessionMigrationButton",
+      "count": 34,
+      "max_ms": 0.110083,
+      "total_ms": 0.9378230000000001
+    },
+    {
+      "view": "SessionTitleLine",
+      "count": 10,
+      "max_ms": 0.026583,
+      "total_ms": 0.151372
+    },
+    {
+      "view": "SettingsDivider",
+      "count": 43,
+      "max_ms": 0.018291,
+      "total_ms": 0.15019300000000002
+    },
+    {
+      "view": "SettingsGroup",
+      "count": 16,
+      "max_ms": 1.634333,
+      "total_ms": 2.6032030000000006
+    },
+    {
+      "view": "SettingsRow",
+      "count": 27,
+      "max_ms": 0.338833,
+      "total_ms": 1.532244
+    },
+    {
+      "view": "SettingsToggleRow",
+      "count": 23,
+      "max_ms": 0.017083,
+      "total_ms": 0.146909
+    },
+    {
+      "view": "SettingsView",
+      "count": 19,
+      "max_ms": 0.882958,
+      "total_ms": 2.157994
+    },
+    {
+      "view": "ShineHoverModifier",
+      "count": 63,
+      "max_ms": 0.253666,
+      "total_ms": 0.7161859999999999
+    },
+    {
+      "view": "ShineSweep",
+      "count": 62,
+      "max_ms": 0.019416,
+      "total_ms": 0.21681400000000006
+    },
+    {
+      "view": "SignalCellRow",
+      "count": 2,
+      "max_ms": 0.005833,
+      "total_ms": 0.010208
+    },
+    {
+      "view": "SignatureGlyph",
+      "count": 202,
+      "max_ms": 0.0315,
+      "total_ms": 0.8792669999999994
+    },
+    {
+      "view": "SiliconCells",
+      "count": 10,
+      "max_ms": 0.033541,
+      "total_ms": 0.08062000000000002
+    },
+    {
+      "view": "SillChip",
+      "count": 35,
+      "max_ms": 0.095375,
+      "total_ms": 0.6626960000000001
+    },
+    {
+      "view": "SillGauge",
+      "count": 4,
+      "max_ms": 0.033875,
+      "total_ms": 0.061874
+    },
+    {
+      "view": "SillGlass",
+      "count": 3,
+      "max_ms": 0.043458,
+      "total_ms": 0.047374
+    },
+    {
+      "view": "SkyModeToggle",
+      "count": 9,
+      "max_ms": 0.09075,
+      "total_ms": 0.361039
+    },
+    {
+      "view": "SourceRing",
+      "count": 40,
+      "max_ms": 0.068458,
+      "total_ms": 0.700279
+    },
+    {
+      "view": "SparkleCta",
+      "count": 3,
+      "max_ms": 0.184666,
+      "total_ms": 0.18924799999999997
+    },
+    {
+      "view": "SparkleMark",
+      "count": 1,
+      "max_ms": 0.003208,
+      "total_ms": 0.003208
+    },
+    {
+      "view": "StandbyEmptyState",
+      "count": 2,
+      "max_ms": 0.06525,
+      "total_ms": 0.092583
+    },
+    {
+      "view": "StatusArrival",
+      "count": 12,
+      "max_ms": 0.01175,
+      "total_ms": 0.04837100000000001
+    },
+    {
+      "view": "StatusPill",
+      "count": 106,
+      "max_ms": 0.010875,
+      "total_ms": 0.528175
+    },
+    {
+      "view": "SunPath",
+      "count": 2,
+      "max_ms": 0.072458,
+      "total_ms": 0.119249
+    },
+    {
+      "view": "SweepRing",
+      "count": 1,
+      "max_ms": 0.004416,
+      "total_ms": 0.004416
+    },
+    {
+      "view": "TileGrid",
+      "count": 29,
+      "max_ms": 0.0735,
+      "total_ms": 0.627865
+    },
+    {
+      "view": "TileModifier",
+      "count": 209,
+      "max_ms": 0.026166,
+      "total_ms": 0.6511379999999992
+    },
+    {
+      "view": "TileSurface",
+      "count": 67,
+      "max_ms": 0.052125,
+      "total_ms": 0.871644
+    },
+    {
+      "view": "TokenComparison",
+      "count": 3,
+      "max_ms": 0.017541,
+      "total_ms": 0.029332
+    },
+    {
+      "view": "TokenMixStrip",
+      "count": 22,
+      "max_ms": 0.071375,
+      "total_ms": 0.463367
+    },
+    {
+      "view": "TopNavTab",
+      "count": 604,
+      "max_ms": 0.087541,
+      "total_ms": 6.832750999999998
+    },
+    {
+      "view": "TrafficView",
+      "count": 3,
+      "max_ms": 8.104,
+      "total_ms": 9.289416
+    },
+    {
+      "view": "Unchanged",
+      "count": 18,
+      "max_ms": 0.496041,
+      "total_ms": 3.4000780000000006
+    },
+    {
+      "view": "UsageAnalyticsSection",
+      "count": 6,
+      "max_ms": 3.280041,
+      "total_ms": 4.427790000000001
+    },
+    {
+      "view": "UsageCompositionBar",
+      "count": 93,
+      "max_ms": 0.036916,
+      "total_ms": 0.6522179999999999
+    },
+    {
+      "view": "UsageHeatmap",
+      "count": 11,
+      "max_ms": 0.054166,
+      "total_ms": 0.285245
+    },
+    {
+      "view": "UsageMiniBars",
+      "count": 3,
+      "max_ms": 0.013625,
+      "total_ms": 0.029498999999999997
+    },
+    {
+      "view": "UsageModelBreakdown",
+      "count": 12,
+      "max_ms": 0.034166,
+      "total_ms": 0.233537
+    },
+    {
+      "view": "UsageModelCard",
+      "count": 50,
+      "max_ms": 0.157291,
+      "total_ms": 2.369064
+    },
+    {
+      "view": "UsagePlatformCard",
+      "count": 10,
+      "max_ms": 0.076458,
+      "total_ms": 0.288038
+    },
+    {
+      "view": "UsageProviderCard",
+      "count": 25,
+      "max_ms": 0.095166,
+      "total_ms": 0.6606179999999999
+    },
+    {
+      "view": "UsageView",
+      "count": 9,
+      "max_ms": 4.416875,
+      "total_ms": 8.013664
+    },
+    {
+      "view": "VPNCurrentNodeLatency",
+      "count": 3,
+      "max_ms": 0.041958,
+      "total_ms": 0.046499000000000006
+    },
+    {
+      "view": "VPNProbeRow",
+      "count": 3,
+      "max_ms": 0.465541,
+      "total_ms": 0.47012299999999996
+    },
+    {
+      "view": "VPNTrafficStrip",
+      "count": 18,
+      "max_ms": 0.213416,
+      "total_ms": 2.019868
+    },
+    {
+      "view": "VPNView",
+      "count": 16,
+      "max_ms": 0.825625,
+      "total_ms": 1.5911620000000002
+    },
+    {
+      "view": "VerticalHairline",
+      "count": 3,
+      "max_ms": 0.029291,
+      "total_ms": 0.04179
+    },
+    {
+      "view": "VpnSpeedChart",
+      "count": 11,
+      "max_ms": 1.916125,
+      "total_ms": 2.010539
+    },
+    {
+      "view": "VpnSubscriptionSection",
+      "count": 3,
+      "max_ms": 0.767666,
+      "total_ms": 0.807291
+    },
+    {
+      "view": "WeatherGlyph",
+      "count": 5,
+      "max_ms": 0.2695,
+      "total_ms": 0.297164
+    }
+  ],
+  "optimization": {
+    "workload": "Synthetic logs and providers; optimized production source slices; no app/system integration",
+    "samples": {
+      "baseline": [
+        {
+          "lookback_8x12MiB_ms": 1407.697625,
+          "provider_groups_10x4000_configured_models_ms": 65.858083
+        },
+        {
+          "lookback_8x12MiB_ms": 1303.282083,
+          "provider_groups_10x4000_configured_models_ms": 62.643625
+        },
+        {
+          "lookback_8x12MiB_ms": 1276.016791,
+          "provider_groups_10x4000_configured_models_ms": 65.368833
+        }
+      ],
+      "current": [
+        {
+          "lookback_8x12MiB_ms": 40.709709,
+          "provider_groups_10x4000_configured_models_ms": 12.2955
+        },
+        {
+          "lookback_8x12MiB_ms": 38.813292,
+          "provider_groups_10x4000_configured_models_ms": 10.129791
+        },
+        {
+          "lookback_8x12MiB_ms": 41.455584,
+          "provider_groups_10x4000_configured_models_ms": 10.860084
+        }
+      ]
+    },
+    "medians_ms": {
+      "baseline": {
+        "lookback_8x12MiB_ms": 1303.282083,
+        "provider_groups_10x4000_configured_models_ms": 65.368833
+      },
+      "current": {
+        "lookback_8x12MiB_ms": 40.709709,
+        "provider_groups_10x4000_configured_models_ms": 10.860084
+      }
+    }
+  },
+  "metal": {
+    "process": "ClaudeBar 1.15.0",
+    "duration_seconds": 25.719247,
+    "counts": {
+      "command_buffer_events": 150,
+      "event:CommandBufferSubmission": 150,
+      "gpu_intervals": 613
+    },
+    "metrics": {
+      "cpu_submit_ms": {
+        "count": 150,
+        "min": 0.055708,
+        "max": 0.472709,
+        "p50": 0.103833,
+        "p95": 0.328375
+      },
+      "encoder_ms": {
+        "count": 150,
+        "min": 0.039042,
+        "max": 0.263667,
+        "p50": 0.058042,
+        "p95": 0.163918
+      },
+      "metal_allocated_MiB": {
+        "count": 289,
+        "min": 39.96875,
+        "max": 41.546875,
+        "p50": 40.5,
+        "p95": 41.546875
+      },
+      "gpu_interval_ms_overlapping": {
+        "count": 613,
+        "min": 0.106833,
+        "max": 6.579458,
+        "p50": 1.028959,
+        "p95": 4.030958
+      }
+    },
+    "limitation": "GPU intervals overlap across hardware channels; their sum is not GPU utilization or frame latency."
+  },
+  "memory": {
+    "process": "ClaudeBar 1.15.0",
+    "samples": 68,
+    "footprint_MiB_min": 504.2986145019531,
+    "footprint_MiB_max": 758.4079895019531,
+    "first": {
+      "seconds": 0.0,
+      "footprint_MiB": 540.1423645019531,
+      "resident_MiB": 515.359375
+    },
+    "last": {
+      "seconds": 69.204995291,
+      "footprint_MiB": 542.4704895019531,
+      "resident_MiB": 445.953125
+    },
+    "limitation": "Short page-navigation/stationary recording, not a retained-allocation or leak test."
+  },
+  "animation_hitches": {
+    "row_count": 1924,
+    "p50_ms": 8.333291,
+    "p95_ms": 16.666666,
+    "max_ms": 58.333333,
+    "causes": {
+      "": 1440,
+      "Potentially expensive app update(s)": 471,
+      "Potentially expensive render, 0 offscreen passes)": 9,
+      "Potentially expensive app update(s), Potentially expensive render, 0 offscreen passes)": 4
+    },
+    "longest": [
+      {
+        "start_ms": 52927.302333,
+        "duration_ms": 58.333333,
+        "cause": "Potentially expensive app update(s)"
+      },
+      {
+        "start_ms": 589.982958,
+        "duration_ms": 25.0,
+        "cause": "Potentially expensive app update(s)"
+      },
+      {
+        "start_ms": 685.816,
+        "duration_ms": 25.0,
+        "cause": "Potentially expensive app update(s)"
+      },
+      {
+        "start_ms": 1639.979541,
+        "duration_ms": 25.0,
+        "cause": "Potentially expensive app update(s)"
+      },
+      {
+        "start_ms": 1673.31275,
+        "duration_ms": 25.0,
+        "cause": "Potentially expensive app update(s)"
+      }
+    ]
+  },
+  "cpu_baseline": {
+    "hidden": {
+      "recorded_seconds": 25,
+      "sampled_cpu_weight_ms": 2399.0,
+      "main_thread_weight_ms": 198.0,
+      "self_by_symbol": [
+        {
+          "symbol": "Substring.subscript.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 611.0
+        },
+        {
+          "symbol": "specialized static String._uncheckedFromUTF8(_:isASCII:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 219.0
+        },
+        {
+          "symbol": "Substring.index(_:offsetBy:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 179.0
+        },
+        {
+          "symbol": "_allASCII(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 151.0
+        },
+        {
+          "symbol": "_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 113.0
+        },
+        {
+          "symbol": "specialized BidirectionalCollection._range<A>(of:anchored:backwards:)",
+          "binary": "Foundation",
+          "weight_ms": 106.0
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "binary": "Foundation",
+          "weight_ms": 77.0
+        },
+        {
+          "symbol": "DYLD-STUB$$Substring.subscript.getter",
+          "binary": "Foundation",
+          "weight_ms": 62.0
+        },
+        {
+          "symbol": "swift_bridgeObjectRelease",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 59.0
+        },
+        {
+          "symbol": "String._uncheckedIndex(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 50.0
+        },
+        {
+          "symbol": "0x1032fd518",
+          "binary": "ClaudeBar",
+          "weight_ms": 50.0
+        },
+        {
+          "symbol": "_StringGuts.validateScalarIndex(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 43.0
+        },
+        {
+          "symbol": "String.subscript.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 39.0
+        },
+        {
+          "symbol": "DYLD-STUB$$_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "Foundation",
+          "weight_ms": 32.0
+        },
+        {
+          "symbol": "_StringGuts.validateCharacterIndex(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 31.0
+        },
+        {
+          "symbol": "0x102c25334",
+          "binary": "ClaudeBar",
+          "weight_ms": 24.0
+        },
+        {
+          "symbol": "newJSONString",
+          "binary": "Foundation",
+          "weight_ms": 23.0
+        },
+        {
+          "symbol": "__proc_info",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "mach_msg2_trap",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 18.0
+        },
+        {
+          "symbol": "0x1031ddde8",
+          "binary": "ClaudeBar",
+          "weight_ms": 18.0
+        },
+        {
+          "symbol": "validateUTF8(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 13.0
+        },
+        {
+          "symbol": "DYLD-STUB$$Substring.index(_:offsetBy:)",
+          "binary": "Foundation",
+          "weight_ms": 12.0
+        },
+        {
+          "symbol": "_StringGuts._opaqueComplexCharacterStride(startingAt:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 11.0
+        },
+        {
+          "symbol": "_GraphemeBreakingState.shouldBreak(between:and:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 11.0
+        },
+        {
+          "symbol": "hasBreakWhenPaired #1 (_:) in _quickHasGraphemeBreakBetween(_:_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 10.0
+        },
+        {
+          "symbol": "objc_msgSend",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "_stringCompareFastUTF8Abnormal(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "__CFFromUTF8",
+          "binary": "CoreFoundation",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "Substring.index(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "_platform_memset",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 8.0
+        },
+        {
+          "symbol": "String.index(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 8.0
+        },
+        {
+          "symbol": "_StringGuts.validateCharacterIndex(_:in:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 8.0
+        },
+        {
+          "symbol": "0x102c25720",
+          "binary": "ClaudeBar",
+          "weight_ms": 7.0
+        },
+        {
+          "symbol": "DYLD-STUB$$String.subscript.getter",
+          "binary": "ClaudeBar",
+          "weight_ms": 7.0
+        },
+        {
+          "symbol": "0x10330838c",
+          "binary": "ClaudeBar",
+          "weight_ms": 6.0
+        },
+        {
+          "symbol": "start_wqthread",
+          "binary": "libsystem_pthread.dylib",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "_CFStringCheckAndGetCharacterAtIndex",
+          "binary": "CoreFoundation",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "_stringCompareInternal(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "DYLD-STUB$$Substring.index(after:)",
+          "binary": "Foundation",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "binary": "ClaudeBar",
+          "weight_ms": 5.0
+        }
+      ],
+      "symbol_quality": {
+        "project_frame_unsymbolicated_ms": 2208.0,
+        "project_entry_point_only_ms": 131.0,
+        "project_frame_symbolicated_ms": 15.0,
+        "missing_backtrace_ms": 10.0
+      }
+    },
+    "visible_dashboard": {
+      "recorded_seconds": 25,
+      "sampled_cpu_weight_ms": 15509.0,
+      "main_thread_weight_ms": 10088.0,
+      "self_by_symbol": [
+        {
+          "symbol": "Substring.subscript.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1223.0
+        },
+        {
+          "symbol": "AG::Graph::propagate_dirty(AG::AttributeID)",
+          "binary": "AttributeGraph",
+          "weight_ms": 687.0
+        },
+        {
+          "symbol": "DYLD-STUB$$os_unfair_lock_unlock",
+          "binary": "CoreGraphics",
+          "weight_ms": 682.0
+        },
+        {
+          "symbol": "__openat",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 625.0
+        },
+        {
+          "symbol": "AG::Graph::UpdateStack::update()",
+          "binary": "AttributeGraph",
+          "weight_ms": 492.0
+        },
+        {
+          "symbol": "specialized static String._uncheckedFromUTF8(_:isASCII:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 453.0
+        },
+        {
+          "symbol": "Substring.index(_:offsetBy:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 406.0
+        },
+        {
+          "symbol": "os_unfair_lock_lock",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 355.0
+        },
+        {
+          "symbol": "AG::Subgraph::update(unsigned int)",
+          "binary": "AttributeGraph",
+          "weight_ms": 300.0
+        },
+        {
+          "symbol": "_allASCII(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 285.0
+        },
+        {
+          "symbol": "CGGlyphBuilderUnlockBitmaps",
+          "binary": "CoreGraphics",
+          "weight_ms": 230.0
+        },
+        {
+          "symbol": "_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 203.0
+        },
+        {
+          "symbol": "vSepConvolveARGB8bgf_vec",
+          "binary": "vImage",
+          "weight_ms": 192.0
+        },
+        {
+          "symbol": "argb32_image_mark_argb32",
+          "binary": "CoreGraphics",
+          "weight_ms": 184.0
+        },
+        {
+          "symbol": "_platform_memmove",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 181.0
+        },
+        {
+          "symbol": "__munmap",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 181.0
+        },
+        {
+          "symbol": "specialized BidirectionalCollection._range<A>(of:anchored:backwards:)",
+          "binary": "Foundation",
+          "weight_ms": 178.0
+        },
+        {
+          "symbol": "os_unfair_lock_unlock",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 178.0
+        },
+        {
+          "symbol": "___CFBasicHashFindBucket_Linear",
+          "binary": "CoreFoundation",
+          "weight_ms": 174.0
+        },
+        {
+          "symbol": "mach_msg2_trap",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 169.0
+        },
+        {
+          "symbol": "_platform_memset",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 139.0
+        },
+        {
+          "symbol": "PDM",
+          "binary": "CoreGraphics",
+          "weight_ms": 138.0
+        },
+        {
+          "symbol": "__mmap",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 132.0
+        },
+        {
+          "symbol": "objc_msgSend",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 132.0
+        },
+        {
+          "symbol": "CGBitmapAllocateData",
+          "binary": "CoreGraphics",
+          "weight_ms": 123.0
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "binary": "Foundation",
+          "weight_ms": 113.0
+        },
+        {
+          "symbol": "AnyToAnyBlockInternal",
+          "binary": "vImage",
+          "weight_ms": 107.0
+        },
+        {
+          "symbol": "String._uncheckedIndex(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 103.0
+        },
+        {
+          "symbol": "__CF_IS_OBJC",
+          "binary": "CoreFoundation",
+          "weight_ms": 101.0
+        },
+        {
+          "symbol": "swift_bridgeObjectRelease",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 99.0
+        },
+        {
+          "symbol": "aa_cache_render",
+          "binary": "CoreGraphics",
+          "weight_ms": 99.0
+        },
+        {
+          "symbol": "DYLD-STUB$$Substring.subscript.getter",
+          "binary": "Foundation",
+          "weight_ms": 91.0
+        },
+        {
+          "symbol": "_xzm_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 89.0
+        },
+        {
+          "symbol": "swift_unknownObjectRetain",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 80.0
+        },
+        {
+          "symbol": "swift_retain",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 78.0
+        },
+        {
+          "symbol": "DYLD-STUB$$protocol witness for OptionSet.init(rawValue:) in conformance DisplayList.Properties",
+          "binary": "SwiftUICore",
+          "weight_ms": 77.0
+        },
+        {
+          "symbol": "DYLD-STUB$$_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "Foundation",
+          "weight_ms": 76.0
+        },
+        {
+          "symbol": "CGFontStrikeGetSize",
+          "binary": "CoreGraphics",
+          "weight_ms": 74.0
+        },
+        {
+          "symbol": "_StringGuts.validateScalarIndex(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 72.0
+        },
+        {
+          "symbol": "aa_add_edges",
+          "binary": "CoreGraphics",
+          "weight_ms": 66.0
+        }
+      ],
+      "symbol_quality": {
+        "project_frame_unsymbolicated_ms": 5141.0,
+        "project_entry_point_only_ms": 9986.0,
+        "missing_backtrace_ms": 47.0,
+        "project_frame_symbolicated_ms": 43.0
+      }
+    }
+  },
+  "cpu_probe_comparison": {
+    "baseline": {
+      "sampled_cpu_weight_ms": 8020.0,
+      "self_by_symbol": [
+        {
+          "symbol": "String.subscript.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1119.0
+        },
+        {
+          "symbol": "String._uncheckedIndex(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1091.0
+        },
+        {
+          "symbol": "_StringGuts.validateScalarIndex(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 751.0
+        },
+        {
+          "symbol": "_StringGuts.validateCharacterIndex(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 691.0
+        },
+        {
+          "symbol": "specialized static String._uncheckedFromUTF8(_:isASCII:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 689.0
+        },
+        {
+          "symbol": "_allASCII(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 528.0
+        },
+        {
+          "symbol": "partial apply for specialized closure #1 in Collection<>.split(separator:maxSplits:omittingEmptySubsequences:)",
+          "binary": "profile-baseline",
+          "weight_ms": 504.0
+        },
+        {
+          "symbol": "_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 501.0
+        },
+        {
+          "symbol": "specialized Collection.split(maxSplits:omittingEmptySubsequences:whereSeparator:)",
+          "binary": "profile-baseline",
+          "weight_ms": 414.0
+        },
+        {
+          "symbol": "String.index(after:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 168.0
+        },
+        {
+          "symbol": "DYLD-STUB$$_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "profile-baseline",
+          "weight_ms": 150.0
+        },
+        {
+          "symbol": "DYLD-STUB$$String.subscript.getter",
+          "binary": "profile-baseline",
+          "weight_ms": 140.0
+        },
+        {
+          "symbol": "DYLD-STUB$$String.index(after:)",
+          "binary": "profile-baseline",
+          "weight_ms": 134.0
+        },
+        {
+          "symbol": "swift_bridgeObjectRelease",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 132.0
+        },
+        {
+          "symbol": "specialized closure #1 in Collection<>.split(separator:maxSplits:omittingEmptySubsequences:)",
+          "binary": "profile-baseline",
+          "weight_ms": 132.0
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "binary": "profile-baseline",
+          "weight_ms": 118.0
+        },
+        {
+          "symbol": "_platform_memmove",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 100.0
+        },
+        {
+          "symbol": "_StringGuts.append(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 93.0
+        },
+        {
+          "symbol": "_StringGuts.prepareForAppendInPlace(totalCount:otherUTF8Count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 67.0
+        },
+        {
+          "symbol": "read",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 41.0
+        },
+        {
+          "symbol": "_stringCompare(_:_:expecting:)",
+          "binary": "profile-baseline",
+          "weight_ms": 40.0
+        },
+        {
+          "symbol": "__StringStorage._updateCountAndFlags(newCount:newIsASCII:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 39.0
+        },
+        {
+          "symbol": "_StringGuts.nativeUnusedCapacity.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 39.0
+        },
+        {
+          "symbol": "swift_isUniquelyReferenced_nonNull_native",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 29.0
+        },
+        {
+          "symbol": "protocol witness for Collection.formIndex(after:) in conformance String",
+          "binary": "profile-baseline",
+          "weight_ms": 28.0
+        },
+        {
+          "symbol": "swift_release",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 24.0
+        },
+        {
+          "symbol": "specialized String.init(repeating:count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 21.0
+        },
+        {
+          "symbol": "__StringStorage._breadcrumbsAddress.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "protocol witness for Collection.subscript.read in conformance String",
+          "binary": "profile-baseline",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "specialized UnsafeMutablePointer.initialize(from:count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 16.0
+        },
+        {
+          "symbol": "DYLD-STUB$$memcpy",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 15.0
+        },
+        {
+          "symbol": "specialized Collection<>.firstIndex(of:)",
+          "binary": "profile-baseline",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "_xzm_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 6.0
+        },
+        {
+          "symbol": "__open",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "String._uncheckedIndex(before:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 4.0
+        },
+        {
+          "symbol": "icu::RegexMatcher::MatchAt(long long, signed char, UErrorCode&)",
+          "binary": "libicucore.A.dylib",
+          "weight_ms": 4.0
+        },
+        {
+          "symbol": "swift_retain",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "utext_setup",
+          "binary": "libicucore.A.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "write",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "-[NSRegularExpression(NSMatching) enumerateMatchesInString:options:range:usingBlock:]",
+          "binary": "Foundation",
+          "weight_ms": 2.0
+        }
+      ],
+      "profile_32_recoveries_ms": 5804.9854589999995
+    },
+    "current": {
+      "sampled_cpu_weight_ms": 696.0,
+      "self_by_symbol": [
+        {
+          "symbol": "_StringGuts.append(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 128.0
+        },
+        {
+          "symbol": "closure #1 in static Recovery.recoverBeforeTail(handle:before:)",
+          "binary": "profile-current",
+          "weight_ms": 86.0
+        },
+        {
+          "symbol": "UnsafeRawBufferPointer.subscript.getter",
+          "binary": "profile-current",
+          "weight_ms": 69.0
+        },
+        {
+          "symbol": "_platform_memmove",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 49.0
+        },
+        {
+          "symbol": "_StringGuts.prepareForAppendInPlace(totalCount:otherUTF8Count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 48.0
+        },
+        {
+          "symbol": "_StringGuts.nativeUnusedCapacity.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 41.0
+        },
+        {
+          "symbol": "read",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 41.0
+        },
+        {
+          "symbol": "specialized UnsafeMutablePointer.initialize(from:count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 33.0
+        },
+        {
+          "symbol": "specialized String.init(repeating:count:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 25.0
+        },
+        {
+          "symbol": "__StringStorage._updateCountAndFlags(newCount:newIsASCII:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 25.0
+        },
+        {
+          "symbol": "swift_isUniquelyReferenced_nonNull_native",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 23.0
+        },
+        {
+          "symbol": "__StringStorage._breadcrumbsAddress.getter",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 21.0
+        },
+        {
+          "symbol": "swift_release",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "DYLD-STUB$$memcpy",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 10.0
+        },
+        {
+          "symbol": "specialized RandomAccessCollection<>.index(after:)",
+          "binary": "profile-current",
+          "weight_ms": 6.0
+        },
+        {
+          "symbol": "Hasher.combine(bytes:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "write",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "__open",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "0x1008fe319",
+          "binary": "unknown",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "dyld3::MachOFile::trieWalk(Diagnostics&, unsigned char const*, unsigned char const*, char const*)",
+          "binary": "dyld",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "__open",
+          "binary": "dyld",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "_platform_strncmp$VARIANT$Base",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "mach_o::UnsafeHeader::forEachLoadCommand(void (load_command const*, bool&) block_pointer) const",
+          "binary": "dyld",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "xzm_malloc_zone_size",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "fsync",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "0x18cad02c4",
+          "binary": "libicucore.A.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "dyld_program_sdk_at_least",
+          "binary": "libdyld.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "_stringCompareFastUTF8(_:_:expecting:bothNFC:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "String.hash(into:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "_platform_memcmp",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "specialized Hasher.init(_seed:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_isUniquelyReferenced_nonNull_native",
+          "binary": "profile-current",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "specialized _NativeSet.insertNew(_:at:isUnique:)",
+          "binary": "profile-current",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "Hasher._finalize()",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "__CFStringCreateImmutableFunnel3",
+          "binary": "CoreFoundation",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "DYLD-STUB$$objc_allocWithZone",
+          "binary": "Foundation",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "getMethodNoSuper_nolock(objc_class*, objc_selector*)",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "@objc NSString.__swiftFillFileSystemRepresentation(pointer:maxLength:)",
+          "binary": "Foundation",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "objc::SafeRanges::find(unsigned long, unsigned int&)",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 1.0
+        }
+      ],
+      "profile_32_recoveries_ms": 179.025208
+    }
+  },
+  "changed_source_sha256": {
+    "Sources/ClaudeBar/Utils/ExternalSessionMonitor.swift": "1fa5d69d90e3c8ec523c0eee9a76fbbb02ed4c32178d82543347bf38f926613e",
+    "Sources/ClaudeBar/Views/Pages/UsageView.swift": "36ee2077e4b2233b4cd367c3589da2b8fe8e99e5ea3a9150eb9a471220b9a0d2",
+    "Sources/ClaudeBar/Utils/UsageProviderInventory.swift": "82824ccddc5ae20b08a48f3677fbaa2e61a584624889e67bf287f8dc456eaaf9",
+    "Tests/measured-performance-regressions.py": "2bb55932fe1b0b154c703ee59a8f3330b19cf2c066b9945e8be7ba2658eda008",
+    "Tools/summarize-xctrace-ui.py": "374c8cb12a2970a888070ecc0b0429756f705e4e24adf6232c3b549ff6b479dd"
+  },
+  "limitations": [
+    "Raw traces remain local because they may contain private data.",
+    "Unsupported SwiftUI layout tracing; valid view-body and CPU tables are used.",
+    "Hardened installed release rejected Allocations attachment; no retained-allocation or leak conclusion.",
+    "Not all menu-bar/Widget/island flows or system-writing actions were exercised.",
+    "UI body durations are not frame latency or FPS.",
+    "Optimized source probes are not an installed-release CPU or FPS improvement measurement.",
+    "GPU intervals overlap; their total is not utilization.",
+    "Separate baseline recordings are not a simultaneous energy A/B test."
+  ],
+  "validation": {
+    "full_regression_suites": 63,
+    "full_regression_seconds": 317.64,
+    "final_focused_suites": [
+      "measured-performance",
+      "usage-analysis",
+      "usage-index"
+    ],
+    "dev_build": "passed; identity, widget, URL scheme, entitlements and signature",
+    "release_build": "passed; identity, widget, URL scheme, entitlements and signature",
+    "installed_release_replaced": false,
+    "diff_check": "passed"
+  }
+}
