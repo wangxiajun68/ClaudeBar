@@ -10,6 +10,8 @@ struct UsageView: View {
     @State private var attributionInterval: DateInterval?
     @State private var providerGroups: [UsageProviderGroup] = []
     @State private var displayedAnalytics: AnalyticsSnapshot?
+    @State private var modelRows: [UsageModelInventory.Row] = []
+    @State private var renderedModelRequest: ModelRequest?
 
     /// Only complete data for the selected window enters the presentation.
     /// Keep the previous snapshot while the index answers a new period.
@@ -54,6 +56,46 @@ struct UsageView: View {
         return ProviderRequest(interval: interval, sources: providerStore.usageBySource, owners: owners,
                                official: attributionInterval == interval ? officialCodexUsage : [],
                                ready: providerStore.usagePublishedInterval == interval)
+    }
+
+    private struct ModelRequest: Equatable {
+        let interval: DateInterval
+        let local: [ModelUsage]
+        let sources: [UsageSource: [ModelUsage]]
+        let cursor: [String: CursorLedger.Row]
+        let costs: [String: ModelPricing.Estimate.Line]
+        let cursorWindowLabel: String?
+        let ready: Bool
+    }
+
+    private var modelRequest: ModelRequest {
+        let interval = UsageStats.interval(for: providerStore.usagePeriod, reference: providerStore.usageReferenceDate)
+        return ModelRequest(interval: interval, local: providerStore.usageStats,
+                            sources: providerStore.usageBySource, cursor: ledger.rows,
+                            costs: providerStore.usageCostLines, cursorWindowLabel: ledger.windowLabel,
+                            ready: providerStore.usagePublishedInterval == interval)
+    }
+
+    private func refreshModelRows(_ request: ModelRequest) async {
+        guard request.ready else { return }
+        let work = Task.detached(priority: .utility) {
+            guard !Task.isCancelled else { return [UsageModelInventory.Row]() }
+            let cursorStats = request.cursor.values.map {
+                ModelUsage(model: $0.model, inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
+                           cacheReadTokens: $0.cacheReadTokens, cacheCreationTokens: $0.cacheWriteTokens)
+            }
+            return UsageModelInventory.rows(local: request.local, sources: request.sources,
+                                            cursor: cursorStats, costs: request.costs)
+        }
+        let rows = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        guard !Task.isCancelled, request == modelRequest else { return }
+        if modelRows != rows { modelRows = rows }
+        // Billing money and its caption belong to the same prepared snapshot.
+        if renderedModelRequest != request { renderedModelRequest = request }
     }
 
     var body: some View {
@@ -137,6 +179,9 @@ struct UsageView: View {
         .onChange(of: readyAnalytics, initial: true) { _, snapshot in
             if let snapshot { displayedAnalytics = snapshot }
         }
+        .task(id: modelRequest) {
+            await refreshModelRows(modelRequest)
+        }
         .task(id: providerRequest) {
             let request = providerRequest
             guard request.ready else { return }
@@ -190,20 +235,17 @@ struct UsageView: View {
     }
 
     private var modelBreakdown: some View {
-        let cursorStats = ledger.rows.values.map {
-            ModelUsage(model: $0.model, inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
-                       cacheReadTokens: $0.cacheReadTokens, cacheCreationTokens: $0.cacheWriteTokens)
-        }
-        let rows = UsageModelInventory.rows(local: providerStore.usageStats,
-                                            sources: providerStore.usageBySource,
-                                            cursor: cursorStats, costs: providerStore.usageCostLines)
+        let rows = modelRows
+        let cursorRows = renderedModelRequest?.cursor ?? [:]
         return VStack(alignment: .leading, spacing: Theme.Space.s12) {
             SectionHeader(icon: "cube", title: "按模型",
                           tint: Theme.cursor, ink: Theme.Ink.cursor, count: rows.count)
             Text("列出所选周期的全部本地模型及 Cursor 账单中的模型；同一模型的两种用量分别显示。")
                 .font(Theme.Font.caption)
                 .foregroundColor(Theme.textSecondary)
-            if rows.isEmpty && !providerStore.usageLoading && !ledger.loading {
+            if renderedModelRequest == nil {
+                ProgressView().controlSize(.small)
+            } else if rows.isEmpty && !providerStore.usageLoading && !ledger.loading {
                 StandbyEmptyState(label: "暂无用量", symbol: "chart.bar",
                                   tint: Theme.textSecondary, block: true)
             } else {
@@ -217,8 +259,8 @@ struct UsageView: View {
                             stat: row.displayed,
                             slices: slices,
                             costLine: row.costLine,
-                            settlement: ledger.rows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) },
-                            settlementWindow: row.cursor == nil ? nil : ledger.windowLabel,
+                            settlement: cursorRows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) },
+                            settlementWindow: row.cursor == nil ? nil : renderedModelRequest?.cursorWindowLabel,
                             cursorStat: row.hasLocal ? row.cursor : nil,
                             cursorOnly: !row.hasLocal
                         )

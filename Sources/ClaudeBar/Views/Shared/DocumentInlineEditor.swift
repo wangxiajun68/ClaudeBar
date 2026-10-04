@@ -64,6 +64,7 @@ struct DocumentInlineEditor: NSViewRepresentable {
         view.textContainer?.widthTracksTextView = true
         view.textContainer?.containerSize = NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude)
         applyText(view)
+        context.coordinator.published = markdown
         view.delegate = context.coordinator
         updateNSView(view, context: context)
         onView(view)
@@ -219,9 +220,10 @@ enum DocumentRichText {
             return "<pre lang=\"" + escapedHTML(language) + "\"><code>" + escapedHTML(lines.dropFirst().dropLast().joined(separator: "\n")) + "</code></pre>"
         }
         let text = attributed(markdown, size: 15)
+        let source = text.string as NSString
         var result = ""
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
-            var value = (text.string as NSString).substring(with: range)
+            var value = source.substring(with: range)
                 .replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\n", with: "<br/>")
             let traits = (attributes[.font] as? NSFont).map { NSFontManager.shared.traits(of: $0) } ?? []
@@ -263,7 +265,7 @@ enum DocumentRichText {
             }
         }
         // Native automatic detection runs after edits; detect initial bare URLs too.
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+        if let detector = linkDetector {
             for match in detector.matches(in: result.string, range: full) {
                 guard let url = match.url, allowedURL(url), match.range.length > 0 else { continue }
                 var canLink = true
@@ -275,10 +277,13 @@ enum DocumentRichText {
         }
         return result
     }
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     static func markdown(_ text: NSAttributedString) -> String {
+        let source = text.string as NSString
         var result = ""
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
-            let raw = (text.string as NSString).substring(with: range)
+            let raw = source.substring(with: range)
             let font = attributes[.font] as? NSFont
             let traits = font.map { NSFontManager.shared.traits(of: $0) } ?? []
             var value: String
@@ -286,10 +291,8 @@ enum DocumentRichText {
                 let fence = String(repeating: "`", count: (raw.split(separator: "`", omittingEmptySubsequences: false).count))
                 value = fence + " " + raw + " " + fence
             } else {
-                value = raw.reduce(into: "") { output, character in
-                    if "\\`*_[]<>~".contains(character) { output.append("\\") }
-                    output.append(character)
-                }
+                // Non-code text is escaped after trimming below, once per run.
+                value = ""
             }
             let leading = String(raw.prefix(while: { $0.isWhitespace }))
             let trailing = String(raw.reversed().prefix(while: { $0.isWhitespace }).reversed())

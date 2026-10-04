@@ -1,0 +1,164 @@
+{
+  "date": "2026-10-04",
+  "baseline_commit": "c985f1f84e42602708eb3012c23c7873c02afea7",
+  "comparison": {
+    "workload": "4000 synthetic inventory models, 1001 Cursor models; 20 result reads; 4000 providers × 20 models, 20 queries; no app or system integration",
+    "baseline_ref": "c985f1f",
+    "samples": {
+      "baseline": [
+        {
+          "directory_20_active_queries_ms": 674.309708,
+          "directory_20_empty_queries_ms": 602.526667,
+          "inventory_prepare_and_20_reads_ms": 219.551667,
+          "inventory_single_prepare_ms": 13.392417
+        },
+        {
+          "directory_20_active_queries_ms": 667.872833,
+          "directory_20_empty_queries_ms": 609.605333,
+          "inventory_prepare_and_20_reads_ms": 213.161708,
+          "inventory_single_prepare_ms": 10.93225
+        },
+        {
+          "directory_20_active_queries_ms": 666.513583,
+          "directory_20_empty_queries_ms": 602.612084,
+          "inventory_prepare_and_20_reads_ms": 215.222167,
+          "inventory_single_prepare_ms": 11.101125
+        }
+      ],
+      "current": [
+        {
+          "directory_20_active_queries_ms": 636.68925,
+          "directory_20_empty_queries_ms": 0.002625,
+          "inventory_prepare_and_20_reads_ms": 11.670458,
+          "inventory_single_prepare_ms": 11.541209
+        },
+        {
+          "directory_20_active_queries_ms": 639.250542,
+          "directory_20_empty_queries_ms": 0.002041,
+          "inventory_prepare_and_20_reads_ms": 11.366167,
+          "inventory_single_prepare_ms": 11.4205
+        },
+        {
+          "directory_20_active_queries_ms": 638.116292,
+          "directory_20_empty_queries_ms": 0.002459,
+          "inventory_prepare_and_20_reads_ms": 11.1965,
+          "inventory_single_prepare_ms": 11.095625
+        }
+      ]
+    },
+    "medians_ms": {
+      "baseline": {
+        "directory_20_active_queries_ms": 667.872833,
+        "directory_20_empty_queries_ms": 602.612084,
+        "inventory_prepare_and_20_reads_ms": 215.222167,
+        "inventory_single_prepare_ms": 11.101125
+      },
+      "current": {
+        "directory_20_active_queries_ms": 638.116292,
+        "directory_20_empty_queries_ms": 0.002459,
+        "inventory_prepare_and_20_reads_ms": 11.366167,
+        "inventory_single_prepare_ms": 11.4205
+      }
+    }
+  },
+  "island_burst_before": {
+    "queries_before_release": 101,
+    "queries_for_101_refreshes": 101,
+    "maximum_concurrent_queries": 12
+  },
+  "island_burst_after": {
+    "queries_before_release": 1,
+    "queries_for_101_refreshes": 2,
+    "maximum_concurrent_queries": 1
+  },
+  "instruments": {
+    "template": "Time Profiler",
+    "trace_duration_seconds": 8.095959,
+    "source": "Isolated optimized production refreshModelRows method and inventory, 500 preparations; initial value tests and directory workloads included",
+    "counts": {
+      "total_samples": 7199,
+      "inventory_main_samples": 34,
+      "inventory_background_samples": 5518
+    },
+    "weights_ms": {
+      "main_all_sampled_ms": 1666.0,
+      "inventory_main_sampled_ms": 34.0,
+      "background_all_sampled_ms": 5533.0,
+      "inventory_background_sampled_ms": 5518.0
+    },
+    "inventory_symbols": {
+      "specialized static UsageModelInventory.rows(local:sources:cursor:costs:)": 2355.0,
+      "specialized key #1 (_:) in static UsageModelInventory.rows(local:sources:cursor:costs:)": 2629.0,
+      "static UsageModelInventory.rows(local:sources:cursor:costs:)": 490.0,
+      "closure #1 in static UsageModelInventory.rows(local:sources:cursor:costs:)": 78.0
+    },
+    "interpretation": "Sampled inclusive stack weights, not wall time, FPS, energy or installed App CPU. Background row construction observed; initial synthetic probe also invokes inventory directly.",
+    "worker_closure_symbol": "closure #1 in PresentationFixture.refreshModelRows(_:)",
+    "background_inventory_samples_with_worker_closure": 5518
+  },
+  "changed_source_sha256": {
+    "Sources/ClaudeBar/Models/IslandLiveModel.swift": "0b86a74f0f885f172bbd5d971febc644af47b3cee381bbedbf049ee9e7e22fdb",
+    "Sources/ClaudeBar/NotchIslandController.swift": "8c10f124cce21970b11a33e08a3b609aa76710a9fcfe972e9ae2940de0fe6d98",
+    "Sources/ClaudeBar/Utils/UsageModelInventory.swift": "59a5e85374f8a276dea69ce23d69ec12436591797686cb72aba567233ba319b7",
+    "Sources/ClaudeBar/Views/Pages/UsageView.swift": "970d8f8040cd28b21e797c94992335b1b3addf260b6243304193fb9b740c34d6",
+    "Sources/ClaudeBar/Views/Shared/ProviderDirectory.swift": "79da3b0d1988ad8e8da6f62500e37b9b436945da4673a19375db813d3f525b37"
+  },
+  "validation": {
+    "full_suites": 67,
+    "full_elapsed_seconds": 315.35,
+    "full_exit_code": 0,
+    "focused_suites": [
+      "inventory-performance",
+      "island-coalescing",
+      "usage-index",
+      "usage-analysis",
+      "island-session-alert"
+    ],
+    "focused_exit_code": 0,
+    "final_focused_suites": 2,
+    "final_focused_exit_code": 0,
+    "dev_build_exit_code": 0,
+    "release_build_exit_code": 0,
+    "bundles": [
+      {
+        "channel": "dev",
+        "bundle_id": "com.claudebar.app.dev",
+        "executable": "ClaudeBarDev",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.dev.widget",
+        "app_groups": [
+          "com.claudebar.app.dev.widget"
+        ],
+        "strict_deep_signature_valid": true
+      },
+      {
+        "channel": "release",
+        "bundle_id": "com.claudebar.app",
+        "executable": "ClaudeBar",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.widget",
+        "app_groups": [
+          "com.claudebar.app.widget"
+        ],
+        "strict_deep_signature_valid": true
+      }
+    ],
+    "widget_snapshot_symlink_verified": true,
+    "diff_check_exit_code": 0,
+    "python_compile_exit_code": 0
+  },
+  "scope": {
+    "changed_production_files": 5,
+    "fixes": 4,
+    "real_app_installed_or_restarted": false,
+    "real_system_integration_tested": false,
+    "measurements_are_synthetic_production_source_slices": true
+  },
+  "limitations": [
+    "No installed App CPU/FPS/energy/memory A/B; Time Profiler ran isolated production methods.",
+    "Timing excludes SwiftUI layout, diff and request comparison; source-value consistency separately tested.",
+    "Cooperative cancellation slightly increases single inventory CPU time.",
+    "Existing in-flight island synchronous query allowed to finish; requests coalesced rather than forcibly interrupting database work.",
+    "Cached presentation retains last coherent snapshot while a new period is loading; memory reduction not established."
+  ]
+}

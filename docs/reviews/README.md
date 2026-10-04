@@ -8,6 +8,8 @@
 - [第三轮：苹果 UI、动效与能源流增量更新](apple-ui-performance-2026-10-04.md)（[组件更新样本](performance-ui-animation-measurements-2026-10-04.json)、[实际 xctrace 采样](performance-xctrace-ui-2026-10-04.json)）
 - [正式版 Instruments 审查与热点优化](apple-release-performance-audit-2026-10-04.md)（[页面、CPU、GPU、内存和生产函数对照](performance-release-audit-2026-10-04.json)）
 - [后续模块：命令、帮助、Widget、额度与流量生命周期](apple-remaining-performance-audit-2026-10-04.md)（[全部源码入口](performance-remaining-source-2026-10-04.md)、[测量与验证](performance-remaining-audit-2026-10-04.json)）
+- [模型库存、供应商搜索与灵动岛性能优化](apple-inventory-performance-2026-10-04.md)（[对照、Instruments 与验证](performance-inventory-audit-2026-10-04.json)）
+- [原生文档、额度显示与 VPN 查询细节优化](apple-native-detail-performance-2026-10-05.md)（[生产函数对照、Instruments 与验证](performance-native-detail-audit-2026-10-05.json)）
 - [会话迁移深度调研及真实验证](session-migration-deep-research-2026-10-03.md)
 - [会话迁移 Swift 首版实现与验收](session-migration-implementation-2026-10-03.md)（[脱敏真实续聊结果](session-migration-swift-live-results-2026-10-03.json)）
 - [会话迁移第二阶段：Cursor 桌面接收与工具交接](session-migration-phase2-implementation-2026-10-03.md)（[脱敏真实续聊结果](session-migration-phase2-live-results-2026-10-03.json)）

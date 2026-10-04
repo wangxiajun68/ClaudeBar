@@ -274,7 +274,7 @@ final class NotchIslandController {
     }
 
     private func applyWings(_ shows: Bool) {
-        model?.setPeriodicRefresh(shows)
+        model?.setPeriodicRefresh(shows && prefs.notchIslandEnabled)
         withAnimation(IslandStyle.morphSpring) { state?.showsWings = shows }
     }
 

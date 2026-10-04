@@ -95,41 +95,53 @@ final class VpnNetProbe: ObservableObject {
     /// awaiting its endpoints when the next one started must not overwrite the
     /// newer answer when it finally lands.
     func refreshIP(afterNodeSwitch: Bool = false) async {
-        guard ipLookup == nil else { return }
+        guard ipLookup == nil, !Task.isCancelled else { return }
         let generation = UUID()
         ipGeneration = generation
         let task = Task { @MainActor [weak self] in
-            defer { self?.ipLookup = nil }
+            defer {
+                if self?.ipGeneration == generation {
+                    self?.ipLookup = nil
+                    self?.ipLoading = false
+                }
+            }
             await self?.performIPLookup(afterNodeSwitch: afterNodeSwitch, generation: generation)
         }
         ipLookup = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private func performIPLookup(afterNodeSwitch: Bool, generation: UUID) async {
+        guard generation == ipGeneration, !Task.isCancelled else { return }
         ipLoading = true
         ipError = nil
         if afterNodeSwitch {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
+        guard generation == ipGeneration, !Task.isCancelled else { return }
         let port = VpnManager.shared.mixedPortIfRunning
         let attempts = afterNodeSwitch ? 2 : 1
         for attempt in 0..<attempts {
             if attempt > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(400_000_000) * UInt64(attempt))
             }
+            guard generation == ipGeneration, !Task.isCancelled else { return }
             if let info = await Self.fetchIP(proxyPort: port) {
                 // A newer lookup took over while this one was in flight: its
                 // answer is the one that describes the tunnel now.
-                guard generation == ipGeneration else { return }
+                guard generation == ipGeneration, !Task.isCancelled else { return }
                 ipInfo = info
                 ipError = nil
                 ipLoading = false
                 return
             }
-            guard generation == ipGeneration else { return }
+            guard generation == ipGeneration, !Task.isCancelled else { return }
         }
-        guard generation == ipGeneration else { return }
+        guard generation == ipGeneration, !Task.isCancelled else { return }
         if ipInfo == nil {
             ipError = port == nil ? "内核未运行" : "无法取得出口 IP"
         }
@@ -203,8 +215,10 @@ final class VpnNetProbe: ObservableObject {
         // second when it answers at all — and it stops the tail.
         let deadline = Date().addingTimeInterval(12)
         for endpoint in ipEndpoints {
-            if Date() >= deadline { return nil }
-            if let info = await fetchOne(endpoint, proxyPort: proxyPort), !info.ip.isEmpty {
+            guard !Task.isCancelled, Date() < deadline else { return nil }
+            let info = await fetchOne(endpoint, proxyPort: proxyPort)
+            guard !Task.isCancelled else { return nil }
+            if let info, !info.ip.isEmpty {
                 return info
             }
         }

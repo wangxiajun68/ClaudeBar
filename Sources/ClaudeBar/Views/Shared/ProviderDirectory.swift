@@ -126,7 +126,9 @@ struct ProviderCatalogBrowser: View {
             }
     }
     private func custom(in layout: Partition) -> [Provider] {
-        layout.custom.filter { matches(searchHaystack(connectionSearchText($0))) }
+        let term = searchTerm
+        guard !term.isEmpty else { return layout.custom }
+        return layout.custom.filter { searchHaystack(connectionSearchText($0)).contains(term) }
     }
     private var showsOfficial: Bool {
         (category == nil || category == .platform) && (!configuredOnly || activeID == nil) &&

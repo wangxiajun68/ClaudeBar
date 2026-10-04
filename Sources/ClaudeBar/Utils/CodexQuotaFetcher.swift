@@ -42,14 +42,18 @@ struct CodexQuotaWindow: Equatable, Identifiable {
     /// Clock time of the next allowance refresh. Today omits the date.
     var resetClock: String {
         guard let resetsAt else { return "重置时间未知" }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        if Calendar.current.isDateInToday(resetsAt) {
-            formatter.dateFormat = "HH:mm"
-        } else {
-            formatter.dateFormat = "M月d日 HH:mm"
-        }
-        return "\(formatter.string(from: resetsAt)) 重置"
+        return "\(Self.clock(resetsAt, includesDate: !Calendar.current.isDateInToday(resetsAt))) 重置"
+    }
+
+    /// Foundation reuses identical format styles; default time zone is read on
+    /// every call so a system time-zone change does not leave a cached clock stale.
+    private static func clock(_ date: Date, includesDate: Bool = false) -> String {
+        let format: Date.FormatString = includesDate
+            ? "\(month: .defaultDigits)月\(day: .defaultDigits)日 \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits)"
+            : "\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits)"
+        return date.formatted(Date.VerbatimFormatStyle(format: format,
+            locale: Locale(identifier: "zh_CN"), timeZone: NSTimeZone.default,
+            calendar: Calendar(identifier: .gregorian)))
     }
 
     /// How long until that refresh, for the dashboard detail line.
@@ -96,10 +100,7 @@ struct CodexQuotaWindow: Equatable, Identifiable {
     var resetCompact: String {
         guard let resetsAt else { return "" }
         if durationMinutes > 0, durationMinutes <= 1_440 {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "HH:mm"
-            return formatter.string(from: resetsAt)
+            return Self.clock(resetsAt)
         }
         // Midnight-to-midnight day difference, not a 24h span: "明天" has to mean
         // the next calendar day, because that is what a person reads it as.
@@ -114,10 +115,7 @@ struct CodexQuotaWindow: Equatable, Identifiable {
                                                    from: Calendar.current.startOfDay(for: Date()),
                                                    to: Calendar.current.startOfDay(for: resetsAt)).day ?? 0
         if days <= 0 {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "HH:mm"
-            return formatter.string(from: resetsAt)
+            return Self.clock(resetsAt)
         }
         if days == 1 { return "明天" }
         return "\(days)天"

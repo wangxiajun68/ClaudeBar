@@ -3,7 +3,7 @@ import Foundation
 /// All recorded models, independent of provider configuration or list limits.
 /// Cursor's window totals remain separate from the selected local period.
 enum UsageModelInventory {
-    struct Row: Identifiable {
+    struct Row: Identifiable, Equatable {
         let id: String
         var local: ModelUsage
         var cursor: ModelUsage?
@@ -17,6 +17,7 @@ enum UsageModelInventory {
 
     static func rows(local: [ModelUsage], sources: [UsageSource: [ModelUsage]],
                      cursor: [ModelUsage], costs: [String: ModelPricing.Estimate.Line]) -> [Row] {
+        guard !Task.isCancelled else { return [] }
         var inventory: [String: Row] = [:]
         var tokensByName: [String: Int] = [:]
         // Local totals, source totals and Cursor often repeat the same names.
@@ -30,6 +31,7 @@ enum UsageModelInventory {
             return id
         }
         for stat in local where !stat.isZero {
+            guard !Task.isCancelled else { return [] }
             let id = key(stat.model)
             tokensByName[stat.model, default: 0] += stat.totalTokens
             var row = inventory[id] ?? Row(id: id, local: ModelUsage(model: id))
@@ -39,6 +41,7 @@ enum UsageModelInventory {
         }
         for (source, models) in sources {
             for stat in models {
+                guard !Task.isCancelled else { return [] }
                 let id = key(stat.model)
                 guard var row = inventory[id] else { continue }
                 row.sourceTokens[source, default: 0] += stat.totalTokens
@@ -46,6 +49,7 @@ enum UsageModelInventory {
             }
         }
         for stat in cursor {
+            guard !Task.isCancelled else { return [] }
             let id = key(stat.model)
             var row = inventory[id] ?? Row(id: id, local: ModelUsage(model: id))
             var usage = row.cursor ?? ModelUsage(model: id)
@@ -54,12 +58,14 @@ enum UsageModelInventory {
             inventory[id] = row
         }
         for id in inventory.keys {
+            guard !Task.isCancelled else { return [] }
             guard var row = inventory[id], row.hasLocal else { continue }
             let lines = row.recordedNames.sorted().compactMap { costs[$0] }
             var cost = ModelPricing.Cost()
             var missing = 0
             var reason: ModelPricing.Unpriced?
             for line in lines {
+                guard !Task.isCancelled else { return [] }
                 cost.cny += line.cost.cny
                 cost.usd += line.cost.usd
                 missing += line.unpricedTokens
@@ -67,6 +73,7 @@ enum UsageModelInventory {
             }
             // A missing cost snapshot must not turn an alias into free usage.
             for name in row.recordedNames where costs[name] == nil {
+                guard !Task.isCancelled else { return [] }
                 missing += tokensByName[name] ?? 0
                 reason = .unknownSlug
             }

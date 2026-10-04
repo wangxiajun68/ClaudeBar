@@ -1,0 +1,213 @@
+{
+  "date": "2026-10-05",
+  "baseline_commit": "c985f1f84e42602708eb3012c23c7873c02afea7",
+  "comparison": {
+    "baseline_ref": "c985f1f",
+    "synthetic": true,
+    "samples": {
+      "current": [
+        {
+          "document_20_serializations_ms": 88.58191967010498,
+          "document_100_html_ms": 16.607999801635742,
+          "editor_150_mounts_ms": 41.375041007995605,
+          "editor_initial_assignments": 1,
+          "quota_1000_updates_ms": 11.841058731079102
+        },
+        {
+          "document_20_serializations_ms": 93.2309627532959,
+          "document_100_html_ms": 17.36307144165039,
+          "editor_150_mounts_ms": 41.72194004058838,
+          "editor_initial_assignments": 1,
+          "quota_1000_updates_ms": 12.82501220703125
+        },
+        {
+          "document_20_serializations_ms": 89.39898014068604,
+          "document_100_html_ms": 16.234993934631348,
+          "editor_150_mounts_ms": 40.78197479248047,
+          "editor_initial_assignments": 1,
+          "quota_1000_updates_ms": 11.886000633239746
+        }
+      ],
+      "baseline": [
+        {
+          "document_20_serializations_ms": 182.23702907562256,
+          "document_100_html_ms": 31.235933303833008,
+          "editor_150_mounts_ms": 110.1830005645752,
+          "editor_initial_assignments": 2,
+          "quota_1000_updates_ms": 61.46597862243652
+        },
+        {
+          "document_20_serializations_ms": 186.63394451141357,
+          "document_100_html_ms": 33.637046813964844,
+          "editor_150_mounts_ms": 118.78490447998047,
+          "editor_initial_assignments": 2,
+          "quota_1000_updates_ms": 60.90903282165527
+        },
+        {
+          "document_20_serializations_ms": 183.27605724334717,
+          "document_100_html_ms": 32.505035400390625,
+          "editor_150_mounts_ms": 109.30299758911133,
+          "editor_initial_assignments": 2,
+          "quota_1000_updates_ms": 57.69193172454834
+        }
+      ]
+    },
+    "medians": {
+      "current": {
+        "document_20_serializations_ms": 89.39898014068604,
+        "document_100_html_ms": 16.607999801635742,
+        "editor_150_mounts_ms": 41.375041007995605,
+        "editor_initial_assignments": 1,
+        "quota_1000_updates_ms": 11.886000633239746
+      },
+      "baseline": {
+        "document_20_serializations_ms": 183.27605724334717,
+        "document_100_html_ms": 32.505035400390625,
+        "editor_150_mounts_ms": 110.1830005645752,
+        "editor_initial_assignments": 2,
+        "quota_1000_updates_ms": 60.90903282165527
+      }
+    }
+  },
+  "vpn_probe": {
+    "before": {
+      "cancelled_sleep_queries": 1,
+      "cancelled_sweep_queries": 7,
+      "overlap_fixture_total_queries": 3,
+      "pre_cancelled_sweep_queries": 7
+    },
+    "after": {
+      "cancelled_sleep_queries": 0,
+      "cancelled_sweep_queries": 1,
+      "overlap_fixture_total_queries": 2,
+      "pre_cancelled_sweep_queries": 0
+    }
+  },
+  "instruments": {
+    "scope": "isolated synthetic production source, no installed application",
+    "duration_seconds": 7.955489,
+    "total_samples": 7048,
+    "main_thread_samples": 7017,
+    "skipped_rows_without_backtrace": 3,
+    "inclusive_samples": {
+      "markdown": 5081,
+      "quota_format": 104,
+      "editor_mount": 1738,
+      "attributed": 685
+    },
+    "inclusive_sample_weight_ms": {
+      "markdown": 5081.0,
+      "quota_format": 104.0,
+      "editor_mount": 1738.0,
+      "attributed": 685.0
+    },
+    "project_symbols": {
+      "static DocumentRichText.markdown(_:)": 5081,
+      "closure #1 in static DocumentRichText.markdown(_:)": 4790,
+      "CodexQuotaWindow.resetClock.getter": 76,
+      "static CodexQuotaWindow.clock(_:includesDate:)": 67,
+      "specialized static CodexQuotaWindow.clock(_:includesDate:)": 66,
+      "DocumentInlineEditor.makeNSView(context:)": 1738,
+      "static DocumentRichText.attributed(_:size:semibold:)": 685,
+      "DocumentInlineEditor.applyText(_:)": 990,
+      "specialized static DocumentRichText.attributed(_:size:semibold:)": 681,
+      "specialized static DocumentRichText.allowedURL(_:)": 8,
+      "static DocumentRichText.allowedURL(_:)": 8,
+      "CodexQuotaWindow.resetCompact.getter": 28,
+      "DocumentInlineEditor.makeCoordinator()": 1,
+      "DocumentInlineEditor.Coordinator.__allocating_init(_:)": 1,
+      "DocumentInlineEditor.updateNSView(_:context:)": 7
+    },
+    "allocations": {
+      "status": "failed_to_attach",
+      "usable_heap_measurement": false
+    }
+  },
+  "changed_production_files": {
+    "Sources/ClaudeBar/Views/Shared/DocumentInlineEditor.swift": "ea02cb788b0439b6ed0e33fada987878d953460eb316073130aa116e7e7100a3",
+    "Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift": "5afd09fbe1f532e5bc5b7ef5d7fc05676a60e34b70b4a0cfdab73f730d576491",
+    "Sources/ClaudeBar/Utils/VpnNetProbe.swift": "65d133f0b7400b312f903ab72723d69217a34960ac9b33a0edf39bcab3020a6a"
+  },
+  "reviewed_files": {
+    "Sources/ClaudeBar/Views/Shared/DocumentInlineEditor.swift": "ea02cb788b0439b6ed0e33fada987878d953460eb316073130aa116e7e7100a3",
+    "Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift": "5afd09fbe1f532e5bc5b7ef5d7fc05676a60e34b70b4a0cfdab73f730d576491",
+    "Sources/ClaudeBar/Utils/VpnNetProbe.swift": "65d133f0b7400b312f903ab72723d69217a34960ac9b33a0edf39bcab3020a6a",
+    "Sources/ClaudeBar/Models/FeishuDocumentStore.swift": "30b7b72792d16e8ec86091f52603fc4a2e6143f63a300081510c6ade9f9c638c",
+    "Sources/ClaudeBar/Models/DocumentMarkup.swift": "83bc637f176a52d571fea77fae33cddec8f4739179440e53a4b323cc5136c0cb",
+    "Sources/ClaudeBar/Models/DocumentTable.swift": "df8bdc2bfed4488cfe0a382d0d05bf07aedaf029ef0acbd55ba82bb019cefbdb",
+    "Sources/ClaudeBar/Views/Pages/FeishuDocumentsView.swift": "2f4d0f49689fe09fc36a71e03e077eaca2d649a5f1132b356bfa8f498b3c046c",
+    "Sources/ClaudeBar/Views/Shared/SkillMarkdownPreview.swift": "067381837fda055fc2aafcf7f250f2bd02e948473f8396875838d896318d0085",
+    "Sources/ClaudeBar/Views/Shared/DocumentTableView.swift": "a0baf0db791b988cca9c4558315a3b5438dd22b73abac9c445a10355a8fc691d",
+    "Sources/ClaudeBar/Views/Shared/FeishuOfficialDocumentView.swift": "669a041e90c4ad698675db645109631d34db2e1b52762b5cb1a96aeec205a2e2",
+    "Sources/ClaudeBar/Utils/FeishuCLI.swift": "c8d06ad16677f4b97afa8122746c478bda97c84ba3f5f3f4f22c7512f8eccdc7",
+    "Sources/ClaudeBar/Utils/VpnHTTP.swift": "d56a11c736993fe289454e4c3f3d2195c85fb06139aca4a5b5eff553f29823bc",
+    "Sources/ClaudeBar/Utils/VpnSubscriptionStore.swift": "e6900d50d29b97e08ff2a3f842ae73e3b6047298c96a3ad5094d755279b425a8",
+    "Sources/ClaudeBar/Utils/ModelPriceCatalog.swift": "86a0a621eda994eed51f970860dd7b7ace40fd3a5a681fd8012ad2447f4c4d07",
+    "Sources/ClaudeBar/Views/Shared/ModelPriceCard.swift": "233f5d9d7f2cb13b93cef609e34480bb4a94c29cdf234be80db48e45d734de8b",
+    "Sources/ClaudeBar/Utils/ProcessMemoryRow.swift": "7f6b93dfa6ff6df3fc0f7ecc4d6d591c3cb67dca65c3c13df900cc8e262121af",
+    "Sources/ClaudeBar/Utils/ProcessSampler.swift": "17d51fc10d6c03941e48fffa58c1a15f746be09bf15cd3cd566bce4ae61eaf7f",
+    "Sources/ClaudeBar/Views/Shared/MemoryDetailPanel.swift": "e247be27608e7484b62efcb5c79bbb4b6ac5089c09c99636b16ad7d82e763c5d",
+    "Sources/ClaudeBar/Models/CodexProviderStore.swift": "0e33c3bf118fb9e60ff12dfa98402a289629c0108e9ddf9661e12ce94df6114f"
+  },
+  "validation": {
+    "full_regression_suites": 69,
+    "full_regression_seconds": 303.81,
+    "full_regression_passed": true,
+    "focused_suites": 3,
+    "focused_seconds": 10.05,
+    "focused_passed": true,
+    "dev_build_passed": true,
+    "diff_check_passed": true,
+    "python_compile_passed": true,
+    "release_build_passed": true,
+    "build_channel_identities": [
+      {
+        "channel": "dev",
+        "bundle_id": "com.claudebar.app.dev",
+        "executable": "ClaudeBarDev",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.dev.widget",
+        "app_groups": [
+          "com.claudebar.app.dev.widget"
+        ],
+        "build_bundle_and_deep_strict_signature_gate_passed": true
+      },
+      {
+        "channel": "release",
+        "bundle_id": "com.claudebar.app",
+        "executable": "ClaudeBar",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.widget",
+        "app_groups": [
+          "com.claudebar.app.widget"
+        ],
+        "build_bundle_and_deep_strict_signature_gate_passed": true
+      }
+    ],
+    "widget_snapshot_symlink_verified": true,
+    "final_focused_suites": 2,
+    "final_focused_seconds": 5.56,
+    "final_focused_passed": true,
+    "default_new_tests_require_git_history": false
+  },
+  "scope": {
+    "synthetic_only": true,
+    "installed_release_replaced": false,
+    "app_restarted": false,
+    "vpn_or_hardware_operated": false,
+    "real_credentials_or_data_read": false,
+    "system_permissions_requested": false
+  },
+  "limitations": [
+    "Microbenchmarks exclude SwiftUI layout/diff/frame pacing and cannot be read as application FPS or energy gains.",
+    "Time Profiler records the production-source fixture; it is not an installed application A/B recording. Inclusive symbol samples overlap.",
+    "Allocations failed to attach even for the launched fixture; no usable heap measurement or no-leak conclusion.",
+    "VpnHTTP session cache remains unchanged: a retained session can be used for requests not yet started, so naive eviction plus invalidation would break callers. Actual port churn retention has not been measured.",
+    "Large table typing, marked text and long-running WebContent/process memory still require runtime scenarios."
+  ],
+  "test_files": {
+    "Tests/detail-performance-regressions.py": "8ad9ab734e85f0fcf09a2c8bac97e25e48a2434c2ec303c88a1aacc3cffaa50a",
+    "Tests/vpn-probe-lifecycle-regressions.py": "4b49bde85690e3e64c97cab80d3b02cf96fb6d880e5d4d634233eb9c0a116da9",
+    "Tests/fixtures/native-detail-baseline.swift": "51d4e784b5578f0ce9777978cc3b1e05e39784169ba8632d5b7831a1f9fa973f"
+  }
+}

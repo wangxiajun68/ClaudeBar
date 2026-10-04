@@ -156,7 +156,8 @@ final class IslandLiveModel: ObservableObject {
     private var quotaResetDetector = QuotaResetDetector()
     private var usageRefreshPending = false
     private var usageRefreshQueued = false
-    private var sessionCostGeneration = 0
+    private var sessionCostPending = false
+    private var sessionCostQueued = false
     private var lastRescan: Date = .distantPast
     private var periodicTimer: Timer?
 
@@ -263,8 +264,8 @@ final class IslandLiveModel: ObservableObject {
         if fresh.map(\.id) != oldIDs { reloadSessionCosts() }
     }
 
-    private func reloadSessionCosts() {
-        let requests: [(id: String, source: UsageSource, sessionId: String)] = sessions.compactMap { session in
+    private func sessionCostRequests() -> [(id: String, source: UsageSource, sessionId: String)] {
+        sessions.compactMap { session in
             let source: UsageSource
             switch session.agent {
             case .claude: source = .claude
@@ -273,22 +274,40 @@ final class IslandLiveModel: ObservableObject {
             }
             return (session.id, source, session.sessionId)
         }
-        sessionCostGeneration += 1
-        let generation = sessionCostGeneration
+    }
+
+    private func reloadSessionCosts() {
+        // As with usage refresh: one in flight, one latest trailing pass.
+        // Dropping stale results alone still ran every superseded index query.
+        guard !sessionCostPending else {
+            sessionCostQueued = true
+            return
+        }
+        sessionCostPending = true
         Task { [weak self] in
-            let costs = await Task.detached(priority: .utility) {
-                var result: [String: ModelPricing.Estimate] = [:]
-                for (source, group) in Dictionary(grouping: requests, by: \.source) {
-                    let families = UsageIndex.fetchSessionFamilies(source: source, sessionIds: group.map(\.sessionId))
-                    for request in group {
-                        let usage = families[request.sessionId] ?? []
-                        if !usage.isEmpty { result[request.id] = ModelPricing.estimate(usage) }
+            repeat {
+                guard let requests = self?.sessionCostRequests() else { return }
+                self?.sessionCostQueued = false
+                let costs = await Task.detached(priority: .utility) {
+                    var result: [String: ModelPricing.Estimate] = [:]
+                    for (source, group) in Dictionary(grouping: requests, by: \.source) {
+                        let families = UsageIndex.fetchSessionFamilies(source: source, sessionIds: group.map(\.sessionId))
+                        for request in group {
+                            let usage = families[request.sessionId] ?? []
+                            if !usage.isEmpty { result[request.id] = ModelPricing.estimate(usage) }
+                        }
                     }
+                    return result
+                }.value
+                guard let self else { return }
+                if self.sessionCostQueued {
+                    self.sessionCostQueued = false
+                    continue
                 }
-                return result
-            }.value
-            guard let self, generation == self.sessionCostGeneration else { return }
-            if costs != self.sessionCosts { self.sessionCosts = costs }
+                if costs != self.sessionCosts { self.sessionCosts = costs }
+                self.sessionCostPending = false
+                return
+            } while true
         }
     }
 
