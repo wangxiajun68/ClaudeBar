@@ -11,6 +11,7 @@ struct FeishuDocumentsView: View {
     @State private var showSetup = false
     @State private var typeFilter = "全部"
     @State private var showSource = false
+    @State private var componentFailure: String?
     @State private var showDocuments = false
     @State private var editorOutlineVisible = true
     @State private var draftHeadings: [DocumentMarkup.Heading] = []
@@ -41,7 +42,7 @@ struct FeishuDocumentsView: View {
                 store.search(search)
             } catch { }
         }
-        .onChange(of: store.selected?.id) { _, _ in tab = "正文"; showSource = false }
+        .onChange(of: store.selected?.id) { _, _ in tab = "正文"; showSource = false; componentFailure = nil }
         .onChange(of: store.activeDraftID) { _, _ in draftPreview = true; titleFocused = store.activeDraft?.isNew == true }
         .task(id: store.activeDraft?.text) {
             do {
@@ -216,8 +217,19 @@ struct FeishuDocumentsView: View {
 
                 Divider()
                 if tab == "正文" {
-                    if doc.isDocument && store.activeDraft == nil && store.drafts[doc.id] == nil && !showSource {
-                        FeishuOfficialDocumentView(document: doc)
+                    if let componentFailure, !showSource, store.activeDraft == nil, store.drafts[doc.id] == nil {
+                        HStack(spacing: 8) {
+                            Text(componentFailure + " 已切换到正文阅读。")
+                                .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
+                            Spacer()
+                            ActionButton("重试原版") { self.componentFailure = nil }
+                        }.padding(12)
+                    }
+                    if doc.isDocument && store.activeDraft == nil && store.drafts[doc.id] == nil && !showSource && componentFailure == nil {
+                        FeishuOfficialDocumentView(document: doc, onUnavailable: { reason in
+                            guard store.selected?.id == doc.id else { return }
+                            componentFailure = reason
+                        })
                     } else if store.detailLoading && store.content.isEmpty {
                         Spacer(); HStack { Spacer(); ProgressView("正在读取文档…"); Spacer() }; Spacer()
                     } else if doc.isDocument {

@@ -26,6 +26,13 @@ struct FeishuComponentSignature: Sendable {
 }
 
 enum FeishuComponentAuthentication {
+    static func requireComponentScope(_ identity: FeishuJSON) throws {
+        let scopes = identity["identities"]["user"]["scope"].text.split(whereSeparator: { $0.isWhitespace })
+        guard scopes.contains("drive:drive") else {
+            throw FeishuCLIError.failed("飞书原版排版需要 drive:drive 权限；请由应用管理员开通云空间权限，并重新授权用户账号。")
+        }
+    }
+
     static func signature(for pageURL: URL) async throws -> FeishuComponentSignature {
         // The gate belongs at the credential side-effect entry, even for reads.
         guard BuildChannel.allowsSystemIntegration else {
@@ -34,6 +41,7 @@ enum FeishuComponentAuthentication {
         let identityData = try await FeishuCLI.run(["auth", "status", "--json"], timeout: 30)
         let identity = FeishuIdentity.parse(identityData)
         guard identity.available else { throw FeishuCLIError.failed("请先连接飞书用户账号。") }
+        try requireComponentScope(identityData)
         let ticket = try await FeishuCLI.run(["api", "POST", "/open-apis/jssdk/ticket/get", "--as", "user"], timeout: 30)
         try Task.checkCancellation()
         // Do not sign with an openId from an account switched during this request.

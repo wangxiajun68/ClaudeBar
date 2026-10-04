@@ -58,7 +58,9 @@ struct WidgetProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<WidgetEntry>) -> Void) {
         let entry = loadEntry() ?? .placeholder
-        let nextUpdate = Date().addingTimeInterval(30)
+        // Data changes trigger a host reload. Periodic fallback follows
+        // WidgetKit's recommended minimum spacing instead of requesting 30s.
+        let nextUpdate = Date().addingTimeInterval(5 * 60)
         let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
         completion(timeline)
     }

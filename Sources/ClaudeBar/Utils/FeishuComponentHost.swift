@@ -103,16 +103,21 @@ enum FeishuComponentPage {
     <style>html,body,#document{margin:0;width:100%;height:100%;overflow:hidden}body{background:#fff}</style>
     </head><body><div id="document"></div><script>
     let component;
-    const report = event => window.webkit.messageHandlers.feishuComponent.postMessage(event);
+    const report = (event, error) => {
+      // Pass only numeric platform codes; SDK messages can contain signed URLs.
+      const value = error && error.code;
+      const code = /^-?\d{1,10}$/.test(String(value)) ? String(value) : '';
+      window.webkit.messageHandlers.feishuComponent.postMessage({event, code});
+    };
     window.mountDocument = (auth, src, theme) => {
       if (component) component.destroy();
       component = new window.DocComponentSdk({src, mount:document.getElementById('document'), auth, theme,
         size:{width:'100%',height:window.innerHeight},
         config:{extensions:{suiteNavBar:{disable:true},content:{mode:'default',readonly:true,
           titleVisible:true,hyperlinkHandler:'outer'},like:{disable:true}}},
-        onAuthError:()=>report('authError'), onError:()=>report('error'),
+        onAuthError:error=>report('authError',error), onError:error=>report('error',error),
         onMountSuccess:()=>report('mounted'), onMountTimeout:()=>report('timeout')});
-      component.start().catch(()=>report('error'));
+      component.start().catch(error=>report('error',error));
     };
     // Fixed viewport, including after a native split-view/window resize.
     new ResizeObserver(()=>{

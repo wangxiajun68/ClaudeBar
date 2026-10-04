@@ -4,8 +4,9 @@ import WebKit
 /// Official cloud document reader; local Markdown drafts keep their native editor.
 struct FeishuOfficialDocumentView: View {
     let document: FeishuDocument
+    var onUnavailable: (String) -> Void = { _ in }
     @Environment(\.colorScheme) private var colorScheme
-    @State private var failure = false
+    @State private var failure: String?
     @State private var mounted = false
     @State private var retry = UUID()
 
@@ -21,18 +22,18 @@ struct FeishuOfficialDocumentView: View {
                 }
             } else if let url = document.webURL {
                 FeishuComponentWebView(documentURL: url, dark: colorScheme == .dark,
-                                       onMounted: { mounted = true; failure = false },
-                                       onFailure: { failure = true })
+                                       onMounted: { mounted = true; self.failure = nil },
+                                       onFailure: { self.failure = $0; onUnavailable($0) })
                     .id(document.id + retry.uuidString + (colorScheme == .dark ? "dark" : "light"))
-                if failure {
+                if let failure {
                     VStack(spacing: 12) {
                         Text("飞书文档暂时无法加载").font(Theme.Font.section)
-                        Text("请检查网络、用户登录，以及自建应用的云文档组件权限。")
+                        Text(failure)
                             .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.center)
                         HStack(spacing: 12) {
                             ActionButton("重试", symbol: "arrow.clockwise") {
-                                failure = false; mounted = false; retry = UUID()
+                                self.failure = nil; mounted = false; retry = UUID()
                             }
                             Link("在飞书中打开", destination: url)
                         }
@@ -49,8 +50,8 @@ struct FeishuOfficialDocumentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: document.id) { _, _ in mounted = false; failure = false }
-        .onChange(of: colorScheme) { _, _ in mounted = false; failure = false }
+        .onChange(of: document.id) { _, _ in mounted = false; self.failure = nil }
+        .onChange(of: colorScheme) { _, _ in mounted = false; self.failure = nil }
     }
 }
 
@@ -58,7 +59,7 @@ private struct FeishuComponentWebView: NSViewRepresentable {
     let documentURL: URL
     let dark: Bool
     let onMounted: () -> Void
-    let onFailure: () -> Void
+    let onFailure: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -91,6 +92,7 @@ private struct FeishuComponentWebView: NSViewRepresentable {
         private var authentication: Task<Void, Never>?
         private var deadline: Task<Void, Never>?
         private var authAttempts = 0
+        private var authFailure = "飞书组件鉴权失败，请检查自建应用的云文档组件权限。"
         private var stopped = false
         init(_ parent: FeishuComponentWebView) { self.parent = parent }
 
@@ -103,10 +105,10 @@ private struct FeishuComponentWebView: NSViewRepresentable {
                     try Task.checkCancellation()
                     pageURL = url
                     webView.load(URLRequest(url: url))
-                } catch is CancellationError {} catch { fail() }
+                } catch is CancellationError {} catch { fail(error.localizedDescription) }
             }
             deadline = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(120)); self?.fail() } catch {}
+                do { try await Task.sleep(for: .seconds(120)); self?.fail("飞书文档加载超过 120 秒，请重试。") } catch {}
             }
         }
 
@@ -121,18 +123,25 @@ private struct FeishuComponentWebView: NSViewRepresentable {
             // remote document iframe, arbitrary links and stale hosts cannot.
             guard !stopped, message.frameInfo.isMainFrame,
                   message.frameInfo.request.url == pageURL,
-                  message.webView === webView, let event = message.body as? String else { return }
+                  message.webView === webView, let payload = message.body as? [String: String],
+                  let event = payload["event"] else { return }
+            let code = payload["code"] ?? ""
+            let suffix = code.range(of: #"^-?\d{1,10}$"#, options: .regularExpression) != nil ? "（错误码 \(code)）" : ""
             switch event {
-            case "ready", "authError": authenticate()
+            case "ready": authenticate()
+            case "authError":
+                authFailure = "飞书组件鉴权失败" + suffix + "，请检查自建应用的云文档组件权限。"
+                authenticate()
             case "mounted": authAttempts = 0; deadline?.cancel(); parent.onMounted()
-            case "error", "timeout": fail()
+            case "error": fail("飞书文档组件加载失败" + suffix + "。")
+            case "timeout": fail("飞书文档组件加载超时。")
             default: break
             }
         }
 
         private func authenticate() {
             guard !stopped, let pageURL, authentication == nil else { return }
-            guard authAttempts < 2 else { fail(); return }
+            guard authAttempts < 2 else { fail(authFailure); return }
             authAttempts += 1
             authentication = Task { [weak self] in
                 guard let self else { return }
@@ -144,15 +153,17 @@ private struct FeishuComponentWebView: NSViewRepresentable {
                     _ = try await webView?.callAsyncJavaScript("await window.mountDocument(auth, src, theme)",
                         arguments: ["auth": auth.arguments, "src": parent.documentURL.absoluteString,
                                     "theme": parent.dark ? "dark" : "light"], in: nil, contentWorld: .page)
-                } catch is CancellationError {} catch { fail() }
+                } catch is CancellationError {} catch {
+                    fail((error as? FeishuCLIError)?.localizedDescription ?? "飞书组件初始化失败，请重试。")
+                }
             }
         }
 
-        private func fail() { if !stopped { deadline?.cancel(); parent.onFailure() } }
+        private func fail(_ reason: String) { if !stopped { deadline?.cancel(); parent.onFailure(reason) } }
 
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { fail() }
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail() }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail() }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { fail("飞书文档网页加载失败（错误码 \((error as NSError).code)），请检查网络后重试。") }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail("飞书文档网页加载失败（错误码 \((error as NSError).code)），请检查网络后重试。") }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail("飞书文档网页进程已退出，请重试。") }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

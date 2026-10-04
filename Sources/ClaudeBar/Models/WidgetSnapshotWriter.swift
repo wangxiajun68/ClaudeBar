@@ -60,6 +60,9 @@ enum WidgetSnapshotWriter {
         // only when the payload actually changed. Both used to build a fresh
         // `JSONEncoder` per call on the main actor, every poll.
         let encoder = JSONEncoder()
+        // JSON object ordering is unspecified; byte-based dedup needs a
+        // canonical order, including keys inside nested session summaries.
+        encoder.outputFormatting = .sortedKeys
         guard let key = try? encoder.encode(normalized) else { return lastData }
         guard key != lastData else { return lastData }
         guard let data = try? encoder.encode(snapshot) else { return lastData }

@@ -26,6 +26,18 @@ fixture = r'''
         let payload = String(decoding: json, as: UTF8.self)
         precondition(!payload.contains("a885c93") && !payload.contains("ticket") && !payload.contains("access_token"))
         precondition(signature.arguments["jsApiList"] as? [String] == ["DocsComponent"])
+        let granted = try FeishuJSON.payload(Data(#"{"identities":{"user":{"scope":"docs:document:readonly drive:drive"}}}"#.utf8))
+        try FeishuComponentAuthentication.requireComponentScope(granted)
+        for scope in ["", "drive:drive:readonly", "prefix-drive:drive"] {
+            let data = try JSONSerialization.data(withJSONObject: ["identities": ["user": ["scope": scope]]])
+            let denied = try FeishuJSON.payload(data)
+            do {
+                try FeishuComponentAuthentication.requireComponentScope(denied)
+                preconditionFailure("component accepted missing drive scope")
+            } catch {
+                precondition(error.localizedDescription.contains("drive:drive"))
+            }
+        }
         let host = FeishuComponentHost()
         if !BuildChannel.allowsSystemIntegration {
             do { _ = try await host.start(); preconditionFailure("dev opened listener") } catch {}

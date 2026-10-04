@@ -20,6 +20,7 @@ final class CursorUsageStore: ObservableObject {
     @Published private(set) var note: String?
 
     private var task: Task<Void, Never>?
+    private var generation = 0
     private var timer: Timer?
     private var permissionObserver: NSObjectProtocol?
 
@@ -43,18 +44,17 @@ final class CursorUsageStore: ObservableObject {
     /// effect without a relaunch.
     func start() {
         timer?.invalidate()
-        guard PermissionGate.allows(.cursorData) else {
-            permissionObserver = permissionObserver ?? NotificationCenter.default.addObserver(
-                forName: .permissionDidChange, object: nil, queue: .main) { [weak self] note in
-                    guard (note.object as? AppPermission) == .cursorData else { return }
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        if PermissionGate.allows(.cursorData) { self.start(); self.refresh() }
-                        else { self.stop() }
-                    }
+        // Observe revocation even when access was already allowed at start.
+        permissionObserver = permissionObserver ?? NotificationCenter.default.addObserver(
+            forName: .permissionDidChange, object: nil, queue: .main) { [weak self] note in
+                guard (note.object as? AppPermission) == .cursorData else { return }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if PermissionGate.allows(.cursorData) { self.start(); self.refresh() }
+                    else { self.stop() }
                 }
-            return
-        }
+            }
+        guard PermissionGate.allows(.cursorData) else { stop(); return }
         timer = Timer.scheduledTimer(
             withTimeInterval: AppConfig.cursorQuotaPollInterval, repeats: true
         ) { [weak self] _ in
@@ -67,6 +67,7 @@ final class CursorUsageStore: ObservableObject {
     /// turned off, so the next launch does not open the DB for a reading the
     /// user opted out of.
     func stop() {
+        generation &+= 1
         timer?.invalidate()
         timer = nil
         task?.cancel()
@@ -95,11 +96,17 @@ final class CursorUsageStore: ObservableObject {
         // refresh button in the popup chip runs through here.
         guard PermissionGate.allows(.cursorData) else { return }
         if manual { CursorUsageFetcher.invalidateCache() }
+        generation &+= 1
+        let expected = generation
         loading = true
         task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.task = nil }
+            // A cancelled transport can still finish after a replacement has
+            // started. It owns neither that request's handle nor its UI state.
+            defer { if expected == self.generation { self.task = nil } }
             let snapshot = await CursorUsageFetcher.fetch()
+            guard !Task.isCancelled, expected == self.generation,
+                  PermissionGate.allows(.cursorData) else { return }
             // Only a reading replaces the figures. A failure leaves the last
             // good numbers up and explains itself in `note` (which the chip
             // shows only when it has no gauges at all).

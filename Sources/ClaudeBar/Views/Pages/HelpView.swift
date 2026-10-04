@@ -257,11 +257,6 @@ private struct HelpBlockView: View {
     /// string arrives as a variable, not a literal. Inline-only parsing keeps
     /// the block structure that the `.para` / `.bullets` cases already provide.
     private func helpText(_ raw: String) -> Text {
-        if let attributed = try? AttributedString(
-            markdown: raw,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            return Text(attributed)
-        }
-        return Text(raw)
+        Text(HelpInlineMarkdown.attributed(raw))
     }
 }

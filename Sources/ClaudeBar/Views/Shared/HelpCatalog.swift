@@ -510,3 +510,30 @@ enum HelpCatalog {
         ),
     ]
 }
+
+// MARK: - Inline markup
+
+/// The manual contains fixed prose. Reuse parsed inline attributes across
+/// redraws; theme, font and color remain the renderer's responsibility.
+enum HelpInlineMarkdown {
+    private final class Value: NSObject {
+        let attributed: AttributedString
+        init(_ attributed: AttributedString) { self.attributed = attributed }
+    }
+    private static let cache: NSCache<NSString, Value> = {
+        let cache = NSCache<NSString, Value>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 512 * 1024
+        return cache
+    }()
+
+    static func attributed(_ raw: String) -> AttributedString {
+        let key = raw as NSString
+        if let value = cache.object(forKey: key) { return value.attributed }
+        let value = (try? AttributedString(
+            markdown: raw,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(raw)
+        cache.setObject(Value(value), forKey: key, cost: raw.utf8.count)
+        return value
+    }
+}

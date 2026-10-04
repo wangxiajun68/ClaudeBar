@@ -1,0 +1,924 @@
+{
+  "date": "2026-10-04",
+  "baseline_commit": "1e186eaee9c41aef42191dc031fc9635b9720fb5",
+  "scope": {
+    "paths": 244,
+    "swift_paths": 238,
+    "lines": 83390,
+    "all_paths_have_static_entrypoint_scan": true,
+    "not_a_claim_of_all_runtime_branches_tested": true,
+    "page_count": 9,
+    "settings_category_count": 6
+  },
+  "production_slice_comparison": {
+    "baseline_ref": "1e186ea",
+    "workload": "Synthetic 10000 palette items, real static manual paragraphs, synthetic Widget snapshot; optimized production slices; OS effects intercepted; each palette sample prepares three times and performs 60 selection updates per preparation, two result reads each; help timings are 20 warm redraws",
+    "samples": {
+      "baseline": [
+        {
+          "help_20_warm_redraws_ms": 27.40425,
+          "widget_1000_unchanged_submissions_ms": 9.561792,
+          "widget_unchanged_writes": 4,
+          "palette_3_preparations_and_180_selection_updates_ms": 9831.12625
+        },
+        {
+          "help_20_warm_redraws_ms": 34.207667,
+          "widget_1000_unchanged_submissions_ms": 13.950125,
+          "widget_unchanged_writes": 4,
+          "palette_3_preparations_and_180_selection_updates_ms": 10311.688292
+        },
+        {
+          "help_20_warm_redraws_ms": 30.221125,
+          "widget_1000_unchanged_submissions_ms": 9.439958,
+          "widget_unchanged_writes": 4,
+          "palette_3_preparations_and_180_selection_updates_ms": 10901.234667
+        }
+      ],
+      "current": [
+        {
+          "help_20_warm_redraws_ms": 1.252167,
+          "widget_1000_unchanged_submissions_ms": 10.362792,
+          "widget_unchanged_writes": 1,
+          "palette_3_preparations_and_180_selection_updates_ms": 28.239583
+        },
+        {
+          "help_20_warm_redraws_ms": 1.245584,
+          "widget_1000_unchanged_submissions_ms": 10.38575,
+          "widget_unchanged_writes": 1,
+          "palette_3_preparations_and_180_selection_updates_ms": 28.439625
+        },
+        {
+          "help_20_warm_redraws_ms": 1.428042,
+          "widget_1000_unchanged_submissions_ms": 10.912791,
+          "widget_unchanged_writes": 1,
+          "palette_3_preparations_and_180_selection_updates_ms": 29.615125
+        }
+      ]
+    },
+    "medians": {
+      "baseline": {
+        "help_20_warm_redraws_ms": 30.221125,
+        "widget_1000_unchanged_submissions_ms": 9.561792,
+        "widget_unchanged_writes": 4,
+        "palette_3_preparations_and_180_selection_updates_ms": 10311.688292
+      },
+      "current": {
+        "help_20_warm_redraws_ms": 1.252167,
+        "widget_1000_unchanged_submissions_ms": 10.38575,
+        "widget_unchanged_writes": 1,
+        "palette_3_preparations_and_180_selection_updates_ms": 28.439625
+      }
+    }
+  },
+  "lifecycle_reproduction": {
+    "baseline_cursor_failures": [
+      "cancelled result published",
+      "old defer removed replacement handle and admitted overlap",
+      "initially allowed permission revocation unobserved",
+      "revoked completion republished"
+    ],
+    "baseline_traffic_failures": [
+      "deferred callback rebuilt after unmount",
+      "old batch applied after remount"
+    ],
+    "current_all_pass": true,
+    "transport_and_scroll_scheduler": "controlled fixture; production store and callback body; no network or application"
+  },
+  "installed_release": {
+    "version": "1.15.0",
+    "pid": 46863,
+    "sha256": "cf251661c5aeee86f801b5617a7b89c0638c89a19620bc05a382e5d4cd0590a0",
+    "attach_only": true,
+    "unchanged_pid_and_sha_during_round": true,
+    "new_changes_installed": false
+  },
+  "instruments": {
+    "template": "SwiftUI",
+    "requested_duration_seconds": 65,
+    "recording_completed": true,
+    "layout_tracing_enabled": false,
+    "observed_project_view_types": 65,
+    "project_view_bodies": [
+      {
+        "module": "ClaudeBar",
+        "view": "CommandPalette",
+        "count": 38,
+        "total_ms": 8.656363,
+        "p50_ms": 0.1626245,
+        "p95_ms": 0.24617229999999996,
+        "max_ms": 3.004666,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CommandRow",
+        "count": 429,
+        "total_ms": 4.698318000000004,
+        "p50_ms": 0.008666,
+        "p95_ms": 0.025499999999999978,
+        "max_ms": 0.219125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "DashboardView",
+        "count": 7,
+        "total_ms": 4.629831,
+        "p50_ms": 0.538375,
+        "p95_ms": 1.0504161999999997,
+        "max_ms": 1.200166,
+        "over_0_5_ms": 6,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ResourceStrip",
+        "count": 13,
+        "total_ms": 4.227955,
+        "p50_ms": 0.306625,
+        "p95_ms": 0.47918319999999986,
+        "max_ms": 0.530833,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GreetingStatusSheet",
+        "count": 9,
+        "total_ms": 2.631039,
+        "p50_ms": 0.290208,
+        "p95_ms": 0.37810799999999994,
+        "max_ms": 0.413458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "Unchanged",
+        "count": 11,
+        "total_ms": 2.623871,
+        "p50_ms": 0.177166,
+        "p95_ms": 0.5399784999999999,
+        "max_ms": 0.542291,
+        "over_0_5_ms": 2,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TopNavTab",
+        "count": 216,
+        "total_ms": 2.5865079999999985,
+        "p50_ms": 0.006625,
+        "p95_ms": 0.049802,
+        "max_ms": 0.093875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GreetingCard",
+        "count": 5,
+        "total_ms": 1.590457,
+        "p50_ms": 0.312833,
+        "p95_ms": 0.43101659999999997,
+        "max_ms": 0.450125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OverviewTile",
+        "count": 42,
+        "total_ms": 1.4519029999999995,
+        "p50_ms": 0.022458,
+        "p95_ms": 0.06850384999999999,
+        "max_ms": 0.142541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HelpView",
+        "count": 1,
+        "total_ms": 1.250791,
+        "p50_ms": 1.250791,
+        "p95_ms": 1.250791,
+        "max_ms": 1.250791,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HelpBlockView",
+        "count": 2,
+        "total_ms": 1.097499,
+        "p50_ms": 0.5487495,
+        "p95_ms": 1.01884965,
+        "max_ms": 1.071083,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "LucideRotor",
+        "count": 16,
+        "total_ms": 0.8679100000000001,
+        "p50_ms": 0.0423955,
+        "p95_ms": 0.0994265,
+        "max_ms": 0.115208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionLoadChip",
+        "count": 36,
+        "total_ms": 0.7637370000000001,
+        "p50_ms": 0.0121245,
+        "p95_ms": 0.056208,
+        "max_ms": 0.110166,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "RollingNumberModifier",
+        "count": 115,
+        "total_ms": 0.7168789999999995,
+        "p50_ms": 0.004416,
+        "p95_ms": 0.016891,
+        "max_ms": 0.034416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillChip",
+        "count": 25,
+        "total_ms": 0.635954,
+        "p50_ms": 0.018625,
+        "p95_ms": 0.05649159999999999,
+        "max_ms": 0.102,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SkyModeToggle",
+        "count": 9,
+        "total_ms": 0.379246,
+        "p50_ms": 0.034708,
+        "p95_ms": 0.059399799999999996,
+        "max_ms": 0.060833,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ControlPlate",
+        "count": 1,
+        "total_ms": 0.355083,
+        "p50_ms": 0.355083,
+        "p95_ms": 0.355083,
+        "max_ms": 0.355083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "WeatherGlyph",
+        "count": 5,
+        "total_ms": 0.334707,
+        "p50_ms": 0.005333,
+        "p95_ms": 0.25091659999999993,
+        "max_ms": 0.3105,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SunPath",
+        "count": 6,
+        "total_ms": 0.33395600000000003,
+        "p50_ms": 0.046853500000000006,
+        "p95_ms": 0.0851875,
+        "max_ms": 0.091875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HardwareIllustration",
+        "count": 25,
+        "total_ms": 0.32607099999999994,
+        "p50_ms": 0.010083,
+        "p95_ms": 0.03519099999999996,
+        "max_ms": 0.039041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HardwareSiliconMark",
+        "count": 11,
+        "total_ms": 0.301913,
+        "p50_ms": 0.026166,
+        "p95_ms": 0.052374500000000004,
+        "max_ms": 0.066083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OverviewStatusDot",
+        "count": 6,
+        "total_ms": 0.296206,
+        "p50_ms": 0.0033955,
+        "p95_ms": 0.21066625,
+        "max_ms": 0.279333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "LinkCard",
+        "count": 6,
+        "total_ms": 0.257373,
+        "p50_ms": 0.0397915,
+        "p95_ms": 0.0603225,
+        "max_ms": 0.065583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PowerFlowContent",
+        "count": 6,
+        "total_ms": 0.242873,
+        "p50_ms": 0.037958,
+        "p95_ms": 0.051677,
+        "max_ms": 0.05275,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CapacityHardwareMark",
+        "count": 8,
+        "total_ms": 0.20858100000000004,
+        "p50_ms": 0.025375,
+        "p95_ms": 0.03592455,
+        "max_ms": 0.037208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "EnergySankey",
+        "count": 10,
+        "total_ms": 0.20674900000000002,
+        "p50_ms": 0.0201875,
+        "p95_ms": 0.026776749999999995,
+        "max_ms": 0.029083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TileSurface",
+        "count": 10,
+        "total_ms": 0.18016400000000002,
+        "p50_ms": 0.015083,
+        "p95_ms": 0.034403799999999984,
+        "max_ms": 0.040666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HoverState",
+        "count": 32,
+        "total_ms": 0.16928,
+        "p50_ms": 0.0026035,
+        "p95_ms": 0.022453649999999995,
+        "max_ms": 0.044333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "RollingNumberText",
+        "count": 61,
+        "total_ms": 0.15489700000000003,
+        "p50_ms": 0.002416,
+        "p95_ms": 0.004833,
+        "max_ms": 0.007291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PowerFlowCard",
+        "count": 6,
+        "total_ms": 0.145416,
+        "p50_ms": 0.025208,
+        "p95_ms": 0.04153125,
+        "max_ms": 0.04625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "AppGlyph",
+        "count": 22,
+        "total_ms": 0.13966,
+        "p50_ms": 0.0062705,
+        "p95_ms": 0.010828850000000001,
+        "max_ms": 0.013875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentSearchField",
+        "count": 4,
+        "total_ms": 0.12916499999999997,
+        "p50_ms": 0.034353999999999996,
+        "p95_ms": 0.037153599999999995,
+        "max_ms": 0.037291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "StatusPill",
+        "count": 21,
+        "total_ms": 0.12857600000000002,
+        "p50_ms": 0.005541,
+        "p95_ms": 0.010916,
+        "max_ms": 0.011125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HourlyWeatherInstrument",
+        "count": 2,
+        "total_ms": 0.118916,
+        "p50_ms": 0.059458,
+        "p95_ms": 0.066883,
+        "max_ms": 0.067708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ForecastRibbon",
+        "count": 2,
+        "total_ms": 0.104624,
+        "p50_ms": 0.052312,
+        "p95_ms": 0.057243100000000005,
+        "max_ms": 0.057791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GreetingClock",
+        "count": 2,
+        "total_ms": 0.10012499999999999,
+        "p50_ms": 0.050062499999999996,
+        "p95_ms": 0.07149375,
+        "max_ms": 0.073875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HoverTileModifier",
+        "count": 10,
+        "total_ms": 0.094705,
+        "p50_ms": 0.004104,
+        "p95_ms": 0.02982849999999998,
+        "max_ms": 0.036916,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SiliconCells",
+        "count": 12,
+        "total_ms": 0.08174700000000001,
+        "p50_ms": 0.0058955,
+        "p95_ms": 0.013622549999999997,
+        "max_ms": 0.01525,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SignatureGlyph",
+        "count": 9,
+        "total_ms": 0.06616500000000002,
+        "p50_ms": 0.005458,
+        "p95_ms": 0.017124999999999998,
+        "max_ms": 0.020625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HairlineDivider",
+        "count": 4,
+        "total_ms": 0.056583,
+        "p50_ms": 0.014416500000000002,
+        "p95_ms": 0.022149949999999998,
+        "max_ms": 0.02225,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillGauge",
+        "count": 4,
+        "total_ms": 0.051458,
+        "p50_ms": 0.0121665,
+        "p95_ms": 0.0198062,
+        "max_ms": 0.020375,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GlyphWell",
+        "count": 3,
+        "total_ms": 0.04604,
+        "p50_ms": 0.015458,
+        "p95_ms": 0.0209327,
+        "max_ms": 0.021541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TokenComparison",
+        "count": 3,
+        "total_ms": 0.045916,
+        "p50_ms": 0.014833,
+        "p95_ms": 0.0229708,
+        "max_ms": 0.023875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CompactFanPair",
+        "count": 8,
+        "total_ms": 0.045412999999999995,
+        "p50_ms": 0.0057495,
+        "p95_ms": 0.00647455,
+        "max_ms": 0.006708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PageTitle",
+        "count": 3,
+        "total_ms": 0.045125,
+        "p50_ms": 0.01775,
+        "p95_ms": 0.0236,
+        "max_ms": 0.02425,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentMetric",
+        "count": 4,
+        "total_ms": 0.043831999999999996,
+        "p50_ms": 0.007353999999999999,
+        "p95_ms": 0.020251799999999993,
+        "max_ms": 0.022458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SectionHeader",
+        "count": 1,
+        "total_ms": 0.0425,
+        "p50_ms": 0.0425,
+        "p95_ms": 0.0425,
+        "max_ms": 0.0425,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "StatusArrival",
+        "count": 12,
+        "total_ms": 0.040412000000000003,
+        "p50_ms": 0.0020415,
+        "p95_ms": 0.00853315,
+        "max_ms": 0.008625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentGlyph",
+        "count": 10,
+        "total_ms": 0.03512200000000001,
+        "p50_ms": 0.0020829999999999998,
+        "p95_ms": 0.009845349999999996,
+        "max_ms": 0.011833,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentWell",
+        "count": 2,
+        "total_ms": 0.032,
+        "p50_ms": 0.016,
+        "p95_ms": 0.0205,
+        "max_ms": 0.021,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InnerFrameRing",
+        "count": 10,
+        "total_ms": 0.029581000000000007,
+        "p50_ms": 0.0023750000000000004,
+        "p95_ms": 0.005618599999999997,
+        "max_ms": 0.006875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentField",
+        "count": 1,
+        "total_ms": 0.026583,
+        "p50_ms": 0.026583,
+        "p95_ms": 0.026583,
+        "max_ms": 0.026583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ScrollHoverGateModifier",
+        "count": 4,
+        "total_ms": 0.025749,
+        "p50_ms": 0.0060205,
+        "p95_ms": 0.010981149999999999,
+        "max_ms": 0.0115,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectInterfaceMark",
+        "count": 2,
+        "total_ms": 0.025374,
+        "p50_ms": 0.012687,
+        "p95_ms": 0.0130056,
+        "max_ms": 0.013041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VerticalHairline",
+        "count": 2,
+        "total_ms": 0.020458,
+        "p50_ms": 0.010229,
+        "p95_ms": 0.0122351,
+        "max_ms": 0.012458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ControlPressModifier",
+        "count": 2,
+        "total_ms": 0.019666,
+        "p50_ms": 0.009833000000000001,
+        "p95_ms": 0.014407700000000002,
+        "max_ms": 0.014916,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ContextBar",
+        "count": 7,
+        "total_ms": 0.018498,
+        "p50_ms": 0.002291,
+        "p95_ms": 0.004587299999999999,
+        "max_ms": 0.00525,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HumidityDrop",
+        "count": 1,
+        "total_ms": 0.017208,
+        "p50_ms": 0.017208,
+        "p95_ms": 0.017208,
+        "max_ms": 0.017208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillGlass",
+        "count": 1,
+        "total_ms": 0.014416,
+        "p50_ms": 0.014416,
+        "p95_ms": 0.014416,
+        "max_ms": 0.014416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProductBrandMark",
+        "count": 4,
+        "total_ms": 0.012416,
+        "p50_ms": 0.002229,
+        "p95_ms": 0.005539249999999999,
+        "max_ms": 0.006083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "MarkNudge",
+        "count": 2,
+        "total_ms": 0.010665999999999998,
+        "p50_ms": 0.005332999999999999,
+        "p95_ms": 0.0060827,
+        "max_ms": 0.006166,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "AtmosphereSurface",
+        "count": 2,
+        "total_ms": 0.010541,
+        "p50_ms": 0.005270499999999999,
+        "p95_ms": 0.007088949999999999,
+        "max_ms": 0.007291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "WindDial",
+        "count": 1,
+        "total_ms": 0.010208,
+        "p50_ms": 0.010208,
+        "p95_ms": 0.010208,
+        "max_ms": 0.010208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentBadge",
+        "count": 4,
+        "total_ms": 0.008957000000000001,
+        "p50_ms": 0.002083,
+        "p95_ms": 0.0030597999999999997,
+        "max_ms": 0.003166,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "DisabledTreatmentModifier",
+        "count": 2,
+        "total_ms": 0.004583,
+        "p50_ms": 0.0022915,
+        "p95_ms": 0.0027788500000000002,
+        "max_ms": 0.002833,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      }
+    ],
+    "unresolved_export_references": 0,
+    "update_counts": {
+      "Other Updates": 912768,
+      "View Body Updates": 10155,
+      "Representable Updates": 379
+    },
+    "hitches_table": {
+      "row_count": 1435,
+      "p50_ms": 8.333291,
+      "p95_ms": 8.333333,
+      "max_ms": 25.0,
+      "causes": {
+        "": 676,
+        "Potentially expensive app update(s)": 758,
+        "Potentially expensive render, 0 offscreen passes), Potentially expensive GPU work": 1
+      },
+      "longest": [
+        {
+          "start_ms": 38981.45025,
+          "duration_ms": 25.0,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 28885.665625,
+          "duration_ms": 24.99425,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 57598.04025,
+          "duration_ms": 20.83325,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 58556.369791,
+          "duration_ms": 16.672291,
+          "cause": ""
+        },
+        {
+          "start_ms": 18481.538291,
+          "duration_ms": 16.666666,
+          "cause": ""
+        }
+      ]
+    },
+    "scope": "palette open, synthetic query, ten Down keys, Escape, Help first article; subsequent article click blocked by CUA user interface change; no runtime performance A/B",
+    "interpretation": "Other Updates are framework events, not app redraws; hitches rows not FPS or hitch-time ratio"
+  },
+  "changed_source_sha256": {
+    "Sources/ClaudeBar/Models/CursorUsageStore.swift": "348578cd4b987354d458c669ed99db9fbe75ed83ad13c25f4997a2439d6eff83",
+    "Sources/ClaudeBar/Models/WidgetSnapshotWriter.swift": "6048d411bda21797705bd7b63060669cb8de8451fdc753d5cfb3883a5895f6fc",
+    "Sources/ClaudeBar/Views/Pages/HelpView.swift": "03504495194d2065f5183b3aee215c4807dc6d7af4ad19821fc28b912fe66985",
+    "Sources/ClaudeBar/Views/Pages/TrafficView.swift": "ab7eb8595b8d1b530a74c055166794cbab193e3656d58015eca23a8a5630b654",
+    "Sources/ClaudeBar/Views/Shared/CommandPalette.swift": "366516e725195195428de26827e961baf444facb4dd86e38469da8055efb9ccb",
+    "Sources/ClaudeBar/Views/Shared/HelpCatalog.swift": "18a5dd3b7fa79e207c8dd47907ead1b94d964ffffd1e13fb8cb36863c4728fc3",
+    "Sources/Widget/WidgetProvider.swift": "2f93999d1fcc2d3de0d53e8d71d6d86feecbb9d90d28a41a78284e31024e31f4"
+  },
+  "validation": {
+    "full_suites": 65,
+    "full_elapsed_seconds": 370.4,
+    "full_exit_code": 0,
+    "final_focused_suites": [
+      "remaining-performance",
+      "remaining-lifecycle"
+    ],
+    "final_focused_exit_code": 0,
+    "dev_build_exit_code": 0,
+    "release_build_exit_code": 0,
+    "bundles": [
+      {
+        "channel": "dev",
+        "bundle_id": "com.claudebar.app.dev",
+        "executable": "ClaudeBarDev",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.dev.widget",
+        "app_group": [
+          "com.claudebar.app.dev.widget"
+        ],
+        "strict_deep_signature_valid": true
+      },
+      {
+        "channel": "release",
+        "bundle_id": "com.claudebar.app",
+        "executable": "ClaudeBar",
+        "version": "1.15.0",
+        "widget_bundle_id": "com.claudebar.app.widget",
+        "app_group": [
+          "com.claudebar.app.widget"
+        ],
+        "strict_deep_signature_valid": true
+      }
+    ],
+    "widget_snapshot_symlink_verified": true,
+    "diff_check_exit_code": 0,
+    "python_compile_exit_code": 0
+  },
+  "limitations": [
+    "Source inventory is static coverage; focused and historical checks are distinguished in module table.",
+    "New changes built, not installed; no claimed installed-release CPU/GPU/FPS or battery improvement.",
+    "Huge provider configurations, all UI sheets and settings combinations require separate runtime workloads.",
+    "Real Widget scheduling, expanded island, popup and external service flows are not covered by this recording.",
+    "No actual VPN/proxy/DNS/TUN, hardware, helper install, real app-server, cloud document or permission prompt tests.",
+    "Hardened installed-release Allocations attach limitation remains; no long-run heap/leak conclusion.",
+    "Help cache accelerates warm parsing, not its first cold parse; NSCache limits are advisory.",
+    "Sorted JSON costs slightly more CPU; disk and WidgetCenter effects replaced in timing harness, actual I/O energy not measured.",
+    "User concurrent Feishu edits were preserved and not authored in this audit."
+  ]
+}

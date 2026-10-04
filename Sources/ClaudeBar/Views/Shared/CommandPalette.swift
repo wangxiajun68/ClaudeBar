@@ -39,6 +39,24 @@ struct CommandItem: Identifiable {
         self.searchTitle = title.lowercased()
         self.searchSubtitle = subtitle.lowercased()
     }
+
+    /// Prepare only when the query or source items change. A stable linear
+    /// partition keeps prefix matches first without sorting each redraw.
+    static func matching(_ items: [CommandItem], query: String) -> [CommandItem] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return items }
+        var prefix: [CommandItem] = []
+        var contained: [CommandItem] = []
+        for item in items {
+            if item.searchTitle.hasPrefix(q) {
+                prefix.append(item)
+            } else if item.searchTitle.contains(q) || item.searchSubtitle.contains(q) {
+                contained.append(item)
+            }
+        }
+        prefix.append(contentsOf: contained)
+        return prefix
+    }
 }
 
 // MARK: - Command palette
@@ -57,6 +75,7 @@ struct CommandPalette: View {
     @State private var query = ""
     @State private var selection: String?
     @State private var items: [CommandItem] = []
+    @State private var filtered: [CommandItem] = []
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -132,7 +151,7 @@ struct CommandPalette: View {
                 .submitLabel(.go)
                 .onSubmit { fireSelected() }
                 .onChange(of: query) { _, _ in
-                    selection = filtered.first?.id
+                    refreshResults(reselect: true)
                 }
             if !query.isEmpty {
                 Button { query = "" } label: {
@@ -233,17 +252,14 @@ struct CommandPalette: View {
 
     private func refreshItems(reselect: Bool = false) {
         items = buildItems()
-        if reselect { selection = filtered.first?.id }
+        refreshResults(reselect: reselect)
     }
 
-    /// Case-insensitive substring filter on title + subtitle; prefix matches
-    /// rank above contained matches.
-    private var filtered: [CommandItem] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return items }
-        return items
-            .filter { $0.searchTitle.contains(q) || $0.searchSubtitle.contains(q) }
-            .sorted { $0.searchTitle.hasPrefix(q) && !$1.searchTitle.hasPrefix(q) }
+    private func refreshResults(reselect: Bool = false) {
+        filtered = CommandItem.matching(items, query: query)
+        if reselect || !filtered.contains(where: { $0.id == selection }) {
+            selection = filtered.first?.id
+        }
     }
 
     // MARK: Actions

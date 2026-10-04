@@ -397,9 +397,13 @@ struct TrafficView: View {
             rebuildConversation()
         }
         .onReceive(streams.$live) { values in
+            let generation = state.loadGen
             // The inspector's live text is not on screen in any useful way
             // while the list is being scrolled; apply the latest once it stops.
             ScrollHoverGate.afterScroll("TrafficView.live") {
+                // The held callback may outlive this mount, including a quick
+                // leave-and-return before scrolling settles.
+                guard state.mounted, generation == state.loadGen else { return }
                 // `values`, not `streams.live`: `$live` emits in `willSet`,
                 // when the property still holds the previous batch.
                 let next = currentSummary.flatMap { values[$0.id] }
