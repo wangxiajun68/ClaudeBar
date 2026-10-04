@@ -36,7 +36,7 @@ make package      # 正式版 DMG、zip、SHA-256
 4. `UserDefaults.standard` 随应用 bundle ID 隔离；不得改用正式版的固定 suite。Widget 的宿主、扩展、签名 entitlement、快照目标必须使用同一版本身份。
 5. 开发测试版不启动 VPN 内核，不设置或清除系统代理、DNS、TUN，不写 SMC、不调用／替换系统特权辅助工具，不注册登录项，不修改外部客户端连接器、不调用真实 Codex app-server。限制必须在副作用入口执行，不能只靠 UI 开关或默认偏好。
 6. 开发测试版不请求任何会弹窗的系统权限（定位、蓝牙、屏幕录制、其他 App 数据）。授权是写在用户 TCC 数据库里的**持久状态**，会活得比请求它的那个构建更久；而 dev 构建是可有可无的。所有请求入口以 `BuildChannel.promptsForSystemPermissions` 为第一道闸，且必须在真正触发系统 API 的那一个函数里，而不是各个调用点分散判断。
-7. 禁止 `pkill ClaudeBar`、`pkill mihomo`、`killall widgetkitd` 等全局进程操作。安装脚本发现对应版本运行时必须拒绝替换；由用户正常退出完成 VPN 清理。
+7. 禁止 `pkill ClaudeBar`、`pkill mihomo`、`killall widgetkitd`、`killall ClaudeBar` 等按名字横扫的全局进程操作；这些会连带杀掉其他会话、其他构建或正在服务用户的 VPN 内核。安装脚本发现对应版本运行时必须拒绝替换。退出按以下两档：默认用应用自身的正常退出（`osascript -e 'tell application "ClaudeBar" to quit'` 或菜单退出），由它完成 VPN 清理；只有在用户已明确要求重新构建并运行正式版的当前任务里，才允许对**本机唯一属于该版本的已安装实例**（先 `pgrep -x ClaudeBar` 确认为单个 PID）发 `kill <pid>`，并在用户未自行退出时执行。任何情况下都不升级为按名字的批量 kill，也不去杀 dev 版本、Widget 扩展或 mihomo。
 8. 正式版安装是 `make install-release` 的显式操作，会覆盖 `/Applications/ClaudeBar.app`。未经任务授权，不执行它，不运行正式版 VPN／充电／风扇控制测试。
 9. 不创建允许环境变量绕过开发版系统集成限制的后门。网络和硬件集成的端到端验证用独立测试机器或显式正式版流程。
 
