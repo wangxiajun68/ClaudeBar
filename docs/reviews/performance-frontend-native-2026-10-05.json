@@ -1,0 +1,533 @@
+{
+  "baseline_commit": "d6a73b86cd97ae08336c817ab0a381996ecb82f3",
+  "scenario": {
+    "geometry_rows": 500,
+    "geometry_columns": 8,
+    "geometry_repeats": 100,
+    "native_table_rows": 24,
+    "native_table_columns": 8,
+    "native_outline_headings": 3000,
+    "native_update_cycles": 30,
+    "profile_native_update_cycles": 120,
+    "nsapp_activation": "prohibited",
+    "theme_chrome": "test stubs; production table, outline, markup and native editor sources",
+    "runloop_wait_per_update_ms": 6
+  },
+  "paired_runs": [
+    {
+      "before": {
+        "cached_layout_100_ms": 542.878125,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 420,
+        "native_outline_updates_ms": 309.451666,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 30,
+        "native_table_text_parses": 5760,
+        "native_table_updates_ms": 2487.569167,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 100
+      },
+      "after": {
+        "cached_layout_100_ms": 1.1515,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 0,
+        "native_outline_updates_ms": 281.823083,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 0,
+        "native_table_text_parses": 0,
+        "native_table_updates_ms": 992.023666,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 0
+      }
+    },
+    {
+      "after": {
+        "cached_layout_100_ms": 0.909958,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 0,
+        "native_outline_updates_ms": 249.301875,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 0,
+        "native_table_text_parses": 0,
+        "native_table_updates_ms": 974.268833,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 0
+      },
+      "before": {
+        "cached_layout_100_ms": 584.34775,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 420,
+        "native_outline_updates_ms": 275.483292,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 30,
+        "native_table_text_parses": 5760,
+        "native_table_updates_ms": 2401.124667,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 100
+      }
+    },
+    {
+      "before": {
+        "cached_layout_100_ms": 540.457583,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 420,
+        "native_outline_updates_ms": 278.055667,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 30,
+        "native_table_text_parses": 5760,
+        "native_table_updates_ms": 2318.252375,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 100
+      },
+      "after": {
+        "cached_layout_100_ms": 0.874125,
+        "native_outline_body_updates": 30,
+        "native_outline_title_parses": 0,
+        "native_outline_updates_ms": 262.249208,
+        "native_table_body_updates": 30,
+        "native_table_layout_computations": 0,
+        "native_table_text_parses": 0,
+        "native_table_updates_ms": 915.552125,
+        "outline_dark_sha256": "1efe8888490cca2bda884d6d51a5ad21cededfc48e269ead64ac9c21764c2a4e",
+        "outline_image_sha256": "50066c941e446d0f69965f0ff49b0e91bdaef9656e7ccec39c90fbff57b20e0b",
+        "table_content_changed_sha256": "e8de8fc9fe767309502ba40edf9ec5f44291059b865b925acf1a2019911c521d",
+        "table_dark_sha256": "1d0b0fa9f2739fc623d84ffdeb16dc5d736f8ff673613f536e222cd0d5656eaa",
+        "table_image_sha256": "59a7356c48866b60d1ef6eba173aa51ead2460acad895c0dba7f8677ab448c2d",
+        "table_styled_sha256": "aee4a53233deeaf96039e7f0f17befdf7ada08aa3496cfed39a4ebeb12d4a820",
+        "unchanged_layout_computations": 0
+      }
+    }
+  ],
+  "median_ms": {
+    "native_table_updates_ms": {
+      "before": 2401.124667,
+      "after": 974.268833
+    },
+    "native_outline_updates_ms": {
+      "before": 278.055667,
+      "after": 262.249208
+    },
+    "cached_layout_100_ms": {
+      "before": 542.878125,
+      "after": 0.909958
+    }
+  },
+  "all_cross_arm_pixels_equal": true,
+  "source_sha256": {
+    "Sources/ClaudeBar/Views/Shared/DocumentTableView.swift": "a148aba56227d8025939d64a82498ada4926ece1df0a4c2ef61760903648ad8e",
+    "Sources/ClaudeBar/Views/Shared/SkillMarkdownPreview.swift": "888d8499c51bd0b65441764c927a8e75c0372c5a8e4262d725b19b6752393dbb",
+    "Tests/frontend-native-regressions.py": "7b817b1455a445d88caf807c2a0232fe3cab9ec7efa328f49ca53f224ab9ffe0",
+    "Makefile": "c7420ef34f2819a4db352fb4140cd90fd7988280a875575c37d697450bde6cea"
+  },
+  "instruments": {
+    "template": "SwiftUI",
+    "swiftui_events_available": false,
+    "warning": "Trace file had no SwiftUI data",
+    "sampling": "100 us; weights are sampled CPU, not wall-time, per-call time or FPS",
+    "launch_environment": "env -i; PATH and TMPDIR only",
+    "includes": "launch, geometry checks, native surface updates, image rasterization, source updates and styled fixtures",
+    "before": {
+      "main_thread_sampled_ms": 14820.600000036386,
+      "inclusive_selected_binaries_ms": {
+        "Foundation": 8933.000000014967,
+        "SwiftUI": 11184.000000023156,
+        "SwiftUICore": 11554.900000024505,
+        "AttributeGraph": 11020.900000022562
+      },
+      "first_project_frames": [
+        {
+          "symbol": "closure #4 in static Regression.main()",
+          "weight_ms": 8082.900000011874
+        },
+        {
+          "symbol": "specialized static DocumentRichText.attributed(_:size:semibold:)",
+          "weight_ms": 1399.2999999998228
+        },
+        {
+          "symbol": "DocumentTableView.markdownCell(_:size:semibold:mono:)",
+          "weight_ms": 857.4000000001264
+        },
+        {
+          "symbol": "settle()",
+          "weight_ms": 798.9000000001131
+        },
+        {
+          "symbol": "specialized digest<A>(_:)",
+          "weight_ms": 486.000000000042
+        },
+        {
+          "symbol": "DocumentTable.layout(measured:)",
+          "weight_ms": 430.2000000000293
+        },
+        {
+          "symbol": "DocumentTableView.cellView(_:)",
+          "weight_ms": 330.2000000000066
+        },
+        {
+          "symbol": "specialized static Regression.main()",
+          "weight_ms": 297.99999999999926
+        },
+        {
+          "symbol": "closure #1 in DocumentTable.layout(measured:)",
+          "weight_ms": 279.299999999995
+        },
+        {
+          "symbol": "closure #6 in static Regression.main()",
+          "weight_ms": 247.7999999999902
+        },
+        {
+          "symbol": "closure #4 in static DocumentRichText.html(_:)",
+          "weight_ms": 171.79999999999453
+        },
+        {
+          "symbol": "specialized AttributedString.subscript.setter",
+          "weight_ms": 142.4999999999962
+        },
+        {
+          "symbol": "outlined init with copy of DocumentTable.Cell",
+          "weight_ms": 92.69999999999901
+        },
+        {
+          "symbol": "static Bench.title(_:)",
+          "weight_ms": 83.39999999999954
+        },
+        {
+          "symbol": "outlined init with take of DocumentTable.Cell",
+          "weight_ms": 76.09999999999995
+        },
+        {
+          "symbol": "outlined destroy of DocumentTable.Cell",
+          "weight_ms": 74.50000000000004
+        },
+        {
+          "symbol": "DocumentTableController.model.getter",
+          "weight_ms": 51.90000000000047
+        },
+        {
+          "symbol": "thunk for @escaping @callee_guaranteed (@guaranteed [NSAttributedStringKey : Any], @unowned _NSRange, @unowned UnsafeMutablePointer<ObjCBool>) -> ()",
+          "weight_ms": 46.50000000000039
+        },
+        {
+          "symbol": "static String.+= infix(_:_:)",
+          "weight_ms": 40.500000000000306
+        },
+        {
+          "symbol": "DocumentTableView.resizeHandle(column:row:)",
+          "weight_ms": 39.700000000000294
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "weight_ms": 38.400000000000276
+        },
+        {
+          "symbol": "DocumentTableView.tableMenu(_:)",
+          "weight_ms": 38.20000000000027
+        },
+        {
+          "symbol": "closure #1 in closure #4 in static DocumentRichText.html(_:)",
+          "weight_ms": 31.00000000000017
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "weight_ms": 28.90000000000014
+        },
+        {
+          "symbol": "specialized Sequence.first(where:)",
+          "weight_ms": 28.10000000000013
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRetain",
+          "weight_ms": 28.000000000000128
+        },
+        {
+          "symbol": "static DocumentRichText.html(_:)",
+          "weight_ms": 26.500000000000107
+        },
+        {
+          "symbol": "specialized DocumentTable.init(cells:rowCount:columnCount:)",
+          "weight_ms": 25.800000000000097
+        },
+        {
+          "symbol": "initializeWithCopy for DocumentTable.Cell",
+          "weight_ms": 25.100000000000087
+        },
+        {
+          "symbol": "type metadata accessor for DocumentTable.Cell",
+          "weight_ms": 21.20000000000003
+        },
+        {
+          "symbol": "specialized static DocumentRichText.allowedURL(_:)",
+          "weight_ms": 18.499999999999993
+        },
+        {
+          "symbol": "specialized IndexingIterator.next()",
+          "weight_ms": 17.799999999999983
+        },
+        {
+          "symbol": "specialized _ArrayBuffer._consumeAndCreateNew(bufferIsUnique:minimumCapacity:growForAppend:)",
+          "weight_ms": 16.19999999999996
+        },
+        {
+          "symbol": "specialized __RawDictionaryStorage.find<A>(_:hashValue:)",
+          "weight_ms": 15.79999999999996
+        },
+        {
+          "symbol": "initializeWithCopy for DocumentTableView",
+          "weight_ms": 15.099999999999962
+        },
+        {
+          "symbol": "closure #1 in closure #1 in closure #1 in closure #2 in DocumentTableView.body.getter",
+          "weight_ms": 14.499999999999964
+        },
+        {
+          "symbol": "@nonobjc NSWindow.init(contentRect:styleMask:backing:defer:)",
+          "weight_ms": 12.69999999999997
+        },
+        {
+          "symbol": "specialized __RawDictionaryStorage.find<A>(_:)",
+          "weight_ms": 12.599999999999971
+        },
+        {
+          "symbol": "DYLD-STUB$$type metadata accessor for UUID",
+          "weight_ms": 12.199999999999973
+        },
+        {
+          "symbol": "objectdestroy.129Tm",
+          "weight_ms": 10.599999999999978
+        }
+      ],
+      "quality": {
+        "project_frame_symbolicated_ms": 14721.600000036025,
+        "missing_backtrace_ms": 48.40000000000042,
+        "project_frame_unsymbolicated_ms": 8.099999999999987
+      },
+      "swiftui_update_counts": {}
+    },
+    "after": {
+      "main_thread_sampled_ms": 8824.400000014572,
+      "inclusive_selected_binaries_ms": {
+        "Foundation": 3084.2999999982903,
+        "SwiftUI": 5488.700000002436,
+        "SwiftUICore": 5877.800000003852,
+        "AttributeGraph": 5307.300000001776
+      },
+      "first_project_frames": [
+        {
+          "symbol": "closure #4 in static Regression.main()",
+          "weight_ms": 3607.3999999978146
+        },
+        {
+          "symbol": "specialized static DocumentRichText.attributed(_:size:semibold:)",
+          "weight_ms": 1522.7999999997105
+        },
+        {
+          "symbol": "settle()",
+          "weight_ms": 817.0000000001172
+        },
+        {
+          "symbol": "specialized digest<A>(_:)",
+          "weight_ms": 531.3000000000523
+        },
+        {
+          "symbol": "specialized static Regression.main()",
+          "weight_ms": 317.70000000000374
+        },
+        {
+          "symbol": "DocumentTableView.cellView(_:)",
+          "weight_ms": 300.7999999999999
+        },
+        {
+          "symbol": "closure #4 in static DocumentRichText.html(_:)",
+          "weight_ms": 186.79999999999367
+        },
+        {
+          "symbol": "closure #6 in static Regression.main()",
+          "weight_ms": 171.79999999999453
+        },
+        {
+          "symbol": "DocumentTable.layout(measured:)",
+          "weight_ms": 99.8999999999986
+        },
+        {
+          "symbol": "outlined init with copy of DocumentTable.Cell",
+          "weight_ms": 87.99999999999928
+        },
+        {
+          "symbol": "outlined init with take of DocumentTable.Cell",
+          "weight_ms": 78.49999999999982
+        },
+        {
+          "symbol": "closure #1 in DocumentTable.layout(measured:)",
+          "weight_ms": 69.9000000000003
+        },
+        {
+          "symbol": "outlined destroy of DocumentTable.Cell",
+          "weight_ms": 68.3000000000004
+        },
+        {
+          "symbol": "thunk for @escaping @callee_guaranteed (@guaranteed [NSAttributedStringKey : Any], @unowned _NSRange, @unowned UnsafeMutablePointer<ObjCBool>) -> ()",
+          "weight_ms": 57.90000000000055
+        },
+        {
+          "symbol": "DocumentTableController.model.getter",
+          "weight_ms": 56.000000000000526
+        },
+        {
+          "symbol": "DocumentTableView.resizeHandle(column:row:)",
+          "weight_ms": 44.000000000000355
+        },
+        {
+          "symbol": "static String.+= infix(_:_:)",
+          "weight_ms": 41.200000000000315
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "weight_ms": 40.0000000000003
+        },
+        {
+          "symbol": "DocumentTableView.tableMenu(_:)",
+          "weight_ms": 37.10000000000026
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRelease",
+          "weight_ms": 34.60000000000022
+        },
+        {
+          "symbol": "closure #1 in closure #4 in static DocumentRichText.html(_:)",
+          "weight_ms": 33.60000000000021
+        },
+        {
+          "symbol": "DYLD-STUB$$swift_bridgeObjectRetain",
+          "weight_ms": 33.0000000000002
+        },
+        {
+          "symbol": "static DocumentRichText.html(_:)",
+          "weight_ms": 29.100000000000144
+        },
+        {
+          "symbol": "specialized Sequence.first(where:)",
+          "weight_ms": 28.000000000000128
+        },
+        {
+          "symbol": "initializeWithCopy for DocumentTable.Cell",
+          "weight_ms": 25.900000000000098
+        },
+        {
+          "symbol": "type metadata accessor for DocumentTable.Cell",
+          "weight_ms": 21.80000000000004
+        },
+        {
+          "symbol": "specialized DocumentTable.init(cells:rowCount:columnCount:)",
+          "weight_ms": 21.70000000000004
+        },
+        {
+          "symbol": "specialized static DocumentRichText.allowedURL(_:)",
+          "weight_ms": 20.800000000000026
+        },
+        {
+          "symbol": "specialized __RawDictionaryStorage.find<A>(_:hashValue:)",
+          "weight_ms": 17.199999999999974
+        },
+        {
+          "symbol": "specialized IndexingIterator.next()",
+          "weight_ms": 16.89999999999997
+        },
+        {
+          "symbol": "specialized __RawDictionaryStorage.find<A>(_:)",
+          "weight_ms": 15.199999999999962
+        },
+        {
+          "symbol": "DYLD-STUB$$type metadata accessor for UUID",
+          "weight_ms": 15.099999999999962
+        },
+        {
+          "symbol": "@nonobjc NSWindow.init(contentRect:styleMask:backing:defer:)",
+          "weight_ms": 13.299999999999969
+        },
+        {
+          "symbol": "@nonobjc NSMutableAttributedString.init(string:)",
+          "weight_ms": 11.999999999999973
+        },
+        {
+          "symbol": "initializeWithCopy for DocumentTableView",
+          "weight_ms": 11.099999999999977
+        },
+        {
+          "symbol": "specialized AttributedString.Runs.Run.subscript.getter",
+          "weight_ms": 10.999999999999977
+        },
+        {
+          "symbol": "static DocumentRichText.attributed(_:size:semibold:)",
+          "weight_ms": 10.399999999999979
+        },
+        {
+          "symbol": "protocol witness for Hashable._rawHashValue(seed:) in conformance NSAttributedStringKey",
+          "weight_ms": 9.799999999999981
+        },
+        {
+          "symbol": "closure #1 in closure #1 in closure #1 in closure #2 in DocumentTableView.body.getter",
+          "weight_ms": 9.299999999999983
+        },
+        {
+          "symbol": "specialized static ViewBuilder.buildEither<A, B>(second:)",
+          "weight_ms": 8.899999999999984
+        }
+      ],
+      "quality": {
+        "project_frame_symbolicated_ms": 8737.500000014255,
+        "missing_backtrace_ms": 51.60000000000046,
+        "project_frame_unsymbolicated_ms": 5.899999999999995
+      },
+      "swiftui_update_counts": {}
+    }
+  },
+  "validation": {
+    "focused_feishu_documents": "passed",
+    "full_test": "76 suites passed in 405.55 s",
+    "dev_build": "passed",
+    "release_build": "passed",
+    "installed_release_modified": false,
+    "runtime_vpn_hardware_validation": false,
+    "diff_check": "passed",
+    "dev_and_release_bundle_widget_entitlements_signature": "passed"
+  },
+  "limitations": [
+    "Offscreen native hosting views with synthetic data and theme/chrome stubs; no release window FPS or GPU compositor comparison.",
+    "One trace per arm, not randomized multi-trace measurement; inclusive weights overlap.",
+    "Layout cache retains one O(cells + rows + columns) result and measured-height keys; this is not a memory reduction claim.",
+    "The frame-work of context menus and resize handles still occurs for editable-mode changes.",
+    "Full module/page/animation-state coverage is not established by this focused experiment."
+  ],
+  "installed_release_identity": {
+    "pid_checked_before_and_after": 74536,
+    "executable_sha256": "b5267a52e68163fe7b6f436f0ed682c93122deb3ea483e780bfde6f7ab270f3a",
+    "restarted": false,
+    "installed": false
+  },
+  "cross_arm_pixel_scenarios_per_pair": 6
+}

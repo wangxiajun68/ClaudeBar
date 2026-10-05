@@ -615,7 +615,7 @@ struct DocumentOutlinePanel: View {
                         Button { selectedID = heading.id; onJump(heading) } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 5) {
                                 Text(heading.number).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.textSecondary.opacity(0.6))
-                                Text((try? AttributedString(markdown: heading.title, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(heading.title))
+                                DocumentOutlineTitle(title: heading.title)
                                     .font(Theme.Font.caption).foregroundStyle(Theme.textPrimary).lineLimit(2)
                                 Spacer(minLength: 0)
                             }
@@ -632,5 +632,14 @@ struct DocumentOutlinePanel: View {
         .background(Theme.cardSurface.opacity(0.96), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline))
         .shadow(color: .black.opacity(Theme.isDark ? 0.22 : 0.07), radius: 12, x: 0, y: 4)
+    }
+}
+
+/// Keep Markdown decoding in a leaf with only the title as input. Selection or
+/// an unrelated outline change must not reparse every visible heading.
+private struct DocumentOutlineTitle: View {
+    let title: String
+    var body: some View {
+        Text((try? AttributedString(markdown: title, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(title))
     }
 }

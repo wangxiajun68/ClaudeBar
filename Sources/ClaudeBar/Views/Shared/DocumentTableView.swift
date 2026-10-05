@@ -2,10 +2,19 @@ import AppKit
 import SwiftUI
 
 @MainActor final class DocumentTableController: ObservableObject {
-    @Published var model: DocumentTable
+    @Published var model: DocumentTable { didSet { cachedLayout = nil } }
+    private var cachedLayout: (measured: [UUID: Double], layout: DocumentTable.Layout)?
     var onChange: (String) -> Void = { _ in }
     var lastSource = ""
     init(_ model: DocumentTable) { self.model = model }
+    /// Focus/selection updates do not change table geometry. Keep one result;
+    /// model mutations (including nested inout edits/undo) invalidate it.
+    func layout(measured: [UUID: Double]) -> DocumentTable.Layout {
+        if let cachedLayout, cachedLayout.measured == measured { return cachedLayout.layout }
+        let layout = model.layout(measured: measured)
+        cachedLayout = (measured, layout)
+        return layout
+    }
     func publish() { lastSource = model.html(renderInline: DocumentRichText.html); onChange(lastSource) }
     func change(undoManager: UndoManager?, _ update: (inout DocumentTable) -> Void) {
         let before = model
@@ -40,7 +49,7 @@ struct DocumentTableView: View {
     }
     private var model: DocumentTable { controller.model }
     var body: some View {
-        let layout = model.layout(measured: measured.mapValues { Double($0) })
+        let layout = controller.layout(measured: measured.mapValues { Double($0) })
         let columns = layout.columnOffsets, heights = layout.rowOffsets
         return ScrollView(.horizontal) {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -81,31 +90,13 @@ struct DocumentTableView: View {
         navigator.order = model.cells.sorted { $0.row == $1.row ? $0.column < $1.column : $0.row < $1.row }.map { $0.id.uuidString }
     }
     private func cellView(_ cell: DocumentTable.Cell) -> some View {
-        let lines = cell.value.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
-        let isCode = lines.count >= 2 && lines[0].hasPrefix("```") && lines.last == "```"
-        let language = isCode ? String(lines[0].dropFirst(3)) : ""
-        let value = isCode ? lines.dropFirst().dropLast().joined(separator: "\n") : cell.value
-        let reading = DocumentInlineEditor(markdown: value, fontSize: isCode ? 13 : 14, editable: editable, semibold: cell.header, literal: isCode, focusedOnAppear: true,
-                             onFocus: { focused in if focused { activeCell = cell.id; navigator.activeID = cell.id.uuidString }; onFocus(focused) },
-                             onHeight: { height in Task { @MainActor in if measured[cell.id] != height { measured[cell.id] = height } } },
-                             onBoundary: { navigate(cell, direction: $0) },
-                             onView: { navigator.register($0, id: cell.id.uuidString) }, contextMenu: { nativeMenu($0, cell: cell) }) { value in
-            guard let index = controller.model.cells.firstIndex(where: { $0.id == cell.id }) else { return }
-            controller.model.cells[index].value = isCode ? DocumentMarkup.fencedCode(value, language: language) : value
-            controller.publish()
-        }
         let alignment: Alignment = cell.attributes["vertical-align"] == "middle" ? .center : (cell.attributes["vertical-align"] == "bottom" ? .bottomLeading : .topLeading)
         let fill = cellFill(cell)
         return Group {
             if editable && activeCell == cell.id {
-                reading
-            } else if let html = cell.originalHTML, cell.value == cell.originalValue, let spans = DocumentMarkup.inlineSpans(html) {
-                Text(cellAttributed(spans, size: isCode ? 13 : 14, semibold: cell.header))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if editable { activeCell = cell.id; onFocus(true) } }
+                editor(cell)
             } else {
-                markdownCell(isCode ? value : cell.value, size: isCode ? 13 : 14, semibold: cell.header, mono: isCode)
+                DocumentTableCellText(cell: cell, textColor: Theme.textPrimary, linkColor: Theme.Ink.claude)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
                     .contentShape(Rectangle())
                     .onTapGesture { if editable { activeCell = cell.id; onFocus(true) } }
@@ -117,36 +108,24 @@ struct DocumentTableView: View {
         .contextMenu { tableMenu(cell) }.clipped()
         .help("点击输入；Tab / Shift-Tab 切换单元格；拖动框线调整宽度和高度；右键管理行列")
     }
+    private func editor(_ cell: DocumentTable.Cell) -> DocumentInlineEditor {
+        let lines = cell.value.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        let isCode = lines.count >= 2 && lines[0].hasPrefix("```") && lines.last == "```"
+        let language = isCode ? String(lines[0].dropFirst(3)) : ""
+        let value = isCode ? lines.dropFirst().dropLast().joined(separator: "\n") : cell.value
+        return DocumentInlineEditor(markdown: value, fontSize: isCode ? 13 : 14, editable: editable, semibold: cell.header, literal: isCode, focusedOnAppear: true,
+                             onFocus: { focused in if focused { activeCell = cell.id; navigator.activeID = cell.id.uuidString }; onFocus(focused) },
+                             onHeight: { height in Task { @MainActor in if measured[cell.id] != height { measured[cell.id] = height } } },
+                             onBoundary: { navigate(cell, direction: $0) },
+                             onView: { navigator.register($0, id: cell.id.uuidString) }, contextMenu: { nativeMenu($0, cell: cell) }) { value in
+            guard let index = controller.model.cells.firstIndex(where: { $0.id == cell.id }) else { return }
+            controller.model.cells[index].value = isCode ? DocumentMarkup.fencedCode(value, language: language) : value
+            controller.publish()
+        }
+    }
     private func cellFill(_ cell: DocumentTable.Cell) -> Color {
         if let name = cell.attributes["background-color"], let fill = DocumentPalette.fill(name) { return Color(hex: fill.0, opacity: fill.1) }
         return cell.header ? Theme.bgOverlay : (cell.row.isMultiple(of: 2) ? Theme.bgSecondary : Theme.cardSurface)
-    }
-    private func cellAttributed(_ spans: [DocumentMarkup.InlineSpan], size: CGFloat, semibold: Bool) -> AttributedString {
-        var attributed = AttributedString()
-        for span in spans {
-            var run = AttributedString(span.text)
-            var font = Font.system(size: size, weight: span.strong || semibold ? .semibold : .regular, design: span.code || span.math ? .monospaced : .default)
-            if span.emphasis { font = font.italic() }
-            run.font = font
-            if span.underline { run.underlineStyle = .single }
-            if span.strike { run.strikethroughStyle = .single }
-            if let hex = DocumentPalette.ink(span.textColor) { run.foregroundColor = Color(hex: hex) }
-            else { run.foregroundColor = span.mention || span.link != nil ? Theme.Ink.claude : Theme.textPrimary }
-            if let fill = DocumentPalette.fill(span.background) { run.backgroundColor = Color(hex: fill.0, opacity: fill.1) }
-            if let link = span.link.flatMap(URL.init(string:)), DocumentRichText.allowedURL(link) { run.link = link }
-            attributed += run
-        }
-        return attributed
-    }
-    private func markdownCell(_ value: String, size: CGFloat, semibold: Bool, mono: Bool) -> Text {
-        let shown = value.isEmpty ? " " : value
-        if mono { return Text(shown).font(.system(size: size, design: .monospaced)).foregroundStyle(Theme.textPrimary) }
-        if var parsed = try? AttributedString(markdown: shown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            parsed.foregroundColor = Theme.textPrimary
-            parsed.font = .system(size: size, weight: semibold ? .semibold : .regular)
-            return Text(parsed)
-        }
-        return Text(shown).font(.system(size: size, weight: semibold ? .semibold : .regular))
     }
     @ViewBuilder private func tableMenu(_ cell: DocumentTable.Cell) -> some View {
         Button("上方插入行") { change { $0.insertRow(at: cell.row) } }
@@ -216,7 +195,7 @@ struct DocumentTableView: View {
                     if let view = navigator.activeView ?? navigator.firstView { view.window?.makeFirstResponder(view) }
                     dragBefore = model
                     dragStart = column.map { model.columnWidths[$0] } ?? row.map { row in
-                        let offsets = model.layout(measured: measured.mapValues { Double($0) }).rowOffsets
+                        let offsets = controller.layout(measured: measured.mapValues { Double($0) }).rowOffsets
                         return offsets[row + 1] - offsets[row]
                     }
                 }
@@ -235,4 +214,49 @@ private final class DocumentMenuAction: NSObject {
     let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     @objc func run() { action() }
+}
+
+/// Stable read-only content has no dependency on focus, selection or edit mode.
+/// Pass appearance colors explicitly so changing the theme invalidates the text.
+private struct DocumentTableCellText: View {
+    let cell: DocumentTable.Cell
+    let textColor: Color
+    let linkColor: Color
+    var body: some View {
+        let lines = cell.value.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        let isCode = lines.count >= 2 && lines[0].hasPrefix("```") && lines.last == "```"
+        let value = isCode ? lines.dropFirst().dropLast().joined(separator: "\n") : cell.value
+        if let html = cell.originalHTML, cell.value == cell.originalValue, let spans = DocumentMarkup.inlineSpans(html) {
+            Text(cellAttributed(spans, size: isCode ? 13 : 14, semibold: cell.header))
+        } else {
+            markdownCell(value, size: isCode ? 13 : 14, semibold: cell.header, mono: isCode)
+        }
+    }
+    private func cellAttributed(_ spans: [DocumentMarkup.InlineSpan], size: CGFloat, semibold: Bool) -> AttributedString {
+        var attributed = AttributedString()
+        for span in spans {
+            var run = AttributedString(span.text)
+            var font = Font.system(size: size, weight: span.strong || semibold ? .semibold : .regular, design: span.code || span.math ? .monospaced : .default)
+            if span.emphasis { font = font.italic() }
+            run.font = font
+            if span.underline { run.underlineStyle = .single }
+            if span.strike { run.strikethroughStyle = .single }
+            if let hex = DocumentPalette.ink(span.textColor) { run.foregroundColor = Color(hex: hex) }
+            else { run.foregroundColor = span.mention || span.link != nil ? linkColor : textColor }
+            if let fill = DocumentPalette.fill(span.background) { run.backgroundColor = Color(hex: fill.0, opacity: fill.1) }
+            if let link = span.link.flatMap(URL.init(string:)), DocumentRichText.allowedURL(link) { run.link = link }
+            attributed += run
+        }
+        return attributed
+    }
+    private func markdownCell(_ value: String, size: CGFloat, semibold: Bool, mono: Bool) -> Text {
+        let shown = value.isEmpty ? " " : value
+        if mono { return Text(shown).font(.system(size: size, design: .monospaced)).foregroundStyle(textColor) }
+        if var parsed = try? AttributedString(markdown: shown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            parsed.foregroundColor = textColor
+            parsed.font = .system(size: size, weight: semibold ? .semibold : .regular)
+            return Text(parsed)
+        }
+        return Text(shown).font(.system(size: size, weight: semibold ? .semibold : .regular))
+    }
 }
