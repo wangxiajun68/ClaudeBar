@@ -152,8 +152,20 @@ struct ProviderCatalogEntry: Identifiable, Equatable {
     static func matchingAll(baseURL: String) -> [Self] {
         let value = identityURL(baseURL)
         guard !value.isEmpty else { return [] }
-        return all.filter { $0.identityURLs.contains(value) }
+        return endpointIndex[value] ?? []
     }
+
+    /// Catalog endpoints are immutable. Normalize them once, preserving catalog
+    /// order and one result per entry even when two protocols share a URL.
+    private static let endpointIndex: [String: [Self]] = {
+        var index: [String: [Self]] = [:]
+        for entry in all {
+            for identity in Set(entry.identityURLs) {
+                index[identity, default: []].append(entry)
+            }
+        }
+        return index
+    }()
 
     var identityURLs: [String] {
         let urls = [claude?.baseURL, codex?.baseURL, codex?.chatBaseURL].compactMap { $0 }

@@ -50,6 +50,8 @@ struct ProviderCatalogBrowser: View {
     var balances: [UUID: String] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var partitionCache = PartitionCache()
+
     private struct Partition {
         var buckets: [String: [Provider]]
         var custom: [Provider]
@@ -60,18 +62,33 @@ struct ProviderCatalogBrowser: View {
     /// One URL match per saved row. The grid used to match every row against
     /// every catalog entry, several times, on each store publish.
     private var partition: Partition {
-        var buckets: [String: [Provider]] = [:]
-        var custom: [Provider] = []
-        for provider in providers {
-            if let id = provider.catalogID {
-                buckets[id, default: []].append(provider)
-            } else if let id = ProviderCatalogEntry.matching(baseURL: provider.baseURL)?.id {
-                buckets[id, default: []].append(provider)
-            } else {
-                custom.append(provider)
+        partitionCache.resolve(providers) {
+            var buckets: [String: [Provider]] = [:]
+            var custom: [Provider] = []
+            for provider in providers {
+                if let id = provider.catalogID {
+                    buckets[id, default: []].append(provider)
+                } else if let id = ProviderCatalogEntry.matching(baseURL: provider.baseURL)?.id {
+                    buckets[id, default: []].append(provider)
+                } else {
+                    custom.append(provider)
+                }
             }
+            return Partition(buckets: buckets, custom: custom)
         }
-        return Partition(buckets: buckets, custom: custom)
+    }
+
+    /// Balances, selection and search do not alter endpoint ownership.
+    @MainActor private final class PartitionCache {
+        private var input: [Provider]?
+        private var result: Partition?
+        func resolve(_ providers: [Provider], build: () -> Partition) -> Partition {
+            if input == providers, let result { return result }
+            let next = build()
+            input = providers
+            result = next
+            return next
+        }
     }
 
     /// The search term, trimmed and lowercased; haystacks are lowercased to

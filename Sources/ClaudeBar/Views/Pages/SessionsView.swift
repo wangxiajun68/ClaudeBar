@@ -102,10 +102,15 @@ struct SessionsView: View {
                 emptyHint("暂无 Claude Code 会话")
             } else {
                 VStack(alignment: .leading, spacing: Theme.Space.s12) {
-                    // A session with work in flight leaves the 宫格. Stretching
-                    // one cell used to drag every sibling in the row with it.
-                    ForEach(live) { session in
-                        SessionTileFull(session: session)
+                    // A separate one-column grid keeps task cards lazy without
+                    // asking a lazy stack to estimate the resting grid as a row.
+                    if !live.isEmpty {
+                        LazyVGrid(columns: [GridItem(.flexible(), alignment: .top)],
+                                  alignment: .leading, spacing: Theme.Space.s12) {
+                            ForEach(live) { session in
+                                SessionTileFull(session: session)
+                            }
+                        }
                     }
                     if !resting.isEmpty {
                         TileGrid(.pageSession) {

@@ -20,6 +20,7 @@ struct ConnectorsView: View {
     @State private var selection: Set<String> = []
     @State private var pendingBatch: BatchConfirm?
     @State private var isBatching = false
+    @State private var inventoryCache = ConnectorInventoryCache()
 
     private let columns = [GridItem(.adaptive(minimum: 268), spacing: Theme.Space.gridGapPage, alignment: .top)]
     private var selectedProject: String? { projectPath.isEmpty ? nil : projectPath }
@@ -259,27 +260,34 @@ struct ConnectorsView: View {
         // cards do: a bundle's contents and the card that renders them are one
         // dependency, so a scan that rewrites a bundle has to invalidate both.
         let contents = manager.pluginContents
-        return manager.records.filter { record in
-            record.kind == kind &&
-            (platform.map { record.platforms.contains($0) } ?? true) &&
-            (matches(record, needle: needle)
-                || (contents[record.id]?.items.contains {
-                        $0.name.localizedStandardContains(needle)
-                    } ?? false))
+        let records = manager.records
+        return inventoryCache.records(records, contents: contents, kind: kind, platform: platform, needle: needle) {
+            records.filter { record in
+                record.kind == kind &&
+                (platform.map { record.platforms.contains($0) } ?? true) &&
+                (matches(record, needle: needle)
+                    || (contents[record.id]?.items.contains {
+                            $0.name.localizedStandardContains(needle)
+                        } ?? false))
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private var visibleCLIs: [LocalCLIRecord] {
-        manager.localCLIs.filter { cli in
-            search.isEmpty || cli.name.localizedStandardContains(search) ||
-            cli.summary.localizedStandardContains(search) ||
-            cli.category.localizedStandardContains(search)
+        guard focus == .local else { return [] }
+        let clis = manager.localCLIs
+        return inventoryCache.clis(clis, query: search) {
+            clis.filter { cli in
+                search.isEmpty || cli.name.localizedStandardContains(search) ||
+                cli.summary.localizedStandardContains(search) ||
+                cli.category.localizedStandardContains(search)
+            }
         }
     }
 
     private func relatedCount(_ name: String) -> Int {
-        manager.records.reduce(0) { $0 + ($1.sharedOwner == name ? 1 : 0) }
+        inventoryCache.relatedCount(name, records: manager.records)
     }
 
     /// Does `record` match the search box, ignoring its plugin contents?
@@ -1130,5 +1138,59 @@ private extension ConnectorPlatform {
         case .codex: Theme.codex
         case .cursor: Theme.cursor
         }
+    }
+}
+
+/// One entry per derived list, owned by the mounted page. Selection, dialogs
+/// and busy-state updates reuse results; catalog/search changes rebuild them.
+@MainActor private final class ConnectorInventoryCache {
+    private struct RecordsInput: Equatable {
+        let records: [ConnectorRecord]
+        let contents: [String: PluginBundleContents]
+        let kind: ConnectorKind
+        let platform: ConnectorPlatform?
+        let needle: String
+        let locale: String
+    }
+    private struct CLIInput: Equatable {
+        let clis: [LocalCLIRecord]
+        let query: String
+        let locale: String
+    }
+    private var recordsInput: RecordsInput?
+    private var recordRows: [ConnectorRecord] = []
+    private var cliInput: CLIInput?
+    private var cliRows: [LocalCLIRecord] = []
+    private var ownersInput: [ConnectorRecord]?
+    private var ownerCounts: [String: Int] = [:]
+
+    func records(_ records: [ConnectorRecord], contents: [String: PluginBundleContents],
+                 kind: ConnectorKind, platform: ConnectorPlatform?, needle: String,
+                 build: () -> [ConnectorRecord]) -> [ConnectorRecord] {
+        let input = RecordsInput(records: records, contents: needle.isEmpty ? [:] : contents,
+                                 kind: kind, platform: platform, needle: needle,
+                                 locale: Locale.current.identifier)
+        if recordsInput == input { return recordRows }
+        recordRows = build()
+        recordsInput = input
+        return recordRows
+    }
+    func clis(_ clis: [LocalCLIRecord], query: String, build: () -> [LocalCLIRecord]) -> [LocalCLIRecord] {
+        let input = CLIInput(clis: clis, query: query, locale: Locale.current.identifier)
+        if cliInput == input { return cliRows }
+        cliRows = build()
+        cliInput = input
+        return cliRows
+    }
+    func relatedCount(_ name: String, records: [ConnectorRecord]) -> Int {
+        if ownersInput != records {
+            var counts: [String: Int] = [:]
+            for record in records {
+                if let owner = record.sharedOwner { counts[owner, default: 0] += 1 }
+            }
+            ownerCounts = counts
+            ownersInput = records
+        }
+        return ownerCounts[name, default: 0]
     }
 }
