@@ -250,6 +250,21 @@ struct TrafficView: View {
         }
     }
 
+    private func reconcileFilteredRecords() {
+        if recordsStamp != Self.stamp(catalog.records) {
+            recomputeFiltered()
+        } else {
+            // The predicate still matches, but cached value copies must receive
+            // status/token/duration patches so completed rows leave TrafficLiveRow.
+            let ids = Set(filteredCache.map(\.id))
+            let latest = catalog.records.filter { ids.contains($0.id) }
+            if latest != filteredCache { filteredCache = latest }
+        }
+        if selectedID == nil || !filtered.contains(where: { $0.id == selectedID }) {
+            selectedID = filtered.first?.id
+        }
+    }
+
     private var filtered: [CaptureSummary] { filteredCache }
 
     private var currentSummary: CaptureSummary? {
@@ -344,22 +359,10 @@ struct TrafficView: View {
         .onReceive(catalog.$records) { _ in
             // @Published emits before assignment; read the committed array one
             // runloop turn from now.
+            let generation = state.loadGen
             DispatchQueue.main.async {
-                // Cheap guard: a record publish that does not change what the
-                // filter reads (an in-place status/duration patch) must not
-                // re-run the O(rows × 3 lowercased()) pass and re-diff the
-                // 120-row list behind it.
-                if recordsStamp != Self.stamp(catalog.records) {
-                    recomputeFiltered()
-                }
-                // Outside the guard: a prune (`ProxyCaptureStore` caps the list
-                // at 120 and drops the tail) removes the selected row without
-                // touching a field the stamp hashes, and a skipped
-                // reconciliation leaves `selectedID` on a row that is gone —
-                // no highlight, empty detail pane until the next click.
-                if selectedID == nil || !filtered.contains(where: { $0.id == selectedID }) {
-                    selectedID = filtered.first?.id
-                }
+                guard state.mounted, generation == state.loadGen else { return }
+                reconcileFilteredRecords()
             }
         }
         .onChange(of: currentSummary?.state) { _, state in

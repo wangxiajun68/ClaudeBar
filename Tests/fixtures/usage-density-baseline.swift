@@ -1,8 +1,9 @@
+// Frozen KDE parity oracle from a5e9688. Test-only; preserve the original unweighted computation.
 import Foundation
 
 /// Pure analysis of local records. Empty elapsed dates remain zero; future
 /// dates are excluded. No inferred hourly usage, savings or billing history.
-struct UsageAnalysis {
+struct OriginalAnalysis {
     struct Bucket: Identifiable {
         let date: Date
         let label: String
@@ -115,13 +116,9 @@ struct UsageAnalysis {
         let ordered = buckets.map(\.total).sorted()
         tokenScale = max(1, Self.quantile(ordered.filter { $0 > 0 }.map(Double.init), fraction: 0.5))
         var empirical: [CurvePoint] = []
-        var densitySamples: [(value: Double, count: Int)] = []
-        var groupStart = 0
         for (index, value) in ordered.enumerated() {
             if index + 1 == ordered.count || ordered[index + 1] != value {
                 empirical.append(CurvePoint(x: Double(value), y: Double(index + 1) / Double(ordered.count)))
-                densitySamples.append((Double(value), index + 1 - groupStart))
-                groupStart = index + 1
             }
         }
         distribution = empirical
@@ -143,11 +140,9 @@ struct UsageAnalysis {
             // negative. Samples remain separate from this explicitly estimated curve.
             density = (0..<96).map { index in
                 let x = lower + (upper - lower) * Double(index) / 95
-                // Identical totals have identical kernels; keep their full
-                // observation weight without evaluating the exponentials again.
-                let sum = densitySamples.reduce(0.0) { total, sample in
-                    total + (exp(-0.5 * pow((x - sample.value) / bandwidth, 2))
-                        + exp(-0.5 * pow((x + sample.value) / bandwidth, 2))) * Double(sample.count)
+                let sum = observations.reduce(0.0) { total, value in
+                    total + exp(-0.5 * pow((x - value) / bandwidth, 2))
+                        + exp(-0.5 * pow((x + value) / bandwidth, 2))
                 }
                 return CurvePoint(x: x, y: sum / normalizer)
             }

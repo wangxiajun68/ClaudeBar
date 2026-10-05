@@ -14,7 +14,6 @@ struct UsageHeatmap: View {
     var onSelectDay: ((Date) -> Void)? = nil
     var onSelectMonth: ((Date) -> Void)? = nil
 
-    @State private var hoveredDate: Date?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let cal = Calendar.current
 
@@ -50,8 +49,6 @@ struct UsageHeatmap: View {
         .frame(height: Self.height(for: period, compact: compact))
         .accessibilityLabel(summary)
         .animation(reduceMotion ? nil : Theme.Animation.smooth, value: period)
-        .onChange(of: period) { _, _ in hoveredDate = nil }
-        .onChange(of: reference) { _, _ in hoveredDate = nil }
     }
 
     // MARK: Day — seven large cells for the week containing `reference`
@@ -98,31 +95,17 @@ struct UsageHeatmap: View {
                 size: geo.size,
                 cal: cal,
                 compact: compact)
+            let cells = layout.cells(by: by, peak: peak, cal: cal)
             Canvas { ctx, _ in
-                for col in 0..<layout.cols {
-                    for row in 0..<7 {
-                        let i = col * 7 + row - layout.leading
-                        let rect = layout.rect(col: col, row: row)
-                        let path = Path(roundedRect: rect, cornerRadius: min(3, layout.cellW * 0.28), style: .continuous)
-                        if i >= 0, i < layout.dayCount,
-                           let date = cal.date(byAdding: .day, value: i, to: layout.start) {
-                            let tokens = by[Self.dayKey(date)]
-                            ctx.fill(path, with: .color(fill(tokens.map { Double($0) / peak })))
-                        } else {
-                            ctx.fill(path, with: .color(Theme.cardFill(0.04)))
-                        }
-                    }
+                for cell in cells {
+                    let path = Path(roundedRect: cell.rect, cornerRadius: min(3, layout.cellW * 0.28), style: .continuous)
+                    ctx.fill(path, with: .color(cell.isPadding ? Theme.cardFill(0.04) : fill(cell.intensity)))
                 }
             }
             .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let point): hoveredDate = layout.date(at: point, cal: cal)
-                case .ended: hoveredDate = nil
-                }
-            }
-            .help(hoveredDate.map { helpText(date: $0, tokens: by[Self.dayKey($0)]) }
-                  ?? "悬停查看每日用量 · 点击日期下钻")
+            .modifier(HeatmapHover(layout: layout, cal: cal, period: period, reference: reference) { date in
+                helpText(date: date, tokens: by[Self.dayKey(date)])
+            })
             .onTapGesture { location in
                 guard let date = layout.date(at: location, cal: cal) else { return }
                 // In the year grid a cell is one day of one month, and drilling
@@ -226,8 +209,38 @@ struct UsageHeatmap: View {
     }
 }
 
+/// Pointer updates only change the tooltip, not the parent dictionary or Canvas inputs.
+private struct HeatmapHover: ViewModifier {
+    let layout: HeatLayout
+    let cal: Calendar
+    let period: UsagePeriod
+    let reference: Date
+    let help: (Date) -> String
+    @State private var hoveredDate: Date?
+
+    func body(content: Content) -> some View {
+        content
+            .onContinuousHover { phase in
+                let date: Date?
+                switch phase {
+                case .active(let point): date = layout.date(at: point, cal: cal)
+                case .ended: date = nil
+                }
+                if date != hoveredDate { hoveredDate = date }
+            }
+            .help(hoveredDate.map(help) ?? "悬停查看每日用量 · 点击日期下钻")
+            .onChange(of: period) { _, _ in hoveredDate = nil }
+            .onChange(of: reference) { _, _ in hoveredDate = nil }
+    }
+}
+
 /// Week-column GitHub layout math, shared by draw + hit testing.
 private struct HeatLayout {
+    struct Cell {
+        let rect: CGRect
+        let intensity: Double?
+        let isPadding: Bool
+    }
     let cols: Int
     let leading: Int
     let dayCount: Int
@@ -254,6 +267,25 @@ private struct HeatLayout {
         CGRect(x: CGFloat(col) * (cellW + gap),
                y: CGFloat(row) * (cellH + gap),
                width: cellW, height: cellH)
+    }
+
+    /// Calendar arithmetic and date-key formatting belong to layout preparation,
+    /// not the Canvas closure, which can run again without changed data.
+    func cells(by: [String: Int], peak: Double, cal: Calendar) -> [Cell] {
+        var result: [Cell] = []
+        result.reserveCapacity(cols * 7)
+        for col in 0..<cols {
+            for row in 0..<7 {
+                let i = col * 7 + row - leading
+                let rect = rect(col: col, row: row)
+                if i >= 0, i < dayCount, let date = cal.date(byAdding: .day, value: i, to: start) {
+                    result.append(Cell(rect: rect, intensity: by[UsageHeatmap.dayKey(date)].map { Double($0) / peak }, isPadding: false))
+                } else {
+                    result.append(Cell(rect: rect, intensity: nil, isPadding: true))
+                }
+            }
+        }
+        return result
     }
 
     func date(at p: CGPoint, cal: Calendar) -> Date? {

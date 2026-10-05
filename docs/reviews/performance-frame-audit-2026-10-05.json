@@ -1,0 +1,2266 @@
+{
+  "date": "2026-10-05",
+  "baseline_ref": "a5e9688",
+  "machine": "Apple M3 Pro, macOS 26.6.2, arm64/macOS15 target",
+  "fixture_compile": "Command Line Tools Swift 6.3.2, -O -g; synthetic production slices",
+  "before": {
+    "heatmap": [
+      {
+        "day_keys": 43920,
+        "days": 366,
+        "frames": 120,
+        "image_sha256": "0769482c23ff8e0a26db25dcac0becae7c19f2a32ca8c6996cd77bd0a4490014",
+        "median_ms": 0.9492083336226642,
+        "prepare_ms": 0.004541667294688523
+      },
+      {
+        "day_keys": 306840,
+        "days": 2557,
+        "frames": 120,
+        "image_sha256": "8a2afcc77107b31df8d9a998694e6181c65fb9adce316987903cd892b619ee6f",
+        "median_ms": 6.676541670458391,
+        "prepare_ms": 4.16621332988143e-05
+      }
+    ],
+    "traffic_stale_live_rows": 120,
+    "density": [
+      {
+        "days": 2000,
+        "density_max_absolute_error": 0,
+        "kde_median_ms": 0.8420944213867188,
+        "distinct_totals": 3,
+        "median_ms": 38.29395771026611
+      },
+      {
+        "kde_median_ms": 0.8560419082641602,
+        "median_ms": 38.83492946624756,
+        "density_max_absolute_error": 0,
+        "days": 2000,
+        "distinct_totals": 30
+      },
+      {
+        "days": 2000,
+        "distinct_totals": 2000,
+        "median_ms": 39.2909049987793,
+        "density_max_absolute_error": 0,
+        "kde_median_ms": 0.8410215377807617
+      }
+    ]
+  },
+  "after": {
+    "heatmap": [
+      {
+        "day_keys": 0,
+        "days": 366,
+        "frames": 120,
+        "image_sha256": "0769482c23ff8e0a26db25dcac0becae7c19f2a32ca8c6996cd77bd0a4490014",
+        "median_ms": 0.04020833148388192,
+        "prepare_ms": 0.9933749970514327
+      },
+      {
+        "day_keys": 0,
+        "days": 2557,
+        "frames": 120,
+        "image_sha256": "8a2afcc77107b31df8d9a998694e6181c65fb9adce316987903cd892b619ee6f",
+        "median_ms": 0.2337916666874662,
+        "prepare_ms": 6.805583332607057
+      }
+    ],
+    "traffic_stale_live_rows": 0,
+    "density": [
+      {
+        "distinct_totals": 3,
+        "density_max_absolute_error": 1.1102230246251565e-15,
+        "median_ms": 38.62190246582031,
+        "kde_median_ms": 0.0029802322387695312,
+        "days": 2000
+      },
+      {
+        "kde_median_ms": 0.015020370483398438,
+        "median_ms": 38.664937019348145,
+        "days": 2000,
+        "density_max_absolute_error": 1.2739375526704677e-17,
+        "distinct_totals": 30
+      },
+      {
+        "density_max_absolute_error": 3.7269449679189215e-20,
+        "kde_median_ms": 0.908970832824707,
+        "distinct_totals": 2000,
+        "median_ms": 39.598941802978516,
+        "days": 2000
+      }
+    ]
+  },
+  "synthetic_heat_time_profiler": {
+    "redraws_per_size": 1500,
+    "sizes_days": [
+      366,
+      2557
+    ],
+    "before": {
+      "main_thread_sampled_cpu_ms": 11250.0,
+      "total_sampled_cpu_ms": 11252.0,
+      "inclusive_by_binary_ms": {
+        "dyld": 11249.0,
+        "heat-profile": 11243.0,
+        "Foundation": 9734.0,
+        "CoreFoundation": 5144.0,
+        "libswiftCore.dylib": 3561.0,
+        "libsystem_malloc.dylib": 1202.0,
+        "libsystem_platform.dylib": 636.0,
+        "libsystem_c.dylib": 581.0,
+        "libsystem_m.dylib": 525.0,
+        "libobjc.A.dylib": 427.0,
+        "libdyld.dylib": 364.0,
+        "SwiftUICore": 206.0,
+        "libicucore.A.dylib": 191.0,
+        "libc++abi.dylib": 57.0,
+        "libsystem_pthread.dylib": 49.0,
+        "CoreGraphics": 23.0,
+        "libswiftos.dylib": 14.0,
+        "AppKit": 12.0,
+        "SwiftUI": 12.0,
+        "libdispatch.dylib": 8.0,
+        "libsystem_kernel.dylib": 6.0,
+        "libxpc.dylib": 4.0,
+        "DesignLibrary": 3.0,
+        "libSystem.B.dylib": 2.0,
+        "SkyLight": 2.0,
+        "CoreUI": 2.0,
+        "TCC": 1.0,
+        "libsystem_trace.dylib": 1.0,
+        "CarbonCore": 1.0,
+        "CoreServicesInternal": 1.0,
+        "ColorSync": 1.0,
+        "AttributeGraph": 1.0,
+        "RenderBox": 1.0,
+        "LDAP": 1.0
+      },
+      "self_by_symbol": [
+        {
+          "symbol": "__CFStringAppendFormatCore",
+          "binary": "CoreFoundation",
+          "weight_ms": 560.0
+        },
+        {
+          "symbol": "remainder",
+          "binary": "libsystem_m.dylib",
+          "weight_ms": 458.0
+        },
+        {
+          "symbol": "__CFStringCreateImmutableFunnel3",
+          "binary": "CoreFoundation",
+          "weight_ms": 396.0
+        },
+        {
+          "symbol": "_xzm_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 352.0
+        },
+        {
+          "symbol": "__CFStringFindFormatSpecifiersInString",
+          "binary": "CoreFoundation",
+          "weight_ms": 347.0
+        },
+        {
+          "symbol": "_platform_memmove",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 295.0
+        },
+        {
+          "symbol": "_CalendarGregorian.dateComponents(_:from:in:)",
+          "binary": "Foundation",
+          "weight_ms": 264.0
+        },
+        {
+          "symbol": "dyld_program_sdk_at_least",
+          "binary": "libdyld.dylib",
+          "weight_ms": 210.0
+        },
+        {
+          "symbol": "objc_msgSend",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 206.0
+        },
+        {
+          "symbol": "swift_release",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 200.0
+        },
+        {
+          "symbol": "_platform_memset",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 198.0
+        },
+        {
+          "symbol": "__CFStringChangeSizeMultiple",
+          "binary": "CoreFoundation",
+          "weight_ms": 191.0
+        },
+        {
+          "symbol": "__vfprintf",
+          "binary": "libsystem_c.dylib",
+          "weight_ms": 179.0
+        },
+        {
+          "symbol": "_xzm_xzone_malloc",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 172.0
+        },
+        {
+          "symbol": "__CFStringSetUpFormatAndSpecBuffers",
+          "binary": "CoreFoundation",
+          "weight_ms": 157.0
+        },
+        {
+          "symbol": "dyld_get_active_platform",
+          "binary": "libdyld.dylib",
+          "weight_ms": 152.0
+        },
+        {
+          "symbol": "_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 148.0
+        },
+        {
+          "symbol": "__CF_IS_OBJC",
+          "binary": "CoreFoundation",
+          "weight_ms": 145.0
+        },
+        {
+          "symbol": "bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, unsigned int)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 145.0
+        },
+        {
+          "symbol": "String.UTF16View._nativeCopy(into:alignedRange:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 144.0
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 113.0
+        },
+        {
+          "symbol": "Hasher._combine(_:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 102.0
+        },
+        {
+          "symbol": "_CFStringGetCStringPtrInternal",
+          "binary": "CoreFoundation",
+          "weight_ms": 100.0
+        },
+        {
+          "symbol": "swift_getObjectType",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 98.0
+        },
+        {
+          "symbol": "swift_retain",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 92.0
+        },
+        {
+          "symbol": "__sfvwrite",
+          "binary": "libsystem_c.dylib",
+          "weight_ms": 89.0
+        },
+        {
+          "symbol": "_CalendarGregorian.date(byAddingAndCarryingOverComponents:to:)",
+          "binary": "Foundation",
+          "weight_ms": 84.0
+        },
+        {
+          "symbol": "_CFRelease",
+          "binary": "CoreFoundation",
+          "weight_ms": 82.0
+        },
+        {
+          "symbol": "__CFStringAppendBytes",
+          "binary": "CoreFoundation",
+          "weight_ms": 74.0
+        },
+        {
+          "symbol": "__ultoa",
+          "binary": "libsystem_c.dylib",
+          "weight_ms": 72.0
+        },
+        {
+          "symbol": "swift::swift_slowAllocTyped(unsigned long, unsigned long, unsigned long long)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 71.0
+        },
+        {
+          "symbol": "swift_deallocClassInstance",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 71.0
+        },
+        {
+          "symbol": "swift_unknownObjectRelease",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 69.0
+        },
+        {
+          "symbol": "CFRelease",
+          "binary": "CoreFoundation",
+          "weight_ms": 69.0
+        },
+        {
+          "symbol": "swift_arrayDestroy",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 68.0
+        },
+        {
+          "symbol": "icu::OlsonTimeZone::getHistoricalOffset(double, signed char, int, int, int&, int&) const",
+          "binary": "libicucore.A.dylib",
+          "weight_ms": 67.0
+        },
+        {
+          "symbol": "swift_allocObject",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 65.0
+        },
+        {
+          "symbol": "swift_cvw_destroyImpl(swift::OpaqueValue*, swift::TargetMetadata<swift::InProcess> const*)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 65.0
+        },
+        {
+          "symbol": "__CFStringValidateFormat",
+          "binary": "CoreFoundation",
+          "weight_ms": 64.0
+        },
+        {
+          "symbol": "String.UTF16View.index(_:offsetBy:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 63.0
+        }
+      ],
+      "unresolved_references": 0
+    },
+    "after": {
+      "main_thread_sampled_cpu_ms": 448.0,
+      "total_sampled_cpu_ms": 449.0,
+      "inclusive_by_binary_ms": {
+        "dyld": 447.0,
+        "heat-profile": 442.0,
+        "libswiftCore.dylib": 274.0,
+        "SwiftUICore": 162.0,
+        "libsystem_malloc.dylib": 90.0,
+        "CoreGraphics": 57.0,
+        "libsystem_platform.dylib": 21.0,
+        "Foundation": 18.0,
+        "AppKit": 14.0,
+        "CoreFoundation": 12.0,
+        "SwiftUI": 11.0,
+        "libdispatch.dylib": 8.0,
+        "libsystem_kernel.dylib": 5.0,
+        "libdyld.dylib": 2.0,
+        "libobjc.A.dylib": 2.0,
+        "libSystem.B.dylib": 1.0,
+        "libxpc.dylib": 1.0,
+        "libsystem_trace.dylib": 1.0,
+        "libsystem_pthread.dylib": 1.0,
+        "SkyLight": 1.0,
+        "CoreServicesInternal": 1.0,
+        "libicucore.A.dylib": 1.0,
+        "CoreUI": 1.0,
+        "HIServices": 1.0,
+        "AttributeGraph": 1.0,
+        "DesignLibrary": 1.0
+      },
+      "self_by_symbol": [
+        {
+          "symbol": "_xzm_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 29.0
+        },
+        {
+          "symbol": "CGRectIsNull",
+          "binary": "CoreGraphics",
+          "weight_ms": 29.0
+        },
+        {
+          "symbol": "bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, unsigned int)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 26.0
+        },
+        {
+          "symbol": "DYLD-STUB$$protocol witness for OptionSet.init(rawValue:) in conformance DisplayList.Properties",
+          "binary": "SwiftUICore",
+          "weight_ms": 26.0
+        },
+        {
+          "symbol": "CGRectIsInfinite",
+          "binary": "CoreGraphics",
+          "weight_ms": 21.0
+        },
+        {
+          "symbol": "swift_allocObject",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 21.0
+        },
+        {
+          "symbol": "Path.init(roundedRect:cornerRadius:style:)",
+          "binary": "SwiftUICore",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "binary": "SwiftUICore",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "swift_deallocObject",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "swift_release",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 18.0
+        },
+        {
+          "symbol": "_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 18.0
+        },
+        {
+          "symbol": "_platform_memset",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 16.0
+        },
+        {
+          "symbol": "_xzm_xzone_malloc",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 16.0
+        },
+        {
+          "symbol": "swift::swift_slowAllocTyped(unsigned long, unsigned long, unsigned long long)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 15.0
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 14.0
+        },
+        {
+          "symbol": "0x23612b6c4",
+          "binary": "SwiftUICore",
+          "weight_ms": 13.0
+        },
+        {
+          "symbol": "static Theme.cardFill(_:)",
+          "binary": "heat-profile",
+          "weight_ms": 10.0
+        },
+        {
+          "symbol": "swift_retain",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 10.0
+        },
+        {
+          "symbol": "_swift_release_dealloc",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 9.0
+        },
+        {
+          "symbol": "swift_deallocClassInstance",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 8.0
+        },
+        {
+          "symbol": "malloc_type_malloc",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 8.0
+        },
+        {
+          "symbol": "Color.opacity(_:)",
+          "binary": "SwiftUICore",
+          "weight_ms": 7.0
+        },
+        {
+          "symbol": "outlined consume of Path.Storage",
+          "binary": "SwiftUICore",
+          "weight_ms": 5.0
+        },
+        {
+          "symbol": "type metadata accessor for ColorBox<Color.MixProvider>",
+          "binary": "SwiftUICore",
+          "weight_ms": 4.0
+        },
+        {
+          "symbol": "DYLD-STUB$$_platform_bzero",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "DrawFixture.fill(_:)",
+          "binary": "heat-profile",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "DYLD-STUB$$malloc_type_malloc",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "DYLD-STUB$$Color.opacity(_:)",
+          "binary": "heat-profile",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "static Color.gray.getter",
+          "binary": "SwiftUICore",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "__bzero",
+          "binary": "libsystem_platform.dylib",
+          "weight_ms": 3.0
+        },
+        {
+          "symbol": "<deduplicated_symbol>",
+          "binary": "dyld",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "mach_absolute_time",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "aa_ael_insert",
+          "binary": "CoreGraphics",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "DplusDM",
+          "binary": "CoreGraphics",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "outlined destroy of Path",
+          "binary": "heat-profile",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "DYLD-STUB$$static Color.gray.getter",
+          "binary": "heat-profile",
+          "weight_ms": 2.0
+        },
+        {
+          "symbol": "__kdebug_trace_string",
+          "binary": "dyld",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "map_images_nolock",
+          "binary": "libobjc.A.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "__sysctl",
+          "binary": "libsystem_kernel.dylib",
+          "weight_ms": 1.0
+        },
+        {
+          "symbol": "_platform_strcmp_noMTE",
+          "binary": "dyld",
+          "weight_ms": 1.0
+        }
+      ],
+      "unresolved_references": 0
+    },
+    "scope": "Same fixed CPU draw preparation work. Includes setup, fixture startup and one raster image per size. Does not render a presented application window."
+  },
+  "installed_release_recording": {
+    "version": "1.15.0",
+    "installed_executable_sha256": "fadf4b9451e647a381a4520d6663ae82b3fdef4481d41c3c7a6d0f9a4731069e",
+    "template": "SwiftUI",
+    "duration_seconds": 90.870428,
+    "scope": "One navigation pass across nine pages with available scroll areas; mostly overview otherwise. No settings changes, network tests, hardware controls or complete interaction matrix.",
+    "update_counts": {
+      "Other Updates": 857845,
+      "View Body Updates": 22454,
+      "Representable Updates": 822
+    },
+    "project_view_type_count": 135,
+    "project_body_count": 4387,
+    "project_body_total_ms": 100.75223600000004,
+    "project_body_over_1_ms_count": 9,
+    "project_views": [
+      {
+        "module": "ClaudeBar",
+        "view": "SessionActionChips",
+        "count": 117,
+        "total_ms": 18.36383399999999,
+        "p50_ms": 0.004125,
+        "p95_ms": 0.0349996,
+        "max_ms": 17.325208,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TrafficView",
+        "count": 4,
+        "total_ms": 9.145165,
+        "p50_ms": 0.468666,
+        "p95_ms": 6.6858641999999975,
+        "max_ms": 7.781208,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderIdentityMark",
+        "count": 20,
+        "total_ms": 8.120076000000001,
+        "p50_ms": 0.530083,
+        "p95_ms": 0.7242416500000001,
+        "max_ms": 0.828583,
+        "over_0_5_ms": 11,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectorsView",
+        "count": 3,
+        "total_ms": 4.9590819999999995,
+        "p50_ms": 0.436583,
+        "p95_ms": 3.9367577,
+        "max_ms": 4.325666,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VPNView",
+        "count": 7,
+        "total_ms": 4.265081,
+        "p50_ms": 0.027958,
+        "p95_ms": 2.8717247999999977,
+        "max_ms": 4.087125,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionTileFull",
+        "count": 8,
+        "total_ms": 2.7654970000000003,
+        "p50_ms": 0.027832999999999997,
+        "p95_ms": 1.6636682999999988,
+        "max_ms": 2.477958,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageView",
+        "count": 4,
+        "total_ms": 2.7550809999999997,
+        "p50_ms": 0.2777285,
+        "p95_ms": 1.7682222499999993,
+        "max_ms": 2.016416,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SettingsView",
+        "count": 5,
+        "total_ms": 2.684082,
+        "p50_ms": 0.049125,
+        "p95_ms": 1.9813163999999996,
+        "max_ms": 2.448583,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "Unchanged",
+        "count": 19,
+        "total_ms": 2.466578,
+        "p50_ms": 0.166375,
+        "p95_ms": 0.1859497,
+        "max_ms": 0.192625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "RollingNumberModifier",
+        "count": 737,
+        "total_ms": 2.4206279999999962,
+        "p50_ms": 0.001291,
+        "p95_ms": 0.009758199999999996,
+        "max_ms": 0.044333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TopNavTab",
+        "count": 261,
+        "total_ms": 2.3461250000000007,
+        "p50_ms": 0.006541,
+        "p95_ms": 0.027,
+        "max_ms": 0.042583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProvidersView",
+        "count": 2,
+        "total_ms": 2.122541,
+        "p50_ms": 1.0612705,
+        "p95_ms": 1.84372645,
+        "max_ms": 1.930666,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionMigrationHistoryCard",
+        "count": 4,
+        "total_ms": 2.0185400000000002,
+        "p50_ms": 0.050416,
+        "p95_ms": 1.6418141999999996,
+        "max_ms": 1.915458,
+        "over_0_5_ms": 1,
+        "over_1_ms": 1
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SegmentedItem",
+        "count": 135,
+        "total_ms": 1.8575000000000002,
+        "p50_ms": 0.011375,
+        "p95_ms": 0.03831249999999999,
+        "max_ms": 0.295458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ExternalSessionGridCard",
+        "count": 20,
+        "total_ms": 1.7844099999999998,
+        "p50_ms": 0.0673955,
+        "p95_ms": 0.15846840000000023,
+        "max_ms": 0.484041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectorCard",
+        "count": 93,
+        "total_ms": 1.661631,
+        "p50_ms": 0.001875,
+        "p95_ms": 0.047957799999999995,
+        "max_ms": 0.408541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageModelCard",
+        "count": 20,
+        "total_ms": 1.6351569999999997,
+        "p50_ms": 0.0191455,
+        "p95_ms": 0.1745559000000006,
+        "max_ms": 0.993416,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "LucideRotor",
+        "count": 22,
+        "total_ms": 1.438827,
+        "p50_ms": 0.045958,
+        "p95_ms": 0.1382601,
+        "max_ms": 0.156708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionMigrationButton",
+        "count": 62,
+        "total_ms": 1.3613109999999997,
+        "p50_ms": 0.010437499999999999,
+        "p95_ms": 0.06268539999999999,
+        "max_ms": 0.189666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderDirectoryCard",
+        "count": 65,
+        "total_ms": 1.1473119999999999,
+        "p50_ms": 0.004333,
+        "p95_ms": 0.05475779999999998,
+        "max_ms": 0.323958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VPNTrafficStrip",
+        "count": 7,
+        "total_ms": 1.084247,
+        "p50_ms": 0.0975,
+        "p95_ms": 0.5090828999999996,
+        "max_ms": 0.682083,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionsView",
+        "count": 3,
+        "total_ms": 1.00679,
+        "p50_ms": 0.134541,
+        "p95_ms": 0.7158285,
+        "max_ms": 0.780416,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillChip",
+        "count": 52,
+        "total_ms": 0.9782719999999999,
+        "p50_ms": 0.0161455,
+        "p95_ms": 0.031534899999999984,
+        "max_ms": 0.042958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VpnSubscriptionSection",
+        "count": 3,
+        "total_ms": 0.8880410000000001,
+        "p50_ms": 0.049541,
+        "p95_ms": 0.7498165999999999,
+        "max_ms": 0.827625,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionLoadChip",
+        "count": 51,
+        "total_ms": 0.702647,
+        "p50_ms": 0.010083,
+        "p95_ms": 0.030229,
+        "max_ms": 0.042041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TileSurface",
+        "count": 68,
+        "total_ms": 0.6713089999999999,
+        "p50_ms": 0.007833,
+        "p95_ms": 0.019153499999999997,
+        "max_ms": 0.040875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HelpView",
+        "count": 1,
+        "total_ms": 0.670875,
+        "p50_ms": 0.670875,
+        "p95_ms": 0.670875,
+        "max_ms": 0.670875,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CursorTokenUsageCard",
+        "count": 3,
+        "total_ms": 0.6280819999999999,
+        "p50_ms": 0.005083,
+        "p95_ms": 0.557233,
+        "max_ms": 0.618583,
+        "over_0_5_ms": 1,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentToggleBody",
+        "count": 7,
+        "total_ms": 0.6273720000000002,
+        "p50_ms": 0.037416,
+        "p95_ms": 0.3604497999999997,
+        "max_ms": 0.49675,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderCardSurface",
+        "count": 56,
+        "total_ms": 0.612111,
+        "p50_ms": 0.0042495,
+        "p95_ms": 0.02856225,
+        "max_ms": 0.038083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HoverState",
+        "count": 284,
+        "total_ms": 0.6015309999999987,
+        "p50_ms": 0.001729,
+        "p95_ms": 0.005112399999999997,
+        "max_ms": 0.014583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderModelSelector",
+        "count": 49,
+        "total_ms": 0.5846939999999997,
+        "p50_ms": 0.001666,
+        "p95_ms": 0.030799799999999992,
+        "max_ms": 0.176416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "RollingNumberText",
+        "count": 201,
+        "total_ms": 0.47572899999999957,
+        "p50_ms": 0.001541,
+        "p95_ms": 0.007916,
+        "max_ms": 0.024125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ActionChip",
+        "count": 100,
+        "total_ms": 0.4706719999999992,
+        "p50_ms": 0.0014995,
+        "p95_ms": 0.009668099999999999,
+        "max_ms": 0.110083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ControlPlate",
+        "count": 87,
+        "total_ms": 0.4471359999999999,
+        "p50_ms": 0.004458,
+        "p95_ms": 0.0097625,
+        "max_ms": 0.012666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SignatureGlyph",
+        "count": 95,
+        "total_ms": 0.4368459999999998,
+        "p50_ms": 0.001666,
+        "p95_ms": 0.0138205,
+        "max_ms": 0.017,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SkyModeToggle",
+        "count": 13,
+        "total_ms": 0.415453,
+        "p50_ms": 0.031208,
+        "p95_ms": 0.0362662,
+        "max_ms": 0.038791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SegmentedCapsule",
+        "count": 25,
+        "total_ms": 0.412282,
+        "p50_ms": 0.013,
+        "p95_ms": 0.04699099999999998,
+        "max_ms": 0.0715,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "StatusPill",
+        "count": 98,
+        "total_ms": 0.3895119999999997,
+        "p50_ms": 0.0035415,
+        "p95_ms": 0.006928599999999999,
+        "max_ms": 0.011416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HardwareIllustration",
+        "count": 28,
+        "total_ms": 0.37444999999999995,
+        "p50_ms": 0.009270500000000001,
+        "p95_ms": 0.029295599999999998,
+        "max_ms": 0.030083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectorUtilityButtonModifier",
+        "count": 138,
+        "total_ms": 0.36274899999999954,
+        "p50_ms": 0.001125,
+        "p95_ms": 0.00793475,
+        "max_ms": 0.01375,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "AppGlyph",
+        "count": 114,
+        "total_ms": 0.35595999999999983,
+        "p50_ms": 0.0020204999999999997,
+        "p95_ms": 0.007589149999999993,
+        "max_ms": 0.035583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TileModifier",
+        "count": 143,
+        "total_ms": 0.3455759999999998,
+        "p50_ms": 0.002375,
+        "p95_ms": 0.0063041000000000035,
+        "max_ms": 0.011041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentField",
+        "count": 8,
+        "total_ms": 0.340623,
+        "p50_ms": 0.0249165,
+        "p95_ms": 0.12149769999999993,
+        "max_ms": 0.169958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderActivationControl",
+        "count": 29,
+        "total_ms": 0.33511699999999994,
+        "p50_ms": 0.010333,
+        "p95_ms": 0.02399999999999999,
+        "max_ms": 0.032875,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GlyphWell",
+        "count": 49,
+        "total_ms": 0.33385599999999993,
+        "p50_ms": 0.005583,
+        "p95_ms": 0.01359119999999999,
+        "max_ms": 0.018916,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TokenMixStrip",
+        "count": 10,
+        "total_ms": 0.325039,
+        "p50_ms": 0.0157495,
+        "p95_ms": 0.10568124999999985,
+        "max_ms": 0.168625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SettingsRow",
+        "count": 6,
+        "total_ms": 0.309706,
+        "p50_ms": 0.0533955,
+        "p95_ms": 0.06216625,
+        "max_ms": 0.063083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentSearchField",
+        "count": 19,
+        "total_ms": 0.308535,
+        "p50_ms": 0.013916,
+        "p95_ms": 0.030116599999999993,
+        "max_ms": 0.032291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "LinkCard",
+        "count": 7,
+        "total_ms": 0.30508100000000005,
+        "p50_ms": 0.039916,
+        "p95_ms": 0.06444119999999999,
+        "max_ms": 0.070416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SourceRing",
+        "count": 10,
+        "total_ms": 0.30312200000000006,
+        "p50_ms": 0.0151665,
+        "p95_ms": 0.10536874999999984,
+        "max_ms": 0.173375,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "DisabledTreatmentModifier",
+        "count": 162,
+        "total_ms": 0.2931539999999994,
+        "p50_ms": 0.001979,
+        "p95_ms": 0.003157699999999998,
+        "max_ms": 0.006,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CompactFanPair",
+        "count": 19,
+        "total_ms": 0.285786,
+        "p50_ms": 0.016375,
+        "p95_ms": 0.028124699999999996,
+        "max_ms": 0.03075,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TileGrid",
+        "count": 14,
+        "total_ms": 0.28482900000000005,
+        "p50_ms": 0.017458,
+        "p95_ms": 0.03625799999999999,
+        "max_ms": 0.047958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderStatusBadge",
+        "count": 21,
+        "total_ms": 0.28436799999999995,
+        "p50_ms": 0.009458,
+        "p95_ms": 0.013416,
+        "max_ms": 0.097458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HardwareSiliconMark",
+        "count": 12,
+        "total_ms": 0.28341299999999997,
+        "p50_ms": 0.0267495,
+        "p95_ms": 0.033416299999999996,
+        "max_ms": 0.03525,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentMenuLabel",
+        "count": 8,
+        "total_ms": 0.27949700000000005,
+        "p50_ms": 0.018229000000000002,
+        "p95_ms": 0.11194944999999994,
+        "max_ms": 0.155291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CapacityHardwareMark",
+        "count": 11,
+        "total_ms": 0.274079,
+        "p50_ms": 0.019375,
+        "p95_ms": 0.0446665,
+        "max_ms": 0.046958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CodexCleanupDialog",
+        "count": 4,
+        "total_ms": 0.262498,
+        "p50_ms": 0.025208,
+        "p95_ms": 0.18118484999999993,
+        "max_ms": 0.208416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PowerFlowContent",
+        "count": 7,
+        "total_ms": 0.256372,
+        "p50_ms": 0.034541,
+        "p95_ms": 0.0415331,
+        "max_ms": 0.041708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HelpBlockView",
+        "count": 1,
+        "total_ms": 0.252625,
+        "p50_ms": 0.252625,
+        "p95_ms": 0.252625,
+        "max_ms": 0.252625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ShineHoverModifier",
+        "count": 68,
+        "total_ms": 0.24043699999999996,
+        "p50_ms": 0.0032915,
+        "p95_ms": 0.009526749999999999,
+        "max_ms": 0.027916,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PowerFlowCard",
+        "count": 7,
+        "total_ms": 0.23391399999999998,
+        "p50_ms": 0.029416,
+        "p95_ms": 0.06133299999999997,
+        "max_ms": 0.071458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OverviewTile",
+        "count": 11,
+        "total_ms": 0.229248,
+        "p50_ms": 0.01725,
+        "p95_ms": 0.041604,
+        "max_ms": 0.04625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PageTitle",
+        "count": 19,
+        "total_ms": 0.22641,
+        "p50_ms": 0.012458,
+        "p95_ms": 0.026678499999999987,
+        "max_ms": 0.033541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "LayerShadow",
+        "count": 51,
+        "total_ms": 0.21989699999999984,
+        "p50_ms": 0.001875,
+        "p95_ms": 0.023083,
+        "max_ms": 0.026375,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SettingsGroup",
+        "count": 3,
+        "total_ms": 0.20820700000000003,
+        "p50_ms": 0.043333,
+        "p95_ms": 0.12725799999999998,
+        "max_ms": 0.136583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ActionButton",
+        "count": 13,
+        "total_ms": 0.207913,
+        "p50_ms": 0.004958,
+        "p95_ms": 0.037116199999999995,
+        "max_ms": 0.038666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CacheHitBadge",
+        "count": 6,
+        "total_ms": 0.205581,
+        "p50_ms": 0.021770499999999998,
+        "p95_ms": 0.08247850000000001,
+        "max_ms": 0.101041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageProviderCard",
+        "count": 13,
+        "total_ms": 0.20395199999999997,
+        "p50_ms": 0.00225,
+        "p95_ms": 0.048732999999999985,
+        "max_ms": 0.053458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SparkleCta",
+        "count": 4,
+        "total_ms": 0.196124,
+        "p50_ms": 0.0113955,
+        "p95_ms": 0.14916864999999993,
+        "max_ms": 0.172,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ShineSweep",
+        "count": 60,
+        "total_ms": 0.19356299999999999,
+        "p50_ms": 0.0030415,
+        "p95_ms": 0.006436849999999998,
+        "max_ms": 0.025375,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionTitleLine",
+        "count": 15,
+        "total_ms": 0.18657999999999997,
+        "p50_ms": 0.011083,
+        "p95_ms": 0.022795499999999996,
+        "max_ms": 0.023583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageHeatmap",
+        "count": 4,
+        "total_ms": 0.184956,
+        "p50_ms": 0.012937,
+        "p95_ms": 0.13456604999999996,
+        "max_ms": 0.154791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InnerFrameRing",
+        "count": 92,
+        "total_ms": 0.17542599999999997,
+        "p50_ms": 0.001625,
+        "p95_ms": 0.00339345,
+        "max_ms": 0.005333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CursorTileFull",
+        "count": 4,
+        "total_ms": 0.168915,
+        "p50_ms": 0.035833000000000004,
+        "p95_ms": 0.09145804999999999,
+        "max_ms": 0.095333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SessionAgentDetailRow",
+        "count": 4,
+        "total_ms": 0.16854,
+        "p50_ms": 0.008062,
+        "p95_ms": 0.12473299999999996,
+        "max_ms": 0.145208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ScrollHoverGateModifier",
+        "count": 19,
+        "total_ms": 0.16824399999999998,
+        "p50_ms": 0.007208,
+        "p95_ms": 0.017357699999999966,
+        "max_ms": 0.031458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "EnergySankey",
+        "count": 10,
+        "total_ms": 0.16178700000000001,
+        "p50_ms": 0.013062,
+        "p95_ms": 0.026078499999999998,
+        "max_ms": 0.027541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SectionHeader",
+        "count": 12,
+        "total_ms": 0.15578699999999998,
+        "p50_ms": 0.013062,
+        "p95_ms": 0.0182622,
+        "max_ms": 0.019041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentWell",
+        "count": 18,
+        "total_ms": 0.15466000000000002,
+        "p50_ms": 0.003541,
+        "p95_ms": 0.021401749999999966,
+        "max_ms": 0.040208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PageHeaderCard",
+        "count": 4,
+        "total_ms": 0.151874,
+        "p50_ms": 0.018041500000000002,
+        "p95_ms": 0.10049734999999997,
+        "max_ms": 0.112541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OfficialProviderCard",
+        "count": 2,
+        "total_ms": 0.146291,
+        "p50_ms": 0.0731455,
+        "p95_ms": 0.11861395,
+        "max_ms": 0.123666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentGlyph",
+        "count": 26,
+        "total_ms": 0.128034,
+        "p50_ms": 0.0027705,
+        "p95_ms": 0.01225975,
+        "max_ms": 0.013791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HairlineDivider",
+        "count": 20,
+        "total_ms": 0.12653500000000004,
+        "p50_ms": 0.004583,
+        "p95_ms": 0.01907225,
+        "max_ms": 0.019666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProductBrandMark",
+        "count": 44,
+        "total_ms": 0.12240300000000004,
+        "p50_ms": 0.001937,
+        "p95_ms": 0.006833050000000001,
+        "max_ms": 0.010541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ActionIcon",
+        "count": 5,
+        "total_ms": 0.115331,
+        "p50_ms": 0.011916,
+        "p95_ms": 0.058933,
+        "max_ms": 0.070583,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HourlyWeatherInstrument",
+        "count": 2,
+        "total_ms": 0.10374900000000001,
+        "p50_ms": 0.051874500000000004,
+        "p95_ms": 0.05959965,
+        "max_ms": 0.060458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "GreetingClock",
+        "count": 2,
+        "total_ms": 0.10220699999999999,
+        "p50_ms": 0.051103499999999996,
+        "p95_ms": 0.06252225,
+        "max_ms": 0.063791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SiliconCells",
+        "count": 14,
+        "total_ms": 0.09495300000000002,
+        "p50_ms": 0.005520499999999999,
+        "p95_ms": 0.0123933,
+        "max_ms": 0.013666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageModelBreakdown",
+        "count": 7,
+        "total_ms": 0.094457,
+        "p50_ms": 0.013416,
+        "p95_ms": 0.019483099999999996,
+        "max_ms": 0.021458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VPNCurrentNodeLatency",
+        "count": 3,
+        "total_ms": 0.08712400000000001,
+        "p50_ms": 0.007583,
+        "p95_ms": 0.07047049999999999,
+        "max_ms": 0.077458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ForecastRibbon",
+        "count": 2,
+        "total_ms": 0.084082,
+        "p50_ms": 0.042041,
+        "p95_ms": 0.042266000000000005,
+        "max_ms": 0.042291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderCategoryFilter",
+        "count": 3,
+        "total_ms": 0.08087400000000002,
+        "p50_ms": 0.006333,
+        "p95_ms": 0.0642327,
+        "max_ms": 0.070666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ActivityLine",
+        "count": 8,
+        "total_ms": 0.079414,
+        "p50_ms": 0.0056665,
+        "p95_ms": 0.027358099999999982,
+        "max_ms": 0.03675,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SunPath",
+        "count": 2,
+        "total_ms": 0.078166,
+        "p50_ms": 0.039083,
+        "p95_ms": 0.0493205,
+        "max_ms": 0.050458,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HeaderControlModifier",
+        "count": 3,
+        "total_ms": 0.07100000000000001,
+        "p50_ms": 0.007125,
+        "p95_ms": 0.0562875,
+        "max_ms": 0.06175,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "TokenComparison",
+        "count": 11,
+        "total_ms": 0.061038999999999996,
+        "p50_ms": 0.005375,
+        "p95_ms": 0.006229,
+        "max_ms": 0.00625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "StandbyEmptyState",
+        "count": 3,
+        "total_ms": 0.060748,
+        "p50_ms": 0.009916,
+        "p95_ms": 0.038491,
+        "max_ms": 0.041666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ContextBar",
+        "count": 20,
+        "total_ms": 0.05916100000000001,
+        "p50_ms": 0.0021455,
+        "p95_ms": 0.007849350000000001,
+        "max_ms": 0.008958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ControlPressModifier",
+        "count": 10,
+        "total_ms": 0.056205000000000005,
+        "p50_ms": 0.0056454999999999995,
+        "p95_ms": 0.010031099999999996,
+        "max_ms": 0.011625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PulsingStatusDot",
+        "count": 17,
+        "total_ms": 0.05586900000000001,
+        "p50_ms": 0.00325,
+        "p95_ms": 0.0045166,
+        "max_ms": 0.005083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PerimeterSweep",
+        "count": 2,
+        "total_ms": 0.052374,
+        "p50_ms": 0.026187000000000002,
+        "p95_ms": 0.044618099999999994,
+        "max_ms": 0.046666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "CapsuleCradle",
+        "count": 10,
+        "total_ms": 0.048952999999999997,
+        "p50_ms": 0.0041245,
+        "p95_ms": 0.00870815,
+        "max_ms": 0.009083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SelectionPill",
+        "count": 11,
+        "total_ms": 0.041831,
+        "p50_ms": 0.003333,
+        "p95_ms": 0.0052705,
+        "max_ms": 0.005708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillGauge",
+        "count": 4,
+        "total_ms": 0.039331,
+        "p50_ms": 0.007916,
+        "p95_ms": 0.016284749999999997,
+        "max_ms": 0.017541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SettingsToggleRow",
+        "count": 4,
+        "total_ms": 0.037790000000000004,
+        "p50_ms": 0.007708,
+        "p95_ms": 0.015472349999999998,
+        "max_ms": 0.016791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PeriodTabs",
+        "count": 4,
+        "total_ms": 0.037372999999999997,
+        "p50_ms": 0.005561999999999999,
+        "p95_ms": 0.019291049999999994,
+        "max_ms": 0.021666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectInterfaceMark",
+        "count": 3,
+        "total_ms": 0.036707000000000004,
+        "p50_ms": 0.010583,
+        "p95_ms": 0.015758,
+        "max_ms": 0.016333,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ResourceMonitorScope",
+        "count": 3,
+        "total_ms": 0.035499,
+        "p50_ms": 0.008083,
+        "p95_ms": 0.019745199999999997,
+        "max_ms": 0.021041,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "DepthLens",
+        "count": 9,
+        "total_ms": 0.034704,
+        "p50_ms": 0.003291,
+        "p95_ms": 0.0062077999999999986,
+        "max_ms": 0.007541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OrbitLoader",
+        "count": 3,
+        "total_ms": 0.031416,
+        "p50_ms": 0.002125,
+        "p95_ms": 0.0251119,
+        "max_ms": 0.027666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HoverTileModifier",
+        "count": 6,
+        "total_ms": 0.029748,
+        "p50_ms": 0.0041455,
+        "p95_ms": 0.00773925,
+        "max_ms": 0.008208,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderDirectorySearch",
+        "count": 3,
+        "total_ms": 0.029081999999999997,
+        "p50_ms": 0.003125,
+        "p95_ms": 0.020936899999999998,
+        "max_ms": 0.022916,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "WeatherGlyph",
+        "count": 4,
+        "total_ms": 0.027041,
+        "p50_ms": 0.0066455,
+        "p95_ms": 0.0105374,
+        "max_ms": 0.010625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderBalanceReadout",
+        "count": 1,
+        "total_ms": 0.02325,
+        "p50_ms": 0.02325,
+        "p95_ms": 0.02325,
+        "max_ms": 0.02325,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ProviderDirectoryHost",
+        "count": 2,
+        "total_ms": 0.022625,
+        "p50_ms": 0.0113125,
+        "p95_ms": 0.01890625,
+        "max_ms": 0.01975,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentMetric",
+        "count": 3,
+        "total_ms": 0.0225,
+        "p50_ms": 0.007125,
+        "p95_ms": 0.0081375,
+        "max_ms": 0.00825,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "DecorativeMotion",
+        "count": 6,
+        "total_ms": 0.020290000000000002,
+        "p50_ms": 0.003083,
+        "p95_ms": 0.0065515,
+        "max_ms": 0.007541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "StatusArrival",
+        "count": 8,
+        "total_ms": 0.015122,
+        "p50_ms": 0.001291,
+        "p95_ms": 0.004818199999999998,
+        "max_ms": 0.006291,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "VerticalHairline",
+        "count": 2,
+        "total_ms": 0.014375,
+        "p50_ms": 0.0071875,
+        "p95_ms": 0.01028125,
+        "max_ms": 0.010625,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageCompositionBar",
+        "count": 1,
+        "total_ms": 0.013416,
+        "p50_ms": 0.013416,
+        "p95_ms": 0.013416,
+        "max_ms": 0.013416,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "PanelCardModifier",
+        "count": 2,
+        "total_ms": 0.012624,
+        "p50_ms": 0.006312,
+        "p95_ms": 0.0068934,
+        "max_ms": 0.006958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "OverviewStatusDot",
+        "count": 5,
+        "total_ms": 0.011623,
+        "p50_ms": 0.002291,
+        "p95_ms": 0.0025077999999999997,
+        "max_ms": 0.002541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SignalCellRow",
+        "count": 3,
+        "total_ms": 0.011541,
+        "p50_ms": 0.003875,
+        "p95_ms": 0.0041,
+        "max_ms": 0.004125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "ConnectorKindFilter",
+        "count": 2,
+        "total_ms": 0.011415999999999999,
+        "p50_ms": 0.0057079999999999995,
+        "p95_ms": 0.0060455,
+        "max_ms": 0.006083,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "BusyPulseRing",
+        "count": 3,
+        "total_ms": 0.009833,
+        "p50_ms": 0.002333,
+        "p95_ms": 0.0057458,
+        "max_ms": 0.006125,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SillGlass",
+        "count": 1,
+        "total_ms": 0.009666,
+        "p50_ms": 0.009666,
+        "p95_ms": 0.009666,
+        "max_ms": 0.009666,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SweepRing",
+        "count": 1,
+        "total_ms": 0.008958,
+        "p50_ms": 0.008958,
+        "p95_ms": 0.008958,
+        "max_ms": 0.008958,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "AtmosphereSurface",
+        "count": 2,
+        "total_ms": 0.00775,
+        "p50_ms": 0.003875,
+        "p95_ms": 0.0039875,
+        "max_ms": 0.004,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "UsageMiniBars",
+        "count": 1,
+        "total_ms": 0.007166,
+        "p50_ms": 0.007166,
+        "p95_ms": 0.007166,
+        "max_ms": 0.007166,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "HumidityDrop",
+        "count": 1,
+        "total_ms": 0.006708,
+        "p50_ms": 0.006708,
+        "p95_ms": 0.006708,
+        "max_ms": 0.006708,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SettingsDivider",
+        "count": 2,
+        "total_ms": 0.006583,
+        "p50_ms": 0.0032915,
+        "p95_ms": 0.00437915,
+        "max_ms": 0.0045,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "SparkleMark",
+        "count": 1,
+        "total_ms": 0.003791,
+        "p50_ms": 0.003791,
+        "p95_ms": 0.003791,
+        "max_ms": 0.003791,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      },
+      {
+        "module": "ClaudeBar",
+        "view": "InstrumentBadge",
+        "count": 2,
+        "total_ms": 0.002999,
+        "p50_ms": 0.0014995,
+        "p95_ms": 0.00153685,
+        "max_ms": 0.001541,
+        "over_0_5_ms": 0,
+        "over_1_ms": 0
+      }
+    ],
+    "hitches_table": {
+      "row_count": 367,
+      "p50_ms": 8.333333,
+      "p95_ms": 30.832182999999905,
+      "max_ms": 416.665583,
+      "causes": {
+        "": 252,
+        "Potentially expensive app update(s)": 115
+      },
+      "longest": [
+        {
+          "start_ms": 51548.736875,
+          "duration_ms": 416.665583,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 53294.565625,
+          "duration_ms": 341.665708,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 49523.742166,
+          "duration_ms": 283.332583,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 57819.553583,
+          "duration_ms": 266.665916,
+          "cause": "Potentially expensive app update(s)"
+        },
+        {
+          "start_ms": 57544.554916,
+          "duration_ms": 266.665333,
+          "cause": "Potentially expensive app update(s)"
+        }
+      ]
+    },
+    "sampled_cpu_total_ms": 40919.899999892405,
+    "sampled_main_thread_cpu_ms": 26204.29999989917,
+    "sampled_cpu_symbol_quality": {
+      "project_entry_point_only_ms": 25003.399999916644,
+      "missing_backtrace_ms": 553.0000000000572,
+      "project_frame_unsymbolicated_ms": 13251.800000030678,
+      "project_frame_symbolicated_ms": 183.79999999999384
+    },
+    "sampled_cpu_self_top": [
+      {
+        "symbol": "AG::Graph::propagate_dirty(AG::AttributeID)",
+        "binary": "AttributeGraph",
+        "weight_ms": 2124.799999999163
+      },
+      {
+        "symbol": "AG::Graph::UpdateStack::update()",
+        "binary": "AttributeGraph",
+        "weight_ms": 1936.2999999993344
+      },
+      {
+        "symbol": "__openat",
+        "binary": "libsystem_kernel.dylib",
+        "weight_ms": 1321.7999999998933
+      },
+      {
+        "symbol": "AG::Subgraph::update(unsigned int)",
+        "binary": "AttributeGraph",
+        "weight_ms": 1285.799999999926
+      },
+      {
+        "symbol": "objc_msgSend",
+        "binary": "libobjc.A.dylib",
+        "weight_ms": 656.3000000000807
+      },
+      {
+        "symbol": "JSONWriter.serializeString(_:)",
+        "binary": "Foundation",
+        "weight_ms": 637.0000000000763
+      },
+      {
+        "symbol": "mach_msg2_trap",
+        "binary": "libsystem_kernel.dylib",
+        "weight_ms": 572.4000000000616
+      },
+      {
+        "symbol": "_platform_memmove",
+        "binary": "libsystem_platform.dylib",
+        "weight_ms": 562.4000000000593
+      },
+      {
+        "symbol": "DYLD-STUB$$os_unfair_lock_unlock",
+        "binary": "CoreGraphics",
+        "weight_ms": 524.9000000000508
+      },
+      {
+        "symbol": "newJSONString",
+        "binary": "Foundation",
+        "weight_ms": 468.400000000038
+      },
+      {
+        "symbol": "getattrlistbulk",
+        "binary": "libsystem_kernel.dylib",
+        "weight_ms": 466.40000000003755
+      },
+      {
+        "symbol": "_xzm_free",
+        "binary": "libsystem_malloc.dylib",
+        "weight_ms": 438.5000000000312
+      },
+      {
+        "symbol": "mach_absolute_time",
+        "binary": "libsystem_kernel.dylib",
+        "weight_ms": 400.6000000000226
+      },
+      {
+        "symbol": "Substring.subscript.getter",
+        "binary": "libswiftCore.dylib",
+        "weight_ms": 377.20000000001727
+      },
+      {
+        "symbol": "swift_release",
+        "binary": "libswiftCore.dylib",
+        "weight_ms": 337.00000000000813
+      },
+      {
+        "symbol": "__CFFromUTF8",
+        "binary": "CoreFoundation",
+        "weight_ms": 332.20000000000704
+      },
+      {
+        "symbol": "swift_retain",
+        "binary": "libswiftCore.dylib",
+        "weight_ms": 287.1999999999968
+      },
+      {
+        "symbol": "_platform_memset",
+        "binary": "libsystem_platform.dylib",
+        "weight_ms": 286.09999999999656
+      },
+      {
+        "symbol": "0x100640290",
+        "binary": "ClaudeBar",
+        "weight_ms": 283.699999999996
+      },
+      {
+        "symbol": "os_unfair_lock_lock",
+        "binary": "libsystem_platform.dylib",
+        "weight_ms": 268.6999999999926
+      }
+    ],
+    "limitations": [
+      "Cold initializations and subsequent updates are mixed in a single exploratory recording.",
+      "SwiftUI cause graph and 100-us CPU sampling add overhead; sampled CPU is not normal CPU utilization.",
+      "Most installed release project frames are stripped. No reliable per-function attribution for their addresses.",
+      "Body durations can nest; total is not mutually exclusive CPU work.",
+      "No overall FPS, hitch ratio, presentation cadence, energy or leak conclusion. The changed code has not been installed."
+    ]
+  },
+  "source_sha256": {
+    "Sources/ClaudeBar/Views/Shared/UsageHeatmap.swift": "00bc75d4d8c54dcace3d7a328747f6b46a3ed3d8283ec121cfa4ea7e4655ce1d",
+    "Sources/ClaudeBar/Views/Pages/TrafficView.swift": "4a0c32aae30e8600cd0ff159c13db58fb6e2bce623bd7c6b860924e23fc8d69c",
+    "Sources/ClaudeBar/Utils/UsageAnalysis.swift": "e6dffc845bd52c6dab5af7e3cadf700771197f575d192b57ca488f63d7cc7620"
+  },
+  "validation": {
+    "full_test_suites": 72,
+    "full_tests_seconds": 356.6,
+    "focused_test_suites": 4,
+    "focused_tests_seconds": 22.47,
+    "build_dev": "passed; bundle/widget/URL scheme/App Group/entitlements/signatures verified by build gate",
+    "build_release": "passed; bundle/widget/URL scheme/App Group/entitlements/signatures verified by build gate",
+    "installed_app_replaced": false,
+    "installed_pid_unchanged": true,
+    "installed_executable_hash_unchanged": true,
+    "widget_snapshot_symlink": "../ClaudeBar/Models/WidgetSnapshot.swift",
+    "private_trace_directory_mode": "0700",
+    "final_frame_regression": "passed after additional order/error/remount coverage",
+    "final_frame_regression_seconds": 10.38,
+    "python_compile": "passed",
+    "git_diff_check": "passed"
+  },
+  "measurement_limits": [
+    "A single baseline/after pair with 120 draw repeats and 10 complete analysis repeats, not randomized multi-run statistics.",
+    "Heatmap prepare_ms counts one layout preparation, not every SwiftUI parent update. It is excluded from redraw median.",
+    "Heatmap array/tooltip isolation adds retained prepared data; no measured memory reduction.",
+    "KDE regrouping changes floating point summation order within the checked tolerance; full analysis timing did not show a meaningful speedup.",
+    "No absolute millisecond CI performance threshold."
+  ]
+}
