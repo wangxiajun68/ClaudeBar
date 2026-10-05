@@ -82,14 +82,25 @@ func originalMarkup(_ raw: String) -> AttributedString {
 ''' + '\n'.join([item, old_filter, selection_fixture, catalog, snapshot, writer]) + '''
 func matches(_ items: [CommandItem], _ query: String) -> [CommandItem] { __MATCH__ }
 func markup(_ raw: String) -> AttributedString { __HELP__ }
+func fixtureItems() -> [CommandItem] {
+    var items: [CommandItem] = []
+    items.reserveCapacity(10000)
+    for i in 0..<10000 {
+        let title: String = i % 3 == 0 ? "Claude 项目 \\(i)" : "项目 \\(i) Claude"
+        let subtitle: String = i % 5 == 0 ? "Cursor · 会话" : "供应商 模型"
+        items.append(CommandItem(id: String(i), title: title, subtitle: subtitle,
+                                 icon: "fixture", tint: .fixture, result: .fixture))
+    }
+    return items
+}
 @main struct Probe {
     static func main() throws {
         var metrics: [String: Double] = [:]
         var checksum = 0
-        let items = (0..<10000).map { i in
-            CommandItem(id: String(i), title: i % 3 == 0 ? "Claude 项目 \\(i)" : "项目 \\(i) Claude",
-                        subtitle: i % 5 == 0 ? "Cursor · 会话" : "供应商 模型", icon: "fixture", tint: .fixture, result: .fixture)
-        }
+        // Built by a dedicated function: inlined into `main` as a two-branch
+        // `map` closure, the whole body became one expression the type
+        // checker gave up on ("unable to type-check in reasonable time").
+        let items = fixtureItems()
         for query in ["", "   ", " cLaUdE ", "Cursor", "项目", "会话", "不存在", "\\n", "😀", "供应商"] {
             require(matches(items, query).map(\\.id) == Filter(items: items, query: query).filtered.map(\\.id), "palette ranking changed")
         }
