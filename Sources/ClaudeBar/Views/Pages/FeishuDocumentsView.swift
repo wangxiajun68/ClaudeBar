@@ -15,6 +15,8 @@ struct FeishuDocumentsView: View {
     @State private var showDocuments = false
     @State private var editorOutlineVisible = true
     @State private var draftHeadings: [DocumentMarkup.Heading] = []
+    @State private var draftLocated: [DocumentMarkup.LocatedBlock] = []
+    @State private var draftOutlineText: String?
     @State private var editorJump: FeishuEditorJump?
     @State private var draftPreview = true
     @State private var confirmDiscard = false
@@ -48,11 +50,21 @@ struct FeishuDocumentsView: View {
             do {
                 try await Task.sleep(for: .milliseconds(350)); try Task.checkCancellation()
                 let text = store.activeDraft?.text ?? ""
-                guard text.utf8.count <= 512_000 else { draftHeadings = []; return }
-                let worker = Task.detached(priority: .utility) { try DocumentMarkup.parse(text) }
-                let blocks = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                guard text.utf8.count <= 512_000 else {
+                    draftHeadings = []; draftLocated = []; draftOutlineText = nil
+                    return
+                }
+                let worker = Task.detached(priority: .utility) {
+                    let located = try DocumentMarkup.locatedBlocks(text)
+                    let headings = DocumentMarkup.outline(located.map(\.block))
+                    try Task.checkCancellation()
+                    return (located, headings)
+                }
+                let prepared = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
                 try Task.checkCancellation()
-                draftHeadings = DocumentMarkup.outline(blocks)
+                draftLocated = prepared.0
+                draftHeadings = prepared.1
+                draftOutlineText = text
             } catch { }
         }
         .onChange(of: tab) { _, value in if value != "正文" { store.loadAuxiliary(value) } }
@@ -369,7 +381,9 @@ struct FeishuDocumentsView: View {
                         .padding(.leading, editorOutlineVisible && !draftHeadings.isEmpty ? 218 : 0)
                     if editorOutlineVisible && !draftHeadings.isEmpty {
                         DocumentOutlinePanel(headings: draftHeadings, onClose: { editorOutlineVisible = false }) { heading in
-                            if let location = DocumentMarkup.sourceLocation(heading, in: draft.text, headings: draftHeadings) {
+                            if draftOutlineText == draft.text, store.activeDraft?.id == draft.id,
+                               store.activeDraft?.text == draft.text,
+                               let location = DocumentMarkup.sourceLocation(heading, in: draftLocated) {
                                 editorJump = FeishuEditorJump(location: location)
                             }
                         }.frame(width: 200).padding(10)

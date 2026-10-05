@@ -167,11 +167,12 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         precondition(Set(duplicates.map(\.id)).count == 3 && duplicates.last?.number == "1.2")
         let sourceWithDuplicates = "# 标题\n```\n## 重复\n```\n## 重复\n## 重复\n<h3><strong>子标题</strong></h3>"
         let sourceHeadings = DocumentMarkup.outline(try DocumentMarkup.parse(sourceWithDuplicates))
+        let sourceLocated = try DocumentMarkup.locatedBlocks(sourceWithDuplicates)
         let rawSource = sourceWithDuplicates as NSString
         let firstReal = rawSource.range(of: "## 重复", options: [], range: NSRange(location: rawSource.range(of: "```\n## 重复\n```").upperBound, length: rawSource.length - rawSource.range(of: "```\n## 重复\n```").upperBound)).location
-        precondition(DocumentMarkup.sourceLocation(sourceHeadings[1], in: sourceWithDuplicates, headings: sourceHeadings) == firstReal)
-        precondition(DocumentMarkup.sourceLocation(sourceHeadings[2], in: sourceWithDuplicates, headings: sourceHeadings) == firstReal + "## 重复\n".utf16.count)
-        precondition(DocumentMarkup.sourceLocation(sourceHeadings[3], in: sourceWithDuplicates, headings: sourceHeadings) == rawSource.range(of: "<h3>").location)
+        precondition(DocumentMarkup.sourceLocation(sourceHeadings[1], in: sourceLocated) == firstReal)
+        precondition(DocumentMarkup.sourceLocation(sourceHeadings[2], in: sourceLocated) == firstReal + "## 重复\n".utf16.count)
+        precondition(DocumentMarkup.sourceLocation(sourceHeadings[3], in: sourceLocated) == rawSource.range(of: "<h3>").location)
         let inlineLiteral = try DocumentMarkup.parse("使用 `<whiteboard token=\"literal\">` 与 **说明**")
         guard case .paragraph(let inlineValue) = inlineLiteral[0] else { preconditionFailure("Missing inline literal") }
         precondition(inlineValue.contains("<whiteboard token="))

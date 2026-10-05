@@ -5,10 +5,21 @@ final class SessionMigrationModel: ObservableObject {
     @Published private(set) var records: [MigrationRecord] = []
     @Published var error: String?
     @Published private(set) var opening: UUID?
+    private var refreshGeneration = 0
 
     func refresh() async {
-        do { records = try await SessionMigrationService.shared.records() }
-        catch { self.error = error.localizedDescription }
+        guard !Task.isCancelled else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        do {
+            let latest = try await SessionMigrationService.shared.records()
+            guard !Task.isCancelled, generation == refreshGeneration else { return }
+            if records != latest { records = latest }
+        } catch {
+            guard !Task.isCancelled, generation == refreshGeneration,
+                  !(error is CancellationError) else { return }
+            self.error = error.localizedDescription
+        }
     }
 
     func open(_ record: MigrationRecord, codexStore: CodexProviderStore) async throws {

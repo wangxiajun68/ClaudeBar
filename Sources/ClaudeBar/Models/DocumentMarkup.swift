@@ -239,51 +239,14 @@ enum DocumentMarkup {
               end.samePosition(in: source.unicodeScalars) != nil else { return nil }
         return (source as NSString).replacingCharacters(in: range, with: replacement)
     }
-    /// Locate the original source heading for native editor navigation. Fenced
-    /// code and HTML pre blocks are excluded, so duplicate text remains unambiguous.
-    static func sourceLocation(_ heading: Heading, in source: String, headings: [Heading]) -> Int? {
-        let lines = source.components(separatedBy: .newlines)
-        var candidates: [(Int, String, Int)] = [], protected: [NSRange] = []
-        var offset = 0, fenceStart = 0, fenceWidth = 0
-        var fenceMarker: Character = "`"
-        for (index, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let end = offset + line.utf16.count + 1
-            defer { offset = end }
-            if fenceWidth > 0 {
-                if trimmed.prefix(while: { $0 == fenceMarker }).count >= fenceWidth && trimmed.drop(while: { $0 == fenceMarker }).trimmingCharacters(in: .whitespaces).isEmpty {
-                    protected.append(NSRange(location: fenceStart, length: end - fenceStart)); fenceWidth = 0
-                }
-                continue
-            }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                fenceMarker = trimmed.first!; fenceWidth = trimmed.prefix(while: { $0 == fenceMarker }).count; fenceStart = offset; continue
-            }
-            let level = trimmed.prefix(while: { $0 == "#" }).count
-            if (1...6).contains(level), trimmed.dropFirst(level).hasPrefix(" ") {
-                let title = String(trimmed.dropFirst(level + 1)).replacingOccurrences(of: "\\s+#+\\s*$", with: "", options: .regularExpression)
-                candidates.append((level, title, offset))
-            } else if !trimmed.isEmpty, index + 1 < lines.count {
-                let underline = lines[index + 1].trimmingCharacters(in: .whitespaces)
-                if underline.count >= 3 && (underline.allSatisfy { $0 == "=" } || underline.allSatisfy { $0 == "-" }) {
-                    candidates.append((underline.first == "=" ? 1 : 2, trimmed, offset))
-                }
-            }
-        }
-        if fenceWidth > 0 { protected.append(NSRange(location: fenceStart, length: (source as NSString).length - fenceStart)) }
-        let full = NSRange(source.startIndex..., in: source)
-        let pre = try! NSRegularExpression(pattern: "<(pre|table)\\b[\\s\\S]*?</\\1\\s*>", options: .caseInsensitive)
-        protected += pre.matches(in: source, range: full).map(\.range)
-        candidates.removeAll { candidate in protected.contains { NSLocationInRange(candidate.2, $0) } }
-        let html = try! NSRegularExpression(pattern: "<h([1-6])\\b[^>]*>[\\s\\S]*?</h\\1\\s*>", options: .caseInsensitive)
-        for match in html.matches(in: source, range: full) where !protected.contains(where: { NSLocationInRange(match.range.location, $0) }) {
-            guard let range = Range(match.range, in: source), let blocks = try? HTMLFragment.blocks(String(source[range])),
-                  case .heading(let level, let title) = blocks.first else { continue }
-            candidates.append((level, title, match.range.location))
-        }
-        let occurrence = headings.prefix(while: { $0.id != heading.id }).filter { $0.level == heading.level && $0.title == heading.title }.count
-        let matches = candidates.sorted { $0.2 < $1.2 }.filter { $0.0 == heading.level && $0.1 == heading.title }
-        return matches.indices.contains(occurrence) ? matches[occurrence].2 : nil
+    /// Use the parser's original UTF-16 range. Navigation must not scan the
+    /// document again on the main thread, or confuse repeated heading titles.
+    static func sourceLocation(_ heading: Heading, in blocks: [LocatedBlock]) -> Int? {
+        guard blocks.indices.contains(heading.id),
+              case .heading(let level, let title) = blocks[heading.id].block,
+              min(max(level, 1), 6) == heading.level, title == heading.title else { return nil }
+        let location = blocks[heading.id].range.location
+        return location >= 0 && location != NSNotFound ? location : nil
     }
     private static let blockTags: Set<String> = ["table", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", "h9", "p", "div", "ul", "ol", "blockquote", "whiteboard", "iframe", "file", "image", "img", "video", "audio", "sheet", "bitable", "callout", "hr", "title", "grid", "checkbox", "bookmark", "button", "time", "source", "figure", "task", "chat_card", "sub-page-list", "okr", "html5-block"]
     private static func htmlBlockTag(_ line: String) -> String? {

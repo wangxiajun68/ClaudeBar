@@ -72,16 +72,20 @@ enum MigrationStorage {
     }
 
     static func records(at root: URL) throws -> [MigrationRecord] {
+        try Task.checkCancellation()
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
         let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
         var records: [MigrationRecord] = []
         for file in files where file.pathExtension == "json" {
+            try Task.checkCancellation()
             let data = try readBounded(file)
+            try Task.checkCancellation()
             guard let record = try? JSONDecoder().decode(MigrationRecord.self, from: data),
                   record.formatVersion == 1, file.deletingPathExtension().lastPathComponent == record.id.uuidString,
                   UUID(uuidString: record.targetSessionID) != nil else { throw MigrationFailure.invalidHistory }
             records.append(record)
         }
+        try Task.checkCancellation()
         return records.sorted { $0.createdAt > $1.createdAt }
     }
 

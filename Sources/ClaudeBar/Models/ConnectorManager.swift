@@ -336,6 +336,8 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
     private var scanGeneration = 0
+    private var scanTask: Task<Void, Never>?
+    private var pendingScan: (path: String?, scanCLIs: Bool, generation: Int)?
 
     /// `kind → platform → count` (with `nil` = every platform), rebuilt once per
     /// scan.
@@ -366,26 +368,46 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
     }
 
     func refresh(projectPath: String?, scanCLIs: Bool = true) async {
+        guard !Task.isCancelled else { return }
         scanGeneration += 1
-        let generation = scanGeneration
-        isLoading = true
-        let path = projectPath
-        let retainedCLIs = localCLIs
-        let result = await Task.detached(priority: .utility) {
-            let scanned = ConnectorInventory.scan(projectPath: path)
-            return (scanned,
-                    ConnectorInventory.bundledContents(of: scanned),
-                    scanCLIs ? LocalCLIInventory.scan() : retainedCLIs)
-        }.value
-        guard generation == scanGeneration else { return }
-        // Publish only what changed: a rescan that finds the same inventory
-        // (nearly every visit) must not re-render ~200 cards.
-        if records != result.0 {
-            records = result.0
-            rebuildCounts()
+        pendingScan = (projectPath, scanCLIs || (pendingScan?.scanCLIs ?? false), scanGeneration)
+        if scanTask == nil {
+            isLoading = true
+            // The shared inventory outlives individual page tasks. Every caller
+            // awaits the same runner, including mutation callers that need the
+            // rescan to finish before reporting their operation complete.
+            scanTask = Task { [weak self] in
+                guard let self else { return }
+                await self.runScans()
+            }
         }
-        if pluginContents != result.1 { pluginContents = result.1 }
-        if localCLIs != result.2 { localCLIs = result.2 }
+        await scanTask?.value
+    }
+
+    private func runScans() async {
+        var retainedCLIs = localCLIs
+        while let request = pendingScan {
+            pendingScan = nil
+            let previousCLIs = retainedCLIs
+            let result = await Task.detached(priority: .utility) {
+                let scanned = ConnectorInventory.scan(projectPath: request.path)
+                return (scanned,
+                        ConnectorInventory.bundledContents(of: scanned),
+                        request.scanCLIs ? LocalCLIInventory.scan() : previousCLIs)
+            }.value
+            // CLI discovery is independent of project scope. Carry it into the
+            // next pass even when a newer project supersedes this scan.
+            retainedCLIs = result.2
+            guard request.generation == scanGeneration else { continue }
+            // Equal results must not remount the inventory grid.
+            if records != result.0 {
+                records = result.0
+                rebuildCounts()
+            }
+            if pluginContents != result.1 { pluginContents = result.1 }
+            if localCLIs != result.2 { localCLIs = result.2 }
+        }
+        scanTask = nil
         isLoading = false
     }
 

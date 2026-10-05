@@ -1,0 +1,313 @@
+{
+  "date": "2026-10-05",
+  "baseline_commit": "a75f9b4",
+  "artifact_directory": ".build/performance/module-scheduling-audit-2026-10-05",
+  "evidence_scope": "Synthetic production-function probes and fixed-workload Time Profiler; no installed-release UI trace in this round. Source review is not runtime coverage.",
+  "reviewed_source_count": 17,
+  "reviewed_sources": [
+    {
+      "path": "Sources/ClaudeBar/Models/ConnectorManager.swift",
+      "sha256": "3d1b540665303aad01fae7f88f888224df92da3033ac4db040a9729ace583140"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Pages/ConnectorsView.swift",
+      "sha256": "96837732ae1e76670d2609136e3123e8233a23a229f44a977b8d75bff4bbc60a"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Pages/ConnectorDetailSheet.swift",
+      "sha256": "efd671bea8f974c2567530f92be13bbbcb8080ec8826d94d0898e4ca8d7f63b3"
+    },
+    {
+      "path": "Sources/ClaudeBar/Utils/MigrationStorage.swift",
+      "sha256": "e7a1730ee06723e0ba7fbbd6884e9894251fc1dda7d846637f8f063b527ef1e4"
+    },
+    {
+      "path": "Sources/ClaudeBar/Utils/SessionMigrationService.swift",
+      "sha256": "bb70a7fc1a7e90d09a1e07f66de461159fbf2a21eab875af81ce1a104e810b3b"
+    },
+    {
+      "path": "Sources/ClaudeBar/Models/SessionMigration.swift",
+      "sha256": "489a2ac72ea22ee6c4cd0dd903ea51d02566ca2f1cee87fe48263a9e90a617a0"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Shared/SessionMigrationDialog.swift",
+      "sha256": "085a291d03a5104f9efa9bc0196cc2c5bcd7e38e220f5ce12bc6a00aea556a21"
+    },
+    {
+      "path": "Sources/ClaudeBar/Models/DocumentMarkup.swift",
+      "sha256": "d4d23c400e58ac525103e0743e93fd5d9634d09ea3ffabdef9afe17480732b99"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Pages/FeishuDocumentsView.swift",
+      "sha256": "170b3dd387bbeecb5782530e76d559e0b06525b11d7b949305b4d33c9070d526"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Shared/SkillMarkdownPreview.swift",
+      "sha256": "067381837fda055fc2aafcf7f250f2bd02e948473f8396875838d896318d0085"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Pages/SettingsView.swift",
+      "sha256": "004cd7ddbfd6aa7227603edaf15f7f1b3e58491df3002feda9140db14700bb13"
+    },
+    {
+      "path": "Sources/ClaudeBar/Models/AppPreferences.swift",
+      "sha256": "a5cec6b0fcc3da4dde6bd409877964565b7c7f212b859b5413aaef965a6df0ce"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Shared/ModelPriceCard.swift",
+      "sha256": "233f5d9d7f2cb13b93cef609e34480bb4a94c29cdf234be80db48e45d734de8b"
+    },
+    {
+      "path": "Sources/ClaudeBar/Utils/ModelPriceCatalog.swift",
+      "sha256": "86a0a621eda994eed51f970860dd7b7ace40fd3a5a681fd8012ad2447f4c4d07"
+    },
+    {
+      "path": "Sources/ClaudeBar/Utils/TerminalLauncher.swift",
+      "sha256": "4892e124089008ff7d58f4dee6dbf38d804362b8a9fbfdd0e2fd377133ba8db2"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Shared/MemoryDetailPanel.swift",
+      "sha256": "e247be27608e7484b62efcb5c79bbb4b6ac5089c09c99636b16ad7d82e763c5d"
+    },
+    {
+      "path": "Sources/ClaudeBar/Views/Shared/ProviderControls.swift",
+      "sha256": "ec6c5b29c69d65e248b1f0cffa226bf7db8f4e14aa054fe8a18065c17e2104c3"
+    }
+  ],
+  "connector_and_migration": {
+    "before": {
+      "connector_burst_scans": 101,
+      "connector_loading_publications": 102,
+      "connector_peak_scans": 12,
+      "mid_cancel_manifest_reads": 300,
+      "pre_cancel_manifest_reads": 300,
+      "unchanged_history_publications": 1
+    },
+    "after": {
+      "connector_burst_scans": 2,
+      "connector_loading_publications": 2,
+      "connector_peak_scans": 1,
+      "mid_cancel_manifest_reads": 1,
+      "pre_cancel_manifest_reads": 0,
+      "unchanged_history_publications": 0
+    },
+    "scope": "Production scheduler/model/read loop; connector inventory and CLI enumeration replaced by synthetic temporary-file transport. 101 burst requests, 200 JSON files per simulated scan, 300 temporary history manifests. Peak concurrency is an observation dependent on scheduling."
+  },
+  "document_navigation": {
+    "before": {
+      "document_navigation": [
+        {
+          "bytes": 15390,
+          "headings": 100,
+          "median_lookup_ms": 0.5237083387328312
+        },
+        {
+          "bytes": 154890,
+          "headings": 1000,
+          "median_lookup_ms": 4.261541660525836
+        },
+        {
+          "bytes": 466890,
+          "headings": 3000,
+          "median_lookup_ms": 12.526708320365287
+        }
+      ],
+      "parity_headings": 16
+    },
+    "after": {
+      "document_navigation": [
+        {
+          "bytes": 15390,
+          "headings": 100,
+          "median_lookup_ms": 0,
+          "measurement_resolution_note": "Reported 0 is below the useful resolution of the single-call timing probe; not zero execution time."
+        },
+        {
+          "bytes": 154890,
+          "headings": 1000,
+          "median_lookup_ms": 0,
+          "measurement_resolution_note": "Reported 0 is below the useful resolution of the single-call timing probe; not zero execution time."
+        },
+        {
+          "bytes": 466890,
+          "headings": 3000,
+          "median_lookup_ms": 0,
+          "measurement_resolution_note": "Reported 0 is below the useful resolution of the single-call timing probe; not zero execution time."
+        }
+      ],
+      "parity_headings": 16
+    },
+    "time_profile": {
+      "before": {
+        "main_thread_sampled_cpu_weight_ms": 17660.0,
+        "total_sampled_cpu_weight_ms": 17660.0,
+        "inclusive_by_binary_ms": {
+          "dyld": 17604.0,
+          "profile": 17600.0,
+          "Foundation": 13599.0,
+          "libswiftCore.dylib": 8143.0,
+          "CoreFoundation": 6839.0,
+          "libicucore.A.dylib": 3759.0,
+          "libsystem_malloc.dylib": 1606.0,
+          "libobjc.A.dylib": 863.0,
+          "libsystem_platform.dylib": 329.0,
+          "libcache.dylib": 221.0,
+          "libsystem_c.dylib": 179.0,
+          "libsystem_kernel.dylib": 99.0,
+          "libdyld.dylib": 77.0,
+          "libsystem_pthread.dylib": 63.0,
+          "libc++abi.dylib": 7.0,
+          "libsystem_blocks.dylib": 4.0,
+          "libdispatch.dylib": 2.0,
+          "libSystem.B.dylib": 1.0,
+          "QuartzCore": 1.0,
+          "libsystem_notify.dylib": 1.0
+        },
+        "top_self_symbols": [
+          {
+            "symbol": "icu::RegexMatcher::find(UErrorCode&)",
+            "binary": "libicucore.A.dylib",
+            "weight_ms": 1202.0
+          },
+          {
+            "symbol": "String.UTF16View._nativeCopy(into:alignedRange:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 890.0
+          },
+          {
+            "symbol": "__CF_IS_OBJC",
+            "binary": "CoreFoundation",
+            "weight_ms": 656.0
+          },
+          {
+            "symbol": "CFCharacterSetIsLongCharacterMember",
+            "binary": "CoreFoundation",
+            "weight_ms": 651.0
+          },
+          {
+            "symbol": "_StringBreadcrumbs.init(_:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 608.0
+          },
+          {
+            "symbol": "Substring.UnicodeScalarView.subscript.getter",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 555.0
+          },
+          {
+            "symbol": "__CFStringAppendFormatCore",
+            "binary": "CoreFoundation",
+            "weight_ms": 418.0
+          },
+          {
+            "symbol": "_xzm_free",
+            "binary": "libsystem_malloc.dylib",
+            "weight_ms": 408.0
+          }
+        ],
+        "inclusive_source_location_ms": {
+          "specialized static DocumentMarkup.sourceLocation(_:in:headings:)": 17534.0,
+          "static DocumentMarkup.sourceLocation(_:in:headings:)": 17529.0,
+          "static OriginalNavigation.sourceLocation(_:in:headings:)": 5.0,
+          "specialized static OriginalNavigation.sourceLocation(_:in:headings:)": 5.0
+        },
+        "unresolved_references": 0
+      },
+      "after": {
+        "main_thread_sampled_cpu_weight_ms": 71.0,
+        "total_sampled_cpu_weight_ms": 72.0,
+        "inclusive_by_binary_ms": {
+          "dyld": 70.0,
+          "profile": 66.0,
+          "Foundation": 43.0,
+          "libswiftCore.dylib": 43.0,
+          "CoreFoundation": 13.0,
+          "libicucore.A.dylib": 11.0,
+          "libsystem_malloc.dylib": 6.0,
+          "libsystem_kernel.dylib": 3.0,
+          "libdispatch.dylib": 3.0,
+          "libxpc.dylib": 2.0,
+          "libSystem.B.dylib": 1.0,
+          "libsystem_platform.dylib": 1.0,
+          "libsystem_trace.dylib": 1.0,
+          "libsystem_pthread.dylib": 1.0
+        },
+        "top_self_symbols": [
+          {
+            "symbol": "_stringCompareFastUTF8Abnormal(_:_:expecting:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 8.0
+          },
+          {
+            "symbol": "swift_bridgeObjectRelease",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 3.0
+          },
+          {
+            "symbol": "String.Iterator.next()",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 3.0
+          },
+          {
+            "symbol": "mach_msg2_trap",
+            "binary": "libsystem_kernel.dylib",
+            "weight_ms": 2.0
+          },
+          {
+            "symbol": "_StringGuts.validateInclusiveCharacterIndex(_:in:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 2.0
+          },
+          {
+            "symbol": "_StringGuts._opaqueComplexCharacterStride(startingAt:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 2.0
+          },
+          {
+            "symbol": "_StringBreadcrumbs.init(_:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 2.0
+          },
+          {
+            "symbol": "specialized static String._uncheckedFromUTF8(_:isASCII:)",
+            "binary": "libswiftCore.dylib",
+            "weight_ms": 2.0
+          }
+        ],
+        "inclusive_source_location_ms": {
+          "static OriginalNavigation.sourceLocation(_:in:headings:)": 6.0,
+          "specialized static OriginalNavigation.sourceLocation(_:in:headings:)": 6.0
+        },
+        "unresolved_references": 0
+      }
+    },
+    "scope": "100/1000/3000 headings, 15390/154890/466890 UTF-8 bytes; 20 single-call timing observations each. Time Profiler runs 1000 queries per size, with parsing/setup and oracle checks included. Whole editor callback text identity checks are tested for correctness but not included in the lookup-only timing. No actual UI/GPU/FPS measurement."
+  },
+  "validation": {
+    "full_regression_suites": 74,
+    "full_regression_seconds": 383.7,
+    "dev_build": "passed, including bundle identity, Widget, entitlements and signature gate",
+    "release_build": "passed, including bundle identity, Widget, entitlements and signature gate; skipped install",
+    "widget_snapshot_link": "../ClaudeBar/Models/WidgetSnapshot.swift",
+    "python_compile": "passed for three changed regression scripts",
+    "git_diff_check": "passed",
+    "remaining_build_warnings": [
+      "Unchanged VpnManager.swift:640 references main actor shared from Sendable closure; warning under current language mode, error under Swift 6 language mode.",
+      "Unchanged VpnManager.swift:673 has redundant try.",
+      "Linker duplicate /usr/lib/swift rpath."
+    ]
+  },
+  "installed_release": {
+    "first_read_only_check_pid": 41396,
+    "final_read_only_check_pid": 41396,
+    "sha256": "e3304aff5e51f7b9eeaaad30d0b69948cd87d754bc7e334e73b6e92eab7edd08",
+    "actions": "No install, launch, quit, restart or runtime control tests; comparison is against the first check during this round, not the previous round."
+  },
+  "limitations": [
+    "Shared connector scan outlives cancellation of an individual caller; in-flight filesystem work is not aborted.",
+    "A currently executing synchronous history read or sort cannot be force-interrupted.",
+    "Cached document ranges retain extra state; no memory-reduction claim.",
+    "Single process per profiling arm; sampling overhead and concurrent system work affect observed weights. Inclusive weights overlap.",
+    "No exhaustive live page, animation, GPU, energy or frame-rate matrix. No real VPN, hardware, external connector mutation or migration execution."
+  ]
+}
