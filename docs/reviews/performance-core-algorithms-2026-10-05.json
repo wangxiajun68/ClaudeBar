@@ -1,0 +1,191 @@
+{
+  "date": "2026-10-05",
+  "baseline_commit": "a75f9b4",
+  "artifact_directory": ".build/performance/core-algorithms-2026-10-05",
+  "changed_production_sources": [
+    {
+      "path": "Sources/ClaudeBar/Utils/UsageIndex.swift",
+      "before_sha256": "abf3277c5d3a155952610af351083925b417c213f7df0c67b15273af9899db86",
+      "after_sha256": "187eae5802fc5b314ef53242357efbdb9cedb38fdff7f1f8a70e37d17579fd84"
+    },
+    {
+      "path": "Sources/ClaudeBar/Utils/UsageJSONStore.swift",
+      "before_sha256": "b386435c21ed91365b477f6a7f38a9e13872c105a599daf64aee342f626263e9",
+      "after_sha256": "8e3a3dc8926fa95c84f387ec5647b3673fccfd180891fef40aa13c3d8c9c1be3"
+    }
+  ],
+  "evidence_scope": "Production algorithm bodies and JSON store in optimized synthetic CLI probes; end-to-end SQLite/JSON conservation regression. No installed-release profiling or FPS measurement this round. Prior worktree changes preserved.",
+  "microbenchmarks": {
+    "before": {
+      "claude_4000_paths_8_requested_ms": 39.334833,
+      "claude_4000_paths_64_requested_ms": 302.571625,
+      "claude_4000_paths_256_requested_ms": 1214.841834,
+      "codex_4000_paths_8_requested_ms": 47.9735,
+      "codex_4000_paths_64_requested_ms": 310.390917,
+      "codex_4000_paths_256_requested_ms": 1244.02225,
+      "codex_dense_12000_chain_ms": 7360.696292,
+      "json_128000_rows_all_20_queries_ms": 112.445084,
+      "json_128000_rows_day_20_queries_ms": 22.286083,
+      "json_128000_rows_ten_days_20_queries_ms": 30.164,
+      "json_save_ms": 346.808792,
+      "process_peak_rss_bytes": 188760064
+    },
+    "after": {
+      "claude_4000_paths_8_requested_ms": 4.65075,
+      "claude_4000_paths_64_requested_ms": 4.847208,
+      "claude_4000_paths_256_requested_ms": 5.339458,
+      "codex_4000_paths_8_requested_ms": 7.40975,
+      "codex_4000_paths_64_requested_ms": 6.982083,
+      "codex_4000_paths_256_requested_ms": 7.554042,
+      "codex_dense_12000_chain_ms": 11.023542,
+      "json_128000_rows_all_20_queries_ms": 124.627375,
+      "json_128000_rows_day_20_queries_ms": 1.958666,
+      "json_128000_rows_ten_days_20_queries_ms": 31.668667,
+      "json_save_ms": 360.765,
+      "process_peak_rss_bytes": 231489536
+    },
+    "repetitions": "Five timing observations, median, except the 12000-node dense chain and save are one observation per process. Timings are diagnostics, not CI thresholds.",
+    "family_fixture": "4000 paths; independent parent chains of 16 nodes; 8,64,256 distinct requested IDs (last size includes six missing roots). 60 deterministic random functional graphs, cycles/self-loops/orphans, filename/header fallback, archived paths, 12000-deep chain, dense 12000-request one-leaf chain.",
+    "json_fixture": "128000 rows,128 distinct lexical day keys,1000 paths; four prefixes including legacy openclaw. Four query APIs checked against row-based oracle, plus mutations, collisions, save/reload/reset. Date sorting is warmed before timing.",
+    "rss_note": "These peaks include oracle data, dense-chain checks, temporary query results and allocator high-water behavior; no memory-reduction claim. Separate smaller identical fixed-workload process RSS is reported in Instruments comparison.",
+    "final_after_repeat": {
+      "claude_4000_paths_8_requested_ms": 4.234917,
+      "claude_4000_paths_64_requested_ms": 4.480916,
+      "claude_4000_paths_256_requested_ms": 5.211583,
+      "codex_4000_paths_8_requested_ms": 6.226,
+      "codex_4000_paths_64_requested_ms": 6.266666,
+      "codex_4000_paths_256_requested_ms": 7.304167,
+      "codex_dense_12000_chain_ms": 10.822958,
+      "json_128000_rows_all_20_queries_ms": 114.630209,
+      "json_128000_rows_day_20_queries_ms": 2.420041,
+      "json_128000_rows_ten_days_20_queries_ms": 33.897583,
+      "json_save_ms": 357.414417,
+      "process_peak_rss_bytes": 216956928
+    }
+  },
+  "instruments_fixed_workload": {
+    "before": {
+      "sampled_cpu_weight_ms": 4271.0,
+      "inclusive_algorithm_sampled_weight_ms": {
+        "family_rollups": 2877.0,
+        "json_add": 141.0,
+        "json_fetch": 1163.0
+      },
+      "top_self_symbols": [
+        {
+          "symbol": "specialized Dictionary.Values.Iterator.next()",
+          "binary": "before-profile",
+          "weight_ms": 399.0
+        },
+        {
+          "symbol": "UsageJSONStore.fetch(startDay:endDay:pathPrefix:)",
+          "binary": "before-profile",
+          "weight_ms": 372.0
+        },
+        {
+          "symbol": "_stringCompareWithSmolCheck(_:_:expecting:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 309.0
+        },
+        {
+          "symbol": "Hasher.combine(bytes:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 267.0
+        },
+        {
+          "symbol": "_stringCompare(_:_:expecting:)",
+          "binary": "before-profile",
+          "weight_ms": 243.0
+        },
+        {
+          "symbol": "specialized Set._Variant.isUniquelyReferenced()",
+          "binary": "before-profile",
+          "weight_ms": 226.0
+        },
+        {
+          "symbol": "Hasher._finalize()",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 225.0
+        }
+      ],
+      "unresolved_references": 0,
+      "separate_uninstrumented_process_peak_rss_bytes": 75759616
+    },
+    "after": {
+      "sampled_cpu_weight_ms": 440.0,
+      "inclusive_algorithm_sampled_weight_ms": {
+        "family_rollups": 68.0,
+        "json_add": 170.0,
+        "json_fetch": 91.0
+      },
+      "top_self_symbols": [
+        {
+          "symbol": "Hasher.combine(bytes:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 33.0
+        },
+        {
+          "symbol": "specialized __RawDictionaryStorage.find<A>(_:hashValue:)",
+          "binary": "after-profile",
+          "weight_ms": 19.0
+        },
+        {
+          "symbol": "_xzm_free",
+          "binary": "libsystem_malloc.dylib",
+          "weight_ms": 17.0
+        },
+        {
+          "symbol": "_stringCompare(_:_:expecting:)",
+          "binary": "after-profile",
+          "weight_ms": 14.0
+        },
+        {
+          "symbol": "Hasher._finalize()",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 14.0
+        },
+        {
+          "symbol": "specialized Hasher.init(_seed:)",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 13.0
+        },
+        {
+          "symbol": "swift_release",
+          "binary": "libswiftCore.dylib",
+          "weight_ms": 13.0
+        }
+      ],
+      "unresolved_references": 0,
+      "separate_uninstrumented_process_peak_rss_bytes": 84606976
+    },
+    "work": "10 batches of 64 Codex IDs over4000 paths/depth16; seed128000 Claude rows;1000 single-day queries; identical checksum16163840. Includes startup, setup, seed and final checks.",
+    "limitations": "Single Time Profiler recording per arm on CLI main thread. Real IslandLiveModel runs these functions on a detached utility worker; no UI-main-thread or whole fetch latency claim. Inclusive weights overlap. No SQL or rollout-header I/O in family-routing probe. Concurrent tests/builds/system work and sampling affect observations. RSS observations are separate launches without Instruments."
+  },
+  "complexity": {
+    "family_before": "Expected O(Q*P*L) Claude path matching and O(Q*P*(L+Hchain)) Codex ancestor matching, plus model merging.",
+    "family_after": "Each file routed once; each parent node resolved once. Shared immutable requested-ancestor links require O(H+Q) graph storage instead of copying requested-ID sets per node; routing still pays for requested memberships and their model merges. Path/filename string processing remains. Dense requested ancestry is not free.",
+    "json_before": "Each range query scans R corpus rows.",
+    "json_after": "Warm narrow window O(log D + Rwindow); first use after date membership changes adds O(D log D). Wide windows fall back to O(R). Additional O(R+D) date index storage; maintained during mutations/reload. 1/16 row-count crossover is a measured heuristic, not universal hardware tuning."
+  },
+  "validation": {
+    "full_regression_suites": 75,
+    "full_regression_seconds": 403.05,
+    "focused_suites": [
+      "usage-index",
+      "backend-performance",
+      "usage-analysis"
+    ],
+    "focused_seconds": 30.97,
+    "dev_build": "passed including bundle,Widget,URL scheme,entitlements and signature; skipped install",
+    "release_build": "passed including bundle,Widget,URL scheme,entitlements and signature; skipped install",
+    "python_compile": "passed",
+    "git_diff_check": "passed",
+    "remaining_build_warnings": [
+      "Unchanged VpnManager.swift actor isolation and redundant try warnings.",
+      "Linker duplicate /usr/lib/swift rpath."
+    ],
+    "final_core_regression_seconds": 14.9,
+    "final_core_regression": "passed against final production source after all experiments"
+  },
+  "runtime_actions": "No install/restart or live VPN,proxy,DNS,TUN,hardware,permissions,external connector or real migration actions."
+}

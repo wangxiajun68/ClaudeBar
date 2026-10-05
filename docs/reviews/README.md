@@ -12,6 +12,7 @@
 - [原生文档、额度显示与 VPN 查询细节优化](apple-native-detail-performance-2026-10-05.md)（[生产函数对照、Instruments 与验证](performance-native-detail-audit-2026-10-05.json)）
 - [概览与天气卡片性能优化](apple-weather-overview-performance-2026-10-05.md)（[生命周期、GPU 与 Instruments 对照](performance-weather-overview-audit-2026-10-05.json)）
 - [连接器、迁移历史与文档目录性能优化](apple-module-scheduling-performance-2026-10-05.md)（[调度、取消、定位与 Instruments 对照](performance-module-scheduling-audit-2026-10-05.json)）
+- [核心算法：会话家族归属与 JSON 日期范围查询](apple-core-algorithms-performance-2026-10-05.md)（[复杂度、CPU 与内存对照](performance-core-algorithms-2026-10-05.json)）
 - [会话迁移深度调研及真实验证](session-migration-deep-research-2026-10-03.md)
 - [会话迁移 Swift 首版实现与验收](session-migration-implementation-2026-10-03.md)（[脱敏真实续聊结果](session-migration-swift-live-results-2026-10-03.json)）
 - [会话迁移第二阶段：Cursor 桌面接收与工具交接](session-migration-phase2-implementation-2026-10-03.md)（[脱敏真实续聊结果](session-migration-phase2-live-results-2026-10-03.json)）

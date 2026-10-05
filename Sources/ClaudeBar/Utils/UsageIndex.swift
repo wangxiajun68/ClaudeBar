@@ -419,26 +419,88 @@ struct UsageIndex {
                 if let parent = header.parent, !parent.isEmpty { parents[header.id] = parent }
             }
         }
+        return sessionFamilyRollups(source: source, ids: ids, byPath: byPath, pathIDs: pathIDs, parents: parents)
+    }
+
+    /// Route each transcript once. Memoized requested ancestors eliminate the
+    /// per-request corpus scan and repeated parent walks; cycles share a set.
+    static func sessionFamilyRollups(source: UsageSource, ids: Set<String>, byPath: [String: [ModelUsage]],
+                                     pathIDs: [String: String], parents: [String: String]) -> [String: [ModelUsage]] {
+        // Share immutable requested-ancestor links. Copying a Set per node
+        // would consume quadratic memory when every node in a deep chain is
+        // requested, even if only one leaf has usage.
+        final class RequestedAncestors {
+            let ids: [String]
+            let next: RequestedAncestors?
+            init(ids: [String], next: RequestedAncestors? = nil) { self.ids = ids; self.next = next }
+        }
+        let empty = RequestedAncestors(ids: [])
+        var ancestorsByID: [String: RequestedAncestors] = [:]
+        func ancestors(of start: String) -> RequestedAncestors {
+            if let cached = ancestorsByID[start] { return cached }
+            var trail: [String] = [], positions: [String: Int] = [:]
+            var current: String? = start
+            while let node = current, ancestorsByID[node] == nil, positions[node] == nil {
+                positions[node] = trail.count; trail.append(node)
+                current = parents[node]
+            }
+            var matched = current.flatMap { ancestorsByID[$0] } ?? empty
+            if let node = current, let cycleStart = positions[node] {
+                // Every node in a parent cycle reaches every other cycle node.
+                let cycle = trail[cycleStart...]
+                matched = RequestedAncestors(ids: cycle.filter { ids.contains($0) })
+                for member in cycle { ancestorsByID[member] = matched }
+                trail.removeSubrange(cycleStart...)
+            }
+            for node in trail.reversed() {
+                if ids.contains(node) { matched = RequestedAncestors(ids: [node], next: matched) }
+                ancestorsByID[node] = matched
+            }
+            return ancestorsByID[start] ?? matched
+        }
+        var grouped: [String: [String: ModelUsage]] = [:]
+        for (path, rows) in byPath {
+            var matched: Set<String> = []
+            let components = path.split(separator: "/", omittingEmptySubsequences: false)
+            if source == .claude {
+                if let leaf = components.last, components.count > 1, leaf.hasSuffix(".jsonl") {
+                    let id = String(leaf.dropLast(6))
+                    if ids.contains(id) { matched.insert(id) }
+                }
+                // Preserve matching at every /id/subagents/ boundary, including
+                // nested workflows and paths with repeated directory names.
+                for i in components.indices where i > 1 && i + 1 < components.count && components[i] == "subagents" {
+                    let id = String(components[i - 1])
+                    if ids.contains(id) { matched.insert(id) }
+                }
+            } else {
+                if let id = pathIDs[path] {
+                    var link: RequestedAncestors? = ancestors(of: id)
+                    while let node = link {
+                        matched.formUnion(node.ids)
+                        link = node.next
+                    }
+                }
+                // Filename fallback remains independent of the metadata ID.
+                // IDs may themselves contain hyphens: check all suffixes once.
+                if let leaf = components.last, leaf.hasSuffix(".jsonl") {
+                    let stem = leaf.dropLast(6)
+                    for index in stem.indices where stem[index] == "-" {
+                        let id = String(stem[stem.index(after: index)...])
+                        if ids.contains(id) { matched.insert(id) }
+                    }
+                }
+            }
+            for id in matched {
+                for row in rows {
+                    grouped[id, default: [:]][row.model, default: ModelUsage(model: row.model)].merge(row)
+                }
+            }
+        }
         var result: [String: [ModelUsage]] = [:]
         for id in ids {
-            var rows: [ModelUsage] = []
-            for (path, usage) in byPath {
-                let belongs: Bool
-                if source == .claude {
-                    belongs = path.hasSuffix("/" + id + ".jsonl") || path.contains("/" + id + "/subagents/")
-                } else {
-                    var current = pathIDs[path]
-                    var visited: Set<String> = []
-                    var matched = path.hasSuffix("-" + id + ".jsonl")
-                    while let child = current, visited.insert(child).inserted {
-                        if child == id { matched = true; break }
-                        current = parents[child]
-                    }
-                    belongs = matched
-                }
-                if belongs { rows += usage }
-            }
-            result[id] = ModelUsage.merged(rows).filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
+            result[id] = (grouped[id].map { Array($0.values) } ?? [])
+                .filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
         }
         return result
     }

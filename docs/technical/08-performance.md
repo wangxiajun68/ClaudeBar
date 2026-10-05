@@ -41,6 +41,8 @@ MCP stdio 发现的 semaphore 等待由 Dispatch 队列承接，调用任务通�
 
 关闭 SQLite 时，`UsageJSONStore` 维护锁保护的路径到汇总键索引。会话替换/删除按该路径的键操作，单会话查询先匹配路径再聚合其记录；增量添加、载入迁移与 reset 同步维护索引。首次建索引有额外成本，文件格式及日期范围聚合规则保留。合成测量与限制见 [第二轮审查](../reviews/apple-performance-followup-2026-10-04.md)。
 
+JSON 日期查询维护日期到汇总键索引，日期成员变化时才重新排序。窄范围通过二分查找访问匹配日期，宽范围按行数选择扫描；索引增加内存和维护工作。`UsageIndex.fetchSessionFamilies` 将每个文件一次性路由到查询家族，Codex 用迭代父链与共享祖先链接复用归属，环共享查询结果，不为每个节点复制完整祖先集合。匹配的祖先及模型输出仍有成本；测量与边界见 [核心算法审查](../reviews/apple-core-algorithms-performance-2026-10-05.md)。
+
 ## 滚动更新与布局
 
 `ScrollHoverGate` 用每个滚动视图的 UUID 记录 ownership；只有最后一个 owner 释放后才 flush 延迟发布。watchdog 可取消并带 generation，连续滚动的最长延迟预算为 4 秒，阶段转换不能重新延长期限。视图拆卸也必须释放 ownership。

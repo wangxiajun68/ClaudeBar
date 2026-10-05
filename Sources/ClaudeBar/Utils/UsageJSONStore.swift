@@ -77,6 +77,9 @@ final class UsageJSONStore {
     /// A transcript rewrite removes only that transcript's rows, even when
     /// the corpus holds years of other sessions. Kept under the same lock.
     private var rollupKeysByPath: [String: Set<String>] = [:]
+    private var rollupKeysByDay: [String: Set<String>] = [:]
+    /// Sorted only when date membership changes, not after every token append.
+    private var sortedRollupDays: [String]?
     private var loaded = false
     /// Set by every mutation, cleared once `persistLocked` has written the
     /// files. Index passes fire on FSEvents bursts where every transcript was
@@ -150,9 +153,9 @@ final class UsageJSONStore {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var byModel: [String: ModelUsage] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay
-            && !row.path.hasPrefix("openclaw")
-            && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
+        forEachRollupLocked(startDay: startDay, endDay: endDay) { row in
+            guard !row.path.hasPrefix("openclaw"),
+                  pathPrefix.map({ row.path.hasPrefix($0) }) ?? true else { return }
             Self.accumulate(row, into: &byModel)
         }
         return byModel.values.filter { $0.totalTokens > 0 }.sorted { $0.totalTokens > $1.totalTokens }
@@ -163,7 +166,8 @@ final class UsageJSONStore {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var grouped: [String: [String: ModelUsage]] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay && row.path.hasPrefix(pathPrefix) {
+        forEachRollupLocked(startDay: startDay, endDay: endDay) { row in
+            guard row.path.hasPrefix(pathPrefix) else { return }
             Self.accumulate(row, into: &grouped[row.path, default: [:]])
         }
         return grouped.mapValues { Array($0.values) }
@@ -187,8 +191,8 @@ final class UsageJSONStore {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var days: [String: [ModelUsage]] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay
-            && (row.path.hasPrefix("claude:") || row.path.hasPrefix("codex:")) {
+        forEachRollupLocked(startDay: startDay, endDay: endDay) { row in
+            guard row.path.hasPrefix("claude:") || row.path.hasPrefix("codex:") else { return }
             days[row.day, default: []].append(ModelUsage(model: row.model, calls: row.calls,
                 inputTokens: row.input, outputTokens: row.output,
                 cacheReadTokens: row.cacheRead, cacheCreationTokens: row.cacheCreate))
@@ -200,9 +204,9 @@ final class UsageJSONStore {
         lock.lock(); defer { lock.unlock() }
         loadLocked()
         var byDay: [String: DayUsage] = [:]
-        for row in rollup.values where row.day >= startDay && row.day <= endDay
-            && !row.path.hasPrefix("openclaw")
-            && (pathPrefix.map { row.path.hasPrefix($0) } ?? true) {
+        forEachRollupLocked(startDay: startDay, endDay: endDay) { row in
+            guard !row.path.hasPrefix("openclaw"),
+                  pathPrefix.map({ row.path.hasPrefix($0) }) ?? true else { return }
             Self.accumulate(row, into: &byDay)
         }
         return byDay.values.filter { $0.totalTokens > 0 }.sorted { $0.day < $1.day }
@@ -213,6 +217,8 @@ final class UsageJSONStore {
         files = [:]
         rollup = [:]
         rollupKeysByPath = [:]
+        rollupKeysByDay = [:]
+        sortedRollupDays = nil
         loaded = false
         dirty = false
         lock.unlock()
@@ -270,26 +276,89 @@ final class UsageJSONStore {
             persistLocked()
         }
         rollupKeysByPath.removeAll(keepingCapacity: true)
-        for (key, row) in rollup { rollupKeysByPath[row.path, default: []].insert(key) }
+        rollupKeysByDay.removeAll(keepingCapacity: true)
+        sortedRollupDays = nil
+        for (key, row) in rollup {
+            rollupKeysByPath[row.path, default: []].insert(key)
+            rollupKeysByDay[row.day, default: []].insert(key)
+        }
     }
 
     private func removeRollupLocked(_ path: String) {
         guard let keys = rollupKeysByPath.removeValue(forKey: path) else { return }
-        for key in keys { rollup.removeValue(forKey: key) }
+        for key in keys {
+            if let row = rollup.removeValue(forKey: key) { removeDayKeyLocked(key, day: row.day) }
+        }
     }
 
     private func insertRollupLocked(_ row: RollupRec) {
         let key = Self.key(row)
         // Preserve the existing composite-key semantics, including a legacy
         // path containing the separator that collides with another key.
-        if let previous = rollup[key], previous.path != row.path {
-            rollupKeysByPath[previous.path]?.remove(key)
-            if rollupKeysByPath[previous.path]?.isEmpty == true {
-                rollupKeysByPath.removeValue(forKey: previous.path)
+        if let previous = rollup[key] {
+            if previous.path != row.path {
+                rollupKeysByPath[previous.path]?.remove(key)
+                if rollupKeysByPath[previous.path]?.isEmpty == true {
+                    rollupKeysByPath.removeValue(forKey: previous.path)
+                }
             }
+            if previous.day != row.day { removeDayKeyLocked(key, day: previous.day) }
         }
         rollup[key] = row
         rollupKeysByPath[row.path, default: []].insert(key)
+        if rollupKeysByDay[row.day] == nil { sortedRollupDays = nil }
+        rollupKeysByDay[row.day, default: []].insert(key)
+    }
+
+    private func removeDayKeyLocked(_ key: String, day: String) {
+        rollupKeysByDay[day]?.remove(key)
+        if rollupKeysByDay[day]?.isEmpty == true {
+            rollupKeysByDay.removeValue(forKey: day)
+            sortedRollupDays = nil
+        }
+    }
+
+    /// Binary-search inclusive string bounds, then visit only matching dates.
+    /// Use the contiguous dictionary values for an all-history query to avoid
+    /// paying an extra key lookup for every row in the corpus.
+    private func forEachRollupLocked(startDay: String, endDay: String, _ body: (RollupRec) -> Void) {
+        guard startDay <= endDay else { return }
+        if sortedRollupDays == nil { sortedRollupDays = rollupKeysByDay.keys.sorted() }
+        let days = sortedRollupDays ?? []
+        func bound(_ value: String, inclusive: Bool) -> Int {
+            var low = 0, high = days.count
+            while low < high {
+                let middle = low + (high - low) / 2
+                if days[middle] < value || (inclusive && days[middle] == value) { low = middle + 1 }
+                else { high = middle }
+            }
+            return low
+        }
+        let low = bound(startDay, inclusive: false), high = bound(endDay, inclusive: true)
+        guard low < high else { return }
+        if low == 0 && high == days.count {
+            for row in rollup.values { body(row) }
+            return
+        }
+        let selectedDays = days[low..<high]
+        // Random hash lookups lose to a contiguous scan for broad windows.
+        // Count keys without reading rows, stopping as soon as the crossover
+        // (measured with narrow/broad synthetic windows) is reached.
+        let scanThreshold = max(1, rollup.count / 16)
+        var selectedCount = 0
+        for day in selectedDays {
+            selectedCount += rollupKeysByDay[day]?.count ?? 0
+            if selectedCount >= scanThreshold { break }
+        }
+        if selectedCount >= scanThreshold {
+            for row in rollup.values where row.day >= startDay && row.day <= endDay { body(row) }
+        } else {
+            for day in selectedDays {
+                for key in rollupKeysByDay[day] ?? [] {
+                    if let row = rollup[key] { body(row) }
+                }
+            }
+        }
     }
 
     private func persistLocked() {
