@@ -126,15 +126,11 @@ struct DashboardView: View {
                           count: totalSessionCount)
                 .padding(.horizontal, Theme.Space.s4)
 
-            // Derived once: `overviewRows` maps every live session through
-            // `displayTitle` / `currentActivity` / `contextLabel` and a
-            // `SessionTitle.condense` pass (five `replacingOccurrences` + a
-            // scalar-width reduce) per row. Reading the property twice — once
-            // for the grid, once for the overflow count — doubled that on
-            // every poll.
-            let all = overviewRows
+            // Format only the tiles shown here; the overflow count comes from
+            // the complete session lists without formatting hidden rows.
+            let rows = overviewRows
+            let total = totalSessionCount
             let cap = Self.overviewCap
-            let rows = all.prefix(cap)
             if rows.isEmpty {
                 StandbyEmptyState(label: "暂无活跃会话",
                                   symbol: "rectangle.stack",
@@ -145,10 +141,10 @@ struct DashboardView: View {
                         OverviewTile(row: row) { onNavigate(.sessions) }
                     }
                 }
-                if all.count > cap {
+                if total > cap {
                     Button(action: { onNavigate(.sessions) }) {
-                        Label("查看全部 \(all.count) 个会话", systemImage: "arrow.right")
-                            .rollingNumber("查看全部 \(all.count) 个会话")
+                        Label("查看全部 \(total) 个会话", systemImage: "arrow.right")
+                            .rollingNumber("查看全部 \(total) 个会话")
                             .font(Theme.Font.bodySmall)
                     }
                     .buttonStyle(.plain)
@@ -207,8 +203,10 @@ struct DashboardView: View {
     }
 
     private var overviewRows: [OverviewRow] {
-        let claudeRows = providerStore.sessions
+        let claudeRows: [OverviewRow] = providerStore.sessions
+            .lazy
             .filter(\.isAlive)
+            .prefix(Self.overviewCap)
             .map { s in
                 OverviewRow(
                     id: "c-\(s.pid)",
@@ -229,6 +227,7 @@ struct DashboardView: View {
                 )
             }
         let cursorRows = providerStore.cursorSessions
+            .prefix(Self.overviewCap - claudeRows.count)
             .map { s in
                 OverviewRow(
                     id: "u-\(s.composerId)",
@@ -252,6 +251,7 @@ struct DashboardView: View {
             }
         // Codex — teal rows.
         let externalRows = providerStore.aliveExternalSessions
+            .prefix(Self.overviewCap - claudeRows.count - cursorRows.count)
             .map { s in
                 OverviewRow(
                     id: "e-\(s.kind.rawValue)-\(s.sessionId)",

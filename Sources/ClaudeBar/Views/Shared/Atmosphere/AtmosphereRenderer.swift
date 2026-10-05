@@ -807,9 +807,12 @@ final class AtmosphereRenderer {
         // The input went back to the texture already shown, or lost its
         // greeting, while this one was being made.
         guard let requested else { return }
+        // A newer size or phrase is waiting. Hold the texture already on screen
+        // until that job finishes instead of flashing the obsolete layout.
+        guard requested.key == job.key else { startRasterizing(); return }
         install(result.texture, frame: job.layout.textureFrame, key: job.key,
                 reduceMotion: input?.reduceMotion ?? true)
-        if requested.key == job.key { self.requested = nil } else { startRasterizing() }
+        self.requested = nil
         textDidChange?()
     }
 

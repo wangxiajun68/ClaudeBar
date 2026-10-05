@@ -45,7 +45,7 @@ struct AtmosphereSurface: View {
 
     var body: some View {
         if input.reduceMotion || Self.stills {
-            AtmosphereStill(input: input)
+            AtmosphereStill(input: input, active: active, synchronous: Self.stills)
         } else {
             AtmosphereMetal(input: input, controller: controller, active: active)
         }
@@ -224,7 +224,14 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
 
     /// One redraw while paused (a ripple, an input change under a paused view).
     func kick() {
-        if isPaused { needsDisplay = true }
+        if drawingAllowed && isPaused { needsDisplay = true }
+    }
+
+    /// Also checked at draw time: AppKit can deliver a queued redraw after a
+    /// scroll hold, occlusion or dismantle has paused the display link.
+    private var drawingAllowed: Bool {
+        active && !held && window?.occlusionState.contains(.visible) == true
+            && renderer.input?.reduceMotion == false
     }
 
     /// The resting card presents at `AtmosphereRenderer.restingRate` (30 Hz for
@@ -265,7 +272,6 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
         } else {
             isPaused = true
             enableSetNeedsDisplay = true
-            needsDisplay = true
         }
     }
 
@@ -329,6 +335,7 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { kick() }
 
     func draw(in view: MTKView) {
+        guard drawingAllowed else { return }
         let now = CACurrentMediaTime()
         // A presented handler that never fired must not stop the sky for good.
         if pending >= 2, now - lastAcquired < 0.25 { return }
@@ -352,23 +359,66 @@ final class AtmosphereMTKView: MTKView, MTKViewDelegate {
 /// nothing between those.
 private struct AtmosphereStill: View {
     var input: AtmosphereRenderer.Input
+    var active: Bool
+    var synchronous: Bool
     @Environment(\.displayScale) private var scale
     @State private var cache = StillCache()
+    @State private var onScreen = true
 
     var body: some View {
         GeometryReader { geo in
-            if let image = cache.image(input: input, size: geo.size, scale: scale) {
-                Image(decorative: image, scale: scale).resizable()
-            } else {
-                Color(red: Double(input.scene.mid.x), green: Double(input.scene.mid.y), blue: Double(input.scene.mid.z))
+            let request = StillCache.Request(input: input, size: geo.size, scale: scale, active: active && onScreen)
+            Group {
+                if let image = synchronous ? cache.image(input: input, size: geo.size, scale: scale) : cache.readyImage {
+                    Image(decorative: image, scale: scale).resizable()
+                } else {
+                    Color(red: Double(input.scene.mid.x), green: Double(input.scene.mid.y), blue: Double(input.scene.mid.z))
+                }
+            }
+            .task(id: request) {
+                if !synchronous { await cache.update(request) }
             }
         }
+        .onScrollVisibilityChange(threshold: 0.02) { onScreen = $0 }
     }
 }
 
-@MainActor private final class StillCache {
+@Observable @MainActor private final class StillCache {
+    /// Value snapshots passed to the serial worker; no view or mutable renderer
+    /// crosses the queue boundary. The GPU's shared pipeline is thread safe.
+    struct Request: Equatable, @unchecked Sendable {
+        let input: AtmosphereRenderer.Input
+        let size: CGSize
+        let scale: CGFloat
+        let active: Bool
+    }
+
+    private(set) var readyImage: CGImage?
+    @ObservationIgnored private var readyKey: Request?
+    @ObservationIgnored private var revision = 0
+    @ObservationIgnored private var worker: StillWorker?
+
+    func update(_ request: Request) async {
+        guard !Task.isCancelled else { return }
+        revision += 1
+        let revision = self.revision
+        guard request.active, request.size.width > 1, request.size.height > 1,
+              let gpu = AtmosphereGPU.shared, readyKey != request else { return }
+        let worker = self.worker ?? StillWorker(gpu: gpu)
+        self.worker = worker
+        guard let image = await worker.snapshot(request), !Task.isCancelled,
+              revision == self.revision else { return }
+        readyImage = image
+        readyKey = request
+    }
+
+    // ImageRenderer previews have no asynchronous presentation cycle. Keep
+    // their deterministic capture separate from the live Reduce Motion path.
+    @ObservationIgnored
     private var key: (AtmosphereRenderer.Input, CGSize, CGFloat)?
+    @ObservationIgnored
     private var image: CGImage?
+    @ObservationIgnored
     private var renderer: AtmosphereRenderer?
 
     func image(input: AtmosphereRenderer.Input, size: CGSize, scale: CGFloat) -> CGImage? {
@@ -377,8 +427,48 @@ private struct AtmosphereStill: View {
         let renderer = self.renderer ?? AtmosphereRenderer(gpu: gpu)
         self.renderer = renderer
         renderer.input = input
-        image = renderer.snapshot(size: size, scale: scale)
+        guard let image = renderer.snapshot(size: size, scale: scale) else { return nil }
+        self.image = image
         key = (input, size, scale)
         return image
+    }
+}
+
+/// Owns its renderer exclusively on a serial queue. GPU completion and image
+/// readback can block, so they use a Dispatch worker rather than an executor
+/// thread in Swift's cooperative task pool. Cancelled queued sizes are skipped;
+/// an already committed frame can finish, but cannot publish into a cancelled view.
+private final class StillWorker: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "claudebar.atmosphere.still", qos: .userInitiated)
+    private let gpu: AtmosphereGPU
+    private var renderer: AtmosphereRenderer?
+
+    init(gpu: AtmosphereGPU) { self.gpu = gpu }
+
+    private final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.withLock { cancelled = true } }
+        var isCancelled: Bool { lock.withLock { cancelled } }
+    }
+
+    func snapshot(_ request: StillCache.Request) async -> CGImage? {
+        let cancellation = Cancellation()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                Self.queue.async { [self] in
+                    guard !cancellation.isCancelled else { continuation.resume(returning: nil); return }
+                    let image = autoreleasepool {
+                        let renderer = self.renderer ?? AtmosphereRenderer(gpu: gpu)
+                        self.renderer = renderer
+                        renderer.input = request.input
+                        return renderer.snapshot(size: request.size, scale: request.scale)
+                    }
+                    continuation.resume(returning: image)
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 }

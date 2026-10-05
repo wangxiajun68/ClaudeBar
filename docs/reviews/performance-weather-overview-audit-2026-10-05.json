@@ -1,0 +1,620 @@
+{
+  "date": "2026-10-05",
+  "source_baseline": "7c20c82dff75fc2a4c05121870f5efa441093e0e",
+  "version": "1.15.0",
+  "environment": {
+    "hardware": "Apple M3 Pro",
+    "os": "macOS 26.6.2",
+    "compiler": "Command Line Tools Swift 6.3.2",
+    "probe_flags": [
+      "-O",
+      "-parse-as-library",
+      "arm64-apple-macos15.0"
+    ]
+  },
+  "scope": "isolated production-source probes; no installed ClaudeBar restart or real weather requests",
+  "dashboard": {
+    "before": {
+      "median_ms": 80.31392097473145,
+      "formatted_per_pass": 10000
+    },
+    "after": {
+      "median_ms": 0.04792213439941406,
+      "formatted_per_pass": 6
+    }
+  },
+  "weather_lifecycle": {
+    "before": {
+      "violations": [
+        "inactive must not enqueue redraw",
+        "inactive must not acquire a drawable",
+        "scroll held must not enqueue redraw",
+        "scroll held must not acquire a drawable",
+        "occluded must not enqueue redraw",
+        "occluded must not acquire a drawable",
+        "Reduce Motion must not enqueue redraw",
+        "Reduce Motion must not acquire a drawable",
+        "dismantled must not enqueue redraw",
+        "dismantled must not acquire a drawable",
+        "detached must not enqueue redraw",
+        "detached must not acquire a drawable"
+      ],
+      "sync_preview_snapshot_median_ms": 8.17500000266591,
+      "snapshot_sha256": "6222f7284a3fdf44823149b5b187a505d703106fbf82c82d6e1304a07feabd50"
+    },
+    "after": {
+      "violations": [],
+      "sync_preview_snapshot_median_ms": 8.031208337342832,
+      "snapshot_sha256": "6222f7284a3fdf44823149b5b187a505d703106fbf82c82d6e1304a07feabd50"
+    }
+  },
+  "time_profiler": {
+    "before": {
+      "samples": {
+        "main_samples": 902,
+        "background_samples": 148,
+        "snapshot_main_samples": 828
+      },
+      "quality": {
+        "missing_backtrace": 7
+      },
+      "inclusive_symbols": [
+        {
+          "thread": "main",
+          "symbol": "StillCache.image(input:size:scale:)",
+          "samples": 845
+        },
+        {
+          "thread": "main",
+          "symbol": "AtmosphereRenderer.snapshot(size:scale:time:)",
+          "samples": 828
+        },
+        {
+          "thread": "main",
+          "symbol": "specialized static GreetingTypesetter.rasterize(_:scale:)",
+          "samples": 4
+        }
+      ],
+      "duration_seconds": 7.250971,
+      "instruments_version": "27.0 (27A266a)"
+    },
+    "after": {
+      "samples": {
+        "main_samples": 58,
+        "background_samples": 994,
+        "snapshot_background_samples": 850
+      },
+      "quality": {
+        "missing_backtrace": 8
+      },
+      "inclusive_symbols": [
+        {
+          "thread": "background",
+          "symbol": "partial apply for closure #1 in closure #1 in closure #1 in StillWorker.snapshot(_:)",
+          "samples": 855
+        },
+        {
+          "thread": "background",
+          "symbol": "AtmosphereRenderer.snapshot(size:scale:time:)",
+          "samples": 850
+        },
+        {
+          "thread": "background",
+          "symbol": "specialized static GreetingTypesetter.rasterize(_:scale:)",
+          "samples": 4
+        },
+        {
+          "thread": "background",
+          "symbol": "closure #1 in StillWorker.snapshot(_:)",
+          "samples": 3
+        },
+        {
+          "thread": "background",
+          "symbol": "closure #1 in closure #1 in StillWorker.snapshot(_:)",
+          "samples": 3
+        },
+        {
+          "thread": "background",
+          "symbol": "StillCache.update(_:)",
+          "samples": 3
+        },
+        {
+          "thread": "background",
+          "symbol": "StillWorker.snapshot(_:)",
+          "samples": 3
+        },
+        {
+          "thread": "main",
+          "symbol": "StillCache.update(_:)",
+          "samples": 2
+        },
+        {
+          "thread": "background",
+          "symbol": "-[_MTLCommandBuffer waitUntilCompleted]",
+          "samples": 1
+        }
+      ],
+      "duration_seconds": 6.947677,
+      "instruments_version": "27.0 (27A266a)"
+    }
+  },
+  "gpu": {
+    "1100": {
+      "before": {
+        "frames": 90,
+        "height": 474,
+        "scale": 2,
+        "scenes": [
+          {
+            "encode_cpu_us": 7.624999852851033,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17862499953480437,
+            "scene": "day clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.23708333173999563,
+            "snapshot_sha256": "4fe3afcb3869c3bd7c6bffc3d1db19212837092b073e0a891a8eb7fd8fb244bd"
+          },
+          {
+            "encode_cpu_us": 7.374997949227691,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17737499729264528,
+            "scene": "day cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.25224999990314245,
+            "snapshot_sha256": "2337acb4de3eadd1ca3af42cb6fef058676e41cd64b9374d36a10aa4af34ad21"
+          },
+          {
+            "encode_cpu_us": 9.041665180120617,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17408333224011585,
+            "scene": "day overcast",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.27187499654246494,
+            "snapshot_sha256": "5a135fcf21b5df0cd0d21805c15f9b465709b3248a8f85eb885fb5270e5504f9"
+          },
+          {
+            "encode_cpu_us": 9.208335541188717,
+            "front_frames": 60,
+            "front_gpu_ms": 0.3189999988535419,
+            "scene": "day heavy rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.41520833474351093,
+            "snapshot_sha256": "d6edb08962000595727143b52f4fb2e14910513d45ed9546f7b50b465eb40199"
+          },
+          {
+            "encode_cpu_us": 12.91666558245197,
+            "front_frames": 42,
+            "front_gpu_ms": 0.31854167173150927,
+            "scene": "day thunder",
+            "sky_frames": 48,
+            "sky_gpu_ms": 0.41700000292621553,
+            "snapshot_sha256": "5a04cdd9999c438585010f78bd76f6bc1a7771dd9f413d51eafececbefaaaaf9"
+          },
+          {
+            "encode_cpu_us": 7.333328539971262,
+            "front_frames": 60,
+            "front_gpu_ms": 0.22075000015320256,
+            "scene": "day snow",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.32012500014388934,
+            "snapshot_sha256": "c661a130656a80488155bd23c3b56ddde016debcce7e8a5a3ed4b6964af6c497"
+          },
+          {
+            "encode_cpu_us": 8.249997335951775,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17616667173570022,
+            "scene": "day fog",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.2562916633905843,
+            "snapshot_sha256": "38365986c8707b496fd0571b80d9d52ad7c0592956813af038de5c58be0031e5"
+          },
+          {
+            "encode_cpu_us": 7.041664503049105,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17645833577262238,
+            "scene": "sunset cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.25150000146823004,
+            "snapshot_sha256": "2d81b861544072e4995cc101cfdbb98bac47ae5730c7bbd82b533b8a906035ba"
+          },
+          {
+            "encode_cpu_us": 7.541661034338176,
+            "front_frames": 60,
+            "front_gpu_ms": 0.1764999979059212,
+            "scene": "night clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.2505000011296943,
+            "snapshot_sha256": "d6a455fc9790462536156079d61ba60c3a58654d93d7bcf9c227d0e22d5d81a3"
+          },
+          {
+            "encode_cpu_us": 7.999995432328433,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17816666513681412,
+            "scene": "night cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.26824999804375693,
+            "snapshot_sha256": "461d5bc89f864ff25ada4686427147f7d2c94e96bdfdd97b3034621b0584ef19"
+          },
+          {
+            "encode_cpu_us": 9.29166708374396,
+            "front_frames": 60,
+            "front_gpu_ms": 0.3186249959981069,
+            "scene": "night rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.4172916669631377,
+            "snapshot_sha256": "8410ea7845a9ccb8f08eda71c29d15e5d6d2c24279aaf1f91746f005bc992a40"
+          }
+        ],
+        "width": 1100
+      },
+      "after": {
+        "frames": 90,
+        "height": 474,
+        "scale": 2,
+        "scenes": [
+          {
+            "encode_cpu_us": 11.041665857192129,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17774999287212268,
+            "scene": "day clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.2409583394182846,
+            "snapshot_sha256": "4fe3afcb3869c3bd7c6bffc3d1db19212837092b073e0a891a8eb7fd8fb244bd"
+          },
+          {
+            "encode_cpu_us": 8.625000191386789,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17462499818066135,
+            "scene": "day cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.2515833330107853,
+            "snapshot_sha256": "2337acb4de3eadd1ca3af42cb6fef058676e41cd64b9374d36a10aa4af34ad21"
+          },
+          {
+            "encode_cpu_us": 10.708332411013544,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17458333604736254,
+            "scene": "day overcast",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.2716250019147992,
+            "snapshot_sha256": "5a135fcf21b5df0cd0d21805c15f9b465709b3248a8f85eb885fb5270e5504f9"
+          },
+          {
+            "encode_cpu_us": 9.708332072477788,
+            "front_frames": 60,
+            "front_gpu_ms": 0.3192083313479088,
+            "scene": "day heavy rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.41558333032298833,
+            "snapshot_sha256": "d6edb08962000595727143b52f4fb2e14910513d45ed9546f7b50b465eb40199"
+          },
+          {
+            "encode_cpu_us": 13.541670341510326,
+            "front_frames": 42,
+            "front_gpu_ms": 0.3186666654073633,
+            "scene": "day thunder",
+            "sky_frames": 48,
+            "sky_gpu_ms": 0.5097916655358858,
+            "snapshot_sha256": "5a04cdd9999c438585010f78bd76f6bc1a7771dd9f413d51eafececbefaaaaf9"
+          },
+          {
+            "encode_cpu_us": 8.333336154464632,
+            "front_frames": 60,
+            "front_gpu_ms": 0.22087500110501423,
+            "scene": "day snow",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.3173333388986066,
+            "snapshot_sha256": "c661a130656a80488155bd23c3b56ddde016debcce7e8a5a3ed4b6964af6c497"
+          },
+          {
+            "encode_cpu_us": 6.958332960493863,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17666666099103168,
+            "scene": "day fog",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.257874999078922,
+            "snapshot_sha256": "38365986c8707b496fd0571b80d9d52ad7c0592956813af038de5c58be0031e5"
+          },
+          {
+            "encode_cpu_us": 9.750001481734216,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17608333291718736,
+            "scene": "sunset cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.25299999833805487,
+            "snapshot_sha256": "2d81b861544072e4995cc101cfdbb98bac47ae5730c7bbd82b533b8a906035ba"
+          },
+          {
+            "encode_cpu_us": 9.083334589377046,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17549999756738544,
+            "scene": "night clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.25133333838311955,
+            "snapshot_sha256": "d6a455fc9790462536156079d61ba60c3a58654d93d7bcf9c227d0e22d5d81a3"
+          },
+          {
+            "encode_cpu_us": 6.958332960493863,
+            "front_frames": 60,
+            "front_gpu_ms": 0.17700000171316788,
+            "scene": "night cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.26808333495864645,
+            "snapshot_sha256": "461d5bc89f864ff25ada4686427147f7d2c94e96bdfdd97b3034621b0584ef19"
+          },
+          {
+            "encode_cpu_us": 7.666669262107462,
+            "front_frames": 60,
+            "front_gpu_ms": 0.3169583360431716,
+            "scene": "night rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.41162499837810174,
+            "snapshot_sha256": "8410ea7845a9ccb8f08eda71c29d15e5d6d2c24279aaf1f91746f005bc992a40"
+          }
+        ],
+        "width": 1100
+      }
+    },
+    "620": {
+      "before": {
+        "frames": 90,
+        "height": 436,
+        "scale": 2,
+        "scenes": [
+          {
+            "encode_cpu_us": 8.625000191386789,
+            "front_frames": 60,
+            "front_gpu_ms": 0.10574999760137871,
+            "scene": "day clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.14237499999580905,
+            "snapshot_sha256": "0b86d11aa61fb87674e5d739159080a433898932aef35ff252d9d2563e35dd3e"
+          },
+          {
+            "encode_cpu_us": 7.583330443594605,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08587499905843288,
+            "scene": "day cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.1325833291048184,
+            "snapshot_sha256": "113786b425677bb429b7774179c76c8a4e791ae6ebbac30e0d91e5d0bdd4ee43"
+          },
+          {
+            "encode_cpu_us": 7.833332347217947,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08679166785441339,
+            "scene": "day overcast",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.1433750003343448,
+            "snapshot_sha256": "adf54b7760194b4f48fe59f4eae3bc28e9f0f5ac72c07e76b25f0a7b754148bf"
+          },
+          {
+            "encode_cpu_us": 7.54166831029579,
+            "front_frames": 60,
+            "front_gpu_ms": 0.15587500092806295,
+            "scene": "day heavy rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.21249999554129317,
+            "snapshot_sha256": "bc0544a400d5137a46367cd65cb048e30f51dbf3d891a5d0e26e91b49ed5ebad"
+          },
+          {
+            "encode_cpu_us": 12.333330232650042,
+            "front_frames": 42,
+            "front_gpu_ms": 0.15604167128913105,
+            "scene": "day thunder",
+            "sky_frames": 48,
+            "sky_gpu_ms": 0.27387499721953645,
+            "snapshot_sha256": "8a2ccb79477096945f783d7c125744c43f53c80216e1d269435f82e53748b028"
+          },
+          {
+            "encode_cpu_us": 7.000002369750291,
+            "front_frames": 60,
+            "front_gpu_ms": 0.10849999671336263,
+            "scene": "day snow",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.16345833864761516,
+            "snapshot_sha256": "799e70c28ca91defe08ee8db493582481f7d3a3eeec0acce313f2caa5da12281"
+          },
+          {
+            "encode_cpu_us": 7.708331395406276,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08441666432190686,
+            "scene": "day fog",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.13262500579003245,
+            "snapshot_sha256": "a699a75fc69d2333992724e2f2769f6f66faa6e11563bacbd777cabc80224433"
+          },
+          {
+            "encode_cpu_us": 8.499999239575118,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08425000123679638,
+            "scene": "sunset cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.13162499817553908,
+            "snapshot_sha256": "b36e066c25b887fde8cc34c974d9d4f8e7895f4f7c857401b2da8a82697a4a60"
+          },
+          {
+            "encode_cpu_us": 7.083333912305534,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08595833787694573,
+            "scene": "night clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.13300000136950985,
+            "snapshot_sha256": "e3f52df2967dce8a9910f894e53970baf693ccd36aab3d72246a51eed26a320a"
+          },
+          {
+            "encode_cpu_us": 8.041664841584861,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08687499939696863,
+            "scene": "night cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.1401249974151142,
+            "snapshot_sha256": "a9253e5ebe4fc3fb3c6548c13a5bc819a56560d830ec6ce62b78191e070363e5"
+          },
+          {
+            "encode_cpu_us": 7.70833867136389,
+            "front_frames": 60,
+            "front_gpu_ms": 0.15529167285421863,
+            "scene": "night rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.21012499928474426,
+            "snapshot_sha256": "a24e21039516d1dc53ab8e12c0db3467dc747f85694e89cbb99affabeb1f3e10"
+          }
+        ],
+        "width": 620
+      },
+      "after": {
+        "frames": 90,
+        "height": 436,
+        "scale": 2,
+        "scenes": [
+          {
+            "encode_cpu_us": 8.916664228308946,
+            "front_frames": 60,
+            "front_gpu_ms": 0.1005000012810342,
+            "scene": "day clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.14033333718543872,
+            "snapshot_sha256": "0b86d11aa61fb87674e5d739159080a433898932aef35ff252d9d2563e35dd3e"
+          },
+          {
+            "encode_cpu_us": 10.708332411013544,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08541667193640023,
+            "scene": "day cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.1329166698269546,
+            "snapshot_sha256": "113786b425677bb429b7774179c76c8a4e791ae6ebbac30e0d91e5d0bdd4ee43"
+          },
+          {
+            "encode_cpu_us": 8.08333425084129,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08583332964917645,
+            "scene": "day overcast",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.14487499720416963,
+            "snapshot_sha256": "adf54b7760194b4f48fe59f4eae3bc28e9f0f5ac72c07e76b25f0a7b754148bf"
+          },
+          {
+            "encode_cpu_us": 9.458330168854445,
+            "front_frames": 60,
+            "front_gpu_ms": 0.1543749967822805,
+            "scene": "day heavy rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.21370833565015346,
+            "snapshot_sha256": "bc0544a400d5137a46367cd65cb048e30f51dbf3d891a5d0e26e91b49ed5ebad"
+          },
+          {
+            "encode_cpu_us": 12.791671906597912,
+            "front_frames": 42,
+            "front_gpu_ms": 0.15462499868590385,
+            "scene": "day thunder",
+            "sky_frames": 48,
+            "sky_gpu_ms": 0.28704166470561177,
+            "snapshot_sha256": "8a2ccb79477096945f783d7c125744c43f53c80216e1d269435f82e53748b028"
+          },
+          {
+            "encode_cpu_us": 6.958332960493863,
+            "front_frames": 60,
+            "front_gpu_ms": 0.10841666517080739,
+            "scene": "day snow",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.16537500050617382,
+            "snapshot_sha256": "799e70c28ca91defe08ee8db493582481f7d3a3eeec0acce313f2caa5da12281"
+          },
+          {
+            "encode_cpu_us": 7.708331395406276,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08499999967170879,
+            "scene": "day fog",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.13337499694898725,
+            "snapshot_sha256": "a699a75fc69d2333992724e2f2769f6f66faa6e11563bacbd777cabc80224433"
+          },
+          {
+            "encode_cpu_us": 8.625000191386789,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08554166561225429,
+            "scene": "sunset cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.1320000010309741,
+            "snapshot_sha256": "b36e066c25b887fde8cc34c974d9d4f8e7895f4f7c857401b2da8a82697a4a60"
+          },
+          {
+            "encode_cpu_us": 7.833339623175561,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08587499905843288,
+            "scene": "night clear",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.12962499749846756,
+            "snapshot_sha256": "e3f52df2967dce8a9910f894e53970baf693ccd36aab3d72246a51eed26a320a"
+          },
+          {
+            "encode_cpu_us": 7.499998901039362,
+            "front_frames": 60,
+            "front_gpu_ms": 0.08570832869736478,
+            "scene": "night cloudy",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.13912499707657844,
+            "snapshot_sha256": "a9253e5ebe4fc3fb3c6548c13a5bc819a56560d830ec6ce62b78191e070363e5"
+          },
+          {
+            "encode_cpu_us": 8.91667150426656,
+            "front_frames": 60,
+            "front_gpu_ms": 0.15366666775662452,
+            "scene": "night rain",
+            "sky_frames": 30,
+            "sky_gpu_ms": 0.21133333211764693,
+            "snapshot_sha256": "a24e21039516d1dc53ab8e12c0db3467dc747f85694e89cbb99affabeb1f3e10"
+          }
+        ],
+        "width": 620
+      }
+    }
+  },
+  "pixel_parity": {
+    "matched": 22,
+    "total": 22,
+    "time_seconds": 42,
+    "live_thunder_note": "SystemRandomNumberGenerator controls bolt versus sheet flashes; live thunder GPU timings are not deterministic paired samples."
+  },
+  "validation": {
+    "full_regression_suites": 71,
+    "full_regression_seconds": 334.0,
+    "dev_build": "passed; bundle/widget/URL scheme/entitlements/signature verified; not installed",
+    "release_build": "passed; bundle/widget/URL scheme/entitlements/signature verified; not installed",
+    "widget_snapshot_symlink": "../ClaudeBar/Models/WidgetSnapshot.swift",
+    "preview": "wide/narrow synthetic automatic/manual cards; light and dark rain/thunder snapshots inspected",
+    "python_compile": "passed",
+    "diff_check": "passed"
+  },
+  "reviewed_source_sha256": {
+    "Sources/ClaudeBar/Views/Pages/DashboardView.swift": "8777705d515848f665b2b911964b6305f6b520b1bf9f69a91517a463b7be3c18",
+    "Sources/ClaudeBar/Views/Shared/GreetingCard.swift": "a7b09190f7d595c24d8dae6e5cd77e350b6542d6f02474d9bce6d37418ba1df8",
+    "Sources/ClaudeBar/Views/Shared/GreetingInstruments.swift": "9ad2035a3bb85d1b6e24fcb131e8f964e5adc1a3fac63f1d9f59e4c0a079f29d",
+    "Sources/ClaudeBar/Views/Shared/WeatherBackdrop.swift": "b48812e30b1cdd6a7101359088384fa5ad3dbd0c87b26b1e3729ae3119b2bf63",
+    "Sources/ClaudeBar/Views/Shared/ResourceStrip.swift": "e7f84985360b13b7b0841c48cad5ec8ba7521268a17a770190cf1061afc89fca",
+    "Sources/ClaudeBar/Views/Shared/PowerFlowCard.swift": "8258048de6ee108a5f0db2937528225993d201d7dee27ca83b3844da23301ace",
+    "Sources/ClaudeBar/Utils/WeatherFetcher.swift": "648d2344c6808f4f25fceb37e7043e0426e175c914361660059d8f1da7c60eea",
+    "Sources/ClaudeBar/Utils/WeatherForecastFetcher.swift": "a65cfb1927880c1c95e40ab5a4ddcca997de0419b83ae3759c22e1cf5af63735",
+    "Sources/ClaudeBar/Utils/SkyAstronomy.swift": "f761ef892de50b76bc1438f617e8347caacd4c81a497c11ed156b76bcc675208",
+    "Sources/ClaudeBar/Views/Shared/Atmosphere/AtmosphereView.swift": "16a6256b9bd16141a169b2da1c4ff8c1d6c963ee365e71331602c3ad985e8fe1",
+    "Sources/ClaudeBar/Views/Shared/Atmosphere/AtmosphereRenderer.swift": "8c1b86da39eeb8671ea987354dee0e5d163fb145cffe06b16f23c52bb4801be8",
+    "Sources/ClaudeBar/Views/Shared/Atmosphere/AtmosphereShader.swift": "1c695feba41bfb7fc28334d21429d23049afa7ecef18bb1f2a907c5c60fa9f15",
+    "Sources/ClaudeBar/Views/Shared/Atmosphere/SkyScene.swift": "c96c9abdcfd08f4d6caa4e670257268f466e3ff8d1c2ee96e2e7598d0bc90397",
+    "Sources/ClaudeBar/Views/Shared/Atmosphere/GreetingScript.swift": "75d03a48c1e8506d690ada728511ec1ee11c8c8beb941f547e194ab5cea987bd"
+  },
+  "test_and_tool_sha256": {
+    "Makefile": "3226e8aedb8b487e8fce16434d918e38f66bc612b44da2a4338c3e31b8573b45",
+    "Tools/bench-atmosphere.py": "646a797a8d819bb4cdab328bce79ac1f4d8724e648b518dfcc1233ff4d0fbf93",
+    "Tests/weather-card-performance-regressions.py": "34f3c5fef5974067cae8ab4d9b3013fcf29ac1524f39db51384240e756687577",
+    "Tests/dashboard-performance-regressions.py": "0da79805feaf72d7da4730edd110b6962ca6cae5c68fedab44c5fc8b7ff4a434"
+  },
+  "limitations": [
+    "No whole-window FPS/hitch/energy measurement for the new build.",
+    "No allocation/leak measurement in this round.",
+    "No live weather endpoint, permission, VPN or hardware control exercised.",
+    "One GPU benchmark pass per arm/width; no CI time threshold.",
+    "Time Profiler running-thread samples are not elapsed wait duration; inclusive frames overlap."
+  ]
+}
