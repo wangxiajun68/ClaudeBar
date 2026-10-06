@@ -394,50 +394,79 @@ struct CursorSessionMonitor {
         }
         // Lossy decode — a strict one fails for the whole window whenever the
         // seek landed mid-character (see `SessionMonitor.fetchContext`).
-        var lastActivity = ""
-        var lastMessageLine = -1
-        var lastTurnEndedLine = -1
-        var lastAssistantWasFinalText = false
+        //
+        // Newest line first. Every consumed field is decided by the tail *end*:
+        // `pending`/`ended` come from which of "a message" or "a turn_ended
+        // marker" is newest, `completionID` from that marker and the assistant
+        // message immediately before it, `activity` from the newest assistant
+        // with a tool since the last user. Records older than those boundaries
+        // cannot change any of it, so the scan stops once both are settled —
+        // instead of decoding the whole 96 KB window (~67 records) on every
+        // 2.5 s poll, ~10 ms per poll across the visible set.
+        var newest: Decisive?
+        var awaitingFlag = false
         var completionID: String?
-        var lineIndex = 0
-        var byteOffset = size - min(readSize, size)
-        for rawLine in tailData.split(separator: 0x0A, omittingEmptySubsequences: false) {
-            defer { byteOffset += UInt64(rawLine.count + 1) }
+        var lastActivity = ""
+        var activitySettled = false
+        var markerStatus = ""
+        var markerStart = 0
+        let windowStart = size - min(readSize, size)
+        var cursor = tailData.count
+        for rawLine in tailData.split(separator: 0x0A, omittingEmptySubsequences: false).reversed() {
+            let start = cursor - rawLine.count
+            cursor = start - 1
             let line = String(decoding: rawLine, as: UTF8.self)
-            defer { lineIndex += 1 }
             guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
             if let t = obj["type"] as? String, t == "turn_ended" {
-                lastTurnEndedLine = lineIndex
-                completionID = (obj["status"] as? String) == "success" && lastAssistantWasFinalText
-                    ? "turn-\(byteOffset)" : nil
-                lastAssistantWasFinalText = false
-                continue
+                if newest == nil {
+                    newest = .marker
+                    markerStatus = (obj["status"] as? String) ?? ""
+                    markerStart = start
+                    awaitingFlag = true
+                } else if awaitingFlag {
+                    // The marker immediately before the newest one clears the
+                    // final-text flag, exactly as it does scanning forward.
+                    awaitingFlag = false
+                }
+            } else if (obj["role"] as? String) == "user" {
+                if newest == nil { newest = .message }
+                awaitingFlag = false
+                // A user message starts the next turn: nothing older can
+                // contribute activity, and the completion flag is cleared.
+                break
+            } else if (obj["role"] as? String) == "assistant",
+                      let message = obj["message"] as? [String: Any] {
+                if newest == nil { newest = .message }
+                if awaitingFlag {
+                    awaitingFlag = false
+                    let blocks = message["content"] as? [[String: Any]] ?? []
+                    let finalText = blocks.contains { ($0["type"] as? String) == "text"
+                        && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                        && !blocks.contains { ($0["type"] as? String) == "tool_use" }
+                    completionID = markerStatus == "success" && finalText
+                        ? "turn-\(windowStart + UInt64(markerStart))" : nil
+                }
+                if lastActivity.isEmpty, let act = describeActivity(in: message), !act.isEmpty {
+                    lastActivity = act
+                    activitySettled = true
+                }
             }
-            if (obj["role"] as? String) == "user" {
-                lastMessageLine = lineIndex
-                lastActivity = ""
-                completionID = nil
-                lastAssistantWasFinalText = false
-                continue
-            }
-            guard (obj["role"] as? String) == "assistant",
-                  let message = obj["message"] as? [String: Any] else { continue }
-            lastMessageLine = lineIndex
-            completionID = nil
-            let blocks = message["content"] as? [[String: Any]] ?? []
-            lastAssistantWasFinalText = blocks.contains { ($0["type"] as? String) == "text"
-                && !(($0["text"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                && !blocks.contains { ($0["type"] as? String) == "tool_use" }
-            if let act = describeActivity(in: message), !act.isEmpty {
-                lastActivity = act
-            }
+            if newest != nil, !awaitingFlag, activitySettled { break }
         }
         // Submission starts the turn; waiting for the first assistant block
         // otherwise hides slow first-token generation and queued work.
-        let pending = lastMessageLine > lastTurnEndedLine
-        let ended = lastTurnEndedLine >= 0 && lastTurnEndedLine > lastMessageLine
+        let pending = newest == .message
+        let ended = newest == .marker
         return CursorTranscriptScan(activity: lastActivity, toolPending: pending,
-                                    completionID: completionID, ended: ended, modifiedAt: modifiedAt * 1000)
+                                    completionID: ended ? completionID : nil, ended: ended,
+                                    modifiedAt: modifiedAt * 1000)
+    }
+
+    /// The newest record that decides `pending` vs `ended` — a message starts
+    /// or continues a turn, a `turn_ended` marker closes it.
+    private enum Decisive {
+        case message
+        case marker
     }
 
     /// Human-readable summary of the latest tool_use in a message:
