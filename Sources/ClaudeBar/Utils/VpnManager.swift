@@ -1411,7 +1411,16 @@ extension VpnManager {
         guard let c = try? await api("GET", "/connections"),
               !Task.isCancelled, isRunning else { return }
         let conns = c["connections"] as? [[String: Any]] ?? []
-        VpnDomainLog.shared.updateConnections(conns)
+        // The 0.1–2 MB snapshot is mapped into rows off the main actor — the
+        // same shape `parseProxyTree` uses for /proxies. Only the finished
+        // `[VpnDomainConnection]` crosses back.
+        let prepared = await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .userInitiated).async {
+                cont.resume(returning: VpnDomainLog.preparedConnections(conns))
+            }
+        }
+        guard !Task.isCancelled, isRunning else { return }
+        VpnDomainLog.shared.applyConnections(prepared)
         let activeConnections = conns.count
 
         // Root totals survive closed connections; summing the live array

@@ -528,7 +528,18 @@ final class VpnDomainLog: ObservableObject {
     }
 
     func updateConnections(_ snapshot: [[String: Any]]) {
-        let next = snapshot.compactMap { item -> VpnDomainConnection? in
+        // The mapping itself is pure (string reads, `JSONCoerce`, one sort), so
+        // it can run off the main actor: `/connections` is 0.1–2 MB of JSON and
+        // this runs every 2 s while any window is visible. Callers on the main
+        // actor pass `prepared` instead of `snapshot`.
+        let next = Self.preparedConnections(snapshot)
+        applyConnections(next)
+    }
+
+    /// The pure half of `updateConnections` — sees an already-decoded JSON
+    /// array and produces the rows, with no main-actor state touched.
+    nonisolated static func preparedConnections(_ snapshot: [[String: Any]]) -> [VpnDomainConnection] {
+        snapshot.compactMap { item -> VpnDomainConnection? in
             guard let id = item["id"] as? String,
                   let metadata = item["metadata"] as? [String: Any] else { return nil }
             let host = metadata["host"] as? String ?? ""
@@ -549,6 +560,9 @@ final class VpnDomainLog: ObservableObject {
                 upload: max(0, JSONCoerce.int64Val(item["upload"])),
                 download: max(0, JSONCoerce.int64Val(item["download"])))
         }.sorted { $0.id < $1.id }
+    }
+
+    func applyConnections(_ next: [VpnDomainConnection]) {
         trafficAccumulator.sample(next)
         proxiedTraffic = trafficAccumulator.totals
         trafficByHost = trafficAccumulator.byHost
