@@ -208,7 +208,9 @@
   "summary": "价格核对把 6 个厂商页的 HTML 解析（最多 ~1.8 MB、618 个 <table>）同步跑在 @MainActor 上，主线程被正则/字符串处理阻塞",
   "evidence": "类声明是 `@MainActor final class ModelPriceCatalog`（ModelPriceCatalog.swift:42-43），`func check(autoApply: Bool) async`（:276）因此整体在主 actor 上。厂商循环里 `let html = try await ModelPriceSources.fetchPage(vendor.url)`（:301）确实在 await 点让出，但下一行 `let rows = vendor.parse(html)`（:302）是同步调用（Vendor.parse 是 @Sendable 闭包，仍按调用者 actor 执行），全部解析落在主线程。对照：models.dev 的 JSON 解析发生在 nonisolated 的 static async `fetchModelsDev()` 内的 JSONSerialization 与 rowsFromModelsDev（ModelPriceSources.swift:202-205），是离主线程的。解析量按 fixture 实测（Tests/fixtures/price-pages/，python 复刻同一套正则）：aliyun 1,797,417 字符 / 618 个 table / 15,810 个单元格，glm 924,395 字符 / 713 单元格，stepfun 849,359 字符；`tables(in:)`（ModelPriceSources.swift:259-271）对每个单元格调 `flatten()`（:281-291，9 次 regex/replace），parseAliyun 再对整页做一次 flatten（:548）。",
   "failure": "用户在设置页点「查询更新」（或首次启动时周更门到点）→ 6 个厂商页依次在 main actor 上做数十至数百毫秒的解析，`isChecking` 置位后 UI 无法绘制 spinner，设置窗口与菜单栏整段冻结（估算 0.3–1 s+，随页面规模线性增长）；每一次周更都会复现。",
-  "fix": "把解析移出主 actor：`let rows = await Task.detached { vendor.parse(html) }.value`（Vendor.parse 已是 @Sendable，无需改签名），或把整个厂商循环抽成 nonisolated static helper，只在回到主 actor 时赋值 report/candidates。"
+  "fix": "把解析移出主 actor：`let rows = await Task.detached { vendor.parse(html) }.value`（Vendor.parse 已是 @Sendable，无需改签名），或把整个厂商循环抽成 nonisolated static helper，只在回到主 actor 时赋值 report/candidates。",
+  "status": "fixed",
+  "verdict_note": "be8f136 detached parse (180 ms over six pages)"
  },
  {
   "category": "dead-code",
@@ -362,7 +364,9 @@
   "summary": "The /connections JSON (0.1-2 MB, hundreds of entries) is parsed with JSONSerialization on the main actor every poll (2 s while any window is visible), then mapped and sorted on main — while the file does exactly this off-main for /proxies.",
   "evidence": "`api` (line 879) is actor-isolated (VpnManager is @MainActor, line 104), so line 889 `return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]` runs on the main actor. `pollConnections` (line 1382) is called from `pollTask`, a `Task {}` inside the @MainActor `startPolling`, so `VpnDomainLog.shared.updateConnections(conns)` (line 1386) and its per-connection dictionary mapping + `sorted { $0.id < $1.id }` (VpnDomainLog.swift:530-551) also run on main. Contrast: `refreshProxies` deliberately moves the identical shape of work off-main — lines 909-913 hop `Self.parseProxyTree(root)` onto `DispatchQueue.global(qos: .userInitiated)`. Cadence: every 2 s with a visible window, or 10 s hidden (line 1136).",
   "failure": "Browsing Mac with 300-1500 live connections: each poll pays ~5-30 ms of JSONSerialization plus ~1-10 ms of mapping/sort on the main thread. The 流量/VPN page is scrolled *while* this fires, so every 2 s a scroll frame is dropped — the exact hitch class the launch path (`lsof`) and `refreshProxies` were already moved off-main to avoid.",
-  "fix": "Parse off-main the same way as `parseProxyTree`: have `api` hand the raw `Data` to a `nonisolated static` parse helper executed via `withCheckedContinuation` + `DispatchQueue.global(qos: .userInitiated)` (or move `updateConnections`' mapping into that same nonisolated pass so only the finished `[VpnDomainConnection]` crosses back)."
+  "fix": "Parse off-main the same way as `parseProxyTree`: have `api` hand the raw `Data` to a `nonisolated static` parse helper executed via `withCheckedContinuation` + `DispatchQueue.global(qos: .userInitiated)` (or move `updateConnections`' mapping into that same nonisolated pass so only the finished `[VpnDomainConnection]` crosses back).",
+  "status": "fixed",
+  "verdict_note": "78b5094 /connections mapping off-main; 9951312 relaunch cancel; 475c808 rate clamp"
  },
  {
   "category": "state",
@@ -428,7 +432,9 @@
   "evidence": "MainWindowView.swift:118-127: `private func route(_ request: ProviderStore.NavigationRequest) { let destination = request.destination; providerStore.clearNavigation(request); switch destination { case .page(let page): navigate(to: page); case .editor(let page): editorRequest = page; navigate(to: page) } }`; subscription :89-91 `.onReceive(providerStore.$navigationRequest.compactMap { $0 }) { request in route(request) }`. ProviderStore.swift:205-208 `func clearNavigation(_ taken: NavigationRequest) { guard navigationRequest == taken else { return }; navigationRequest = nil }`; ProviderStore.swift:196-199 `requestNavigation` sets `navigationRequest` from the chain that ends in route(), i.e. while the publisher's willSet is still delivering - @Published emits in willSet, so the synchronous .onReceive sees both writes. Re-entrancy path: the second route() calls `onNavigate(page)` (MainWindowController.swift:153-155 closure writes lastPage), then navigate() writes `selectedPage`; ConsumersView above: ProvidersView.swift:24 `@Binding var editorRequest: AppPage?`, :71-75 and :76-82 open the sheet whenever it equals .providers then nil it.",
   "failure": "Popup 管理模型 posts .showMainWindow(page: .providers, editor: true): first route() sets editorRequest=.providers, ProvidersView consumes and nils it, then the clear emission reaches the live view and sets it again - the provider editor sheet re-opens unprompted on the next visit to 模型 (or immediately after dismissal). Every request also calls navigate(to:) twice, running the withAnimation(Theme.Motion.page) transition twice.",
   "fix": "Do not mutate the publisher inside its own delivery: defer `providerStore.clearNavigation(request)` with DispatchQueue.main.async and guard route() against re-entry (e.g. a routing flag keyed by request token).",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "ef0091e deferred clearNavigation (Combine willSet)"
  },
  {
   "category": "perf-cpu",
@@ -440,7 +446,9 @@
   "line": 49,
   "severity": "high",
   "summary": "350ms debounce 的整篇 Markdown 解析只为源码编辑器左侧目录服务，但草稿只要还在（无论面板显示什么）就一直跑，草稿存盘后 activeDraftID 不清空所以永不停止。",
-  "symbol": "FeishuDocumentsView.body.task(id: store.activeDraft?.text)"
+  "symbol": "FeishuDocumentsView.body.task(id: store.activeDraft?.text)",
+  "status": "fixed",
+  "verdict_note": "39183b4 outline task keyed on pane visibility"
  },
  {
   "category": "perf-frame",
@@ -834,7 +842,9 @@
   "summary": "navigationRequest 在 willSet 投递时被清除，guard 永远失败，被路由过的请求留在 store 上，下次窗口重建时重放",
   "evidence": "MainWindowView.swift:89-91 `.onReceive(providerStore.$navigationRequest.compactMap { $0 }) { request in route(request) }`；route 同步调用 `providerStore.clearNavigation(request)`（:120）。`clearNavigation` 的定义是 `guard navigationRequest == taken else { return }`（ProviderStore.swift:205-207），而 `@Published` 在 willSet 里投递：payload 是新值、属性仍hold旧值——仓库自己两处写明这一点（TrafficView.swift:410-411 “`$live` emits in `willSet`, when the property still holds the previous batch”；ProxyLogView.swift:97 “@Published emits before assignment”）。因此 onReceive 回调里 `providerStore.navigationRequest` 还是上一个请求（或 nil），`nil/old == taken` 不成立，clear 直接 return，请求在赋值落地后永久留在 store 里。ProviderStore.swift:203-204 的注释恰恰承诺 “a later reopen (or a revisit of the page) cannot replay it”。",
   "failure": "点击 popup「管理模型」（`.editor(.providers)`）→ 请求被路由但没被清除 → 用户切到别的页并关闭主窗口 → 从 Dock 图标或 popup「打开主窗口」重开（`showWindow()`，不带目的地）→ `MainWindowController.installContent` 新建 NSHostingView，`@Published` 把陈旧请求重放给新订阅者 → 窗口跳到「模型」页并且 ProvidersView 的 provider 编辑弹窗自行弹出；纯 `.page` 请求（帮助/VPN）则让重开落到上次中继的页而不是 `lastPage` 记住的页。",
-  "fix": "把清除延迟到赋值落地之后，与该仓库对 willSet 的既有处理一致：在 route 里改为 `DispatchQueue.main.async { providerStore.clearNavigation(request) }`（若期间来了更新的请求，相等 guard 会正确拒绝清除）；或把 clearNavigation 改为按 token 比较。"
+  "fix": "把清除延迟到赋值落地之后，与该仓库对 willSet 的既有处理一致：在 route 里改为 `DispatchQueue.main.async { providerStore.clearNavigation(request) }`（若期间来了更新的请求，相等 guard 会正确拒绝清除）；或把 clearNavigation 改为按 token 比较。",
+  "status": "fixed",
+  "verdict_note": "ef0091e deferred clearNavigation (Combine willSet)"
  },
  {
   "category": "perf-io",
@@ -1463,7 +1473,9 @@
   "summary": "批量应用逐个候选写盘：每行一次 record→commit→全量 JSON 编码 + 原子写 + 全应用通知，首轮约 77 行 = 约 77 次写盘/通知",
   "evidence": ":389 `for candidate in candidates where !candidate.isUnchanged { apply(candidate) }`；`apply`（:414-420）调 `record`，`record`（:249）调 `commit()`，`commit`（:455-459）post `.modelPriceDidChange` 并 `save()`→`saveMeta()`（:466-476）每次对整个 overrides 做 `JSONEncoder`（prettyPrinted+sortedKeys）再 `try? data.write(to: file, options: .atomic)`；check 的 autoApply 分支（:323-333）走同一条路。行数量级：用 fixture 复刻解析，models.dev 产出 58 行，六个厂商页合计 82 行（glm 26 / stepfun 10 / minimax 8 / aliyun 30 / kimi 4 / deepseek 4），内置表只认识 63 个 slug，所以首次「查询更新」或「全部应用」会 apply ≈77 行。ProviderStore 的观察者（ProviderStore.swift:1266-1270）在每次 post 上跑 `refreshUsage(rescan: false)`。",
   "failure": "首次批量应用 → 约 77 次完整 JSON 编码 + 77 次原子写（每次重建约 20 KB 文件，含临时文件 rename）+ 77 次主线程通知，而只需 1 次；设置页在写入期间长时间卡在 isChecking 之后的落盘上，SSD 写入被无谓放大。",
-  "fix": "给 `record` 增加一个「不提交」的内部参数（或在 Catalog 内直接改 `overrides` 后收集结果），在 `applyAllCandidates` 与 `check(autoApply:)` 循环结束后统一调用一次 `commit()`，把通知移到循环外。"
+  "fix": "给 `record` 增加一个「不提交」的内部参数（或在 Catalog 内直接改 `overrides` 后收集结果），在 `applyAllCandidates` 与 `check(autoApply:)` 循环结束后统一调用一次 `commit()`，把通知移到循环外。",
+  "status": "fixed",
+  "verdict_note": "be8f136 detached parse (180 ms over six pages)"
  },
  {
   "category": "robustness",
@@ -3023,7 +3035,9 @@
   "summary": "「查询更新」与启动时的自动核查把全部厂商页面的正则解析放在主 actor 上同步执行，主线程在解析期间被占满（入口是 ModelPriceCard.swift:66-69 的按钮）。",
   "evidence": "ModelPriceCatalog.swift:42 `@MainActor final class ModelPriceCatalog`，276 行 `func check(autoApply: Bool) async`，302 行 `let rows = vendor.parse(html)` 在循环里同步调用；`Vendor.parse` 是 `@Sendable (String) -> [ParsedRow]`（ModelPriceSources.swift:42），非 async，因此直接在当前执行器即主线程上跑。它内部是 `tables(in:)` / `flatten` / `allMatches`（ModelPriceSources.swift:259-301）：每个 `<td>` 都做一次 flatten（2 次正则替换 + 7 次字面量替换 + 1 次空白正则），GLM/StepFun/Aliyun 三页各含大量表格行。Tests/fixtures/price-pages/ 里这 6 个页面的 gzip 体积为 6 KB–204 KB（解压后更大），一次 check 要把全部页面文本+所有单元格字符串在主线程序列化处理。",
   "failure": "点「查询更新」（或启动后 autoCheckIfStale 走同一路径）→ 网络返回后，主线程被数百 KB–数 MB HTML 的多轮正则解析占住：设置页滚动/打字掉帧，常驻的岛与弹窗（同一 main run loop）一并卡顿；按钮上的进度圈在这段里不再动。",
-  "fix": "把解析挪出主线程：`let rows = await Task.detached { vendor.parse(html) }.value`（闭包已是 @Sendable，Vendor 仅含 String/@Sendable 成员），或把 tables/flatten/allMatches 标成 nonisolated 并在 detached task 中调用；`candidate(from:)` 的 resolve 留在主 actor 无妨。"
+  "fix": "把解析挪出主线程：`let rows = await Task.detached { vendor.parse(html) }.value`（闭包已是 @Sendable，Vendor 仅含 String/@Sendable 成员），或把 tables/flatten/allMatches 标成 nonisolated 并在 detached task 中调用；`candidate(from:)` 的 resolve 留在主 actor 无妨。",
+  "status": "fixed",
+  "verdict_note": "be8f136 detached parse (180 ms over six pages)"
  },
  {
   "category": "compat",
