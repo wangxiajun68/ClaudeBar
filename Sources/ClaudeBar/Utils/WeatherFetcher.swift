@@ -615,7 +615,16 @@ enum DomesticWeatherParser {
         let weatherText = (dataSK["weather"] as? String) ?? ""
 
         let days = cnForecastDays(forecast)
-        let today = days.first
+        // The cell whose own date is today in Asia/Shanghai, not `days.first`.
+        // The source's first cell keeps `fj: "今天"` from the previous day's
+        // refresh until it recomputes a few hours after midnight — measured
+        // 2026-10-06 02:10 Asia/Shanghai on four cities: `dataSK.date` read
+        // "10月06日(星期二)" while `fc.f[0]` was still `(fi: "10/5", fj: "今天")`.
+        // Reading it as today put yesterday's high/low on the card in the small
+        // hours. Same rule, and the same reason, as the 高德 path above.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? calendar.timeZone
+        let today = days.first { calendar.isDate($0.date, inSameDayAs: Date()) } ?? days.first
         // `rain` is millimetres of precipitation, not a probability — a live
         // reading carries "0" on a dry hour and "2.7" in a shower, so the old
         // `rain * 100` painted a 3 mm hour as 270 % and the umbrella at 100 %.

@@ -143,9 +143,17 @@ source += r'''
         let dataSK: [String: Any] = ["cityname": "上海", "temp": "25.4", "sd": "68", "SD": "68%",
                                      "WD": "北风", "WS": "1级", "weather": "阴",
                                      "weathercode": "d02", "rain": "0"]
+        // 中国天气网 dates its cells "M/d" in Asia/Shanghai, so the fixture is
+        // dated off *today in that zone* — a hard-coded date picks tomorrow's
+        // cell (or yesterday's) depending on when the suite runs. The helper
+        // mirrors `cnDay`, which the 高德 block above already uses.
+        let cnShort: (Int) -> String = { offset in
+            let parts = cnDay(offset).split(separator: "-")
+            return "\(Int(parts[1])!)/\(Int(parts[2])!)"
+        }
         let fc: [String: Any] = ["f": [
-            ["fa": "d7", "fb": "n7", "fc": "26", "fd": "23", "fe": "东风", "fi": "9/29", "fj": "今天"],
-            ["fa": "d00", "fb": "n00", "fc": "27", "fd": "22", "fe": "东北风", "fi": "9/30", "fj": "星期三"]]]
+            ["fa": "d7", "fb": "n7", "fc": "26", "fd": "23", "fe": "东风", "fi": cnShort(0), "fj": "今天"],
+            ["fa": "d00", "fb": "n00", "fc": "27", "fd": "22", "fe": "东北风", "fi": cnShort(1), "fj": "星期三"]]]
         let cn = DomesticWeatherParser.reading(dataSK: dataSK, forecast: fc)!
         precondition(cn.temperatureC == 25.4 && cn.humidity == 68 && cn.sky == .cloudy)
         precondition(cn.forecast.count == 2 && cn.forecast[0].sky == .drizzle && cn.forecast[1].sky == .clear)
@@ -167,6 +175,20 @@ source += r'''
         precondition(wet.rainChance == DomesticWeatherParser.rainChance(fromText: "小雨"))
         precondition(wet.rainChance == 35)
         precondition(cn.rainChance == 0)
+
+        // The first cell is not always today. Measured 2026-10-06 02:10
+        // Asia/Shanghai on four cities: `dataSK.date` read "10月06日(星期二)"
+        // while `fc.f[0]` was still (fi "10/5", fj "今天") — the source had not
+        // recomputed since midnight. Taking `days.first` put yesterday's
+        // high/low on the card for the first hours of the day; the cell's own
+        // date decides, in the same Asia/Shanghai calendar the 高德 path uses.
+        let staleFirstCell: [String: Any] = ["f": [
+            ["fa": "d7", "fb": "n7", "fc": "18", "fd": "12", "fe": "东风", "fi": cnShort(-1), "fj": "今天"],
+            ["fa": "d00", "fb": "n00", "fc": "27", "fd": "22", "fe": "东北风", "fi": cnShort(0), "fj": "星期三"]]]
+        let stale = DomesticWeatherParser.reading(dataSK: dataSK, forecast: staleFirstCell)!
+        precondition(stale.highC == 27 && stale.lowC == 22,
+                     "the cell dated today must supply high/low, not the stale first cell; got \(stale.highC)/\(stale.lowC)")
+        precondition(stale.forecast.count == 2, "a stale first cell still lists both days")
         let noPercent: [String: Any] = ["cityname": "上海", "temp": "25", "SD": "68%", "weathercode": "d02"]
         precondition(DomesticWeatherParser.reading(dataSK: noPercent, forecast: nil)!.humidity == 68)
         let script = #"var dataSK ={"temp":"25"};var fc ={"f":[{"fa":"d7","fb":"n7"}]};var alarmDZ ={"w":[]};"#

@@ -843,7 +843,9 @@
   "line": 49,
   "severity": "high",
   "summary": "中国天气网路径把 fc.f[0]（上次运行留下的「今天」单元格）当作当天高低温，卡片在凌晨 0 点后的头几个小时显示昨天的预报",
-  "symbol": "WeatherCNFetcher.reading(cityID:)"
+  "symbol": "WeatherCNFetcher.reading(cityID:)",
+  "status": "fixed",
+  "verdict_note": "`DomesticWeatherParser.reading` now picks the cell whose own date is today in Asia/Shanghai (the same rule as the 高德 path), falling back to `days.first` only when no cell is dated today. Verified with a fixture whose first cell is dated yesterday while the second is today: high/low come from the second (27/22, not 18/12). The fixture dates are now derived from today-in-Shanghai instead of the hard-coded 9/29, so the suite cannot silently assert a different day depending on when it runs."
  },
  {
   "category": "state",
@@ -5964,7 +5966,9 @@
   "summary": "中国天气网的预报日期只用「当前年」拼 M/d，跨年的那几天会被解析成过去一年，丝带的星期标签整体错一年。",
   "evidence": "WeatherCNFetcher.swift:48 `let forecast = DomesticWeatherParser.jsonVariable(\"fc\", in: text)` 直接把 fc 交给 `cnForecastDays`；WeatherFetcher.swift:648-677：`let year = calendar.component(.year, from: Date())` → `cnDate(entry[\"fi\"] as? String, year: year, ...)`，而 cnDate（667-677）只取月/日再套 year。实况响应里 fc 的 `fi` 是 \"10/6\" 这种无年份的文本（本机 curl http://d1.weather.com.cn/weather_index/101010100.html 实测）。星期文本由 GreetingInstruments.swift:334-338 的 `weekday(_:index:)` 用解析出的 Date 现算，index>0 的格子不做任何跨年修正。",
   "failure": "时序：12/30 前后取数 → 源给出的 \"1/1\"、\"1/2\" 被解析成去年 1/1、1/2（远在过去）→ 预报丝带上这些格子显示的星期与真实日期不符（错一整年的星期），高/低温取自 `days.first` 所以数字仍对，只有标签错。",
-  "fix": "在 cnDate 里做单向跨年推断：解析出的日期若早于 now 超过约 180 天，则 `components.year = year + 1`（滚动预报不会给出 180 天前的格子）；或改读 fc 自带的 `fj`（\"今天\"/\"星期X\"）做序号校准。"
+  "fix": "在 cnDate 里做单向跨年推断：解析出的日期若早于 now 超过约 180 天，则 `components.year = year + 1`（滚动预报不会给出 180 天前的格子）；或改读 fc 自带的 `fj`（\"今天\"/\"星期X\"）做序号校准。",
+  "status": "fixed",
+  "verdict_note": "`DomesticWeatherParser.reading` now picks the cell whose own date is today in Asia/Shanghai (the same rule as the 高德 path), falling back to `days.first` only when no cell is dated today. Verified with a fixture whose first cell is dated yesterday while the second is today: high/low come from the second (27/22, not 18/12). The fixture dates are now derived from today-in-Shanghai instead of the hard-coded 9/29, so the suite cannot silently assert a different day depending on when it runs."
  },
  {
   "category": "compat",
@@ -5975,7 +5979,9 @@
   "summary": "中国天气网请求走明文 http://，而同一 URL 的 https 实测可用（带 Referer 返回 200）；明文响应可被中间人改写。",
   "evidence": "32 行: `guard let url = URL(string: \"http://d1.weather.com.cn/weather_index/\\(cityID).html\")`。本机实测（read-only curl，带 `Referer: http://www.weather.com.cn/` + UA）：`https://d1.weather.com.cn/weather_index/101010100.html` → 200，与 http 同码；响应头无 Content-Encoding，代码注释里依赖的 `identity` 与 403 行为在 https 下一致。ATS 侧因为 build.sh:340-343 的 `NSAllowsArbitraryLoads=true` 而不拦 http。",
   "failure": "环境：用户所在网络（公共 Wi-Fi、运营商劫持层）可注入响应体 → 解析出的 dataSK/fc 是被篡改的温湿度与天气码，卡片与语音播报照常显示；解析器只用 brace matching，注入的 `var dataSK ={...}` 会被当成合法数据。",
-  "fix": "把 scheme 改为 https（实测同 Referer/UA 下返回 200）。若担心服务的证书链问题，保留 http 作为失败回退并在注释说明。"
+  "fix": "把 scheme 改为 https（实测同 Referer/UA 下返回 200）。若担心服务的证书链问题，保留 http 作为失败回退并在注释说明。",
+  "status": "fixed",
+  "verdict_note": "`DomesticWeatherParser.reading` now picks the cell whose own date is today in Asia/Shanghai (the same rule as the 高德 path), falling back to `days.first` only when no cell is dated today. Verified with a fixture whose first cell is dated yesterday while the second is today: high/low come from the second (27/22, not 18/12). The fixture dates are now derived from today-in-Shanghai instead of the hard-coded 9/29, so the suite cannot silently assert a different day depending on when it runs."
  },
  {
   "category": "dead-code",
@@ -7880,7 +7886,9 @@
   "line": 32,
   "severity": "low",
   "summary": "端点以明文 http:// 请求，而同一 URL 的 https 实测可用，平白让每次天气刷新多一次 ATS 例外与明文抓取（含 UA/Referer）",
-  "symbol": "WeatherCNFetcher.reading(cityID:)"
+  "symbol": "WeatherCNFetcher.reading(cityID:)",
+  "status": "fixed",
+  "verdict_note": "`DomesticWeatherParser.reading` now picks the cell whose own date is today in Asia/Shanghai (the same rule as the 高德 path), falling back to `days.first` only when no cell is dated today. Verified with a fixture whose first cell is dated yesterday while the second is today: high/low come from the second (27/22, not 18/12). The fixture dates are now derived from today-in-Shanghai instead of the hard-coded 9/29, so the suite cannot silently assert a different day depending on when it runs."
  },
  {
   "category": "robustness",
@@ -7892,7 +7900,9 @@
   "line": 46,
   "severity": "low",
   "summary": "响应用 String(decoding:as: UTF8.self) 无条件按 UTF-8 解，若 CDN 或中间设备给的是 GBK 体，中文全部变成 U+FFFD 并被当成功返回",
-  "symbol": "WeatherCNFetcher.reading(cityID:)"
+  "symbol": "WeatherCNFetcher.reading(cityID:)",
+  "status": "fixed",
+  "verdict_note": "`DomesticWeatherParser.reading` now picks the cell whose own date is today in Asia/Shanghai (the same rule as the 高德 path), falling back to `days.first` only when no cell is dated today. Verified with a fixture whose first cell is dated yesterday while the second is today: high/low come from the second (27/22, not 18/12). The fixture dates are now derived from today-in-Shanghai instead of the hard-coded 9/29, so the suite cannot silently assert a different day depending on when it runs."
  },
  {
   "category": "dead-code",
