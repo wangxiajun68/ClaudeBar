@@ -87,6 +87,14 @@ final class ScreenshotHotKey: ObservableObject {
     }
 
     func register() {
+        // The event tap and the exclusive Carbon registration are persistent
+        // system state: while they live, ⌘⇧A is swallowed in every app on the
+        // machine. The overlay they would call refuses to run in a build that
+        // must not raise the screen-recording prompt
+        // (`ScreenshotOverlay.run`), so registering here would hijack the
+        // shortcut and only beep. The toggle still records the intent; the
+        // registration is the side effect this build must not reach.
+        guard BuildChannel.promptsForSystemPermissions else { return }
         unregister()
         installHandlerIfNeeded()
         installTap()

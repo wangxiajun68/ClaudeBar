@@ -248,4 +248,13 @@ assert 'pkill' not in build and 'killall' not in build
 manager = (root / 'Sources/ClaudeBar/Utils/VpnManager.swift').read_text()
 start = manager[manager.index('    func startCore() {'):]
 assert start.index('guard BuildChannel.allowsSystemIntegration') < start.index('Self.reapOrphanCore()')
-print('PASS: safe build defaults, channel validation, packaging constraints, VPN launch guard')
+# The dev restriction has to sit at the side effect, not at a UI switch: the
+# ⌘⇧A tap and Carbon registration are persistent system state (they swallow
+# the combo in every app), and the overlay behind them refuses to run without
+# the screen-recording grant. If `register()` ever runs before that guard
+# again, a dev build reclaims ⌘⇧A globally and only beeps.
+hotkey = (root / 'Sources/ClaudeBar/Utils/ScreenshotHotKey.swift').read_text()
+register = hotkey[hotkey.index('    func register() {'):hotkey.index('    func unregister() {')]
+assert register.index('guard BuildChannel.promptsForSystemPermissions') < register.index('installTap()'), \
+    'the screenshot hotkey must be gated before installing the tap'
+print('PASS: safe build defaults, channel validation, packaging constraints, VPN launch and hotkey registration guards')
