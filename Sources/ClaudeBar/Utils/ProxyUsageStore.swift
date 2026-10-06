@@ -11,8 +11,9 @@ import SQLite3
 /// that third source, so the usage ring's third-party slice is a real token
 /// share rather than a guess from a truncated list.
 ///
-/// Backends mirror `UsageIndex`: SQLite when 存储 → SQLite is on, JSONL
-/// otherwise. Never migrated between them.
+/// Storage is SQLite (`proxy-usage.db`). A JSONL backend lived here until the
+/// settings switch that selected it was removed; it is gone rather than kept
+/// as an unreachable branch.
 final class ProxyUsageStore {
     static let shared = ProxyUsageStore()
     static let didChange = Notification.Name("ClaudeBar.proxyUsageDidChange")
@@ -35,9 +36,11 @@ final class ProxyUsageStore {
 
     private let lock = NSLock()
     private var db: OpaquePointer?
-    private var openFailed = false
-    private var rows: [String: Row] = [:]
-    private var loaded = false
+    /// When the last `sqlite3_open_v2` failed; retried after a cooldown so a
+    /// transient failure (disk full, a lock held by a crashed sibling) does
+    /// not disable the rollup for the rest of the process.
+    private var openFailedAt: Date?
+    private static let openRetryInterval: TimeInterval = 5
 
     private static let dbURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -45,9 +48,6 @@ final class ProxyUsageStore {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("proxy-usage.db")
     }()
-
-    private var useDatabase: Bool { DiskPersistence.useDatabase }
-    private var jsonURL: URL { FilePaths.logsDir.appendingPathComponent("usage-third-party.jsonl") }
 
     /// `SQLITE_TRANSIENT` equivalent — the constant in `UsageIndex.swift` is
     /// module-wide, but naming it here keeps this file independent of that
@@ -66,24 +66,11 @@ final class ProxyUsageStore {
         let day = ModelPricing.dayKey(date)
         guard input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0 else { return }
         lock.lock()
-        defer { lock.unlock() }
-        if useDatabase {
-            guard let db = connectionLocked() else { return }
+        if let db = connectionLocked() {
             upsertSQL(db, day: day, model: name, input: input, output: output,
                       cacheRead: cacheRead, cacheWrite: cacheWrite)
-        } else {
-            loadJSONLocked()
-            var row = rows[Self.key(day, name)] ?? Row(day: day, model: name, calls: 0,
-                                                       input: 0, output: 0, cacheRead: 0,
-                                                       cacheWrite: 0)
-            row.calls += 1
-            row.input += input
-            row.output += output
-            row.cacheRead += cacheRead
-            row.cacheWrite += cacheWrite
-            rows[Self.key(day, name)] = row
-            persistJSONLocked()
         }
+        lock.unlock()
         // Transcript watchers cannot see third-party requests. Refresh the
         // cached usage snapshot when this independent rollup advances.
         DispatchQueue.main.async {
@@ -135,10 +122,6 @@ final class ProxyUsageStore {
     private func allRows(startDay: String, endDay: String) -> [Row] {
         lock.lock()
         defer { lock.unlock() }
-        if !useDatabase {
-            loadJSONLocked()
-            return rows.values.filter { $0.day >= startDay && $0.day <= endDay }
-        }
         guard let db = connectionLocked() else { return [] }
         var stmt: OpaquePointer?
         // The table is WITHOUT ROWID with `PRIMARY KEY (day, model)`, so this
@@ -168,7 +151,8 @@ final class ProxyUsageStore {
         return out
     }
 
-    /// Drop everything (used when the persistence backend switches).
+    /// Close SQLite (if open). Used by the regression harness between
+    /// scenarios; production has no backend to switch any more.
     func reset() {
         lock.lock()
         defer { lock.unlock() }
@@ -177,27 +161,26 @@ final class ProxyUsageStore {
             sqlite3_close(handle)
             db = nil
         }
-        openFailed = false
-        rows = [:]
-        loaded = false
+        openFailedAt = nil
     }
 
     // MARK: - SQLite
 
     private func connectionLocked() -> OpaquePointer? {
         if let db { return db }
-        if openFailed { return nil }
+        if let failedAt = openFailedAt, Date().timeIntervalSince(failedAt) < Self.openRetryInterval { return nil }
         guard sqlite3_open_v2(Self.dbURL.path, &db,
                               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
                               nil) == SQLITE_OK, let handle = db else {
             // `open_v2` hands back a handle even when it fails, and that
             // handle keeps the file lock. Clear it, or the next call returns
-            // it before `openFailed` is ever consulted.
+            // it before the cooldown is consulted.
             sqlite3_close(db)
             db = nil
-            openFailed = true
+            openFailedAt = Date()
             return nil
         }
+        openFailedAt = nil
         sqlite3_exec(handle, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-500", nil, nil, nil)
         sqlite3_busy_timeout(handle, 2000)
         sqlite3_exec(handle, """
@@ -274,79 +257,5 @@ final class ProxyUsageStore {
         sqlite3_finalize(stmt)
     }
 
-    // MARK: - JSON backend
-
-    /// The JSON backend's migration marker: `usage-third-party.jsonl` has no
-    /// `PRAGMA user_version` to carry one, and the repair below must run once,
-    /// not on every launch.
-    private var jsonMigratedURL: URL {
-        FilePaths.logsDir.appendingPathComponent("usage-third-party.v1")
-    }
-
-    private func loadJSONLocked() {
-        guard !loaded else { return }
-        loaded = true
-        if let data = try? Data(contentsOf: jsonURL),
-           let text = String(data: data, encoding: .utf8) {
-            let dec = JSONDecoder()
-            for line in text.split(whereSeparator: \.isNewline) {
-                guard let row = try? dec.decode(JSONRow.self, from: Data(line.utf8)) else { continue }
-                rows[Self.key(row.day, row.model)] = Row(day: row.day, model: row.model,
-                                                         calls: row.calls, input: row.input,
-                                                         output: row.output,
-                                                         cacheRead: row.cacheRead,
-                                                         cacheWrite: row.cacheWrite ?? 0)
-            }
-        }
-        // Unconditionally — including when there was no file at all. A fresh
-        // install has nothing to repair, but it must still leave the marker
-        // behind, or the first launch *after* rows are written would subtract
-        // from rows this build already wrote correctly.
-        migrateJSONLocked()
-    }
-
-    /// Same repair as `migrateLocked`, for the JSONL backend. Writes once and
-    /// drops a marker beside the file, so a launch does not re-subtract.
-    private func migrateJSONLocked() {
-        guard !FileManager.default.fileExists(atPath: jsonMigratedURL.path) else { return }
-        for key in rows.keys {
-            guard var row = rows[key], row.cacheRead > 0 else { continue }
-            row.input = max(0, row.input - row.cacheRead)
-            rows[key] = row
-        }
-        persistJSONLocked()
-        try? Data().write(to: jsonMigratedURL, options: .atomic)
-    }
-
-    private struct JSONRow: Codable {
-        var day: String
-        var model: String
-        var calls: Int
-        var input: Int
-        var output: Int
-        var cacheRead: Int
-        /// Absent on every line written before the third-party rollup carried
-        /// a cache-write bucket.
-        var cacheWrite: Int?
-    }
-
-    private func persistJSONLocked() {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.sortedKeys]
-        var body = ""
-        for row in rows.values.sorted(by: { $0.day == $1.day ? $0.model < $1.model : $0.day < $1.day }) {
-            let jsonRow = JSONRow(day: row.day, model: row.model, calls: row.calls,
-                                  input: row.input, output: row.output,
-                                  cacheRead: row.cacheRead, cacheWrite: row.cacheWrite)
-            guard let data = try? enc.encode(jsonRow), let line = String(data: data, encoding: .utf8) else { continue }
-            body += line + "\n"
-        }
-        try? Data(body.utf8).write(to: jsonURL, options: .atomic)
-    }
-
     // MARK: - Helpers
-
-    private static func key(_ day: String, _ model: String) -> String {
-        day + "\u{1F}" + model
-    }
 }

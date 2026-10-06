@@ -38,9 +38,7 @@
 
 MCP stdio 发现的 semaphore 等待由 Dispatch 队列承接，调用任务通过 checked continuation 挂起。取消标记与进程启动/停止分别用短状态锁和进程锁保护；取消先唤醒 collector，再由独立队列停止本次发现的子进程。每条路径只恢复一次 continuation，保留逐请求预算、分页限制与禁止安装型运行器的边界。
 
-关闭 SQLite 时，`UsageJSONStore` 维护锁保护的路径到汇总键索引。会话替换/删除按该路径的键操作，单会话查询先匹配路径再聚合其记录；增量添加、载入迁移与 reset 同步维护索引。首次建索引有额外成本，文件格式及日期范围聚合规则保留。合成测量与限制见 [第二轮审查](../reviews/apple-performance-followup-2026-10-04.md)。
-
-JSON 日期查询维护日期到汇总键索引，日期成员变化时才重新排序。窄范围通过二分查找访问匹配日期，宽范围按行数选择扫描；索引增加内存和维护工作。`UsageIndex.fetchSessionFamilies` 将每个文件一次性路由到查询家族，Codex 用迭代父链与共享祖先链接复用归属，环共享查询结果，不为每个节点复制完整祖先集合。匹配的祖先及模型输出仍有成本；测量与边界见 [核心算法审查](../reviews/apple-core-algorithms-performance-2026-10-05.md)。
+日期查询由 SQLite 的范围索引完成，`rollup(day)` 上的索引把窄窗口查询收敛到索引扫描，宽窗口交给一次全表 `GROUP BY`；不再有 Swift 侧的日期到键索引。`UsageIndex.fetchSessionFamilies` 将每个文件一次性路由到查询家族，Codex 用迭代父链与共享祖先链接复用归属，环共享查询结果，不为每个节点复制完整祖先集合。匹配的祖先及模型输出仍有成本；测量与边界见 [核心算法审查](../reviews/apple-core-algorithms-performance-2026-10-05.md)。
 
 ## 滚动更新与布局
 

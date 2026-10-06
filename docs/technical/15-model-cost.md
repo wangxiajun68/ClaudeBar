@@ -57,7 +57,7 @@
 
 缓存写入单独给桶：Anthropic 形状报 `cache_creation_input_tokens`（或 `cache_write_tokens`），Responses 形状认 `input_tokens_details` 里的 `cache_write_tokens`；读取为零、写入非零的首轮请求也照样入账。
 
-DeepSeek 自己的文档就写明了这条等式：`prompt_tokens == prompt_cache_hit_tokens + prompt_cache_miss_tokens`。**旧版本把这个和 `cached_tokens` 一起原样存了**，于是命中那部分既按 `input` 全价算了一次、又按 `cacheRead` 折价算了一次，`totalTokens` 也把它加了两次。第三方 rollup（`proxy-usage.db`）里修前的行走过一次 `input -= cache_read` 的迁移（`user_version = 1`），JSONL 后端同理（`usage-third-party.v1` 标记文件）。`Tests/proxy-usage-regressions.py` 锁定这些形状。
+DeepSeek 自己的文档就写明了这条等式：`prompt_tokens == prompt_cache_hit_tokens + prompt_cache_miss_tokens`。**旧版本把这个和 `cached_tokens` 一起原样存了**，于是命中那部分既按 `input` 全价算了一次、又按 `cacheRead` 折价算了一次，`totalTokens` 也把它加了两次。第三方 rollup（`proxy-usage.db`）里修前的行走过一次 `input -= cache_read` 的迁移（`user_version = 1`）。`Tests/proxy-usage-regressions.py` 锁定这些形状。
 
 ### 厂商的桶各不相同，按三条规则映射
 

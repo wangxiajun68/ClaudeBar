@@ -42,9 +42,10 @@ enum UsageClaims {
     private static var owners: [String: Set<String>] = [:]
     private static var loaded = false
 
-    /// `UsageIndex`'s SQLite path holds its own lock across a whole pass, but
-    /// the JSON path runs without it — `UsageJSONStore` carries its own — so
-    /// the ledger needs one of its own to keep two passes off each other.
+    /// `UsageIndex`'s SQLite path holds its own lock across a whole pass, and
+    /// this ledger is read/reclaimed from more than one call site inside it
+    /// (`begin` at the top, `flush` at the end, `owned(by:)` during the walk),
+    /// so it needs one of its own.
     private static let lock = NSLock()
 
     /// Written by the next `flush()`.
@@ -53,8 +54,8 @@ enum UsageClaims {
     private static var lines = 0
 
     /// Forget the in-memory state so the next pass re-reads the file. Called
-    /// from `UsageIndex.reloadPersistence`, where the backend may also have
-    /// been switched.
+    /// from `UsageIndex.reloadPersistence` (the regression harness's reset
+    /// between scenarios) and from the claims-ledger phase of the same suite.
     static func reset() {
         lock.lock(); defer { lock.unlock() }
         ledger = [:]

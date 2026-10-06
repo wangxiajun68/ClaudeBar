@@ -257,7 +257,7 @@ enum HelpCatalog {
                 .bullets([
                     "「设置 → 本地代理 → 第三方接入 → 记录第三方流量」管的是非 CC / Codex 客户端发来的请求",
                     "CC / Codex 自己的请求在「模型」页编辑对应供应商，打开「记录请求报文」",
-                    "抓包数据落在 `~/Library/Application Support/ClaudeBar/logs/`（数据库存储打开时进库，否则写 JSONL）",
+                    "抓包数据落在 `~/Library/Application Support/ClaudeBar/logs/`（媒体文件）与 `proxy-capture.db`（请求正文）",
                 ]),
                 .para("抓包很大时可以随时关掉抓包——关掉不影响转发。"),
             ],

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production family routing and JSON range queries, synthetic/temporary data only."""
+"""Production family routing, synthetic/temporary data only."""
 from pathlib import Path
 import argparse
 import json
@@ -37,14 +37,7 @@ else:
 models = (root / 'Sources/ClaudeBar/Models/ModelUsage.swift').read_text()
 swift = 'import Foundation\nimport Darwin\nenum UsageSource { case claude, codex, thirdParty }\n'
 swift += '\n'.join(declaration(models, m) for m in ['struct ModelUsage', 'struct DayUsage'])
-swift += r'''
-enum FilePaths {
-    static var root = URL(fileURLWithPath: CommandLine.arguments[1])
-    static var usageFilesJSON: URL { root.appendingPathComponent("files.json") }
-    static var usageRollupJSONL: URL { root.appendingPathComponent("rollup.jsonl") }
-}
-'''
-swift += declaration(read('UsageJSONStore.swift'), 'final class UsageJSONStore') + '\n' + oracle + family
+swift += oracle + family
 swift += r'''
 func canonical(_ rows: [ModelUsage]) -> [ModelUsage] { rows.sorted { $0.model < $1.model } }
 func same(_ a: [String: [ModelUsage]], _ b: [String: [ModelUsage]]) -> Bool {
@@ -150,67 +143,10 @@ func sample(_ body: () -> Void) -> Double {
                 byPath: ["codex:/p/rollout-n11999.jsonl": [usage(1)]], pathIDs: ["codex:/p/rollout-n11999.jsonl": "n11999"], parents: longParents)
             precondition(dense.count == 12000 && dense.values.allSatisfy { $0 == [usage(1)] })
         }
-        let store = UsageJSONStore.shared
-        var reference: [String: UsageJSONStore.RollupRec] = [:]
-        func key(_ row: UsageJSONStore.RollupRec) -> String { row.path + "\u{1F}" + row.day + "\u{1F}" + row.model }
-        func replace(_ path: String, _ rows: [UsageJSONStore.RollupRec]) {
-            reference = reference.filter { $0.value.path != path }
-            for row in rows { reference[key(row)] = row }
-            store.replaceRollup(path: path, rows: rows)
-        }
-        func check(_ low: String, _ high: String, prefix: String? = nil) {
-            let rows = reference.values.filter { row in
-                row.day >= low && row.day <= high && !row.path.hasPrefix("openclaw") && (prefix.map { row.path.hasPrefix($0) } ?? true)
-            }
-            let expected = ModelUsage.merged(rows.map { ModelUsage(model: $0.model, calls: $0.calls, inputTokens: $0.input, outputTokens: $0.output, cacheReadTokens: $0.cacheRead, cacheCreationTokens: $0.cacheCreate) }).filter { $0.totalTokens > 0 }
-            precondition(canonical(store.fetch(startDay: low, endDay: high, pathPrefix: prefix)) == canonical(expected))
-            var days: [String: DayUsage] = [:]
-            for row in rows {
-                var day = days[row.day] ?? DayUsage(day: row.day)
-                day.inputTokens += row.input; day.outputTokens += row.output; day.cacheReadTokens += row.cacheRead; day.cacheCreationTokens += row.cacheCreate
-                days[row.day] = day
-            }
-            precondition(store.fetchDaily(startDay: low, endDay: high, pathPrefix: prefix) == days.values.filter { $0.totalTokens > 0 }.sorted { $0.day < $1.day })
-            let grouped = Dictionary(grouping: reference.values.filter { $0.day >= low && $0.day <= high && $0.path.hasPrefix("claude:") }, by: \.path)
-            let expectedPaths = grouped.mapValues { rows in ModelUsage.merged(rows.map { ModelUsage(model: $0.model, calls: $0.calls, inputTokens: $0.input, outputTokens: $0.output, cacheReadTokens: $0.cacheRead, cacheCreationTokens: $0.cacheCreate) }) }
-            precondition(same(store.fetchByPath(startDay: low, endDay: high, pathPrefix: "claude:"), expectedPaths))
-            let expectedDays = Dictionary(grouping: reference.values.filter { $0.day >= low && $0.day <= high && ($0.path.hasPrefix("claude:") || $0.path.hasPrefix("codex:")) }, by: \.day).mapValues { rows in
-                ModelUsage.merged(rows.map { ModelUsage(model: $0.model, calls: $0.calls, inputTokens: $0.input, outputTokens: $0.output, cacheReadTokens: $0.cacheRead, cacheCreationTokens: $0.cacheCreate) })
-            }
-            precondition(same(store.fetchDailyModels(startDay: low, endDay: high), expectedDays))
-        }
-        store.load()
-        for i in 0..<1000 {
-            let path = ["claude:", "codex:", "openclaw:", "other:"][i % 4] + "p\(i)"
-            replace(path, (0..<128).map { day in .init(path: path, day: String(format: "%04d", day), model: "m\(i % 7)", calls: 1, input: 10, output: 2, cacheRead: 3, cacheCreate: 1) })
-        }
-        check("0064", "0064"); check("0060", "0069", prefix: "codex:"); check("", "9999"); check("0070", "0010"); check("9998", "9999")
-        for (low, high, label) in [("0064", "0064", "day"), ("0060", "0069", "ten_days"), ("", "9999", "all")] {
-            metrics["json_128000_rows_\(label)_20_queries_ms"] = sample {
-                for _ in 0..<20 { checksum += store.fetch(startDay: low, endDay: high).reduce(0) { $0 + $1.totalTokens } }
-            }
-        }
-        // Delete, replace, additive update, new/removed date, collision transfer,
-        // save/reload and reset must all maintain the in-memory range index.
-        replace("claude:p0", []); check("0000", "0127")
-        let extra = UsageJSONStore.RollupRec(path: "claude:extra", day: "0128", model: "new", calls: 1, input: 40, output: 2, cacheRead: 3, cacheCreate: 1)
-        replace("unrelated argument", [extra]); check("0128", "0128")
-        store.addRollup(path: "unrelated argument", rows: [extra])
-        var doubled = extra; doubled.calls *= 2; doubled.input *= 2; doubled.output *= 2; doubled.cacheRead *= 2; doubled.cacheCreate *= 2
-        reference[key(extra)] = doubled; check("0128", "0128")
-        store.deletePath(extra.path); reference = reference.filter { $0.value.path != extra.path }; check("0128", "0128")
-        let collisionA = UsageJSONStore.RollupRec(path: "claude:x", day: "d\u{1F}y", model: "z", calls: 1, input: 5, output: 0, cacheRead: 0, cacheCreate: 0)
-        let collisionB = UsageJSONStore.RollupRec(path: "claude:x\u{1F}d", day: "y", model: "z", calls: 1, input: 9, output: 0, cacheRead: 0, cacheCreate: 0)
-        replace(collisionA.path, [collisionA]); replace(collisionB.path, [collisionB]); check("d", "z")
-        store.deletePath(collisionA.path); reference = reference.filter { $0.value.path != collisionA.path }; check("d", "z")
-        metrics["json_save_ms"] = milliseconds { store.save() }
-        store.reset(); store.load(); check("0064", "0064"); check("", "z")
-        store.deletePath(collisionB.path); reference = reference.filter { $0.value.path != collisionB.path }; check("d", "z")
-        precondition(checksum > 0)
         var info = rusage(); getrusage(RUSAGE_SELF, &info)
         metrics["process_peak_rss_bytes"] = Double(info.ru_maxrss)
         print("METRICS " + String(decoding: try JSONSerialization.data(withJSONObject: metrics, options: [.sortedKeys]), as: UTF8.self))
-        print("PASS production family routing, random graphs/cycles/long chains, JSON range parity and mutation/reload/collision conservation")
+        print("PASS production family routing, random graphs/cycles/long chains")
     }
 }
 '''

@@ -24,13 +24,10 @@ source = 'import Foundation\nimport SQLite3\nimport Combine\nstruct Color {}\nen
 source += '\n'.join(declaration(models, m) for m in [
     'enum UsageSource', 'struct ModelUsage', 'struct DayUsage', 'enum UsageProviderAttribution'])
 source += r'''
-enum DiskPersistence { static var useDatabase = true }
 enum FilePaths {
     static var root = URL(fileURLWithPath: CommandLine.arguments[1])
     static var claudeDir: URL { root.appendingPathComponent("claude") }
     static var logsDir: URL { root }
-    static var usageFilesJSON: URL { root.appendingPathComponent("files.json") }
-    static var usageRollupJSONL: URL { root.appendingPathComponent("rollup.jsonl") }
     static var usageClaimsJSONL: URL { root.appendingPathComponent("usage-claims.jsonl") }
 }
 enum ExternalAgentKind {
@@ -41,7 +38,6 @@ enum ExternalAgentKind {
 let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 '''
 source += (utils / 'JSONCoerce.swift').read_text()
-source += declaration((utils / 'UsageJSONStore.swift').read_text(), 'final class UsageJSONStore') + '\n'
 source += declaration((utils / 'UsageClaims.swift').read_text(), 'enum UsageClaims') + '\n'
 for filename, marker, name in [
     ('UsageIndex.swift', 'struct UsageIndex', 'index.db'),
@@ -87,9 +83,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
     static func main() throws {
         let fm = FileManager.default
         let base = FilePaths.root
-        for sqlite in [true, false] {
-            DiskPersistence.useDatabase = sqlite
-            FilePaths.root = base.appendingPathComponent(sqlite ? "sqlite" : "json")
+        do {
+            FilePaths.root = base.appendingPathComponent("index")
             UsageIndex.reloadPersistence(); ProxyUsageStore.shared.reset()
             let sessions = FilePaths.root.appendingPathComponent("codex/sessions")
             let archive = FilePaths.root.appendingPathComponent("codex/archived_sessions")
@@ -121,7 +116,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             }
             let interval = period("2026-10-01", "2026-10-03")
             func total() -> Int { UsageIndex.fetch(in: interval).reduce(0) { $0 + $1.totalTokens } }
-            require(total() == 110, "backend \(sqlite) initial total \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
+            require(total() == 110, "initial total \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
             try append(event(100, 10, 60)) // duplicate across append boundary
             UsageIndex.updateIndex(); require(total() == 110)
             try append(event(140, 15, 80, day: "2026-10-02")) // cumulative-only delta
@@ -156,12 +151,12 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             UsageIndex.updateIndex()
             let shrunk = UsageIndex.fetchBySource(in: interval)
             require(shrunk.values.flatMap { $0 }.reduce(0) { $0 + $1.totalTokens } == 0,
-                    "a shrunk rewrite must not keep stale rows on backend \(sqlite): \(shrunk)")
+                    "a shrunk rewrite must not keep stale rows: \(shrunk)")
             // …and the next append is counted as its own delta, not as a
             // rebuild of everything the rewritten file used to hold.
             try append(event(100, 10, 60), to: archivedRollout)
             UsageIndex.updateIndex()
-            require(total() == 110, "backend \(sqlite) post-rewrite append \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
+            require(total() == 110, "post-rewrite append \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
             // Put the original transcript back so the rest of the scenario
             // keeps its baseline. It returns as a *new* path (vanished files
             // are pruned with their rows), which is how a restored transcript
@@ -170,7 +165,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             UsageIndex.updateIndex()
             try fullBody.write(to: archivedRollout)
             UsageIndex.updateIndex()
-            require(total() == 190, "backend \(sqlite) restored transcript \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
+            require(total() == 190, "restored transcript \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
             func assistant(_ output: Int) -> String {
                 line(["type": "assistant", "timestamp": "2026-10-01T12:00:00Z",
                     "message": ["id": "message-id", "model": "audit-model",
@@ -247,16 +242,10 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
                     "official attribution is separate from the Codex platform total")
             // Upgrade an inflated legacy cache without touching either transcript.
             UsageIndex.reloadPersistence()
-            if sqlite {
-                var db: OpaquePointer?
-                require(sqlite3_open(FilePaths.root.appendingPathComponent("index.db").path, &db) == SQLITE_OK)
-                require(sqlite3_exec(db, "UPDATE rollup SET input=input+10000 WHERE path LIKE 'codex:%'; PRAGMA user_version=9", nil, nil, nil) == SQLITE_OK)
-                sqlite3_close(db)
-            } else {
-                var files = try JSONSerialization.jsonObject(with: Data(contentsOf: FilePaths.usageFilesJSON)) as! [String: [String: Any]]
-                for key in files.keys { files[key]?.removeValue(forKey: "parserVersion") }
-                try JSONSerialization.data(withJSONObject: files).write(to: FilePaths.usageFilesJSON)
-            }
+            var db: OpaquePointer?
+            require(sqlite3_open(FilePaths.root.appendingPathComponent("index.db").path, &db) == SQLITE_OK)
+            require(sqlite3_exec(db, "UPDATE rollup SET input=input+10000 WHERE path LIKE 'codex:%'; PRAGMA user_version=9", nil, nil, nil) == SQLITE_OK)
+            sqlite3_close(db)
             UsageIndex.updateIndex(); require(total() == 380, "legacy parser caches must be rebuilt")
 
             // Lifetime family costs include completed children and workflow
@@ -331,7 +320,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             // the corpus passed ~4,096 ids; assert the two behaviours the
             // corrected test encodes, through the real flush path. A fresh root
             // keeps this phase's ledger away from the scenario's own claims.
-            FilePaths.root = base.appendingPathComponent("claims-\(sqlite)")
+            FilePaths.root = base.appendingPathComponent("claims")
             try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
             let claimsURL = FilePaths.usageClaimsJSONL
             UsageClaims.reset()
@@ -349,7 +338,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             require(afterAppend.hasPrefix(afterFirst), "an append must not disturb the prefix")
             // Now bury the live set. With dead lines dominating, the flush
             // compacts back to one line per live id.
-            FilePaths.root = base.appendingPathComponent("claims-compact-\(sqlite)")
+            FilePaths.root = base.appendingPathComponent("claims-compact")
             try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
             UsageClaims.reset()
             for id in 0..<20000 { UsageClaims.record("dead-\(id)", owner: "claude:dead") }
@@ -384,7 +373,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
         let localOnly = inventory.first { $0.id == "local-only" }!
         require(localOnly.costLine?.unpricedTokens == 20)
         require(inventory.first { $0.id == "cursor-model-1" }?.hasLocal == false)
-        print("PASS: SQLite/JSON production indexing, cumulative deltas, dedupe, archives and aggregate conservation")
+        print("PASS: SQLite production indexing, cumulative deltas, dedupe, archives and aggregate conservation")
     }
 }
 '''

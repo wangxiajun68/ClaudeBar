@@ -224,7 +224,9 @@
   "evidence": "`private var useDatabase: Bool { DiskPersistence.useDatabase }` (line 179) and `UsageJSONStore.swift:6-10` read `UserDefaults.standard` key \"databaseEnabled\". `grep -rn \"databaseEnabled\" Sources Tests docs Tools` returns only that one declaration block — the `@Published var databaseEnabled` plus its `didSet` (which called `ProxyCaptureStore.shared.reloadPersistence()`, `UsageIndex.reloadPersistence()`, `ProxyUsageStore.shared.reset()` and posted `.persistenceModeDidChange`) was removed in 16b225e (\"refactor: 全仓深度审查第二批\"), and no `removeObject(forKey: \"databaseEnabled\")` was added. In this file `reloadPersistence()` (215) has zero callers repo-wide (grep over Sources/Tests/Tools/docs finds only the definition and a comment at line 946), and `loadListIfNeeded(force:)` (197) is only ever called with the default at `TrafficView.swift:389`; `closeDatabaseLocked()` (564) is therefore reached only from the dead `reloadPersistence`. The JSON branches this leaves — 259 (`jsonStore.begin`), 324-333, 449-450, 474-475, 779-820 and the whole `CaptureJSONStore` file — are unreachable in every state the current build can put the app in, while `NotificationService.swift:21`'s `.persistenceModeDidChange` (whose only poster was the deleted `didSet`) still has a live observer at `ProviderStore.swift:1238`.",
   "failure": "Two concrete hazards. (a) A user upgrading from a build that predates the deletion with `databaseEnabled = false` stored keeps writing `logs/captures.jsonl` / `logs/captures/<id>.json` and `logs/usage-third-party.jsonl` forever, with no UI to flip it back and no code that ever writes or clears the key — the setting is frozen and invisible. (b) Any future edit touching only the SQLite branch silently diverges from the JSON branch that no test can reach: `Tests/capture-retention-regressions.py` slices `pruneLocked`/`exec`/`execRaw`/`loadListIDs` against a real SQLite file only.",
   "fix": "Either delete the JSON backend (and have `useDatabase` return true, or delete `DiskPersistence`), or reintroduce a writer for the key; if the latter, also make `closeDatabaseLocked()` see the handle reliably (see the `openFailed` finding). At minimum, call `UserDefaults.standard.removeObject(forKey: \"databaseEnabled\")` once so legacy users are not parked on an unreachable branch.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The JSON/JSONL backend was deleted outright rather than documented as unreachable: the databaseEnabled key never had a writer after 16b225e, every profile without it was already on SQLite, and UsageJSONStore/CaptureJSONStore plus all useDatabase branches are gone (Sources/ClaudeBar/Utils/UsageJSONStore.swift and CaptureJSONStore.swift removed). reloadPersistence() was dropped from ProxyCaptureStore; UsageIndex.reloadPersistence survives only as the harness reset. make test: 79 suites pass; dev and release bundles verified."
  },
  {
   "category": "perf-cpu",
@@ -315,8 +317,8 @@
   "evidence": "Read 全文后全仓 grep：`grep -rn \"fetchSession(pathPrefix\" Sources` 只有定义行 UsageJSONStore.swift:178；调用点全部在 Tests（Tests/backend-performance-regressions.py:83、90、94、96、102、105、106、108）。`UsageIndex.fetchSession(source:sessionId:)`(UsageIndex.swift:343) 也只在 Tests/usage-index-regressions.py:280 被调用；生产侧 IslandLiveModel.swift:294 走的是 `fetchSessionFamilies`，而它读的是 `currentFiles()` 与 `fetchByPath`，不经过本函数。该函数是 rollupKeysByPath（UsageJSONStore.swift:79，注释自称‘A transcript rewrite removes only that transcript's rows’）的唯一消费者——真正需要按路径删除的是 removeRollupLocked。",
   "failure": "任何输入都不会执行这条路径；代价是常驻内存：本机 usage-index.db 实测 2412 行 rollup / 2260 个不同 path（sqlite3 只读查询），rollupKeysByPath 维护 2260 个 Set<String> + 2412 个字符串 key，而语料量大时每个转录至少 1 个 key。此外 O(P) 遍历（`for (path, keys) in rollupKeysByPath where path.hasPrefix(...)`）在测试里被测量成 400 次查询走一遍全表（backend-performance 的 json_session_400_ms 指标）。",
   "fix": "删除 fetchSession(pathPrefix:pathSuffix:)，同时删除 rollupKeysByPath 索引及 insertRollupLocked / removeRollupLocked 中对应的维护分支（保留 rollupKeysByDay，日期索引在生产有四条调用路径：fetch/fetchByPath/fetchDaily/fetchDailyModels）；若想保留 API 供测试，改为在测试里用 fetchByPath 过滤实现。",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
+  "status": "fixed",
+  "verdict_note": "fetchSession(pathPrefix:pathSuffix:) and the whole rollupKeysByPath index were deleted with UsageJSONStore; the SQL backend never had a per-path query for that shape (fetchSessionFamilies covers it via byPath JOIN)."
  },
  {
   "category": "dead-code",
@@ -327,8 +329,8 @@
   "evidence": "UsageJSONStore.swift:5-10 从 UserDefaults 读 databaseEnabled 并以 true 为默认。全仓 grep：`grep -rn \"databaseEnabled\" . --exclude-dir=.git` 只有这两行读取；`grep -rn \"databaseEnabled\" Sources/ClaudeBar/Models/AppPreferences.swift` 无命中，而 `git show 16b225e -- Sources/ClaudeBar/Models/AppPreferences.swift` 显示该提交删除了 `@Published var databaseEnabled`、其 didSet 中的 `UsageIndex.reloadPersistence()` 以及设置页的 `isOn: $prefs.databaseEnabled` 开关。当前 `defaults read com.claudebar.app databaseEnabled` 返回 “does not exist”（即走 `object(forKey:) == nil → true`）。文档也已过时：docs/technical/04-data-access-layer.md:96 仍写「设置 → 开启数据库」。",
   "failure": "用户永远拿不到 JSON 后端（UseDatabase 恒 true），UsageJSONStore 的 406 行、CacheJSON/JSONL 解码迁移（loadLocked 的 stale/unprefixed/oldParser/oldClaude 四分支）、persistLocked 全量重写全部不可达；反过来，若某台机器/旧版仍写入 databaseEnabled=false（键在 UserDefaults 里持久存在，`as? Bool ?? true` 的读取方会尊重它），那台机器上的 JSON 后端会带着无人维护的代码继续跑，而 UI 再没有任何入口能切回——两条后端从此永久分叉且用户无法自救。",
   "fix": "二选一：要么按文档把「存储」开关恢复（在 AppPreferences 重新加入 databaseEnabled + didSet 调 UsageIndex.reloadPersistence/ProxyUsageStore.reset，并在 SettingsView 恢复开关，见 c128885 的实现）；要么删除 JSON 后端与 DiskPersistence，把 UsageIndex/ProxyUsageStore/ProxyCaptureStore 的 useDatabase 分支收敛为单实现。",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
+  "status": "fixed",
+  "verdict_note": "Switch and both backends removed; storage is SQLite-only. No removeObject(forKey:) needed for correctness (the key's absence already defaulted to SQLite), but no reader remains either — the stale default in a profile can no longer park anyone anywhere."
  },
  {
   "category": "test-gap",
@@ -339,8 +341,8 @@
   "evidence": "loadLocked 第 248 行判定 `$0.path.hasPrefix(\"codex:\") && $0.model.lowercased() == \"codex\"`，265-274 行据此过滤 files/rollup；配套 UsageIndex.migrateIfNeeded 的 v3/v4（UsageIndex.swift:122-129）DELETE openclaw 行。全仓测试 grep：`grep -rn \"openclaw\" Tests` 只有 core-algorithms-regressions.py:163/184（把 openclaw: 当‘不参与查询’的普通前缀，不覆盖持久化清理），`grep -rn \"cxTotal\\|cxModel\" Tests` 无命中；usage-index-regressions.py:257 只删 parserVersion 来触发 oldClaude 分支（该分支有覆盖）。",
   "failure": "若未来 parser 改动导致 `model == \"codex\"` 的行再次出现（历史上 v6 就是这种行），或 JSON 后端文件里残留 openclaw: 前缀行，没有任何回归能发现 loadLocked 不再清理它们——查询侧 UsageJSONStore.fetch/fetchDaily 虽过滤 openclaw（157/208 行），但 fetchSession/currentFiles 不过滤，且持久化文件会无限增长。",
   "fix": "在 Tests/usage-index-regressions.py 的 JSON 分支（同 parserVersion 那段）追加两个夹具：写入一行 codex: model=\"codex\" 的 rollup + 一行 openclaw:p 的行，调 load() 后断言 files/rollup 均被清掉并触发一次 persistLocked。",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
+  "status": "fixed",
+  "verdict_note": "Moot — the JSON backend's loadLocked migration (stale codex slug, openclaw rows) is deleted with the file; the SQLite migrateIfNeeded v3/v4 steps that cover the same dirty data are exercised by usage-index-regressions.py."
  },
  {
   "category": "crash",
@@ -1617,8 +1619,8 @@
   "failure": "两类后果：(1) ProviderStore.swift:1236-1241 的观察者是不可达死代码；(2) 任何在 620c375 之前把 databaseEnabled 存成 false 的用户档案，`DiskPersistence.useDatabase` 永久返回 false，被钉死在 JSON/JSONL 后端（UsageIndex、ProxyCaptureStore 的十条分支），且 UI 里已没有任何开关能切回 SQLite。",
   "fix": "二选一：要么恢复开关（AppPreferences 加 `databaseEnabled` + 设置行，改动时 post `.persistenceModeDidChange`），要么删除该 Notification.Name、ProviderStore 里的观察者并同步 docs/technical/04-data-access-layer.md:96 的口径。",
   "confidence": "high",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Deleted with the JSON backends in the same unit of work."
+  "status": "fixed",
+  "verdict_note": "Deleted with the switch: notification, observer and backends are all gone."
  },
  {
   "category": "concurrency",
@@ -1733,7 +1735,9 @@
   "summary": "reloadPersistence() 已无任何调用者，且其唯一触发源（databaseEnabled 偏好）在 16b225e 被删除，导致 JSON 后端不可达、openFailed 无复位路径",
   "evidence": "215-230 定义 `reloadPersistence()`；`grep -rn \"reloadPersistence\" Sources Tests Tools` 只有这里与 UsageIndex（不同类）命中，ProxyCaptureStore 的版本无人调用。git 16b225e（AppPreferences.swift）删除了唯一的调用点与偏好本身：`- @Published var databaseEnabled: Bool { didSet { ... ProxyCaptureStore.shared.reloadPersistence(); ... } }`。全仓 `grep -rn databaseEnabled` 只剩 UsageJSONStore.swift:8-9 的读侧。副作用：179 `useDatabase` 恒为 true（除非旧版本留下的 UserDefaults 值），CaptureJSONStore 整条分支在新安装上不可达；171/493/569 的 `openFailed` 只由 `closeDatabaseLocked()`（只被 reloadPersistence 调用）复位；946 的文档注释仍把 reloadPersistence 列为 live maps 的移除点。",
   "failure": "SQLite 打开一次失败（权限、磁盘满、文件被替换）后 `openFailed = true`，connection() 永久返回 nil → begin 返回 nil，抓包从此静默消失，用户没有任何提示也没有任何恢复入口（原先是切一次存储开关）。JSON 后端同理：没有 UI 能再打开它，之后任何针对该分支的改动都无法被产品路径验证。",
-  "fix": "删除 reloadPersistence 与顶部 946 行的过期注释，把 disk-backend 的选择写成显式常量（或保留 legacy 读取但加注释）；给 connection() 加一次重试（例如 openFailed 只在同一次调用内短路，或失败后带冷却重试），否则一次失败即静音到重启。"
+  "fix": "删除 reloadPersistence 与顶部 946 行的过期注释，把 disk-backend 的选择写成显式常量（或保留 legacy 读取但加注释）；给 connection() 加一次重试（例如 openFailed 只在同一次调用内短路，或失败后带冷却重试），否则一次失败即静音到重启。",
+  "status": "fixed",
+  "verdict_note": "reloadPersistence() removed from ProxyCaptureStore entirely (no callers, and its trigger was the deleted switch); the openFailed latch became openFailedAt + 5s cooldown in ProxyCaptureStore and ProxyUsageStore, and UsageIndex, so a transient open failure self-heals without any settings path."
  },
  {
   "category": "test-gap",
@@ -1793,7 +1797,9 @@
   "evidence": "本文件第 14 行仍写 “Backends mirror `UsageIndex`: SQLite when 存储 → SQLite is on, JSONL otherwise”；HelpCatalog.swift:260 同样写「数据库存储打开时进库，否则写 JSONL」。实际 `grep -rn databaseEnabled Sources/` 只剩唯一读者 UsageJSONStore.swift:5-10（`enum DiskPersistence { static var useDatabase: Bool { ... d.bool(forKey: \"databaseEnabled\") } }`，缺省 true），写入者 `AppPreferences.databaseEnabled` 已在 commit 16b225e 中删除（`git log -p -S databaseEnabled` 显示该 @Published 属性及其 didSet 整块被删），设置页也不再有该开关。",
   "failure": "任何曾把该偏好设为 false 的安装（UserDefaults 键随 bundle ID 持久保留）此后永远走 JSONL 路径：既拿不到 SQLite 的按日区间扫描，又命不中上面的迁移/修复标记逻辑的更新，且用户在任何 UI 里都找不到切回 SQLite 的入口；同时 HelpCatalog 对用户描述了一个不存在的开关。",
   "fix": "二选一：把 `useDatabase` 改为常量 true 并删除 JSON 分支（连同本文件的 migrateJSONLocked/JSONRow/persistJSONLocked 与 UsageJSONStore 的 JSONL 写路径）；或恢复一个设置项写回 `databaseEnabled` 并调用 ProxyCaptureStore.reloadPersistence()/UsageIndex.reloadPersistence()/ProxyUsageStore.shared.reset()。前者更符合「已无开关」的现状。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Top-of-file doc rewritten: storage is SQLite only; no settings switch to name."
  },
  {
   "category": "perf-cpu",
@@ -1819,7 +1825,9 @@
   "summary": "持久化后端开关只剩读点，写点已随设置页删除，用户被永久锁在 JSON 后端",
   "evidence": "49 行 `private var useDatabase: Bool { DiskPersistence.useDatabase }`；读点在 UsageJSONStore.swift:5-10 `enum DiskPersistence { static var useDatabase: Bool { let d = UserDefaults.standard; if d.object(forKey: \"databaseEnabled\") == nil { return true }; return d.bool(forKey: \"databaseEnabled\") } }`，全仓 `databaseEnabled` 只有这两处出现（无任何写点）。git log -S databaseEnabled 显示写点原为 `AppPreferences.databaseEnabled` 的 didSet（它同时调用 `ProxyCaptureStore.shared.reloadPersistence()`、`UsageIndex.reloadPersistence()`、`ProxyUsageStore.shared.reset()` 并 post `.persistenceModeDidChange`），该属性与 SettingsView 的开关已在 16b225e「全仓深度审查第二批」中删除（AppPreferences.swift 净删 19 行）。佐证：本文件 161-162 行注释 `Drop everything (used when the persistence backend switches)` 已无生产调用者——`reset()` 现在只被 Tests/usage-index-regressions.py:93/155/207 调用；ProviderStore.swift:1236-1244 订阅的 `.persistenceModeDidChange`（NotificationService.swift:21）也再没有人 post（全仓仅这两处）。",
   "failure": "任何在旧版把「开启数据库」关掉的用户，该键仍留在 UserDefaults，而新版没有任何 UI/代码能把它写回 true：被永久钉在 JSON/JSONL 后端——每次 `record` 都整文件重写 usage-third-party.jsonl（323-335 行 persistJSONLocked），且 `.persistenceModeDidChange` 这条刷新链成为永不触发的死代码。",
-  "fix": "二选一：恢复一个写点（设置页里重新暴露该开关，并接回 reloadPersistence/reset/post）；或把 `DiskPersistence.useDatabase` 固定为 true、删除 JSON 分支与 ProviderStore 里那个永不触发的观察者，同时删掉 `reset()` 中「backend switches」的过期说法。"
+  "fix": "二选一：恢复一个写点（设置页里重新暴露该开关，并接回 reloadPersistence/reset/post）；或把 `DiskPersistence.useDatabase` 固定为 true、删除 JSON 分支与 ProviderStore 里那个永不触发的观察者，同时删掉 `reset()` 中「backend switches」的过期说法。",
+  "status": "fixed",
+  "verdict_note": "useDatabase removed; the store always opens proxy-usage.db, with the same cooldown retry as UsageIndex."
  },
  {
   "category": "test-gap",
@@ -2050,7 +2058,9 @@
   "evidence": "`grep -rn databaseEnabled` over the whole repo (Sources/Tests/Tools/docs, excluding .git) matches exactly two lines, both readers: UsageJSONStore.swift:8–9. `git show 16b225e` removes `@Published var databaseEnabled` and its `didSet { ... UsageIndex.reloadPersistence(); ... }` along with the initialization from defaults. Meanwhile the doc at UsageIndex.swift:13 ('Backends (Settings → 开启数据库)') and docs/technical/04-data-access-layer.md:96 still describe the switch, and ProviderStore.swift:1238 still observes `.persistenceModeDidChange`, which nothing posts (`grep -rn persistenceModeDidChange Sources` → the Notification.Name declaration plus that observer only). Consequence: `reloadPersistence()` (line 200) — the only resetter of `openFailed` and `_hasCachedData` — is now called exclusively from Tests/usage-index-regressions.py (lines 93/155/207/249/287).",
   "failure": "The JSON/JSONL half of this file (lines 250–253, 309–312, 363–367, 525–527, 582–586, 621–623, 652–654, 685–687) can never execute in the shipped app, so it silently rots (its only exercise is the test harness); a user following the docs' '设置 → 开启数据库' finds no such control, and any maintenance change to only the SQLite path looks tested because the fixture still builds both.",
   "fix": "Either restore the setting (re-add the toggle that calls `UsageIndex.reloadPersistence()` + posts `.persistenceModeDidChange`), or delete the JSON branches and the `databaseEnabled` key together with the stale docs; do not leave the branches as runtime-unreachable code.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "All !DiskPersistence.useDatabase branches deleted; UsageIndex is single-implementation (Backend enum, updateIndexJSON, knownFromJSON, rollupRecs all removed)."
  },
  {
   "category": "perf-cpu",
@@ -2060,7 +2070,9 @@
   "summary": "persistLocked 对 rollup 全量重排、逐行 JSONEncoder 编码、字符串 += 拼接再一次性写盘——同文件查询侧已改为 O(log D) 范围索引，写侧仍是每次保存 O(R log R) + R 次编码 + O(总字节²) 级拼接",
   "evidence": "375 行 `rollup.values.sorted(...)`；373-377 `for row ... { enc.encode(row); body += line + \"\\n\" }`；378 `try? Data(body.utf8).write(...)`。`save()`（147）由 UsageIndex.updateIndexJSON 无条件调用（UsageIndex.swift:295），而 FSEvents 每 0.4s 去抖一次（UsageFSWatcher.swift:87）都可能触发；每条 rollup 行 Edit 循环里 `String` 追加在 Swift 中按需重新分配缓冲。",
   "failure": "本机 rollup 2412 行时该函数约 10-20ms；真实语料（本机 2502 个 transcript 文件、376 个 Codex rollout）在上万行量级，每次 FSEvents 保存付 O(R log R) 排序 + R 次 JSONEncoder 分配 + 一遍全量 UTF-8 转码 + 一次全文件原子写（正比于文件字节数，JSONL 可达数 MB）。在用户开着 Usage 页并持续对话时这是每几秒一次的后台突发。",
-  "fix": "保持现有 dirty 去抖即可，进一步把 `body` 换成 `Data` + `reserveCapacity`（或复用 JSONEncoder 写入 FileHandle）；排序改为复用 forEachRollupLocked 的 sortedRollupDays 顺序遍历（已经按 day 排序，只需 path 二级排序），省掉每次保存的整表排序。"
+  "fix": "保持现有 dirty 去抖即可，进一步把 `body` 换成 `Data` + `reserveCapacity`（或复用 JSONEncoder 写入 FileHandle）；排序改为复用 forEachRollupLocked 的 sortedRollupDays 顺序遍历（已经按 day 排序，只需 path 二级排序），省掉每次保存的整表排序。",
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: persistLocked no longer exists; rollup writes are SQL statements."
  },
  {
   "category": "robustness",
@@ -2070,7 +2082,9 @@
   "summary": "loadLocked 直接 `String(decoding: data, as: UTF8.self)` 把整个 usage-rollup.jsonl 拉成字符串再 split，大文件时是一份额外全量拷贝；同项目 CaptureJSONStore/ProxyAccessLog 已用字节级 split",
   "evidence": "238-242 行：`if let data = try? Data(contentsOf: FilePaths.usageRollupJSONL) { let text = String(decoding: data, as: UTF8.self); for line in text.split(whereSeparator: \\.isNewline) { ... Data(line.utf8) } }`——`Data(line.utf8)` 又把每行从 String 转回字节。对照 ProxyAccessLog.swift:348 `for line in String(decoding: data, as: UTF8.self).split(...)` 同样是 String 路径，但 UsageClaims.swift:180 用的是 `data.split(separator: 0x0A)` 的字节路径。",
   "failure": "语料持续增长下，启动或首次 hasRows()（UsageIndex.hasCachedData → UsageJSONStore.hasRows）会先在堆上分配全文件 String（约 2 倍原始字节峰值）+ 每行一个 Data 临时对象；与索引页自己的内存增长叠加。功能上没错，但会给启动/首帧增加可观测的峰值内存与分配次数。",
-  "fix": "改成 `for line in data.split(separator: 0x0A) { try? dec.decode(RollupRec.self, from: line) }`（Data 是 RandomAccessCollection，decode 可用 SubSequence 的 Data 切片），去掉整文件 String 与逐行回编。"
+  "fix": "改成 `for line in data.split(separator: 0x0A) { try? dec.decode(RollupRec.self, from: line) }`（Data 是 RandomAccessCollection，decode 可用 SubSequence 的 Data 切片），去掉整文件 String 与逐行回编。",
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: loadLocked's string copy is gone with the file."
  },
  {
   "category": "dead-code",
@@ -3656,7 +3670,9 @@
   "evidence": "UsageJSONStore.swift:5-11 `enum DiskPersistence { static var useDatabase: Bool { let d = UserDefaults.standard; if d.object(forKey: \"databaseEnabled\") == nil { return true }; return d.bool(forKey: \"databaseEnabled\") } }`. Repo-wide grep for `databaseEnabled` (Sources, Tests, Tools, docs, Makefile) returns only these two lines. `git show 16b225e -- Sources/ClaudeBar/Models/AppPreferences.swift` deletes `@Published var databaseEnabled` (whose didSet wrote the key, called `UsageIndex.reloadPersistence()` / `ProxyUsageStore.shared.reset()` and posted `.persistenceModeDidChange`), and `git show 620c375 -- Sources/ClaudeBar/Views/Pages/SettingsView.swift` deletes the sole Settings toggle (`SettingTile(icon: \"cylinder\", title: \"SQLite\" … Toggle(\"\", isOn: $prefs.databaseEnabled)`). Nothing else in the repo writes the key: grep for `register(defaults` returns nothing. The reader is consumed by UsageIndex.swift:54,230,250,309,363,525,582,621,652,685, ProxyUsageStore.swift:49 and ProxyCaptureStore.swift:179 — i.e. the whole JSON-vs-SQLite fork, plus the `parserVersion` migration in the same file. Docs still advertise the switch: docs/technical/04-data-access-layer.md:96 「两个后端二选一（设置 → 开启数据库）」 and Sources/ClaudeBar/Views/Shared/HelpCatalog.swift:260 「数据库存储打开时进库，否则写 JSONL」.",
   "failure": "A user whose defaults still hold `databaseEnabled = false` (set in any build before 620c375/16b225e) silently keeps the JSON backend forever: every index pass rewrites the entire usage-rollup.jsonl and usage-files.json on each FSEvents burst, and there is no Settings row to switch back — the app looks identical to a SQLite install, and the help text points at a toggle that does not exist. New users hit the same fork only if they hand-edit defaults.",
   "fix": "Pick one: (a) restore a writer — a `databaseEnabled` field on AppPreferences again (with the reloadPersistence/reset side effects the deleted didSet had) plus the Settings toggle the docs describe; or (b) if the JSON backend is meant to be a hidden escape hatch only, stop documenting 「设置 → 开启数据库」 in 04-data-access-layer.md and HelpCatalog, and note the `defaults write` key in the code comment; leaving a persisted kill-switch with no writer and stale docs is the defect.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "DiskPersistence removed with the JSON backends; the key is no longer read anywhere."
  },
  {
   "category": "correctness",
@@ -5722,7 +5738,9 @@
   "evidence": "Line 56 `if openFailed { return nil }`; line 65 `openFailed = true`; line 207 `openFailed = false` inside `reloadPersistence()`. With the settings writer gone (see previous finding), nothing in Sources calls `reloadPersistence()` — grep shows the only callers are the test harness. Because `connection()` is also what lazily creates the schema/migrations, a failure at launch (e.g. a full disk, a `usage-index.db` left locked by a crashed sibling process, a permission error at first run) leaves the whole session's queries returning `[]`/`thirdParty` only.",
   "failure": "The database file is briefly unopenable at the first `refreshUsage` after launch → every `fetch`/`fetchDaily`/`fetchBySource` for the rest of the process returns empty local usage, `hasCachedData` returns early on `connection() == nil` so no rows are ever re-read, and the Usage page shows '暂无用量' until the app is relaunched; the user sees a permanent zero with no error surface.",
   "fix": "Make the latch retryable: store `openFailedAt` and allow another `sqlite3_open_v2` after a cooldown (or clear `openFailed` at the top of `updateIndex()`), instead of requiring the removed settings toggle.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "openFailed boolean replaced with openFailedAt + 5s cooldown in UsageIndex, ProxyCaptureStore and ProxyUsageStore; a transient open now self-heals on the next call instead of requiring the removed settings path."
  },
  {
   "category": "duplication",
@@ -5768,7 +5786,9 @@
   "summary": "FileRec 迁移判定 `rec.cxTotal == 0` 与真实语义重合：一次 Codex 会话若累计 total_tokens 恰为 0（空 rollout）会被反复判定为“pre-cx_total 旧记录”并每次 load 触发整表过滤 + persistLocked",
   "evidence": "252-255 行：`let unprefixed = files.contains { key, rec in key.hasPrefix(\"codex:\") && rec.cxTotal == 0 && (rec.cxIn + rec.cxOut + rec.cxCached) > 0 }`——cxIn/cxOut/cxCached 都 >0 而累计 total 为 0 在真实语法里不可能吗？parseCodex 的 `last.total = JSONCoerce.intVal(total[\"total_tokens\"])`，而我在本机 372 个真实 rollout 的 `total_token_usage` 里实测 total_tokens == input+output 恒成立（8 个抽样 diff 全为 0），所以正常不会为 0。但这在语义上仍是“用 sentinel 0 表示缺失”，一旦上游把 total_tokens 换成缺失/改名（JSONCoerce 会静默返回 0），条件会对每个有 usage 的 Codex 文件恒真。",
   "failure": "输入：上游 token_count 记录缺少 total_tokens 键（JSONCoerce 归 0）。则每次 load()（启动、hasCachedData 探测）都判定 unprefixed=true → 清空全部 codex files+rollup 并 persistLocked 写下删除后的状态 → 下一次 updateIndex 全量重解析所有 Codex 转录（本机 376 个文件、单个 139MB），每次启动重复。CPU/IO 明显，但不破坏正确性。",
-  "fix": "改用显式版本标记替代 sentinel（FileRec 已有 parserVersion，可把 codex 的 cxModel/cxTotal 引入条件改成 parserVersion < 12 并在 upsert 时写入），或在 parseCodex 解析不到 total_tokens 时保留 prior.cxTotal 而不是写 0。"
+  "fix": "改用显式版本标记替代 sentinel（FileRec 已有 parserVersion，可把 codex 的 cxModel/cxTotal 引入条件改成 parserVersion < 12 并在 upsert 时写入），或在 parseCodex 解析不到 total_tokens 时保留 prior.cxTotal 而不是写 0。",
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: the cxTotal == 0 rebranch case existed only in the JSON FileRec migration."
  },
  {
   "category": "test-gap",
@@ -6946,7 +6966,9 @@
   "summary": "persistenceModeDidChange 观察者对应的通知从来没人 post，`DiskPersistence.useDatabase` 读取的 \"databaseEnabled\" 也从来没人写入——整套后端切换接线是死路径。",
   "evidence": "全仓 grep：`.persistenceModeDidChange` 仅两处——NotificationService.swift:21 的 Name 声明与 ProviderStore.swift:1238 的 `addObserver(forName: .persistenceModeDidChange...)`，没有任何 `post`；`databaseEnabled` 只有 UsageJSONStore.swift:8-9 的读取，Sources/Views 里已无写入者（git show 620c375 显示 SettingsView 的 `Toggle(\"\", isOn: $prefs.databaseEnabled)` 在该次设置页重做中被删除）。`defaults read com.claudebar.app databaseEnabled` / `com.claudebar.app.dev` 均无输出，`UseDatabase` 恒定走「未设置→true」。",
   "failure": "语义层面：JSON 后端与 `UsageIndex.reloadPersistence()` 都成了不可达代码（只有测试能切换测试夹具里的 `DiskPersistence.useDatabase`），而 ProviderStore 仍注册着一个永不触发的观察者、注释也仍宣称「Settings → 开启数据库」可切换；若将来有人重新加回开关却忘了补 post，切换会静默不生效。",
-  "fix": "二选一：要么补回设置项并在写入处 post `persistenceModeDidChange`（同时调用 UsageIndex.reloadPersistence / ProxyUsageStore.reset），要么删除观察者、`reloadPersistence` 与文档中的「设置 → 开启数据库」口径，只保留测试用的静态开关。"
+  "fix": "二选一：要么补回设置项并在写入处 post `persistenceModeDidChange`（同时调用 UsageIndex.reloadPersistence / ProxyUsageStore.reset），要么删除观察者、`reloadPersistence` 与文档中的「设置 → 开启数据库」口径，只保留测试用的静态开关。",
+  "status": "fixed",
+  "verdict_note": "The observer was removed from ProviderStore and the notification declaration deleted; the dead wiring no longer exists."
  },
  {
   "category": "dead-code",
@@ -7194,8 +7216,8 @@
   "evidence": "`grep -rn \"persistenceModeDidChange\" Sources Tests` → only the declaration (NotificationService.swift:21) and ProviderStore.swift:1238 (`NotificationCenter.default.addObserver(forName: .persistenceModeDidChange …)`); no `post(name: .persistenceModeDidChange)` and no `NotificationCenter.default.post` of that name anywhere.\nSame class of leftover: `UsageIndex.reloadPersistence()` (UsageIndex.swift:200) and `ProxyCaptureStore.reloadPersistence()` (ProxyCaptureStore.swift:215) have zero production callers — only Tests/usage-index-regressions.py:93/155/207/249/287 call them. There is a `@Published var useDatabase` in the stores, but no Settings row writes `databaseEnabled` (grep only hits DiskPersistence's default-true read at UsageJSONStore.swift:8-9).",
   "failure": "No user-visible failure by itself; it documents a mode switch that does not exist, so the next maintainer wires a Settings toggle to a notification nothing listens to (or vice versa) and the SQLite/JSON flip never takes effect for an already-running app (the observer only fires `refreshUsage(rescan: true)`, it does not reset the backend — that is `reloadPersistence`, which is production-unreachable).",
   "fix": "Delete the unused Notification.Name (and, separately, decide whether the persistence toggle is dead and remove `reloadPersistence`/`useDatabase` or wire one Settings action that posts then calls both `reloadPersistence`s).",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Deleted with the JSON backends in the same unit of work."
+  "status": "fixed",
+  "verdict_note": "persistenceModeDidChange deleted from NotificationService together with its only observer."
  },
  {
   "category": "dead-code",
@@ -7742,8 +7764,8 @@
   "failure": "usage-files.json contains one entry missing a key (or with a mistyped number) → `files` is empty for this process → `UsageIndex.knownFromJSON()` returns `[:]` → `sync(file:prior:nil)` takes the full-reparse branch for every transcript in the corpus (~1,250 files on this machine), discarding each file's byte offset, head hash and Codex cx_total dedupe stamps; the Codex dedupe across append boundaries restarts from 0 and the next FSEvents burst re-parses everything again until the file is rewritten. No log line records the decode failure.",
   "fix": "Decode per entry the way CaptureJSONStore does per line: read `[String: Any]`, then `for (key, value) in obj { if let rec = try? JSONDecoder().decode(FileRec.self, from: JSONSerialization.data(withJSONObject: value)) { files[key] = rec } }` (or add decodeIfPresent defaults for headHash/offset/cx*), so one bad entry costs one file's incremental state instead of all of them.",
   "confidence": "high",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: usage-files.json is neither read nor written any more."
  },
  {
   "category": "crash",
@@ -7755,7 +7777,9 @@
   "evidence": "UsageJSONStore.swift:156-161 folds rows with `Self.accumulate(row, into: &byModel)` (lines 387-395: `u.inputTokens += row.input; … u.cacheCreationTokens += row.cacheCreate`) and then evaluates `$0.totalTokens > 0`; `ModelUsage.totalTokens` (Models/ModelUsage.swift:83) is `inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens` with no overflow guard. The four Ints are decoded straight from JSONL (RollupRec, lines 61-70) or from `JSONCoerce.intVal` (Utils/JSONCoerce.swift:14-16), which clamps to the Int64 range but not to anything a 4-way sum can hold. The same unchecked shape exists on the parse side (UsageIndex.swift:1226 `e.input + e.output + e.cacheRead + e.cacheCreate > 0`).",
   "failure": "A corrupt or hand-edited usage-rollup.jsonl line such as `{\"path\":\"claude:x\",\"day\":\"2026-01-01\",\"model\":\"m\",\"calls\":1,\"input\":9223372036854775807,\"output\":9223372036854775807,…}` (or a transcript whose usage counters are huge) → `Int` addition overflows in `totalTokens` → SIGTRAP in the usage query path, which runs on the background usage-refresh task and takes the whole app down. Reachability requires corrupt/absurd input rather than normal data, which is why this is low severity.",
   "fix": "Clamp the four buckets to a sane per-bucket ceiling where they enter the model (JSONCoerce or RollupRec decode, e.g. reject values with `magnitude > Int.max / 4`), or make the sums saturating in `ModelUsage.totalTokens`/`merge` and in `ParsedEntry.aggregated`'s per-field adds — matching the precedent set for VPN/weather remote data in commit 5c45f70.",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: no local bucket arithmetic reads from a JSON rollup; SQL SUMs run in SQLite (64-bit INTEGER)."
  },
  {
   "category": "dead-code",
@@ -7768,8 +7792,8 @@
   "failure": "No runtime failure: dead weight that keeps a second, divergent session-matching rule (suffix `hasSuffix(pathSuffix)` + `hasSuffix` path scan) alive next to the family router that actually ships, so a future fix to session attribution must be applied twice or the tests validate a path nothing runs.",
   "fix": "Either delete the method and rewrite the harness assertions onto `fetchByPath` (the shipped API), or, if it is intentionally kept as a test seam, keep it but have the harness compare against `fetchByPath` so the two cannot drift.",
   "confidence": "high",
-  "status": "planned-sqlite-only",
-  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: the per-file session query that only the harness exercised is gone with the store."
  },
  {
   "category": "test-gap",
@@ -7781,7 +7805,9 @@
   "evidence": "UsageJSONStore.swift:248-277 defines four independent predicates — `stale` (a codex row with model == \"codex\"), `unprefixed` (a codex FileRec with usage but `cxTotal == 0`), `oldParser` (`parserVersion < 10`), `oldClaude` (`parserVersion < 11`). Tests/usage-index-regressions.py:257 only deletes the `parserVersion` key for all files (`for key in files.keys { files[key]?.removeValue(forKey: \"parserVersion\") }`) and then asserts the rebuild count; the SQLite half of the same test (line 250-253) does fabricate an inflated rollup, but that is `migrateIfNeeded`, not this file. Nothing asserts that a corpus whose FileRecs are all `parserVersion == 11` and `cxTotal > 0` is left untouched (no drop, offsets preserved), nor the `model == \"codex\"` / `cxTotal == 0` codex-specific branches.",
   "failure": "A regression that makes one predicate always true (e.g. flipping the parserVersion comparison) silently drops every Claude or Codex file row on every launch and re-parses the whole corpus each start — the exact class of bug the predicates were added to fix — and no test turns red; conversely a predicate that never fires leaves the double-booked resumed-transcript rows (103M tokens measured) in place undetected.",
   "fix": "Extend Tests/usage-index-regressions.py's JSON arm: (a) seed files.json with all three legacy shapes one at a time (codex model \"codex\"; codex cxTotal 0 with usage; parserVersion 10) and assert exactly the expected subset of rows disappears; (b) add the negative case — a corpus stamped parserVersion 11 / cxTotal > 0 must keep its `offset`/`headHash` (assert no re-parse by leaving a sentinel offset and checking it survives `load()`).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Deletion resolves it: all four legacy predicates lived in UsageJSONStore.loadLocked; the SQLite migration equivalents (v3/v4) are covered by usage-index-regressions.py."
  },
  {
   "category": "test-gap",

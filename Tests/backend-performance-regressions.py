@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production JSON rollups and MCP discovery with temporary files/mock children.
+"""Production MCP discovery with mock children.
 
 --baseline-dir compares a saved pre-change source snapshot with the working tree.
 Timings are diagnostics, not CI speed thresholds. No app/client/VPN is started.
@@ -20,8 +20,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--baseline-dir', type=Path)
 p.add_argument('--output-json', type=Path)
 args = p.parse_args()
-paths = ['Sources/ClaudeBar/Utils/UsageJSONStore.swift',
-         'Sources/ClaudeBar/Models/MCPToolDiscovery.swift']
+paths = ['Sources/ClaudeBar/Models/MCPToolDiscovery.swift']
 
 
 def declaration(text, marker):
@@ -45,8 +44,6 @@ def harness(baseline):
     source += '''
 enum FilePaths {
     static var root = URL(fileURLWithPath: CommandLine.arguments[1])
-    static var usageFilesJSON: URL { root.appendingPathComponent("files.json") }
-    static var usageRollupJSONL: URL { root.appendingPathComponent("rollup.jsonl") }
 }
 '''
     source += '\n'.join(sources)
@@ -61,51 +58,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String, line: UInt
         return Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
     }
     static func main() async throws {
-        let store = UsageJSONStore.shared
         var metrics: [String: Double] = [:]
-        func row(_ path: String, _ day: Int, _ input: Int = 10) -> UsageJSONStore.RollupRec {
-            .init(path: path, day: String(format: "2026-09-%02d", day / 2 + 1), model: "m\(day % 2)",
-                  calls: 1, input: input, output: 3, cacheRead: 4, cacheCreate: 5)
-        }
-        store.load()
-        metrics["json_seed_ms"] = ms {
-            for path in 0..<2000 { store.addRollup(path: "claude:\(path).jsonl", rows: (0..<32).map { row("claude:\(path).jsonl", $0) }) }
-        }
-        require(store.fetch(startDay: "", endDay: "9999").reduce(0) { $0 + $1.totalTokens } == 1_408_000, "seed conservation")
-        metrics["json_replace_800_ms"] = ms {
-            for _ in 0..<2 {
-                for path in 0..<400 { store.replaceRollup(path: "claude:\(path).jsonl", rows: (0..<32).map { row("claude:\(path).jsonl", $0, 20) }) }
-            }
-        }
-        var checksum = 0
-        metrics["json_session_400_ms"] = ms {
-            for path in 0..<400 {
-                checksum += store.fetchSession(pathPrefix: "claude:", pathSuffix: ":\(path).jsonl").reduce(0) { $0 + $1.totalTokens }
-            }
-        }
-        require(checksum == 409_600, "session conservation")
-        metrics["json_delete_400_ms"] = ms { for path in 0..<400 { store.deletePath("claude:\(path).jsonl") } }
-        require(store.fetch(startDay: "", endDay: "9999").reduce(0) { $0 + $1.totalTokens } == 1_126_400, "delete conservation")
-        store.replaceRollup(path: "claude:1600.jsonl", rows: [])
-        require(store.fetchSession(pathPrefix: "claude:", pathSuffix: ":1600.jsonl").isEmpty, "empty replacement")
-        // Row.path owns the row; preserve behavior even if it differs from the argument.
-        store.replaceRollup(path: "missing", rows: [row("codex:foreign", 0)])
-        store.addRollup(path: "missing", rows: [row("codex:foreign", 0)])
-        require(store.fetchSession(pathPrefix: "codex:", pathSuffix: "foreign").first?.calls == 2, "foreign-row add")
-        store.deletePath("codex:foreign")
-        require(store.fetchSession(pathPrefix: "codex:", pathSuffix: "foreign").isEmpty, "foreign-row removal")
-        let a = UsageJSONStore.RollupRec(path: "p", day: "d\u{1F}x", model: "m", calls: 1, input: 7, output: 0, cacheRead: 0, cacheCreate: 0)
-        let b = UsageJSONStore.RollupRec(path: "p\u{1F}d", day: "x", model: "m", calls: 2, input: 9, output: 0, cacheRead: 0, cacheCreate: 0)
-        store.replaceRollup(path: "p", rows: [a])
-        store.replaceRollup(path: b.path, rows: [b])
-        store.deletePath("p")
-        require(store.fetchSession(pathPrefix: b.path, pathSuffix: "d").first?.inputTokens == 9, "composite collision transfer")
-        store.deletePath(b.path)
-        store.save(); store.reset(); store.load()
-        require(store.fetchSession(pathPrefix: "claude:", pathSuffix: ":1600.jsonl").isEmpty, "reloaded index empty path")
-        require(store.fetchSession(pathPrefix: "claude:", pathSuffix: ":1601.jsonl").reduce(0) { $0 + $1.totalTokens } == 704, "reloaded index")
-        store.deletePath("claude:1601.jsonl"); store.save(); store.reset(); store.load()
-        require(store.fetchSession(pathPrefix: "claude:", pathSuffix: ":1601.jsonl").isEmpty, "persisted delete")
         let fm = FileManager.default
         let config = FilePaths.root.appendingPathComponent("mock-config.json")
         let script = CommandLine.arguments[2], python = CommandLine.arguments[3]
@@ -235,8 +188,8 @@ with tempfile.TemporaryDirectory(prefix='claudebar-backend-perf-') as folder:
             'hardware': subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip(),
             'swift': subprocess.check_output(['swiftc', '--version'], text=True, stderr=subprocess.STDOUT).strip(),
             'compiler_flags': ['-O', '-parse-as-library'],
-            'fixtures': {'json_paths': 2000, 'rows_per_path': 32, 'replacements': 800, 'session_queries': 400, 'deletions': 400, 'mock_reply_delay_ms': 1200},
+            'fixtures': {'mock_reply_delay_ms': 1200},
             'samples': samples, 'medians': medians,
-            'limitations': ['synthetic functions/mock children; not full-app FPS/CPU/power', 'RSS includes fixtures, serialization, reload and Foundation runtime', 'after arm additionally checks pre-cancel and launch races'],
+            'limitations': ['mock children; not full-app FPS/CPU/power', 'RSS includes fixtures and Foundation runtime', 'after arm additionally checks pre-cancel and launch races'],
         }, indent=2, ensure_ascii=False) + '\n')
-print('PASS: JSON path replacement/add/delete/reload and mock MCP pagination/cancellation/owned-child cleanup')
+print('PASS: mock MCP pagination/cancellation/owned-child cleanup')

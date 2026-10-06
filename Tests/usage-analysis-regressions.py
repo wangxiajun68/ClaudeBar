@@ -177,9 +177,8 @@ with tempfile.TemporaryDirectory(prefix='claudebar-usage-analysis-tests-') as fo
     subprocess.run(['swiftc', '-O', '-parse-as-library', str(swift), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
 
-# Exercise both production attribution query branches with isolated rollups.
+# Exercise the production attribution query with an isolated rollup.
 index = (root / 'Sources/ClaudeBar/Utils/UsageIndex.swift').read_text()
-json_store = (root / 'Sources/ClaudeBar/Utils/UsageJSONStore.swift').read_text()
 def slice_declaration(text, marker):
     start = text.index(marker)
     end = text.index('{', start) + 1
@@ -195,13 +194,9 @@ probe += '\n'.join(declaration(marker) for marker in [
 probe += r'''
 enum FilePaths {
     static var root = URL(fileURLWithPath: CommandLine.arguments[1])
-    static var usageFilesJSON: URL { root.appendingPathComponent("files.json") }
-    static var usageRollupJSONL: URL { root.appendingPathComponent("rollup.jsonl") }
 }
-enum DiskPersistence { static var useDatabase = true }
 let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 '''
-probe += slice_declaration(json_store, 'final class UsageJSONStore')
 probe += r'''
 struct UsageIndex {
     static let lock = NSLock()
@@ -226,13 +221,13 @@ probe += r'''
         precondition(!UsageProviderAttribution.isOfficialCodex(metadata: header("custom")))
         precondition(!UsageProviderAttribution.isOfficialCodex(metadata: header(nil)))
         precondition(!UsageProviderAttribution.isOfficialCodex(metadata: Data("malformed".utf8)))
-        var rows: [UsageJSONStore.RollupRec] = []
+        var rows: [(path: String, day: String, model: String, input: Int, output: Int, cached: Int)] = []
         func add(_ name: String, _ provider: String?, _ day: String, _ input: Int, _ output: Int, _ cached: Int,
                  source: String = "codex:", writeFile: Bool = true) throws {
             let file = FilePaths.root.appendingPathComponent(name)
             if writeFile { try header(provider).write(to: file) }
-            rows.append(.init(path: source + file.path, day: day, model: "gpt-shared", calls: 1,
-                              input: input, output: output, cacheRead: cached, cacheCreate: 0))
+            rows.append((path: source + file.path, day: day, model: "gpt-shared",
+                         input: input, output: output, cached: cached))
         }
         try add("official.jsonl", "openai", "2026-10-01", 100, 10, 200)
         try add("official.jsonl", "openai", "2026-09-30", 999, 0, 0)
@@ -244,34 +239,27 @@ probe += r'''
         precondition(sqlite3_open(":memory:", &UsageIndex.db) == SQLITE_OK)
         defer { sqlite3_close(UsageIndex.db) }
         precondition(sqlite3_exec(UsageIndex.db, "CREATE TABLE rollup(path TEXT, day TEXT, model TEXT, calls INTEGER, input INTEGER, output INTEGER, cache_read INTEGER, cache_create INTEGER)", nil, nil, nil) == SQLITE_OK)
-        UsageJSONStore.shared.load()
-        for (path, grouped) in Dictionary(grouping: rows, by: \.path) {
-            UsageJSONStore.shared.replaceRollup(path: path, rows: grouped)
-        }
         for row in rows {
             var stmt: OpaquePointer?
             precondition(sqlite3_prepare_v2(UsageIndex.db, "INSERT INTO rollup VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", -1, &stmt, nil) == SQLITE_OK)
             sqlite3_bind_text(stmt, 1, row.path, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 2, row.day, -1, SQLITE_TRANSIENT)
             sqlite3_bind_text(stmt, 3, row.model, -1, SQLITE_TRANSIENT)
-            for (offset, value) in [row.calls, row.input, row.output, row.cacheRead, row.cacheCreate].enumerated() {
+            for (offset, value) in [1, row.input, row.output, row.cached, 0].enumerated() {
                 sqlite3_bind_int64(stmt, Int32(offset + 4), Int64(value))
             }
             precondition(sqlite3_step(stmt) == SQLITE_DONE); sqlite3_finalize(stmt)
         }
-        for useDatabase in [true, false] {
-            DiskPersistence.useDatabase = useDatabase
-            let result = UsageIndex.fetchOfficialCodex(in: interval)
-            precondition(result.count == 1 && result[0].calls == 2)
-            precondition(result[0].inputTokens == 170 && result[0].outputTokens == 15 && result[0].cacheReadTokens == 290)
-            precondition(result[0].totalTokens == 475, "Official metadata, interval, path scope and shared-model relay exclusion")
-            let snapshot = ModelUsage(model: "gpt-shared", calls: 1, inputTokens: 120, outputTokens: 10, cacheReadTokens: 400)
-            let parts = UsageProviderAttribution.split(snapshot, official: result[0])
-            var combined = parts.official; combined.merge(parts.remaining)
-            precondition(combined == snapshot && parts.remaining.cacheReadTokens == 110,
-                         "A newer attribution cannot overcount an older UI snapshot")
-        }
-        print("PASS: provider attribution from actual metadata across SQLite/JSON, period and source bounds, missing metadata, same-model relays and snapshot conservation")
+        let result = UsageIndex.fetchOfficialCodex(in: interval)
+        precondition(result.count == 1 && result[0].calls == 2)
+        precondition(result[0].inputTokens == 170 && result[0].outputTokens == 15 && result[0].cacheReadTokens == 290)
+        precondition(result[0].totalTokens == 475, "Official metadata, interval, path scope and shared-model relay exclusion")
+        let snapshot = ModelUsage(model: "gpt-shared", calls: 1, inputTokens: 120, outputTokens: 10, cacheReadTokens: 400)
+        let parts = UsageProviderAttribution.split(snapshot, official: result[0])
+        var combined = parts.official; combined.merge(parts.remaining)
+        precondition(combined == snapshot && parts.remaining.cacheReadTokens == 110,
+                     "A newer attribution cannot overcount an older UI snapshot")
+        print("PASS: provider attribution from actual metadata, period and source bounds, missing metadata, same-model relays and snapshot conservation")
     }
 }
 '''

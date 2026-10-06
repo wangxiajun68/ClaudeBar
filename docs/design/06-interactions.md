@@ -28,7 +28,7 @@
 ## 用量统计
 
 1. `ProviderStore.refreshUsage(rescan:)` 在 detached task 上跑：先发布索引里的缓存结果（有缓存时立刻可读），再 `UsageIndex.updateIndex()`，最后再查一遍索引并发布最终值。
-2. `UsageIndex` 是持久化索引，不做现扫：每个 transcript 只解析一次，按 (文件, 天, 模型) 落成汇总行（SQLite `usage-index.db`，或 JSON 后端 `logs/usage-files.json` + `usage-rollup.jsonl`），查询即一次 `GROUP BY`。增量维护按 mtime + size 跳过未变文件、只从字节 `offset` 解析追加块——细节见技术文档 [§4](../technical/04-data-access-layer.md)。
+2. `UsageIndex` 是持久化索引，不做现扫：每个 transcript 只解析一次，按 (文件, 天, 模型) 落成汇总行（SQLite `usage-index.db`），查询即一次 `GROUP BY`。增量维护按 mtime + size 跳过未变文件、只从字节 `offset` 解析追加块——细节见技术文档 [§4](../technical/04-data-access-layer.md)。
 3. 查询 `UsageIndex.fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` 聚合 `ModelUsage`（input/output/cacheRead/cacheCreation）与按日 `DayUsage`；第三方（代理）流量由 `ProxyUsageStore` 的独立汇总并入，见技术文档 §4。
 
 ## 编辑 Provider（独立窗口 / 主窗口页面）

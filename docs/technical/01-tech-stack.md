@@ -12,7 +12,7 @@
 | 表面 | 卡面实底 + 发丝线描边 | `panelCard()` / `.tile()` 为 `Theme.cardSurface` 实底 + 发丝线与内嵌白环，**非** `glassEffect`；按钮为自绘 `ActionButton`（默认 `.neutral` 铣削凹槽，`.sparkle` 深色板 / `.accent` / `.destructive` 需显式指定，见 [DESIGN.md](../../DESIGN.md) 的 Controls 表）。原生 `glassEffect` 只出现在问候卡窗台（macOS 26 用 `glassEffect`，macOS 15 退化为材质叠层）；⌘K 面板把结果列表包在 `GlassEffectContainer` 里，但行本身为普通填充 |
 | Widget | WidgetKit | `systemLarge` 尺寸，`StaticConfiguration` |
 | 数据 | Foundation Codable + JSONSerialization | 模型编码用 Codable；`settings.json` 读写用 JSONSerialization 以保留未知字段 |
-| 数据库 | SQLite3（系统库） | Cursor `state.vscdb` 与 Codex `state_*.sqlite`（只读）；自有 `usage-index.db`、`proxy-usage.db`、`proxy-capture.db`（读写，`DiskPersistence.useDatabase` 决定是否启用）；会话迁移按事务读写 Cursor 桌面库 |
+| 数据库 | SQLite3（系统库） | Cursor `state.vscdb` 与 Codex `state_*.sqlite`（只读）；自有 `usage-index.db`、`proxy-usage.db`、`proxy-capture.db`（读写）；会话迁移按事务读写 Cursor 桌面库 |
 | 依赖 | **无 Swift 包管理器依赖** | 系统框架 + `libsqlite3`；VPN 内核 mihomo 以 `.xz` 归档随包（构建时注入，非 SPM） |
 | 构建 | `swiftc` + `bash` 脚本 | 无 Xcode 工程、无 SPM |
 | 最低系统 | macOS 15+，arm64 | 仅 Apple Silicon；`build.sh` 默认编译目标 `arm64-apple-macos15.0`（可用 `MACOS_MIN` 覆盖） |

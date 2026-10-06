@@ -1230,7 +1230,6 @@ class ProviderStore: ObservableObject {
 
     private var usageWatcherStarted = false
     private var usageWatcherStoppedAt: Date?
-    private var persistenceObserver: NSObjectProtocol?
     private var settlementObserver: NSObjectProtocol?
     private var priceObserver: NSObjectProtocol?
     private var proxyUsageObserver: NSObjectProtocol?
@@ -1243,13 +1242,6 @@ class ProviderStore: ObservableObject {
             URL(fileURLWithPath: ExternalAgentKind.codex.rootDir).deletingLastPathComponent().path, // Includes archive moves.
         ]) { [weak self] in
             DispatchQueue.main.async { self?.refreshUsage(rescan: true) }
-        }
-        if persistenceObserver == nil {
-            persistenceObserver = NotificationCenter.default.addObserver(
-                forName: .persistenceModeDidChange, object: nil, queue: .main
-            ) { [weak self] _ in
-                self?.refreshUsage(rescan: true)
-            }
         }
         // The Cursor ledger reads on its own schedule (it is a network read for
         // whichever window the usage page has selected) and announces itself

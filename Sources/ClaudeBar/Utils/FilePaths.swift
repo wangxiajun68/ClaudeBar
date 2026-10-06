@@ -68,7 +68,8 @@ enum FilePaths {
     /// Mutable greeting fonts, isolated by build channel.
     static var greetingFontsDir: URL { appSupportDir.appendingPathComponent("GreetingFonts", isDirectory: true) }
 
-    /// JSON / JSONL logs used when the SQLite stores are turned off.
+    /// Logs and sidecar files that live outside SQLite: the access log, capture
+    /// media, the claims ledger, the proxy log.
     static var logsDir: URL {
         let dir = appSupportDir.appendingPathComponent("logs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -83,16 +84,14 @@ enum FilePaths {
         appSupportDir.appendingPathComponent("proxy-token")
     }
 
-    static var captureIndexFile: URL { logsDir.appendingPathComponent("captures.jsonl") }
+    /// Capture payload directories hold decoded media (`<id>/` per capture);
+    /// the capture rows themselves live in `proxy-capture.db`.
     static var capturePayloadsDir: URL {
         let dir = logsDir.appendingPathComponent("captures", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
-    static var captureSeqFile: URL { logsDir.appendingPathComponent("capture-seq") }
     static var proxyLogFile: URL { logsDir.appendingPathComponent("proxy.jsonl") }
-    static var usageFilesJSON: URL { logsDir.appendingPathComponent("usage-files.json") }
-    static var usageRollupJSONL: URL { logsDir.appendingPathComponent("usage-rollup.jsonl") }
     /// Claude message ids and the transcript that books them. See
     /// `UsageIndex.claimClaudeIDs` — a resumed session copies the parent's
     /// assistant records verbatim, so an id has to be claimed once for the

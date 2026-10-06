@@ -95,7 +95,7 @@ Claude / Codex / Cursor 的根目录都按 `BuildChannel` 分流：正式版用�
 
 **数据源**：Claude Code 的 `~/.claude/projects/**/*.jsonl`（assistant 消息 `message.usage`）与 Codex 的 `sessions` 及 `archived_sessions`（每轮 `last_token_usage`）。第三方（代理）流量不在这里，见下文 `ProxyUsageStore`。
 
-**不再现扫**。旧实现是每次查询用 mtime 预筛 + UTC 日期粗筛 + `concurrentPerform` 并行解析整个项目树；现在每个 transcript 只解析一次，落成 (file, day, model) 汇总行，查询退化为一次 `GROUP BY`。两个后端二选一（设置 → 开启数据库），互不迁移：SQLite `usage-index.db`，或 JSON 的 `logs/usage-files.json` + `usage-rollup.jsonl`。`rollup` 按用户本地时区的日期键记录 `calls` / `input` / `output` / `cache_read` / `cache_create`。
+**不再现扫**。旧实现是每次查询用 mtime 预筛 + UTC 日期粗筛 + `concurrentPerform` 并行解析整个项目树；现在每个 transcript 只解析一次，落成 (file, day, model) 汇总行，查询退化为一次 `GROUP BY`。存储只有 SQLite 一份（`usage-index.db`）；曾有的 JSON/JSONL 后端随设置开关一起删除。`rollup` 按用户本地时区的日期键记录 `calls` / `input` / `output` / `cache_read` / `cache_create`。
 
 **增量维护 `updateIndex()`**：`collectTranscripts()` 用 `FileManager.enumerator`（`.skipsPackageDescendants`）一次目录列举取回 mtime/size，逐文件与索引中的记录比较——
 
@@ -104,7 +104,7 @@ Claude / Codex / Cursor 的根目录都按 `BuildChannel` 分流：正式版用�
 - 变小或改写：从 0 全量重解析并替换该文件的 rollup，旧数据不会残留；`headHash`（文件头 256 字节的 FNV-1a）用来识别「size 相同但首部已被改写」。
 - 文件消失（含 `archived_sessions` 归档后）：连 rollup 一起删除。
 
-**查询与更新的分工**：`fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` / `fetchOfficialCodex` 只查索引，都不走 transcript；`ProviderStore` 先发布缓存结果，再 `updateIndex()`，再发布最终值（`hasCachedData` / `needsInitialBuild` 只用来决定是否显示 spinner）。schema 版本由 `PRAGMA user_version` 管理（当前 11，`migrateIfNeeded`；v7/v8/v10 各重建过一次 Codex 行，v11 重建过 Claude 行）。JSON 后端用 `FileRec.parserVersion` 表达同一件事。
+**查询与更新的分工**：`fetch` / `fetchBySource` / `fetchDaily` / `fetchDailyModels` / `fetchSession` / `fetchOfficialCodex` 只查索引，都不走 transcript；`ProviderStore` 先发布缓存结果，再 `updateIndex()`，再发布最终值（`hasCachedData` / `needsInitialBuild` 只用来决定是否显示 spinner）。schema 版本由 `PRAGMA user_version` 管理（当前 11，`migrateIfNeeded`；v7/v8/v10 各重建过一次 Codex 行，v11 重建过 Claude 行）。
 
 **两个来源语义**：Claude 的同一个 `message.id` 会分多次追加（partial → final），索引按 `message.id` 最后一次为准，并且**整个语料只记一次**（见下）；Codex 的 `token_count` 是累计快照，按事件去重、并用 `turn_context` 的模型 slug 归属到具体模型。
 
@@ -116,16 +116,16 @@ Claude / Codex / Cursor 的根目录都按 `BuildChannel` 分流：正式版用�
 
 ## `ProxyUsageStore` — 第三方（代理）用量
 
-代理请求的 token 只落在 `ProxyCaptureStore` 的抓包行上，而抓包行按最近 120 条滚动（见下），不能当账本。`ProxyUsageStore` 因此是第三方流量的持久 (day, model) 汇总：`record(model:at:input:output:cacheRead:cacheWrite:)` 在每次代理请求结束时累加，`input` 是扣除了缓存命中后的新输入（`TokenTotals` 先把上游 prompt 数里的命中折出去），查询走 `fetch(startDay:endDay:)`。后端与 `UsageIndex` 同为 SQLite（`proxy-usage.db`）或 JSONL（`logs/usage-third-party.jsonl`）。`UsageIndex.fetch` 会把它的结果并入模型汇总，所以用量环的第三方切片是真实的 token 份额，而不是从被截断的列表上估的。**这份汇总不裁剪**——它就是要留住比抓包窗口更长的历史。
+代理请求的 token 只落在 `ProxyCaptureStore` 的抓包行上，而抓包行按最近 120 条滚动（见下），不能当账本。`ProxyUsageStore` 因此是第三方流量的持久 (day, model) 汇总：`record(model:at:input:output:cacheRead:cacheWrite:)` 在每次代理请求结束时累加，`input` 是扣除了缓存命中后的新输入（`TokenTotals` 先把上游 prompt 数里的命中折出去），查询走 `fetch(startDay:endDay:)`。存储与 `UsageIndex` 同为 SQLite（`proxy-usage.db`）。`UsageIndex.fetch` 会把它的结果并入模型汇总，所以用量环的第三方切片是真实的 token 份额，而不是从被截断的列表上估的。**这份汇总不裁剪**——它就是要留住比抓包窗口更长的历史。
 
-## 抓包留存 — `ProxyCaptureStore` / `CaptureJSONStore`
+## 抓包留存 — `ProxyCaptureStore`
 
 「流量」页的抓包记录是滚动窗口，不是完整账本：
 
-- **列表上限 `listLimit = 120`**：两个后端都保留最近 120 条；SQLite 侧 `pruneLocked()` 先按 `capture_id NOT IN (最新 120)` 显式删除 payload 行，再删 capture 行（不依赖 `ON DELETE CASCADE`——`foreign_keys` is per-connection，实测关掉时 payload 会永远留下）。
+- **列表上限 `listLimit = 120`**：保留最近 120 条；`pruneLocked()` 先按 `capture_id NOT IN (最新 120)` 显式删除 payload 行，再删 capture 行（不依赖 `ON DELETE CASCADE`——`foreign_keys` is per-connection，实测关掉时 payload 会永远留下）。
 - **空闲页回收**：`PRAGMA freelist_count` 超过 `vacuumThresholdPages = 8_192`（4096 字节页 → 约 32 MB）才 `VACUUM`，因为 VACUUM 是整文件重写。
 - **孤儿媒体清扫**：每 `300` 秒一次 `sweepOrphanMedia()`，`logs/captures/<id>/` 中既无对应行、mtime 又早于 `-86_400` 秒的目录才删除——间隔内刚创建的目录会被留下。
-- `CaptureJSONStore` 在 `prune()` 里做同样的 120 条截断；`ProxyCaptureStore.loadListIfNeeded()` 把列表读放在后台队列、幂等，只在首次挂载流量页时触发。
+- `ProxyCaptureStore.loadListIfNeeded()` 把列表读放在后台队列、幂等，只在首次挂载流量页时触发。
 
 ## `CursorLedger` / `CursorLedgerStore` — Cursor 的真实用量与金额
 

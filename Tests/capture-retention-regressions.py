@@ -34,7 +34,7 @@ def method(signature):
 prune = method('pruneLocked()')
 exec_body = method('exec(_ sql: String, args: [Bind])').replace(
     'lock.lock(); defer { lock.unlock() }\n        ', '').replace(
-    'guard useDatabase, let db = connection() else { return false }', 'guard let db = Self.db else { return false }').replace(
+    'guard let db = connection() else { return false }', 'guard let db = Self.db else { return false }').replace(
     '@discardableResult\n    static func', 'static func')
 exec_raw = method('execRaw(_ sql: String)').replace(
     'guard let db else { return }', 'guard let db = Self.db else { return }')

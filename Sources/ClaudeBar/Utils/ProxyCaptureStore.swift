@@ -168,15 +168,17 @@ final class ProxyCaptureStore {
     private var listLoaded = false
     private let loadQueue = DispatchQueue(label: "com.claudebar.capture-load", qos: .userInitiated)
     private var db: OpaquePointer?
-    private var openFailed = false
+    /// When the last `sqlite3_open_v2` failed; retried after a cooldown so a
+    /// transient failure (disk full, a lock held by a crashed sibling) does
+    /// not disable capture for the rest of the process.
+    private var openFailedAt: Date?
+    private static let openRetryInterval: TimeInterval = 5
     private var pendingLive: [Int64: CaptureLive] = [:]
     private var flushWork: DispatchWorkItem?
     private let liveFlushQueue = DispatchQueue(label: "com.claudebar.capture-live", qos: .utility)
     private let listLimit = 120
     private let payloadCap = CaptureMedia.payloadCapBytes
     private let isoFormatter = ISO8601DateFormatter()
-    private lazy var jsonStore = CaptureJSONStore(listLimit: listLimit, iso: isoFormatter)
-    private var useDatabase: Bool { DiskPersistence.useDatabase }
 
     private static let dbURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -191,47 +193,27 @@ final class ProxyCaptureStore {
     ///
     /// Called from `TrafficView.onAppear` — the only surface that renders the
     /// list. The load is idempotent: a second call while one is in flight (a
-    /// fast page switch away and back) is a no-op, and so is any later call
-    /// with the default `force: false`; `force: true` is the escape hatch that
-    /// re-reads regardless.
-    func loadListIfNeeded(force: Bool = false) {
+    /// fast page switch away and back) is a no-op, and so is any later call.
+    func loadListIfNeeded() {
         lock.lock()
-        if listLoaded && !force { lock.unlock(); return }
+        if listLoaded { lock.unlock(); return }
         lock.unlock()
         loadQueue.async { [weak self] in
             guard let self else { return }
             self.lock.lock()
             // Re-check under the lock: two queued loads must not both run, and
             // the first one to get here wins.
-            if self.listLoaded && !force { self.lock.unlock(); return }
-            let rows = self.loadCurrentBackendLocked()
+            if self.listLoaded { self.lock.unlock(); return }
+            let rows = self.loadListLocked()
             self.listLoaded = true
             self.lock.unlock()
             self.publishList(rows)
         }
     }
 
-    /// Close SQLite (if open) and reload from the backend selected in Settings.
-    func reloadPersistence() {
-        loadQueue.async { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            self.closeDatabaseLocked()
-            let rows = self.loadCurrentBackendLocked()
-            self.listLoaded = true
-            self.lock.unlock()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.catalog.records = rows
-                self.previews.map = [:]
-                self.streams.live = [:]
-            }
-        }
-    }
-
     // MARK: - Proxy API (any thread)
 
-    /// Start a capture. Returns nil if the active backend cannot persist.
+    /// Start a capture. Returns nil if SQLite cannot be opened.
     ///
     /// `preview` and `encodeHeaders` parse the request body to find the last
     /// user utterance and to pretty-print headers. Both are pure functions of
@@ -247,21 +229,11 @@ final class ProxyCaptureStore {
         let headersJSON = Self.encodeHeaders(requestHeaders)
         lock.lock()
         defer { lock.unlock() }
-        let summary: CaptureSummary
-        if useDatabase {
-            guard let created = beginSQL(kind: kind, source: source, provider: provider,
-                                         model: model, path: path, stream: stream,
-                                         requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
-                                         requestHeadersJSON: headersJSON,
-                                         preview: preview) else { return nil }
-            summary = created
-        } else {
-            summary = jsonStore.begin(kind: kind, source: source, provider: provider,
-                                      model: model, path: path, stream: stream,
-                                      requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
-                                      requestHeadersJSON: headersJSON,
-                                      preview: preview)
-        }
+        guard let summary = beginSQL(kind: kind, source: source, provider: provider,
+                                     model: model, path: path, stream: stream,
+                                     requestJSON: requestJSON, rewrittenJSON: rewrittenJSON,
+                                     requestHeadersJSON: headersJSON,
+                                     preview: preview) else { return nil }
         let id = summary.id
         // Registered before the tap escapes, so an interrupt tap that lands
         // while the proxy is still connecting upstream is not lost.
@@ -302,36 +274,24 @@ final class ProxyCaptureStore {
                 state: CaptureState, status: Int, error: String?,
                 assembler: CaptureAssembler, rawSSE: String?) {
         let ended = Date()
-        if useDatabase {
-            update(id, fields: [
-                "state": .text(state.rawValue),
-                "http_status": .int(Int64(status)),
-                "ended_at": .text(iso(ended)),
-                "prompt_tokens": assembler.promptTokens.map { .int(Int64($0)) } ?? .null,
-                "completion_tokens": assembler.completionTokens.map { .int(Int64($0)) } ?? .null,
-                "cache_read_tokens": assembler.cacheReadTokens.map { .int(Int64($0)) } ?? .null,
-                "cache_write_tokens": assembler.cacheWriteTokens.map { .int(Int64($0)) } ?? .null,
-                "error": error.map { .text($0) } ?? .null,
-                "model": assembler.model.isEmpty ? .null : .text(assembler.model),
-            ])
-            exec("""
-                UPDATE payloads SET response_json = ?, raw_sse = ? WHERE capture_id = ?
-                """, args: [
-                .text(Self.truncate(assembler.toResponseJSON(), cap: payloadCap)),
-                .text(Self.truncate(rawSSE, cap: payloadCap)),
-                .int(id),
-            ])
-        } else {
-            lock.lock()
-            jsonStore.patch(id) {
-                Self.applyFinish(&$0, state: state, status: status, ended: ended,
-                                 assembler: assembler, error: error)
-            }
-            jsonStore.mergePayload(id,
-                response: Self.truncate(assembler.toResponseJSON(), cap: payloadCap),
-                sse: Self.truncate(rawSSE, cap: payloadCap))
-            lock.unlock()
-        }
+        update(id, fields: [
+            "state": .text(state.rawValue),
+            "http_status": .int(Int64(status)),
+            "ended_at": .text(iso(ended)),
+            "prompt_tokens": assembler.promptTokens.map { .int(Int64($0)) } ?? .null,
+            "completion_tokens": assembler.completionTokens.map { .int(Int64($0)) } ?? .null,
+            "cache_read_tokens": assembler.cacheReadTokens.map { .int(Int64($0)) } ?? .null,
+            "cache_write_tokens": assembler.cacheWriteTokens.map { .int(Int64($0)) } ?? .null,
+            "error": error.map { .text($0) } ?? .null,
+            "model": assembler.model.isEmpty ? .null : .text(assembler.model),
+        ])
+        exec("""
+            UPDATE payloads SET response_json = ?, raw_sse = ? WHERE capture_id = ?
+            """, args: [
+            .text(Self.truncate(assembler.toResponseJSON(), cap: payloadCap)),
+            .text(Self.truncate(rawSSE, cap: payloadCap)),
+            .int(id),
+        ])
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let live = CaptureLive(content: assembler.content,
@@ -378,15 +338,6 @@ final class ProxyCaptureStore {
                 includePayloads: Bool = true, includeTools: Bool = true) -> CaptureDetail? {
         lock.lock()
         defer { lock.unlock() }
-        if !useDatabase {
-            guard let summary = jsonStore.summary(id: id) else { return nil }
-            let payload = jsonStore.readPayload(id)
-            return makeDetail(id: id, summary: summary, request: payload.request,
-                              rewritten: payload.rewritten, response: payload.response,
-                              sse: includeRaw ? payload.sse : "",
-                              requestHeadersJSON: payload.headers,
-                              includePayloads: includePayloads, includeTools: includeTools)
-        }
         guard let db = connection() else { return nil }
         let sql = includeRaw
             ? """
@@ -452,22 +403,18 @@ final class ProxyCaptureStore {
     }
 
     func clearAll() {
-        if useDatabase {
-            // SQLite drops the rows, but media directories (decoded
-            // screenshots, keyed by capture id) live outside the database.
-            // Without this, 「清空全部抓包」 left every screenshot on disk with
-            // no row to reach it — and the age-gated sweep in `pruneLocked`
-            // deliberately keeps directories younger than a day, so they
-            // outlived the clear. Read the ids under the same lock as the
-            // DELETE so no `begin` can slip in between the two.
-            lock.lock()
-            let mediaIDs = connection().flatMap { loadListIDs($0) } ?? []
-            exec("DELETE FROM captures", args: [])
-            lock.unlock()
-            removeMedia(ids: mediaIDs)
-        } else {
-            lock.lock(); jsonStore.clearAll(); lock.unlock()
-        }
+        // SQLite drops the rows, but media directories (decoded screenshots,
+        // keyed by capture id) live outside the database. Without this,
+        // 「清空全部抓包」 left every screenshot on disk with no row to reach
+        // it — and the age-gated sweep in `pruneLocked` deliberately keeps
+        // directories younger than a day, so they outlived the clear. Read
+        // the ids under the same lock as the DELETE so no `begin` can slip in
+        // between the two.
+        lock.lock()
+        let mediaIDs = connection().flatMap { loadListIDs($0) } ?? []
+        exec("DELETE FROM captures", args: [])
+        lock.unlock()
+        removeMedia(ids: mediaIDs)
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records = []
             self?.previews.map = [:]
@@ -478,15 +425,15 @@ final class ProxyCaptureStore {
     // MARK: - SQLite
 
     private func connection() -> OpaquePointer? {
-        guard useDatabase else { return nil }
         if let db { return db }
-        if openFailed { return nil }
+        if let failedAt = openFailedAt, Date().timeIntervalSince(failedAt) < Self.openRetryInterval { return nil }
         guard sqlite3_open_v2(Self.dbURL.path, &db,
                               SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
                               nil) == SQLITE_OK else {
-            openFailed = true
+            openFailedAt = Date()
             return nil
         }
+        openFailedAt = nil
         sqlite3_exec(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2000; PRAGMA foreign_keys=ON", nil, nil, nil)
         // The app is the only writer, but a backup agent or a `sqlite3` shell
         // holding a lock made every capture write fail instantly with
@@ -543,24 +490,11 @@ final class ProxyCaptureStore {
             """, args: [])
     }
 
-    private func loadCurrentBackendLocked() -> [CaptureSummary] {
-        if useDatabase {
-            _ = connection()
-            recoverOrphans()
-            pruneLocked()
-            return loadListUnlocked()
-        }
-        jsonStore.load()
-        jsonStore.recoverOrphans()
-        return jsonStore.summaries
-    }
-
-    private func closeDatabaseLocked() {
-        guard let handle = db else { return }
-        sqlite3_exec(handle, "PRAGMA wal_checkpoint(PASSIVE)", nil, nil, nil)
-        sqlite3_close(handle)
-        db = nil
-        openFailed = false
+    private func loadListLocked() -> [CaptureSummary] {
+        _ = connection()
+        recoverOrphans()
+        pruneLocked()
+        return loadListUnlocked()
     }
 
     private func publishList(_ rows: [CaptureSummary]) {
@@ -742,8 +676,8 @@ final class ProxyCaptureStore {
     }
 
     private func currentLiveIDs() -> [Int64] {
-        if useDatabase, let db, let rows = loadListIDs(db) { return rows }
-        return jsonStore.summaries.map(\.id)
+        guard let db, let rows = loadListIDs(db) else { return [] }
+        return rows
     }
 
     private func loadListIDs(_ db: OpaquePointer) -> [Int64]? {
@@ -778,49 +712,6 @@ final class ProxyCaptureStore {
     }
 
     private func update(_ id: Int64, fields: [String: Bind]) {
-        if !useDatabase {
-            lock.lock()
-            jsonStore.patch(id) { row in
-                for (k, v) in fields {
-                    switch (k, v) {
-                    case ("state", .text(let s)):
-                        if let st = CaptureState(rawValue: s) { row.state = st }
-                    case ("first_token_at", .text(let s)):
-                        row.firstTokenAt = parseISO(s)
-                    case ("ended_at", .text(let s)):
-                        row.endedAt = parseISO(s)
-                    case ("http_status", .int(let n)):
-                        row.httpStatus = Int(n)
-                    case ("prompt_tokens", .int(let n)):
-                        row.promptTokens = Int(n)
-                    case ("prompt_tokens", .null):
-                        row.promptTokens = nil
-                    case ("completion_tokens", .int(let n)):
-                        row.completionTokens = Int(n)
-                    case ("completion_tokens", .null):
-                        row.completionTokens = nil
-                    case ("cache_read_tokens", .int(let n)):
-                        row.cacheReadTokens = Int(n)
-                    case ("cache_read_tokens", .null):
-                        row.cacheReadTokens = nil
-                    case ("cache_write_tokens", .int(let n)):
-                        row.cacheWriteTokens = Int(n)
-                    case ("cache_write_tokens", .null):
-                        row.cacheWriteTokens = nil
-                    case ("error", .text(let s)):
-                        row.error = s
-                    case ("error", .null):
-                        row.error = nil
-                    case ("model", .text(let s)):
-                        row.model = s
-                    default:
-                        break
-                    }
-                }
-            }
-            lock.unlock()
-            return
-        }
         var sets: [String] = []
         var args: [Bind] = []
         for (k, v) in fields {
@@ -837,7 +728,7 @@ final class ProxyCaptureStore {
     @discardableResult
     private func exec(_ sql: String, args: [Bind]) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard useDatabase, let db = connection() else { return false }
+        guard let db = connection() else { return false }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
@@ -983,10 +874,10 @@ final class ProxyCaptureStore {
         mutate(&catalog.records[idx])
     }
 
-    /// The summary fields a finished capture writes, shared by the JSON store
-    /// patch and the main-thread patch: the two rows must agree, and a field
-    /// added to one copy and missed in the other is a silent divergence between
-    /// what is on disk and what the list draws.
+    /// The summary fields a finished capture writes to the on-screen row —
+    /// the same set `finish`'s UPDATE writes to disk, so a field added in one
+    /// place and missed in the other is a silent divergence between what the
+    /// list draws and what a re-read would produce.
     private static func applyFinish(_ s: inout CaptureSummary, state: CaptureState, status: Int,
                                     ended: Date, assembler: CaptureAssembler, error: String?) {
         s.state = state

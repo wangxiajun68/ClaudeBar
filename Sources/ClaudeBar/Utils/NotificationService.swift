@@ -17,9 +17,6 @@ extension Notification.Name {
     /// - `inDesktop`: Bool, Codex only
     static let resumeSession = Notification.Name("com.claudebar.resumeSession")
 
-    /// SQLite vs JSON/JSONL persistence flipped in Settings.
-    static let persistenceModeDidChange = Notification.Name("com.claudebar.persistenceModeDidChange")
-
     /// `CursorLedgerStore` finished a read and its money map changed.
     ///
     /// A notification rather than a direct call because the reader and the
