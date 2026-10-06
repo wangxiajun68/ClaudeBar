@@ -644,7 +644,9 @@
   "evidence": "ProcessSampler.swift:931 `let key = (cwd as NSString).standardizingPath`（内核 buffter 给出的是 `/private/var/...`），而视图侧是 38-39 `Key.standardizedCwd(session.cwd)`。实测（-O 编译，精确复刻这两个函数）：目录存在时 `/private/var/folders/…/T/keyprobe-7440` → `/var/folders/…`，与视图键一致；目录被删后同一进程的内核 cwd 仍是 `/private/var/…`，但 standardizingPath 不再折叠 → sampler 键 `/private/var/folders/…`、view 键 `/var/folders/…`，实测输出 “MATCH: false”。`~/…/.codex/sessions` 里 14 份 rollout 的 `session_meta.cwd` 正是 `/var/folders/lj/…/T`（另 9 份是 `/tmp`，同样在 /private/tmp 删除后失配），而 workspace 临时目录在自动化跑完后会被清理。",
   "failure": "Codex 曾在 /var/folders 或 /tmp 下（迁移、自动化、临时 workspace）工作 → 临时目录被清理 → 该 Codex 行 `sampler.byKey[.cwd(...)]` 永远为 nil，SessionLoadChip 常驻 “—”，与机器负载无关；重启 App 也不会自愈（每次扫描都重新取被删目录的 /private 拼写）。",
   "fix": "两侧用同一规范化：抽一个函数，先 standardizingPath，若结果仍以 \"/private/\" 开头则去掉该前缀（或在 scan 侧对内核路径做与 Key.standardizedCwd 相同的预处理），保证同一 cwd 在两种实存状态下产生同一 Key。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`ProcessSampler.Key.canonicalCwd` is now the single spelling for both sides: it standardizes and folds the three published `/private` root-symlink prefixes (`/etc`, `/tmp`, `/var`) at the *leading* component only, while a deeper `/private/...` path is left alone. `ProcessIndex.scan` builds its `byCwd` keys through it, so a kernel-reported `/private/var/...` matches a session row's `/var/...` even after the directory is gone. `process-cpu-regressions.py` slices the function and asserts 10 mappings including the negative cases."
  },
  {
   "category": "perf-cpu",
@@ -656,7 +658,9 @@
   "evidence": "tick 在 452 行无条件 `let battery = HardwareSensors.batteryStatus()`，而 `guard wantsAttribution` 在 499 行才分流；后台档周期由 379-391 给出（无 scope 前台 6 s、后台 12 s）。实测同一 IOKit 形状的读取（IOServiceGetMatchingService(AppleSmartBattery)+IORegistryEntryCreateCFProperties）为 0.314 ms/次（200 次平均）；UIWakePolicy.swift:27-30 说明无可见窗口时进程仍常驻。按 6 s 档计：每日 ~14 400 次 × 0.31 ms ≈ 4.4 s 的唤醒尾巴 + 约 1.6 ms/s 摊薄占用，且它是每 tick 唯一必付的“贵读”。",
   "failure": "用户合上窗口整天不打开 App → 采样线程仍按 6–12 s 唤醒并做 IORegistry 往返，属可完全消除的常驻能耗；结果只是被 publish 到没人观察的 `host`。",
   "fix": "把 452 行降到 499 行之后（attribution 分支内）读取；或在此处复用上次读数（host.battery* 已是值类型），只在 wantsAttribution 时重读——注释里“电量 mark 是常驻的”对应的是 popup 打开的场景，那时 wantsAttribution 必为真。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`tick()` now refreshes the battery reading only while a visible-surface tier is active (`wantsDevices`), on a 5 s gate, and reuses the last sample otherwise; the background 6–12 s tier no longer opens the IOKit service. The published `Snapshot` still carries the cached values every tick, so the popup's first frame renders a real percentage. Verified by `make build` + `make test TEST=\"process-cpu measured-performance interaction-performance\"`."
  },
  {
   "category": "correctness",
@@ -7233,7 +7237,9 @@
   "evidence": "`grep -rn \"ProcessIndex|argvMentionsCodex|firstPath|standardizedCwd|byKey\" Tests/` 只命中 dashboard-performance-regressions.py 里的一个同名枚举桩（36-37 行）与 DashboardView 的键断言（108 行）；Tests/process-cpu-regressions.py:39-42 只切 `nanosecondsPerTick` 与 `cpuPercent`；interaction-performance-regressions.py:41,83 只切 `applyPeriod`；charge-limit-regressions.py:66 是自建 fixture 类。本报告第 1、2、4、5 条的缺陷（env 误报、/private 键失配、截断重复走）都落在这些未被覆盖的函数里。",
   "failure": "回归无法发现“node 进程被误判为 Codex”“临时目录清理后 Codex 芯片显示 —”，因为没有任何夹具构造 cwd/env 输入来驱动这两个纯函数。",
   "fix": "新增一个切片回归：把 `Key.standardizedCwd`、`ProcessIndex.firstPath` 与（拆出纯函数的）codex 判定一起切出编译，喂三种输入——装进 env 的 \"codex\" 子串、存在与删除两种状态的 /var/folders 与 /tmp 路径——断言两侧键相等且 env 不参与判定。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`ProcessSampler.Key.canonicalCwd` is now the single spelling for both sides: it standardizes and folds the three published `/private` root-symlink prefixes (`/etc`, `/tmp`, `/var`) at the *leading* component only, while a deeper `/private/...` path is left alone. `ProcessIndex.scan` builds its `byCwd` keys through it, so a kernel-reported `/private/var/...` matches a session row's `/var/...` even after the directory is gone. `process-cpu-regressions.py` slices the function and asserts 10 mappings including the negative cases."
  },
  {
   "category": "perf-io",

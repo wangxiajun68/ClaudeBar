@@ -40,10 +40,22 @@ timebase_start = sampler.index('    private static let nanosecondsPerTick: Doubl
 timebase_end = sampler.index('    private func cpuPercent(pid: pid_t, now: TimeInterval) -> Double {')
 timebase = sampler[timebase_start:timebase_end].replace('private static let', 'static let')
 cpu_percent = method(sampler, '    private func cpuPercent(pid: pid_t, now: TimeInterval) -> Double {')
+# The cwd join key is defined next to `cpuPercent` and is what a session row
+# and the sampled process must agree on; slicing it here keeps the suite on
+# one production file.
+canonical_start = sampler.index('        static func canonicalCwd(_ path: String) -> String {')
+# Line-anchored terminator: the body's own closing braces are indented deeper,
+# and a bare `'        }'` matches inside them.
+canonical_end = sampler.index('\n        }', canonical_start) + len('\n        }')
+canonical = sampler[canonical_start:canonical_end].replace('static func', 'static func')
+canonical = ('enum CanonicalKey {\n' + canonical.replace('        ', '    ')
+             + '\n}')
 
 probe = r'''
 import Darwin
 import Foundation
+
+<<<CANONICAL>>>
 
 final class CPUSampler {
     var lastCPU: [pid_t: (ticks: UInt64, at: TimeInterval)] = [:]
@@ -104,12 +116,34 @@ func sampled(_ sampler: CPUSampler, pid: pid_t) -> Double {
         precondition(busyCPU > idleCPU * 10,
                      "busy \(busyCPU)% must separate from idle \(idleCPU)%")
 
-        print(String(format: "PASS: busy %.1f%%, idle %.1f%%, %.2f ns/tick",
+        // The cwd join: the kernel always reports the /private form, session
+        // rows come from wherever the tool was launched, and the same
+        // directory has to land on one key either way. Only the three
+        // published root symlinks are folded, and only as the leading
+        // component.
+        var canonicalFailures: [String] = []
+        func canonicalMatches(_ input: String, _ want: String) {
+            let got = CanonicalKey.canonicalCwd(input)
+            if got != want { canonicalFailures.append("\(input) -> \(got), want \(want)") }
+        }
+        canonicalMatches("/private/tmp/proj", "/tmp/proj")
+        canonicalMatches("/tmp/proj", "/tmp/proj")
+        canonicalMatches("/private/var/folders/x/T", "/var/folders/x/T")
+        canonicalMatches("/var/folders/x/T", "/var/folders/x/T")
+        canonicalMatches("/private/etc/hosts.d", "/etc/hosts.d")
+        canonicalMatches("/private/tmp", "/tmp")
+        canonicalMatches("/Users/a/proj", "/Users/a/proj")
+        canonicalMatches("/Users/a/private/tmp", "/Users/a/private/tmp")
+        canonicalMatches("/private/Users/a", "/private/Users/a")
+        canonicalMatches("/private/tmpx", "/private/tmpx")
+        precondition(canonicalFailures.isEmpty, "cwd keys drifted: \(canonicalFailures)")
+
+        print(String(format: "PASS: busy %.1f%%, idle %.1f%%, %.2f ns/tick; cwd keys canonical",
                      busyCPU, idleCPU, CPUSampler.nanosecondsPerTick))
     }
 }
 '''
-probe = probe.replace('<<<TIMEBASE>>>', timebase).replace('<<<CPU_PERCENT>>>', cpu_percent)
+probe = probe.replace('<<<TIMEBASE>>>', timebase).replace('<<<CPU_PERCENT>>>', cpu_percent).replace('<<<CANONICAL>>>', canonical)
 assert 'nanosecondsPerTick' in probe and 'proc_pidinfo' in probe, \
     'the probe lost the production slice it is supposed to compile'
 

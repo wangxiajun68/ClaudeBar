@@ -36,7 +36,30 @@ final class ProcessSampler {
         case cwd(String)
 
         static func standardizedCwd(_ path: String) -> Key {
-            .cwd((path as NSString).standardizingPath)
+            .cwd(canonicalCwd(path))
+        }
+
+        /// One spelling per directory, for both sides of the join.
+        ///
+        /// `/etc`, `/tmp` and `/var` are symlinks into `/private`, and
+        /// `standardizingPath` only resolves those when the *destination*
+        /// exists — which is exactly the transient case the reading has to
+        /// handle: the kernel's `PROC_PIDVNODEPATHINFO` always reports the
+        /// `/private` form, while a session row's cwd comes from wherever the
+        /// tool was launched, and a checkout under `/private/tmp` disappears
+        /// when the build directory is cleaned. Stripping the prefix on both
+        /// sides keeps the key the same whether or not the directory survived.
+        static func canonicalCwd(_ path: String) -> String {
+            let s = (path as NSString).standardizingPath
+            // Only the three published root symlinks, and only as the leading
+            // component: a project literally named `/private/etc …` is not a
+            // thing, while a deeper `/private/...` path is a real directory
+            // that must not be rewritten.
+            for prefix in ["/private/etc", "/private/tmp", "/private/var"] {
+                if s == prefix { return String(prefix.dropFirst("/private".count)) }
+                if s.hasPrefix(prefix + "/") { return String(s.dropFirst("/private".count)) }
+            }
+            return s
         }
 
         var family: Family {
@@ -215,6 +238,9 @@ final class ProcessSampler {
     private var diskSampleAt: TimeInterval = 0
     private var linkSample: HardwareSensors.LinkStatus?
     private var linkSampleAt: TimeInterval = 0
+    /// The battery reading, held between ticks — see the gate in `tick()`.
+    private var batterySample: HardwareSensors.BatteryStatus?
+    private var batterySampleAt: TimeInterval = 0
     private var cpuTemperature: Double?
     /// The GPU's SMC fallback, held on the same 5 s gate as the CPU read.
     private var gpuTemperature: Double?
@@ -442,14 +468,18 @@ final class ProcessSampler {
             cpuTemperature = HardwareSensors.cpuTemperatureCelsius()
             temperatureSampleAt = now
         }
-        // Read on *every* tier, not just the foreground one. The 电量 mark is
-        // permanent (`ConnectLaneRow` draws it whether or not a pack is fitted),
-        // so a background-tier sample that left it at 0 would repaint the tile
-        // with a flat battery on the first popup tick. It is one
-        // `IORegistryEntryCreateCFProperties` on an already-matched service —
-        // cheaper than the GPU and temperature reads beside it, which *are*
-        // still tiered because they are the expensive ones.
-        let battery = HardwareSensors.batteryStatus()
+        // Cached across ticks, refreshed on the tiers that can see it. The 电量
+        // mark (`ConnectLaneRow`, `CompactBatteryChargeControl`) is drawn on
+        // surfaces that set a scope while they are open, so the reading is
+        // current whenever it is on screen — and the 6–12 s background tier
+        // stops waking the IOKit service just to hold a number nobody is
+        // looking at. `Snapshot` publishes this every tick either way, so the
+        // popup's first frame still carries a real percentage rather than 0.
+        if batterySample == nil || (wantsDevices && now - batterySampleAt >= 5) {
+            batterySample = HardwareSensors.batteryStatus()
+            batterySampleAt = now
+        }
+        let battery = batterySample ?? HardwareSensors.BatteryStatus()
         // One `vm_statistics64` serves both the pressure figure and the mark's
         // parts, so the two cannot be read a tick apart.
         let memory = memoryBreakdown()
@@ -928,7 +958,8 @@ private struct ProcessIndex {
         var byCwd: [String: [pid_t]] = [:]
         for pid in codex {
             guard let cwd = cwd(of: pid, scratch: &scratch), !cwd.isEmpty else { continue }
-            let key = (cwd as NSString).standardizingPath
+            // The same spelling the session rows use — see `canonicalCwd`.
+            let key = ProcessSampler.Key.canonicalCwd(cwd)
             byCwd[key, default: []].append(pid)
         }
         idx.codexByCwd = byCwd
