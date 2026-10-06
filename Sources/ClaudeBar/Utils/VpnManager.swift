@@ -66,6 +66,19 @@ enum VpnFormat {
         return overflow ? (b < 0 ? .max : .min) : difference
     }
 
+    /// `delta / seconds` as an `Int64`, clamped instead of trapping.
+    ///
+    /// `Int64(_: Double)` aborts above `Int64.max`, and a counter that appears
+    /// to jump forward — a restarted core, a wrapped total, a corrupt reply —
+    /// yields a quotient no live rate could be. The value is only ever rendered
+    /// through the byte formatter, so saturating loses nothing visible.
+    static func rate(_ delta: Int64, over seconds: TimeInterval) -> Int64 {
+        guard seconds > 0 else { return 0 }
+        let value = Double(delta) / seconds
+        guard value.isFinite, value < Double(Int64.max) else { return delta > 0 ? .max : 0 }
+        return max(0, Int64(value))
+    }
+
     private static func scaled(_ b: Int64) -> (Double, String) {
         // `Double(b.magnitude)` rather than `abs(b)`: `abs(Int64.min)` traps,
         // and `Int64.min` is reachable from the core's own JSON — the
@@ -1422,8 +1435,12 @@ extension VpnManager {
                 // otherwise report a negative rate or a crash.
                 let deltaDown = VpnFormat.saturatingSub(totalDown, prev.down)
                 let deltaUp = VpnFormat.saturatingSub(totalUp, prev.up)
-                let derivedDown = Int64(Double(deltaDown) / dt)
-                let derivedUp = Int64(Double(deltaUp) / dt)
+                // Clamp *before* the conversion: `Int64(_: Double)` traps above
+                // Int64.max, and a byte total large enough to reach the rail is
+                // exactly the case this fallback exists for. The rate is
+                // meaningless at that magnitude either way, so it saturates.
+                let derivedDown = VpnFormat.rate(deltaDown, over: dt)
+                let derivedUp = VpnFormat.rate(deltaUp, over: dt)
                 VpnLiveRates.shared.applyStream(
                     up: max(0, derivedUp), down: max(0, derivedDown))
             }

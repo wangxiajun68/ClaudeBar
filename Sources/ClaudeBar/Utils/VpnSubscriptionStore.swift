@@ -413,9 +413,16 @@ final class VpnSubscriptionStore: ObservableObject {
             case "download": sub.download = traffic(parts[1]) ?? sub.download
             case "total": sub.total = traffic(parts[1]) ?? sub.total
             case "expire":
-                if var t = TimeInterval(parts[1]), t > 0 {
+                // Same plausibility gate the traffic fields get. `inf` and
+                // `1e297` parse as `TimeInterval`, and the card renders the
+                // remaining days as an `Int` — a Date built from either traps
+                // while drawing. 253402300799 is 9999-12-31, past any expiry a
+                // subscription states.
+                if var t = TimeInterval(parts[1]), t.isFinite, t > 0 {
                     if t > 10_000_000_000 { t /= 1000 } // milliseconds
-                    sub.expires = Date(timeIntervalSince1970: t)
+                    if t.isFinite, t > 0, t <= 253_402_300_799 {
+                        sub.expires = Date(timeIntervalSince1970: t)
+                    }
                 }
             default: break
             }

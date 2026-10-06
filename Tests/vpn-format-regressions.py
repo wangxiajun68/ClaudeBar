@@ -47,7 +47,8 @@ def braced(text, signature):
 format_source = manager[manager.index('enum VpnFormat {'):]
 format_source = format_source[:format_source.index('\n}\n') + 3]
 saturating = (braced(manager, '    static func saturatingAdd(')
-              + '\n' + braced(manager, '    static func saturatingSub('))
+              + '\n' + braced(manager, '    static func saturatingSub(')
+              + '\n' + braced(manager, '    static func rate(_ delta: Int64, over seconds: TimeInterval)'))
 
 swift = f'''
 import Foundation
@@ -76,6 +77,13 @@ import Foundation
         precondition(VpnFormat.saturatingSub(Int64.min, 1) == Int64.min)
         precondition(VpnFormat.saturatingSub(Int64.max, -1) == Int64.max)
         precondition(VpnFormat.saturatingSub(5, 3) == 2)
+        // The derived-rate fallback: a counter jump that would overflow the
+        // Double→Int64 conversion saturates instead of trapping, and a
+        // non-positive interval reads as no rate rather than a division by zero.
+        precondition(VpnFormat.rate(Int64.max, over: 0.000001) == Int64.max)
+        precondition(VpnFormat.rate(1_000, over: 0.5) == 2_000)
+        precondition(VpnFormat.rate(1_000, over: 0) == 0)
+        precondition(VpnFormat.rate(-5, over: 1) == 0)
 
         // 3. Accumulating a hostile connections array neither traps nor turns
         //    the strip into a negative figure.
@@ -123,6 +131,8 @@ assert 'VpnFormat.saturatingAdd(upload, download)' in subscription and \
     'VpnSubscription must do its arithmetic through the saturating helpers'
 assert 'guard let value = Int64(text), value >= 0, value <= (1 << 53) else { return nil }' in subscription, \
     'parseUserInfo must refuse a negative or absurd subscription-userinfo value'
+assert 't.isFinite, t > 0, t <= 253_402_300_799' in subscription, \
+    'parseUserInfo must refuse an unrepresentable subscription expiry'
 
 with tempfile.TemporaryDirectory(prefix='claudebar-vpn-format-') as folder:
     path = Path(folder) / 'Regression.swift'
