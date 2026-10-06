@@ -23,7 +23,16 @@ struct MigrationLocations: Sendable {
                 .appendingPathComponent(sessionID + ".jsonl")
         case .codex:
             let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            // The client's own convention, measured on this machine's 24
+            // rollouts: the day folder and the filename stamp are both the
+            // *local* wall clock (a rollout created at 14:35 local reads
+            // `rollout-2026-06-03T14-35-17` with a `06:35Z` session_meta).
+            // Stamping UTC instead misfiles anything migrated between 00:00
+            // and 08:00 local into the previous day — and at a month boundary
+            // into the previous month's folder, which the readers' day-walk
+            // (its cutoff computed from `Calendar.current`) never descends to.
+            formatter.timeZone = .current
             formatter.dateFormat = "yyyy/MM/dd"
             let folder = codex.appendingPathComponent("sessions/" + formatter.string(from: now))
             formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"

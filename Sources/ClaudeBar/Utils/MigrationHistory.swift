@@ -130,7 +130,7 @@ enum MigrationHistory {
         }
         var canonical: [MigrationMessage] = [], projected: [MigrationMessage] = []
         var omissions: [String] = [], openTurn = false
-        var calls: [String: (name: String, input: Any)] = [:], completedTools = 0, canonicalTools = 0
+        var calls: [String: (name: String, input: Any)] = [:], completedTools = 0
         for row in records.dropFirst() {
             let payload = row["payload"] as? [String: Any] ?? [:]
             let type = row["type"] as? String ?? ""
@@ -168,7 +168,6 @@ enum MigrationHistory {
                         let images = includeImages ? try messageImages(item["content"], role: role) : []
                         if !body.isEmpty || !images.isEmpty { canonical.append(.init(role: role, text: body, images: images)) }
                     } else if ["CommandExecution", "FileChange", "McpToolCall", "DynamicToolCall", "WebSearch"].contains(kind) {
-                        canonicalTools += 1
                         omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
                     }
                 default: break
@@ -214,9 +213,17 @@ enum MigrationHistory {
         }
         guard !openTurn else { throw MigrationFailure.busy }
         guard calls.isEmpty else { throw MigrationFailure.busy }
-        if includeCompletedTools && canonicalTools > completedTools {
-            throw MigrationFailure.unsupported("这段 Codex 工具格式尚未验证，请取消包含工具记录后再迁移。")
-        }
+        // The gate is "every call we opened was answered", which `calls` being
+        // empty already proves, per call_id. It used to compare
+        // `canonicalTools > completedTools` — counts from two *different*
+        // projections of the same turns (event_msg `item_completed` items vs
+        // response_item call/output pairs). Real rollouts carry more completed
+        // items than call/output pairs (measured: 89 vs 73 in one rollout, 610
+        // vs 420 in another; the item ids and call ids share no value), so the
+        // comparison refused ordinary paginated history with 「工具格式尚未
+        // 验证」. What it was trying to catch — an unanswerable tool record —
+        // is already a throw inside the loop (a bare output, or a duplicate
+        // call_id).
         if completedTools > 0 { omissions.append("已完成工具的输入与结果作为历史资料携带，不会重新执行。") }
         let selected = paginated ? canonical : projected
         if selected.contains(where: { $0.carriedImageCount > 0 }) {

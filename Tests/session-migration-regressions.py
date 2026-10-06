@@ -337,6 +337,28 @@ import SQLite3
         precondition(rereadArchived.messages.compactMap(\.tool).first?.inputJSON == bashTool?.inputJSON)
         let execTool = cxTools.messages.compactMap(\.tool).first
         precondition(execTool?.name == "exec_command" && execTool?.inputJSON == "\"fixture\"")
+        // Real rollouts carry more `item_completed` tool items than
+        // response_item call/output pairs (measured 89 vs 73 and 610 vs 420 in
+        // this machine's own sessions; their ids share no value, so no pairing
+        // is possible). The old gate — `canonicalTools > completedTools` —
+        // compared those two projections and refused ordinary paginated
+        // history with 工具格式尚未验证. A tool item with no paired
+        // function_call is legitimate and must not refuse the migration; an
+        // *unpaired output*, below, still must.
+        var mixedProjections = legacyTools
+        mixedProjections.insert(["type":"event_msg","payload":["type":"item_completed",
+            "item":["type":"CommandExecution","id":"exec-unpaired",
+                    "command":["argv":["echo","fixture"]],"status":"completed"]]], at: 3)
+        mixedProjections.insert(["type":"event_msg","payload":["type":"item_completed",
+            "item":["type":"McpToolCall","id":"mcp-unpaired","status":"completed"]]], at: 4)
+        let mixedPreview = try MigrationHistory.codex(data(mixedProjections), source: cxSource, includeCompletedTools: true)
+        precondition(mixedPreview.completedToolCount == 1,
+                     "unpaired completed items must not be counted as carried tools")
+        precondition(!mixedPreview.omissions.contains { $0.contains("尚未验证") },
+                     "an unpaired tool item must not refuse the migration")
+        mustFail { _ = try MigrationHistory.codex(data(legacyTools + [
+            ["type":"response_item","payload":["type":"custom_tool_call_output","call_id":"never-opened","output":"x"]]]),
+            source: cxSource, includeCompletedTools: true) }
         let archivedCodex = String(decoding: try MigrationHistory.codexData(cxTools.messages, sessionID: sourceID, cwd: cwd, providerKey: "fixture"), as: UTF8.self)
         precondition(archivedCodex.contains("\"function_call\"") && archivedCodex.contains("\"function_call_output\""), "codex native")
         precondition(!archivedCodex.contains("迁移的已完成工具记录") && !archivedCodex.contains("foreign-call"), "codex leaked")
@@ -385,6 +407,34 @@ import SQLite3
         for url in [locations.claude, locations.codex, locations.cursorCLI, locations.records] {
             try MigrationStorage.directory(url)
         }
+        // The Codex target path follows the client's own convention, measured
+        // on real rollouts: the day folder and the filename stamp are the
+        // local wall clock. Stamping UTC instead misfiled every run between
+        // 00:00 and 08:00 local into the previous day (and at a month
+        // boundary, into a folder the readers' day-walk never descends to).
+        // 00:30 local is the case that separates the two: it is a different
+        // UTC day on any zone east of Greenwich.
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = .current
+        let localMidnight = localCalendar.startOfDay(for: Date())
+        let shortlyAfterMidnight = localMidnight.addingTimeInterval(30 * 60)
+        let midnightURL = try locations.nativeURL(client: .codex, sessionID: UUID().uuidString.lowercased(),
+                                                  cwd: cwd, now: shortlyAfterMidnight)
+        let dayFormat = DateFormatter()
+        dayFormat.locale = Locale(identifier: "en_US_POSIX")
+        dayFormat.timeZone = .current
+        dayFormat.dateFormat = "yyyy/MM/dd"
+        precondition(midnightURL.deletingLastPathComponent().path.hasSuffix(
+            "sessions/" + dayFormat.string(from: shortlyAfterMidnight)),
+            "the Codex rollout folder must be the local civil day, not UTC")
+        precondition(midnightURL.lastPathComponent.hasPrefix(
+            "rollout-" + { () -> String in
+                let stamp = DateFormatter()
+                stamp.locale = Locale(identifier: "en_US_POSIX")
+                stamp.timeZone = .current
+                stamp.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
+                return stamp.string(from: shortlyAfterMidnight)
+            }()), "the rollout filename stamp must be the local wall clock")
         try PrivateFileWriter.write(Data("model=\"test-model\"\n".utf8),to:FilePaths.codexConfigFile)
         try PrivateFileWriter.write(Data("{}".utf8),to:FilePaths.settingsFile)
         let route = MigrationRoute(model:"test-model",providerKey:"fixture_provider",
