@@ -109,8 +109,6 @@ struct WeatherReading: Equatable {
     enum Sky: String {
         case clear, partly, cloudy, fog, drizzle, rain, sleet, snow, hail, thunder
 
-        /// Every sky the card can draw, for the regression sweep.
-        static let all: [Sky] = [.clear, .partly, .cloudy, .fog, .drizzle, .rain, .sleet, .snow, .hail, .thunder]
     }
 
     var sky: Sky { skyHint ?? Self.sky(for: conditionCode) }
@@ -119,12 +117,13 @@ struct WeatherReading: Equatable {
     ///
     /// Two numbering schemes arrive here and they overlap in the low hundreds,
     /// so the mapping is written against the *WW* table wttr.in serves (which
-    /// what the card actually gets) and the WMO codes are folded in explicitly
-    /// rather than by range: 176/263/266/293/296/299/302/305/308/311/314/353/356/
-    /// 359 are rain, 200–233 thunder, 179/182/185/281/284/317/320/362/365/374/377
-    /// sleet/ice, 227/230/320s snow, 143/248/260 fog, 116/119/122 cloudy,
-    /// 353… thunder-showers. Anything unrecognized falls to `cloudy`, which is
-    /// the safe reading — a wrong grey card is a smaller lie than a wrong sun.
+    /// is what the card actually gets) and the WMO codes are folded in
+    /// explicitly rather than by range: 176/263/266/293/296/299/302/305/308/
+    /// 311/314/353/356/359 are rain, 200/386/389/392/395 thunder, 179/182/185/
+    /// 281/284/317/320/362/365/374/377 sleet/ice, 227/230/320s snow,
+    /// 143/248/260 fog, 116/119/122 cloudy. Anything unrecognized falls to
+    /// `cloudy`, which is the safe reading — a wrong grey card is a smaller
+    /// lie than a wrong sun.
     static func sky(for code: Int) -> Sky {
         switch code {
         case 113: return .clear                          // Sunny / Clear
@@ -263,6 +262,10 @@ enum WeatherFetcher {
         var components = URLComponents(string: "https://wttr.in/\(cleaned)")
         components?.queryItems = [
             URLQueryItem(name: "format", value: "j1"),
+            // WMO/国内源全不可用时 this is the only source left, and the card
+            // shows `conditionText` verbatim. wttr.in answers English without
+            // this; with it, the WW-code → 中文 mapping the caption reads.
+            URLQueryItem(name: "lang", value: "zh"),
         ]
         return components?.url
     }
@@ -282,13 +285,18 @@ enum WeatherFetcher {
             // `NSNumber.intValue` *saturates*: a numeric `1e300` becomes
             // `Int.max` and prints as 9223372036854775807% instead of being
             // rejected, which is a worse failure than a missing reading. Keep
-            // the same bounded conversion the parsers elsewhere use.
+            // the same bounded conversion the parsers elsewhere use — and take
+            // the string spelling through it too, since `Int("9223372036854775807")`
+            // parses exactly at the boundary and lands the same garbage figure.
             if let n = current[key] as? NSNumber {
                 let d = n.doubleValue
                 guard d >= Double(Int.min), d < Double(Int.max) else { return nil }
                 return n.intValue
             }
-            if let s = current[key] as? String { return Int(s) }
+            if let s = current[key] as? String, let d = Double(s) {
+                guard d >= Double(Int.min), d < Double(Int.max) else { return nil }
+                return Int(d)
+            }
             return nil
         }
 
@@ -441,7 +449,11 @@ enum DomesticWeatherParser {
     /// "10级".
     static func beaufortLevel(_ text: String?) -> Int? {
         guard let text, !text.isEmpty else { return nil }
-        let parts = text.split { !$0.isNumber }.compactMap { Int($0) }
+        // Each token is capped before the sum: `(a + b + 1)` on two
+        // wire-supplied 19-digit values traps the whole app under `-O`, and
+        // this is a band, not arithmetic — AMap's `windpower` and 中国天气网's
+        // `WS` top out at 17 in the published scale.
+        let parts = text.split { !$0.isNumber }.compactMap { Int($0) }.prefix(2).map { min($0, 17) }
         guard !parts.isEmpty else { return nil }
         if parts.count >= 2 { return (parts[0] + parts[1] + 1) / 2 }
         return parts[0]
@@ -598,17 +610,6 @@ enum DomesticWeatherParser {
         return nil
     }
 
-    /// `toy1` search returns a JSON array wrapped in parentheses:
-    /// `([{"ref":"101020100~shanghai~上海~…"}])`. The id is the first `~`-field.
-    static func searchCityID(fromSearchResponse text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = trimmed.drop { $0 == "(" }.reversed().drop { $0 == ")" }.reversed()
-        guard let data = String(body).data(using: .utf8),
-              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let ref = rows.first?["ref"] as? String else { return nil }
-        return ref.split(separator: "~").first.map(String.init)
-    }
-
     static func reading(dataSK: [String: Any], forecast: [String: Any]?) -> WeatherReading? {
         guard let temperature = number(dataSK["temp"]) else { return nil }
         let weatherText = (dataSK["weather"] as? String) ?? ""
@@ -645,6 +646,13 @@ enum DomesticWeatherParser {
     /// `fc.f[]` → days. The date arrives as "9/29"; the code as "d00"/"n7"/"d1".
     /// Year is taken from `now`, which is right for a rolling forecast and for
     /// the New Year boundary the source would have to disambiguate anyway.
+    ///
+    /// `fc`/`fd` are the day high and the day low. Measured against the live
+    /// payload (上海, 2026-10-06): `fc` 23 / `fd` 15, then 25/17, 25/17, 24/18
+    /// — day-minus-night gaps of 6–8 °C, which is the 5-day range this feed
+    /// publishes, not the hour-to-hour pair. `fa`/`fb` are the *day* and
+    /// *night* condition codes, and the temperature on this site tracks the
+    /// civil day, so the pair is a daily high/low.
     static func cnForecastDays(_ forecast: [String: Any]?) -> [WeatherDay] {
         guard let entries = forecast?["f"] as? [[String: Any]] else { return [] }
         var calendar = Calendar(identifier: .gregorian)
@@ -780,9 +788,6 @@ final class WeatherStore {
 
     private var cancellables: Set<AnyCancellable> = []
 
-    /// Whether the card should show a figure at all.
-    var hasReading: Bool { reading != nil }
-
     /// Fetch unless the current reading is fresh. A location switch with no
     /// fix yet always fetches: a city reading from two minutes ago must not
     /// hide the position the user just allowed.
@@ -839,7 +844,7 @@ final class WeatherStore {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             loading = false
-            note = reading == nil ? "未设置天气城市" : note
+            note = reading == nil ? "未设置天气城市" : nil
             return
         }
         loading = true
@@ -859,9 +864,18 @@ final class WeatherStore {
             } else {
                 self.note = self.reading == nil ? "天气暂不可用" : "天气更新失败，显示上次读数"
             }
-            if self.rerun {
+            // The latch is consumed in a loop, not a single `if`. The nested
+            // `refresh()` used to run with `inflight` still pointing at *this*
+            // task — so its own single-flight guard set `rerun = true` and
+            // returned without fetching, and the pass it was meant to trigger
+            // never happened (the card then served the old city's reading until
+            // the next 15-minute tick). Clearing the reference is what lets the
+            // rerun actually start, and the loop covers a rerun requested while
+            // that one is in flight.
+            while self.rerun {
                 self.rerun = false
                 self.refresh()
+                if self.inflight != nil { return }
             }
         }
     }

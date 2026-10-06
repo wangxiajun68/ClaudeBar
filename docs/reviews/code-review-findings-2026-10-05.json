@@ -853,7 +853,9 @@
   "evidence": "867 行 `self.inflight = nil` 在 `if self.rerun { self.rerun = false; self.refresh() }` 之前（864-865 行）执行，所以嵌套 refresh() 进入 `guard inflight == nil`（808 行）时 self.inflight 仍指向正在收尾的那个 task，于是 `rerun = true; return` —— 这一轮请求从未发出，且没有任何后续触发会再消费它。同一 guard 也让 CurrentLocation 的失败回调 refreshFromCity 有时被吞：refreshFromCity(834) 同样只置 rerun 不置 loading。",
   "failure": "用户在天气请求在飞行中改城市（SettingsView 538/547 行 commitWeatherCity/commitAmapKey 调 WeatherStore.refresh()）或一次定位回调与一轮定时刷新重叠 → 外层 guard 置 rerun=true 返回，flight 结束后的嵌套 refresh() 只把 rerun 置回 true，fetch 一次都没跑 → 卡片永久停在旧城市的读数，直到下一次 15 分钟定时或手动点击才恢复。",
   "fix": "把收尾的 `if self.rerun { rerun = false; refresh() }` 换成循环直到 rerun 为 false 的 do-while，或在嵌套调用处直接释放 inflight（例如把收尾放进 `defer { inflight = nil }` 并先消费 rerun 再清引用）；refreshFromCity 同样补 loading = true。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The rerun pass is consumed in a loop after `inflight = nil`, so the nested `refresh()` actually starts instead of being refused by its own single-flight guard; the empty-city branch now clears a stale note when a reading is kept."
  },
  {
   "category": "state",
@@ -3911,7 +3913,9 @@
   "evidence": "L442-447: `let parts = text.split { !$0.isNumber }.compactMap { Int($0) }` … `if parts.count >= 2 { return (parts[0] + parts[1] + 1) / 2 }`. Only `Int($0)` bounds each token; the addition is unchecked. Reproduced with an identical snippet: `beaufortLevel(\"9223372036854775807-9223372036854775807\")` aborts (exit 133, SIGILL stack dump). Inputs come straight off the wire: `live?[\"windpower\"] as? String` (L556, AMap) and `dataSK[\"WS\"] as? String` (L633, 中国天气网). The rest of the file went out of its way to guard `Int` conversions (`wholeNumber`, L232-235; the NSNumber saturation note, L282-293), so this one unchecked addition is the outlier.",
   "failure": "A hostile or glitched weather response (AMap `windpower`/CN `WS` = \"<huge>-<huge>\") traversed through the app's own proxy/DNS → `(a + b + 1)` overflows in a refresh → SIGILL takes the whole menu-bar app down mid-refresh, exactly the failure `wholeNumber`'s comment says the parsers were fixed for.",
   "fix": "Clamp before adding: `if parts.count >= 2 { return min(parts[0], 17) + ... }` — simplest: `let mean = parts.prefix(2).reduce(0) { $0 + min($1, 17) } / 2` or use `addingReportingOverflow`/`Int(exactly:)`. Wind levels are 0-12, so capping each token at 17 is lossless for real data.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "`beaufortLevel` caps each of the two tokens at 17 before summing, so `(a + b + 1)` on wire-supplied 19-digit values no longer traps."
  },
  {
   "category": "state",
@@ -3937,7 +3941,9 @@
   "evidence": "L286-291: the NSNumber path is guarded (`guard d >= Double(Int.min), d < Double(Int.max) else { return nil }; return n.intValue`), but the next line is `if let s = current[key] as? String { return Int(s) }`. `Int(\"9223372036854775807\")` returns `Int.max`; that value is stored via `humidity: int(\"humidity\") ?? 0` (L326) and rendered (GreetingCard L926 `湿度 \\(reading.humidity)%`). The regression only pins the string case `\"1e300\"` (Tests/weather-astronomy-regressions.py L247) and the numeric case (L260), not a string that parses exactly at the Int boundary.",
   "failure": "wttr.in payload with `\"humidity\": \"9223372036854775807\"` (or any 19-digit value ≤ Int.max) → card/VoiceOver prints 湿度 9223372036854775807% — the precise \"worse failure than a missing reading\" the comment at L281-285 says must not happen.",
   "fix": "Route the string through the same bound check: `if let s = current[key] as? String, let d = Double(s) { guard d >= Double(Int.min), d < Double(Int.max) else { return nil }; return Int(d) }`.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "The string branch of `int(_:)` now goes through the same `Double` range guard as the NSNumber branch, so `\"9223372036854775807\"` reads as unreported instead of `Int.max`."
  },
  {
   "category": "test-gap",
@@ -3961,7 +3967,9 @@
   "evidence": "656-657 行 `let high = number(entry[\"fc\"]) ?? number(entry[\"fd\"]) ?? 0; let low = number(entry[\"fd\"]) ?? high`；Tests/weather-astronomy-regressions.py:146-149 的夹具 `[\"fa\": \"d7\", \"fb\": \"n7\", \"fc\": \"26\", \"fd\": \"23\", ...]` 只断言了 sky 与 count，没有对 fc/fd 语义做任何断言（该断言缺失因此没有测试钉住这一映射）。",
   "failure": "若字段语义与解码假设相反，卡片当天与未来 6 天的最高/最低温互换（高温显示 23、低温 26），并同步影响 daily 温度条与 VoiceOver 文案。",
   "fix": "在夹具里加 `precondition(days[0].high > days[0].low)` 级别的语义断言并核对一次真实 payload 的 fc/fd，再确定映射；若两者其实同义（白天/夜间温度）则应改用 max/min 而不是 `??` 链。",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "verified",
+  "verdict_note": "Measured against the live payload through 17890 with the site's Referer (http://d1.weather.com.cn/weather_index/101020100.html): 上海 fc/fd = 23/15, 25/17, 25/17, 24/18 — day-minus-night gaps of 6–8 °C, i.e. the daily high/low this feed publishes rather than an hour-to-hour pair. `fa`/`fb` are the day/night condition codes. The mapping stays as written; the doc comment now records the measurement, and the fixture pins high/low for both days."
  },
  {
   "category": "test-gap",
@@ -7898,7 +7906,9 @@
   "evidence": "L112-113: `/// Every sky the card can draw, for the regression sweep.` / `static let all: [Sky] = [.clear, .partly, .cloudy, .fog, .drizzle, .rain, .sleet, .snow, .hail, .thunder]`. Repo-wide grep for `Sky.all` returns only this declaration. The nearest sweep, Tests/greeting-layout-regressions.py L230, hand-lists 8 of the 10 families: `for sky: WeatherReading.Sky in [.clear, .partly, .cloudy, .rain, .drizzle, .thunder, .snow, .fog]` — `.sleet` and `.hail` are missing, which is exactly the drift `.all` was meant to prevent.",
   "failure": "A renderer regression limited to sleet/hail (e.g. SkyScene.make's `.lightRain` branch reading `sky == .sleet` for snow mixing) ships unnoticed, and the supposedly-single source of truth for \"every sky\" is unused, so the hand-written list in the test can keep drifting.",
   "fix": "Either delete `Sky.all` and have Tests/greeting-layout-regressions.py iterate `WeatherReading.Sky.all` instead of the literal list, or drop the property.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "dead-code",
@@ -7911,7 +7921,9 @@
   "evidence": "L783-784: `/// Whether the card should show a figure at all.` / `var hasReading: Bool { reading != nil }`. Repo-wide grep finds the declaration only; GreetingCard.swift L62 passes `reading: weather.reading` and every consumer (L924 `guard let reading`, L787 `weatherLoading ?…`) tests the optional itself.",
   "failure": "None at runtime; it is an extra public surface on the store that can silently diverge from the consumers' actual predicate (e.g. `reading != nil || loading`).",
   "fix": "Delete the property.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "dead-code",
@@ -7924,7 +7936,9 @@
   "evidence": "L601-610 implements the `toy1` search response parse. grep for `searchCityID` outside this declaration matches exactly one site, Tests/weather-astronomy-regressions.py L172. Production resolution is `DomesticWeatherParser.cityID(forName:tableJSON:)` via `WeatherCNFetcher.fetch` (Utils/WeatherCNFetcher.swift L25-27). The doc comment at L688-691 states the search endpoint \"started answering `()` for every name\", i.e. the parsed payload no longer occurs.",
   "failure": "None at runtime; it is test-only code kept on the promise of a dead endpoint, so a future rename or payload change reviewed as \"only used by the fixture\" can silently delete the last evidence of the old format.",
   "fix": "Keep if the fixture is still wanted, but mark it `// test-only` in the doc comment (or move it into the probe), so the \"dead endpoint\" status is explicit.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "compat",
@@ -7937,7 +7951,9 @@
   "evidence": "L257-259: \"`lang=zh` gets the Chinese condition strings the caption prefers\" — but L264-266 builds `components?.queryItems = [URLQueryItem(name: \"format\", value: \"j1\")]`. Live check: `curl 'https://wttr.in/Shanghai?format=j1'` returns `weatherDesc: 'Clear '` (English); `lang=zh` is not in the request at all. Consumers: GreetingCard.swift L917 appends `reading.conditionText` to the tooltip verbatim (English text in an otherwise Chinese card), and GreetingCard.swift L283 decides the storm phrase with `reading.conditionText.contains(\"大雨\") || reading.conditionText.contains(\"暴雨\") || [305, 308, 359, 65, 82].contains(reading.conditionCode)`. WW code 302 = \"Heavy rain\" is absent from that list, so the string check was the only path for it.",
   "failure": "wttr fallback active (overseas city, no AMap key) → wttr \"Heavy rain\" (code 302) yields `.rain` instead of `.storm` in the greeting phrase, and the tooltip shows \"Clear\"/\"Heavy rain\" in English. Note the same live probe shows wttr.in currently answers English even with `lang=zh`, so adding the parameter alone may not fix the text.",
   "fix": "Add `URLQueryItem(name: \"lang\", value: \"zh\")` to match the comment, and/or map the description through `WeatherReading.sky(forText:)` plus the code list; at minimum add 302 (and 176/293/296/299 heavy-rain family) to the storm-code list at GreetingCard.swift:283.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "The wttr.in URL now carries `lang=zh` to match the doc comment, and GreetingCard's storm list gained 302 (WW “Heavy rain”) alongside 305/308/359/65/82."
  },
  {
   "category": "test-gap",
@@ -7962,7 +7978,9 @@
   "evidence": "`grep -rFn 'Sky.all' .`（排除 .build）返回 rc=1 无命中；GreetingInstruments 里的 sweep 显式列举 [.clear, .partly, .cloudy, .rain, .drizzle, .thunder, .snow, .fog]（Tests/greeting-layout-regressions.py:230），Tools/bench-atmosphere.py:82 的 cases 也是手写，均未用 all。",
   "failure": "仅浪费二进制里的一行常量与维护歧义；新增 Sky case 时改 all 没有任何效果。",
   "fix": "删除 `static let all` 与注释，或让测试真正改用它（例如 sweep 循环 for sky in WeatherReading.Sky.all）。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "dead-code",
@@ -7974,7 +7992,9 @@
   "evidence": "`grep -rFn 'hasReading' .`（排除 .build）只有 WeatherFetcher.swift:784 这一行与 PowerFlowCard 的 hasReadings（不同标识符）。",
   "failure": "死代码，无运行时影响。",
   "fix": "删除该属性；卡片直接读 `weather.reading != nil`。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "dead-code",
@@ -7986,7 +8006,9 @@
   "evidence": "全仓命中：Tests/weather-astronomy-regressions.py:172 与定义处 603 行；WeatherCNFetcher.fetch（WeatherCNFetcher.swift:26）用 cityID(forName:tableJSON:) 而非 searchCityID。",
   "failure": "无运行时后果；但注释把已死的接口写法保留成“活路径”，后续维护者可能误以为它仍在链路里。",
   "fix": "删除函数与对应 preconditions（或标注为保留的协议示例并移出生产源码切片）。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`searchCityID` deleted from the parser and its test assertion; `WeatherReading.Sky.all` and `WeatherStore.hasReading` deleted (no readers). `docs/technical/09-file-index.md` no longer describes the dead toy1 search as the live cityid path."
  },
  {
   "category": "dead-code",
@@ -8046,7 +8068,9 @@
   "evidence": "注释 122-127 行说 “353… thunder-showers”；128-150 行的 case 把 353 与 356/359 一起归 .rain，把 386/389/392/395 归 .thunder。Tests/weather-astronomy-regressions.py:27 的用例集只挑 (51,66,71,95,99,227,113) 七个码，353 从未被断言。",
   "failure": "注释与实现冲突，后续维护者按注释修表会把雷阵雨画成普通雨；绘图族切换会改变 SkyScene 的雨/雷动画与卡片文案。",
   "fix": "明确 353 的归属（WW 353 是 light shower rain）并把注释改成与 case 一致，或在用例集里补 353 的断言。",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "The WW table comment now matches the `case` list: 200/386/389/392/395 are the thunder family, and the stale “353… thunder-showers” clause is gone (353 is rain in both)."
  },
  {
   "category": "perf-io",
@@ -8058,7 +8082,9 @@
   "evidence": "263-267 行 queryItems 仅 [URLQueryItem(name: \"format\", value: \"j1\")]；GreetingCard.swift:917 `if reading.conditionText != reading.skyLabel, !reading.conditionText.isEmpty { parts.append(reading.conditionText) }`；GreetingCard.swift:283-284 的 `conditionText.contains(\"大雨\")` 只对中文成立。",
   "failure": "WMO/国内源全不可用时（无 key、海外城市、国内源挂），卡片 tooltip 显示英文天气描述，且短语里的“暴雨→storm”判定在 wttr 路径不可达；注释声称的中文翻译并不存在。",
   "fix": "补回 `URLQueryItem(name: \"lang\", value: \"zh\")` 或删掉注释里对 lang=zh 的描述（二者取一，避免误导）。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The wttr.in URL now carries `lang=zh` to match the doc comment, and GreetingCard's storm list gained 302 (WW “Heavy rain”) alongside 305/308/359/65/82."
  },
  {
   "category": "logic",

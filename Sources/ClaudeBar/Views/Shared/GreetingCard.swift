@@ -280,8 +280,12 @@ struct GreetingStatusSheet: View {
             switch reading.sky {
             case .thunder, .hail: context.weather = .storm
             case .rain, .drizzle:
+                // 302 is WW's "Heavy rain" and 305/308 its variants; 65/82 are
+                // the WMO heavy-rain codes. The Chinese text check covers the
+                // domestic sources, and `lang=zh` now covers the wttr fallback
+                // — the code list is what holds if a translation drifts.
                 context.weather = reading.conditionText.contains("大雨") || reading.conditionText.contains("暴雨")
-                    || [305, 308, 359, 65, 82].contains(reading.conditionCode) ? .storm : .rain
+                    || [302, 305, 308, 359, 65, 82].contains(reading.conditionCode) ? .storm : .rain
             case .snow, .sleet: context.weather = .snow
             case .fog: context.weather = .fog
             default: break

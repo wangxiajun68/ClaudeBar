@@ -149,6 +149,12 @@ source += r'''
         let cn = DomesticWeatherParser.reading(dataSK: dataSK, forecast: fc)!
         precondition(cn.temperatureC == 25.4 && cn.humidity == 68 && cn.sky == .cloudy)
         precondition(cn.forecast.count == 2 && cn.forecast[0].sky == .drizzle && cn.forecast[1].sky == .clear)
+        // fc/fd are the daily high/low, not a day/night pair — verified against
+        // the live 中国天气网 payload (上海: fc 23 / fd 15, 25/17, 25/17, 24/18).
+        // Pinned here so a swap of the two fields cannot ship silently.
+        precondition(cn.forecast[0].high == 26 && cn.forecast[0].low == 23,
+                     "fc must be the high and fd the low; got \(cn.forecast[0].high)/\(cn.forecast[0].low)")
+        precondition(cn.forecast.allSatisfy { $0.high > $0.low }, "every forecast day needs high > low")
         precondition(cn.place == "上海" && cn.source == "中国天气网" && cn.timezone == "Asia/Shanghai")
         // `rain` is millimetres, not a probability. The live payload writes
         // "0" on a dry hour and a small number like "2.7" during a shower —
@@ -168,8 +174,6 @@ source += r'''
         precondition(DomesticWeatherParser.jsonVariable("fc", in: script)?["f"] != nil)
         precondition(DomesticWeatherParser.jsonVariable("alarmDZ", in: script) != nil)
         precondition(DomesticWeatherParser.jsonVariable("cityDZ", in: script) == nil)
-        let search = #"([{"ref":"101020100~shanghai~上海~Shanghai~上海~Shanghai~21~200000~SH~上海"}])"#
-        precondition(DomesticWeatherParser.searchCityID(fromSearchResponse: search) == "101020100")
 
         // The offline city table is what replaced 中国天气网's dead search API.
         precondition(DomesticWeatherParser.cityID(forName: "上海", tableJSON: CNWeatherCityTable.json) == "101020100")
