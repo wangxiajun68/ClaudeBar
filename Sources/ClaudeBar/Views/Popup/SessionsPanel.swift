@@ -74,7 +74,7 @@ struct SessionsPanelView: View {
             ForEach(tree) { node in
                 ExternalSessionCardView(session: node.session,
                                         descendantCount: node.descendantCount,
-                                        childAgents: node.children.flatMap(\.flattened),
+                                        childAgents: node.descendants,
                                         onDoubleTap: { resumeCodex(node.session) },
                                         onOpenAgent: { resumeCodex($0) },
                                         onCleanUp: { cleanUpCodex(node.session) })

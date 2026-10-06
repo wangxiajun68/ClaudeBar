@@ -39,9 +39,6 @@ private struct SessionActionChips<Content: View>: View {
     }
 }
 
-/// Status dot: filled + haloed while `isOn`, muted gray otherwise. Shared with
-/// the dashboard and the popup; see `SessionStatusViews.swift`.
-///
 /// Full session page: one section per tool family — Claude Code, Cursor, then
 /// one per external kind (Codex …) — each an adaptive tile grid with
 /// double-click-to-resume, and the Codex tiles carrying their sub-agent swarm.
@@ -737,14 +734,14 @@ private struct ExternalSessionTile: View {
                             accent: Theme.external, ink: Theme.Ink.success)
     }
 
-    /// Every agent below this node, in pre-order (sub-agents first, then their    /// own children).
+    /// Every agent below this node, in pre-order (sub-agents first, then their
+    /// own children).
     ///
-    /// `node.children.flatMap(\.flattened)` allocates the whole descendant
-    /// list per read, and `body` read it through `tileHeight` + the swarm
-    /// header several times — `O(subtree)` recomputed per access, on every
-    /// poll. `body` hoists it into one `let` and passes it down instead.
+    /// The stored `node.descendants`, not a per-read `children.flatMap`:
+    /// `body` used to walk the subtree for this on every read — `O(subtree)`
+    /// recomputed per access, on every poll, for every visible card.
     static func swarmAgents(of node: ProviderStore.ExternalSessionNode) -> [ExternalSessionInfo] {
-        node.children.flatMap(\.flattened)
+        node.descendants
     }
 
     /// Left column width. The swarm column takes the rest, and its header and
@@ -878,7 +875,8 @@ private struct ExternalSessionTile: View {
                 .foregroundColor(Theme.textTertiary())
             Spacer()
             if !agents.isEmpty {
-                let running = agents.filter(\.isActive).count
+                // No array built just to count it.
+                let running = agents.reduce(0) { $0 + ($1.isActive ? 1 : 0) }
                 Text(running > 0 ? "\(running) 运行中" : "全部空闲")
                     .rollingNumber(running > 0 ? "\(running) 运行中" : "全部空闲")
                     .font(Theme.Font.caption)
@@ -932,17 +930,24 @@ private struct ExternalSessionGridCard: View {
                             accent: Theme.external, ink: Theme.Ink.success)
     }
 
-    /// Card width the strip is sized against — an estimate, not a measurement,
-    /// so the grid row height does not reflow on every poll.
-    private static let stripWidthEstimate: CGFloat = 300
+    /// Width the strip is assumed to have until the cell reports its own.
+    /// The grid card's box decides how many columns fit; sizing against a fixed
+    /// estimate clipped the bottom row whenever the real cell came out
+    /// narrower. This value only covers the first layout pass.
+    private static let stripWidthFallback: CGFloat = 300
     /// How many rows of agent cards a grid cell gives its strip. The cell is a
     /// normal 宫格 card, so it grows by a row or two, never to the height of its
     /// largest fan-out; the rest is counted by the `⋯N` badge.
     private static let stripRows = 2
-    /// Constant: the strip asks for `count: .max`, so this never varies and it
-    /// was pure overhead to recompute it on every read of `body`.
-    private static let strip: (visible: Int, height: CGFloat) = AgentSwarmView.SwarmGrid.strip(
-        count: .max, width: stripWidthEstimate, maxRows: stripRows, compact: true)
+    /// Measured width of the cluster's own box (see `stripWidthFallback`).
+    @State private var stripWidth = ExternalSessionGridCard.stripWidthFallback
+    /// `count: .max` keeps the reservation independent of how many agents
+    /// exist: the strip always holds its two rows, and the badge above counts
+    /// the rest.
+    private var strip: (visible: Int, height: CGFloat) {
+        AgentSwarmView.SwarmGrid.strip(
+            count: .max, width: stripWidth, maxRows: Self.stripRows, compact: true)
+    }
 
     var body: some View {
         // One subtree walk per render — this used to run on every read of
@@ -1027,19 +1032,22 @@ private struct ExternalSessionGridCard: View {
             // The agents, right under the session's own readout. Only drawn when
             // there are some — an empty session's card ends here. A two-row
             // strip holds the first `strip.visible` agents; the badge above
-            // accounts for the rest.
+            // accounts for the rest. The width is measured, not assumed: the
+            // write only lands when the cell's width actually changes, so the
+            // row height does not reflow on a poll.
             if !agents.isEmpty {
                 Rectangle()
                     .fill(Theme.hairline)
                     .frame(height: 1)
                 AgentSwarmView(root: session,
-                               children: Array(agents.prefix(Self.strip.visible)),
+                               children: Array(agents.prefix(strip.visible)),
                                compact: true,
                                onOpen: {
                                    TerminalLauncher.resumeCodexSession(cwd: $0.cwd, sessionId: $0.sessionId,
                                                                        pid: $0.holderPID, inDesktop: $0.inDesktop)
                                })
-                    .frame(height: Self.strip.height)
+                    .frame(height: strip.height)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { stripWidth = $0 }
             }
         }
         .padding(Theme.Space.s12)

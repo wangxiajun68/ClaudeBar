@@ -29,60 +29,76 @@ struct AgentSwarmView: View {
     var onOpen: ((ExternalSessionInfo) -> Void)? = nil
 
     @State private var hoveredId: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Callers mount this only when there is a fan-out to draw (every call site
+    /// gates on `!agents.isEmpty`); an empty `children` still packs to zero
+    /// rows rather than failing.
+    ///
+    /// Still a `GeometryReader`, deliberately. The packing it re-derives per
+    /// pass is a handful of integer divisions, and the row arrays it rebuilds
+    /// now carry the agents' own ids, so an unchanged pass diffs to nothing.
+    /// A cache here (the `EqualRowGrid.Cache` shape) would exist to avoid
+    /// re-*measuring* children — `sizeThatFits` over 200 text views — which is
+    /// not this: the cluster measures nothing per pass.
     var body: some View {
-        if children.isEmpty {
-            // No swarm to draw. The callers skip this view entirely when there
-            // is nothing to show, but an empty grid is still legal.
-            Color.clear
-        } else {
-            GeometryReader { geo in
-                let grid = SwarmGrid(count: children.count, size: geo.size, compact: compact)
-                let hovered = children.first { $0.id == hoveredId }
-                let shown = min(children.count, grid.visibleCount)
+        GeometryReader { geo in
+            let grid = SwarmGrid(count: children.count, size: geo.size, compact: compact)
+            let hovered = children.first { $0.id == hoveredId }
+            let rows = cells(grid: grid)
 
-                VStack(alignment: .leading, spacing: grid.spacing) {
-                    ForEach(0..<grid.rows, id: \.self) { row in
-                        HStack(spacing: grid.spacing) {
-                            ForEach(rowCells(row, grid: grid, shown: shown), id: \.index) { cell in
-                                tile(cell.item, grid: grid)
-                            }
-                            // Rows are left-aligned: a short last row reads as
-                            // the end of the list rather than a centred orphan.
-                            if grid.rowFill < 1 { Spacer(minLength: 0) }
+            VStack(alignment: .leading, spacing: grid.spacing) {
+                ForEach(rows) { row in
+                    HStack(spacing: grid.spacing) {
+                        ForEach(row.cells) { cell in
+                            tile(cell.item, grid: grid)
                         }
-                        .frame(height: grid.cardHeight)
+                        // Rows are left-aligned: a short last row reads as
+                        // the end of the list rather than a centred orphan.
+                        if grid.rowFill < 1 { Spacer(minLength: 0) }
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .overlay(alignment: .bottom) {
-                    if !compact, let hovered {
-                        hoverLabel(hovered)
-                    }
+                    .frame(height: grid.cardHeight)
                 }
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilityText)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .overlay(alignment: .bottom) {
+                if !compact, let hovered {
+                    hoverLabel(hovered)
+                }
+            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
     }
 
-    /// One row's cells, in row-major order: the newest agents across the top.
-    /// A `nil` item is the overflow tile, which is always the last cell drawn.
-    private func rowCells(_ row: Int, grid: SwarmGrid,
-                          shown: Int) -> [(index: Int, item: ExternalSessionInfo?)] {
-        var out: [(index: Int, item: ExternalSessionInfo?)] = []
-        for column in 0..<grid.columns {
-            let index = row * grid.columns + column
-            guard index < shown else {
-                // Past the visible agents: either the overflow tile or nothing.
-                if index == shown, grid.overflow > 0, row == grid.rows - 1 {
-                    out.append((index, nil))
-                }
-                continue
+    /// A cell's identity is the **agent**, not its slot: a poll that adds or
+    /// drops one child shifts every later index, and an index-keyed `ForEach`
+    /// would then rebuild the whole cluster. The overflow tile keeps the
+    /// stable `"overflow"` id — there is only ever one.
+    private struct Cell: Identifiable {
+        let id: String
+        let item: ExternalSessionInfo?
+    }
+
+    private struct Row: Identifiable {
+        /// First cell's identity: stable while that agent stays on screen.
+        let id: String
+        let cells: [Cell]
+    }
+
+    /// The grid as identity-carrying rows, in row-major order: the newest
+    /// agents across the top. A `nil` item is the overflow tile, which is
+    /// always the last cell drawn. `SwarmGrid.slots()` owns the placement; this
+    /// only names the slots.
+    private func cells(grid: SwarmGrid) -> [Row] {
+        grid.slots().compactMap { row in
+            let cells = row.map { index in
+                index.map { Cell(id: children[$0].id, item: children[$0]) }
+                    ?? Cell(id: "overflow", item: nil)
             }
-            out.append((index, children[index]))
+            guard let first = cells.first else { return nil }
+            return Row(id: first.id, cells: cells)
         }
-        return out
     }
 
     /// Regular grid packing for fixed-size cards.
@@ -191,7 +207,31 @@ struct AgentSwarmView: View {
             cardWidth = min(cap, (gridW - CGFloat(max(chosen - 1, 0)) * spacing) / CGFloat(chosen))
 
             let usedW = cardWidth * CGFloat(columns) + spacing * CGFloat(columns - 1)
-            rowFill = gridW > 0 ? min(1, usedW / gridW) : 1
+            // `gridW` is clamped to ≥ 1 above, so no zero-width arm is needed.
+            rowFill = min(1, usedW / gridW)
+        }
+
+        /// The grid's slots in row-major order, for the view to name. A slot is
+        /// an agent index or `nil` for the trailing overflow tile, which is
+        /// always the last slot drawn. Part of the type rather than the view so
+        /// the placement rule (including the "+N must never be hidden" slot
+        /// reservation) is testable as arithmetic.
+        func slots() -> [[Int?]] {
+            guard rows > 0 else { return [] }
+            var out: [[Int?]] = []
+            for row in 0..<rows {
+                var line: [Int?] = []
+                for column in 0..<columns {
+                    let index = row * columns + column
+                    if index < visibleCount {
+                        line.append(index)
+                    } else if index == visibleCount, overflow > 0, row == rows - 1 {
+                        line.append(nil)
+                    }
+                }
+                if !line.isEmpty { out.append(line) }
+            }
+            return out
         }
 
         /// How many cards the grid packs into a row at `width`. A column is
@@ -209,8 +249,14 @@ struct AgentSwarmView: View {
         /// 61-agent session inside a grid cell, or the popup card. The strip
         /// shows what fits and hands the rest to the `⋯N` badge / popover, so
         /// the card stays a card instead of growing to the height of its
-        /// largest fan-out. Sized against a width *estimate*: the drawn box is
-        /// usually wider, so the cluster simply comes out roomier than reserved.
+        /// largest fan-out.
+        ///
+        /// `width` must be the box the strip is actually drawn in. It used to
+        /// be a fixed estimate; at a cell narrower than the estimate the drawn
+        /// grid packed the prefix into more rows than the returned height
+        /// reserved, and the bottom row was clipped — so the caller measures
+        /// the cluster's own frame (a write that only lands when the width
+        /// changes, never per poll).
         static func strip(count: Int, width: CGFloat, maxRows: Int,
                           compact: Bool = true) -> (visible: Int, height: CGFloat) {
             guard maxRows > 0 else { return (0, 0) }
@@ -280,7 +326,16 @@ struct AgentSwarmView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             if showsAge {
-                RollingNumberText("\(child.relativeUpdated) 前")
+                // Deliberately *not* rolling. A cluster is up to ~60 of these
+                // cards, each fed by the session poll, and in a fresh cluster
+                // every one of them changes on every republish — sixty
+                // staggered transactions keep the whole hosting view in flight
+                // for the poll's duration, which is the cost
+                // `RollingNumberModifier` documents and the reason `rolls`
+                // exists. At `tileDetail` size the roll was not visible anyway
+                // (the same conclusion `SignatureGlyph` records for its
+                // spring); the popup's single recency figure keeps its roll.
+                RollingNumberText("\(child.relativeUpdated) 前", rolls: false)
                     .font(Theme.Font.tileDetail)
                     .monospacedDigit()
                     .foregroundColor(Theme.textTertiary(0.45))
@@ -304,6 +359,14 @@ struct AgentSwarmView: View {
                 .strokeBorder(isHovered ? Theme.externalHi
                                         : Theme.external.opacity(child.isActive ? 0.65 : 0.22),
                               lineWidth: isHovered ? 1.3 : 1)
+                // Riding the border is what keeps the hover motion: the border
+                // is not affected by the scale below, so it can ease on its own
+                // (border-only interpolation is a stroke, not a re-raster of
+                // the card's text). Keyed on the *card's* flag, not the
+                // cluster's `hoveredId` — a big container change re-lays out
+                // nothing, and only the two cards whose state actually flipped
+                // open a transaction.
+                .animation(reduceMotion ? nil : Theme.Motion.state, value: isHovered)
         )
         .overlay(alignment: .leading) {
             // On the leading edge, level with the first text line: half the
@@ -314,7 +377,15 @@ struct AgentSwarmView: View {
                 .padding(.leading, inset)
                 .padding(.top, showsAge ? vPad + 4 : 0)
         }
-        .scaleEffect(isHovered ? 1.06 : 1)
+        // The pop is applied with no transaction behind it. On this grid the
+        // scale is the one change that touches a text-bearing subtree, and an
+        // in-flight transaction makes *every* display cycle re-run the hosting
+        // view's layout + display list (the measurement `RollingNumberModifier`
+        // documents); a bouncy spring here held that open for ~0.4 s of every
+        // hover flip, and a pointer crossing a 6-column cluster flips twice per
+        // card. Applied in one frame (as in `SignatureGlyph`), the card's marks
+        // are drawn when the state flips and not on the cycles between.
+        .scaleEffect(isHovered && !reduceMotion ? 1.06 : 1)
         .contentShape(Rectangle())
         .onHover { hovering in
             guard !compact else { return }
@@ -323,7 +394,7 @@ struct AgentSwarmView: View {
             // one hover re-evaluates every cell in the cluster.
             let next: String? = hovering ? child.id : (hoveredId == child.id ? nil : hoveredId)
             guard next != hoveredId else { return }
-            withAnimation(Theme.Animation.bouncy) { hoveredId = next }
+            hoveredId = next
         }
         .onTapGesture(count: 2) { onOpen?(child) }
         .help(child.help)
@@ -382,7 +453,9 @@ struct AgentSwarmView: View {
     }
 
     private var accessibilityText: String {
-        let running = children.filter(\.isActive).count
+        // Folded, not `filter(\.isActive).count`: the cluster is up to 60
+        // cards, and the count never needed the intermediate array.
+        let running = children.reduce(0) { $0 + ($1.isActive ? 1 : 0) }
         return "\(root.displayName)，\(children.count) 个子 agent，\(running) 个运行中"
     }
 }

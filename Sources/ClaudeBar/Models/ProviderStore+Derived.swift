@@ -49,13 +49,14 @@ extension ProviderStore {
         var id: String { session.id }
         let session: ExternalSessionInfo
         let children: [ExternalSessionNode]
-        /// This node's session plus every descendant's, in pre-order.
+        /// Every sub-agent below this node, at any depth, in pre-order.
         ///
         /// Stored, not computed: the tree is already cached per kind, and this
-        /// used to be `[self] + children.flatMap(\.flattened)` evaluated on
-        /// every access from `body` — a fresh `O(subtree)` allocation per node,
-        /// per call, so a wide tree cost `O(n²)` per render.
-        let flattened: [ExternalSessionInfo]
+        /// used to be `children.flatMap(\.flattened)` evaluated on every access
+        /// from `body` — a fresh `O(subtree)` allocation per node, per call, so
+        /// a wide tree cost `O(n²)` per render and the sessions page paid for
+        /// it again on every poll of every visible card.
+        let descendants: [ExternalSessionInfo]
 
         /// How many descendants are mid-turn. Counted once at build time so a
         /// page that only needs the number does not allocate the descendant
@@ -65,14 +66,14 @@ extension ProviderStore {
         init(session: ExternalSessionInfo, children: [ExternalSessionNode]) {
             self.session = session
             self.children = children
-            self.flattened = [session] + children.flatMap(\.flattened)
+            self.descendants = children.flatMap { [$0.session] + $0.descendants }
             self.activeDescendantCount = children.reduce(0) {
                 $0 + $1.activeDescendantCount + ($1.session.isActive ? 1 : 0)
             }
         }
 
         /// Every sub-agent below this node, at any depth.
-        var descendantCount: Int { flattened.count - 1 }
+        var descendantCount: Int { descendants.count }
     }
 
     /// Visible main threads, including idle unarchived Codex tasks. Helpers
