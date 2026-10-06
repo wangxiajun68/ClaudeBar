@@ -184,7 +184,7 @@ struct DocumentTableView: View {
         add("删除所在行", enabled: model.rowCount > 1) { change { $0.deleteRow(at: cell.row) } }
         add("删除所在列", enabled: model.columnCount > 1) { change { $0.deleteColumn(at: cell.column) } }
     }
-    private func change(_ update: (inout DocumentTable) -> Void) { controller.change(undoManager: navigator.activeView?.undoManager, update) }
+    private func change(_ update: (inout DocumentTable) -> Void) { controller.change(undoManager: navigator.structureUndoManager, update) }
     private func resizeHandle(column: Int?, row: Int?) -> some View {
         Rectangle().fill(Color.clear).contentShape(Rectangle())
             .onHover { inside in (inside ? (column != nil ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown) : NSCursor.arrow).set() }
@@ -203,7 +203,7 @@ struct DocumentTableView: View {
                 if let row { controller.model.rowHeights[row] = DocumentTable.clampHeight((dragStart ?? 48) + value.translation.height) }
             }.onEnded { _ in
                 let changed = model
-                if let before = dragBefore { controller.model = before; controller.change(undoManager: navigator.activeView?.undoManager) { $0 = changed } }
+                if let before = dragBefore { controller.model = before; controller.change(undoManager: navigator.structureUndoManager) { $0 = changed } }
                 dragStart = nil; dragBefore = nil
             })
             .help(column != nil ? "拖动调整列宽" : "拖动调整行高")

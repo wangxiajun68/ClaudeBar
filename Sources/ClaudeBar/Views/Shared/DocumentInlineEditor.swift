@@ -43,11 +43,19 @@ struct DocumentInlineEditor: NSViewRepresentable {
         }
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             let name = NSStringFromSelector(selector), selection = textView.selectedRange()
-            if name == "insertTab:" { return parent.onBoundary(1) }
-            if name == "insertBacktab:" { return parent.onBoundary(-1) }
-            if ["moveUp:", "moveLeft:"].contains(name), selection.location == 0 { return parent.onBoundary(-1) }
-            if ["moveDown:", "moveRight:"].contains(name), selection.upperBound == (textView.string as NSString).length { return parent.onBoundary(1) }
-            return false
+            let boundary: Int
+            if name == "insertTab:" { boundary = 1 }
+            else if name == "insertBacktab:" { boundary = -1 }
+            else if ["moveUp:", "moveLeft:"].contains(name), selection.location == 0 { boundary = -1 }
+            else if ["moveDown:", "moveRight:"].contains(name), selection.upperBound == (textView.string as NSString).length { boundary = 1 }
+            else { return false }
+            // Leaving the cell with an IME composition still open: commit it
+            // first, the same thing moving focus with the mouse does. Without
+            // this the marked text stayed uncommitted in a view that was no
+            // longer first responder, and `textDidChange` skips marked text —
+            // so the composed characters never reached the model.
+            if textView.hasMarkedText() { textView.unmarkText() }
+            return parent.onBoundary(boundary)
         }
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -108,6 +116,22 @@ struct DocumentInlineEditor: NSViewRepresentable {
     var activeID: String?
     var activeView: DocumentTextView? { activeID.flatMap { views[$0]?.view } }
     var firstView: DocumentTextView? { order.lazy.compactMap { self.views[$0]?.view }.first }
+    /// The undo stack table structure changes register into.
+    ///
+    /// The stack belongs to the **window**, not to any editor: every
+    /// `NSTextView` in one window reports the same `window.undoManager`
+    /// (measured), so the cell editors SwiftUI rebuilds on identity changes
+    /// cannot break it. What the navigator has to solve is only *finding* the
+    /// window when no cell editor is on screen — `activeCell` dangles after a
+    /// re-parse replaces the cells, or the user right-clicks a fresh table
+    /// before ever clicking a cell. `view.window` (not the view's own
+    /// `undoManager`, which for an unmounted view is a private dead-end
+    /// manager) keeps every hop on a stack the menu can reach; the key window
+    /// is the last hop, and it is non-nil exactly in the app, where a
+    /// structure change can only be triggered by a gesture in some window.
+    var structureUndoManager: UndoManager? {
+        activeView?.window?.undoManager ?? firstView?.window?.undoManager ?? NSApp.keyWindow?.undoManager
+    }
     func register(_ view: DocumentTextView, id: String) { views[id] = WeakView(view) }
     func move(from id: String, direction: Int) -> Bool {
         guard let index = order.firstIndex(of: id), order.indices.contains(index + direction), let view = views[order[index + direction]]?.view else { return false }

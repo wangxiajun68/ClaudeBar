@@ -291,6 +291,76 @@ swift = '\n'.join(p.read_text() for p in sources) + rich_fixture + fixture + r''
         print("PASS: production native editor typing preserves marks and Unicode; native undo restores content")
 
 
+        // Finding 41: Tab / Shift-Tab / edge arrow out of a cell while an IME
+        // composition is open. AppKit queues the command to the delegate with
+        // the composition still marked; without committing it first, the
+        // marked text rode along into a view that was no longer first
+        // responder, and `textDidChange` (which skips marked text) never
+        // published it — the composed characters silently never reached the
+        // model. Leaving a cell must commit (unmark) before the boundary move,
+        // the same thing moving focus with the mouse does.
+        var boundaryMoves: [Int] = []
+        var boundaryText = ""
+        let boundaryEditor = DocumentInlineEditor(markdown: "abc", fontSize: 15, editable: true,
+                                                  onBoundary: { boundaryMoves.append($0); return true }) { boundaryText = $0 }
+        let boundaryHost = NSHostingView(rootView: boundaryEditor.frame(width: 600, height: 60))
+        fixtureWindow.contentView = boundaryHost
+        boundaryHost.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        guard let composing = textView(in: boundaryHost) as? DocumentTextView else { preconditionFailure("Missing composing editor") }
+        fixtureWindow.makeFirstResponder(composing)
+        composing.setMarkedText("にほんご", selectedRange: NSRange(location: 4, length: 0),
+                                replacementRange: NSRange(location: NSNotFound, length: 0))
+        precondition(composing.hasMarkedText(), "the fixture must hold a live composition")
+        _ = composing.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        precondition(boundaryMoves == [1], "Tab at the cell edge must announce the boundary move")
+        precondition(!composing.hasMarkedText(), "the composition must be committed before the boundary move")
+        precondition(boundaryText.contains("にほんご"),
+                     "the committed composition must reach the model, got \"\(boundaryText)\"")
+        fixtureWindow.contentView = nil
+
+        // Finding 40: a structure change (右键增删行列、合并、框线、边框拖动)
+        // must land on the window's undo stack even when no cell has been
+        // focused. Every cell editor reports its *window's* manager (measured:
+        // two text views in one window share one UndoManager), so routing
+        // through `view.window` keeps the stack alive across the editor
+        // rebuilds SwiftUI performs as cell identity changes — while
+        // `activeID`'s view can be the one that was just replaced.
+        let structureTable = DocumentTable(rows: [["A", "B"], ["C", "D"]])
+        let structureController = DocumentTableController(structureTable)
+        let structureNavigator = DocumentFocusNavigator()
+        structureNavigator.order = structureTable.cells
+            .sorted { $0.row == $1.row ? $0.column < $1.column : $0.row < $1.row }
+            .map { $0.id.uuidString }
+        let cellEditor = DocumentTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        cellEditor.isEditable = true
+        let undoHost = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        undoHost.addSubview(cellEditor)
+        fixtureWindow.contentView = undoHost
+        structureNavigator.register(cellEditor, id: structureNavigator.order[0])
+        precondition(structureNavigator.activeView == nil, "no cell focused — the right-click-before-click case")
+        precondition(structureNavigator.structureUndoManager === fixtureWindow.undoManager,
+                     "the structure stack must resolve to the window's manager")
+        fixtureWindow.undoManager?.removeAllActions()
+        let originalWidth = structureController.model.columnWidths[0]
+        structureController.change(undoManager: structureNavigator.structureUndoManager) { $0.columnWidths[0] = 260 }
+        precondition(structureController.model.columnWidths[0] == 260)
+        precondition(fixtureWindow.undoManager?.canUndo == true,
+                     "a structure change must reach the window's undo stack with no focused cell")
+        fixtureWindow.undoManager?.undo()
+        precondition(structureController.model.columnWidths[0] == originalWidth,
+                     "the window stack must restore the structure change")
+        // A rebuilt editor (fresh instance under the same cell id, as the
+        // identity-change rebuild does) resolves to the same manager.
+        let rebuiltEditor = DocumentTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        undoHost.addSubview(rebuiltEditor)
+        structureNavigator.register(rebuiltEditor, id: structureNavigator.order[0])
+        precondition(structureNavigator.structureUndoManager === fixtureWindow.undoManager,
+                     "the stack must survive a cell editor rebuild")
+        fixtureWindow.contentView = nil
+        print("PASS: IME composition commits before boundary moves; table structure undo survives unfocused cells and editor rebuilds")
+
+
         let tableHTML = "<table border='2'><colgroup><col width='220'/><col width='340'/></colgroup><tr height='90'><th rowspan='2'>合并标题</th><td><a href='https://example.test/a'>链接</a><mention token='preserve-token'>人员</mention></td></tr><tr><td><pre lang='json'><code>{&quot;x&quot;:1}</code></pre></td></tr></table>"
         guard var grid = try DocumentMarkup.locatedBlocks(tableHTML).first?.table else { preconditionFailure("Missing editable topology") }
         precondition(grid.cells.count == 3 && grid.rowCount == 2 && grid.columnCount == 2)
