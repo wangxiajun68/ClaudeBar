@@ -994,6 +994,17 @@ private struct ProcessIndex {
         return nil
     }
 
+    /// Whether a `node` process is running the Codex CLI, judged from **argv
+    /// only**.
+    ///
+    /// `KERN_PROCARGS2` returns one buffer holding `argc`, the executable path,
+    /// the arguments and then the whole environment, all NUL-separated. The
+    /// environment is not part of the command line: macOS puts
+    /// `/var/run/com.apple.security.cryptexd/codex.system/...` on every
+    /// process's `PATH`, so scanning the whole buffer made every `node` process
+    /// a Codex session — Cursor's own agent workers among them. `argc` from the
+    /// buffer's first four bytes bounds the argument region, and the walk stops
+    /// there.
     private static func argvMentionsCodex(_ pid: pid_t, scratch: inout ProcessScanScratch) -> Bool {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -1004,10 +1015,42 @@ private struct ProcessIndex {
         var sz = size
         let ok = scratch.argv.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &sz, nil, 0) == 0 }
         guard ok else { return false }
-        let slice = scratch.argv.prefix(sz)
-        guard let text = String(bytes: slice, encoding: .utf8) ?? String(bytes: slice, encoding: .isoLatin1) else {
-            return false
+        let buf = scratch.argv
+        let n = min(sz, buf.count)
+        guard n > 4 else { return false }
+        let argc = Int(UInt32(buf[0]) | UInt32(buf[1]) << 8 | UInt32(buf[2]) << 16 | UInt32(buf[3]) << 24)
+        guard argc > 0, argc < 4096 else { return false }
+
+        // Skip the executable path, then walk `argc` NUL-terminated arguments.
+        var i = 4
+        while i < n && buf[i] != 0 { i += 1 }
+        var remaining = argc
+        while remaining > 0 && i < n {
+            while i < n && buf[i] == 0 { i += 1 }          // NULs between entries
+            guard i < n else { break }
+            let start = i
+            while i < n && buf[i] != 0 { i += 1 }
+            if containsCodex(buf[start..<i]) { return true }
+            remaining -= 1
         }
-        return text.localizedCaseInsensitiveContains("codex")
+        return false
+    }
+
+    /// Latin-1 comparison against "codex": byte-wise, so a non-UTF8 or Latin-1
+    /// argument still matches without allocating a String per argument.
+    private static func containsCodex(_ bytes: ArraySlice<UInt8>) -> Bool {
+        let needle = Array("codex".utf8)
+        let caseBit: UInt8 = 0x20
+        guard bytes.count >= needle.count else { return false }
+        let array = Array(bytes)
+        for start in 0...(array.count - needle.count) {
+            var match = true
+            for offset in 0..<needle.count where (array[start + offset] | caseBit) != needle[offset] {
+                match = false
+                break
+            }
+            if match { return true }
+        }
+        return false
     }
 }
