@@ -202,9 +202,21 @@ class ProviderStore: ObservableObject {
     /// an editor request is handed to the page as a `@State` flag — so the
     /// request can be dropped as soon as it has been routed, and a later
     /// reopen (or a revisit of the page) cannot replay it.
+    ///
+    /// **The landing is deferred one main-queue turn.** `@Published` emits in
+    /// `willSet` — the delivery that calls this runs while the property still
+    /// holds the *previous* value (nil, or an older request) — so a synchronous
+    /// assignment here would be overwritten by the pending `willSet` the moment
+    /// the callback returns, and the request would stay in the store forever
+    /// (measured: the guard below refuses on every call made from inside the
+    /// delivery). Assigning after the current turn lets the routed value land
+    /// first; the `token` comparison then also keeps a *newer* request from
+    /// being cleared by an older route.
     func clearNavigation(_ taken: NavigationRequest) {
-        guard navigationRequest == taken else { return }
-        navigationRequest = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.navigationRequest?.token == taken.token else { return }
+            self.navigationRequest = nil
+        }
     }
 
     /// Initial state is populated by the AppDelegate once the status item and
