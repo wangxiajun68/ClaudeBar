@@ -75,6 +75,14 @@ enum SolarTerm: Int, CaseIterable, Identifiable {    case minorCold, majorCold, 
 
     /// Committed `(month, day)` per term, in `allCases` order, from the HKO
     /// tables. Keyed by Gregorian year in the observer's timezone.
+    ///
+    /// The window ends at 2036 on purpose. Past it a year is answered from the
+    /// nearest published row, and the error that introduces grows without
+    /// bound — the table used to stop at 2030, where reusing 2030 put 2032's
+    /// 清明 a day late and 2033's 立春 on 02-03 (a day before the crossing).
+    /// Six more rows cover this app's plausible life; the terms drift by a day
+    /// roughly every four years, so a decade-old row is the wrong answer for a
+    /// date a decade later.
     private static let published: [Int: [(Int, Int)]] = [
         2026: [(1, 5), (1, 20), (2, 4), (2, 18), (3, 5), (3, 20), (4, 5), (4, 20), (5, 5), (5, 21),
                (6, 5), (6, 21), (7, 7), (7, 23), (8, 7), (8, 23), (9, 7), (9, 23), (10, 8), (10, 23),
@@ -91,11 +99,34 @@ enum SolarTerm: Int, CaseIterable, Identifiable {    case minorCold, majorCold, 
         2030: [(1, 5), (1, 20), (2, 4), (2, 18), (3, 5), (3, 20), (4, 5), (4, 20), (5, 5), (5, 21),
                (6, 5), (6, 21), (7, 7), (7, 23), (8, 7), (8, 23), (9, 7), (9, 23), (10, 8), (10, 23),
                (11, 7), (11, 22), (12, 7), (12, 22)],
+        2031: [(1, 5), (1, 20), (2, 4), (2, 19), (3, 6), (3, 21), (4, 5), (4, 20), (5, 6), (5, 21),
+               (6, 6), (6, 21), (7, 7), (7, 23), (8, 8), (8, 23), (9, 8), (9, 23), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 7), (12, 22)],
+        2032: [(1, 6), (1, 20), (2, 4), (2, 19), (3, 5), (3, 20), (4, 4), (4, 19), (5, 5), (5, 20),
+               (6, 5), (6, 21), (7, 6), (7, 22), (8, 7), (8, 22), (9, 7), (9, 22), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 6), (12, 21)],
+        2033: [(1, 5), (1, 20), (2, 3), (2, 18), (3, 5), (3, 20), (4, 4), (4, 20), (5, 5), (5, 21),
+               (6, 5), (6, 21), (7, 7), (7, 22), (8, 7), (8, 23), (9, 7), (9, 23), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 7), (12, 21)],
+        2034: [(1, 5), (1, 20), (2, 4), (2, 18), (3, 5), (3, 20), (4, 5), (4, 20), (5, 5), (5, 21),
+               (6, 5), (6, 21), (7, 7), (7, 23), (8, 7), (8, 23), (9, 7), (9, 23), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 7), (12, 22)],
+        2035: [(1, 5), (1, 20), (2, 4), (2, 19), (3, 6), (3, 21), (4, 5), (4, 20), (5, 5), (5, 21),
+               (6, 6), (6, 21), (7, 7), (7, 23), (8, 7), (8, 23), (9, 8), (9, 23), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 7), (12, 22)],
+        2036: [(1, 6), (1, 20), (2, 4), (2, 19), (3, 5), (3, 20), (4, 4), (4, 19), (5, 5), (5, 20),
+               (6, 5), (6, 21), (7, 6), (7, 22), (8, 7), (8, 22), (9, 7), (9, 22), (10, 8), (10, 23),
+               (11, 7), (11, 22), (12, 6), (12, 21)],
     ]
 
     /// The table for a year, clamped to the published window. Never nil.
+    ///
+    /// Past the window the nearest row is reused — a day of error at the edge,
+    /// rather than inventing a date. The window is wide enough (2026–2036) that
+    /// this is a fallback for a clock outside the supported range, not the
+    /// normal reading.
     private static func schedule(for year: Int) -> [(Int, Int)] {
-        let clamped = min(2030, max(2026, year))
+        let clamped = min(2036, max(2026, year))
         return published[clamped] ?? published[2026]!
     }
 

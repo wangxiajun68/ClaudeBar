@@ -11,6 +11,8 @@ https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2027e.txt
 https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2028e.txt
 https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2029e.txt
 https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2030e.txt
+https://www.hko.gov.hk/en/gts/time/calendar/text/files/T2031e.txt
+… through T2036e.txt (the same series; fetched through the project proxy).
 """
 from pathlib import Path
 import subprocess
@@ -37,6 +39,12 @@ source += r'''
             2028: [(1,6),(1,20),(2,4),(2,19),(3,5),(3,20),(4,4),(4,19),(5,5),(5,20),(6,5),(6,21),(7,6),(7,22),(8,7),(8,22),(9,7),(9,22),(10,8),(10,23),(11,7),(11,22),(12,6),(12,21)],
             2029: [(1,5),(1,20),(2,3),(2,18),(3,5),(3,20),(4,4),(4,20),(5,5),(5,21),(6,5),(6,21),(7,7),(7,22),(8,7),(8,23),(9,7),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,21)],
             2030: [(1,5),(1,20),(2,4),(2,18),(3,5),(3,20),(4,5),(4,20),(5,5),(5,21),(6,5),(6,21),(7,7),(7,23),(8,7),(8,23),(9,7),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,22)],
+            2031: [(1,5),(1,20),(2,4),(2,19),(3,6),(3,21),(4,5),(4,20),(5,6),(5,21),(6,6),(6,21),(7,7),(7,23),(8,8),(8,23),(9,8),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,22)],
+            2032: [(1,6),(1,20),(2,4),(2,19),(3,5),(3,20),(4,4),(4,19),(5,5),(5,20),(6,5),(6,21),(7,6),(7,22),(8,7),(8,22),(9,7),(9,22),(10,8),(10,23),(11,7),(11,22),(12,6),(12,21)],
+            2033: [(1,5),(1,20),(2,3),(2,18),(3,5),(3,20),(4,4),(4,20),(5,5),(5,21),(6,5),(6,21),(7,7),(7,22),(8,7),(8,23),(9,7),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,21)],
+            2034: [(1,5),(1,20),(2,4),(2,18),(3,5),(3,20),(4,5),(4,20),(5,5),(5,21),(6,5),(6,21),(7,7),(7,23),(8,7),(8,23),(9,7),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,22)],
+            2035: [(1,5),(1,20),(2,4),(2,19),(3,6),(3,21),(4,5),(4,20),(5,5),(5,21),(6,6),(6,21),(7,7),(7,23),(8,7),(8,23),(9,8),(9,23),(10,8),(10,23),(11,7),(11,22),(12,7),(12,22)],
+            2036: [(1,6),(1,20),(2,4),(2,19),(3,5),(3,20),(4,4),(4,19),(5,5),(5,20),(6,5),(6,21),(7,6),(7,22),(8,7),(8,22),(9,7),(9,22),(10,8),(10,23),(11,7),(11,22),(12,6),(12,21)],
         ]
         var termDays = 0
         for (year, rows) in published.sorted(by: { $0.key < $1.key }) {
@@ -71,9 +79,14 @@ source += r'''
                 "立春 opens spring")
         require(SolarTerm.winterSolstice.chineseName == "冬至" && SolarTerm.minorCold.season == .winter,
                 "Winter runs 立冬 … 大寒")
-        // Out of the published window the nearest year is reused rather than
+        // The window now reaches 2036; 2033-02-03 is 立春 on the HKO table and
+        // must read as the term (reusing the 2030 row used to answer nothing
+        // here — 2033's crossing is a day earlier than 2030's).
+        require(SolarTerm.term(on: date("2033-02-03"), calendar: calendar) == .springBegins,
+                "2033's 立春 is Feb 3, not the 2030 row's Feb 4")
+        // Past the window the nearest published year is reused rather than
         // inventing a date; a term day still reads as that term.
-        let beyond = date("2033-02-04")
+        let beyond = date("2037-02-04")
         require(SolarTerm.term(on: beyond, calendar: calendar) == .springBegins,
                 "Outside the table the nearest published year is reused")
         // Every term carries at least one line in each language, and the
@@ -107,7 +120,7 @@ source += r'''
                 }
             }
         }
-        print("PASS: HKO solar-term dates 2026-2030, season boundaries, out-of-range reuse")
+        print("PASS: HKO solar-term dates 2026-2036, season boundaries, out-of-range reuse")
     }
 }
 '''
