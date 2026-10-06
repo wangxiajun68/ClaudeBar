@@ -33,7 +33,18 @@ final class WorkflowMonitor: @unchecked Sendable {
     static let shared = WorkflowMonitor()
     private let lock = NSLock()
     private var cache: [String: Records] = [:]
+    /// Insertion order of `cache`, for single-entry eviction (see `read`).
+    private var cacheOrder: [String] = []
     private static let activityWindow: TimeInterval = 90
+    /// Byte patterns that gate JSON parsing, one per record shape `apply`
+    /// consults: a launch carries `runId`, a journal line carries `agentId`,
+    /// and a terminal record carries the notification XML. Both spellings
+    /// appear verbatim in the JSON text of the records that matter.
+    private static let interestingNeedles = [
+        Data("runId".utf8),
+        Data("agentId".utf8),
+        Data("task-notification".utf8),
+    ]
 
     private struct Run {
         var name: String
@@ -148,24 +159,53 @@ final class WorkflowMonitor: @unchecked Sendable {
                 guard let chunk = try handle.read(upToCount: Int(min(65_536, remaining))), !chunk.isEmpty else { break }
                 remaining -= UInt64(chunk.count)
                 records.offset += UInt64(chunk.count)
-                for byte in chunk {
-                    if byte == 10 {
-                        if !records.droppingLine,
-                           let json = try? JSONSerialization.jsonObject(with: records.partial) as? [String: Any] {
-                            apply(json, to: &records)
-                        }
-                        records.partial.removeAll(keepingCapacity: true)
-                        records.droppingLine = false
-                    } else if !records.droppingLine {
-                        if records.partial.count < 4_000_000 { records.partial.append(byte) }
-                        else { records.partial.removeAll(keepingCapacity: false); records.droppingLine = true }
+                // Only two record kinds in these files are ever consulted
+                // (`runId`/`taskId` on a `toolUseResult`, and the task
+                // notification XML), and a transcript is mostly conversation —
+                // tens of thousands of lines that carry neither. Scanning for a
+                // byte pattern before handing the line to JSONSerialization
+                // skips the parse for nearly all of them; `runId` appears in
+                // the same record as `taskId`, so either needle is enough.
+                var bytes = chunk[...]
+                if records.droppingLine {
+                    // Inside a runaway line: skip whole chunks to its newline,
+                    // then resume with the bytes that follow it.
+                    guard let newline = chunk.firstIndex(of: 0x0A) else { continue }
+                    records.droppingLine = false
+                    bytes = chunk[chunk.index(after: newline)...]
+                }
+                guard !bytes.isEmpty else { continue }
+                records.partial.append(contentsOf: bytes)
+                var scan = records.partial.startIndex
+                while let newline = records.partial[scan...].firstIndex(of: 0x0A) {
+                    let line = records.partial[scan..<newline]
+                    if Self.interestingNeedles.contains(where: { line.range(of: $0, options: []) != nil }),
+                       let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                        apply(json, to: &records)
                     }
+                    scan = newline + 1
+                }
+                records.partial.removeSubrange(records.partial.startIndex..<scan)
+                if records.partial.count >= 4_000_000 {
+                    records.partial.removeAll(keepingCapacity: false)
+                    records.droppingLine = true
                 }
             }
+            // A line still open at the end of the read is kept for the next call.
         } catch { return Records() }
         records.modified = modified
         records.inode = inode
-        if cache.count >= 64, cache[key] == nil { cache.removeAll(keepingCapacity: true) }
+        // Evict one, not all. A flat `removeAll()` at the ceiling threw away
+        // every warm entry at once — including the main transcript read first
+        // on the next pass — and the following tick paid to re-read and
+        // re-parse the whole file. Dropping the least recently stored entry
+        // keeps the working set warm when a session accumulates many workflow
+        // journals.
+        if cache.count >= 64, cache[key] == nil, let oldest = cacheOrder.first {
+            cache.removeValue(forKey: oldest)
+            cacheOrder.removeFirst()
+        }
+        if cache[key] == nil { cacheOrder.append(key) }
         cache[key] = records
         return records
     }
