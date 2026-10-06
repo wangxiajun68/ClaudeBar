@@ -78,8 +78,8 @@ func ms(_ body: () -> Void) -> Double {
     let start = ContinuousClock.now; body(); let d = start.duration(to: .now)
     return Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
 }
-@MainActor func settle() {
-    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.006))
+@MainActor func settle(rounds: Int = 1) {
+    for _ in 0..<rounds { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.006)) }
 }
 func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line: UInt = #line) {
     if !condition() { FileHandle.standardError.write(Data("FAIL line \(line): \(message)\n".utf8)); exit(1) }
@@ -104,6 +104,14 @@ struct OutlineSurface: View {
     var body: some View { DocumentOutlinePanel(headings: state.headings, onClose: {}, onJump: { _ in }).preferredColorScheme(state.dark ? .dark : .light) }
 }
 @MainActor func digest<V: View>(_ host: NSHostingView<V>) -> String {
+    // Nine 6 ms turns, not one. A single `RunLoop.main.run(until:)` returns as
+    // soon as the shortest of the timers it installed fires, so work SwiftUI
+    // scheduled for the *next* display cycle (an appearance or content change
+    // arriving with the update) may not have been committed when the bitmap is
+    // drawn. On the CI runner that raced: `table_image_sha256` differed from
+    // `initialTable` with no geometry change in between. Draining several turns
+    // makes the sample a settled frame on both machines.
+    settle(rounds: 9)
     host.layoutSubtreeIfNeeded()
     let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
     host.cacheDisplay(in: host.bounds, to: bitmap)
