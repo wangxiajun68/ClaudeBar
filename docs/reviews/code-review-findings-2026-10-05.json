@@ -142,7 +142,9 @@
   "summary": "The `canonicalTools > completedTools` guard compares two unrelated counters, so real Codex paginated rollouts with any aborted/compacted tool call are permanently un-migratable with 包含已完成工具",
   "evidence": "Line 170-173 increments `canonicalTools` for every `event_msg/item_completed` of kind CommandExecution/FileChange/McpToolCall/DynamicToolCall/WebSearch, while `completedTools` (line 209) counts only `response_item/function_call_output` pairs. Line 217: `if includeCompletedTools && canonicalTools > completedTools { throw MigrationFailure.unsupported(\"这段 Codex 工具格式尚未验证…\") }`. The test fixture never contains a tool `item_completed` row (only UserMessage/AgentMessage at Tests/session-migration-regressions.py:46,49), so both counters are 0 in every test. Measured on this machine's real rollouts (~/.codex/sessions/2026/**/*.jsonl): 6 of 8 non-empty files fail the guard — e.g. 01a0f7b1 items 116 / outputs 100, 01a0ff9c items 610 / outputs 420, 01a1023e items 89 / outputs 73. The version regex is also inherently fragile: /v\\d+$/ matches /v1 but not /v1.2 (MigrationBridgeConfiguration.swift:24).",
   "failure": "Release user selects a Codex session that used any tool (the normal case) and turns on 包含已完成工具的输入与结果 → codex() runs the loop, canonicalTools (per-event rows, inflated by aborted/compacted/replayed events) exceeds completedTools (per call/output pair), and prepare() throws .unsupported(\"工具格式尚未验证\") every time. There is no data the user can change to make it succeed; the feature is dead for the majority of real sessions, and the error blames the upstream format.",
-  "fix": "Drop the counter comparison (it verifies nothing: canonical messages are only appended from item_completed rows, so they are already bounded by the records that were validated) or replace it with a per-record correlation — e.g. remember the set of tool `item.id`s seen and require each to be consumed exactly once — and add a regression fixture containing tool `item_completed` rows mixed with function_call/function_call_output pairs."
+  "fix": "Drop the counter comparison (it verifies nothing: canonical messages are only appended from item_completed rows, so they are already bounded by the records that were validated) or replace it with a per-record correlation — e.g. remember the set of tool `item.id`s seen and require each to be consumed exactly once — and add a regression fixture containing tool `item_completed` rows mixed with function_call/function_call_output pairs.",
+  "status": "fixed",
+  "verdict_note": "f54fb31: cross-projection count comparison deleted; real rollouts measured 89 vs 73"
  },
  {
   "category": "correctness",
@@ -165,7 +167,9 @@
   "evidence": "Line 170-173 counts `canonicalTools += 1` for every event_msg/item_completed item of kind CommandExecution/FileChange/McpToolCall/DynamicToolCall/WebSearch; line 199-209 counts `completedTools += 1` only for paired response_item function_call/function_call_output rows. The two counters diverge on real data: I replayed the exact counting over the 24 rollouts in ~/.codex/sessions (read-only): 6 of 24 refuse (e.g. 42 MB rollout-2026-10-03T23-18:40: canon=1202 items vs completed=728 pairs; 19 MB 10-33-31: 610 vs 420; 12.9 MB 10-26-35: 137 vs 111; even a 756 KB file: 6 vs 3). All six are ordinary `thread_source: user` sessions with parent_thread_id/history_base/subagent_history_start_ordinal all nil and history_mode=paginated, so they pass every earlier guard and fail only this one. The fixtures never exercise it: Tests/session-migration-regressions.py contains no CommandExecution/FileChange/McpToolCall item at all (grep 'CommandExecution' in Tests/ → only unrelated lines), so line 217 always compares 0 > 0 in CI.",
   "failure": "User enables 「包含已完成工具的输入与结果」 on a Codex source whose log pairs fewer response_item calls than the canonical items it recorded (measured on ~25% of local rollouts) → codex() throws MigrationFailure.unsupported at line 218 → the dialog shows 「这段 Codex 工具格式尚未验证」 and the only way forward is to switch the toggle off, losing all tool history; the rollout has not changed, so retrying after a version bump of the reader still refuses.",
   "fix": "Stop comparing cross-projection counts. Either require a positive signal only (`guard canonicalTools == 0 || completedTools > 0`) or replace the throw with `omissions.append(\"N 项历史工具未能配对，未携带。\")` and carry the pairs that do exist.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "f54fb31: cross-projection count comparison deleted; real rollouts measured 89 vs 73"
  },
  {
   "category": "correctness",
@@ -177,7 +181,9 @@
   "failure": "User migrates a session to Codex at 02:30 local time. Vehicle: `MigrationStorage.prepare` → `locations.nativeURL` → the 2026/10/05 folder with an 18:30 filename. Observable: for the next ~5.5h the new Codex thread does not appear in the session list / migration history cards even though Codex itself resumes it fine, and because `record.nativePath` is the only handle the app has, the mismatch makes the app's own view of its product wrong until the next day directory rolls over.",
   "fix": "Drop the UTC line and format in `TimeZone.current` (matching ExternalSessionMonitor's day-walk contract), or keep UTC for the `yyyy-MM-dd'T'HH-mm-ss` suffix but derive the day folder separately with a local-timezone formatter; add a regression that asserts `nativeURL`'s folder equals the local `yyyy/MM/dd` of `now`.",
   "confidence": "high",
-  "symbol": "MigrationLocations.nativeURL"
+  "symbol": "MigrationLocations.nativeURL",
+  "status": "fixed",
+  "verdict_note": "f54fb31: TimeZone.current; regression asserts local civil day for an 00:30 local instant"
  },
  {
   "category": "robustness",
@@ -189,7 +195,9 @@
   "failure": "A user pastes `http://my-gateway.example.com/v1` (typo or copy/paste), clicks 拉取模型; the GET with both auth headers traverses the public internet in plaintext, visible to any hop. Even without an attacker, an http→https 301 can never be followed (NoModelListRedirects returns nil), so the failure shown is '无法连接', not an explanation of the credential exposure.",
   "fix": "Require `https` unless `ProviderCatalogEntry.isLocalEndpoint(urlText)` is true, mirroring BalanceFetcher; keep the existing loopback escape hatch for Ollama/LM Studio.",
   "confidence": "high",
-  "symbol": "ModelListFetcher.fetch"
+  "symbol": "ModelListFetcher.fetch",
+  "status": "fixed",
+  "verdict_note": "a8d3534: allowsKeyTransport (https, or http to isLocalEndpoint); local-endpoint suite"
  },
  {
   "category": "perf-cpu",
@@ -248,7 +256,9 @@
   "evidence": "第 144 行：`let sql = \"SELECT day, model, calls, input, output, cache_read, cache_write FROM usage\"`，没有 WHERE；三个读接口各自在 Swift 里过滤：第 99 行 `for row in allRows() where row.day >= startDay && row.day <= endDay`、第 113 行、第 124 行同形。建表见 193-203 行 `PRIMARY KEY (day, model)) WITHOUT ROWID` —— day 是主键首列，加 `WHERE day BETWEEN ?1 AND ?2` 即走键区间。调用侧：UsageIndex.fetch:308 / fetchBySource:516 / fetchDaily:574 / fetchDailyModels:581 / fetchDaily:684 每次发布各调一次；ProviderStore.refreshUsage（1040-1060 行）一轮 quick + 一轮 final 共 5 组查询 → 每次刷新约 14 次全表扫描（queryUsage、queryUsageBySource、fetchDaily、queryDailyModels、queryTodayUsage×2、queryWeekDays 里第三方的部分）。",
   "failure": "装在用了 1-2 年、每天 10 个模型的机器上（≈3 650-7 300 行），任何一次用量刷新（FSEvents 转录追加就会触发）都要把整表重复解码 14 遍：≈5-10 万次 sqlite3_step + 每行两个 String（day/model）分配 ≈ 10-20 万次分配、14 次 prepare。代价随装机时长线性增长，与用户查看的月份无关。",
   "fix": "给 allRows 加日期区间参数，SQL 补 `WHERE day BETWEEN ?1 AND ?2`（bind startDay/endDay），三个读接口只做聚合不再过滤；保留无参 allRows 供 JSON 后端用。同一个月视图的行数从 O(历史) 降到 O(30×模型数)（今天 ≈24×，未来无界收敛）。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "b611c5f: day BETWEEN bound in SQL; three call sites no longer filter in Swift"
  },
  {
   "category": "correctness",
@@ -260,7 +270,9 @@
   "summary": "The system-wide swallow tap and the Carbon hotkey are installed without any BuildChannel gate, while the overlay they trigger refuses to run in the same build — the dev app hijacks ⌘⇧A globally and only beeps.",
   "evidence": "ScreenshotHotKey.swift:36-40 `func startIfEnabled() { guard AppPreferences.shared.screenshotHotkeyEnabled else { return }; register(); installWakeObserverIfNeeded() }` — no `BuildChannel.promptsForSystemPermissions` check anywhere in the class (grep: the only BuildChannel use in the pair is ScreenshotOverlay.swift:45). The preference write path is unguarded too: AppPreferences.swift:167 `if didSetReady { ScreenshotHotKey.shared.setEnabled(screenshotHotkeyEnabled) }`, and PermissionCenter.swift:184 gates only the prompt (`if on, BuildChannel.promptsForSystemPermissions { request(permission) }`), not the registration. Compare the consumer: ScreenshotOverlay.swift:45-49 `guard BuildChannel.promptsForSystemPermissions else { capturing = false; NSSound.beep(); return }`.",
   "failure": "In a dev build, the user flips the 区域截图 toggle in Settings (the switch still records the intent, PermissionCenter.swift:172-186) → `register()` installs the head-insert `.defaultTap` (ScreenshotHotKey.swift:149-175) plus `RegisterEventHotKey(⌘⇧A)` (95-101) → every ⌘⇧A in every app is swallowed by the dev process (the tap returns nil, ScreenshotHotKey.swift:156) and the overlay only beeps (ScreenshotOverlay.swift:45-49). Feishu/Lark and any other observer of ⌘⇧A silently lose the combo for as long as the dev app runs, and there is no surface that says the feature is inert.",
-  "fix": "Gate the registration itself, not just the overlay: at the top of `register()` (and `startIfEnabled`) add `guard BuildChannel.promptsForSystemPermissions else { lastError = nil; return }`, or have PermissionCenter set `lastError = BuildChannel.restrictionMessage` and leave the switch off for dev."
+  "fix": "Gate the registration itself, not just the overlay: at the top of `register()` (and `startIfEnabled`) add `guard BuildChannel.promptsForSystemPermissions else { lastError = nil; return }`, or have PermissionCenter set `lastError = BuildChannel.restrictionMessage` and leave the switch off for dev.",
+  "status": "fixed",
+  "verdict_note": "95387c6: register() gated on BuildChannel.promptsForSystemPermissions before installTap"
  },
  {
   "category": "correctness",
@@ -272,7 +284,9 @@
   "summary": "The sunrise/sunset scan records each horizon crossing independently, so on the polar-day shoulder it can return an inverted pair (sunrise later than sunset) or a half pair for a civil day.",
   "evidence": "Lines 57-74 walk the civil day in 300 s steps and assign whatever crossing the bisection finds: `if rising { result.sunrise = crossing } else { result.sunset = crossing }` — nothing checks that the day's rising precedes its setting. `Snapshot`/`solarEvents` are consumed unchanged by `SunPath.times(on:reading:zone:)` (GreetingInstruments.swift:465-491) and rendered as the two clocks of `SunPath` (line 394-397 `Text(clock(date))` / accessibility label line 387). I replicated lines 50-74 verbatim in Python and validated the replica against this repo's own fixtures: Guangzhou 2026-09-30 gives 06:18 / 18:16 with rise hour 6 and set hour 18, exactly what Tests/greeting-layout-regressions.py:91 requires, and my independent apparent-solar-longitude solver reproduced all 120 committed HKO rows. On the replica, Tromso (69.65 N, 18.96 E, Europe/Oslo) civil day 2026-05-18 returns sunrise 01:06 and sunset 00:14 local (inverted); 2026-05-17 returns sunrise 01:24 with sunset nil. Rovaniemi (66.5 N, 25 E) is inverted on 20 days of 2026, Bodo (67.3 N) on 11, McMurdo on 8. The committed tests only cover hard polar day/night at 69.65 N in June and December (Tests/greeting-layout-regressions.py:102-107), which return nil/nil, so the shoulder is untested.",
   "failure": "A user at 66-70 N whose forecast source omits that day's clocks (the `forecast?.sunrise ?? ...` at GreetingInstruments.swift:485 falls through) gets the coordinate fallback: on Tromso 2026-05-18 the card prints 日出 01:06 / 日落 00:14 and its accessibility label says the same; `SunPath.progress` guards `length > 0` so the arc silently disappears instead of drawing. The inverted pair also feeds `representativeMinutes` (GreetingCard.swift:1006-1025) in manual sky mode, where rise > set yields a noon before sunrise.",
-  "fix": "After the scan, drop a pair that cannot belong to one civil day before caching: `if let r = result.sunrise, let s = result.sunset, s <= r { result = missing }` (matches the file's stated rule that unresolvable crossings stay nil). If the daylight spanning midnight is wanted instead, keep the rise and pair it with the first subsequent setting (the renderer already tolerates sunrise on the previous day, SunPath.swift:411-418)."
+  "fix": "After the scan, drop a pair that cannot belong to one civil day before caching: `if let r = result.sunrise, let s = result.sunset, s <= r { result = missing }` (matches the file's stated rule that unresolvable crossings stay nil). If the daylight spanning midnight is wanted instead, keep the rise and pair it with the first subsequent setting (the renderer already tolerates sunrise on the previous day, SunPath.swift:411-418).",
+  "status": "fixed",
+  "verdict_note": "f6a1542: inverted pair dropped whole; shoulder-day regression"
  },
  {
   "category": "perf-io",
@@ -284,7 +298,9 @@
   "evidence": "UsageClaims.swift:154 `if lines * 2 > ledger.count + 4096 {`, body at :155-157 `let compacted = encode(ledger.keys.sorted().map { Claim(id: $0, owner: ledger[$0]!) }, []); if (try? Data(compacted.utf8).write(to: FilePaths.usageClaimsJSONL, options: .atomic)) != nil { lines = ledger.count }`. The doc at :123-124 states the intent: \"Rewrites the file in full once the dead lines outnumber the live ones\" — that is lines - ledger.count > ledger.count, i.e. `lines > 2 * ledger.count`. With `lines == ledger.count` (no dead lines) the shipped condition reduces to `ledger.count > 4,096`, so it fires on every flush. Measured on the live file `/Users/wangxiajun/Library/Application Support/ClaudeBar/logs/usage-claims.jsonl`: 32,017,827 bytes, 154,159 lines, 154,159 distinct ids, 0 tombstone lines — i.e. `2*154159 > 154159 + 4096` is true.",
   "failure": "During a live Claude/Codex session every debounced FSEvents pass that books at least one new message.id (the normal case) sorts and re-encodes ~154k Claim structs, writes a 32 MB temp file and renames it, instead of appending a few hundred bytes. That is hundreds of ms of CPU plus 32 MB of disk write per pass, done while holding `UsageClaims.lock` — the same lock `owner(of:)`/`record`/`release` take inside `claimClaude` (UsageIndex.swift:1320-1341), so each transcript parse queues behind it. The cost is guaranteed to keep growing with the user's lifetime API-call count; the file never shrinks below one line per id.",
   "fix": "Flip the comparison to the documented intent: `if lines > ledger.count * 2 + 4096 {`. A tombstone-free corpus (lines == ledger.count) then never compacts and each pass appends only the changed lines (KB).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "c54d6c7: comparison flipped to lines > count*2 + 4096; two-phase regression"
  },
  {
   "category": "dead-code",
@@ -294,7 +310,9 @@
   "summary": "UsageJSONStore.fetchSession(pathPrefix:pathSuffix:) 在生产代码中没有任何调用者，只有测试在用；整条 rollupKeysByPath 索引为一条死路径存在",
   "evidence": "Read 全文后全仓 grep：`grep -rn \"fetchSession(pathPrefix\" Sources` 只有定义行 UsageJSONStore.swift:178；调用点全部在 Tests（Tests/backend-performance-regressions.py:83、90、94、96、102、105、106、108）。`UsageIndex.fetchSession(source:sessionId:)`(UsageIndex.swift:343) 也只在 Tests/usage-index-regressions.py:280 被调用；生产侧 IslandLiveModel.swift:294 走的是 `fetchSessionFamilies`，而它读的是 `currentFiles()` 与 `fetchByPath`，不经过本函数。该函数是 rollupKeysByPath（UsageJSONStore.swift:79，注释自称‘A transcript rewrite removes only that transcript's rows’）的唯一消费者——真正需要按路径删除的是 removeRollupLocked。",
   "failure": "任何输入都不会执行这条路径；代价是常驻内存：本机 usage-index.db 实测 2412 行 rollup / 2260 个不同 path（sqlite3 只读查询），rollupKeysByPath 维护 2260 个 Set<String> + 2412 个字符串 key，而语料量大时每个转录至少 1 个 key。此外 O(P) 遍历（`for (path, keys) in rollupKeysByPath where path.hasPrefix(...)`）在测试里被测量成 400 次查询走一遍全表（backend-performance 的 json_session_400_ms 指标）。",
-  "fix": "删除 fetchSession(pathPrefix:pathSuffix:)，同时删除 rollupKeysByPath 索引及 insertRollupLocked / removeRollupLocked 中对应的维护分支（保留 rollupKeysByDay，日期索引在生产有四条调用路径：fetch/fetchByPath/fetchDaily/fetchDailyModels）；若想保留 API 供测试，改为在测试里用 fetchByPath 过滤实现。"
+  "fix": "删除 fetchSession(pathPrefix:pathSuffix:)，同时删除 rollupKeysByPath 索引及 insertRollupLocked / removeRollupLocked 中对应的维护分支（保留 rollupKeysByDay，日期索引在生产有四条调用路径：fetch/fetchByPath/fetchDaily/fetchDailyModels）；若想保留 API 供测试，改为在测试里用 fetchByPath 过滤实现。",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
  },
  {
   "category": "dead-code",
@@ -304,7 +322,9 @@
   "summary": "DiskPersistence.useDatabase 读取的 \"databaseEnabled\" 键已无任何写入方，JSON 后端整条字节路径不可达——设置里的开关在 16b225e 被删除，读取方成了孤儿",
   "evidence": "UsageJSONStore.swift:5-10 从 UserDefaults 读 databaseEnabled 并以 true 为默认。全仓 grep：`grep -rn \"databaseEnabled\" . --exclude-dir=.git` 只有这两行读取；`grep -rn \"databaseEnabled\" Sources/ClaudeBar/Models/AppPreferences.swift` 无命中，而 `git show 16b225e -- Sources/ClaudeBar/Models/AppPreferences.swift` 显示该提交删除了 `@Published var databaseEnabled`、其 didSet 中的 `UsageIndex.reloadPersistence()` 以及设置页的 `isOn: $prefs.databaseEnabled` 开关。当前 `defaults read com.claudebar.app databaseEnabled` 返回 “does not exist”（即走 `object(forKey:) == nil → true`）。文档也已过时：docs/technical/04-data-access-layer.md:96 仍写「设置 → 开启数据库」。",
   "failure": "用户永远拿不到 JSON 后端（UseDatabase 恒 true），UsageJSONStore 的 406 行、CacheJSON/JSONL 解码迁移（loadLocked 的 stale/unprefixed/oldParser/oldClaude 四分支）、persistLocked 全量重写全部不可达；反过来，若某台机器/旧版仍写入 databaseEnabled=false（键在 UserDefaults 里持久存在，`as? Bool ?? true` 的读取方会尊重它），那台机器上的 JSON 后端会带着无人维护的代码继续跑，而 UI 再没有任何入口能切回——两条后端从此永久分叉且用户无法自救。",
-  "fix": "二选一：要么按文档把「存储」开关恢复（在 AppPreferences 重新加入 databaseEnabled + didSet 调 UsageIndex.reloadPersistence/ProxyUsageStore.reset，并在 SettingsView 恢复开关，见 c128885 的实现）；要么删除 JSON 后端与 DiskPersistence，把 UsageIndex/ProxyUsageStore/ProxyCaptureStore 的 useDatabase 分支收敛为单实现。"
+  "fix": "二选一：要么按文档把「存储」开关恢复（在 AppPreferences 重新加入 databaseEnabled + didSet 调 UsageIndex.reloadPersistence/ProxyUsageStore.reset，并在 SettingsView 恢复开关，见 c128885 的实现）；要么删除 JSON 后端与 DiskPersistence，把 UsageIndex/ProxyUsageStore/ProxyCaptureStore 的 useDatabase 分支收敛为单实现。",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
  },
  {
   "category": "test-gap",
@@ -314,7 +334,9 @@
   "summary": "迁移分支 stale（codex 模型名）与旧 openclaw 行残留没有任何测试覆盖，而这两条恰是测试缝里才能发现的脏数据路径",
   "evidence": "loadLocked 第 248 行判定 `$0.path.hasPrefix(\"codex:\") && $0.model.lowercased() == \"codex\"`，265-274 行据此过滤 files/rollup；配套 UsageIndex.migrateIfNeeded 的 v3/v4（UsageIndex.swift:122-129）DELETE openclaw 行。全仓测试 grep：`grep -rn \"openclaw\" Tests` 只有 core-algorithms-regressions.py:163/184（把 openclaw: 当‘不参与查询’的普通前缀，不覆盖持久化清理），`grep -rn \"cxTotal\\|cxModel\" Tests` 无命中；usage-index-regressions.py:257 只删 parserVersion 来触发 oldClaude 分支（该分支有覆盖）。",
   "failure": "若未来 parser 改动导致 `model == \"codex\"` 的行再次出现（历史上 v6 就是这种行），或 JSON 后端文件里残留 openclaw: 前缀行，没有任何回归能发现 loadLocked 不再清理它们——查询侧 UsageJSONStore.fetch/fetchDaily 虽过滤 openclaw（157/208 行），但 fetchSession/currentFiles 不过滤，且持久化文件会无限增长。",
-  "fix": "在 Tests/usage-index-regressions.py 的 JSON 分支（同 parserVersion 那段）追加两个夹具：写入一行 codex: model=\"codex\" 的 rollup + 一行 openclaw:p 的行，调 load() 后断言 files/rollup 均被清掉并触发一次 persistLocked。"
+  "fix": "在 Tests/usage-index-regressions.py 的 JSON 分支（同 parserVersion 那段）追加两个夹具：写入一行 codex: model=\"codex\" 的 rollup + 一行 openclaw:p 的行，调 load() 后断言 files/rollup 均被清掉并触发一次 persistLocked。",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
  },
  {
   "category": "crash",
@@ -352,7 +374,9 @@
   "summary": "reloadConfig 的延迟启动任务不受 stopCore/syncRuntime 约束，用户已关闭 VPN 后内核仍会被拉起来并重新接管系统代理",
   "evidence": "reloadConfig 把重启交给一个无人持有的 Task：\n```swift\n799    func reloadConfig() {\n800        guard prefs.vpnEnabled else { return }\n801        launchTask?.cancel()\n802        launchTask = nil\n803        let old = stopCore(clearLists: false, resetProbe: false)\n804        state = .starting\n805        Task { @MainActor [weak self] in\n806            await Self.awaitExit(old)      // 最长 5s（812-818）\n807            self?.startCore()\n808        }\n809    }\n```\n而 startCore 只挡构建通道和 process/launchTask，没有对 prefs.vpnEnabled 的复查：\n```swift\n469    func startCore() {\n470        guard BuildChannel.allowsSystemIntegration else { ... }\n474        guard process == nil else { return }\n475        guard launchTask == nil else { return }\n```\nstopCore()（746）和 syncRuntime()（460-467）都无法取消这个 Task（句柄未保存）。VPNView:262-269 的“停止”分支只置 `prefs.vpnEnabled = false` 后调用 syncRuntime()，不会动这个待启动任务。",
   "failure": "时序：用户在端口提交 / TUN 开关 / 订阅卡片 activate（VPNView:294-298,361；VPNSubscriptionSection:96,129,199,210 都会 reloadConfig）之后、旧内核退出前（awaitExit 每 50ms 轮询，常态 ~百 ms，卡死时到 5s）点“停止”。后果：prefs.vpnEnabled=false、state==.idle，但 805 行的 Task 到点后 startCore() 照常 spawn；waitUntilReady:826-834 成功后置 state=.running，并因 prefs.vpnSystemProxyEnabled 仍为 true 重新 applySystemProxy(7890/17890)；同时灵动岛按 `enabled && state == .running`（IslandLiveModel:211）显示“代理未连接”。即：UI 说已关闭，系统代理却被一个用户刚停掉的 VPN 接管。横跨 awaitExit 与 startCore 的这段窗口就是全部触发条件，长期后台自动刷新不会触发（reloadConfig 第 800 行挡住了），只有手动路径会。",
-  "fix": "把该 Task 存成 `private var reloadTask: Task<Void, Never>?`，stopCore() 里 cancel；并在 `self?.startCore()` 前加 `guard self.prefs.vpnEnabled else { return }`（或在 startCore 开头补 `guard prefs.vpnEnabled`，注意 retryStart/ClaudeBarApp 路径的 vpnEnabled 均为 true，不受影响）。"
+  "fix": "把该 Task 存成 `private var reloadTask: Task<Void, Never>?`，stopCore() 里 cancel；并在 `self?.startCore()` 前加 `guard self.prefs.vpnEnabled else { return }`（或在 startCore 开头补 `guard prefs.vpnEnabled`，注意 retryStart/ClaudeBarApp 路径的 vpnEnabled 均为 true，不受影响）。",
+  "status": "fixed",
+  "verdict_note": "9951312: relaunchTask held + cancelled by stopCore; re-checks vpnEnabled"
  },
  {
   "category": "perf-cpu",
@@ -541,7 +565,9 @@
   "summary": "`(recency >= ? OR checkpointAt >= ?)` forces a full index-table scan on every 2.5 s poll; the checkpoint arm is provably redundant with the Swift-side liveness predicate.",
   "evidence": "SQL at lines 203-209 (and the child query at 296-301):\n```\nWHERE isArchived = 0 AND isSubagent = 0\n  AND (recency >= ? OR checkpointAt >= ?)\n```\n`EXPLAIN QUERY PLAN` on this machine's real DB (13.8 GB state.vscdb, 875 composerHeaders rows, index `idx_composerHeaders_1 ON (recency, composerId)`) yields `SCAN composerHeaders USING INDEX idx_composerHeaders_1` — no range seek. No index covers `checkpointAt`, so the OR is not index-usable. A synthetic 50k-row table with the same DDL reproduces it: production OR-form 5.15 ms (SCAN) vs `recency >= ?` only 0.11 ms (SEARCH) — ~47x. Swift-side check: the row predicate never uses the SQL's checkpoint arm either — line 246 computes `updatedAt = max(submittedAt, terminalCurrent ? 0 : checkpointAt, scan.modifiedAt)` and line 255 `isAlive: updatedAt > cutoff`, where `submittedAt` falls back to the column recency and `checkpointAt` is `max(column, JSON mirror)`. Cross-checking 875 real rows with that predicate: 0 rows are `isAlive` while excluded by `recency >= cutoff` alone (and column checkpointAt == JSON `conversationCheckpointLastUpdatedAt` in all 611 row pairs that carry both).",
   "failure": "Steady-state: two full scans of composerHeaders (main + subagent query) per `fetchActive()` call, i.e. per session poll (2.5 s busy / 5 s idle / 8 s hidden). On a 500k-row long-lived install this is ~50 ms of SQLite CPU per poll on a background thread, waking every 2.5 s; the query also cannot shrink below O(rows) as Cursor accumulates composers, so the cost grows with account age even though the recent set stays at a handful.",
-  "fix": "Drop the checkpoint arm from both WHERE clauses (`AND recency >= ?`), keep `checkpointAt` in the SELECT list — the checkpoint clock still rescues a long run through `updatedAt`/`isAlive`, and the row is selected because its `recency` moved when the run started. If a genuinely checkpoint-only row must be caught, add a dedicated index or a second short query restricted by an indexed `checkpointAt`, not an OR."
+  "fix": "Drop the checkpoint arm from both WHERE clauses (`AND recency >= ?`), keep `checkpointAt` in the SELECT list — the checkpoint clock still rescues a long run through `updatedAt`/`isAlive`, and the row is selected because its `recency` moved when the run started. If a genuinely checkpoint-only row must be caught, add a dedicated index or a second short query restricted by an indexed `checkpointAt`, not an OR.",
+  "status": "fixed",
+  "verdict_note": "58040bd: OR checkpointAt arm removed from both polls (index scan -> range scan); measured 611 real rows and the 09-28 composer"
  },
  {
   "category": "perf-cpu",
@@ -553,7 +579,9 @@
   "summary": "scanTail JSON-decodes the entire 96 KB tail (~67 records) although every consumed state is decided by the tail end; measured 1.4-1.6 ms per file, ~10 ms per poll for the typical visible set.",
   "evidence": "Lines 376-393 read 96 KB and decode every line:\n```\ntry? handle.seek(toOffset: size - min(readSize, size))\nguard let tailData = try? handle.readToEnd() else { ... }\nfor rawLine in tailData.split(separator: 0x0A, omittingEmptySubsequences: false) {\n    let line = String(decoding: rawLine, as: UTF8.self)\n    guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }\n```\nMeasured on this machine's real transcripts (520 agent-transcript JSONL files, 130 over 96 KB): a Swift re-implementation of exactly this loop costs 1.40-1.55 ms per file (best of 20), i.e. ~10.5 ms for 7 sessions per poll, ~30 ms for 20 poll-fresh sessions per poll. Parsing is unavoidable only for the records that can change the outcome: `lastMessageLine`, `lastTurnEndedLine`, `lastActivity`, `completionID`, `lastAssistantWasFinalText` are all overwritten by the newest matching record, and the 25 largest files average 67 records per tail. Vocabulary check over 120 real transcripts: every record has either `role` (user/assistant) or `type: turn_ended` — no unknown record kind needs to be looked at. A second filter is available free: the head's `unfinishedRunAt` is absent on 705 of 706 real main heads, and `inFlight` then depends only on `toolPending && modifiedAt` (lines 152-157).",
   "failure": "Every session poll (2.5-8 s, all day) decodes ~9.6 KB x N sessions of JSON that cannot change the published state; on Cursor installations with many recently-active composers the cost is tens of ms of utility-thread CPU per poll with the associated energy wakeups, for a result identical to the cheap scan.",
-  "fix": "Iterate `tailData.split(separator: 0x0A)` in reverse and stop at the first record that is `role == \"user\"` or `type == \"turn_ended\"` (with `pending` derived from which was found first); records after that cannot affect `pending`/`ended`/`activity`/`completionID`. Optionally skip the read entirely when `unfinishedRunAt == 0` and the file mtime is older than `turnLiveWindowMs` (on this machine that prefilter leaves 0 of 4 recent heads to read)."
+  "fix": "Iterate `tailData.split(separator: 0x0A)` in reverse and stop at the first record that is `role == \"user\"` or `type == \"turn_ended\"` (with `pending` derived from which was found first); records after that cannot affect `pending`/`ended`/`activity`/`completionID`. Optionally skip the read entirely when `unfinishedRunAt == 0` and the file mtime is older than `turnLiveWindowMs` (on this machine that prefilter leaves 0 of 4 recent heads to read).",
+  "status": "fixed",
+  "verdict_note": "1cdfefd: reverse scan with early exit; 520-transcript differential, 0 mismatches; 1.8ms -> 0.5ms per file"
  },
  {
   "category": "correctness",
@@ -701,7 +729,9 @@
   "confidence": "high",
   "evidence": "L154-160: `if lines * 2 > ledger.count + 4096 { let compacted = encode(ledger.keys.sorted().map { Claim(id: $0, owner: ledger[$0]!) }, []); if (try? Data(compacted.utf8).write(to: FilePaths.usageClaimsJSONL, options: .atomic)) != nil { lines = ledger.count }; return }`. The file exists on this machine at ~/Library/Application Support/ClaudeBar/logs/usage-claims.jsonl at 32,064,895 bytes / 154,548 lines (wc -l), and it is fully id-sorted (checked every line: 0 out-of-order ids), i.e. compaction has already run here. With `lines = ledger.count` inside the `if`, any failure of the atomic write (disk full, quota, permission repair in flight — the write is the app's own log dir, not a read the guard covers) leaves `lines` at the old value only when the rewrite fails... but the rewrite CREATES the file: a transcript corpus whose ids number near 4,096 triggers `lines*2 > ledger.count+4096` with its FIRST pass (e.g. a fresh install with 4,000 records: lines=0, 0 > 8096 is false, so the first store appends; a reset plus fresh corpus reaches lines=0 first too). The unrecoverable path is narrower and real: after a compaction succeeds, `lines = ledger.count == 0` when the file was deleted/reset, then every later append leaves `lines` at the tombstone/appended count, never the on-disk line count.",
   "failure": "A ledger whose in-memory state was reset while the on-disk file survived (or any atomic-write failure inside the compaction branch) leaves `lines` diverged from the real line count; the file then only ever grows by appends and is never rewritten, ending at the multi-MB whole-file read this machine already shows on every process start. The compaction path is setup-free to break because `lines` is only ever incremented by `appended.count + tombstones.count`, never by the actual bytes appended by another writer or by a pre-existing file after `reset()`.",
-  "fix": "Set `lines = ledger.count` only after a verified write: capture the byte count, and on failure leave `lines` unchanged (or recompute `lines` from the file size on the next `loadLocked`)."
+  "fix": "Set `lines = ledger.count` only after a verified write: capture the byte count, and on failure leave `lines` unchanged (or recompute `lines` from the file size on the next `loadLocked`).",
+  "status": "fixed",
+  "verdict_note": "c54d6c7: lines advanced only by a verified write; failed compaction falls through to append"
  },
  {
   "category": "robustness",
@@ -1298,7 +1328,9 @@
   "evidence": "Tests/session-migration-regressions.py builds codex_rows with only UserMessage/AgentMessage items (lines 36-52) and a cursor Desktop composer with exactly 2 bubbles (line 60, `fullConversationHeadersOnly:[{bubbleId:user_bubble},{bubbleId:answer_bubble}]`), while the includeCompletedTools assertions there (lines 318-343, 546) drive small synthetic tool sets. grep for 'CommandExecution|FileChange|McpToolCall' in Tests/ finds none, and no fixture exceeds a handful of messages, so MigrationCursorDesktop.insert's `root.count * (messages.count + 1)` guard can never trip in CI. Confirmed by the two findings above: both defects are invisible to `make test TEST=session-migration` yet reproduce on this machine's real stores (6/24 rollouts refused; refusal at 575 messages).",
   "failure": "Regression suite stays green while a user's normal session migration fails with an unsupported/tooLarge message; a later change to either counter or guard would be signed off by CI without touching the real failure mode.",
   "fix": "Add two fixtures: a paginated codex rollout containing a CommandExecution item_completed with no matching function_call_output (expect a carried/omitted result, not a refusal), and a Cursor-desktop migrate of ~600 messages whose payload is <1 MiB (expect success).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "f54fb31: cross-projection count comparison deleted; real rollouts measured 89 vs 73"
  },
  {
   "category": "correctness",
@@ -1536,7 +1568,9 @@
   "evidence": "`grep -rn persistenceModeDidChange Sources` 只有本声明（20-21 行）与 ProviderStore.swift:1237 的观察者，没有任何 `NotificationCenter.default.post(name: .persistenceModeDidChange …)`；全仓 `grep -rn databaseEnabled .`（排除 .git）只命中 UsageJSONStore.swift:8-9（`if d.object(forKey: \"databaseEnabled\") == nil { return true }; return d.bool(forKey: \"databaseEnabled\")`），view/model 里再无写入者——`git log -S 'databaseEnabled'` 显示写它的设置项（`prefs.databaseEnabled` Toggle 及 AppPreferences 属性）在 620c375 随设置页重做被删；docs/technical/04-data-access-layer.md:96 仍在写「两个后端二选一（设置 → 开启数据库）」。",
   "failure": "两类后果：(1) ProviderStore.swift:1236-1241 的观察者是不可达死代码；(2) 任何在 620c375 之前把 databaseEnabled 存成 false 的用户档案，`DiskPersistence.useDatabase` 永久返回 false，被钉死在 JSON/JSONL 后端（UsageIndex、ProxyCaptureStore 的十条分支），且 UI 里已没有任何开关能切回 SQLite。",
   "fix": "二选一：要么恢复开关（AppPreferences 加 `databaseEnabled` + 设置行，改动时 post `.persistenceModeDidChange`），要么删除该 Notification.Name、ProviderStore 里的观察者并同步 docs/technical/04-data-access-layer.md:96 的口径。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Deleted with the JSON backends in the same unit of work."
  },
  {
   "category": "concurrency",
@@ -1715,7 +1749,9 @@
   "summary": "三个 fetch 每次调用都全表扫描+全量 String 分配，区间过滤放在 Swift 侧",
   "evidence": "97-133 行三个查询都是 `for row in allRows() where row.day >= startDay && row.day <= endDay`；144 行 `let sql = \"SELECT day, model, calls, input, output, cache_read, cache_write FROM usage\"` 没有 WHERE；148-157 行逐行构造 Row，每行两次 `String(cString: sqlite3_column_text(...))`。调用密度：ProviderStore.refreshUsage 的一次发布要跑 queryUsage / queryUsageBySource / fetchDaily / queryDailyModels / queryTodayUsage(内部 2 次) / queryWeekDays，合计 7 次（ProviderStore.swift:1040-1043、1057-1061、1146-1162、1194-1208），IslandLiveModel.computeUsage 另有 fetchBySource×4 + fetchDailyModels（IslandLiveModel.swift:450-464）。",
   "failure": "每次刷新都把整张 usage 表物化成 [Row] 再逐行比较日期字符串，而这张表按设计永不裁剪（本文件 12 行与 docs/technical/04-data-access-layer.md:117 都写明「这份汇总不裁剪」）；一条第三方请求落盘后的 didChange → refreshUsage(rescan:false) 就会连带触发 IslandLiveModel 侧的同一批查询。行数随使用年限单调增长，成本只是从「不可见」变成「可见」。",
-  "fix": "把区间下推到 SQL：`SELECT day, model, calls, input, output, cache_read, cache_write FROM usage WHERE day BETWEEN ?1 AND ?2` 并 bind startDay/endDay（三个 fetch 共用同一条，day 是 yyyy-MM-dd 字典序即时间序，与现有比较语义完全一致），Swift 侧只留聚合。"
+  "fix": "把区间下推到 SQL：`SELECT day, model, calls, input, output, cache_read, cache_write FROM usage WHERE day BETWEEN ?1 AND ?2` 并 bind startDay/endDay（三个 fetch 共用同一条，day 是 yyyy-MM-dd 字典序即时间序，与现有比较语义完全一致），Swift 侧只留聚合。",
+  "status": "fixed",
+  "verdict_note": "b611c5f: day BETWEEN bound in SQL; three call sites no longer filter in Swift"
  },
  {
   "category": "state",
@@ -1894,7 +1930,9 @@
   "evidence": "Tests/usage-index-regressions.py is the only suite that slices UsageClaims (declaration extracted at :45) and its corpus is a handful of transcripts — a few dozen claims — so `lines * 2 > ledger.count + 4096` is false there and :154-159 is never executed. `ls Tests/` plus grep shows no fixture references `UsageFSWatcher`/`FSEvent` beyond two comments (Tests/inflight-animation-regressions.py:92, 107). The suite does cover fork/claim semantics (usage-index-regressions.py:180-186) but never the file-size path.",
   "failure": "Both defects in this review (32 MB rewrite per flush; stale item rescanning while hidden) are invisible to `make test`; the compaction branch only misbehaves at real corpus size (>4,096 ids) and the watcher has no test seam at all.",
   "fix": "Extend the existing UsageClaims slice fixture: seed `usage-claims.jsonl` with ~5,000 synthetic lines, call begin/record/flush, and assert the file grows by only the changed lines (and that a flush with no changes writes nothing). For the watcher, extract the debounce decision into a testable helper (e.g. a handler box consulted at fire time) and assert a cancelled/stopped generation does not invoke it.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "c54d6c7: comparison flipped to lines > count*2 + 4096; two-phase regression"
  },
  {
   "category": "perf-cpu",
@@ -7004,7 +7042,9 @@
   "summary": "`persistenceModeDidChange` is declared but never posted anywhere; its only counterpart is an observer in `ProviderStore.startUsageWatcher`.",
   "evidence": "`grep -rn \"persistenceModeDidChange\" Sources Tests` → only the declaration (NotificationService.swift:21) and ProviderStore.swift:1238 (`NotificationCenter.default.addObserver(forName: .persistenceModeDidChange …)`); no `post(name: .persistenceModeDidChange)` and no `NotificationCenter.default.post` of that name anywhere.\nSame class of leftover: `UsageIndex.reloadPersistence()` (UsageIndex.swift:200) and `ProxyCaptureStore.reloadPersistence()` (ProxyCaptureStore.swift:215) have zero production callers — only Tests/usage-index-regressions.py:93/155/207/249/287 call them. There is a `@Published var useDatabase` in the stores, but no Settings row writes `databaseEnabled` (grep only hits DiskPersistence's default-true read at UsageJSONStore.swift:8-9).",
   "failure": "No user-visible failure by itself; it documents a mode switch that does not exist, so the next maintainer wires a Settings toggle to a notification nothing listens to (or vice versa) and the SQLite/JSON flip never takes effect for an already-running app (the observer only fires `refreshUsage(rescan: true)`, it does not reset the backend — that is `reloadPersistence`, which is production-unreachable).",
-  "fix": "Delete the unused Notification.Name (and, separately, decide whether the persistence toggle is dead and remove `reloadPersistence`/`useDatabase` or wire one Settings action that posts then calls both `reloadPersistence`s)."
+  "fix": "Delete the unused Notification.Name (and, separately, decide whether the persistence toggle is dead and remove `reloadPersistence`/`useDatabase` or wire one Settings action that posts then calls both `reloadPersistence`s).",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Deleted with the JSON backends in the same unit of work."
  },
  {
   "category": "dead-code",
@@ -7534,7 +7574,9 @@
   "evidence": "UsageJSONStore.swift:230-233 `if let data = try? Data(contentsOf: FilePaths.usageFilesJSON), let obj = try? JSONDecoder().decode([String: FileRec].self, from: data) { files = obj }` — `FileRec.init(from:)` (lines 42-54) decodes mtime/size/offset/headHash/cxIn/cxOut/cxCached as *required*, so a single entry lacking any of them fails the decode for the whole dictionary, and `try?` swallows the error (`files` stays `[:]`, `loaded` is still set true). Directly below, lines 236-245 go out of their way to be lossy: 「Lossy decode: … Skipping the bad line keeps the rest of the rollup readable — strict decoding threw away every other line with it.」 Files written by the deleted JSON-backend era, hand-edits, or disk damage are the acknowledged threat model for the same file.",
   "failure": "usage-files.json contains one entry missing a key (or with a mistyped number) → `files` is empty for this process → `UsageIndex.knownFromJSON()` returns `[:]` → `sync(file:prior:nil)` takes the full-reparse branch for every transcript in the corpus (~1,250 files on this machine), discarding each file's byte offset, head hash and Codex cx_total dedupe stamps; the Codex dedupe across append boundaries restarts from 0 and the next FSEvents burst re-parses everything again until the file is rewritten. No log line records the decode failure.",
   "fix": "Decode per entry the way CaptureJSONStore does per line: read `[String: Any]`, then `for (key, value) in obj { if let rec = try? JSONDecoder().decode(FileRec.self, from: JSONSerialization.data(withJSONObject: value)) { files[key] = rec } }` (or add decodeIfPresent defaults for headHash/offset/cx*), so one bad entry costs one file's incremental state instead of all of them.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
  },
  {
   "category": "crash",
@@ -7558,7 +7600,9 @@
   "evidence": "UsageJSONStore.swift:178-188 `func fetchSession(pathPrefix:pathSuffix:)` — repo-wide grep for `fetchSession(` finds no Sources caller of the JSON-store overload: UsageIndex.updateIndexJSON / fetchSessionFamilies use `UsageJSONStore.shared.fetchByPath` (UsageIndex.swift:364) and the SQLite branch of `fetchSessionFamilies` (UsageIndex.swift:357-423) never touches the JSON store. The only callers are Tests/backend-performance-regressions.py:83,90,94,96,102,105,106,108, which slice the class out of source. `git log -p -S \"fetchSession(pathPrefix\"` shows UsageIndex stopped calling it in c708081 (「perf: 三路并行审查后的模块、后端与 UI 性能优化」), leaving the method and its `rollupKeysByPath` scan behind. (Test-only, not entirely unreferenced: the harness asserts by it.)",
   "failure": "No runtime failure: dead weight that keeps a second, divergent session-matching rule (suffix `hasSuffix(pathSuffix)` + `hasSuffix` path scan) alive next to the family router that actually ships, so a future fix to session attribution must be applied twice or the tests validate a path nothing runs.",
   "fix": "Either delete the method and rewrite the harness assertions onto `fetchByPath` (the shipped API), or, if it is intentionally kept as a test seam, keep it but have the harness compare against `fetchByPath` so the two cannot drift.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "planned-sqlite-only",
+  "verdict_note": "Decided 2026-10-06: the end state is SQLite-only (docs/design/surfaces/settings.md, written with the 620c375 settings redesign, states the page carries no storage-implementation switch). Deleting the JSON backends (UsageJSONStore 406 lines, CaptureJSONStore 260 lines, ~43 useDatabase sites across UsageIndex/ProxyCaptureStore/ProxyUsageStore, plus rewrites of usage-index, usage-analysis, backend-performance and core-algorithms suites) is a dedicated change, not a drive-by: until then the reader of the orphaned key stays, because flipping a parked install to SQLite re-indexes the corpus and that consequence belongs in a tested change. Tracked as its own unit of work."
  },
  {
   "category": "test-gap",
