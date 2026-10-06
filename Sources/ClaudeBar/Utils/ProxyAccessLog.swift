@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreFoundation
 
 /// Origin of a proxied request. Independent of capture enums so the access
 /// log can run when traffic recording is off.
@@ -68,11 +69,22 @@ struct ProxyLogEntry: Identifiable, Equatable {
     /// same fold as `TokenTotals.total` in `StreamAssembler`, and as
     /// `ModelUsage.totalTokens`, which is what the Usage page's per-model
     /// rollup is built from. `nil` when the upstream reported nothing.
+    ///
+    /// Summed with `addingReportingOverflow`: a line loaded from disk carries
+    /// whatever number was in the file, and `NSNumber.intValue` clamps an
+    /// oversized one to `Int.max` rather than rejecting it, so four of those
+    /// would trap on the main actor while the page renders. Saturating is the
+    /// only outcome that keeps a corrupt file from crashing the app.
     var totalTokens: Int? {
         guard promptTokens != nil || completionTokens != nil
                 || cacheReadTokens != nil || cacheWriteTokens != nil else { return nil }
-        return (promptTokens ?? 0) + (completionTokens ?? 0)
-            + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
+        var sum = 0
+        for value in [promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens] {
+            guard let value else { continue }
+            let (next, overflow) = sum.addingReportingOverflow(value)
+            sum = overflow ? Int.max : next
+        }
+        return sum
     }
 
     /// Single-line console form, used by the log view and copy-all: the
@@ -356,10 +368,13 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         var rows: [ProxyLogEntry] = []
         rows.reserveCapacity(limit)
         func appendLines(_ data: Data.SubSequence) {
-            // Keep the prior lossy decoding and Unicode newline behavior.
-            // Assemble a whole LF-delimited record before decoding so a
-            // multibyte character straddling a read boundary stays intact.
-            for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).reversed() {
+            // Records are cut at raw 0x0A above, so split on "\n" only. The
+            // previous `whereSeparator: \.isNewline` also cut on U+2028,
+            // U+2029 and U+0085, and `JSONSerialization` writes those scalars
+            // unescaped inside a JSON string — a path or error containing one
+            // split a single record into fragments that no longer decoded, and
+            // the row silently disappeared from the history list.
+            for line in String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true).reversed() {
                 guard let row = decode(String(line), using: formatter) else { continue }
                 rows.append(row)
                 if rows.count == limit { break }
@@ -436,7 +451,14 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         let snapshot = rows
         lock.unlock()
         guard snapshot.count >= limit else { return }
-        let blob = snapshot.compactMap { encode($0) }.reduce(into: Data(), { $0.append($1) })
+        // Only sealed rows. `rows` holds requests still streaming, and writing
+        // one now puts a `"end":""` copy on disk that `finish` then appends
+        // again under the same id — the loader would list the call twice, once
+        // pending forever. A pending row is also the one most likely to change
+        // a millisecond later, so skipping it is what the next compaction (or
+        // its own `scheduleWrite`) will pick up.
+        let blob = snapshot.compactMap { $0.endedAt == nil ? nil : encode($0) }
+            .reduce(into: Data(), { $0.append($1) })
         try? blob.write(to: FilePaths.proxyLogFile, options: .atomic)
     }
 
@@ -470,7 +492,10 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         guard let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let id = (obj["id"] as? NSNumber)?.uint64Value ?? 0
-        guard id > 0,
+        // The ceiling keeps `begin`'s `nextID += 1` away from UInt64 overflow:
+        // a truncated or hand-edited sidecar can hold any value that fits, and
+        // `NSNumber.uint64Value` converts a larger one without complaining.
+        guard id > 0, id < 1 << 62,
               let atRaw = obj["at"] as? String,
               let at = iso.date(from: atRaw),
               let method = obj["method"] as? String,
@@ -498,11 +523,27 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
                 return s.isEmpty ? nil : s
             }(),
             // Absent on every line written before usage was recorded, and on
-            // lines for requests whose upstream never reported it.
-            promptTokens: (obj["promptTokens"] as? NSNumber)?.intValue,
-            completionTokens: (obj["completionTokens"] as? NSNumber)?.intValue,
-            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber)?.intValue,
-            cacheWriteTokens: (obj["cacheWriteTokens"] as? NSNumber)?.intValue)
+            // lines for requests whose upstream never reported it. Present but
+            // implausible counts read as absent (see `tokenCount`).
+            promptTokens: (obj["promptTokens"] as? NSNumber).flatMap(Self.tokenCount),
+            completionTokens: (obj["completionTokens"] as? NSNumber).flatMap(Self.tokenCount),
+            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber).flatMap(Self.tokenCount),
+            cacheWriteTokens: (obj["cacheWriteTokens"] as? NSNumber).flatMap(Self.tokenCount))
+    }
+
+    /// One token bucket from disk, rejected when it is not a plausible count.
+    ///
+    /// `NSNumber.intValue` clamps anything oversized to `Int.max` and rounds a
+    /// fractional value, so a corrupted or hand-edited line would otherwise
+    /// hand the UI a number no request can produce — four of those trap the
+    /// `totalTokens` sum under `-O`. The ceiling is a plausibility bound, well
+    /// above any single request's counts and well below `Int.max`, so a real
+    /// line is never rejected while a hostile one is dropped to "unreported".
+    static func tokenCount(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let double = number.doubleValue
+        guard double.isFinite, double >= 0, double < 1e15 else { return nil }
+        return Int(double)
     }
 
     static func clip(_ s: String, _ cap: Int) -> String {

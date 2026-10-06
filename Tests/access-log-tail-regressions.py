@@ -74,10 +74,10 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 ''' + log + r'''
 @main struct Regression {
-    @MainActor static func waitUntil(_ condition: () -> Bool) async throws {
+    @MainActor static func waitUntil(_ condition: () -> Bool, _ stage: String = "?", line: Int = #line) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !condition() {
-            require(ContinuousClock.now < deadline, "timed out waiting for publication")
+            require(ContinuousClock.now < deadline, "timed out waiting for publication at line \(line)")
             try await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -97,16 +97,31 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(next.id == 50_001, "history id continuation")
         __FIRST_REQUESTS__
         let base = FilePaths.proxyLogFile.deletingLastPathComponent()
-        for name in ["boundary", "unicode-separators", "single", "empty", "missing"] {
+        for name in ["boundary", "single", "empty", "missing"] {
             FilePaths.proxyLogFile = base.appendingPathComponent(name + ".jsonl")
             let store = ProxyAccessLog()
             let expected = name == "boundary" ? Array(301...800).map(UInt64.init)
-                : name == "unicode-separators" ? Array(101...600).map(UInt64.init)
                 : name == "single" ? [UInt64(7)] : []
             __LOAD_SMALL__
             require(store.entries.map(\.id) == expected, "\(name) tail differs")
             if name == "boundary" { require(store.entries.allSatisfy { $0.path == "/中文😀/health" }, "chunk boundary broke UTF8") }
         }
+        FilePaths.proxyLogFile = base.appendingPathComponent("unicode-separators.jsonl")
+        var store = ProxyAccessLog()
+        var expected = Array(101...600).map(UInt64.init)
+        __LOAD_SMALL__
+        require(store.entries.allSatisfy { $0.path.contains("\u{2028}") || $0.path.contains("\u{2029}") },
+                "a raw U+2028/U+2029 split the record it belonged to")
+        // Out-of-range token buckets must read as unreported, not as Int.max:
+        // summing four clamped buckets traps under -O while the page renders.
+        FilePaths.proxyLogFile = base.appendingPathComponent("oversized-tokens.jsonl")
+        store = ProxyAccessLog()
+        expected = [UInt64(21), 22]
+        __LOAD_SMALL__
+        require(store.entries.map(\.id) == expected, "token fixture tail differs")
+        require(store.entries.allSatisfy { $0.totalTokens == nil }, "oversized token bucket produced a total")
+        require(store.entries.allSatisfy { $0.promptTokens == nil && $0.completionTokens == nil
+            && $0.cacheReadTokens == nil && $0.cacheWriteTokens == nil }, "oversized token bucket survived decode")
         if __ASYNC__ {
             // Pause the real reader before disk I/O. Clear must finish while
             // it is paused, and an old history result must not overwrite fresh traffic.
@@ -150,20 +165,21 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(ids == Array(50_001...50_100).map(UInt64.init), "concurrent first requests lost history or reused ids")
         try await waitUntil { requestStore.entries.last?.id == 50_100 }
         require(requestStore.entries.map(\.id) == Array(49_601...50_100).map(UInt64.init), "history/request ordering")
-        ''' if asynchronous else '').replace('__ASYNC__', 'true' if asynchronous else 'false').replace('__LOAD_LARGE__', 'large.loadListIfNeeded(); try await waitUntil { large.entries.count == 500 }' if asynchronous else '').replace('__LOAD_SMALL__', 'store.loadListIfNeeded(); try await waitUntil { store.loadedForTest() && store.entries.map(\.id) == expected }' if asynchronous else '').replace('__RACE_LOAD__', 'store.loadListIfNeeded()' if asynchronous else '')
+        ''' if asynchronous else '').replace('__ASYNC__', 'true' if asynchronous else 'false').replace('__LOAD_LARGE__', 'large.loadListIfNeeded(); try await waitUntil { large.entries.count == 500 }' if asynchronous else '').replace('__LOAD_SMALL__', '__STORE__.loadListIfNeeded(); try await waitUntil { __STORE__.loadedForTest() && __STORE__.entries.map(\.id) == expected }' if asynchronous else '').replace('__STORE__', 'store').replace('__RACE_LOAD__', 'store.loadListIfNeeded()' if asynchronous else '')
 
 
-def line(ident, padding=256):
+def line(ident, padding=256, path='/中文😀/health', tokens=(1, 2, 3, 4)):
     return json.dumps(dict(id=ident, at='2026-10-03T00:00:00Z', end='2026-10-03T00:00:01Z',
-                           method='GET', path='/中文😀/health', source='other', kind='health',
-                           promptTokens=1, completionTokens=2, cacheReadTokens=3, cacheWriteTokens=4,
+                           method='GET', path=path, source='other', kind='health',
+                           promptTokens=tokens[0], completionTokens=tokens[1],
+                           cacheReadTokens=tokens[2], cacheWriteTokens=tokens[3],
                            ignored='x' * padding), ensure_ascii=False).encode()
 
 
 with tempfile.TemporaryDirectory(prefix='claudebar-access-tail-') as folder:
     work = Path(folder)
     # Write on Python's test driver, outside the measured Swift processes.
-    for name, count, padding, separator in [('large', 50_000, 256, b'\n'), ('boundary', 800, 121, b'\r\n'), ('unicode-separators', 600, 0, '\u2028'.encode())]:
+    for name, count, padding, separator in [('large', 50_000, 256, b'\n'), ('boundary', 800, 121, b'\r\n')]:
         with (work / (name + '.jsonl')).open('wb') as f:
             for ident in range(1, count + 1):
                 f.write(line(ident, padding) + separator)
@@ -171,7 +187,22 @@ with tempfile.TemporaryDirectory(prefix='claudebar-access-tail-') as folder:
                 f.write(b'broken' * 30_000 + b'\n' + b'{"id":')
             elif name == 'large':
                 f.write(b'\xffbad\n{"id":')
+    # U+2028 / U+2029 are `CharacterSet.newlines` members and `JSONSerialization`
+    # writes them raw inside a string, so a real path can carry one. Records are
+    # still separated by LF: a reader that also splits on those scalars tears the
+    # record in half and silently drops the row.
+    with (work / 'unicode-separators.jsonl').open('wb') as f:
+        for ident in range(1, 601):
+            scalar = '\u2028' if ident % 2 else '\u2029'
+            f.write(line(ident, 0, path='/中文' + scalar + '/health').replace(
+                scalar.encode('unicode_escape'), scalar.encode()) + b'\n')
     (work / 'single.jsonl').write_bytes(line(7))
+    # Out-of-range token buckets: `NSNumber.intValue` clamps these to Int.max,
+    # and four clamped buckets used to trap the total under `-O`.
+    (work / 'oversized-tokens.jsonl').write_bytes(
+        line(21, tokens=(9_223_372_036_854_775_807, 9_223_372_036_854_775_807,
+                         9_223_372_036_854_775_807, 9_223_372_036_854_775_807)) + b'\n'
+        + line(22, tokens=(1.5e300, -1, 1e16, 9e18)) + b'\n')
     (work / 'empty.jsonl').write_bytes(b'')
     (work / 'race.jsonl').write_bytes(line(99) + b'\n')
     binaries = {}
