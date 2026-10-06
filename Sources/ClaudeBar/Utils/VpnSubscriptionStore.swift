@@ -47,6 +47,10 @@ final class VpnSubscriptionStore: ObservableObject {
     /// does not reload the core. Nil means the active subscription.
     @Published var browsingID: UUID? = nil
     @Published var errorMessage: String? = nil
+    /// Whether `load()` found a `subscriptions.json` it could not decode.
+    /// While set, `save()` is refused: overwriting the file with the empty
+    /// in-memory list would destroy subscriptions the user still has on disk.
+    @Published var loadFailed = false
 
     private var refreshTimer: Timer?
     /// Set by VpnManager at startup; when non-nil, profile downloads go
@@ -59,17 +63,26 @@ final class VpnSubscriptionStore: ObservableObject {
     // MARK: Persistence
 
     func load() {
-        guard let data = try? Data(contentsOf: FilePaths.vpnSubscriptionsFile),
-              let file = try? JSONDecoder().decode(VpnSubscriptionsFile.self, from: data) else { return }
+        guard let data = try? Data(contentsOf: FilePaths.vpnSubscriptionsFile) else { return }
+        // A file that exists but does not decode is not "no file": `save()`
+        // would then write the empty in-memory list over it, and the user's
+        // subscriptions — with their tokens — are gone. `loaded` keeps that
+        // from happening, and the page shows the store as it is.
+        guard let file = try? JSONDecoder().decode(VpnSubscriptionsFile.self, from: data) else {
+            loadFailed = true
+            return
+        }
+        loadFailed = false
         subscriptions = file.subscriptions
         activeID = file.activeID
         browsingID = file.activeID
     }
 
     func save() {
+        guard !loadFailed else { return }
         let file = VpnSubscriptionsFile(subscriptions: subscriptions, activeID: activeID)
         guard let data = try? JSONEncoder().encode(file) else { return }
-        try? data.write(to: FilePaths.vpnSubscriptionsFile, options: .atomic)
+        try? PrivateFileWriter.write(data, to: FilePaths.vpnSubscriptionsFile)
     }
 
     func profileURL(_ id: UUID) -> URL {
@@ -89,7 +102,11 @@ final class VpnSubscriptionStore: ObservableObject {
             }
             let sub = VpnSubscription(name: name.isEmpty ? Self.defaultName(from: url) : name, url: url)
             try? FileManager.default.createDirectory(at: FilePaths.vpnProfilesDir, withIntermediateDirectories: true)
-            try? text.write(to: profileURL(sub.id), atomically: true, encoding: .utf8)
+            // 0600: the profile carries node credentials (uuid / password), and
+            // the default umask would leave it world-readable. A failed write
+            // fails the whole add — reporting success while nothing landed on
+            // disk is worse than an error the user can act on.
+            try PrivateFileWriter.write(Data(text.utf8), to: profileURL(sub.id))
             var stored = sub
             Self.applyUserInfo(headers: headers, body: text, to: &stored)
             if stored.name == Self.defaultName(from: url),
@@ -136,7 +153,10 @@ final class VpnSubscriptionStore: ObservableObject {
                 await updateError("订阅返回内容无效。")
                 return false
             }
-            try? text.write(to: profileURL(id), atomically: true, encoding: .utf8)
+            // The refresh is what replaces the profile on disk, so a failed
+            // write must not report success: the core would keep running the
+            // stale node list the user just asked to replace.
+            try PrivateFileWriter.write(Data(text.utf8), to: profileURL(id))
             if let idx = subscriptions.firstIndex(where: { $0.id == id }) {
                 Self.applyUserInfo(headers: headers, body: text, to: &subscriptions[idx])
             }
@@ -204,7 +224,7 @@ final class VpnSubscriptionStore: ObservableObject {
     /// first is the only teardown: a timer armed by an earlier core start must
     /// not keep refreshing against one that has since stopped.
     func startAutoRefresh() {
-        refreshTimer?.invalidate()
+        stopAutoRefresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, let id = self.activeID else { return }
@@ -212,6 +232,14 @@ final class VpnSubscriptionStore: ObservableObject {
             }
         }
         refreshTimer?.tolerance = 180
+    }
+
+    /// Called from the core's teardown: a stopped core has nothing to reload,
+    /// and a subscription hit is a network call that would otherwise go out
+    /// half an hour after the user turned the VPN off.
+    func stopAutoRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 
     // MARK: Download
@@ -435,9 +463,15 @@ final class VpnSubscriptionStore: ObservableObject {
     ///   - name: HK-1
     ///     type: vless
     /// A standalone `---` / `...` document marker is not an entry.
+    ///
+    /// Only the *entries'* indentation counts. Counted naively, the nested
+    /// lists every node carries — `alpn:`, `http-opts.headers`, any map-shaped
+    /// option — came in as extra nodes: measured against a real airport
+    /// subscription this over-counted by 17%.
     static func countProxies(in yaml: String) -> Int {
         var counting = false
         var n = 0
+        var entryIndent: Int?
         for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if !counting {
@@ -449,7 +483,14 @@ final class VpnSubscriptionStore: ObservableObject {
             let isListItem = trimmed.hasPrefix("-")
             if !isListItem && lineIndent == 0 { break }
             if isListItem && (trimmed.hasPrefix("- ") || trimmed == "-" || trimmed.hasPrefix("-{")) {
-                n += 1
+                if let entryIndent {
+                    if lineIndent == entryIndent { n += 1 }
+                } else {
+                    // The first list item fixes the entry level; anything
+                    // deeper belongs to the node above it.
+                    entryIndent = lineIndent
+                    n += 1
+                }
             }
         }
         return n
@@ -509,6 +550,10 @@ struct VpnProfilePreview: Equatable {
         var groups: [Group] = []
         var current: Group?
         var listingMembers = false
+        /// A bare `-` opens a block-style node whose `name:` sits on the next
+        /// line — a style airports ship and this parser used to read as zero
+        /// nodes, because it only looked for `- name:` on one line.
+        var pendingProxy = false
 
         func closeGroup() {
             if let current { groups.append(current) }
@@ -533,7 +578,17 @@ struct VpnProfilePreview: Equatable {
             }
             switch section {
             case .proxies:
-                if let name = Self.proxyName(trimmed) { proxies.append(name) }
+                if trimmed == "-" {
+                    pendingProxy = true
+                } else if pendingProxy {
+                    if trimmed.hasPrefix("name:") {
+                        let name = Self.unquote(Self.scalar(trimmed))
+                        if !name.isEmpty { proxies.append(name) }
+                    }
+                    pendingProxy = false
+                } else if let name = Self.proxyName(trimmed) {
+                    proxies.append(name)
+                }
             case .groups:
                 if trimmed.hasPrefix("- name:") || trimmed.hasPrefix("-name:") {
                     closeGroup()
@@ -629,6 +684,8 @@ enum VpnConfigBuilder {
                 || line.hasPrefix("mixed-port:")
                 || line.hasPrefix("port:")
                 || line.hasPrefix("socks-port:")
+                || line.hasPrefix("redir-port:")
+                || line.hasPrefix("tproxy-port:")
                 || line.hasPrefix("secret:")
                 || line.hasPrefix("allow-lan:")
                 || line.hasPrefix("bind-address:")

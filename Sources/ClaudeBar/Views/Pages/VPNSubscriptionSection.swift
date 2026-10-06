@@ -45,6 +45,16 @@ struct VpnSubscriptionSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            // A subscriptions.json that does not decode leaves the list empty
+            // and, from the user's side, silently gone. Say so — and that the
+            // file is untouched, because `save()` refuses while this is set.
+            if store.loadFailed {
+                Text("subscriptions.json 无法解析，已按只读处理（不会覆盖该文件）。修复或移走它后重启应用。")
+                    .font(Theme.Font.caption)
+                    .foregroundColor(Theme.Ink.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if store.subscriptions.isEmpty {
                 Text("粘贴 Clash / clash-verge 订阅 URL。添加后可查询剩余流量与到期日。")
                     .font(Theme.Font.caption)

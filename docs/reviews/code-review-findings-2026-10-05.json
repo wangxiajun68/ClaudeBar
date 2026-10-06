@@ -783,7 +783,9 @@
   "fix": "在进入计数后记录第一个列表项的缩进（`line.prefix { $0 == \" \" || $0 == \"\\t\" }.count`），只对缩进等于该值的 `- ` 行计数；遇到缩进更深的 `- ` 行跳过。",
   "line": 444,
   "severity": "high",
-  "summary": "countProxies 把节点内部任意缩进的 `- ` 序列项都算成节点（alpn/http-opts 等），真实订阅已被多算 17%"
+  "summary": "countProxies 把节点内部任意缩进的 `- ` 序列项都算成节点（alpn/http-opts 等），真实订阅已被多算 17%",
+  "status": "fixed",
+  "verdict_note": "countProxies now fixes the entry indentation from the first list item and counts only items at that depth; the block style (`-` alone, `name:` on the next line) is read by `pendingProxy` in `VpnProfilePreview.parse`. Probed with the production slices under -O: flat / nested-with-nested-alpn-and-http-opts / block-style / column-0 all count 2 and parse to [HK-1, HK-2] (nested counted 5 before)."
  },
  {
   "category": "correctness",
@@ -794,7 +796,9 @@
   "fix": "在 `.proxies` 分支里：trimmed == \"-\" 时置一个 pending 标志，下一行若命中 `name:` 就取标量作为节点名；`-` 后同行有内容时按现有 proxyName 处理。",
   "line": 529,
   "severity": "high",
-  "summary": "VpnProfilePreview.parse 只认 `- name:`，机场常见的 `  -` + 下一行 `name:` 风格整份订阅解析出 0 个节点"
+  "summary": "VpnProfilePreview.parse 只认 `- name:`，机场常见的 `  -` + 下一行 `name:` 风格整份订阅解析出 0 个节点",
+  "status": "fixed",
+  "verdict_note": "countProxies now fixes the entry indentation from the first list item and counts only items at that depth; the block style (`-` alone, `name:` on the next line) is read by `pendingProxy` in `VpnProfilePreview.parse`. Probed with the production slices under -O: flat / nested-with-nested-alpn-and-http-opts / block-style / column-0 all count 2 and parse to [HK-1, HK-2] (nested counted 5 before)."
  },
  {
   "category": "crash",
@@ -805,7 +809,9 @@
   "fix": "在 416 行的 guard 里补 `t.isFinite`，并加上上限（如 `t <= 253_402_300_799`，即 9999 年），超出即忽略该字段。",
   "line": 415,
   "severity": "high",
-  "summary": "subscription-userinfo 的 expire 分支没有像 traffic 一样做边界检查，`expire=inf`/`1e297` 会让卡片渲染时的 `Int(expires.timeIntervalSinceNow/86400)` 直接 trap"
+  "summary": "subscription-userinfo 的 expire 分支没有像 traffic 一样做边界检查，`expire=inf`/`1e297` 会让卡片渲染时的 `Int(expires.timeIntervalSinceNow/86400)` 直接 trap",
+  "status": "fixed",
+  "verdict_note": "Already repaired before this batch: `parseUserInfo`'s expire arm guards `t.isFinite, t > 0, and `t <= 253_402_300_799`, and `vpn-format-regressions.py` asserts the guard text."
  },
  {
   "category": "perf-io",
@@ -3740,7 +3746,9 @@
   "fix": "在 620 行起的 skip 条件里补 `line.hasPrefix(\"redir-port:\")`、`\"tproxy-port:\"`，以及与监听相关的 `ss-config:`/`vmess-config:`。",
   "line": 617,
   "severity": "medium",
-  "summary": "配置头剥离列表漏了 `redir-port:` / `tproxy-port:`，机场 profile 的 redir 端口会原样进入运行配置"
+  "summary": "配置头剥离列表漏了 `redir-port:` / `tproxy-port:`，机场 profile 的 redir 端口会原样进入运行配置",
+  "status": "fixed",
+  "verdict_note": "Both keys are now in the unindented-key strip list in `sanitizeProfile`."
  },
  {
   "category": "robustness",
@@ -3751,7 +3759,9 @@
   "fix": "三处写入改走 `PrivateFileWriter.write(Data(text.utf8), to: url)`，并在 load()/previewAsync 时对既有文件调用一次 `PrivateFileWriter.harden`。",
   "line": 72,
   "severity": "medium",
-  "summary": "订阅元数据与 profile YAML 以 0644 落盘，而两者都含凭据（订阅 token、节点 uuid/password）"
+  "summary": "订阅元数据与 profile YAML 以 0644 落盘，而两者都含凭据（订阅 token、节点 uuid/password）",
+  "status": "fixed",
+  "verdict_note": "Both the subscription metadata and the profile YAML now go through `PrivateFileWriter` (staged 0600 + rename), and the two profile writes report failure instead of `try?`."
  },
  {
   "category": "correctness",
@@ -3762,7 +3772,9 @@
   "evidence": "Lines 441-446: `let lineIndent = line.prefix { $0 == \" \" || $0 == \"\\t\" }.count` ... `if isListItem && (trimmed.hasPrefix(\"- \") || trimmed == \"-\" || trimmed.hasPrefix(\"-{\")) { n += 1 }` — the indent is computed but never compared against the item indent, and the column-0 `break` only guards non-list lines. Ran the exact algorithm over the real profile `~/Library/Application Support/ClaudeBar/vpn/profiles/11694E03-C6D6-48FF-8C41-1F91D8584ACA.yaml`: entries like `-\\n  name: HK-1` carry `alpn:\\n    - h3`; production count = 68 while the top-level item count (first-item indent) is 58 — the 10 `- h3` lines at indent 6 are counted as proxies. The same 68 is what `applyUserInfo` (line 325) stores and what `/Users/wangxiajun/Project/ClaudeBar/Sources/ClaudeBar/Views/Pages/VPNSubscriptionSection.swift:157` renders as \"68 节点\".",
   "failure": "Any subscription whose proxy entries carry nested YAML lists (alpn, ws headers are common) → the card reports more nodes than exist, and `refresh` passes the inflated `floorNodes` so the `asFullAsBefore` gate at lines 257-258 (`nodes + 2 >= floorNodes`) fails for the true count, forcing the loop to retry every remaining UA (extra downloads) before returning the same body.",
   "fix": "Record the indent of the first counted item; count only later `- ` items whose indent equals it (and `break`/skip when indent < it).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "countProxies now fixes the entry indentation from the first list item and counts only items at that depth; the block style (`-` alone, `name:` on the next line) is read by `pendingProxy` in `VpnProfilePreview.parse`. Probed with the production slices under -O: flat / nested-with-nested-alpn-and-http-opts / block-style / column-0 all count 2 and parse to [HK-1, HK-2] (nested counted 5 before)."
  },
  {
   "category": "correctness",
@@ -3773,7 +3785,9 @@
   "evidence": "`proxyName` (lines 559-563) only accepts `- name:`/`-name:`/`- {`; group detection (line 531) likewise requires `- name:` on the same line. Real profile `11694E03-…yaml` writes proxies as `  -` (line 96) followed by `    name: HK-1` (line 97); profile `8B463C6B-…yaml` writes both proxies (line 39) and groups (line 572) that way. A faithful re-run of `VpnProfilePreview.parse` over those files returns 0 proxies for 11694E03 (58 real) and 0 groups + 0 proxies for 8B463C6B; the column-0 style files (021CED3C, F920C08E) parse correctly, which is why the defect is invisible with today's active subscription.",
   "failure": "With the core stopped or while browsing a non-active card, `VPNView.swift:455-458/470` builds the browser from `previewGroups`/`filePreview.proxyNames` → the panel shows 「暂无节点」 even though the card next to it says the profile has 58 nodes (the two surfaces disagree on the same file).",
   "fix": "In `.proxies`/`.groups`, when a lone `-` item at list indent is seen, treat the following indented `name:` line as the item/group start and continue consuming `- ` member lines.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "countProxies now fixes the entry indentation from the first list item and counts only items at that depth; the block style (`-` alone, `name:` on the next line) is read by `pendingProxy` in `VpnProfilePreview.parse`. Probed with the production slices under -O: flat / nested-with-nested-alpn-and-http-opts / block-style / column-0 all count 2 and parse to [HK-1, HK-2] (nested counted 5 before)."
  },
  {
   "category": "state",
@@ -3795,7 +3809,9 @@
   "evidence": "Lines 61-67: `guard let data = try? Data(contentsOf: …), let file = try? JSONDecoder().decode(…) else { return }` — no flag records that the load failed, and `save()` (lines 69-73) unconditionally writes the in-memory (empty) state. `VpnSubscriptionsFile` relies on the synthesized decoder, which ignores property defaults, so any missing non-optional key (or a truncated/hand-edited file) throws; the sibling model documents this exact hazard — `Sources/ClaudeBar/Models/CodexProvider.swift:138-140` (\"a file without `activeKey` … would throw and `load()` would fall back to an empty list — which the next `save()` writes over the real file\").",
   "failure": "subscriptions.json fails to decode (schema drift when a field is added, external edit, partial file) → the page shows no subscriptions; the user re-enables/browses/renames anything → save() writes `{\"subscriptions\":[],\"activeID\":null}` → every subscription entry is lost while the downloaded YAMLs stay orphaned in profiles/.",
   "fix": "Track decode success in load() and make save() refuse (or back up to .bak first) when the last load failed; surface it via errorMessage.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "`load()` now records `loadFailed` when the file exists but does not decode, `save()` refuses while it is set (so the empty in-memory list can never overwrite the user's file), and the VPN subscription section shows a one-line banner instead of silently losing the list."
  },
  {
   "category": "robustness",
@@ -3806,7 +3822,9 @@
   "evidence": "Line 92 (`addSubscription`) and line 139 (`refresh`) both do `try? text.write(to: profileURL(…), atomically: true, encoding: .utf8)`; addSubscription then appends the record and saves (99-101), and refresh returns true (144). If that write fails, `VpnManager.startCore` (VpnManager.swift:557: `profileURL.flatMap { try? String(contentsOf: …) }`) passes nil into `VpnConfigBuilder.build`, which emits `proxies: [] / rules: - MATCH,DIRECT` (VpnSubscriptionStore.swift:605-611).",
   "failure": "Disk-full or permission error on the profile write → the card is added/updated and the UI reports success, but starting that subscription brings up a kernel whose config routes everything DIRECT under `MATCH,DIRECT`; the status reads 运行中 while no traffic is proxied.",
   "fix": "Make the two writes throwing (or check the result) and on failure remove/keep the previous record and surface an error instead of returning success.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "`addSubscription` and `refresh` now write through `PrivateFileWriter` with `try`, so a failed write surfaces through the page's error banner instead of reporting success."
  },
  {
   "category": "correctness",
@@ -7740,7 +7758,9 @@
   "evidence": "The doc (lines 203-205) says invalidating first is \"the only teardown\" and that a timer \"must not keep refreshing against one that has since stopped\", but `refreshTimer?.invalidate()` exists only inside `startAutoRefresh` itself (line 207). grep over Sources shows the only caller is `VpnManager.swift:837` (startup path) and no stop path touches it: `stopCore` (VpnManager.swift:746-779), `syncRuntime` (460-467) and `reloadConfig` (799-809) never invalidate or nil it.",
   "failure": "User starts the VPN once, then turns it off → the 1800 s timer stays armed for the life of the process; every 30 min it downloads the active subscription URL again and, on success, calls `manager.reloadConfig()` (a no-op while disabled). Background network I/O plus unexpected on-disk profile rewrites long after the user stopped the module.",
   "fix": "Add a `stopAutoRefresh()` that invalidates and nils the timer, call it from the stop branches (`syncRuntime`/`stopCore`), or guard the closure with `guard self.manager?.isRunning == true`.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`stopAutoRefresh()` is new and called from `VpnManager.stopCore` — the one teardown every core stop passes through — so a stopped core no longer carries a 30-minute subscription refresh that would call `reloadConfig()` on nothing."
  },
  {
   "category": "dead-code",
@@ -7762,7 +7782,9 @@
   "evidence": "`grep -rn \"countProxies|VpnProfilePreview|VpnConfigBuilder|sanitizeProfile|downloadProfile\" Tests/` returns nothing; the registered VPN suites cover only the probe lifecycle (`Tests/vpn-probe-lifecycle-regressions.py`), host eligibility/injection (`Tests/vpn-provider-direct-regressions.py`) and VpnFormat arithmetic plus two textual asserts (`Tests/vpn-format-regressions.py`). The two parsing surfaces that verifiably disagree on real profiles (findings above) sit exactly in this gap.",
   "failure": "A future layout change (expanded lists, nested alpn, CRLF) silently ships: nodeCount and the node browser disagree and nothing fails CI; a fixture built from the two real styles (column-0 vs expanded) would have caught both the 68-vs-58 over-count and the 0-node preview.",
   "fix": "Add a slice-based regression that runs `countProxies` and `VpnProfilePreview.parse` over two fixtures (column-0 style and expanded `-`/indented-keys style) and asserts equal, correct counts.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "countProxies now fixes the entry indentation from the first list item and counts only items at that depth; the block style (`-` alone, `name:` on the next line) is read by `pendingProxy` in `VpnProfilePreview.parse`. Probed with the production slices under -O: flat / nested-with-nested-alpn-and-http-opts / block-style / column-0 all count 2 and parse to [HK-1, HK-2] (nested counted 5 before)."
  },
  {
   "category": "test-gap",

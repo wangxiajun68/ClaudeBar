@@ -771,6 +771,11 @@ final class VpnManager: ObservableObject {
         log("停止内核")
         readinessTask?.cancel()
         stopPolling()
+        // The 30-minute subscription refresh belongs to a running core. Left
+        // armed it would download half an hour after the user turned the VPN
+        // off and then ask this (stopped) manager to reload its config.
+        subscriptions.stopAutoRefresh()
+
         let old = process
         if let proc = old {
             proc.terminationHandler = nil
