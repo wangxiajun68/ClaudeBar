@@ -4,15 +4,13 @@
 
 本目录描述 **做什么** 与 **怎么交互**。建议按编号顺序阅读前几章建立全局认识，其余按需查阅。
 
----
-
 ## 文档列表
 
 | # | 文件 | 内容 | 何时读 |
 |---|------|------|--------|
 | 01 | [product-overview.md](01-product-overview.md) | 产品定位、目标用户、非目标 | 了解 ClaudeBar 是什么 |
 | 02 | [architecture.md](02-architecture.md) | 顶层架构图、核心设计取舍 | 理解整体结构与决策 |
-| 03 | [data-models.md](03-data-models.md) | Provider、会话、用量、Widget 快照 | 改数据模型时 |
+| 03 | [data-models.md](03-data-models.md) | Provider、EnvConfig、Widget 快照、VPN 订阅 | 改数据模型时 |
 | 04 | [popup-layout.md](04-popup-layout.md) | 菜单栏 popup 460pt 布局 | 改 popup 时 |
 | 05 | [main-window-and-theme.md](05-main-window-and-theme.md) | 主窗口、页面、Theme token | 改主窗口 / 视觉时 |
 | 06 | [interactions.md](06-interactions.md) | 切换、轮询、通知、Widget 联动 | 理解行为流程时 |
@@ -21,11 +19,9 @@
 | 09 | [build-and-distribution.md](09-build-and-distribution.md) | 构建、分发、平台要求 | 构建与发版时 |
 | 10 | [notch-island.md](10-notch-island.md) | 刘海灵动岛：视觉、状态机、数据口径、性能；权限与隐私开关 | 改灵动岛或权限时 |
 | — | [greeting-atmosphere.md](greeting-atmosphere.md) | 概览问候卡：Metal 大气天空、手动天空控制台、53 款问候字体、逐层配色与帧率预算 | 改问候卡 / 天空时 |
-| — | [weather-observatory.md](weather-observatory.md) | **已取代**：Canvas 版问候带与 HUD 内联预报区（`ForecastStrip`）的现场记录；仍成立的是 Open-Meteo 与天文口径 | 查早期结论时 |
+| — | [weather-observatory.md](weather-observatory.md) | 已取代：Canvas 版问候带与 HUD 内联预报区的现场记录；仍成立的是 Open-Meteo 与天文口径 | 查早期结论时 |
 
-按界面组织的说明放在 [`surfaces/`](surfaces)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：四类分组、精简清单与验证边界）、[usage.md](surfaces/usage.md)（用量分析：读数层级、数据口径与验证范围）、[vpn.md](surfaces/vpn.md)（VPN 页：节点、订阅与流量日志）、[feishu-documents.md](surfaces/feishu-documents.md)（飞书文档工作区：浏览、编辑与权限边界）。
-
----
+按界面组织的说明放在 [`surfaces/`](surfaces)：[providers.md](surfaces/providers.md)（供应商管理：目录、聚焦弹窗、激活流程）、[settings.md](surfaces/settings.md)（设置页：六个分类、精简清单与验证边界）、[usage.md](surfaces/usage.md)（用量分析：读数层级、数据口径与验证范围）、[vpn.md](surfaces/vpn.md)（VPN 页：节点、订阅与流量日志）、[feishu-documents.md](surfaces/feishu-documents.md)（飞书文档工作区：浏览、编辑与权限边界）。
 
 ## 推荐阅读顺序
 

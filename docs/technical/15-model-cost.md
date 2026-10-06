@@ -3,13 +3,13 @@
 > ClaudeBar 技术文档 · §15
 > 相关：[数据访问层](04-data-access-layer.md) · [供应商目录](13-provider-directory.md)
 
-概览页的「模型花费」磁贴与用量页每个模型瓦片上的价格都由这里算出。核心事实：**ClaudeBar 拿不到账单**。
+概览问候卡上的「预估」、popup 用量区的「花费」、灵动岛的「今日花费」hero，以及用量页每个模型瓦片上的价格行，都由这里算出。核心事实：ClaudeBar 拿不到账单。
 
 - Claude Code / Codex 订阅不按 token 计费，本地只能读到 token。
 - 第三方中转不回传单价。**只有 OpenRouter 与 Cursor 的接口回传金额**（见下），其余平台一个都没有。
 - 国产平台没有公开的「查价」接口；硅基流动有价格页但 `/v1/models` 只返回模型 ID。
 
-所以这里的数字是 **按厂商官方刊例价折算的估算**：回答「这批 token 走按量 API 要花多少钱」，不是「实际扣了多少」。磁贴 tooltip 第一行就写明「按官方刊例价估算（非账单）」。
+所以这里的数字是**按厂商官方刊例价折算的估算**：回答「这批 token 走按量 API 要花多少钱」，不是「实际扣了多少」。用量页瓦片的 tooltip 第一行写明「按官方刊例价估算」，概览问候卡的那一枚读数标为「预估」。
 
 ## 组成
 
@@ -17,13 +17,13 @@
 |------|------|
 | `Utils/ModelPricing.swift` | slug 归一化与匹配、逐桶计价、分币种累加、金额格式化、「无价」分类。**只管估算**——不接受金额，也就不可能把实扣折进来 |
 | `Utils/ModelPriceTable.swift` | 内置价目表 + 无价名单（编译进二进制、带核查日期）。**改内置价只改这一个文件**，日期在 `ModelPricing.updated` |
-| `Utils/ModelPriceCatalog.swift` | 价目表的可写层：用户编辑与抓取回来的**覆盖行**（各带生效日）、待确认队列、核查新鲜度；落盘 `price-overrides.json`。**不发网络请求** |
-| `Utils/ModelPriceSources.swift` | 出站那一半：models.dev（美元厂商）与各人民币厂商的定价页解析。解析不出的页面返回空并报告为「未能读取」，绝不用聚合源的国际价顶替 |
+| `Utils/ModelPriceCatalog.swift` | 价目表的可写层：用户编辑与抓取回来的**覆盖行**（各带生效日）、待确认队列、核查新鲜度；落盘 `price-overrides.json`。网络由 `ModelPriceSources` 执行，本类型不开 socket，所有写入经同一个校验器和同一个 JSON 文件 |
+| `Utils/ModelPriceSources.swift` | 出站来源：models.dev（美元厂商，ETag 条件请求）与各人民币厂商定价页的解析。解析不出的页面返回空并报告为「未能读取」，不用聚合源的国际价代替 |
 | `Utils/CursorLedger.swift` / `Utils/CursorLedgerStore.swift` | Cursor 的**实际扣费**：解码、窗口规划与取数节奏（见 [04 数据访问层](04-data-access-layer.md)） |
 | `Utils/ExchangeRate.swift` | USD→CNY 汇率：双源查询、TTL 缓存、手动覆盖；默认模式下不发请求 |
 | `Views/Shared/UsageModelCard.swift` | 用量瓦片上的价格行：估算一行、`Cursor 实扣` 一行，各自成句、永不相加 |
 | `Views/Shared/ModelPriceCard.swift` | 设置页的模型定价表：逐行编辑、覆盖行的溯源标签、待确认的抓取候选与差异行 |
-| `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示） |
+| `Views/Shared/ExchangeRateTile.swift` | 设置页的汇率控件（仅折算模式下显示；位于设置 → 用量与计费 → 显示与换算） |
 | `Models/ProviderStore+Derived.swift` | `costEstimate` / `costLine(for:)` 两个估算入口；实扣不进 store，`UsageView` 直接读 `CursorLedgerStore`（`rows` / `windowLabel`） |
 | `Tests/model-cost-regressions.py` | 锁定 slug 匹配（含 effort 档归一）、**覆盖价与内置表的并列判定**（同 slug 的覆盖在生效日取胜、生效日之前不生效、清除后复原；短 slug 覆盖不吞更长内置 slug）、币种隔离、无价分类与格式化 |
 | `Tests/model-price-source-regressions.py` | 用 `Tests/fixtures/price-pages/` 的页面快照跑真实解析器，抽出的数字与内置表的行逐条比对 |
@@ -31,7 +31,7 @@
 
 ### 覆盖行与内置表的关系
 
-覆盖（用户手动编辑或抓取后应用）不替换内置表，而是在解析时参与同一次最长匹配，**等长 slug 时覆盖胜出**，因此「改一行内置模型的价格」这种最常见的编辑确实生效；覆盖行还带生效日，生效日之前记录的用量仍按当时的价格计价，改价因此是前向的。默认不抓取：`autoCheckIfStale()` 在没有核查记录时直接返回，第一次联网必须由用户点「查询更新」发起，抓取结果默认进入待确认队列而不是直接应用。抓取到的行按 `apply(_:)` 与编辑器同一套规则校验（canonical slug、四个桶全为正、cacheRead ≤ input）；被拒绝的行留在待确认队列里，不静默丢弃。
+覆盖（用户手动编辑或抓取后应用）不替换内置表，而是在解析时参与同一次最长匹配，**等长 slug 时覆盖胜出**，因此「改一行内置模型的价格」这种最常见的编辑确实生效；覆盖行还带生效日，生效日之前记录的用量仍按当时的价格计价，改价因此是前向的。默认不抓取：`autoCheckIfStale()` 在没有核查记录时直接返回，第一次联网必须由用户发起（点「查询更新」，或过 7 天后由启动时的后台核对发起）。后台核对只提议，结果进入待确认队列；「查询更新」是 `check(autoApply: true)`，直接应用抓到的差异。抓取到的行按 `record(slug:rate:…)` 与编辑器同一套规则校验（canonical slug、四个桶全为正、cacheRead ≤ input）；被拒绝的行留在待确认队列里，不静默丢弃。
 
 ## 计价口径
 
@@ -54,6 +54,8 @@
 | Chat Completions | `prompt_tokens` **含**命中数，另外在 `prompt_tokens_details.cached_tokens`（DeepSeek 还额外给顶层 `prompt_cache_hit_tokens`）报命中 | `input = prompt_tokens − 命中` |
 | Responses | `input_tokens` **含** `input_tokens_details.cached_tokens` | 同上 |
 | 中转回显 Anthropic 字段 | `cache_read_input_tokens` 旁边是**不含**缓存的 `input_tokens` | 不折，按 Anthropic 处理 |
+
+缓存写入单独给桶：Anthropic 形状报 `cache_creation_input_tokens`（或 `cache_write_tokens`），Responses 形状认 `input_tokens_details` 里的 `cache_write_tokens`；读取为零、写入非零的首轮请求也照样入账。
 
 DeepSeek 自己的文档就写明了这条等式：`prompt_tokens == prompt_cache_hit_tokens + prompt_cache_miss_tokens`。**旧版本把这个和 `cached_tokens` 一起原样存了**，于是命中那部分既按 `input` 全价算了一次、又按 `cacheRead` 折价算了一次，`totalTokens` 也把它加了两次。第三方 rollup（`proxy-usage.db`）里修前的行走过一次 `input -= cache_read` 的迁移（`user_version = 1`），JSONL 后端同理（`usage-third-party.v1` 标记文件）。`Tests/proxy-usage-regressions.py` 锁定这些形状。
 
@@ -79,13 +81,15 @@ struct Cost { var cny: Double = 0; var usd: Double = 0 }
 - `secondary` 取另一个，做副行「另有 $43.20」。
 - 两者都是 0 时没有主数字（磁贴显示 `—`）。
 
-把两种币种加起来会得到一个虚构的数字，静默丢掉一种则会让总额少一块——这两种都做过，`Tests/model-cost-regressions.py` 里各有一条断言守着。
+把两种币种加起来会得到一个虚构的数字，静默丢掉一种则会让总额少一块；`Tests/model-cost-regressions.py` 对这两条各有一条断言。
 
-### 可选折算（设置 → 模型花费 → 显示货币）
+### 可选折算（设置 → 用量与计费 → 显示货币）
 
 默认 `split`（分列）**不联网、不换算**。用户可切到「人民币」或「美元」，此时才需要汇率。
 
 `ModelPricing` **自身不保存汇率**——`cost.converted(to:rate:)` 把汇率当**参数**，`present(_:display:rate:)` 同理。这是整个模块里唯一会把两种货币相加的地方，参数化意味着「不可能在拿不到汇率的情况下算出一个折算金额」。`CostDisplay` 也定义在 `ModelPricing.swift` 而不是 `AppPreferences`：定价规则和选择它的开关留在同一个文件里，回归测试也不必拖进整个偏好图。
+
+`ExchangeRate` 是汇率唯一的状态持有者（`ObservableObject`，单例）：`usdToCny`、`providerDate`、`isFetching`、`lastError` 都是 `@Published`，`effectiveRate` 是读取手动覆盖或已取回值的计算属性；各视图直接观察它，没有额外的通知广播。
 
 | `CostDisplay` | 行为 | 需要汇率 |
 |---|---|---|
@@ -110,30 +114,29 @@ struct Cost { var cny: Double = 0; var usd: Double = 0 }
 
 关键行为：
 
-- **默认模式下一次请求都不发。** `ExchangeRate.start()` 在启动时先看偏好；`costDisplay` 的 `didSet` 只在 `needsRate` 时触发。这与本项目对其他出站请求的态度一致：开关没打开，代码路径完全不执行。
-- **手动汇率是逃生门。** `AppPreferences.manualUSDToCNY` 一旦设定，`refreshIfStale()` 直接返回，永远不联网。合法区间 `(1, 20)`，越界视为清空——一个手滑打成 `72` 的汇率会把所有折算金额放大十倍且不报错。
+- **默认模式下一次请求都不发。** `ExchangeRate.start()` 在启动时先看偏好；`costDisplay` 的 `didSet`（以及 `AppPreferences` 里兜底的 `refreshIfStale`）只在 `needsRate` 时触发。这与本项目对其他出站请求的态度一致：开关没打开，代码路径完全不执行。
+- **手动汇率会关闭联网。** `AppPreferences.manualUSDToCNY` 一旦设定，`refreshIfStale()` 与设置页的「更新」按钮都直接返回，永远不联网。合法区间 `(1, 20)`，越界视为清空——一个手滑打成 `72` 的汇率会把所有折算金额放大十倍且不报错。
 - **TTL 12 小时**（来源每日更新，一天问两次已足够）。缓存写 UserDefaults：三个标量，且必须在重启后存活，否则选了折算模式的用户每次启动都要等一次网络请求。
 - **失败保留旧值**：过期汇率好过没有汇率，`isStale` 会在文案里标出来。
-- 取回后用 `NotificationCenter` 发 `.exchangeRateDidChange`，磁贴与设置页据此刷新。
 
 ## 有模型，但没有价
 
 `rate(for:)` 返回 nil 时**绝不按 0 计**，也不套别的模型的价。这时候 `unpricedReason(_:)` 再问一次「这是已知的无价模型吗」，`Estimate.Line` 因此带一个 `unpriced: Unpriced?`：
 
-| `Unpriced` | 含义 | 磁贴文案 |
+| `Unpriced` | 含义 | 枚举标签（单个模型的 tooltip） |
 |---|---|---|
-| `.subscription` | 会员 / 套餐 SKU，压根不按 token 计费 | 「N 个订阅制」 |
-| `.notPublished` | 按量计费，但官方没公开刊例价 | 「N 个未公开价」 |
-| `.unknownSlug` | 表里没有这个名字 | 「N 个未计价」 |
+| `.subscription` | 会员 / 套餐 SKU，压根不按 token 计费 | 「订阅制」 |
+| `.notPublished` | 按量计费，但官方没公开刊例价 | 「未公开价」 |
+| `.unknownSlug` | 表里没有这个名字 | 「未计价」 |
 
 分这三类不是为了好看：**订阅制**要用户去订阅页看额度，**未公开价**是厂商的问题，**未收录**是这张表该补的行。混成「未计价」三种都得不到该有的处理。
 
 名单在 `ModelPriceTable.unpriced`：
 
 - `.subscription`：`kimi-for-coding`、`kimi-for-coding-highspeed`（Kimi Code 会员，与开放平台是两套产品）、`ark-code`（火山 Coding/Agent Plan 的 `ark-code-latest` 别名，官方说该端点不能用于 API 调用）。
-- `.notPublished`：`qwen3.8-max`、`qwen3.8-flash`——百炼文档明说这两个的显式缓存命中价**不是**标准的 10%，让去控制台看，所以没有公开数字；`gpt-5.4-pro`、`gpt-5.5-pro`——OpenAI 公布了它们的 input/output（$30/$180），但没给 cached-input 价，而缓存读占本应用统计的 token 大头，**只有一半的卡片不如不给**。
+- `.notPublished`：`qwen3.8-max`、`qwen3.8-flash`——百炼文档明说这两个的显式缓存命中价**不是**标准的 10%，让去控制台看，所以没有公开数字；`gpt-5.4-pro`、`gpt-5.5-pro`——OpenAI 公布了它们的 input/output（$30/$180），但没给 cached-input 价，而缓存读占本应用统计的 token 大头，只标一半的卡片不如不标。
 
-这三类的 token 都计入 `unpricedTokens`，tooltip 里写明「未计入合计的模型共 N token」。
+这三类的 token 都计入 `unpricedTokens`。各表面只印合并计数「N 个模型未计价」，分类计数由回归测试读取；瓦片 tooltip 会写明未覆盖的 token 数。
 
 ## slug 匹配
 
@@ -171,7 +174,7 @@ struct Cost { var cny: Double = 0; var usd: Double = 0 }
 
 ## 金额格式化
 
-`ModelPricing.format` 手写千分位而不用 `NumberFormatter`：它每帧都在最密的页面上被调用，一次布局一个 formatter 是本项目别处（`UsageStats` 的缓存 formatter）刻意避开的开销。
+`ModelPricing.format` 手写千分位而不用 `NumberFormatter`：它每帧都在最密的页面上被调用，一次布局一个 formatter 是本项目别处（`UsageStats.formatter` 的缓存 formatter）刻意避开的开销。
 
 - `¥1,284.60` — 两位小数，千分位
 - `<¥0.01` — 不足一分显示下限，`¥0.00` 会被读成「没有花费」
@@ -182,14 +185,15 @@ struct Cost { var cny: Double = 0; var usd: Double = 0 }
 ```
 UsageIndex / ProxyUsageStore          （token 事实）
         ↓
-ProviderStore.usageStats              （当前周期的每模型聚合，已按周期 chip 变）
-        ↓  ModelPricing.estimate
-ProviderStore.costEstimate            （概览磁贴）
-        ↓  ModelPricing.cost(of:) / unpricedReason(_:)
-ProviderStore.costLine(for:)          （用量瓦片，逐个模型，不重建整个 estimate）
+ProviderStore.publishUsage → usageStats / usageCostLines / usageEstimate
+        ↓  ModelPricing.estimate(days:)（每日按当天价目重算）
+ProviderStore.costEstimate            （popup 用量区的「花费」）
+ProviderStore.costLine(for:)          （按模型逐条取用；用量页走 usageCostLines）
         ↓  ModelPricing.present(_:display:rate:)   ← ExchangeRate.effectiveRate
-UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡（按偏好渲染：分列 / 折算）
+UsageModelCard（用量页）
 ```
+
+概览的今日读数与灵动岛花费各有一处独立入口：问候卡用 `ProviderStore.todayUsage.cost`（固定今日窗口，`ModelPricing.estimate(_:on:)`），灵动岛 hero 由 `IslandLiveModel` 自己按日算 `ModelPricing.Estimate`；两者都再经 `ModelPricing.present` 渲染。
 
 `costEstimate` 与周期选择天然联动：`usageStats` 就是周期聚合，换日 / 月 / 年 / 全部自动跟着变，不需要额外查询。折算只发生在**渲染**这一步，`Estimate` 本身始终保留两种货币的原值——切换显示模式不会丢失任何信息，也不会把折算结果写回数据。
 
@@ -198,7 +202,7 @@ UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡（按偏好
 估算之所以是估算，是因为绝大多数厂商不回传钱。真金额来源只有两个：
 
 - **OpenRouter**：响应里的 `usage.cost`（credits）与 `usage.cost_details.upstream_inference_cost`；`prompt_tokens_details.cached_tokens` / `cache_write_tokens` 给的是读 / 写。`GET /api/v1/models` 的 `pricing.prompt` 等单位是 **USD per token**（不是 per million），`overrides[]` 里带 `min_prompt_tokens` 或 UTC 时段的条件价（OpenRouter 就用它表达 OpenAI 的长上下文档）。注意：`cost` 单位文档写的是 credits，从未给过 credits↔USD 的汇率。**尚未接入。**
-- **Cursor**（**已接入**）：`api2.cursor.sh` 的 `DashboardService.GetAggregatedUsageEvents` / `GetFilteredUsageEvents`，用本机 `state.vscdb` 里已存的裸 JWT 调用，不新增凭据。每条带 `tokenUsage.{inputTokens,outputTokens,cacheWriteTokens,cacheReadTokens,totalCents}`，且 `totalCents == chargedCents`（9,895 条逐条核对）——**是实际扣掉的数额**。解码与窗口见 [04 数据访问层](04-data-access-layer.md) 的 `CursorLedger` 一节。
+- **Cursor**（**已接入**）：`api2.cursor.sh` 的 `DashboardService.GetAggregatedUsageEvents`，用本机 `state.vscdb` 里已存的裸 JWT 调用，不新增凭据；`GetFilteredUsageEvents`（逐事件账本）的解码与分页判据在 `CursorLedger` 里实现，目前只由回归夹具驱动，实际取数走聚合接口。每条带 `tokenUsage.{inputTokens,outputTokens,cacheWriteTokens,cacheReadTokens,totalCents}`，且 `totalCents == chargedCents`（9,895 条逐条核对）——**是实际扣掉的数额**。解码与窗口见 [04 数据访问层](04-data-access-layer.md) 的 `CursorLedger` 一节。
 
 其余厂商（含所有国产平台）都只有 token 事实，金额只能自己乘价目表——这正是本模块存在的理由。
 
@@ -208,9 +212,9 @@ UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡（按偏好
 
 ```
 claude-opus-5-5        38.7M
-  估算  ¥1,284.60          ← token × 刊例价表，本模块算的
+  本地估算  ¥1,284.60      ← token × 刊例价表，本模块算的
   Cursor 实扣  $34.65      ← Cursor 自己扣的，来自它的账本
-  ⓘ 9月28日–10月28日        ← 仅当金额覆盖的窗口与页面周期不一致时出现
+  9月28日–10月28日         ← Cursor 账单窗口，有 Cursor 用量时总是标出
 ```
 
 三条规则，都有回归断言守着：
@@ -219,18 +223,13 @@ claude-opus-5-5        38.7M
    来自不同来源（本地价目表 vs Cursor 账本），可能覆盖不同窗口。把它们合成一个数，得到的既不是
    估算也不是账单。`ModelUsage` **没有金额字段**，`ModelPricing.estimate` **只接受 token**——
    类型系统就是这条规则的执行者（`Tests/cursor-ledger-regressions.py` 断言 `ModelUsage` 不带钱）。
-2. **措辞不共享。** 实扣那行写「Cursor 实扣」，估算那行写「按官方刊例价估算」；两者的
-   accessibility label 各自成句。实扣上出现「估算」二字是这个功能最不能犯的错。
-3. **窗口必须说出来。** Cursor 的金额接口接受的是**窗口**（上限约 90 天，超出非确定性报错），
-   不是「今天 / 月 / 年」。切到别的周期时**保留旧值并标明它属于哪个窗口**，而不是让数字消失
-   ——数字消失会读成「数据坏了」，而不是读成「口径不同」。`年` / `全部` 退化为账单周期并标注
-   「仅覆盖一个账期」，绝不返回一年的某个切片冒充总额。
+2. **措辞不共享。** 实扣那行写「Cursor 实扣」，估算那行写「本地估算」（部分未计价时为「本地部分估算」），tooltip 里写「按官方刊例价估算」；两者的 accessibility label 各自成句。实扣上出现「估算」二字是这个功能最不能犯的错。
+3. **窗口必须说出来。** Cursor 的金额接口接受的是**窗口**（约 90 天以上会非确定性报错；请求按 31 天一段切分），不是「今天 / 月 / 年」。切到别的周期时**保留旧值并标明它属于哪个窗口**，而不是让数字消失
+   ——数字消失会读成「数据坏了」，而不是读成「口径不同」。`年` / `全部` 退化为账单周期，界面标注「仅覆盖上述日期，未覆盖所选周期的完整用量」，绝不返回一年的某个切片冒充总额。
 
 ## 为什么不接动态价源
 
-调研过全部公开的机器可读价源（2026-09-25），结论是**没有一个能替代这张表**，而且有几个会静默改错数字。记录在这里，避免以后有人顺手接一个。**表仍然是唯一事实来源**：抓取只用来核对与提议，不自动改写。
-
-**美元那一半自动核对，人民币那一半读厂商自己的定价页**：
+调研过全部公开的机器可读价源（2026-09-25），结论是**没有一个能替代这张表**，而且有几个会静默改错数字。记录在这里，避免以后有人顺手接一个。**表仍然是唯一事实来源**：抓取只用来核对与提议，不自动改写（美元那一半由 models.dev 自动核对，人民币那一半读厂商自己的定价页）：
 
 | 来源 | 单位 | 币种 | 覆盖本表 | 问题 |
 |---|---|---|---|---|
@@ -242,20 +241,20 @@ claude-opus-5-5        38.7M
 
 models.dev 在这张表里只用于 **Anthropic 与 OpenAI 两家**（`ModelPriceSources.usdVendors`），因为其余条目是聚合源自己折出来的国际价；人民币厂商一律读厂商定价页（DeepSeek / 智谱 / Kimi / 百炼 / 阶跃 / MiniMax，见 `ModelPriceSources.vendors`），解析不出的页面返回空并报「未能读取」。火山方舟在 `uncheckable` 里，理由写在名单上。
 
-**三个会静默改错的具体例子**（都是我实测确认的，不是推断）：
+**三个会静默改错的具体例子**（2026-09-25 调研时逐项核对确认的）：
 
-1. **DeepSeek 会掉一半。** models.dev 的 `deepseek/deepseek-flash` 是 `0.15 USD`，÷6.75 ≈ ¥1——正是**错峰**价。本表的约定是记峰时（见上「三条规则」）。直接导入会让这两行腰斩。
-2. **阿里会把国际价当国内价。** models.dev 的 `alibaba-cn/qwen3.7-max` 是 `2.5 USD`（国际站价），阿里云国内站是 **12 元**。导入会让它看起来便宜 4.8 倍。
-3. **`qwen3.7-flash` 曾经真的写错了**，而且是本表自己的错：写成 `0.03 / 0.13`，那是**美元**刊例价留着人民币符号——比真价（`0.2 元 / 0.8 元`）便宜 6.7 倍。是这次调研交叉比对才发现的。现在有回归断言守着这一类（见下）。
+1. **DeepSeek 的错峰价。** models.dev 的 `deepseek/deepseek-flash` 是 `0.15 USD`，÷6.75 ≈ ¥1——正是**错峰**价。本表的约定是记峰时（见上「三条规则」）。直接导入会把这两行按错峰价计。
+2. **阿里的国际价当国内价。** models.dev 的 `alibaba-cn/qwen3.7-max` 是 `2.5 USD`（国际站价），阿里云国内站是 **12 元**。导入会让它看起来便宜 4.8 倍。
+3. **`qwen3.7-flash` 曾经写错过**，而且是本表自己的错：写成 `0.03 / 0.13`，那是**美元**刊例价留着人民币符号——比真价（`0.2 元 / 0.8 元`）便宜 6.7 倍。是那次交叉比对发现的。现在有回归断言守着这一类（见下）。
 
-**OpenRouter 是法律问题，不是技术问题。** 它的 ToS（2026-08-31 更新）明确禁止用任何自动化手段「抓取或复制本服务上的任何信息」，以及「以转售为目的访问本服务」。把它的端点接进一个消费级应用并复制价格，是灰的。**不要接。**
+**OpenRouter 是法律问题，不是技术问题。** 它的 ToS（2026-08-31 更新）明确禁止用任何自动化手段「抓取或复制本服务上的任何信息」，以及「以转售为目的访问本服务」。把它接进应用并复制价格不会被本表采纳。
 
 ## 更新价目表
 
 1. 核对厂商定价页，改 `Sources/ClaudeBar/Utils/ModelPriceTable.swift` 里对应的行（文件里每段都标了来源 URL）。
-2. 改 `ModelPricing.updated` 的日期（tooltip 末尾显示「价目表核查于 …」）—— 它是唯一的日期来源，价目表文件里只写注释。
+2. 改 `ModelPricing.updated` 的日期——设置页「模型定价」的副标题与内置行的 tooltip 都显示它（「核查于 …」）。它是唯一的日期来源，价目表文件里只写注释。
 3. `python3 Tests/model-cost-regressions.py` —— 会校验 slug 唯一且 canonical、input/output 非零、cache 桶非零、无价名单与价目表不重叠，以及**本应用目录里内置的那些模型 ID 都有交代**。
-4. 设置页「模型定价 → 查询更新」可以对现有行做一次自动核对：差异进入待确认队列，逐条「应用」才写入 `price-overrides.json`，不改动内置表也不重新发版。抓到的页面解析数字由 `Tests/model-price-source-regressions.py` 用 `Tests/fixtures/price-pages/` 的快照守着。
+4. 设置页「用量与计费 → 模型定价 → 查询更新」可以对现有行做一次自动核对：点击即以 `autoApply: true` 抓取并应用差异（并清掉旧的待确认列表），周度后台检查（`autoCheckIfStale`，间隔 7 天）只提议、不写入。任何被写下的行都进 `price-overrides.json`，不改动内置表也不重新发版。抓到的页面解析数字由 `Tests/model-price-source-regressions.py` 用 `Tests/fixtures/price-pages/` 的快照守着。
 
 模型 ID 以 [§13 供应商目录](13-provider-directory.md) 里的预设为准：那张表里的 slug 是「用户实际会记录下来的名字」，这里少一行，那张卡片就会显示「未计价」。新增厂商时两处一起加。
 
@@ -267,22 +266,19 @@ models.dev 在这张表里只用于 **Anthropic 与 OpenAI 两家**（`ModelPric
 - **GLM Coding Plan 新订阅价**：当前积分制套餐的 CNY 页面是纯 JS，拿不到；表里没有 Coding Plan 相关行（它是订阅制）。
 
 
-### 2026-10-01 用量正确性排查
+## 计价与用量边界
 
 - 总 Token、每日记录、来源明细、按日计价统一包含 Claude Code、Codex 和第三方代理记录；Cursor 官方账单仍独立显示，不加进本地总量。
-- Codex 同时扫描 `sessions` 和 `archived_sessions`。归档移动不再让历史用量消失，目录监听覆盖两者及归档目录的创建。缺失模型名的记录归入 `unknown` 并标记未计价，不能把已测量的 Token 丢弃。
+- Codex 同时扫描 `sessions` 和 `archived_sessions`；用量目录监听挂在 `~/.codex` 上，归档移动与归档目录创建都能触发重扫。缺失模型名的记录归入 `unknown` 并标记未计价，不能把已测量的 Token 丢弃。
 - `last_token_usage` 优先作为新增用量；缺少它的旧记录使用累计输入、输出和缓存读取字段的差值。重复累计事件不再次加总，跨追加保存累计基线，零 Token 的上下文事件不增加调用次数。
-- SQLite 索引升级到 v10 重建 Codex 派生记录；JSON 文件携带 `parserVersion`，旧版本同样重建。这只更新应用自己的缓存，不改写原始会话。
-- 费用在每次发布用量时按日重算，发布前比较结果；估算结果发布到 `.usage` 观察域，解决「价格修改或每日分布改变但 Token 总量不变」时的旧金额。
+- SQLite 索引目前为 `user_version = 11`（v10 重建 Codex 派生记录，v11 按 `message.id` 重建 Claude 记录）；JSON 文件携带 `parserVersion`，旧版本同样重建。这只更新应用自己的缓存，不改写原始会话。
+- 费用在每次发布用量时按日重算（`ModelPricing.estimate(days:)`），估算随 `.usage` 域的发布一起更新——价格修改或每日分布改变但 Token 总量不变时金额也会刷新。
 - 同一模型部分日期未计价时保留已计价金额，同时显示未覆盖的 Token 数；不能因为某一天有价格就把所有日期标成完整估算。
-- Responses 路由转发 Anthropic 形状的 usage 时，首次缓存写入即便读取为零也计入；第三方请求入账后主动通知刷新。
+- Responses 路由转发 Anthropic 形状的 usage 时，首次缓存写入即便读取为零也计入；第三方请求入账后经 `ProxyUsageStore.didChange` 通知刷新。
 - 文件枚举保留返回的完整绝对路径，避免符号链接路径规范化后丢失子目录而漏读记录。
+- 模型清单是本地与 Cursor 窗口记录的集合，不设数量上限；本地别名合并，Cursor 数量与账单日期独立显示，缺失模型标识保留为 `unknown`。
 
 `make test TEST="usage-index model-cost proxy-usage usage-analysis"` 执行生产解析、持久化、升级和发布函数，使用临时 SQLite/JSON 与模拟会话；覆盖重复追加、半行、归档移动、消息 ID 去重、来源/每日/模型总量守恒、仅改价刷新及部分计价。全回归清单由 Makefile 维护。
-
-只读抽查时，正式版 2026-10-01 索引里的 Claude Code **52,559,217** Token、未归档 Codex **11,469,321** Token 分别与原始 usage 去重加总一致；另外归档 Codex 中 UTC 日期为当天的记录合计 **47,056,983** Token，旧扫描入口完全遗漏。数值是排查时的快照，后续请求会继续增长；UTC 筛选值不代替本地日界线的正式查询。
-
-补充模型完整性：平台按客户端来源归属，Codex 自定义模型与官方模型都在 Codex 平台内。模型清单改为本地与 Cursor 窗口记录的集合，不设数量上限；本地别名合并，Cursor 数量与账单日期独立显示，避免遗漏 Cursor-only 模型或把不同窗口加总。缺失模型标识保留 `unknown` 用量。模型卡片改用真实 Token 分量条，并明确标注本地估算及 Cursor 实扣。
 
 口径边界：Token 是每次请求处理的输入、缓存和输出累计量，同一段上下文被多次使用会多次计入，并非独立文本的字数。金额仍是按价目表/用户覆盖价估算；错峰、上下文阶梯、缓存 TTL、代理折扣与订阅实际扣费不由日级 rollup 还原。Cursor 的窗口、截断和官方聚合覆盖限制见本页既有说明。
 

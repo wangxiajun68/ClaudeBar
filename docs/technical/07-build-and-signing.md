@@ -11,14 +11,14 @@
 
 **本机开发**用钥匙串里的自签身份 `ClaudeBar Dev`（`Sources/ensure-dev-cert.sh` 在缺失时创建，并把它设为登录钥匙串里的 code-signing trust root）。
 
-证书如果是 `CSSMERR_TP_NOT_TRUSTED`，`codesign` 仍能签上，但内核 / TCC 会把 App 当成未签名，屏幕录制绑到每次重编译都变的 CDHash，于是每次都要授权。`find-identity -v` 里必须能看到这张证（不要带 `CSSMERR`）。指定要求绑定证书根哈希，同一张证的重编译保持授权。哈希钉在 `~/Library/Application Support/ClaudeBar/dev-codesign-identity`。
+证书如果是 `CSSMERR_TP_NOT_TRUSTED`，`codesign` 仍能签上，但内核 / TCC 会把 App 当成未签名，屏幕录制绑到每次重编译都变的 CDHash，于是每次都要授权。`security find-identity -v -p codesigning` 里必须能看到这张证（不带 `CSSMERR`，`build.sh` 会以此校验并中止）。指定要求绑定证书根哈希，同一张证的重编译保持授权。哈希钉在 `~/Library/Application Support/ClaudeBar/dev-codesign-identity`。
 
-**正式版本机构建同样**使用 `ClaudeBar Dev` 自签身份——不是 ad-hoc。ad-hoc 没有证书可供识别，指定要求会退化成 `cdhash H"..."`（整份二进制的哈希），于是每次重编译在 TCC 眼里都是新 App，屏幕录制反复要求授权，截图功能对本地开发者等于不可用。默认 ad-hoc 只保留给 CI 与显式 `CODESIGN_IDENTITY=-`；配置了 Developer ID 时，直接用它覆盖同一个变量即可（未配置前不要发布到 GitHub Releases）。
+**正式版本机构建同样**使用 `ClaudeBar Dev` 自签身份——不是 ad-hoc。ad-hoc 没有证书可供识别，指定要求会退化成 `cdhash H"..."`（整份二进制的哈希），于是每次重编译在 TCC 眼里都是新 App，屏幕录制反复要求授权，截图功能对本地开发者等于不可用。默认 ad-hoc 只保留给 CI 与显式 `CODESIGN_IDENTITY=-`。当前未配置 Developer ID：CI 的 release job 写死 `CODESIGN_IDENTITY: "-"`，GitHub Releases 上的产物就是 ad-hoc 签名（Release 说明让用户 `xattr -cr` 后打开）。切换到 Developer ID 时把身份名称传给同一个变量即可完成签名，但辅助工具的安装校验只认应用指定要求里精确拼写的 `certificate root = H"…"` 子句（`HelperSignature.anchorRequirement()` 按该字面量查找，找不到即拒绝安装）；Developer ID 的默认指定要求通常写作 `certificate 1[…]` 锚子句而非 `certificate root`，因此该查找很可能失败，切换前必须先在真实 Developer ID 签名上验证辅助工具安装路径。
 
 自底向上、不用 `--deep`：
 
 ```bash
-xattr -cr "$APP_BUNDLE"                        # 1. 清扩展属性（关键！）
+xattr -cr "$APP_BUNDLE"                        # 1. 清扩展属性（签名前必须）
 
 codesign ... --options runtime --identifier claudebar-batteryctl "$BATTERYCTL"    # 2. 电池辅助进程（Resources/claudebar-batteryctl）
 codesign ... --options runtime --identifier claudebar-fanctl     "$FANCTL"        # 2b. 风扇辅助进程
@@ -30,7 +30,7 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 b
 
 安装到 /Applications 后**再次** `xattr -cr`（`cp` 会重新引入扩展属性）。
 
-电池辅助进程用 `clang -Wall -Wextra -Werror -O2` 编译为 universal（arm64 + x86_64），**编译失败会中断整个构建**——它是安全相关组件，不允许静默缺失。风扇辅助进程同样编译为 universal，但只带 `-O2`，没有 `-Werror`。安装时 `BatteryHelperInstaller` 会再校验安装副本的 SHA-256 与代码签名，与当前包一致才使用。详见 [§12](12-battery-control.md)。
+电池辅助进程用 `clang -Wall -Wextra -Werror -O2` 编译为 universal（arm64 + x86_64），**编译失败会中断整个构建**——它是安全相关组件，不允许静默缺失。风扇辅助进程同样编译为 universal，但只带 `-O2`，没有 `-Werror`。安装时 `BatteryHelperInstaller` 在管理员授权中对暂存副本校验 SHA-256（`shasum -a 256`）并以应用证书锚的指定要求复核签名；此后每次复用安装副本前，对它与随包副本逐架构比对 CDHash（跳过 CMS 时间戳差异），且两者都必须通过同一锚要求（`HelperSignature.verify`）。详见 [§12](12-battery-control.md)。
 
 ## Entitlements
 
@@ -46,7 +46,7 @@ codesign ... --entitlements app.plist   "$APP_BUNDLE"                 # 6. 主 b
 - `personal-information.location: true`（问候卡的「当前位置」开关）
 - `files.user-selected.read-write: true`
 
-## 签名陷阱（踩坑记录）
+## 签名陷阱
 
 1. **bundle wrapper 必须带 `--entitlements`**：签名 bundle 会重新密封主可执行文件，若 wrapper 不带 entitlements，codesign 会**剥离**刚嵌入主二进制的 entitlements，静默破坏 App Group 访问。
 2. **`xattr -cr` 两次**：签名前一次；`cp` 安装到 /Applications 后再一次（`cp` 会重新引入 `com.apple.FinderInfo` 等扩展属性，导致 `codesign --deep --strict` 失败、Widget 加载失败）。
@@ -89,4 +89,4 @@ pluginkit -e use -i "$WIDGET_ID"                # 强制启用扩展（各自 bu
 # 不重启共享 widgetkitd；开发测试版安装使用各自 bundle ID。
 ```
 
-否则 Widget 画廊可能滞后一次启动。首次使用仍需在桌面右键手动添加 "ClaudeBar"（systemLarge）组件。
+否则 Widget 画廊可能滞后一次启动。首次使用仍需在桌面右键手动添加对应版本的组件（画廊显示名取 `BuildChannel.appName`，即 release 的「ClaudeBar」或 dev 的「ClaudeBar Dev」，尺寸 systemLarge）。

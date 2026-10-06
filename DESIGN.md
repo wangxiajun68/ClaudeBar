@@ -4,9 +4,10 @@ CatStatus-class **status sheet**: ice canvas in light, graphite in dark. White
 (or raised dark) cards, SF Rounded metrics. Color lives in charts and status.
 
 Scope: this document describes the **app target** (`Sources/ClaudeBar`). The
-WidgetKit extension (`Sources/Widget`) is compiled separately from only three
-files and cannot reach `Theme` or any shared primitive, so it keeps its own
-drawing; it is not a consumer of this language and is not covered by it.
+WidgetKit extension (`Sources/Widget`) is compiled separately from its own four
+sources plus `Sources/Shared/BuildChannel.swift`, and cannot reach `Theme`, so
+it keeps its own drawing; it is not a consumer of this language and is not
+covered by it.
 
 ## Canvas
 
@@ -30,7 +31,7 @@ drawing; it is not a consumer of this language and is not covered by it.
 | Chart blue `#5B9CFF` | GPU bars |
 | Chart amber `#FF9F0A` | Memory line |
 | Chart purple `#BF5AF2` | General usage accents; analytical figures use the palette below |
-| Ink / snow | Primary text in light / dark |
+| Ink / snow | Primary text in light / dark (`Theme.textPrimary`) |
 
 Claude / Cursor / Codex hues remain for identity chips only.
 
@@ -53,12 +54,16 @@ is how a state ends up readable in exactly one theme.
 
 ## Surfaces
 
-One surface language, four parts (`Views/Shared/UiverseSurfaces.swift`), so a
-card in one grid is the same object as a card in another:
+One surface language, four parts (`TileSurface.body` in
+`Views/Shared/Tile.swift`; the ring and lens views in
+`Views/Shared/UiverseSurfaces.swift`), so a card in one grid is the same object
+as a card in another:
 
-1. **Base + accent wash** — `cardSurface`, then the card's own hue at 5–17 %.
-   The wash is what makes a page of tiles scannable by row; it never moves under
-   the pointer except by deepening.
+1. **Base + accent wash** — `cardSurface`, then the card's own hue at 5.5 %
+   (light) / 11 % (dark), deepened ×1.7 under the pointer; a page band carries
+   a heavier 9 / 15 % so its inner frame ring reads at full width. The wash is
+   what makes a page of tiles scannable by row; it never moves under the
+   pointer except by deepening.
 2. **Inner frame ring** — a 1pt ring inset 3pt inside the card's own edge
    (`InnerFrameRing`, and `Theme.innerFrame` / `innerFrameMuted`). White on a
    tinted tile, an engraved hairline on a plain one.
@@ -88,7 +93,7 @@ no other use for the hover flag — never two `.onHover` regions for one target.
 sliding selection pill (`matchedGeometryEffect`), replacing the earlier "capsule
 of loose capsules" where a four-item filter drew four cards inside an outer one.
 It backs the connector type and platform filters, the provider client switcher
-and category filter, the usage period tabs and the VPN group tabs.
+and category filter, and the usage period tabs.
 
 `OrbitGauge` is a trim-based arc with a body riding it (the quota gauges);
 `ConveyorBelt` is the travelling-tick strip used where a surface is *doing*
@@ -121,13 +126,13 @@ ornament is one shape rather than a stack of views.
 | Control | Reference | What it is |
 | --- | --- | --- |
 | `InstrumentField` / `InstrumentWell` / `InstrumentFieldStyle` | `metanef` switch track | the **one** field surface: a recessed well (`Theme.fieldWell`), a lit accent rim on focus, and the same inner frame ring the tiles wear. Search boxes, ports, rates, filters and every provider input are this box. `InstrumentWell` is its surface alone, for a control *drawn* as a field but not typed into (an API key's read state, the model selector); `InstrumentField` is one line delegating to it. The providers directory's second search field is a thin alias. |
-| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that travels on the state change. Backs all 16 toggles in the app. The handle **does not stretch** toward its destination on hover — that is geometry moving because the pointer arrived, and the control already states its state; the hover is a lit rim instead. |
-| `ActionButton` | reference CSS pill + `ultimate-3d-btn` | **the one push button**, named by *intent* rather than appearance: `tone:` (`.neutral` is the default; `.accent` / `.destructive` / `.sparkle` are opted into), `emphasis:` (`.primary` fills solid — one per page at most), `metrics:` (`.regular` / `.large`). Every labelled action in the app is this. `.neutral` (the default) draws the quiet machined plate — a light fill with a hairline — for a button that must not punch a dark hole in a card. `.sparkle` is the **dark plate** (`SparklePlate`): a near-black pill whose identity *is* its own surface, so it does not tint from the caller's hue — it was ported from a reference CSS button (`#1C1A1C`, hover gradient `#A47CF3 → #683FEA`, glow `#9917FF`, 450 ms ease-in-out, hence `Theme.Animation.sparkle`). |
+| `InstrumentToggleStyle` | `metanef` switch | the **one** switch: an engraved inset track with a lit bottom edge, and a plated handle that travels on the state change. Backs the settings rows and every provider-editor toggle (`.instrument` / `SettingsToggleRow`); native `.switch` remains only on the VPN overview controls, the fan detail sheet and the session-migration dialog, and `.checkbox` on the domain-log failure filter. The handle **does not stretch** toward its destination on hover — that is geometry moving because the pointer arrived, and the control already states its state; the hover is a lit rim instead. |
+| `ActionButton` | reference CSS pill + `ultimate-3d-btn` | **the one push button**, named by *intent* rather than appearance: `tone:` (`.neutral` is the default; `.accent` / `.destructive` / `.sparkle` are opted into), `emphasis:` (`.primary` fills solid — one per page at most), `metrics:` (`.regular` / `.large`). Every solid push button is this plate; inline text-only affordances (`Button` + `.buttonStyle(.plain)` / `.link`, e.g. the provider sheet's 关闭 or the proxy picker's 添加供应商) stay text and are not action plates. `.neutral` (the default) draws the quiet machined plate — a light fill with a hairline — for a button that must not punch a dark hole in a card. `.sparkle` is the **dark plate** (`SparklePlate`): a near-black pill whose identity *is* its own surface, so it does not tint from the caller's hue — it was ported from a reference CSS button (`#1C1A1C`, hover gradient `#A47CF3 → #683FEA`, glow `#9917FF`, 450 ms ease-in-out, hence `Theme.Animation.sparkle`). |
 | `ProviderActionStyle` | `ultimate-3d-btn` | a **historical spelling** of the same button, kept because those call sites pass it positionally. It forwards to `ActionPlateButtonStyle`, so a connector button, a provider card's button and a native `ActionButton` are the same plate and cannot drift. `adaptiveGlassButton()` and `InstrumentButtonStyle` are gone — see the note below the table. |
 | `ChipButton` | `mymiamo` glass menu | a compact *selectable* chip — a state you flip, not an action you fire. Radius 8 rather than a capsule, so a filter row does not read as a row of buttons. |
-| `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type and platform filters, the provider client switcher and category filter, the usage period tabs, the VPN group tabs, and the three settings pickers. |
+| `SegmentedCapsule` | `mymiamo` glass menu | the one filter / segmented control, with one sliding pill. Backs the connector type / platform / 连接器-飞书文档 filters, the provider client switcher and category filter, the usage period tabs, the traffic filters, the domain-log view picker and the three settings pickers. |
 | `headerControl()` | `metanef` switch track | **the page band's own control** — now literally `ActionPlateButtonStyle` at the band's proportions, in the quiet tone. Shared by 连接器 and 模型 so two bands read as the same object. |
-| `InstrumentMenuLabel` | `mymiamo` glass menu | the same well for a `Menu`'s own label (settings 打开方式, proxy upstream). It is a *label*: the native menu inside a machined tile is Aqua chrome, so this draws the well, the hover rim and the chevron and leaves the press state to the `Menu` that owns the button. |
+| `InstrumentMenuLabel` | `mymiamo` glass menu | the same well for a `Menu`'s own label (the settings compact category picker, 继续会话终端, 问候语, 问候语言 and 问候字体). It is a *label*: the native menu inside a machined tile is Aqua chrome, so this draws the well, the hover rim and the chevron and leaves the press state to the `Menu` that owns the button. |
 | `PerimeterSweep` | `ultimate-3d-btn::before` | a lit arc travelling a control's **own** perimeter, once, on hover only. Never a loop: a permanent rotating border is per-frame chrome and stops meaning anything. |
 | `GroundShadow` | `stat-widget` `.ground-shadow` | the soft ellipse that appears under a control with its hover lift, so the pair says "picked up". |
 | `TokenMixStrip` | `NK2552003` stat card | the usage page's stacked input / hit / write / output track (`Views/Shared/UsageViz.swift`), also used inside every model card. |
@@ -178,15 +183,18 @@ meter as **two stacked lanes**, and the split is the design:
   (CPU), per graphics sub-unit (GPU), per area (内存 / 硬盘). A bar's *height* is
   its own reading, so the shape of the row is the shape of the load.
 
-The two are separate lanes on purpose. The first attempt squeezed the reading
-*inside* the artwork and the two fought: bars crossed the GPU's port circles and
-the DIMM's chip windows. Giving the reading its own lane keeps the icon legible
-as an icon and the reading legible as a reading.
+The two are separate lanes on purpose. A bar's unit is:
+`ProcessSampler.cells.cores` for the CPU bars, `ProcessSampler.cells.gpuRenderers`
+for the GPU bars, `memoryActive` / `memoryWired` / `memoryCompressed` for the
+memory wells and the disk's used / free for the drive bay. The first attempt
+squeezed the reading *inside* the artwork and the two fought: bars crossed the
+GPU's port circles and the DIMM's chip windows. Giving the reading its own lane
+keeps the icon legible as an icon and the reading legible as a reading.
 
 | Tile | Bars |
 | --- | --- |
-| CPU | one per **logical core** (`HostStats.coreLoad`) — 12 cores is 12 countable bars |
-| GPU | one per **graphics sub-unit** (`HostStats.gpuRenderers`), each at its own 0…100 |
+| CPU | one per **logical core** (`ProcessSampler.cells.cores`) — 12 cores is 12 countable bars |
+| GPU | one per **graphics sub-unit** (`ProcessSampler.cells.gpuRenderers`), each at its own 0…100 |
 | 内存 | one per **page category** (`memoryActive` / `memoryWired` / `memoryCompressed`) |
 | 硬盘 | used / free |
 | 风扇 | the rotors, which say the same thing more literally |
@@ -206,21 +214,24 @@ The rules that keep this a *reading* rather than a decoration:
    inventing three. The sampler's first tick has no per-core baseline, so the lane
    shows the aggregate until the second one lands.
 3. **Two opaque, far-apart fills.** A busy unit is ink; an idle unit is a pale
-   stub that still keeps its slot, so twelve cores stay countable at rest. An
-   earlier version stacked two translucent tints over a gradient plate and the
-   reads came out 6/255 apart — a mark that measured nothing while looking like
-   one.
+   stub that still keeps its slot, so twelve cores stay countable at rest.
+   Translucent tints over a gradient plate are not acceptable: two such fills
+   are one reading, not two.
 4. **Colour carries state, the mark carries load.** `StatusPill`, temperature and
    pressure own the state readouts; nothing lights up because it is busy.
 
 ## Mark
 
-Dock: three thick jade rings on a white ice card (blue / violet / green) over
-a slim live bar. Menu-bar status item is a template **ring + bar**.
+Dock: an ice card with blue, violet and green rings and a slim live bar (see
+the app icon artwork). Menu-bar status item is a template **ring + bar**
+(`MenuBarMark`, drawn as `NSBezierPath` and marked `isTemplate` — it renders
+black for the menu bar rather than carrying the icon's mint fill).
 
 ## Anatomy
 
-1. **Switcher HUD** — session/proxy facts, then CC / Codex / VPN.
+1. **Switcher HUD** — row 1 is session / proxy / VPN facts; row 2 is the CC /
+   Codex / Cursor switcher chips. VPN rides the fact strip as a pill, not the
+   switcher row.
 2. **Machine KPIs** — one connected strip in the popup. Dashboard is a 2×3
    resource grid (CPU / GPU / memory, disk / links / dual fans). Each fan
    rotor toggles max vs auto and spins at its own RPM; every other meter carries
@@ -274,9 +285,9 @@ delay, a selection tally — rolls per digit with the island's own effect:
 
 ## Motion / performance
 
-- Popup sections lift in once on open — never stagger inner cells. (The
-  staggered `appearLift` pass is currently removed; the rule stands for
-  whatever re-introduces a section entrance.)
+- The popup opens without a staggered section entrance today; the rule for
+  whatever re-introduces one: a section entrance is one-shot per section, never
+  staggered per inner cell.
 - Traffic rates live on `VpnLiveRates` (4 Hz). Mosaic does not observe them.
 - YAML sanitize + `networksetup` run off the main actor.
 - Fan rotors are a Core Animation layer with one endless rotation retimed in
@@ -285,18 +296,21 @@ delay, a selection tally — rolls per digit with the island's own effect:
   `rotationEffect` on a SwiftUI view.
 - Connector controls animate only on press, selection, focus, or an explicit
   state change. Inventory tiles stay lazy and fixed-height. They carry a hover
-  shadow and a 1pt lift (`.tile()`), which is a hover *state* change, not a
+  shadow and a 2pt lift (`.tile()`), which is a hover *state* change, not a
   loop; reduce-motion removes both, and no tile animates while the grid scrolls
   under a stationary pointer.
 - The depth lens and the inner frame ring are geometry, not animation: one
   `Canvas` and one stroked `RoundedRectangle` per card, drawn once. Rings on an
   unscrolled card cost nothing per frame.
-- Two one-shot motions exist and both are gated on `surfaceIsVisible` **and**
-  reduce-motion: the status-button shine (`ShineSweep`, a single 0.55 s sweep
-  when hover begins) and the conveyor belt (`DecorativeMotion.kind == .conveyor`,
-  a Core Animation layer). Neither repeats a SwiftUI animation.
+- Two one-shot motions exist and both are gated on reduce-motion, and on
+  `surfaceIsVisible` where the control can sit off-screen: the status-button
+  shine (`ShineSweep`, a single 0.55 s sweep when hover begins) and the conveyor
+  belt (`ConveyorBelt` → `DecorativeMotion.kind == .conveyor`, a Core Animation
+  layer used by the connector scan strip). Neither repeats a SwiftUI animation.
 - The machine marks are `Canvas` geometry, redrawn only when the sampler
-  publishes a new reading (every 2 s, 1 s while a window is frontmost). The
+  publishes a new reading (every 2 s with a resource UI open, 1 s while a
+  session is live, 6 s in the background with attribution on, 12 s with no
+  consumer at all — `ProcessSampler.applyPeriod`). The
   sweep across their reading lanes is **not** a schedule: each busy bar carries
   one `ReadingSweep` `CAGradientLayer`, translated by the render server at a
   rate proportional to that bar's own figure, so the app runs no per-frame
@@ -311,14 +325,17 @@ delay, a selection tally — rolls per digit with the island's own effect:
   `LoadRing` that used to sit behind each meter is gone too: its five Core
   Animation layers were the strip's only per-frame cost, and what they bought —
   a spinner reading as "waiting" — was the wrong idea.
-- Overview fan instruments use native SF Symbols within a quiet
-  neutral ring. Core Animation retimes rotation in place as RPM changes;
-  below 80 RPM, off-screen, and Reduce Motion all stop the rotation.
+- Local fan tiles draw the bundled rotor crops inside a neutral ring housing
+  with a rim gauge (`LucideRotor` in `CompactFanPair`); the small badge and the
+  popup KPI marks use the SF Symbol `fanblades.fill`. Core
+  Animation retimes rotation in place as RPM changes; below 80 RPM, off-screen,
+  and Reduce Motion all stop the rotation.
   The fan buttons directly toggle max / auto; the rest of the tile opens details.
-  Detail-panel turbines use circular crops from the internal illustration.
-  Internals use a bundled detailed vector-style PNG illustration. It is a
-  conceptual overview, not an exact host-specific board map or a true SVG.
-  Both illustrated fans animate independently using the shared turbine crops.
+  The internals detail panel overlays the same rotating turbine crops on the
+  bundled illustration. That illustration is a conceptual overview in a
+  simplified vector-like style, not an exact host-specific board map or a true
+  SVG. Both illustrated fans animate independently using the shared turbine
+  crops.
 - The 3D card's tilt is a **hero** treatment, not part of `.tile()`.
   Connector inventory tiles use the ordinary surface and hover state; 3D tilt
   stays off scrolling grids of 200 cards.
@@ -335,7 +352,7 @@ bottom.
 
 - **Typography:** the greeting is drawn from CoreText glyph outlines by
   `GreetingScript`, in one of **53 selectable script faces** (`GreetingTypeface.allCases`;
-  设置 → 通用 → 天气与问候 → 问候字体). **49 are bundled** under the local
+  设置 → 外观与天气 → 天气与问候 → 问候字体). **49 are bundled** under the local
   face library (`FilePaths.greetingFontsDir`; SIL OFL 1.1 / Apache 2.0, each
   licence beside its file — see `ASSET-LICENSES.md`) and seeded into it by
   `AppPreferences.prepareGreetingFonts()`; **four are the Mac's own**
@@ -353,27 +370,29 @@ bottom.
   (`Xiajun Wang`). Long names may drop below the phrase; both clear the
   instruments. The clock, weather, models and usage keep system type and
   monospaced figures.
-- **Composition:** a 272 / 300pt sky band leaves room around the greeting. The
-  clock sits at the upper left with the auto / manual sky toggle under it; the
-  weather HUD sits at the upper right. The sun path or, in manual mode, the sky
-  console sits at the lower left. The outer window has continuous 36pt corners
-  and the sky is its own `MTKView`, full-bleed inside them. The single
-  24pt-corner dock contains two zones — model / quota readings and today's
-  usage — and `ViewThatFits` keeps them in a row when its 640pt minimum fits.
-  Thin rules separate zones inside the shared surface.
+- **Composition:** a sky band of `min(430, max(380, width × 0.38))` over a 56pt
+  sill. The clock sits at the upper left with the auto / manual sky toggle under
+  it; the weather HUD sits at the upper right. The sun path or, in manual mode,
+  the sky console sits at the lower left. The outer window has continuous 32pt
+  corners and the sky is its own `MTKView`, full-bleed inside them. The card
+  treats itself as narrow below 700pt: provider detail lines drop, the model
+  chips truncate sooner and the manual console takes the forecast's place. The
+  single full-width sill has no corner of its own; model / quota readings and
+  today's usage share one surface, separated by a thin rule. Values here are the
+  acceptance targets; the measured spec and its current build values are in
+  [Greeting atmosphere](docs/design/greeting-atmosphere.md).
 - **Color and material:** `SkyScene` derives the palette and shader parameters
   from **solar altitude (not clock time) × weather**, so the same eight periods
   hold at any latitude and season, and `SkyScene.mix` cross-fades the
   continuous quantities (palette, cloud cover, precipitation, fog, starlight)
-  over 1.2 s when the weather changes. Ink over the sky does not follow the app
+  over `AtmosphereRenderer.weatherFade` = 1.2 s when the weather changes. Ink over the sky does not follow the app
   theme: legibility comes from the shader's own masks and the glyph's drop
   shadow. `SillGlass` uses native tinted glass on macOS 26 (`glassEffect`) and an
-  `ultraThinMaterial` stack, tint and hairline on macOS 15. Reduce Transparency
-  replaces both dock and weather HUD material with an opaque light or dark
-  fill.
-- **Readings and actions:** model rows open model management. The dock's Cursor
-  and Codex chips and the popup's switcher chips read an allowance the **same
-  way** — `SillGauge`, **remaining** per cent, the arc growing with what is
+  `ultraThinMaterial` stack, tint and hairline on macOS 15; Reduce Transparency
+  replaces the sill with an opaque dark fill.
+- **Readings and actions:** model rows open model management. The sill's
+  `SillGauge` and the popup's `QuotaSwayGauge` read an allowance the **same
+  way** — **remaining** per cent, the arc growing with what is
   left, amber at ≤ 25 % and red at ≤ 10 % — because two readings of one
   allowance are read as two different numbers. Cursor's are Cursor's **own two
   pool names** — Cursor Models (`autoPercentUsed`) and Other Models
@@ -417,8 +436,9 @@ bottom.
   while the runtime compiler ships with the OS. The `MTKView` keeps its own
   pointer tracking area, so parallax and wiping drops never invalidate the
   SwiftUI graph. The frame rate follows the hand, not the weather: the pen, a
-  weather fade, parallax while the pointer is actually moving and a drag through
-  the day run at the display's rate; a card at rest presents at 30 Hz (15 Hz when
+  weather fade and a drag through the day run at the display's rate; parallax
+  while the pointer is moving runs at up to 60 Hz; a card at rest presents at
+  30 Hz (15 Hz when
   calm) because the cloud deck has its own slower clock and rain and snow are a
   baked plates. Rain uses tapered bright heads, rectangular atlas dimensions
   and independent lane velocities at three depths; thunder adds density, speed
@@ -443,8 +463,8 @@ policy, is [Greeting atmosphere](docs/design/greeting-atmosphere.md).
 
 The app watches **three client families** — Claude Code, Codex and Cursor — and
 names them in a dozen places: the popup's source tallies, the island's agent
-badges, the dashboard tiles' pills, the session section headers, the settings
-connectivity row, the connector platform filter, and the widget's header. Each
+badges, the dashboard tiles' pills, the session section headers, the session
+migration dialog, the connector platform filter, and the widget's header. Each
 of those used to answer "which client?" with whatever was nearest: an SF Symbol
 (`command`, `terminal`, `cursorarrow.rays`), a two-letter string, or the real
 artwork — so one product had three faces and `cursorarrow.rays` said "a pointer",
@@ -488,11 +508,11 @@ The greeting is a **sentence**, and two of its words are decided rather than
 printed.
 
 **The salutation is chosen, not stamped.** `GreetingPhrase` picks from a festival
-table, then one of six parts of a day (late / dawn / morning / noon / afternoon /
-evening / night, with the 22:00 line between 晚 and 深夜 the one that had to
-move — 23:28 is not an evening). It is **not randomised**: a greeting that
-changes on every re-render is a slot machine, and the card re-renders on every
-pointer move. A stable phrase per (time, date) is what lets the entrance
+table, then one of seven parts of a day (late / dawn / morning / noon / afternoon /
+evening / night, with the 22:00 line between 晚 and 深夜 — 23:28 is not an
+evening). It is **not randomised**: a phrase that changed on every re-render
+would be a fresh draw each time the pointer moved, and the card re-renders on
+every pointer move. A stable phrase per (time, date) is what lets the entrance
 animation be *the* event.
 
 The name is the **person**, taken from the machine's name and then written the
@@ -565,7 +585,8 @@ are not described here. Ground truth and research sources live in
 Settings is an Operate surface with six purpose-based categories: 通用、外观与天气、
 灵动岛、用量与计费、权限与隐私、本地代理. A 200pt sidebar anchors containers at least
 860pt wide; narrower containers use one category menu. The main window currently
-has a 900pt minimum width, so compact layout is verified in the isolated preview.
+has a 900pt minimum width, so the compact menu is below what the live window can
+reach and is not currently covered by an automated preview.
 A 32pt rounded category title and a single
 line icon establish hierarchy above an independent, at-most-900pt scrolling column.
 `SettingsGroup` integrates its icon/header into one neutral 18pt panel. Rows align
@@ -584,9 +605,9 @@ disclosure state survive page navigation and palette changes within that window'
 lifetime. City text commits on submit, blur or leaving its category; credentials
 and ports require Save / Apply or submit, so navigation preserves unsaved drafts.
 
-Native previews cover all six categories at 1180pt and 700pt in light and dark,
-including an unsaved credential after navigation and rejection of port 99999 while
-retaining 15721. The production `Sources/build.sh` build succeeds with installation
-skipped; installation, actual system authorization and proxy rebinding remain
-outside that check. Independent model-pricing regression has seven existing
-price-logic / fixture failures; the Settings UI changes do not modify that logic.
+Native previews (`Tools/render-mainwindow-preview.py`) render five pages from
+the current production source — overview, 会话, 用量, VPN and 流量 — and do not
+include the settings page. Settings verification therefore rests on the
+registered regression suites (`make test`) and manual runs of the dev build;
+installation, actual system authorization and proxy rebinding remain outside
+those checks.

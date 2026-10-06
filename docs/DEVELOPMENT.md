@@ -43,7 +43,7 @@ Widget ID / App Group 为各自 bundle ID 加 `.widget`。偏好由各自 `UserD
 
 正式版可以始终运行。开发版的启动、退出、VPN 开关及异常清理都不启动／回收 VPN 内核，不修改或清除系统代理、DNS、TUN，不安装／调用正式版特权辅助工具，不写 SMC，不注册登录项，不修改外部连接器，不调用真实 Codex app-server。开发版也不请求任何会弹窗的系统权限（定位、蓝牙、屏幕录制、其他 App 数据）：TCC 授权是持久的，而且 ad-hoc 签名或身份变化会让重编后的应用在系统眼里变成新 App，于是反复弹窗——这也是本地重建一直被反复要求授权的原因。界面测试与状态机逻辑通过单元夹具验证；需要真实 VPN／硬件端到端验证时使用独立机器或明确允许接管的正式版流程。
 
-开发版 Claude 会话列表读取自身 Application Support 目录（`ClaudeBar Dev/.claude`）下的记录，不导入或覆盖真实用户配置。Codex 扫描读 `CODEX_HOME`（未设置时是真实 `~/.codex/sessions`），只读客户端自己写的 rollout；配置写入仍在开发版自己的目录。Cursor 保持对真实 `~/.cursor` 与 Cursor 状态库的只读查询。LLM 本地代理可使用隔离供应商和独立端口验证，不要手动改成正式版占用的端口。
+开发版 Claude 会话列表读取自身 Application Support 目录（`ClaudeBar Dev/.claude`）下的记录，不导入或覆盖真实用户配置。Codex 与 Cursor 的读路径同样按版本隔离：开发版在自身 Application Support 下读 `.codex` 与 `.cursor`（目录与 `cursor-state.vscdb` 都不存在，扫描为空而不是读到真实数据）；正式版才读 `CODEX_HOME`（未设置时 `~/.codex/sessions`，只读客户端自己写的 rollout）与真实 `~/.cursor` 及其状态库。配置写入始终在各自版本的目录。LLM 本地代理可使用隔离供应商和独立端口验证，不要手动改成正式版占用的端口。
 
 ## 编译和运行速度
 
@@ -51,7 +51,7 @@ Widget ID / App Group 为各自 bundle ID 加 `.widget`。偏好由各自 `UserD
 
 输入未变化时，构建校验源码／资源／工具链／编译参数／签名身份的指纹及现有包签名，直接复用产物，跳过编译、资源复制和签名。指纹覆盖 `Sources/` 下的全部文件、`VERSION` 与构建脚本自身，但 `Tools/` 只有 `build-cache.py` 和 `check-bundle.py` 计入——预览与渲染脚本不改变包内容，不值得让一次编辑换来重新链接和签名。缓存只在验证成功后写入；包被破坏或验证失败会重新构建。无变更的 `make run` 因此只需要快速检查和启动。正式版仍使用 `-O -whole-module-optimization`，不影响发布性能。
 
-本机验证：无变更构建约 0.6 秒；修改一个函数后只重编译约 218 个对象中的 1 个，整包约 6.7 秒；单组端点测试约 0.7 秒，快速回归约 10 秒。耗时随机器、改动依赖和工具链而变化。对象数量取当前 `.build/dev/objects/app/output-file-map.json` 的条目数，随源码文件增加而增长。
+本机验证：无变更构建约 0.6 秒；修改一个函数后只重编译约 234 个对象中的 1 个，整包约 6.7 秒；单组端点测试约 0.7 秒，快速回归约 10 秒。耗时随机器、改动依赖和工具链而变化。对象数量取当前 `.build/dev/objects/app/output-file-map.json` 的条目数，随源码文件增加而增长。
 
 首次编译需要生成完整对象缓存，耗时不能代表后续增量编译。开发版带优化，调试时部分局部变量可能被优化掉；性能数据与正式版也不应视为完全一致。要排查编译缓存可执行 `CLAUDEBAR_FORCE_REBUILD=1 make build`（强制重建包；Swift 仍可复用有效对象）。只有确认没有对应构建进程后才能删除 `.build/dev/objects` 来做冷编译。
 

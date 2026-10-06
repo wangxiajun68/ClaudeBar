@@ -1,19 +1,29 @@
 # Weather observatory
 
-> **Superseded.** This is the record of the Canvas-era greeting band. The card
-> has since been rebuilt around a Metal atmosphere, and `SkyVeil` / `SkyGrain`
-> and the `WeatherBackdrop` sky itself are gone — `WeatherBackdrop.swift` now
-> holds only `WeatherBackdrop` and its `SkyPalette` — the Canvas sky the card
-> falls back to when the Metal atmosphere is unavailable — plus the palette
-> table the Metal path's colours were authored from. The current specification is
-> [Greeting atmosphere](greeting-atmosphere.md); the parts below that still hold
-> (Open-Meteo and wttr.in, `SkyAstronomy`, the inline forecast strip) are
-> described there too. Kept because it carries the earlier rounds' verification
-> background.
+> **Superseded.** This is the record of the Canvas-era greeting band and its
+> popover-era inline forecast. The card has since been rebuilt around a Metal
+> atmosphere; the current specification is
+> [Greeting atmosphere](greeting-atmosphere.md). `SkyVeil` / `SkyGrain` and the
+> popover-era `WeatherExplorer` / `SolarHorizon` / `ForecastStrip` views are
+> deleted; the trend strip became `ForecastRibbon` in `GreetingInstruments.swift`.
+> `WeatherBackdrop.swift` survives as the Canvas sky `FallbackSky` mounts while
+> the Metal pipeline is unready or unavailable; it holds `WeatherBackdrop`, its
+> `SkyPalette` and a private cloud texture. The Metal palette is not this one —
+> it lives in `SkyScene`. What still matches the code — the provider chain and
+> `SkyAstronomy`'s contract — also appears in the
+> [file index](../technical/09-file-index.md),
+> [weather and atmosphere](../technical/18-weather-and-atmosphere.md) and the
+> [FAQ](../FAQ.md); the Canvas frame intervals are restated in the
+> [rendering review](../reviews/rendering-audit.md), and the `WeatherStore`
+> cadence is stated here (the technical documents only say it reuses the
+> existing refresh cycle). Later Metal-era measurements are in
+> [weather-card measurements](../reviews/weather-card-measurements-2026-09-30.md).
+> The layout, forecast and motion paragraphs below describe the earlier band,
+> not the current card.
 
-Scope: the native SwiftUI greeting band and its inline forecast zone in
-`Sources/ClaudeBar`. This extends the existing visual language locally. It
-introduces no web view, JavaScript runtime or custom font dependency.
+Scope: the Canvas-era SwiftUI greeting band and its inline forecast zone in
+`Sources/ClaudeBar`. It introduced no web view, JavaScript runtime or custom
+font dependency.
 
 ## Layout and interaction
 
@@ -29,10 +39,10 @@ draws the available dates from a six-date request (today and day +1 through day
 +5) as slim columns — weekday, glyph, low/high — under the current temperature.
 It replaced the dock's full-width rail and the 620pt `WeatherDetails` popover it
 opened; the reading (a six-day trend) is unchanged, but it no longer needs a
-third of the card to say it. Each glyph runs a one-shot `symbolEffect`
-(`.variableColor`) gated on visibility and Reduce Motion — there is no timer and
-no `TimelineView` here, so an idle card animates nothing. A day with no forecast
-draws no strip at all; the HUD's own "no weather" line already says why.
+third of the card to say it. Each glyph ran a repeating `symbolEffect`
+(`.variableColor.iterative.reversing`) gated on visibility and Reduce Motion —
+there was no timer and no `TimelineView` in the strip. A day with no forecast
+drew no strip at all; the HUD's own "no weather" line already said why.
 
 ## Architecture and data
 
@@ -62,17 +72,18 @@ remains the source for overseas cities (the domestic pair covers mainland China
 only) and the last fallback. Named cities use its geocoding API; valid
 latitude/longitude pairs bypass that lookup. The request uses `forecast_days=6`,
 `timezone=auto` and Unix timestamps. Dates and sunrise/sunset labels are
-interpreted in the returned location's timezone. The detail footer links to the
-active provider.
+interpreted in the returned location's timezone. (The detail footer that linked
+to the active provider belonged to the popover and is gone with it.)
 
 If every provider fails, the existing wttr.in fetch supplies current conditions
 and a forecast-unavailable note. Incomplete daily arrays retain valid dates
 and report partial availability; missing optional forecast metrics show a dash.
 The UI does not fabricate five extra days — a shorter forecast just draws fewer
-columns, and the horizon label counts what is there. `WeatherStore` shares one
-reading, uses a 15-minute freshness interval and a single in-flight request, and
-retains the last good reading after a failed refresh. Location use follows the
-existing permission gate; a configured city remains the fallback.
+columns, and today's `ForecastRibbon` names "未来 N 天预报" with the count it
+actually has. `WeatherStore` shares one reading, uses a 15-minute freshness
+interval and a single in-flight request, and retains the last good reading after
+a failed refresh. Location use follows the existing permission gate; a
+configured city remains the fallback.
 
 ## Astronomy and atmosphere
 
@@ -102,41 +113,52 @@ decorative; celestial placement comes from the astronomy snapshot.
 
 The Canvas-era weather timeline requested minimum intervals of 1/12 second for
 clear skies, 1/16 for cloud/fog and 1/30 for precipitation, and paused when
-`surfaceIsVisible` was false or Reduce Motion was enabled. **That timeline is
-gone**: the sky is now an `MTKView` with its own frame-rate policy (see
-[Greeting atmosphere](greeting-atmosphere.md) §5.7), and `WeatherBackdrop`'s
-canvas is mounted only when no GPU is available. Reduce Motion draws a
-fixed atmospheric phase and suppresses pointer scaling and arrival movement.
-The minute astronomy task exits when the surface becomes hidden. These are
-implementation limits, not measured CPU/GPU or frame-rate guarantees.
+`surfaceIsVisible` was false or Reduce Motion was enabled. That schedule now
+applies only to the Canvas fallback; the steady card is an `MTKView` with its
+own frame-rate policy (see [Greeting atmosphere](greeting-atmosphere.md) §5.7).
+The card chooses between the Metal surface and `FallbackSky` on
+`AtmosphereGPU.shared != nil`, so the Canvas sky is what runs before the
+pipeline finishes building on a background queue, and on a Mac where Metal is
+unavailable. In that Canvas sky Reduce Motion draws a fixed atmospheric phase;
+the Metal surface substitutes a cached still. The minute astronomy task exits
+when the surface becomes hidden. These are implementation limits, not measured
+CPU/GPU or frame-rate guarantees.
 
-Background drawing is hidden from accessibility and ignores hit testing.
-Native date buttons retain text labels, tooltips and selected-state traits;
-metrics carry their units in text. Decorative graphs do not replace values.
+Background drawing is hidden from accessibility and ignores hit testing. The
+Canvas-era date buttons retained text labels, tooltips and selected-state
+traits; today's forecast lives in `ForecastRibbon`, which is one adjustable
+accessibility element rather than a button per day. Metrics carry their units
+in text. Decorative graphs do not replace values.
 
 ## Verification
 
-From the repository root on macOS:
+These are the commands that existed when this record was written; they are not a
+current gate. From the repository root on macOS:
 
 ```sh
 python3 Tests/weather-astronomy-regressions.py
-python3 Tests/greeting-data-regressions.py
 python3 Tests/inflight-animation-regressions.py
 python3 Tools/render-greeting-preview.py
-bash Sources/build.sh
 ```
 
-The astronomy regression compiles production parsing/calculation code and uses
-synthetic fixtures for equinox, east/west placement, polar day/night, moon
-phase, sidereal stars, day +5, timezone handling and partial/null data. The
-preview renderer uses production view code with synthetic readings; it also
-regenerates `Tools/greeting-preview-support.swift`. It does not establish live
-service availability or replace pointer, keyboard and visibility checks in
-the running app.
+`Tests/weather-astronomy-regressions.py` is registered as `make test
+TEST=weather-astronomy`; `Tests/greeting-data-regressions.py`, also listed here
+originally, now covers Codex credit parsing and is no longer a weather check.
+(`bash Sources/build.sh` builds the dev app and does not install it by default;
+`make build` wraps that.) The astronomy regression compiles production
+parsing/calculation code and uses synthetic fixtures for equinox, east/west
+placement, polar day/night, moon phase, sidereal stars, day +5, timezone
+handling and partial/null data. The preview renderer uses production view code
+with synthetic readings; it also regenerates `Tools/greeting-preview-support.swift`.
+It does not establish live service availability or replace pointer, keyboard and
+visibility checks in the running app.
 
-Visual fixtures in `.build/greeting-preview/` (all names carry the render mode:
-`auto-` for the automatic sky, `manual-` / `pinned-` / `bare-` for the others;
-`face-*` variants drop it):
+Visual fixtures in `.build/greeting-preview/`. Names carry the render mode — and,
+apart from the `face-*` and `ribbon-*` passes, a scene suffix; the scene list is
+`sun`, `rain`, `heavy`, `thunder`, `night`, `cloud`, `snow`, `fog`, `empty`, and
+the modes are `auto` / `manual` / `bare`. The Canvas-era captures were renamed
+away by that scheme; the three files below are what the current renderer
+produces:
 
 - `auto-light-1100-cloud.png`: wide band with compact rail.
 - `auto-dark-620-rain.png`: narrow stacked band.
@@ -146,12 +168,13 @@ Visual fixtures in `.build/greeting-preview/` (all names carry the render mode:
 
 - [Componentry Magnetic Dock](https://componentry.dev/docs/components/magnetic-dock):
   reference for pointer-revealed controls and active indicators, translated into
-  native SwiftUI readings and buttons.
+  native SwiftUI readings and buttons. The current card does not use it either.
 - [Componentry Scroll Choreography](https://componentry.dev/docs/components/scroll-choreography):
   reference for coordinated motion. The implemented band uses brief grouped
   arrivals; it does not implement the reference's scroll-driven image stack.
 - [Uiverse](https://uiverse.io): reference collection for tactile hover and
   press treatments, consistent with the app's existing control language.
 
-These are interaction references. Runtime behavior and exact values are owned
-by the Swift source above.
+These are interaction references from the popover era; the current control
+language lives in [DESIGN.md](../../DESIGN.md). Runtime behavior and exact
+values are owned by the Swift source.

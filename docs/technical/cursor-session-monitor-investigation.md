@@ -30,7 +30,7 @@
 
 ## 验证
 
-`python3 Tests/cursor-turn-regressions.py` 通过 Swift 解释器直接运行完整生产 `CursorSessionMonitor`、`CursorDB` 和路径逻辑。只将 home 目录重定向到临时文件夹，SQLite 与 JSONL 都是合成数据，不修改用户数据库。
+`python3 Tests/cursor-turn-regressions.py` 通过 Swift 解释器直接运行完整生产 `CursorSessionMonitor`、`CursorDB` 和路径逻辑。把 home 与 Application Support 两个根目录都重定向到临时文件夹（否则 dev 版路径会把夹具写进真实的 `~/Library/Application Support/ClaudeBar Dev`），SQLite 与 JSONL 都是合成数据，不修改用户数据库。
 
 32 项检查全部通过，覆盖：checkpoint 更新但 JSONL 滞后或缺失、首 token 等待、8 分钟静默工具、过期中断、成功与错误终止、旧答案与新提交、归档、80 条以外的运行会话、超过 14 个并发会话、3 天以前提交但 checkpoint 仍活跃的任务，以及子 Agent 路径、根父级、checkpoint 与过期行为。
 
@@ -38,6 +38,6 @@
 
 ## 剩余边界与待验证项
 
-- 已确认下游 `ProviderStore → IslandLiveModel → NotchIslandView` 根据发布的 `status/toolPending` 显示状态；列表本身可滚动，不会再截断为前几个会话。
+- 已确认下游 `ProviderStore → IslandLiveModel → NotchIslandView` 根据发布的 `isBusy` / `isWaiting`（由 `status`、`hasPendingDecision` 与子 Agent 运行状态派生）显示状态；列表本身可滚动，运行中的会话不受 14 个展示上限截断。
 - 现有轮询间隔：界面可见时忙碌 2.5 秒、闲置 5 秒；界面隐藏或灵动岛收起时 8 秒。因此状态变化仍有轮询延迟。
 - 为避免崩溃或中断会话永久显示运行，保留 10 分钟写入过期边界。真实任务若 SQLite 和 JSONL 都停止写入超过该窗口，仍可能被判闲置；单靠当前持久化信号无法可靠区分这种情况与已中断任务。

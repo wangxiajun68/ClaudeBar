@@ -14,7 +14,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | 激活策略 | `.regular`（Dock 图标 + 主窗口），同时保留菜单栏 status item 与非激活 popup |
 | 数据边界 | 读取本机 `~/.claude`、`~/.codex`、`~/.cursor`；VPN 工作目录在 Application Support；不向用户未配置的上游发送 LLM 流量 |
 
-## 三大能力
+## 主要能力
 
 ### 1. 配置切换
 
@@ -23,9 +23,9 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | 运行时 | 写入目标 |
 |--------|----------|
 | Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/config.toml` + `~/.claude/claude-bar-codex-providers.json` |
+| Codex | `~/.codex/config.toml`，供应商列表另存 `~/.claude/claude-bar-codex-providers.json` |
 
-两侧**供应商列表和激活状态独立**（不同 JSON）。切换 Claude Code 只写 `settings.json`，切换 Codex 只写 `config.toml`；需要整份拷贝时到管理页手动「导入」。popup 提供快速切换入口。
+两侧**供应商列表和激活状态独立**（不同 JSON）。切换 Claude Code 只写 `settings.json`；切换 Codex 只写 Codex 侧文件（`~/.codex/config.toml`，并按登录保留策略维护 `~/.codex/auth.json`、写模型目录 `~/.codex/claude-bar-model-catalog.json`），不动 `settings.json`。需要整份拷贝时到管理页手动「导入」。popup 提供快速切换入口。
 
 ### 2. 会话监控
 
@@ -37,7 +37,7 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 | Cursor | Composer 会话（SQLite）、上下文与活动状态 |
 | Codex | 进程与工作目录、busy / idle 心跳 |
 
-主窗口「会话」页与菜单栏 popup 均以宫格瓦片呈现；会话**这一轮真的交付了答案**时可触发 macOS 系统通知（默认关闭，见设置 → 权限与隐私）。判定不是「忙转闲」——轮次键、文件新鲜度与忙态三条同见 [技术 §03](../technical/03-provider-store.md)。
+主窗口「会话」页以宫格瓦片呈现；菜单栏 popup 为单列卡片列表。会话**这一轮真的交付了答案**时可触发 macOS 系统通知（默认关闭，见设置 → 权限与隐私）。判定不是「忙转闲」——轮次键、文件新鲜度与忙态三条同见 [技术 §03](../technical/03-provider-store.md)。
 
 ### 3. 用量统计
 
@@ -45,19 +45,20 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 
 ### 4. 连接器
 
-主窗口「连接器」页只读扫描 Claude Code / Codex / Cursor 三家客户端的本机 Skills、MCP 服务器与插件，展示各自启停方式与 MCP 工具清单；不启动任何服务、不写配置。见 [技术文档 §16](../technical/16-connectors.md)。
+主窗口「连接器」页扫描 Claude Code / Codex / Cursor 三家客户端的本机 Skills、MCP 服务器与插件，展示各自启停方式与 MCP 工具清单；只有用户显式启停时才会写配置（Skill 可逆移库、Codex 表内一行 `enabled`、Claude / Cursor 官方 CLI），打开详情时按 MCP 生命周期连接本机 stdio / Streamable HTTP 服务读取 `tools/list`，不发送 `tools/call`。见 [技术文档 §16](../technical/16-connectors.md)。
 
 ### 5. 电池充电控制（可选，仅内置电池机型）
 
-概览的能源卡支持 20–100% 充电上限（默认 80%）、充电至上限、暂停充电、接电放电至上限与恢复系统管理。首次点击控制按钮时安装随包签名的特权辅助进程；退出应用恢复系统管理。实现与限制见 [技术文档 §12](../technical/12-battery-control.md)。
+概览的能源卡（`PowerFlowCard`，仅内置电池机型）支持 20–100% 充电上限（默认 80%）、启动管理、充电、放电与还原系统。首次点击控制按钮时安装随包签名的特权辅助进程；退出应用恢复系统管理。实现与限制见 [技术文档 §12](../technical/12-battery-control.md)。
 
 ## 本机代理（可选）
 
-用户可在设置中显式开启 **Codex 本机协议代理**（默认 `127.0.0.1` 可配置端口）：
+用户可在设置 → 本地代理中显式开启「启用本地代理」（`AppPreferences.codexRoutingEnabled`，默认关；默认端口 release `15721` / dev `15722`）：
 
 - Codex 始终以 Responses 协议对话；代理在上游为 Chat 或 Responses 时自动桥接、改写工具调用与流式事件。
 - 其他 OpenAI 兼容客户端也可将 Base URL 指向该地址。
 - 「流量」页提供请求捕获、改写对比与代理访问日志；完整抓包需在供应商上启用流量记录。
+- 全局开关关闭时，Codex 请求仍可因两条本地条件改经代理：该供应商开着流量记录，或该供应商的 wire API 是 chat（Codex 客户端始终写 `wire_api = "responses"`，Chat 桥接只发生在上游一侧）。其余情况写供应商原始 `base_url` 直连。
 
 > ClaudeBar 不做模型推理。代理仅转发至用户已配置的上游，不把流量发到未授权的第三方。
 
@@ -69,14 +70,14 @@ ClaudeBar 是一款 macOS 菜单栏应用，面向同时使用 **Claude Code**�
 
 | 表面 | 职责 |
 |------|------|
-| 主窗口 | 旗舰交互面：顶栏 tabs + 9 个页面（概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置 / 帮助），⌘K 命令面板 |
-| 菜单栏 popup | 460pt 非激活面板（自绘圆角实填，非毛玻璃）；页头三个客户端 chip（CC / Codex / Cursor）+ VPN 药丸 + 资源条；快速查看配置、会话与用量 |
+| 主窗口 | 旗舰交互面：顶栏 8 个 tab + 尾随帮助入口，共 9 个页面（概览 / 会话 / 模型 / 连接器 / 用量 / 流量 / VPN / 设置 / 帮助），⌘K 命令面板 |
+| 菜单栏 popup | 460pt 非激活面板（自绘圆角实填，非毛玻璃）；面板含状态行（会话数、本地代理、VPN 药丸）+ 三个客户端 chip（CC / Codex / Cursor）+ 机器 KPI 条；快速查看配置、会话与用量 |
 | 刘海灵动岛 | 有刘海的屏幕顶边常驻：收起态显示运行中的 Agent 与今日 token，会话完成时弹出提醒，鼠标碰上展开成会话列表 + 用量卡。见 [§10](10-notch-island.md) |
 | Widget | 沙盒扩展，读取 App Group 快照渲染用量概览 |
 
 ## 权限与隐私
 
-会触发系统授权弹窗的能力（桌面小组件、空闲通知、区域截图、自动化、蓝牙、Wi-Fi 名称、当前位置、Cursor 会话）**默认全部关闭**，在设置 → 「权限与隐私」逐项开启；关闭时不发起系统请求，对应代码路径完全不执行。清单与实现见 [§10 权限与隐私](10-notch-island.md#5-权限与隐私设置--权限与隐私)。
+会触发系统授权弹窗的能力（桌面小组件、空闲通知、区域截图、在终端继续会话、蓝牙、Wi-Fi 名称、当前位置）**默认全部关闭**，在设置 → 「权限与隐私」逐项开启；关闭时不发起系统请求，对应代码路径完全不执行。读取 Cursor 会话不会弹窗，默认开启。清单与实现见 [§10 权限与隐私](10-notch-island.md#5-权限与隐私设置--权限与隐私)。
 
 ## 目标用户
 

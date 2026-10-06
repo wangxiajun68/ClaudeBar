@@ -8,7 +8,7 @@ macos (native SwiftUI menu-bar app + main window). Not web.
 
 ## Stack
 
-Existing: SwiftUI / AppKit, `swiftc` + `Sources/build.sh`. Visual redesign stays native. WKWebView / TS / JS not used.
+Existing: SwiftUI / AppKit, `swiftc` + `Sources/build.sh`. Visual redesign stays native; no TS / JS surfaces. The single WKWebView in the app is the Feishu official-document reader (`FeishuOfficialDocumentView`); every other surface is SwiftUI / AppKit.
 
 ## Users
 

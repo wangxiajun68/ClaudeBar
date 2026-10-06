@@ -620,8 +620,8 @@ every case — so all five readers of `.missingCore` were unreachable, and with
 them the one actionable affordance for that failure: `VPNView.coreMissingHint`,
 which prints the path to drop the binary at and offers an 打开目录 button. The
 user saw only the generic error line. `fail` now maps `.coreMissing` to
-`.missingCore`, which is what `docs/design/08-error-handling.md:16` specified in
-the first place.
+`.missingCore`, which is what the "mihomo binary missing" row of
+`docs/design/08-error-handling.md` specified in the first place.
 
 ## 15. `TokenComparison` — the last implicit animation on a per-poll value
 

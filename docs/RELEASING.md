@@ -6,13 +6,13 @@
 
 | 角色 | 路径 |
 |------|------|
-| **终端用户** | [GitHub Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 **DMG**，拖入 Applications |
-| **维护者 / CI** | `Sources/build.sh` 编译并产出 `.build/dist/` 下的 DMG、zip、校验和 |
-| **贡献者** | `make build` 仅生成隔离开发版；`make install-dev` 显式安装开发版 |
+| 终端用户 | [GitHub Releases](https://github.com/wangxiajun68/ClaudeBar/releases) 下载 DMG，拖入 Applications |
+| 维护者 / CI | `Sources/build.sh` 编译并产出 `.build/dist/` 下的 DMG、zip、校验和 |
+| 贡献者 | `make build` 仅生成隔离开发版；`make install-dev` 显式安装开发版 |
 
-`Sources/build.sh` 是**开发者与 CI 脚本**，不是面向用户的安装器。用户不应需要 clone 仓库或运行 shell 脚本来安装应用。
+`Sources/build.sh` 是开发者与 CI 脚本，不是面向用户的安装器。用户不应需要 clone 仓库或运行 shell 脚本来安装应用。
 
-Release 说明由 [`Sources/ci/extract-changelog.py`](../Sources/ci/extract-changelog.py) 从 CHANGELOG 里切出对应版本段拼成。它是独立文件而非内联 heredoc——`<<'PY'` 的正文必须顶到列 0 才能不被缩进，那会提前终止 `run:` 块标量、让整个 workflow 解析失败。
+GitHub Release 说明由 workflow 内的安装说明、[`Sources/ci/extract-changelog.py`](../Sources/ci/extract-changelog.py) 切出的 CHANGELOG 版本段和完整更新日志链接拼成。切分脚本是独立文件而非内联 heredoc——`<<'PY'` 的正文必须顶到列 0 才能不被缩进，那会提前终止 `run:` 块标量、让整个 workflow 解析失败。
 
 ## 发行物
 
@@ -20,21 +20,21 @@ Release 说明由 [`Sources/ci/extract-changelog.py`](../Sources/ci/extract-chan
 
 | 文件 | 用途 |
 |------|------|
-| `ClaudeBar-<version>-macOS-arm64.dmg` | **主分发格式**（含 Applications 快捷方式） |
-| `ClaudeBar-<version>-macOS-arm64.zip` | 脚本/自动化备用 |
+| `ClaudeBar-<version>-macOS-arm64.dmg` | 主分发格式（含 Applications 快捷方式） |
+| `ClaudeBar-<version>-macOS-arm64.zip` | 脚本 / 自动化备用 |
 | `*.sha256` | 校验和 |
 
-均为 **ad-hoc 签名**，目标 macOS 15+ Apple Silicon。无 Developer ID、无公证、无 Intel 包。
+目标 macOS 15+ Apple Silicon，无 Intel 包。签名身份按构建环境而定：CI 与显式 `CODESIGN_IDENTITY=-` 为 ad-hoc，本机默认用 `Sources/ensure-dev-cert.sh` 生成并信任的 `ClaudeBar Dev` 自签证书。当前未配置 Developer ID，也不做公证。
 
 ## 版本号
 
 规则见 [VERSIONING.md](VERSIONING.md)。单一来源：仓库根目录 [`VERSION`](../VERSION)，格式 `MAJOR.MINOR.PATCH`。
 
-`Sources/build.sh` 写入主 app 与 Widget appex 的 `CFBundleShortVersionString` / `CFBundleVersion`。
+`Sources/build.sh` 写入主 app 与 Widget appex 的 `CFBundleShortVersionString` / `CFBundleVersion`，构建结束由 `Tools/check-bundle.py` 比对两者是否等于 `VERSION`。
 
-Git tag 必须是 `v` + 该文件内容（如 `1.8.0` → `v1.8.0`）。Release workflow 会校验不一致则失败。
+Git tag 必须是 `v` + 该文件内容（如 `1.15.0` → `v1.15.0`）。Release workflow 会在 tag 触发时校验，不一致直接失败；`workflow_dispatch` 手动触发不走该校验。
 
-发版前把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成对应版本段。GitHub Release 说明会自动截取该段。
+发版前把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成对应版本段。GitHub Release 说明由 `Sources/ci/extract-changelog.py` 截取该段。
 
 ## 本地验证打包
 
@@ -48,7 +48,7 @@ open .build/dist/ClaudeBar-$(tr -d '[:space:]' < VERSION)-macOS-arm64.dmg
 
 1. `main` 处于要发布的提交（CI 绿）。
 2. 按 [VERSIONING.md](VERSIONING.md) 更新 `VERSION`，并把 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]` 改成 `## [x.y.z] — 日期`。
-3. 提交，例如 `chore(release): 1.8.1`。
+3. 提交，例如 `chore(release): 1.15.1`。
 4. 打 tag 并推送：
 
 ```bash
@@ -58,18 +58,18 @@ git push origin main
 git push origin "v${VERSION}"
 ```
 
-5. [`.github/workflows/release.yml`](../.github/workflows/release.yml) 构建 DMG/zip、上传 artifact，并创建 GitHub Release。
+5. [`.github/workflows/release.yml`](../.github/workflows/release.yml) 在 `macos-26` runner 上先跑 `make setup` 与 `make test`，再构建 DMG / zip、上传 artifact，并创建 GitHub Release。
 
-不要用 `v1.8` 这类短 tag，也不要移动已发布的 tag。
+不要用 `v1.15` 这类短 tag，也不要移动已发布的 tag。
 
-**本地预检**（省一次失败的发版）：
+本地预检（省一次失败的发版）：
 
 ```bash
 make test                                       # 源码切片回归
-make package                                    # 确认 DMG/zip 能产出
+make package                                    # 确认 DMG / zip 能产出
 python3 Sources/ci/extract-changelog.py "$(tr -d '[:space:]' < VERSION)" | head
 ```
 
 ## 手动触发
 
-Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，**不会**创建 GitHub Release（那一步仅在 `v*` tag 上跑）。这也是唯一不消耗版本号的端到端验证方式——它会把打包与（除 `gh release create` 之外的）全部步骤真跑一遍。
+Release workflow 支持 `workflow_dispatch`：只构建并上传 artifact，不会创建 GitHub Release（那一步要求 `github.ref_type == 'tag'`）。这也是唯一不消耗版本号的端到端验证方式——它会把打包与（除 `gh release create` 之外的）全部步骤真跑一遍。手动触发时 `make test` 与打包同样执行。

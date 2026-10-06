@@ -5,37 +5,39 @@
 
 ## `FilePaths` — 路径常量
 
-集中管理所有文件系统路径，分三组：
+集中管理所有文件系统路径，分四组：
 
-- **Claude Code**：`~/.claude/settings.json`、`~/.claude/claude-bar-providers.json`（新）、`~/.claude/claude-bar-presets.json`（旧，迁移用）、`~/.claude/projects/`、`~/.claude/sessions/`。
+- **Claude Code**：`~/.claude/settings.json`、`~/.claude/claude-bar-providers.json`（当前格式；`FilePaths.presetsFile` 是这一路径的历史命名）、`~/.claude/claude-bar-codex-providers.json`（Codex 供应商）、`~/.claude/projects/`、`~/.claude/sessions/`。
 - **Cursor**：`~/.cursor/projects/`、`~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`。
-- **App Group**：`com.claudebar.app.widget`。
-- **VPN**：`~/Library/Application Support/ClaudeBar/vpn/`（`config.yaml`、`subscriptions.json`、`core.log`、`vpn.log`）。订阅 token 只出现在此目录。
+- **App Group**：`com.claudebar.app.widget`（dev 为其 bundle ID 加 `.widget`）。
+- **VPN**：`~/Library/Application Support/ClaudeBar/vpn/`（`config.yaml`、`subscriptions.json`、`profiles/`、`mihomo`、`core.log`、`vpn.log`）。订阅 token 只出现在此目录。
 
-`cursorProjectName(for:)` 复现 Cursor 的 cwd 编码：去前导 `/` 后把 `/` 换成 `-`（注意 Cursor **不**加前导 `-`，与 Claude Code 不同）。`cursorTranscriptURL(cwd:composerId:)` 拼出 `agent-transcripts/<composerId>/<composerId>.jsonl`。
+Claude / Codex / Cursor 的根目录都按 `BuildChannel` 分流：正式版用真实用户目录，开发版落在自身的 `~/Library/Application Support/ClaudeBar Dev/` 下（`.claude`、`.codex`、`.cursor`，以及一份不存在的 `cursor-state.vscdb`，使 Cursor 读取端全部返回空）。
+
+`cursorProjectName(for:)` 复现 Cursor 的 cwd 编码：去前导 `/`，随后把 `[A-Za-z0-9]` 与 `-` 之外的每个字符换成 `-`（下划线、点号都换；Cursor 不加前导 `-`，与 Claude Code 不同）。`cursorTranscriptURL(cwd:composerId:)` 拼出 `agent-transcripts/<composerId>/<composerId>.jsonl`。
 
 ## `SettingsManager` — settings.json 读写
 
-**读**：`readSettings()` 用 `JSONSerialization` 解析为 `[String: Any]`，取 `env` 字典构造 `EnvConfig`（缺字段默认 `""`）。返回 `EnvConfig?`（B11 简化：原先返回 `(env, raw)` 元组，但 `raw` 通道无调用方使用，已删除；`writeSettings` 内部经 `readDocument()` 自行重读整份 JSON 以保留其他顶层字段）。
+**读**：`readSettings()` 用 `JSONSerialization` 解析为 `[String: Any]`，取 `env` 字典构造 `EnvConfig`（缺字段默认 `""`）。返回 `EnvConfig?`；`writeSettings` 需要保留其他顶层字段，内部经 `readDocument()` 自行重读整份 JSON。
 
-**写** `writeSettings(env:)`：先 `readDocument()` 取现有 JSON，`environment(in:)` 取出 `env` 子字典；`EnvConfig` 经 `JSONEncoder` → `JSONDecoder` 折成 `[String: String]` 后，**先按 `managedEnvKeys` 逐键删除旧值，再把非空的新值写回**——空值就是清掉上一个供应商的凭据与开关，不保留旧值；`permissions` 等顶层字段原样保留。随后 `backUpOnce()`（只在第一次写时留一份 `.bak`，已存在则不覆盖），`writeDocument` 用 `JSONSerialization.data(withJSONObject:options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])` 序列化——`.withoutEscapingSlashes` 让 URL 里的 `/` 保持可读，不需要写回前的字符串替换——再交给 `PrivateFileWriter.write`（0600 暂存文件 + `rename` 原子替换）。
+**写** `writeSettings(env:)`：先 `readDocument()` 取现有 JSON，`environment(in:)` 取出 `env` 子字典；`EnvConfig` 经 `JSONEncoder` → `JSONDecoder` 折成 `[String: String]` 后，**先按 `managedEnvKeys` 逐键删除旧值，再把非空的新值写回**——空值就是清掉上一个供应商的凭据与开关，不保留旧值；`permissions` 等顶层字段原样保留。随后 `backUpOnce()`（只在第一次写时留一份 `.bak`，已存在则不覆盖），`writeDocument` 用 `JSONSerialization.data(withJSONObject:options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])` 序列化——`.withoutEscapingSlashes` 让 URL 里的 `/` 保持可读——再交给 `PrivateFileWriter.write`（0600 暂存文件 + `rename` 原子替换）。
 
 `restoreOfficial()` 走同一条链：删掉全部 `managedEnvKeys`，`env` 剩空则整个键移除。
 
-## `writeWidgetSnapshot()` — 四路冗余写入 + diff（B6）
+## `writeWidgetSnapshot()` — 四路冗余写入 + diff
 
-快照写入逻辑已抽到 `Models/WidgetSnapshotWriter.swift`（`enum WidgetSnapshotWriter`）。因 Widget 沙盒环境的多样性，快照被写到四个位置，按 Widget 读取优先级：
+快照写入逻辑在 `Models/WidgetSnapshotWriter.swift`（`enum WidgetSnapshotWriter`；`ProviderStore.writeWidgetSnapshot()` 只负责构建快照并 `submit`，编码、diff 与写入在串行队列上执行）。因 Widget 沙盒环境的多样性，快照被写到四个位置，按 Widget 读取优先级：
 
-1. **App Group 容器**：`containerURL(forSecurityApplicationGroupIdentifier:)` 下的 `claude-bar-widget-data.json`（首选，沙盒可读）。
-2. **`~/.claude/`**：非沙盒回退，便于手工调试。
-3. **Widget 沙盒容器**：`~/Library/Containers/com.claudebar.app.widget/Data/claude-bar-widget-data.json`。
-4. **UserDefaults (App Group)**：`shared.set(data, forKey: AppConfig.widgetSnapshotDefaultsKey)`。
+1. **App Group 容器**：`containerURL(forSecurityApplicationGroupIdentifier:)` 下的 `claude-bar-widget-data.json`（首选，沙盒可读）；容器取不到时回退到 `~/.claude/`。
+2. **`~/.claude/`**：仅当它与第 1 路的路径不同才写一次，便于手工调试。
+3. **Widget 沙盒容器**：`~/Library/Containers/<widgetBundleID>/Data/claude-bar-widget-data.json`。
+4. **UserDefaults (App Group)**：`shared.set(data, forKey: BuildChannel.widgetSnapshotDefaultsKey)`。
 
-各路写入均为 best-effort，一路失败不阻塞其他路。
+各路写入均为 best-effort，一路失败不阻塞其他路。写入前有一道闸：`BuildChannel.promptsForSystemPermissions` 且用户权限 `.widgetData` 允许，否则直接返回上次的 diff key——写其他 App 容器会触发系统弹窗，开发版不请求这种持久 TCC 授权。
 
 **载荷自描述**：Widget 进程有自己的 `UserDefaults.standard`（App 的 domain 对它是隐形的），也无法导入 `Theme` / `AppPreferences`，因此「这个 token 总量属于哪个周期」「用万/亿还是 K/M/B」「当前是深色还是浅色」都随快照下发（`usagePeriodLabel` / `unitStyle` / `isDark`，均为可选字段，旧快照仍可解码）。三者在 App 侧变化（切周期、改单位、切外观）时会主动重推一次快照，否则要等下一次会话轮询写出的快照发生变化——全空闲时可能永远不写。同一份 `WidgetSnapshot.swift` 通过符号链接被两个 target 编译（`Sources/Widget/WidgetSnapshot.swift`），`build.sh` 会断言该链接仍指向 App 侧同一文件。
 
-> **diff 优化（B6）**：2.5s 轮询会反复调用 `writeWidgetSnapshot()`。`WidgetSnapshotWriter.write(_:deduplicatingAgainst:)` 缓存上次 snapshot 的 JSON `Data`，仅当新 `Data != lastSnapshotData` 时才执行四路写入 + `WidgetCenter.shared.reloadAllTimelines()`。Apple 建议仅数据变化时重载 timeline——无 diff 时每 2.5s 无意义重载会浪费磁盘 I/O 与 widget 刷新配额。已删除原 `shared.synchronize()`（现代 macOS 自动同步，已弃用）。
+> **diff 优化**：2.5s 轮询会反复调用 `writeWidgetSnapshot()`。`WidgetSnapshotWriter.write(_:deduplicatingAgainst:)` 缓存上次 snapshot 的规范化 JSON `Data`（`updatedAt` 置零后按 `.sortedKeys` 编码，否则每次构建的时间戳都会让比较失配），仅当新 key 与上次不同时才执行四路写入 + `WidgetCenter.shared.reloadAllTimelines()`。Apple 建议仅数据变化时重载 timeline——无 diff 时每 2.5s 无意义重载会浪费磁盘 I/O 与 widget 刷新配额。已删除原 `shared.synchronize()`（现代 macOS 自动同步，已弃用）；用户开启 `.widgetData` 权限时走 `force` 分支清掉 diff key，重推一次未变的载荷。
 
 ## `SessionMonitor` — Claude Code 会话
 
@@ -68,9 +70,9 @@
 
 **数据源**：Cursor 的 `state.vscdb`（SQLite，WAL 模式），表 `composerHeaders`（含 `composerId`、`recency`、`value` JSON、`isArchived`、`isSubagent`）。DB 约 6.5GB，但 `(recency, composerId)` 有索引。
 
-**打开方式**：经共享的 `CursorDB.open()`（`Utils/CursorDB.swift`）——`sqlite3_open_v2` + `SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX`，`busy_timeout 2000`。WAL 允许并发读，不阻塞 Cursor 的写入。`CursorDB` 同时提供 `textColumn` 文本读取与 `cString` helper，供 `CursorSessionMonitor`、`CursorUsageFetcher` 与 `CursorLedgerStore` 复用（D2 去重；并消除 B3 的 `map[key]!` force-unwrap）。
+**打开方式**：经共享的 `CursorDB.open()`（`Utils/CursorDB.swift`）——存在性检查 + `sqlite3_open_v2` + `SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX`，`busy_timeout 2000`。WAL 允许并发读，不阻塞 Cursor 的写入。`CursorDB` 同时提供 `textColumn` 文本读取与 `cString` helper，供 `CursorSessionMonitor`、`CursorUsageFetcher` 与 `CursorLedgerStore` 复用。
 
-**查询**：读取 `isArchived=0 AND isSubagent=0` 且 `recency` 或 `checkpointAt` 在最近 3 天的 header。先解析运行状态再按忙碌优先排序，列表通常保留 14 个，但全部运行会话必须保留。取消查询前 80 条的硬截断，避免较早提交的长任务被新会话挤掉。查询只扫描小型 `composerHeaders` 索引表，不读取大型 `cursorDiskKV` 消息正文。
+**查询**：读取 `isArchived=0 AND isSubagent=0` 且 `recency` 或 `checkpointAt` 在最近 3 天内的 header，先解析运行状态再按忙碌优先排序；列表通常保留 14 个，但全部运行会话必须保留（`max(14, 忙会话数)` 截取）。查询只读 `composerHeaders` 这一张索引表，不读 `cursorDiskKV` 的消息正文。
 
 **head 字段解析**：`name`、`lastUpdatedAt`、`contextUsagePercent`、`unfinishedRunAt`、`conversationCheckpointLastUpdatedAt`；`workspaceIdentifier.uri.fsPath`（或 `draftTarget.environment.uri.fsPath`）取 cwd。`agentLocation.status == "active"` 是可能残留的绑定标记，只用于提交后 120 秒的启动宽限，不能代表整轮运行状态。
 
@@ -83,7 +85,7 @@
 
 **时间语义**：返回的 `lastUpdatedAt` 是最新活动时间，运行期间结合 checkpoint 与 transcript mtime；有当前结束标记时使用 transcript 的时间，不让后续 metadata 写入刷新旧答案的完成时间。原始 head 的 `lastUpdatedAt` 是提交时间，用它给长任务的完成通知判新鲜度会漏通知。
 
-**账号凭据**：同一张 `ItemTable` 里还有 `cursorAuth/*` 行（accessToken / cachedEmail / stripeMembershipType / stripeSubscriptionStatus），供 `CursorUsageFetcher` 调用额度接口。**每次探测都重读**——Cursor 会在运行中原地轮换 access token，缓存一小时的 token 会开始 401；读的是只读 WAL 句柄上一条按主键的 SELECT，成本可忽略。token 是 424 字节的 JWT，必须走 `textColumn` 而不是 `cString`（后者在第一个 NUL 截断，交出去的是坏 token）。
+**账号凭据**：同一张 `ItemTable` 里有 `cursorAuth/accessToken` 行，`CursorDB.readCredentials()` 只读这一个键；JWT 的 `sub` 从 payload 段就地解出，供 `CursorUsageFetcher` 拼 `cursor.com/api/*` 的 cookie（Connect RPC 用裸 JWT）。**每次探测都重读**——Cursor 会在运行中原地轮换 access token，缓存一小时的 token 会开始 401；读的是只读 WAL 句柄上一条按主键的 SELECT，成本可忽略。token 是 424 字节的 JWT，必须走 `textColumn` 而不是 `cString`（后者在第一个 NUL 截断，交出去的是坏 token）。
 
 **子 Agent**：`fetchSubagents` 查最近的 `isSubagent=1` header，按 `subagentInfo.parentComposerId` 归组；直属父级是另一个 helper 时，回退到可见的 `rootParentConversationId`。transcript 优先读 `agent-transcripts/<rootId>/subagents/<childId>.jsonl`，再兼容旧的独立 composer 路径。运行状态使用与主会话相同的 checkpoint / transcript 判据。
 

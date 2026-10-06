@@ -13,9 +13,9 @@
 | # | 文件 | 内容 | 何时读 |
 |---|------|------|--------|
 | 01 | [tech-stack.md](01-tech-stack.md) | 技术选型、构建命令、Bundle 结构 | 了解技术栈 / 改构建 |
-| 02 | [app-launch-and-windows.md](02-app-launch-and-windows.md) | 启动、主窗口、菜单栏面板 | 改窗口 / 启动时序 |
-| 03 | [provider-store.md](03-provider-store.md) | `ProviderStore`、刷新管线、空闲通知 | 改状态与轮询 |
-| 04 | [data-access-layer.md](04-data-access-layer.md) | 文件路径、监控、用量索引、余额 | 改数据采集 |
+| 02 | [app-launch-and-windows.md](02-app-launch-and-windows.md) | 启动时序、主窗口、菜单栏面板与收起监听 | 改窗口 / 启动时序 |
+| 03 | [provider-store.md](03-provider-store.md) | `ProviderStore` 状态、派生量、刷新管线、跨面导航、空闲通知 | 改状态 / 轮询 / 通知 |
+| 04 | [data-access-layer.md](04-data-access-layer.md) | 文件路径、会话监控、用量索引、Cursor 账本、余额、Widget 快照写入 | 改数据采集 |
 | 05 | [view-layer.md](05-view-layer.md) | Theme、视图组件、Popup / Pages | 改 UI |
 | 06 | [data-migration.md](06-data-migration.md) | 数据格式兼容 | 改持久化格式 |
 | 07 | [build-and-signing.md](07-build-and-signing.md) | 签名、Entitlements、Widget 注册 | 改签名 / 发布 |
@@ -30,6 +30,7 @@
 | 18 | [weather-and-atmosphere.md](18-weather-and-atmosphere.md) | 天气数据、真实日出日落、天空引擎、文字布局与性能边界 | 改天气 / 问候卡 |
 | — | [cursor-session-monitor-investigation.md](cursor-session-monitor-investigation.md) | 排查记录：Cursor 长轮次被判「闲置」的实测证据与残留边界 | 改 Cursor 运行判据 |
 | — | [session-migration.md](session-migration.md) | 正文迁移、原生适配器、目标路由、事务与版本边界 | 改会话迁移 |
+| — | [feishu-component.md](feishu-component.md) | 飞书官方云文档组件：签名、临时宿主、回退与开发版闸门 | 改飞书正文阅读 |
 
 ---
 

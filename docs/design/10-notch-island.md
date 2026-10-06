@@ -1,6 +1,6 @@
 # 10 · 刘海灵动岛（Notch Island）
 
-> 把 MacBook 的硬件刘海变成 ClaudeBar 的"余光界面"：平时在刘海两侧告诉你**谁在跑、今天用了多少**；
+> 把 MacBook 的硬件刘海变成 ClaudeBar 的「余光界面」：平时在刘海两侧告诉你**谁在跑、今天用了多少**；
 > 会话一结束就从刘海里长出一条提醒，一键回到那个会话；鼠标碰到刘海则展开成会话列表 + 用量卡。
 
 ---
@@ -8,21 +8,21 @@
 ## 1. 设计立意
 
 ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Codex / Cursor），其次才是用量。
-所以灵动岛不做"六个圆环的仪表盘"，而是回答用户在写代码时真正会瞄一眼的三个问题：
+所以灵动岛不做「六个圆环的仪表盘」，而是回答用户在写代码时真正会瞄一眼的三个问题：
 
 1. **它还在跑吗？** —— 收起态左翼：运行中 Agent 的标志 + 旋转轨道，多于一个时显示数量。
-2. **它跑完了吗？** —— 完成提醒：会话**真的交付了答案**时自动弹出（不是单纯「由忙转闲」，见 §3.1），"继续"直接回到该会话的终端 / Cursor。
+2. **它跑完了吗？** —— 完成提醒：会话**真的交付了答案**时自动弹出（不是单纯「由忙转闲」，见 §3.1），「继续」直接回到该会话的终端 / Cursor。
 3. **今天烧了多少？** —— 右翼今日 token；展开后是可滑动查看的 30 天直方图与本月节奏。
 
 | 维度 | 取舍 |
 |---|---|
-| **材质** | 纯黑 `#000`。收起态**不描边、不投影**，与硬件刘海无缝融合；提醒 / 展开态才出现 1px 白 9% 的轮廓光。 |
-| **色彩** | 黑底之上只有"身份色"与"数据色"：Claude 陶土 `#E8845E`、Codex 钴蓝 `#7C9CFF`、Cursor 紫 `#B79CFF`；今日 / 完成薄荷 `#5EEAD4`；超速琥珀 `#FFC53D`；上下文告急珊瑚 `#FF6B61`。文字只用白色三档透明度。 |
-| **字体** | SF Rounded；数字 `monospacedDigit` + `.numericText()`，变化时逐位滚动。 |
-| **动效** | 形变用弹簧（展开 0.42/0.80、提醒 0.46/0.72 略带回弹、收起 0.34/0.92 利落）；内容"淡入 + 从 94% 向顶边放大"；提醒出现时一道身份色光沿岛的轮廓扫过一次。 |
-| **创新点** | ① 完成提醒（不需要通知权限，也不打断焦点）；② 顶栏路由随"最相关的会话"切换（Codex 会话在前时显示 Codex 路由）；③ 直方图悬停即滑动查看任意一天；④ 会话行显示上下文窗口"油量"，60% 转琥珀、85% 转珊瑚。 |
+| **材质** | 纯黑 `#000`。收起态不描边、不投影，与硬件刘海无缝融合；提醒 / 展开态才出现 1px 白 9% 的轮廓光。 |
+| **色彩** | 黑底之上只有「身份色」与「数据色」：Claude 陶土 `#E8845E`、Codex 钴蓝 `#7C9CFF`、Cursor 紫 `#B79CFF`；今日 / 完成薄荷 `#5EEAD4`；超速琥珀 `#FFC53D`；上下文告急珊瑚 `#FF6B61`。文字只用白色三档透明度。 |
+| **字体** | SF Rounded；数字 `monospacedDigit` + `.numericText()`，变化时逐位滚动（收起态右翼的今日总量不滚动，见 §4.4）。 |
+| **动效** | 形变用弹簧（展开 0.42/0.80、提醒 0.46/0.72 略带回弹、收起 0.34/0.92 利落）；内容「淡入 + 从 94% 向顶边放大」；提醒出现时一道身份色光沿岛的轮廓扫过一次。 |
+| **创新点** | ① 完成提醒（不需要通知权限，也不打断焦点）；② 顶栏路由随「最相关的会话」切换（Codex 会话在前时显示 Codex 路由）；③ 直方图悬停即滑动查看任意一天；④ 会话行显示上下文窗口占用，60% 转琥珀、85% 转珊瑚。 |
 
-与主窗口 / 弹窗的关系：灵动岛只做"看一眼 + 回到会话"，不承载切换供应商等写操作；右上角按钮跳转主窗口。
+与主窗口 / 弹窗的关系：灵动岛只做「看一眼 + 回到会话」，不承载切换供应商等写操作；右上角按钮跳转主窗口。
 
 ---
 
@@ -58,24 +58,24 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 |---|---|---|---|
 | **收起（无翼）** | 与刘海相同，完全透明 | 否（点击穿透） | 关闭两翼时 |
 | **收起（有翼）** | 刘海宽 + 2 × 6pt + 2 × 52pt（`topFlare` + 两翼） | 否（点击穿透） | 默认 |
-| **提醒** | `max(380, 刘海宽 + 2 × 6 + 200)` × 刘海高 + 54（`alertBodyHeight`） | 是 | 会话交付了新答案、停在用户身上，或 Codex 额度窗口重置；6s 后收起，悬停时暂停（离开后至少再留 2s）；点「继续 / 去确认」回到会话；点其他位置展开 |
+| **提醒** | `max(380, 刘海宽 + 2 × 6 + 200)` × 刘海高 + 54（`alertBodyHeight`） | 是 | 会话交付了新答案、停在用户身上，或 Codex 额度窗口重置；6s 后收起，悬停时把期限持续推到「当前时刻 + 2s」（离开后约 2s 收起）；点「继续 / 去确认」回到会话；点其他位置展开 |
 | **展开** | `max(520, 刘海宽 + 2 × 6 + 320)` × 刘海高 + 292 | 是 | 鼠标停在刘海热区 ≥ 120ms；离开岛 250ms 后收起 |
 
-- **展开态高度是常数**，不再随会话数量变化：`6`（`contentTopGap`）+ `110`（会话区 `sessionStripHeight`）+ `8`（`sectionGap`）+ `156`（用量卡）+ `12`（`bottomPadding`）= **292pt**。会话多于一屏时在会话格内部**滚动**（原生 `ScrollView` + `LazyVGrid`，2 列 × 2 行，每行 44pt、行距 4pt），提示行写「N 个会话 · 上下滑动查看更多」。
-- 用量卡下半部是**今日 / 今日花费**两个 hero，下接 42pt 的 30 天直方图（`Canvas` 一次绘制，悬停即横向滑动查看任意一天），底部一行是本月节奏与来源分段条。
-- 提醒不会打断展开态（展开时列表里本来就能看到）；新的完成事件会替换正在显示的提醒。
+- 展开态高度是常数，不再随会话数量变化：`6`（`contentTopGap`）+ `110`（会话区 `sessionStripHeight`）+ `8`（`sectionGap`）+ `156`（用量卡）+ `12`（`bottomPadding`）= **292pt**。会话多于一屏时在会话格内部**滚动**（原生 `ScrollView` + `LazyVGrid`，2 列 × 2 行，每行 44pt、行距 4pt），提示行写「N 个会话 · 上下滑动查看更多」。
+- 用量卡自上而下是**今日 / 今日花费**两个 hero、42pt 的 30 天直方图（`Canvas` 一次绘制，悬停即横向滑动查看任意一天）、本月节奏与来源分段条。
+- 提醒不会打断展开态：展开时列表里本来就能看到会话，完成与额度重置都不弹（额度重置不补发）；停在用户身上的会话此时改走系统横幅。新的提醒会替换正在显示的那一条（提醒内容的 `.id(alert.id)` 决定替换发生在同一位置而不是重建）。
 
-提醒条有三种 payload（`IslandAlert`）：**会话完成**（交付了新的最终答复，判定见 §3.1）、**会话停在用户身上**（`needsInput`，等待确认或提问）与 **Codex 额度重置**。三者共用同一条状、同一个 6s 倒计时和同一条展开路径，因为它们都是「你等的那个东西刚刚变真了」。区别只在文案、图标与动作：完成是薄荷色对勾 + 「继续」（Cursor 会话是「打开」），停在用户身上是琥珀色 + 「去确认」，额度是琥珀色回环箭头 + 窗口名胶囊（无处可跳，headline 写「<窗口名> 已重置」）。停住的会话在岛不可用（关闭 / 展开中）时改发系统横幅，因为那条边沿没有重试。
+提醒条有三种 payload（`IslandAlert`）：**会话完成**（交付了新的最终答复，判定见 §3.1）、**会话停在用户身上**（`needsInput`，等待确认或提问）与 **Codex 额度重置**。三者共用同一条状、同一个 6s 倒计时和同一条展开路径，因为它们都是「你等的那个东西刚刚变真了」。区别只在文案、图标与动作：完成是薄荷色对勾 + 「继续」（Cursor 会话是「打开」），停在用户身上是琥珀色 + 「去确认」，额度是琥珀色回环箭头 + 窗口名胶囊（无处可跳，headline 写「<窗口名> 已重置」）。停在用户身上的会话在岛不可用（总开关 / 提醒开关关闭或展开中）时改发系统横幅（空闲通知开关仍须开启），因为那条边沿没有重试；完成与额度重置在同样情况下不补发。
 
-额度重置由 `QuotaResetDetector` 做**边沿检测**，这是必须的 —— `CodexProviderStore.$quotaWindows` 在 Codex 会话轮询里持续发布：
+额度重置由 `QuotaResetDetector` 做**边沿检测**，这是必须的 —— `CodexProviderStore.$quotaWindows` 每次额度轮询都会重发同一批窗口：
 
 - 首次见到某个窗口只做基线，启动时不误报；
 - 需要「曾经用过（≥5%）」且「掉幅 ≥20 点」才算重置，小幅回落是供应商取整；
 - **重置时间前移**也算重置（Codex 有时先滚时间、百分比后更新），但同样受「曾经用过」约束；
 - 同一个重置只播一次；窗口消失（换账号 / 换供应商）时清除状态，重新出现按基线处理；
-- 窗口按**载荷槽位**（`primary` / `secondary`）区分，不按显示名。显示名由 `windowDurationMins` 推导，接口可以不带这个字段——不带时两个窗口都叫「额度」，按名字记账就会互相冒充：次窗口的首次出现被拿去和主窗口的百分比比较而立即误报，主窗口此后每次真实重置又都拿次窗口的历史做对照，于是再也报不出来。
+- 窗口按**载荷槽位**（`primary` / `secondary`，`CodexQuotaWindow.slot`）区分，不按显示名。显示名由 `windowDurationMins` 推导，接口可以不带这个字段 —— 不带时两个窗口都叫「额度」，按名字记账就会互相冒充：次窗口的首次出现被拿去和主窗口的百分比比较而立即误报，主窗口此后每次真实重置又都拿次窗口的历史做对照，于是再也报不出来。无槽位的窗口回退到用显示名作身份。
 - **一次失败的查询不会清空这份状态**：失败与「账号确实没有窗口」是两回事，前者保留上一次读数（`QuotaResetDetector` 因此也保留每个窗口的历史），后者才清空。
-- 提醒只从收起态弹出；悬停提醒不会自动展开（需点击），保证"继续"按钮能点到。
+- 提醒只从收起态弹出；悬停提醒不会自动展开（需点击），保证「继续」按钮能点到。
 
 ---
 
@@ -83,25 +83,25 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 ### 3.1 会话
 
-全部存活会话按 2 列 × 2 行排成宫格，多于一屏时在格内原生滚动（滚轮 / 触控板），底部提示行给总数并写「上下滑动查看更多」；没有播放定时器，指针悬在哪一行，那一行就不会被移走。会话行里是 Agent 标志、目录名、上下文「油量」与本次会话的估算花费，悬停时标题行右端出现一个「↗」箭头（点击即回到会话）；行标题只取目录名（不套用主窗口会话卡的 `目录 | 标题` 两段式，灵动岛的行宽只够一段）。该区域不读取本机 CPU、内存或电池数据。
+全部存活会话按 2 列 × 2 行排成宫格，多于一屏时在格内原生滚动（滚轮 / 触控板），底部提示行给总数并写「上下滑动查看更多」；没有播放定时器，指针悬在哪一行，那一行就不会被移走。会话行里是 Agent 标志、目录名、上下文占用与本次会话的估算花费，悬停时标题行右端出现一个「↗」箭头（点击即回到会话）；行标题只取目录名（不套用主窗口会话卡的 `目录 | 标题` 两段式，灵动岛的行宽只够一段）。该区域不读取本机 CPU、内存或电池数据。
 
 | 来源 | 取自 | 忙碌判定 | 点击 |
 |---|---|---|---|
-| Claude Code | `ProviderStore.sessions`（存活） | `status == .busy` 或工具待批 | `claude --resume` 于原目录 |
-| Cursor | `ProviderStore.cursorSessions`（存活；受"读取 Cursor 会话"开关控制） | `status == .active` 或工具待批；**且该 transcript 的写时钟在 10 分钟内**（中断的轮次不写收尾标记，只按行序判定会让冻结的文件永远算忙） | 在 Cursor 打开该目录 |
+| Claude Code | `ProviderStore.sessions`（存活） | `isBusy`：CLI `status` 为 busy / shell、工具待批、或有 workflow 在跑；`waiting`（停在用户身上）不算忙 | `claude --resume` 于原目录 |
+| Cursor | `ProviderStore.cursorSessions`（存活；受「读取 Cursor 会话」开关控制） | `status == .active`（含工具待批）或子代理在跑，且没有待决策项；**轮次写时钟须在 10 分钟内**（transcript 或未完成 run 的 checkpoint 任一），中断的冻结轮次会过期 | 在 Cursor 打开该目录 |
 | Codex | `ProviderStore.externalSessions`（存活、非子代理） | `isActive` | `codex resume` 于原目录 |
 
-- 排序：运行中在前，其余按最近更新。
-- "完成" 的判定与通知同源（`ConfirmedCompletionDetector`）：**该会话的轮次键变了 + 它的文件刚刚写过（60 s 内）+ 当前不是忙**。轮次键 Claude 取「轮次/步数计数 + 最终答复 uuid」（计数来自 transcript 尾窗并做单调夹紧）、Codex 取 `task_complete.turn_id`、Cursor 取 `turn-<字节偏移>`；同一把键只播一次。于是被中断 / 杀掉的一轮、启动前就存在的答案、以及没人在看时结束的一轮都不播报，而短于轮询间隔的一轮、忙→闲之后才落盘的答案都能报出来。首帧只建立基线。
-- 回到会话走 `TerminalLauncher`：开启"在终端继续会话（自动化）"时直接在 Warp / Terminal 执行；
-  关闭时不发 Apple Event，把命令复制到剪贴板并在该目录打开终端。
+- 排序：停在用户身上的在前，其次运行中，其余按最近更新。
+- 「完成」的判定与通知同源（`ConfirmedCompletionDetector` 的三条：轮次键变了 + 该会话的文件刚写过（岛内阈值 60s）+ 当前不是忙；首次见到某个会话只建立基线）。岛上的键就是 `IslandSession.completionID`：Claude 取最终答复的 uuid、Codex 取 `task_complete.turn_id`、Cursor 取 `turn-<字节偏移>`；`ProviderStore` 自己的通知检测在 Claude 侧把轮次数并进键（`turnCount|uuid`，计数来自 transcript 尾窗并做单调夹紧）。同一把键只播一次。于是被中断 / 杀掉的一轮、启动前就存在的答案、以及没人在看时结束的一轮都不播报，而短于轮询间隔的一轮、忙→闲之后才落盘的答案都能报出来。
+- 回到会话走 `TerminalLauncher`：会话仍存活时先回到宿主终端（Otty 精确到 pane；Terminal / iTerm2 精确到 tab 需要「在终端继续会话」授权，未授权时只把宿主 App 激活到前台）。需要新开终端执行命令时：Otty（含「自动」解析到 Otty 时）走 Otty 自身 socket；Warp / Terminal 在授权开启时直接键入执行，关闭时不发 Apple Event —— 复制命令并在该目录打开终端。Codex 会话若已载入 Codex Desktop 则直接打开该 thread。
 
 ### 3.2 用量
 
-- 今日 / 昨日 / 本月至今 / 上月同期 / 近 30 天逐日，全部来自 `UsageIndex.fetchBySource` 与 `fetchDailyModels`（rollup 查询，不扫描 transcript）；会话行上的估算金额走 `UsageIndex.fetchSession`。
-- 今日同时给出**花费估算**（与概览「模型花费」同一套刊例价，见 [技术 §15](../technical/15-model-cost.md)），主数字旁副行写「另有 $43.20」或「N 个模型未计价」。
-- "同期"按天对齐：本月 1–23 日对比上月 1–23 日；上月天数不足时截到月末。
-- 本月超过上月同期时节奏文字转琥珀。
+- 今日 / 昨日 / 本月至今 / 上月同期 / 近 30 天逐日，全部来自 `UsageIndex.fetchBySource` 与 `fetchDailyModels`（rollup 查询，不扫描 transcript）；会话行上的估算金额走 `UsageIndex.fetchSessionFamilies`。
+- 今日同时给出花费估算（与概览「模型花费」同一套刊例价，见 [技术 §15](../technical/15-model-cost.md)），主数字旁副行写「另有 $43.20」或「N 个模型未计价」。
+- 「同期」按天对齐：本月至今的逐日总量对比上月 1 日到同一天；上月天数不足时截到月末。直方图悬停某一天时，hero 换成该日总量与「峰值的 N%」。
+- 今日 hero 的副行写「昨日的 112%」这类节奏与「1,204 次」调用数。
+- 本月超过上月同期时节奏文字转琥珀（本月 line 的「上月同期 N%」），未超过时用次级文字色。
 - 来源分段条按 CC / Codex / 第三方 的顺序（`UsageSource.allCases`），色相用岛自己的黑底调色板（陶土 / 钴蓝 / 品红）；悬停显示各自数值与占比。
 
 ---
@@ -112,19 +112,19 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 | 文件 | 职责 |
 |---|---|
-| `NotchIslandController.swift` | `NotchIslandState`（模式与尺寸）；面板生命周期、热区、10Hz 离开 / 提醒计时、偏好监听 |
+| `NotchIslandController.swift` | `NotchIslandState`（模式与尺寸）；面板生命周期、热区、10 Hz 离开 / 提醒计时、偏好监听 |
 | `Utils/NotchGeometry.swift` | 从 `NSScreen` 读刘海尺寸；无刘海时给出菜单栏高度的伪刘海 |
 | `Models/IslandLiveModel.swift` | 会话扁平化与去重、完成事件、额度重置边沿、路由 / VPN、会话花费与后台用量计算 |
-| `Views/Island/NotchIslandView.swift` | `IslandStyle`、根视图、两翼、提醒、展开顶栏、会话格与用量卡 |
-| `Views/Island/IslandComponents.swift` | Agent 标志与轨道、会话行、上下文油量、用量卡与花费 hero、`Canvas` 直方图、来源分段条 |
+| `Views/Island/NotchIslandView.swift` | `IslandStyle`、根视图、两翼、提醒条、展开顶栏、会话格（`IslandSessionStrip`）、滚动条与过渡 |
+| `Views/Island/IslandComponents.swift` | Agent 标志与轨道、会话行、上下文占用、用量卡与花费 hero、`Canvas` 直方图、来源分段条 |
 | `Views/Island/IslandShape.swift` | 可动画的刘海形状（上沿内凹圆角 + 下沿圆角；顶边开口，描边不贴屏幕边） |
 
 ### 4.2 窗口
 
 - `NSPanel`，`[.borderless, .nonactivatingPanel]`，`canBecomeKey = false`：永不抢焦点。
 - 层级 `mainMenu + 3`；`collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]`，
-  开启"全屏应用中显示"时追加 `.fullScreenAuxiliary`。
-- 面板固定 640 × 386（`IslandStyle.panelSize` 由展开态最高几何推出：刘海 46 + `contentTopGap` 6 + 会话区 110 + `sectionGap` 8 + 用量卡 156 + `bottomPadding` 12，再留 48 余量，不是手填数字），顶边贴屏幕顶边、水平居中；形变全部在 SwiftUI 内完成，窗口本身不做帧动画。
+  开启「全屏应用中显示」时追加 `.fullScreenAuxiliary`。
+- 面板固定 640 × 386：宽 `panelWidth` 是常量，高由展开态最高几何推出（刘海 46 + `contentTopGap` 6 + 会话区 110 + `sectionGap` 8 + 用量卡 156 + `bottomPadding` 12，再留 48 余量），不是手填数字。顶边贴屏幕顶边、水平居中；形变全部在 SwiftUI 内完成，窗口本身不做帧动画。
 - `NSHostingView` 用 `autoresizingMask` 铺满、`sizingOptions = []`（与 `MenuBarController` 同样的 macOS 26 约束崩溃规避）。
 
 ### 4.3 状态机
@@ -132,36 +132,37 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 ```
  collapsed ──热区停留 120ms──▶ expanded ──离开岛 250ms──▶ collapsed
      │                           ▲
-     └──交付新答案──▶ alert ──点击──┘
-                     └──6s（悬停暂停）/ 继续──▶ collapsed
+     └──完成 / 停住 / 额度重置──▶ alert ──点击──┘
+                     └──6s（悬停顺延）/ 继续──▶ collapsed
 ```
 
-- 收起态：`ignoresMouseEvents = true`，点击完全穿透；全局 + 本地 `mouseMoved` 监听热区（只监听鼠标不需要辅助功能权限）。
-- 提醒 / 展开态：接收鼠标；另开 10Hz 定时器只读 `NSEvent.mouseLocation` 判断离开 / 倒计时（非 key 面板收不到可靠的 `mouseMoved`）。定时器只在岛打开期间存在。
+- 收起态：`ignoresMouseEvents = true`，点击完全穿透；全局 + 本地 `mouseMoved` 监听热区（只监听鼠标不需要辅助功能权限）。热区以刘海为中心自屏幕顶边下垂、左右各外扩 4pt，上缘多探 2pt（指针钉在屏幕顶边时 `y == maxY`）。
+- 提醒 / 展开态：接收鼠标；另开 10 Hz 定时器只读 `NSEvent.mouseLocation` 判断离开 / 倒计时（非 key 面板收不到可靠的 `mouseMoved`）。定时器只在岛打开期间存在。面板是固定透明画布，只有落在实际岛形状内的点击被接收，其余透传（`syncMouseCapture` 按鼠标位置逐次判定；展开的离开判定用岛外扩 8pt 的范围）。
 
 ### 4.4 性能
 
-目标：展开 / 收起 / 悬停全程 120Hz 不掉帧，收起常驻时 CPU ≈ 0。
+目标：展开 / 收起 / 悬停全程 120 Hz 不掉帧；收起常驻不挂动画事务，开销只来自用量采样对两翼读数的更新。
 
 - **不做每帧昂贵效果**：过渡只用 opacity + scale（无模糊）；岛不投影；轮廓光是静态 1px 描边。
-- **旋转轨道走 Core Animation**：`DecorativeMotion(kind: .arc)` 由渲染服务插值，不用 SwiftUI 的 `repeatForever`（那会把一个动画事务一直挂在飞行中，每个显示周期重排整个 hosting view）；"N 分钟前"用 30s 周期的 `TimelineView`，只包住那一行文字。
+- **旋转轨道走 Core Animation**：`DecorativeMotion(kind: .arc)` 由渲染服务插值，不用 SwiftUI 的 `repeatForever`（那会把一个动画事务一直挂在飞行中，每个显示周期重排整个 hosting view）；「N 分钟前」用 30s 周期的 `TimelineView`，只包住那一行文字。
 - **直方图一次绘制**：30 根柱子画在一个 `Canvas` 里；滑动只改卡片内的局部 `@State`，不触达外部模型。
 - **发布去重**：`IslandLiveModel` 把会话压成 `Equatable` 快照后 `removeDuplicates`，心跳、子代理树、余额等岛上看不到的变化不会引起重绘。展开态高度已是常数，控制器不再需要按会话数量决定尺寸。
-- **会话花费单独一拍**：每行的估算金额来自 `UsageIndex.fetchSession`，只在会话集合**变化时**重算（带代次号），不随轮询走。
+- **会话花费单独一拍**：每行的估算金额来自 `UsageIndex.fetchSessionFamilies`（单会话形式 `fetchSession` 是对它的包装），会话集合变化时重算，索引刷新后随 0.5s 防抖再跟一拍，不随会话轮询逐拍走。
 - **悬停状态局部化**：每行的悬停是行内 `@State`，不会让整个岛重算。
-- **查询不在主线程**：用量在 `Task.detached(priority: .utility)` 中计算，带代次号丢弃过期结果。
+- **查询不在主线程**：用量与花费在 `Task.detached(priority: .utility)` 中计算，带「一次在飞 + 一次尾随」的合并，过期批次直接丢弃。
+- 收起态右翼的今日总量用 `rolls: false` 关闭逐位滚动：面板常驻、读数来自采样，且收起态不计入 `UIWakePolicy` 的可见界面，滚动只会白花每次更新的一次显示周期。
 - 展开期间 `UIWakePolicy` 视为有可见界面，会话轮询回到前台频率；收起即恢复。
 
 ### 4.5 数据刷新
 
-- 触发：安装时一次；`ProviderStore.$usageStats` 发布后 0.5s 防抖；展开时一次；两翼显示时每 10 分钟一次（跨日）。
+- 触发：模型创建时一次；`ProviderStore.usageIndexDidRefresh` 发布后 0.5s 防抖（用量与每行花费一起重算）；展开时一次；两翼显示且总开关开启时每 10 分钟一次（跨日）。
 - 展开时若距上次 >60s，调用 `providerStore.refreshUsage(rescan: true)` 让索引追上最新 transcript；
   灵动岛本身**从不**直接调用 `UsageIndex.updateIndex()`，避免两个扫描并发。
-- 关闭灵动岛时释放 `IslandLiveModel` 及其全部订阅。
+- 关闭灵动岛时只销毁面板与 `NotchIslandState`，并停掉两翼的周期刷新；`IslandLiveModel` 与其订阅刻意保留 —— 停在用户身上的边沿要在岛关闭时仍然发出系统横幅。
 
 ### 4.6 屏幕
 
-- 优先有刘海的屏幕（内建屏）；没有则用菜单栏所在屏幕画伪刘海（200pt 宽、菜单栏高）。
+- 优先有刘海的屏幕（内建屏）；没有则用菜单栏所在屏幕画伪刘海（200pt 宽、菜单栏高，最低 24pt）。
 - 监听 `NSApplication.didChangeScreenParametersNotification`，重新定位；几何变化时先无动画收起。
 
 ### 4.7 偏好（设置 → 灵动岛）
@@ -169,7 +170,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 | Key | 默认 | 说明 |
 |---|---|---|
 | `notchIslandEnabled` | 开 | 总开关 |
-| `notchIslandShowsWings` | 开 | 收起时显示两翼 |
+| `notchIslandShowsWings` | 开 | 收起时显示两翼（同时启用每 10 分钟的跨日刷新） |
 | `notchIslandAlertsEnabled` | 开 | 会话完成提醒 |
 | `notchIslandInFullScreen` | 关 | 全屏应用中是否显示 |
 
@@ -182,14 +183,14 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 
 | 开关 | 系统类别 | 关闭时的行为 |
 |---|---|---|
-| 桌面小组件 | 其他 App 的数据 | 不写小组件容器 / App Group（这正是每次启动"访问其他 App 的数据"弹窗的来源） |
-| 空闲通知 | 通知 | 不发通知 |
+| 桌面小组件 | 其他 App 的数据 | 不写小组件容器 / App Group（这正是每次启动「访问其他 App 的数据」弹窗的来源） |
+| 空闲通知 | 通知 | 不发通知（完成与「停在用户身上」两类都不发；岛内提醒条不受此开关约束，由「会话完成提醒」单独控制） |
 | 区域截图 ⌘⇧A | 屏幕录制 | 不注册热键 |
-| 在终端继续会话 | 自动化 | 不发 Apple Event，改为复制命令 + 在目录打开终端 |
-| 蓝牙与耳机电量 | 蓝牙 | 不读蓝牙控制器、不跑 `system_profiler SPBluetoothDataType` |
-| Wi-Fi 名称 | 定位服务 | 不读 SSID，网络卡片显示"在设置中开启" |
-| 当前位置 | 定位服务 | 问候卡按「天气城市」取名，不读坐标 |
-| 读取 Cursor 会话 | 无系统弹窗（默认开） | 不读 Cursor 数据库：会话列表、额度（`CursorUsageStore`）与实扣（`CursorLedgerStore`）三条读路径都在入口按这个开关短路；重新打开时由 `.permissionDidChange` 就地恢复轮询，不必重启 |
+| 在终端继续会话 | 自动化 | 不发 Apple Event：会话仍存活时先回到宿主终端（Otty 走自身 socket，无需授权；未授权时 Terminal / iTerm2 只激活到前台、不定位 tab），需要新开终端时复制命令 + 在目录打开终端 |
+| 蓝牙与耳机电量 | 蓝牙 | 不读蓝牙控制器、不跑 `system_profiler SPBluetoothDataType`（该外部进程仅在开关开启且构建允许系统集成时启动） |
+| Wi-Fi 名称 | 定位服务 | 不读 SSID，网络详情的 Wi-Fi 名称处改为引导去设置授权 |
+| 当前位置 | 定位服务 | 问候卡按「天气城市」取名，不读坐标（未设城市时提示未设置天气城市） |
+| 读取 Cursor 会话 | 无系统弹窗（默认开） | 不读 Cursor 数据库：会话列表、额度（`CursorUsageStore`）与实扣（`CursorLedgerStore`）三条读路径都在入口按这个开关短路；重新打开时由 `.permissionDidChange` 就地恢复会话列表与额度轮询，不必重启 |
 
 实现：`AppPermission` 清单 + `PermissionGate.allows(_:)`（直接读 `UserDefaults`，任意线程可调）+
 `PermissionCenter`（系统授权状态，应用激活时刷新；开关变化广播 `.permissionDidChange`）。

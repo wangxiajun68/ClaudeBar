@@ -6,7 +6,7 @@
 
 会话卡片上的「迁移会话」打开迁移弹窗，「迁移到」选择目标客户端及配置。运行中、待确认或仍有子 agent 在跑时该按钮停用。目标为 Claude Code 当前配置、Claude Code 使用已保存的 Codex 自定义模型、Codex 当前配置、Codex 官方登录、Cursor CLI Auto、Cursor 桌面项目模型。先读取预览及遗漏说明，随后点击「迁移并打开」，复制历史并打开新会话，保留原会话。会话页的「迁移会话」区域通过「打开会话」恢复已迁移的目标，通过「再次迁移」把目标的新回合再迁往其他客户端。
 
-Claude Code、Codex、Cursor CLI 与 Cursor 桌面的原生正文适配器已实现。桌面目标要求此项目已在 Cursor 创建聊天，以读取其原生 workspace ID 和模型配置；没有登记时明确提示先建立项目聊天。创建后通过固定版本的本地 deep link 直接选中迁移聊天；实测已打开的窗口无需重载即可载入刚写入的聊天。此链接来自该版本私有 renderer，不能当成公开稳定 API。若客户端未响应，用户仍可在历史搜索「ClaudeBar · 迁移」。程序不自动重载窗口。会话页原有 Cursor 卡片对应桌面会话；CLI 来源通过迁移记录提供，未增加 CLI 全量会话发现器。
+Claude Code、Codex、Cursor CLI 与 Cursor 桌面的原生正文适配器已实现。桌面目标要求此项目已在 Cursor 创建聊天，以读取其原生 workspace ID 和模型配置；没有登记时明确提示先建立项目聊天。创建后通过固定版本的本地 deep link 直接选中迁移聊天；在此固定版本的已打开窗口上无需重载即可载入刚写入的聊天。此链接来自该版本私有 renderer，不能当成公开稳定 API。若客户端未响应，用户仍可在历史搜索「ClaudeBar · 迁移」。程序不自动重载窗口。会话页原有 Cursor 卡片对应桌面会话；CLI 来源通过迁移记录提供，未增加 CLI 全量会话发现器。
 
 「包含已完成工具的输入与结果」默认关闭。开启后预览显示记录数量，并提示这些资料会发送给目标模型。迁移只携带已配对完成的工具历史，保留 CC 的错误标记。文档里保留工具名称、输入和输出，不保留原来的调用 ID。写入 Claude Code 时成为紧邻的 `tool_use` 与 `tool_result`，写入 Codex 时成为紧邻的 `function_call` 与 `function_call_output`。结果行和调用行一起写入，恢复时没有待执行的调用。Cursor 桌面只在来源气泡带有已核对的 `tool` 编号时写回 `toolFormerData`，不给其他客户端的工具名编造编号。
 
@@ -61,13 +61,13 @@ Claude Code / Codex 源 JSONL 的读取上限为 64 MiB，独立于原生导入�
 
 桌面每条 bubble 携带原生 conversationState，实际展开可能更早达到 16 MiB，因此还做预分配估计和精确序列化体积检查；不能把正文上限当成桌面一定可导入的承诺。数据库被其他写事务占用约 2 秒后拒绝；不暂停或杀死 Cursor。
 
-运行中、待确认、运行中子 agent、未完成工具、子代理、缺失 parent、重复 ID 和分页缺口会拒绝。Codex 的 paginated 日志在从 ordinal 0 连续且仍保留 canonical 正文时，允许上下文压缩标记，迁移原始对话而不重复导入压缩摘要或 replacement_history；legacy 压缩日志、未知压缩格式、外部历史引用和 Claude Code 压缩历史仍拒绝。未打开「包含用户图片」时，用户消息里的图片和文档仍整段拒绝；打开后只接受上面列出的用户图片，以及在同时打开工具记录时的工具结果图片。Codex 开启工具记录时，只支持已验证的 response_item 调用/结果配对；canonical 工具记录无法完整对应时明确拒绝，并提示关闭该选项。CC 工作目录编码超过 200 字符时拒绝，尚未实现其长路径哈希分支。文档、音频、视频、Cursor 的 attachedFiles、Cursor 同模型桥接及新的 OAuth 登录注册未实现。已完成工具会写成相邻的原生调用和结果；Cursor 桌面图片和带原始编号的 toolFormerData 按 3.23.12 样本读写。自定义模型到 CC 的跨协议桥已实现并以 Kimi Responses / DeepSeek Chat 验证；不表示任意供应商、MCP 工具或长任务均兼容。官方历史迁到 CC 当前模型已通过。官方套餐的请求形状由 `AgentProtocolBridge.siwcRequest` 适配；登录、刷新和范围核验仍要单独授权，不能复用现有登录文件冒充授权。
+运行中、待确认、运行中子 agent、未完成工具、子代理、缺失 parent、重复 ID 和分页缺口会拒绝。Codex 的 paginated 日志在从 ordinal 0 连续且仍保留 canonical 正文时，允许上下文压缩标记，迁移原始对话而不重复导入压缩摘要或 replacement_history；legacy 压缩日志、未知压缩格式、外部历史引用和 Claude Code 压缩历史仍拒绝。未打开「包含用户图片」时，用户消息里的图片和文档仍整段拒绝；打开后只接受上面列出的用户图片，以及在同时打开工具记录时的工具结果图片。Codex 开启工具记录时，只支持已验证的 response_item 调用/结果配对；canonical 工具记录无法完整对应时明确拒绝，并提示关闭该选项。CC 工作目录编码超过 200 字符时拒绝，尚未实现其长路径哈希分支。文档、音频、视频、Cursor 的 attachedFiles、Cursor 同模型桥接及新的 OAuth 登录注册未实现。已完成工具会写成相邻的原生调用和结果；Cursor 桌面图片和带原始编号的 toolFormerData 按 3.23.12 样本读写。自定义模型到 CC 的跨协议桥已实现并以 Kimi Responses / DeepSeek Chat 验证；不表示任意供应商、MCP 工具或长任务均兼容。官方历史迁到 CC 当前模型已通过。官方套餐的请求形状已有 `AgentProtocolBridge.siwcRequest` 适配器，但尚未接入生产路径；登录、刷新和范围核验仍要单独授权，不能复用现有登录文件冒充授权。
 
 ## 协议转换层
 
 历史迁移和实时桥共用「一条消息里的有序部分」这个边界，不把官方 Codex 导入那种纯文本投影当成模型。`CodexProxyTransform` 继续负责 Responses 与 Chat，不并进会话写入器。
 
-已落地：用户文字和用户图片留在同一条消息里；图片解析由 `ConversationMedia` 同时服务历史迁移和 `AgentProtocolBridge`。已完成工具以 `MigrationToolExchange` 留在消息上（名称、输入 JSON、输出 JSON，不含原来的调用 ID）。Claude Code 与 Codex 写入成对的原生工具块，调用和结果相邻，恢复时不存在未完成调用。Cursor 3.23.12 的用户图片和带原始 `tool` 编号的 `toolFormerData` 按本机样本读写。`attachedFiles` 在已扫描的气泡里没有非空样本，继续拒绝。`AgentProtocolBridge.siwcRequest` 强制 `store=false`、`stream=true`，并去掉 `max_output_tokens`、`temperature`、`top_p` 和 `previous_response_id`；它不读取 Codex `auth.json`。
+已落地：用户文字和用户图片留在同一条消息里；图片解析由 `ConversationMedia` 同时服务历史迁移和 `AgentProtocolBridge`。已完成工具以 `MigrationToolExchange` 留在消息上（名称、输入 JSON、输出 JSON，不含原来的调用 ID）。Claude Code 与 Codex 写入成对的原生工具块，调用和结果相邻，恢复时不存在未完成调用。Cursor 3.23.12 的用户图片和带原始 `tool` 编号的 `toolFormerData` 按本机样本读写。`attachedFiles` 在已扫描的气泡里没有非空样本，继续拒绝。`AgentProtocolBridge.siwcRequest` 强制 `store=false`、`stream=true`，去掉 `max_output_tokens`、`temperature`、`top_p`，并在请求带有 `previous_response_id` 时直接拒绝（SIWC 预览要求完整 input 数组）；它不读取 Codex `auth.json`。当前该适配器只有协议桥回归在调用。
 
 仍拒绝：文档、音频、视频、签名思考、无法验证完整日志的压缩历史、运行中工具，以及没有核对样本的 Cursor 附件。官方套餐登录、刷新和范围核验仍要单独授权，不能把现有 API key 桥贴上官方 token。
 

@@ -5,25 +5,25 @@
 
 ## 切换 Provider / Model
 
-1. 用户点击 popup 的模型行，或在目录瓦片上选好模型后按「激活」→ `ProviderStore.activateModel(providerID:modelID:)`。
-2. `buildEnv()` 用所选 Provider + Model 构造完整 `EnvConfig`。
-3. `SettingsManager.writeSettings(env:)` 读现有 JSON，按 `managedEnvKeys` 删掉旧值、再把非空的 `EnvConfig` 值写回（空值即清除，不保留），`permissions` 等顶层字段原样保留，`PrivateFileWriter` 0600 暂存 + `rename` 写回 `~/.claude/settings.json`；URL 的可读斜杠靠 `JSONSerialization` 的 `.withoutEscapingSlashes`，不是写后替换（机制见技术文档 [§4](../technical/04-data-access-layer.md)）。
-4. 更新 `activeProviderID` / `activeModelID`，持久化 `claude-bar-providers.json`（`FilePaths.presetsFile`），刷新余额。
+1. 用户点击 popup 的模型 chip，或在目录卡片上选好模型后按「激活」→ `ProviderStore.activateModel(providerID:modelID:)`（Codex 侧是 `CodexProviderStore.activate`）。
+2. `buildEnv(from:model:)` 用所选 Provider + Model 构造完整 `EnvConfig`。
+3. `SettingsManager.writeSettings(env:)` 读现有 JSON，按 `managedEnvKeys` 删掉旧值、再把非空的 `EnvConfig` 值写回（空值即清除，不保留），`permissions` 等顶层字段原样保留，`PrivateFileWriter` 以 0600 写暂存文件 + `rename` 写回 `~/.claude/settings.json`（写入前会做一次 `.bak` 备份）；URL 的可读斜杠靠 `JSONSerialization` 的 `.withoutEscapingSlashes`，不是写后替换（机制见技术文档 [§4](../technical/04-data-access-layer.md)）。
+4. 更新 `activeProviderID` 与 provider 的 `activeModelID`，持久化到 `FilePaths.presetsFile`（`~/.claude/claude-bar-providers.json`），刷新余额与共享代理状态。
 5. popup 页头显示 `FeedbackToast`（Claude 侧文案 `CC · <模型名>`，Codex 侧 `Codex · <模型名>`；由 `PanelState.feedbackToken` 驱动 `.task(id:)`，2 秒后淡出）。
 6. Claude Code 与 Codex 独立激活：切换一侧只写该侧配置。共享代理会刷新上游状态，但不会选择另一侧的供应商或模型。
 
-> **设计取舍（`managedEnvKeys` 的清除语义，B4）**：`writeSettings` 先删掉全部 `managedEnvKeys`、只把非空的新值写回，所以切换 Provider 时上一个 Provider 的 token / 模型变量会被清掉，而用户手填的**非托管**变量原样保留。已经过时的旧说法是「空值不覆盖旧值、旧 token 会残留」——现在的方向相反：托管的空值就是删除。若以后要保留某一项手填值，应把它移出 `managedEnvKeys`，而不是恢复「空值不覆盖」的语义。
+> **设计取舍（`managedEnvKeys` 的清除语义，B4）**：`writeSettings` 先删掉全部 `managedEnvKeys`、只把非空的新值写回，所以切换 Provider 时上一个 Provider 的 token / 模型变量会被清掉，而用户手填的非托管变量原样保留。已经过时的旧说法是「空值不覆盖旧值、旧 token 会残留」——现在的方向相反：托管的空值就是删除。若以后要保留某一项手填值，应把它移出 `managedEnvKeys`，而不是恢复「空值不覆盖」的语义。
 
 ## 会话监控（2.5s 轮询 + 心跳 + 空闲通知）
 
-1. `ProviderStore.refresh()` → `startSessionPolling()` 启动 2.5s 定时器（间隔定义在 `AppConfig.sessionPollInterval`）；定时器只触发，扫描在 detached task 中离主线程执行。
+1. `ProviderStore.refresh()` → `startSessionPolling()` 启动定时器：界面可见但有会话忙时 `AppConfig.sessionPollInterval`（2.5s），可见且全部空闲时 `sessionPollIdleInterval`（5s），无可见窗口时 `sessionPollHiddenInterval`（8s）；定时器只触发，扫描在 detached task 中离主线程执行。
 2. `SessionMonitor.fetchActive()`：扫描 `~/.claude/sessions/*.json`，解析 PID/cwd/status，用 `kill(pid, 0)` 判活，按 recency 排序。
 3. 对每个活跃会话 `fetchContext()`：读其 transcript `*.jsonl` 的**尾部 ~96KB**，取最后一条 assistant 消息的 `input + cache_read + cache_creation` 作为当前上下文 token，并从最近的 `tool_use` 推断当前活动；`toolPending` 按 `tool_use` 的 **id** 判定——最新一批调用里还有谁没被 `tool_result` 的 `tool_use_id` 点名，就算仍在跑（Claude Code 会把并行调用塞进同一条 assistant 记录、每次调用写一条结果记录，只按行号判会在批次里第一个结果落地时就误判「没有待办」）。
 4. `fetchSubagents()`：扫描会话目录的 `subagents/*.meta.json` 与 `subagents/workflows/<id>/`，聚合子 Agent 与 Workflow。
 5. 每轮把 busy/idle 采样追加进 `heartbeats[pid]`（长度 `AppConfig.heartbeatLength`，默认 2.5s×24 ≈ 最近一分钟），驱动瓦片上的 `HeartbeatSparkline`。
-6. `ConfirmedCompletionDetector` 判定「这一轮真的交付了答案」：该会话的轮次键变了 + 它自己的文件刚写过（60 s 内）+ 当前不忙（三条同见 [§03-provider-store](../technical/03-provider-store.md)）。命中且 `AppPreferences.idleNotifyEnabled` 开启时，经 `NotificationService` 发系统通知（"最终答复已就绪"，附 Resume 动作）；点按通知经 `.resumeSession` 通知回 AppDelegate 用 `TerminalLauncher` 恢复会话。Cursor / Codex 同一条规则，只是轮次键取各自的本机字段（Cursor 用 transcript 字节偏移 `turn-<offset>`、Codex 用 `task_complete.turn_id`，文案随各自客户端）。
+6. `ConfirmedCompletionDetector` 判定「这一轮真的交付了答案」：该会话的轮次键变了 + 它自己的文件刚写过（`completionFreshness`，60 s 内）+ 当前不忙。命中且 `AppPreferences.idleNotifyEnabled` 开启时，经 `NotificationService` 发系统通知（"最终答复已就绪"，附 Resume 动作）；点按通知经 `.resumeSession` 通知回 AppDelegate 用 `TerminalLauncher` 恢复会话。Cursor / Codex 同一条规则，只是轮次键取各自的本机字段（Claude 是 `turnCount|答案 id`、Cursor 用 transcript 字节偏移 `turn-<offset>`、Codex 用 `task_complete.turn_id`，文案随各自客户端）。
 7. `CursorSessionMonitor.fetchActive()` 在后台线程读 Cursor 的 `state.vscdb`（SQLite，只读，WAL 安全），按 `recency` **或 `checkpointAt`** 取最近 3 天内活跃的非归档 composer，**先判运行状态再按忙碌优先排序**（列表通常保留 14 个，但运行中的会话不受这个数量限制），再扫描其 transcript 与 checkpoint 补充活动状态——**「有轮次在飞」的判据是两条写时钟取其一**：JSONL 的最后一条 user **或** assistant 行在最后一个 `turn_ended` 之后（`toolPending`）且文件 mtime 在 10 分钟内，或者存在未完成的 run（`unfinishedRunAt > 0`）且 `max(unfinishedRunAt, checkpointAt)` 在 10 分钟内（中断的轮次不写 `turn_ended`，只按行序判定会让一条冻结的文件永远算忙；而 Cursor 会持续写 checkpoint 却可能很久不导出 JSONL，只看 JSONL 会把长任务判成闲置；带有终态标记且标记晚于 `unfinishedRunAt` 的 transcript 直接收尾）。细节见 [Cursor 监控排查](../technical/cursor-session-monitor-investigation.md)。
-8. 全部结果回主线程后 `writeWidgetSnapshot()` 同步给 Widget。
+8. 全部结果回主线程后提交 `writeWidgetSnapshot()`，由 `WidgetSnapshotWriter` 在后台队列上 diff 后写入并通知 Widget。
 
 ## 用量统计
 
@@ -41,5 +41,5 @@
 
 ## Widget 联动
 
-- Widget 点击通过 `widgetURL("claudebar://")` 触发；主 app 的 `AppDelegate.application(_:open:)` 收到该 URL 后调用 `showPanel()` 弹出菜单栏面板。
-- 主 app 每次状态变化构建 `WidgetSnapshot`，经 `WidgetSnapshotWriter` 与上次快照 diff——**仅在数据变化时**才写 4 路文件并调 `WidgetCenter.shared.reloadAllTimelines()`（避免每 2.5s 无意义重载，见技术文档 [§4.3](../technical/04-data-access-layer.md#writewidgetsnapshot--四路冗余写入--diffb6)）；Widget 自身 30s 也会主动刷新。
+- Widget 点击通过 `widgetURL("claudebar://")` 触发；主 app 的 `AppDelegate.application(_:open:)` 收到该 URL 后调用 `showPanel()` 弹出菜单栏面板（冷启动时先记下请求，等 `menuBarController` 建好再回放）。
+- 主 app 在状态变化时构建 `WidgetSnapshot`，提交给 `WidgetSnapshotWriter`；编码、与上次快照的 diff 和四路写入都在它的串行队列上，**仅在数据变化时**才写文件并调 `WidgetCenter.shared.reloadAllTimelines()`（避免无意义重载，见技术文档 [§4.3](../technical/04-data-access-layer.md#writewidgetsnapshot--四路冗余写入--diffb6)）；Widget 自身的时间线每 5 分钟兜底刷新一次（`WidgetProvider` 的 `.after` 策略，取 WidgetKit 建议的最小间隔）。

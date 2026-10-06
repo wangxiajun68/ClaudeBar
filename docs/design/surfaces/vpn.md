@@ -6,18 +6,20 @@ SF typography and semantic ink colors. This page uses stationary neutral surface
 
 ## Structure
 
-A full-width connection band sits above a viewport-sized workspace. At widths
-of 900pt and above, subscriptions occupy a 340–380pt column (28% of the
-workspace) and traffic takes the remainder. Each column scrolls independently. Narrow windows
+A page-header row (VPN title and core-log button) sits above a viewport-sized
+workspace. At widths of 900pt and above, the leading column (340–380pt, 28% of
+the workspace) holds the runtime overview and the subscriptions, and traffic
+takes the remainder. Each column scrolls independently. Narrow windows
 use a native segmented switch between traffic and subscriptions. The page never
 forces a minimum content width or a horizontal page scroll.
 
-The connection band owns runtime controls, sampled rates, totals and one current
+The overview panel owns runtime controls, sampled rates, totals and one current
 node entry. TUN, LAN access and editable port live in a network-settings popover.
-Connectivity probes, including ChatGPT and Claude, are always visible in an
-full-width row, with a balanced four-column grid in narrow windows. The running-node entry includes its latest measured latency.
-Rate and cumulative values keep intrinsic text width; narrow layouts wrap the
-metric groups instead of truncating their numeric readings. Core logs have a separate popover;
+Connectivity combines its glyph, all seven probes, exit IP and test action in one
+row of the panel; narrow layouts wrap the probes into an adaptive grid without
+hiding any service. The running-node entry includes its latest measured latency.
+Rate and cumulative values keep intrinsic text width; the layout does not
+truncate their numeric readings. Core logs have a separate popover;
 runtime failures also expose it automatically.
 
 Subscriptions share one neutral panel with compact separated rows. Browsing is
@@ -41,8 +43,6 @@ switching and testing are available only for the running subscription. Node
 switches show progress, suppress overlapping switches, and surface failures.
 Long names remain available in tooltips. Preview and live lists share geometry.
 
-Connectivity combines its glyph, all seven probes, exit IP and test action in one compact row. Very small windows wrap probes without hiding any service.
-
 ## Traffic
 
 Shared icon-bearing `SegmentedCapsule`: detail, retained-domain summary, live
@@ -52,9 +52,9 @@ uses a fixed header and 30pt rows. Text is neutral; only route and failure signa
 carry color. Record text supports system text selection. The row is not a button: only its
 trailing detail control opens complete endpoint/rule/outbound information, so
 mouse and system three-finger text selection are not intercepted by a row action.
-Copy targets the visible filtered set. Clear is a confirmed action in a menu.
+The header copy button targets the filtered set, not only the current page. Clear is a confirmed action in a menu.
 
-The route menu shows matching counts; the log glyph tooltip carries retained capacity. A compact footer pages through at most 200 rows at a time. Copy includes the full filtered set, across pages. Domain summary covers retained records, not evicted
+The route menu shows matching counts; the log glyph tooltip carries retained capacity. The footer pages through at most 200 rows at a time and states the total. Domain summary covers retained records, not evicted
 history. Following is explicit and pauses on user scroll or older-page navigation; paused history freezes its reading snapshot, even at ring eviction, and shows
 new matching record count and a return-to-latest action. Incoming logs do not
 change subscriptions, drawer geometry or the page's layout.
@@ -78,11 +78,9 @@ compact-workspace switches, preserving search, mode and position.
 
 Build the complete native app with `CLAUDEBAR_SKIP_INSTALL=1` (do not restart the
 user's VPN for visual verification). Parser/query/ring regression suite:
-`python3 Tests/vpn-domain-log-regressions.py`. Synthetic preview uses 1,500 nodes
-and 12,000 input records; retention is 2,000. Earlier checks verified desktop and narrow-window geometry, complete cumulative readings
-(2.0 GB download / 258.9 MB upload), current-node latency, always-visible probes,
-and native drag selection of log text. Also verified node search, Escape dismissal,
-retained-record search and domain summary. Resizing preserves search and mode.
-Preview appearance uses the same authored window appearance as the app. Runtime
-node switching and real network startup are intentionally not exercised by the
-synthetic preview.
+`python3 Tests/vpn-domain-log-regressions.py` drives the production parser and
+ring (including 2,000-record wraparound and paused-snapshot cases) without
+launching the app. The synthetic preview (`Tools/render-mainwindow-preview.py`)
+seeds 12 node names and no domain-log records, so it exercises layout, not
+volume; runtime node switching, real network startup, native text selection and
+hover remain outside preview coverage.
