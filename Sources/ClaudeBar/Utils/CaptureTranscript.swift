@@ -111,12 +111,27 @@ enum CaptureTranscript {
     }
 
     static func clip(_ text: String, cap: Int = 160) -> String {
-        let folded = text
-            .split(whereSeparator: { $0.isNewline || $0 == "\r" })
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        if folded.count <= cap { return folded }
-        return String(folded.prefix(cap)) + "…"
+        // Fold a window, not the whole string: the fold (newlines → one
+        // space, trim the ends) can only ever shorten, so a window that
+        // already carries more than `cap` folded characters yields exactly
+        // the same first `cap` characters the full string would. A window
+        // that comes up short is retried larger — a body that opens with
+        // thousands of newlines needs the walk to reach its first real text —
+        // and a window that is the whole string is the old answer by
+        // construction. The live preview calls this ten times a second per
+        // streaming capture, on a body that grows to megabytes; folding the
+        // whole thing measured ~76 ms a call at 2.6 M characters.
+        var window = max(64, cap * 2)
+        while true {
+            let slice = text.prefix(window)
+            let folded = text[..<slice.endIndex]
+                .split(whereSeparator: { $0.isNewline || $0 == "\r" })
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            if folded.count > cap { return String(folded.prefix(cap)) + "…" }
+            if slice.endIndex == text.endIndex { return folded }
+            window *= 4
+        }
     }
 
     // MARK: - Tools (invocations, not the 30+ schema dump)

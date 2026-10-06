@@ -334,41 +334,62 @@ final class ProxyCaptureStore {
         }
     }
 
+    /// Read one capture's payload and derive its panes. The SQLite read runs
+    /// under the store lock; the derivation — JSON parsing of up to
+    /// `payloadCap` (16 MB, see `CaptureMedia`), media-directory resolution,
+    /// turn/tool extraction — runs **after** the read, off the lock. Holding
+    /// the recursive lock across those parses would stall every capture
+    /// thread (`pushLive` / `begin` / `finish`) for the duration, exactly the
+    /// hazard `begin`'s own comment describes for the write side.
     func detail(id: Int64, includeRaw: Bool = false,
                 includePayloads: Bool = true, includeTools: Bool = true) -> CaptureDetail? {
         lock.lock()
-        defer { lock.unlock() }
-        guard let db = connection() else { return nil }
-        let sql = includeRaw
-            ? """
-            SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
-                   c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
-                   c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
-                   c.cache_write_tokens,
-                   p.request_json, p.rewritten_json, p.response_json, p.raw_sse,
-                   COALESCE(p.request_headers, '')
-            FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
-            """
-            : """
-            SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
-                   c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
-                   c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
-                   c.cache_write_tokens,
-                   p.request_json, p.rewritten_json, p.response_json, '',
-                   COALESCE(p.request_headers, '')
-            FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
-            """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int64(stmt, 1, id)
-        guard sqlite3_step(stmt) == SQLITE_ROW, let summary = rowToSummary(stmt) else { return nil }
-        let request = text(stmt, 18)
-        return makeDetail(id: id, summary: summary, request: request,
-                          rewritten: text(stmt, 19), response: text(stmt, 20),
-                          sse: includeRaw ? text(stmt, 21) : "",
-                          requestHeadersJSON: text(stmt, 22),
-                          includePayloads: includePayloads, includeTools: includeTools)
+        if let db = openConnectionLocked() {
+            let sql = includeRaw
+                ? """
+                SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
+                       c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
+                       c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
+                       c.cache_write_tokens,
+                       p.request_json, p.rewritten_json, p.response_json, p.raw_sse,
+                       COALESCE(p.request_headers, '')
+                FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
+                """
+                : """
+                SELECT c.id, c.started_at, c.ended_at, c.first_token_at, c.kind, c.source,
+                       c.provider_name, c.model, c.path, c.is_stream, c.state, c.http_status,
+                       c.prompt_tokens, c.completion_tokens, c.cache_read_tokens, c.error, c.preview,
+                       c.cache_write_tokens,
+                       p.request_json, p.rewritten_json, p.response_json, '',
+                       COALESCE(p.request_headers, '')
+                FROM captures c LEFT JOIN payloads p ON p.capture_id = c.id WHERE c.id = ?
+                """
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_int64(stmt, 1, id)
+                var row: (summary: CaptureSummary, request: String, rewritten: String,
+                          response: String, sse: String, headers: String)?
+                if sqlite3_step(stmt) == SQLITE_ROW, let summary = rowToSummary(stmt) {
+                    // String atoms, not the statement: copying them here lets
+                    // the statement close before the parses below.
+                    row = (summary, text(stmt, 18), text(stmt, 19), text(stmt, 20),
+                           includeRaw ? text(stmt, 21) : "", text(stmt, 22))
+                }
+                // Finalize under the lock: `pruneLocked`'s VACUUM refuses to
+                // run while any statement is open, and it must not be left to
+                // the parses below to release this one.
+                sqlite3_finalize(stmt)
+                if let row {
+                    lock.unlock()
+                    return makeDetail(id: id, summary: row.summary, request: row.request,
+                                      rewritten: row.rewritten, response: row.response,
+                                      sse: row.sse, requestHeadersJSON: row.headers,
+                                      includePayloads: includePayloads, includeTools: includeTools)
+                }
+            }
+        }
+        lock.unlock()
+        return nil
     }
 
     private func makeDetail(id: Int64, summary: CaptureSummary,
@@ -425,6 +446,14 @@ final class ProxyCaptureStore {
     // MARK: - SQLite
 
     private func connection() -> OpaquePointer? {
+        lock.lock()
+        defer { lock.unlock() }
+        return openConnectionLocked()
+    }
+
+    /// The body of `connection()`, for callers that already hold the
+    /// recursive lock (`detail`).
+    private func openConnectionLocked() -> OpaquePointer? {
         if let db { return db }
         if let failedAt = openFailedAt, Date().timeIntervalSince(failedAt) < Self.openRetryInterval { return nil }
         guard sqlite3_open_v2(Self.dbURL.path, &db,

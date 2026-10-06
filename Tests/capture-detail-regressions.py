@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """The capture store's detail path against a real SQLite file.
 
-Three things here are invisible from every other suite:
+Four things here are invisible from every other suite:
 
 - `makeDetail` used to parse the same request/response four times (once for
   turns, once for the reply, once each for tool calls). The derivation is
   asserted equal to the per-derivation composition, so the single-parse
   refactor cannot change what a detail contains.
+- `detail()` must finish its SQLite read — statement finalized, lock released
+  — *before* the multi-megabyte derivation runs; the fixture locks assert the
+  ordering, so a future edit cannot quietly re-introduce parsing under the
+  store lock.
 - `rowToSummary` read the token columns through `sqlite3_column_int` (32-bit),
   silently truncating anything past 2^31, and turned an unparseable
   `started_at` into "now" while `ended_at` stayed put — two clocks in one row.
+- `CaptureTranscript.clip` now folds one growing window instead of the whole
+  body (the live preview calls it at 10 Hz per streaming capture); the
+  differential fixture pins it to the old whole-string fold across random and
+  handcrafted strings.
 - `evictStaleLiveBuffers` republished `streams.live` / `previews.map` on every
   finishing proxied call (health checks included) even when the filter removed
   nothing, re-evaluating the whole traffic page for no change.
@@ -39,17 +47,23 @@ def static_method(signature):
     return method(signature).replace('    func ', '    static func ', 1)
 
 
-# `detail()` keeps its production SQL; only the storage handle and the JSON
-# fallback branch are neutralized. `if false` keeps the branch compiled (and
-# therefore needs the stub `jsonStore`), but the SQL path is what runs.
+# `detail()` keeps its production SQL and its lock/unlock points verbatim; the
+# fixture supplies the lock and resolves the connection handle. The count of
+# those calls is load-bearing: the derivation must run *after* the statement is
+# finalized and the lock released, which `makeDetail` itself asserts below.
 detail = method('detail(id: Int64, includeRaw: Bool = false,\n                includePayloads: Bool = true, includeTools: Bool = true)')
-detail = detail.replace('        lock.lock()\n        defer { lock.unlock() }\n', '')
-detail = detail.replace('if !useDatabase {', 'if false {')
-detail = detail.replace('guard let db = connection() else { return nil }',
-                        'guard let db = Self.db else { return nil }')
+detail = detail.replace('openConnectionLocked()', 'connection()')
+detail = detail.replace('sqlite3_prepare_v2(db, sql, -1, &stmt, nil)', 'prepareStatement(db, sql, &stmt)')
+detail = detail.replace('sqlite3_finalize(stmt)', 'closeStatement(stmt)')
 detail = detail.replace('    func detail(', '    static func detail(', 1)
 
 make_detail = static_method('makeDetail(id: Int64, summary: CaptureSummary,')
+make_detail = make_detail.replace(
+    '        let dir = CaptureMedia.mediaDir(captureID: id)',
+    '''        require(lock.depth == 0, "makeDetail ran while detail() still held the store lock")
+        require(!stmtOpen, "makeDetail ran with detail()'s statement still open")
+        let dir = CaptureMedia.mediaDir(captureID: id)''',
+    1)
 row_to_summary = static_method('rowToSummary(_ stmt: OpaquePointer?)')
 opt_int = static_method('optInt(_ stmt: OpaquePointer?, _ i: Int32)')
 text_col = static_method('text(_ stmt: OpaquePointer?, _ i: Int32)')
@@ -168,7 +182,30 @@ enum StoreFixture {
     static let jsonStore = JSONStoreStub()
     static let useDatabase = true
 
+    /// Stands in for the store's `NSRecursiveLock`. `detail()` must release
+    /// it before `makeDetail` runs, and must have closed its statement first
+    /// (`pruneLocked`'s VACUUM cannot run with one open).
+    final class ProbeLock {
+        var depth = 0
+        func lock() { depth += 1 }
+        func unlock() { depth -= 1 }
+    }
+    static let lock = ProbeLock()
+    static var stmtOpen = false
+
     static func connection() -> OpaquePointer? { db }
+
+    static func prepareStatement(_ db: OpaquePointer?, _ sql: String,
+                                 _ stmt: inout OpaquePointer?) -> Int32 {
+        let rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nil)
+        if rc == SQLITE_OK { stmtOpen = true }
+        return rc
+    }
+
+    static func closeStatement(_ stmt: OpaquePointer?) {
+        stmtOpen = false
+        sqlite3_finalize(stmt)
+    }
 
 DETAIL
 
@@ -343,7 +380,48 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(store.streams.live.keys.sorted() == [1] && store.previews.map.keys.sorted() == [1],
                 "the stale buffers must be gone")
         _ = (streamToken, previewToken)
-        print("PASS: detail derivation, 64-bit token columns, timestamp fallback and eviction publishing")
+
+        // --- `clip` is now a windowed fold; it must agree with the old
+        // whole-string fold everywhere, including the degenerate shapes
+        // (newline runs longer than the window, whitespace-only bodies).
+        func oldClip(_ text: String, cap: Int = 160) -> String {
+            let folded = text
+                .split(whereSeparator: { $0.isNewline || $0 == "\r" })
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            if folded.count <= cap { return folded }
+            return String(folded.prefix(cap)) + "…"
+        }
+        var seed: UInt64 = 0x5eed
+        func random(_ n: Int) -> Int { seed = seed &* 6364136223846793005 &+ 1; return Int((seed >> 33) % UInt64(n)) }
+        func randomText(_ length: Int) -> String {
+            // Characters chosen to straddle the fold's edges: newlines, CR,
+            // leading/trailing whitespace, wide scalars and plain letters.
+            let alphabet = Array("ab \n\r\t\u{00A0}\u{3000}😀한글。")
+            return String((0..<length).map { _ in alphabet[random(alphabet.count)] })
+        }
+        var clipCases: [String] = ["", " ", "\n", "\r\n", "\n\n\n\n", "   \n  ", String(repeating: "\n", count: 500),
+                                   String(repeating: "x", count: 10_000), String(repeating: "\n", count: 4_000) + "real text"]
+        clipCases += (0..<400).map { _ in randomText(random(300)) }
+        for (index, text) in clipCases.enumerated() {
+            for cap in [1, 2, 64, 160, 159, 1600] {
+                let current = CaptureTranscript.clip(text, cap: cap)
+                let expected = oldClip(text, cap: cap)
+                require(current == expected, "clip drifted on case \(index) cap \(cap): \(current.prefix(40)) vs \(expected.prefix(40))")
+            }
+        }
+        // The measured hazard: a multi-megabyte body must not be walked per
+        // call. The window fold touches at most a few multiples of `cap`.
+        let big = randomText(2_000_000)
+        func milliseconds(_ body: () -> Void) -> Double {
+            let start = ContinuousClock.now; body()
+            let d = start.duration(to: .now)
+            return Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
+        }
+        let clipMs = milliseconds { _ = CaptureTranscript.clip(big) }
+        require(clipMs < 5, "clip on 2 MB took \(clipMs) ms — the whole-string fold is back")
+
+        print("PASS: detail derivation, 64-bit token columns, timestamp fallback, eviction publishing and clip folding")
     }
 }
 '''

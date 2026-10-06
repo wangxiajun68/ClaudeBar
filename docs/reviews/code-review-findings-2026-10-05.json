@@ -238,7 +238,9 @@
   "summary": "每一批 live flush 都对整段已累积正文做一次全量折叠来取前 120 字；完成时还在主线程对最终全文再做一次",
   "evidence": "917: `let previews = snapshot.mapValues { Self.clip($0.content.isEmpty ? $0.reasoning : $0.content) }`；341（finish 的主线程块）: `self.previews.map[id] = Self.clip(live.content.isEmpty ? live.reasoning : live.content)`；1015-1017: `static func clip(_ s: String) -> String { CaptureTranscript.clip(s, cap: 120) }`；CaptureTranscript.swift 85-92: `text.split(whereSeparator: ...).joined(separator: \" \").trimmingCharacters(...)` 之后再 `prefix(cap)` —— split/join 的输入是整段 content，与 120 的上限无关。flushLive 由 scheduleFlush 以 100 ms 节流对每条活跃流调用（897-906），即 10 Hz/流。",
   "failure": "一条 1 MB 的助手回复流 5 分钟：约 3000 次 flush × 平均 500 KB = 每流 ~1.5 GB 字符扫描 + 每次 split 出上万条 Substring；100 条并发（Tests/performance-regressions.py 就按 100 条建模）时是 ~150 GB/流·5min 量级的纯重复工作，全部落在 utility 队列与分配器上。更尖锐的是 341：结束那一刻在**主线程**对最终全文（长回复可达数百 KB，含数万行）做同样的 split/join，正是面板要刷新的那一帧，直接表现为流结束时的一次卡顿。",
-  "fix": "折叠前先截断：`clip` 只输出前 120 字符，而折叠（换行→空格、trim）只会缩短，所以先 `String(text.prefix(320))` 再折叠不会改变前 120 个可见字符；把该前缀截断放进 CaptureTranscript.clip 或两处调用点（341、917）即可。"
+  "fix": "折叠前先截断：`clip` 只输出前 120 字符，而折叠（换行→空格、trim）只会缩短，所以先 `String(text.prefix(320))` 再折叠不会改变前 120 个可见字符；把该前缀截断放进 CaptureTranscript.clip 或两处调用点（341、917）即可。",
+  "status": "fixed",
+  "verdict_note": "Code: `CaptureTranscript.clip` folds a growing window (`text.prefix(window)`, window starts at max(64, cap*2), ×4 until the fold exceeds `cap`), not the whole body; a window that is the whole string is the old answer by construction. Measured with a production-slice differential probe: 200,000 random + handcrafted strings agree with the old whole-string fold across five caps; a 2.6 M-character body went from 74.34 ms to 0.011 ms per call. Test: `capture-detail-regressions.py` now splices the production `clip` and asserts equality with the old fold over 410 strings × 6 caps (newline runs longer than the window, whitespace-only, wide scalars) plus a 2 MB timing guard; reverting to the old fold trips the guard at 120 ms."
  },
  {
   "category": "concurrency",
@@ -250,7 +252,9 @@
   "summary": "detail() 在 store 全局锁内读 SQLite 并做多 MB 的完整 JSON 解析，期间代理线程的 pushLive/begin/finish 全部阻塞，实时转发的流会被卡住",
   "evidence": "379-380: `lock.lock(); defer { lock.unlock() }`；390-420 在锁内 prepare/step 并取出 request/response 字符串（payloadCap 为 16 MB，CaptureMedia.swift:8）；416-420 调 `makeDetail(...)`，而 makeDetail 在锁内执行 428: `CaptureTranscript.turns(from: request, ...)`、430: `replyTurns(responseJSON: response, ...)`、441: `CaptureTranscript.toolCalls(request: request, response: response)` —— 每次都会 `JSONSerialization.jsonObject` 整份正文（CaptureTranscript.swift:465-468）。对比 236-241 的注释：begin 正是因为「holding the recursive lock across two full JSON parses of a multi-MB body stalled every other capture thread」才把解析挪到锁外，同一条风险在 detail 上没有处理。",
   "failure": "用户在流量页点开一条 40-100 MB 的截图抓包（或任何大请求）：detail 在 com.claudebar.capture-detail 队列上持锁数秒，期间 CodexProxyServer 的 `tap?.pushLive`（1064-1092 → 292-299 lock）、`markStreaming`（281-284 → exec 的 lock）、`finish` 全部排队等待；pushLive 又是在 `for try await line in bytes.lines` 的转发循环里同步调用（CodexProxyServer.swift:1139-1152、502-516），于是**代理不再读/转发上游 SSE**，正在流式输出的对话出现数秒停顿。",
-  "fix": "锁内只做 SQLite 读取并把 4 个字符串拷贝出来，`makeDetail`（解析 + 文件系统 mediaDir 查询）移到 `defer { lock.unlock() }` 之后执行：`lock.lock(); ...取出 summary 与字符串...; lock.unlock(); return makeDetail(...)`。"
+  "fix": "锁内只做 SQLite 读取并把 4 个字符串拷贝出来，`makeDetail`（解析 + 文件系统 mediaDir 查询）移到 `defer { lock.unlock() }` 之后执行：`lock.lock(); ...取出 summary 与字符串...; lock.unlock(); return makeDetail(...)`。",
+  "status": "fixed",
+  "verdict_note": "Code: `detail()` reads the row under the lock, copies the payload columns out as Strings, finalizes the statement (so `pruneLocked`'s VACUUM can still run), unlocks, and only then calls `makeDetail` — the JSON parsing of up to `payloadCap` (16 MB) now runs off the lock, matching the rule `begin`'s own comment states for the write side. `connection()` was split so `openConnectionLocked()` serves callers already holding the recursive lock. Test: `capture-detail-regressions.py` splices production `detail` verbatim (its lock calls resolve to a depth-counting probe) and `makeDetail` asserts `lock.depth == 0` and no statement open on entry; both mutants (derivation under lock; statement left open across it) fail the suite."
  },
  {
   "category": "perf-cpu",
