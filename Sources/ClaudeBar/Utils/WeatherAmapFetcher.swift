@@ -77,13 +77,17 @@ enum WeatherAmapFetcher {
     /// Live conditions and the forecast, fetched together. The forecast can be
     /// missing without sinking the reading — a live temperature alone still
     /// paints the card.
+    ///
+    /// One request, not two: `extensions=all` already carries `lives` beside
+    /// `forecasts`, so the `extensions=base` call that used to run in parallel
+    /// spent the key's free quota twice for a figure the same payload held.
     private static func reading(adcode: String, place: String,
                                 latitude: Double?, longitude: Double?, key: String) async -> WeatherReading? {
-        async let live = payload(adcode: adcode, key: key, extensions: "base")
-        async let forecast = payload(adcode: adcode, key: key, extensions: "all")
-        let (liveRoot, forecastRoot) = await (try? live, try? forecast)
-        guard let lives = (liveRoot?["lives"] as? [[String: Any]])?.first else { return nil }
-        let casts = (forecastRoot?["forecasts"] as? [[String: Any]])?.first
+        // A payload the key is refused for is "no reading", not a throw: the
+        // chain below falls through to 中国天气网.
+        guard let root = (try? await payload(adcode: adcode, key: key, extensions: "all")) ?? nil else { return nil }
+        guard let lives = (root["lives"] as? [[String: Any]])?.first else { return nil }
+        let casts = (root["forecasts"] as? [[String: Any]])?.first
         let parsed = DomesticWeatherParser.reading(
             live: lives,
             forecast: casts.flatMap { $0["casts"] as? [[String: Any]] }.map { ["casts": $0] },

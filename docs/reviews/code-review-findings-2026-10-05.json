@@ -829,7 +829,9 @@
   "line": 83,
   "severity": "high",
   "summary": "extensions=all 已经包含实况（lives），代码却再发一次 extensions=base，每次刷新对该 key 的免费配额多花一倍请求",
-  "symbol": "WeatherAmapFetcher.reading(adcode:place:latitude:longitude:key:)"
+  "symbol": "WeatherAmapFetcher.reading(adcode:place:latitude:longitude:key:)",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "correctness",
@@ -2218,7 +2220,9 @@
   "summary": "两个国内天气源文件完全不进任何回归切片：坐标判定、URL/请求头组装、国内兜底决策链都只能靠手动跑应用验证。",
   "evidence": "grep -rn 'WeatherAmapFetcher|WeatherCNFetcher' Tests → 0 命中。Tests/weather-astronomy-regressions.py:6-7 的切片是 `WeatherFetcher.swift` 的 marker 前段 + `WeatherForecastFetcher.swift` + `SkyAstronomy.swift` + `CNWeatherCityTable.swift`，两个 fetcher 文件不在内；其它测试（greeting-layout、weather-card-performance）同样只 splice 前两个解析文件。两个文件里真正有分支的逻辑：coordinates 的 `pair.count == 2 && (-90...90).contains(pair[0])` 判定（106-110）、locate 的「原样再带 city=query 重试」两步（62-73）、CNFetcher 的 `!name.isEmpty, coordinate(name) == nil, cityID(...)` 三连守卫（25-27）与 Referer/Accept-Encoding 请求头（37-39）。",
   "failure": "输入：这两个文件被改动（例如把坐标顺序写反、把 extensions 写成同一个值、或把 CN 守卫去掉）时，现有测试全绿而运行时行为已经坏掉——例如 coordinates 的经纬顺序一旦反过来，AMap/Open-Meteo 都会静默给出别的城市。",
-  "fix": "把 `coordinates(_:)` 与 CNFetcher.fetch 的纯判定部分提成 `DomesticWeatherParser`/同文件的纯函数，并加进 weather-astronomy 的切片（或新增 `Tests/weather-domestic-fetcher-regressions.py` 直接编译这两个文件，stub 掉 URLSession）；至少覆盖 lat,lon 合法/越界/单位数、坐标查询不进 CN 表、表外区县名回落。"
+  "fix": "把 `coordinates(_:)` 与 CNFetcher.fetch 的纯判定部分提成 `DomesticWeatherParser`/同文件的纯函数，并加进 weather-astronomy 的切片（或新增 `Tests/weather-domestic-fetcher-regressions.py` 直接编译这两个文件，stub 掉 URLSession）；至少覆盖 lat,lon 合法/越界/单位数、坐标查询不进 CN 表、表外区县名回落。",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "correctness",
@@ -3900,7 +3904,9 @@
   "line": 84,
   "severity": "medium",
   "summary": "「实况必须存在才能出读数」——一个并发请求（base）的失败会整条源作废，而 all 的响应里同样有 lives 可救",
-  "symbol": "WeatherAmapFetcher.reading(adcode:place:latitude:longitude:key:)"
+  "symbol": "WeatherAmapFetcher.reading(adcode:place:latitude:longitude:key:)",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "crash",
@@ -5945,7 +5951,9 @@
   "summary": "在 nonisolated async 上下文里读主线程拥有的 AppPreferences（非 Sendable、非 @MainActor），与设置页的写入构成数据竞争窗口。",
   "evidence": "25 行: `let key = AppPreferences.shared.amapAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)`。调用链：WeatherStore.fetch 是 @MainActor，`inflight = Task { ... await WeatherFetcher.fetch(city: trimmed) ... }`（WeatherFetcher.swift:846-851）；`WeatherFetcher.fetch` 与 `WeatherAmapFetcher.fetch` 都是 nonisolated async，Swift 5.7+ 会切到全局协作线程池执行，因此该读取发生在主线程之外。AppPreferences 是普通 `final class ... ObservableObject`（未标 @MainActor，AppPreferences.swift:44），写入点在 SettingsView.swift:546 `prefs.amapAPIKey = key`（主线程）。",
   "failure": "时序：用户在设置页保存 AMap key（主线程写 @Published 存储属性 + 发 objectWillChange）与卡片每 15 分钟的天气刷新同时发生 → 后台线程与主线程并发读写同一个 String 存储属性（当前 Swift 5 语言模式下编译通过，无诊断）。实践中窗口极小，故置信度低；但这是本仓库唯一在非主 actor 继续里触碰 AppPreferences 的读点（同文件 WeatherStore.city 在 @MainActor 上读）。",
-  "fix": "把 key 作为参数传进 WeatherAmapFetcher.fetch（WeatherStore 在主 actor 上读好再传），或在 fetch 开头 `let key = await MainActor.run { AppPreferences.shared.amapAPIKey }`；与该仓库「UI 状态在主 actor 上读写」的约定一致。"
+  "fix": "把 key 作为参数传进 WeatherAmapFetcher.fetch（WeatherStore 在主 actor 上读好再传），或在 fetch 开头 `let key = await MainActor.run { AppPreferences.shared.amapAPIKey }`；与该仓库「UI 状态在主 actor 上读写」的约定一致。",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "correctness",
@@ -7844,7 +7852,9 @@
   "line": 83,
   "severity": "low",
   "summary": "两个请求共用 extensions 参数的 payload 是重复实现，合并后第二个参数与分叉可直接删除",
-  "symbol": "WeatherAmapFetcher.payload"
+  "symbol": "WeatherAmapFetcher.payload",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "robustness",
@@ -7856,7 +7866,9 @@
   "line": 26,
   "severity": "low",
   "summary": "空 key 直接跳过；非空但错误的 key（超配额、被限流）则每次刷新固定两次调用+一次 regeo 全部失败，状态无区分",
-  "symbol": "WeatherAmapFetcher.fetch(query:)"
+  "symbol": "WeatherAmapFetcher.fetch(query:)",
+  "status": "fixed",
+  "verdict_note": "`reading(adcode:)` now issues one `extensions=all` request and reads both `lives` and `forecasts` from it; the parallel `extensions=base` call is gone (it doubled the key's free-quota spend for a figure the same payload carried). Verified by `make build` plus the 高德 arm of `weather-astronomy-regressions.py`."
  },
  {
   "category": "compat",
