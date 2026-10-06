@@ -19,6 +19,13 @@ enum ModelListFetcher {
               ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
               parsed.user == nil, parsed.password == nil, parsed.query == nil, parsed.fragment == nil
         else { return .failure("Base URL 无效，请勿在 URL 中附带 Key") }
+        // The key travels in `Authorization` and `x-api-key` on every request
+        // below, so a plaintext `http://` to a public host would put it on the
+        // wire readable. Loopback and private-space endpoints keep the
+        // escape hatch (Ollama / LM Studio speak http).
+        guard allowsKeyTransport(urlText) else {
+            return .failure("仅本机或内网端点可用 http，公网地址请使用 https。")
+        }
 
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastError = "未能从 API 获取模型列表"
@@ -35,6 +42,17 @@ enum ModelListFetcher {
             }
         }
         return .failure(lastError)
+    }
+
+    /// Whether a request carrying an API key may go to this URL. https always;
+    /// http only when `ProviderCatalogEntry.isLocalEndpoint` recognises the
+    /// host as loopback, RFC 1918 or a `.local` name. Pure, so the rule is
+    /// testable without a network.
+    static func allowsKeyTransport(_ raw: String) -> Bool {
+        guard let scheme = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines))?
+            .scheme?.lowercased() else { return false }
+        if scheme == "https" { return true }
+        return scheme == "http" && ProviderCatalogEntry.isLocalEndpoint(raw)
     }
 
     // MARK: - URL candidates

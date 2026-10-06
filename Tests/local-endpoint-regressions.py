@@ -18,12 +18,23 @@ source = (root / 'Sources/ClaudeBar/Models/ProviderCatalog.swift').read_text()
 start = source.index('    static func isLocalEndpoint(_ raw: String) -> Bool {')
 end = source.index('\n    }\n', start) + len('\n    }\n')
 body = source[start:end]
+# `ModelListFetcher.allowsKeyTransport` is the same rule applied to a whole
+# URL and it is the one that decides whether an API key may cross the wire
+# unencrypted, so it is sliced here rather than re-derived.
+fetcher = (root / 'Sources/ClaudeBar/Utils/ModelListFetcher.swift').read_text()
+transport_start = fetcher.index('    static func allowsKeyTransport(_ raw: String) -> Bool {')
+transport_end = fetcher.index('\n    }\n', transport_start) + len('\n    }\n')
+transport = fetcher[transport_start:transport_end]
 
 swift = r'''
 import Foundation
 
 enum ProviderCatalogEntry {
 BODY
+}
+
+enum ModelListFetcher {
+TRANSPORT
 }
 
 @main struct Regression {
@@ -82,12 +93,42 @@ BODY
             failures.append("expected REMOTE, got local: \(url)")
         }
         precondition(failures.isEmpty, failures.joined(separator: "\n"))
+
+        // The key-transport rule: https anywhere, http only for the hosts
+        // `isLocalEndpoint` already classifies as local. The fetch sends the
+        // key in two headers, so an http:// to a public host would put it on
+        // the wire readable.
+        let allowed = [
+            "https://api.deepseek.com/anthropic",
+            "https://api.openai.com/v1",
+            "http://localhost:11434",
+            "http://127.0.0.1:11434",
+            "http://192.168.1.50:1234",
+            "http://ollama.local:11434",
+            "  https://api.openai.com/v1  ",
+        ]
+        let refused = [
+            "http://api.openai.com/v1",     // public host in cleartext
+            "http://ollama.com",
+            "http://localhost.evil.com",
+            "ftp://localhost:21",           // not an API scheme
+            "",
+            "not a url",
+        ]
+        for url in allowed where !ModelListFetcher.allowsKeyTransport(url) {
+            failures.append("expected key transport ALLOWED: \(url)")
+        }
+        for url in refused where ModelListFetcher.allowsKeyTransport(url) {
+            failures.append("expected key transport REFUSED: \(url)")
+        }
+        precondition(failures.isEmpty, failures.joined(separator: "\n"))
         print("PASS: \(local.count) loopback/private hosts classified local, "
               + "\(remote.count) public hosts remote (172.15/172.32, 192.169, 11.x, "
-              + "non-loopback bracketed IPv6, localhost.evil.com and ftp:// all correctly remote)")
+              + "non-loopback bracketed IPv6, localhost.evil.com and ftp:// all correctly remote); "
+              + "key transport allows https + local http only")
     }
 }
-'''.replace('BODY', body)
+'''.replace('BODY', body).replace('TRANSPORT', transport)
 with tempfile.TemporaryDirectory(prefix='claudebar-local-tests-') as folder:
     path = Path(folder) / 'Regression.swift'
     path.write_text(swift)
