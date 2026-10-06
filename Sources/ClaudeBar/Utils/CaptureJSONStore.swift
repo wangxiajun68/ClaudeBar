@@ -166,12 +166,6 @@ final class CaptureJSONStore {
         summaries.first { $0.id == id }
     }
 
-    func delete(_ id: Int64) {
-        summaries.removeAll { $0.id == id }
-        deletePayload(id)
-        persistIndex()
-    }
-
     func clearAll() {
         let ids = summaries.map(\.id)
         summaries = []

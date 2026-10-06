@@ -24,14 +24,30 @@ enum CaptureTranscript {
 
     // MARK: - Conversation
 
+    /// JSON-parsed body. Callers that derive several things from one payload
+    /// (the capture store builds turns *and* tool calls from the same request)
+    /// parse it here once instead of once per derivation.
+    static func parseBody(_ raw: String?) -> [String: Any]? { object(raw) }
+
     static func turns(
         from raw: String?,
         mode: ParseMode = .conversation,
         mediaDir: URL? = nil,
         includeImages: Bool = true
     ) -> [Turn] {
+        turns(parsed: object(raw), raw: raw, mode: mode, mediaDir: mediaDir, includeImages: includeImages)
+    }
+
+    /// The same derivation from an already-parsed body (`parseBody`).
+    static func turns(
+        parsed obj: [String: Any]?,
+        raw: String?,
+        mode: ParseMode = .conversation,
+        mediaDir: URL? = nil,
+        includeImages: Bool = true
+    ) -> [Turn] {
         guard let raw, !raw.isEmpty else { return [] }
-        guard let obj = object(raw) else {
+        guard let obj else {
             return mode == .full ? [Turn(role: "request", text: raw)] : []
         }
         var out: [Turn] = []
@@ -65,12 +81,24 @@ enum CaptureTranscript {
         streaming: Bool,
         mode: ParseMode = .conversation
     ) -> [Turn] {
+        replyTurns(parsedResponse: object(responseJSON), responseJSON: responseJSON,
+                   live: live, streaming: streaming, mode: mode)
+    }
+
+    /// The same derivation from an already-parsed response body (`parseBody`).
+    static func replyTurns(
+        parsedResponse obj: [String: Any]?,
+        responseJSON: String?,
+        live: CaptureLive?,
+        streaming: Bool,
+        mode: ParseMode = .conversation
+    ) -> [Turn] {
         if streaming {
             return turns(fromLive: live)
         }
         let fromLive = turns(fromLive: live)
         if !fromLive.isEmpty { return fromLive }
-        return turns(fromResponse: responseJSON, mode: mode)
+        return turns(fromResponse: obj, raw: responseJSON, mode: mode)
     }
 
     static func preview(from raw: String?) -> String {
@@ -94,6 +122,12 @@ enum CaptureTranscript {
     // MARK: - Tools (invocations, not the 30+ schema dump)
 
     static func toolCalls(request: String?, response: String?) -> [ToolCall] {
+        toolCalls(parsedRequest: object(request), parsedResponse: object(response))
+    }
+
+    /// The same derivation from already-parsed bodies (`parseBody`) — the
+    /// capture store parses each payload once and hands it to both derivations.
+    static func toolCalls(parsedRequest: [String: Any]?, parsedResponse: [String: Any]?) -> [ToolCall] {
         var map: [String: ToolCall] = [:]
         var order: [String] = []
 
@@ -116,8 +150,8 @@ enum CaptureTranscript {
             map[key] = row
         }
 
-        collectTools(from: object(request), upsert: upsert, setOutput: setOutput)
-        collectTools(from: object(response), upsert: upsert, setOutput: setOutput)
+        collectTools(from: parsedRequest, upsert: upsert, setOutput: setOutput)
+        collectTools(from: parsedResponse, upsert: upsert, setOutput: setOutput)
         return order.compactMap { map[$0] }
     }
 
@@ -149,8 +183,12 @@ enum CaptureTranscript {
     }
 
     private static func turns(fromResponse raw: String?, mode: ParseMode) -> [Turn] {
+        turns(fromResponse: object(raw), raw: raw, mode: mode)
+    }
+
+    private static func turns(fromResponse obj: [String: Any]?, raw: String?, mode: ParseMode) -> [Turn] {
         guard let raw, !raw.isEmpty else { return [] }
-        guard let obj = object(raw) else {
+        guard let obj else {
             return mode == .full ? [Turn(role: "response", text: raw)] : []
         }
         var out: [Turn] = []

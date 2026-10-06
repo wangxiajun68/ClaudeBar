@@ -157,6 +157,14 @@ struct TrafficView: View {
         get { state.loadingDetail }
         nonmutating set { state.loadingDetail = newValue }
     }
+    /// The retained detail belongs to the previously selected row until the new
+    /// load lands. Every pane reads through this gate so the header, the
+    /// bodies and the raw slices can never mix two records — `currentSummary`
+    /// is already the new row the moment `selectedID` changes.
+    private var matchingDetail: CaptureDetail? {
+        guard let id = currentSummary?.id, detail?.summary.id == id else { return nil }
+        return detail
+    }
 
     private var queryBinding: Binding<String> {
         Binding(get: { state.query }, set: { state.query = $0 })
@@ -218,6 +226,9 @@ struct TrafficView: View {
     /// copy, no undo — and it used to be a single click on a plain text
     /// button. The VPN module already confirms its destructive action.
     @State private var confirmClear = false
+    /// Bumped by 「复制」; the off-main pretty-print runs from `rawPane`'s
+    /// `.task(id:)` on this token (see there).
+    @State private var copyToken = 0
 
     /// What a filter pass actually depends on: the row identity plus the three
     /// fields the predicate reads. A status/duration-only patch leaves it
@@ -371,9 +382,12 @@ struct TrafficView: View {
             }
         }
         .onChange(of: tab) { _, t in
-            if t == .raw, detail?.payloadsLoaded != true {
+            // `matchingDetail`, not `detail`: the retained copy can still
+            // belong to the previously selected row, and its content flags
+            // must not decide whether this row needs raw payloads or tools.
+            if t == .raw, matchingDetail?.payloadsLoaded != true {
                 reloadDetail(selectedID, raw: true, tools: false)
-            } else if t == .tools, detail?.toolCalls.isEmpty == true {
+            } else if t == .tools, matchingDetail?.toolCalls.isEmpty ?? true {
                 reloadDetail(selectedID, raw: false, tools: true)
             }
         }
@@ -398,6 +412,26 @@ struct TrafficView: View {
             }
             selectedLive = currentSummary.flatMap { streams.live[$0.id] }
             rebuildConversation()
+            // The detail is *not* rebuilt on mount — it survives `onDisappear`
+            // by design (`detailQueue`'s doc comment). But a cancelled load
+            // leaves `loadingDetail` true forever (`reloadDetail`'s completion
+            // is guarded by `state.mounted`, and `onDisappear` only drops the
+            // work handle), and a record published while the page was hidden
+            // leaves `detail` describing a row the pane no longer shows. Both
+            // are only observable here, so reconcile against the selection and
+            // what this mount will draw: a mismatch — or a detail missing what
+            // the tab needs, because the unmount cancelled the load that tab
+            // fired and `onChange(of: tab)` will not fire again — re-loads.
+            // A match with everything on hand still clears the leftover flag.
+            let needsRaw = tab == .raw || fullRender
+            let needsTools = tab == .tools
+            let missing = (needsRaw && detail?.payloadsLoaded != true)
+                || (needsTools && (detail?.toolCalls.isEmpty ?? true))
+            if detail?.summary.id != selectedID || missing {
+                reloadDetail(selectedID, raw: needsRaw, tools: needsTools)
+            } else {
+                loadingDetail = false
+            }
         }
         .onReceive(streams.$live) { values in
             let generation = state.loadGen
@@ -427,6 +461,11 @@ struct TrafficView: View {
             state.fullWork?.cancel()
             state.fullWork = nil
             state.clearConversation()
+            // The cancelled completion block returns early (it is guarded by
+            // `mounted`), so nothing else would ever lower this flag — the pane
+            // would sit on 「解析对话…」 after a remount. `onAppear` sets the
+            // state back up from the selection.
+            loadingDetail = false
         }
         .onChange(of: filter) { _, _ in recomputeFiltered() }
         .onChange(of: query) { _, _ in recomputeFiltered() }
@@ -664,12 +703,12 @@ struct TrafficView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.s8) {
-                        if detail?.requestTruncated == true {
+                        if matchingDetail?.requestTruncated == true {
                             Text("请求体超过 \(CaptureMedia.payloadCapLabel) 已截断。完整渲染可能不完整。")
                                 .font(Theme.Font.caption)
                                 .foregroundColor(Theme.Ink.warning)
                         }
-                        if fullRender, let headers = detail?.requestHeadersJSON, !headers.isEmpty {
+                        if fullRender, let headers = matchingDetail?.requestHeadersJSON, !headers.isEmpty {
                             requestHeadersSection(headers)
                         }
                         if blocks.isEmpty {
@@ -770,7 +809,7 @@ struct TrafficView: View {
 
     private func toolsPane(_ rec: CaptureSummary) -> some View {
         let calls = CaptureTranscript.mergingLive(
-            detail?.toolCalls ?? [],
+            matchingDetail?.toolCalls ?? [],
             live: selectedLive?.tools ?? [])
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -827,12 +866,32 @@ struct TrafficView: View {
             JSONTreeView(
                 source: rawSource ?? "",
                 empty: rawEmpty,
-                parseID: "\(selectedID ?? 0)-\(rawSlice.rawValue)-\(rawSource?.count ?? 0)",
+                // `utf8.count` (O(1)) not `count` (a full grapheme scan —
+                // ~50 ms on a capped-16 MB payload, paid in every body pass):
+                // the key only has to change when the slice changes, and the
+                // one in-place change that happens is "" → loaded content.
+                parseID: "\(selectedID ?? 0)-\(rawSlice.rawValue)-\(rawSource?.utf8.count ?? 0)",
                 fold: jsonFold)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onChange(of: rawSlice) { _, _ in rawCopied = false }
         .onChange(of: selectedID) { _, _ in rawCopied = false }
+        // The copy work runs here, not in the button action: pretty-printing a
+        // capped-16 MB payload on the main thread is a full JSON parse, a
+        // re-serialization and a whole-string replacement, and it used to run
+        // in the click's own runloop turn. The button only bumps `copyToken`;
+        // the token also drops a pretty-print whose row has since changed.
+        .task(id: copyToken) {
+            guard copyToken > 0, let src = rawSource, !src.isEmpty else { return }
+            let pretty = await Task.detached(priority: .userInitiated) {
+                JSONTree.pretty(src)
+            }.value
+            guard !Task.isCancelled else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(pretty, forType: .string)
+            rawCopied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { rawCopied = false }
+        }
     }
 
     private func rawToolButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -846,21 +905,17 @@ struct TrafficView: View {
     }
 
     private func copyRawJSON() {
-        let src = rawSource ?? ""
-        guard !src.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(JSONTree.pretty(src), forType: .string)
-        rawCopied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { rawCopied = false }
+        guard let src = rawSource, !src.isEmpty else { return }
+        copyToken += 1
     }
 
     private var rawSource: String? {
-        guard let detail else { return nil }
+        guard let matchingDetail else { return nil }
         switch rawSlice {
-        case .request: return detail.requestJSON
-        case .rewritten: return detail.rewrittenJSON
-        case .response: return detail.responseJSON
-        case .sse: return detail.rawSSE
+        case .request: return matchingDetail.requestJSON
+        case .rewritten: return matchingDetail.rewrittenJSON
+        case .response: return matchingDetail.responseJSON
+        case .sse: return matchingDetail.rawSSE
         }
     }
 
@@ -891,7 +946,12 @@ struct TrafficView: View {
                 CaptureThumb(image: img)
             }
             if !text.isEmpty {
-                if text.count > 8_000 {
+                // `utf8.count` is O(1); `count` is a full grapheme scan paid by
+                // every bubble (including the streaming reply's, rebuilt ten
+                // times a second). The threshold only picks the renderer; the
+                // byte-based cutover trades a few early PlainDumpView rows for
+                // no scan on the common small-text path.
+                if text.utf8.count > 8_000 {
                     let lines = max(16, text.split(separator: "\n", omittingEmptySubsequences: false).count)
                     let height = min(CGFloat(lines) * 15 + 28, 4_000)
                     PlainDumpView(text: text)
@@ -962,8 +1022,8 @@ struct TrafficView: View {
     }
 
     private func rebuildFullTurns() {
-        let raw = detail?.requestJSON
-        guard detail?.payloadsLoaded == true, raw != nil else {
+        let raw = matchingDetail?.requestJSON
+        guard matchingDetail?.payloadsLoaded == true, raw != nil else {
             reloadDetail(selectedID, raw: true, tools: false)
             return
         }
@@ -989,11 +1049,11 @@ struct TrafficView: View {
             state.clearConversation()
             return
         }
-        let matchingDetail = detail?.summary.id == rec.id ? detail : nil
+        let full = matchingDetail
         state.requestConversation(ConversationInput(
-            id: rec.id, history: fullRender ? fullTurns : (matchingDetail?.turns ?? []),
-            live: selectedLive, response: fullRender ? matchingDetail?.responseJSON : nil,
-            headers: fullRender ? matchingDetail?.requestHeadersJSON : nil,
+            id: rec.id, history: fullRender ? fullTurns : (full?.turns ?? []),
+            live: selectedLive, response: fullRender ? full?.responseJSON : nil,
+            headers: fullRender ? full?.requestHeadersJSON : nil,
             full: fullRender, streaming: rec.isLive, query: conversationQuery))
     }
 
@@ -1016,7 +1076,12 @@ struct TrafficView: View {
                 guard gen == state.loadGen, state.mounted else { return }
                 detail = d
                 loadingDetail = false
-                if fullRender { rebuildFullTurns() }
+                // Only a load that produced a detail can feed the full-render
+                // pass. With a nil result (the row vanished, or the database
+                // is unreachable) `rebuildFullTurns` would fail its own
+                // payload guard and re-issue `reloadDetail` — every cycle
+                // bumping the generation and queueing another read, forever.
+                if fullRender, d != nil { rebuildFullTurns() }
                 else { rebuildConversation() }
             }
         }
@@ -1025,17 +1090,21 @@ struct TrafficView: View {
     }
 
     private func duration(_ rec: CaptureSummary) -> String {
-        let end = rec.endedAt ?? Date()
-        let s = end.timeIntervalSince(rec.startedAt)
-        if s < 1 { return String(format: "%.0f ms", s * 1000) }
-        return String(format: "%.1f s", s)
+        Self.intervalText((rec.endedAt ?? Date()).timeIntervalSince(rec.startedAt))
     }
 
     private func firstToken(_ rec: CaptureSummary) -> String {
         guard let t = rec.firstTokenAt else { return "—" }
-        let s = t.timeIntervalSince(rec.startedAt)
-        if s < 1 { return String(format: "%.0f ms", s * 1000) }
-        return String(format: "%.1f s", s)
+        return Self.intervalText(t.timeIntervalSince(rec.startedAt))
+    }
+
+    /// Both stats above measure one instant against `startedAt`; one copy of
+    /// the unit switch (ms under a second, then seconds) so the two cannot
+    /// drift. The 日志 tab's columns keep their own fixed-width formats
+    /// (`ProxyAccessLog.formatDuration`), where padding is what aligns rows.
+    private static func intervalText(_ seconds: Double) -> String {
+        seconds < 1 ? String(format: "%.0f ms", seconds * 1000)
+                    : String(format: "%.1f s", seconds)
     }
 }
 

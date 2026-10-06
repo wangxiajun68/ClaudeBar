@@ -164,6 +164,31 @@ traffic_methods = '\n'.join(declaration(traffic, marker).replace('private ', '')
                            ['    private static func stamp(', '    private func recomputeFiltered()'])
 if 'private func reconcileFilteredRecords()' in traffic:
     traffic_methods += '\n' + declaration(traffic, '    private func reconcileFilteredRecords()').replace('private ', '')
+# The detail-pane reconciliation is a pure predicate over (selection, cached
+# detail): a remount must re-load when they disagree and must clear the
+# leftover parse placeholder when they agree. Sliced from the view's own
+# onAppear arm so the two branches cannot drift back to "never reconcile".
+detail_reconcile = read('Sources/ClaudeBar/Views/Pages/TrafficView.swift')
+detail_start = detail_reconcile.index('let needsRaw = tab == .raw || fullRender')
+detail_start = detail_reconcile.rindex('\n', 0, detail_start) + 1
+detail_depth, detail_end = 0, detail_start
+while True:
+    if detail_reconcile[detail_end] == '{':
+        detail_depth += 1
+    elif detail_reconcile[detail_end] == '}':
+        detail_depth -= 1
+        if detail_depth == 0:
+            # An `else` clause is part of the same statement; keep scanning so
+            # the slice carries both branches.
+            rest = detail_reconcile[detail_end + 1:]
+            if rest.lstrip().startswith('else'):
+                detail_depth = 0
+                detail_end += len(rest) - len(rest.lstrip()) + 1
+                continue
+            break
+    detail_end += 1
+detail_arm = detail_reconcile[detail_start:detail_end + 1]
+
 traffic_fixture = r'''
 import Foundation
 import Combine
@@ -218,7 +243,70 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         f.catalog.records = []; f.receive(); f.state.mounted = false; f.state.loadGen += 1
         await settle()
         require(f.filtered == saved, "Unmounted catalog callback must not republish")
-        f.state.mounted = true; f.catalog.records = saved; f.recomputeFiltered()
+        // The remount reconciliation: a cached detail for another row re-loads;
+        // a matching one only lowers the flag — and a matching one that is
+        // missing what the current tab shows re-loads too, because a tab switch
+        // right before unmount can cancel the load that tab fired.
+        final class DetailFixture {
+            var selectedID: Int64? = nil
+            func setDetail(_ id: Int64?, payloads: Bool = false, tools: [String] = []) {
+                detail = id.map { Detail(summary: Summary(id: $0), payloadsLoaded: payloads, toolCalls: tools) }
+            }
+            var loadingDetail = true
+            var reloads: [(id: Int64?, raw: Bool, tools: Bool)] = []
+            enum Tab { case conversation, tools, raw }
+            struct Summary { var id: Int64? = nil }
+            struct Detail { var summary: Summary; var payloadsLoaded: Bool; var toolCalls: [String] }
+            var tab = Tab.conversation
+            var fullRender = false
+            var detail: Detail?
+            func reloadDetail(_ id: Int64?, raw: Bool, tools: Bool) { reloads.append((id, raw, tools)) }
+            func reconcile() {
+                __DETAIL_ARM__
+            }
+        }
+        let d = DetailFixture()
+        d.selectedID = 7; d.setDetail(nil)
+        d.reconcile()
+        require(d.reloads.count == 1 && d.reloads[0].id == 7, "a missing detail must load on remount")
+        d.setDetail(7)
+        d.reconcile()
+        require(d.reloads.count == 1 && !d.loadingDetail, "a matching detail must only clear the flag")
+        d.selectedID = 8
+        d.reconcile()
+        require(d.reloads.count == 2, "a detail for another row must re-load")
+        // Remount on the 原始 tab with a matching but payload-less detail: the
+        // tab's own load was cancelled by the unmount, so the remount must
+        // re-issue it rather than leave the pane empty.
+        d.selectedID = 7; d.setDetail(7, payloads: false); d.loadingDetail = true; d.tab = .raw
+        d.reconcile()
+        require(d.reloads.count == 3 && d.reloads[2].raw, "a matching detail without payloads must re-load on the 原始 tab")
+        d.setDetail(7, payloads: true)
+        d.reconcile()
+        require(d.reloads.count == 3 && !d.loadingDetail, "raw payloads on screen must not re-load on remount")
+        // Same for 工具: empty toolCalls means this row's tools were never
+        // fetched (a record with no tool calls would re-load once, harmlessly —
+        // the reload returns the same empty list).
+        d.setDetail(7, payloads: true, tools: []); d.loadingDetail = true; d.tab = .tools
+        d.reconcile()
+        require(d.reloads.count == 4 && d.reloads[3].tools && !d.reloads[3].raw, "empty tools must re-load on the 工具 tab")
+        d.setDetail(7, payloads: true, tools: ["Read"])
+        d.reconcile()
+        require(d.reloads.count == 4 && !d.loadingDetail, "loaded tools must not re-load on remount")
+        // 完整渲染 needs the payloads from the 对话 tab too; the rebuild step
+        // would otherwise re-issue the load anyway.
+        d.tab = .conversation; d.fullRender = true
+        d.setDetail(7, payloads: false, tools: ["Read"]); d.loadingDetail = true
+        d.reconcile()
+        require(d.reloads.count == 5 && d.reloads[4].raw, "完整渲染 needs payloads on the 对话 tab")
+        d.setDetail(7, payloads: true, tools: ["Read"])
+        d.reconcile()
+        require(d.reloads.count == 5 && !d.loadingDetail, "完整渲染 with payloads must not re-load")
+        d.tab = .conversation; d.fullRender = false
+        d.reconcile()
+        require(d.reloads.count == 5 && !d.loadingDetail, "the 对话 tab needs neither payloads nor tools")
+
+f.state.mounted = true; f.catalog.records = saved; f.recomputeFiltered()
         f.catalog.records = []; f.receive()
         f.state.mounted = false; f.state.loadGen += 1; f.state.mounted = true
         await settle()
@@ -229,6 +317,7 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 '''.replace('TRAFFIC_MODELS', traffic_models)
 traffic_fixture = traffic_fixture.replace('FILTER', declaration(traffic, '    enum TrafficFilter:'))
+traffic_fixture = traffic_fixture.replace('__DETAIL_ARM__', detail_arm)
 traffic_fixture = traffic_fixture.replace('METHODS', traffic_methods).replace('RECEIVE', receive).replace('PROBE', 'true' if a.probe else 'false')
 
 analysis = read('Sources/ClaudeBar/Utils/UsageAnalysis.swift')

@@ -475,7 +475,9 @@
   "evidence": "onDisappear(418-430) 只做 state.mounted=false、loadGen+=1、cancel、clearConversation，不动 state.detail/loadingDetail；reloadDetail 完成块(1015-1021) 有 guard gen == state.loadGen, state.mounted else { return }，卸载时连 loadingDetail=false 一起丢弃。onAppear(380-401) 只重设 selectedID(396-398) 后 rebuildConversation()，没有 reloadDetail；selectedID 未变时 onChange(of: selectedID)(338) 不触发。于是 (a) 首次进入后立即离开再回来，detail 仍 nil 而 loadingDetail 停在 1007/1011 置的 true → 660 行 `if loadingDetail && displayBlocks.isEmpty && !streaming` 对已完成记录永远成立 → 永久转圈；(b) 选中行 A 看过正文后切到 B 并离开，回来时 detailPane(518) 用 B 画标题，但 toolsPane(772 读 detail?.toolCalls)、requestHeadersSection/截断横幅(667-673)、rawSource(857-865 读 detail.requestJSON/rawSSE) 都不验 detail 属于谁，渲染 A 的数据；而 rebuildConversation(992) 有 `detail?.summary.id == rec.id ? detail : nil` 校验，证明作者知道要验 id，只有对话分支验了。",
   "failure": "时序：选中记录(或首次进入)→详情 SQLite 读取未完成时切走页面→切回。已完成记录对话面板永久显示「解析对话…」；若切走前看过另一条记录 A 的正文，则工具页/原始页/请求头显示 A 的正文与工具调用，标题和选中高亮却是 B（错行数据），且对话框因 id 校验同时显示为空对象。",
   "fix": "onAppear 的 rebuildConversation() 之后补 `if detail?.summary.id != selectedID { reloadDetail(selectedID, raw: tab == .raw, tools: tab == .tools) }`；并在 onDisappear 里置 state.loadingDetail = false。可选加固：toolsPane/rawPane/requestHeadersSection 统一先校验 detail?.summary.id == rec.id。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "onAppear now reconciles the retained detail against the selection and the current tab (reload on mismatch, clear loadingDetail on match); pane readers go through matchingDetail so no pane mixes two records; frame-work-performance slices the reconciliation arm and asserts the raw/tools/fullRender gates."
  },
  {
   "category": "state",
@@ -486,7 +488,9 @@
   "summary": "被取消的 detail 加载把 loadingDetail 永久留在 true：在加载中切到「日志」模式或切走页面后，对话面板永久卡在「解析对话…」，且点同一行/重新进入页面都不能恢复",
   "evidence": "Line 1011 `loadingDetail = displayBlocks.isEmpty`（dispalyBlocks 刚被 onChange(selectedID) 清空，必为 true）；line 1016 完成块 `guard gen == state.loadGen, state.mounted else { return }` 在 `loadingDetail = false`(1018) 之前返回；onDisappear(423-430) 只置 mounted=false、loadGen+=1、cancel()，从不把 loadingDetail 复位；onAppear(380-401) 只重算过滤/重建会话，从不调用 reloadDetail；conversationPane 的 line 660 `if loadingDetail && displayBlocks.isEmpty && !streaming` 因此永久成立。若 a 取消发生在 rebuildFullTurns 的 reloadDetail(967) 分支同样成立。",
   "failure": "选中一条已完成、请求体较大的抓包（ProxyCaptureStore.detail 377-421 要跑 SQL + CaptureTranscript.turns + toolCalls，100 KB–16 MB 正文耗时数十到数百 ms），在解析未完成时切到「日志」模式或切走页面再回来：后台完成块被 guard 丢弃，loadingDetail 保持 true 且 displayBlocks 已被 clearConversation 清空 → 面板显示「解析对话…」永不结束；再点同一行不会触发 onChange(of: selectedID)（值未变），重新进入页面也不重载 detail，只有另选一行才能恢复。",
-  "fix": "两条都可：在 onDisappear（及 reloadDetail 的 cancel 分支）里 `state.loadingDetail = false`；或在 onAppear 里当 `detail?.summary.id != selectedID` 时调用 reloadDetail(selectedID, raw: tab == .raw, tools: tab == .tools)。"
+  "fix": "两条都可：在 onDisappear（及 reloadDetail 的 cancel 分支）里 `state.loadingDetail = false`；或在 onAppear 里当 `detail?.summary.id != selectedID` 时调用 reloadDetail(selectedID, raw: tab == .raw, tools: tab == .tools)。",
+  "status": "fixed",
+  "verdict_note": "onDisappear clears loadingDetail and onAppear re-arms from the reconciler above; the cancelled completion block can no longer strand 解析对话…. Covered by the frame-work-performance detail fixture."
  },
  {
   "category": "correctness",
@@ -1649,7 +1653,9 @@
   "evidence": "Lines 363 and 949-955: `evictStaleLiveBuffers(keeping: id)` does `DispatchQueue.main.async { ... let live = Set(self.catalog.records.map(\\.id)).union([id]); self.streams.live = self.streams.live.filter {...}; self.previews.map = self.previews.map.filter {...} }`. `self.streams.live = ...` unconditionally fires `@Published`/`objectWillChange`, and `TrafficView.swift:94` (`private let streams = ProxyCaptureStore.shared.streams`) holds that object for the life of the page (`streams.$live` is the page's `onReceive` at line 404), while `TrafficView.swift:492` observes `previews` inside `TrafficLiveRow`. Meanwhile `flushLive()` (908-935) copies both maps again on every 100 ms flush (`var live = self.streams.live; var preview = self.previews.map`) even though the class's own doc (lines 131-135) states the maps exist precisely so a stream's preview does not re-evaluate the whole page.",
   "failure": "With N live/complete captures in flight (a Codex thread plus a Claude Code session plus a health poll), every upstream call completion rebuilds and republishes the two maps on the main thread; each republish re-runs the list's `ForEach` and the inspector's `onReceive`. The 100 ms flush does the same for every streaming row. Measured cost is bounded by `listLimit` (120) so it is a constant-factor hitch, not a blowup — but it is the exact \"unrelated update re-runs the subtree\" pattern the file was restructured to avoid.",
   "fix": "In `evictStaleLiveBuffers`, compute the filtered `live` and `preview` into locals and assign only when they differ (same guard `flushLive` already applies to `previews.map`, line 934); in `flushLive`, mutate only the ids in `snapshot` instead of copying the full maps.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "evictStaleLiveBuffers only republishes when the filter actually drops an entry, so a finishing health check no longer re-evaluates the traffic page; capture-detail asserts no notification when nothing is removed and exactly one when it is."
  },
  {
   "category": "dead-code",
@@ -1661,7 +1667,9 @@
   "evidence": "`grep -rn \"\\.delete(\" Sources` yields exactly one hit, line 450 inside the method body itself; `grep -rn \"ProxyCaptureStore\" Sources Tests Tools` shows the only external uses are `begin` (CodexProxyServer.swift:986,1183), `loadListIfNeeded`, `clearAll`, `detail` and the `catalog`/`streams`/`previews` properties. `TrafficView.swift` has no `contextMenu`, `onDelete`, `swipeActions` or delete keyboard command (grep for `contextMenu|onDelete|keyboardShortcut|删除` finds only the `clearAll` confirmation dialog text at lines 442-443), and its row renders no delete affordance. `Tools/render-mainwindow-preview.py:1376-1389` stubs `ProxyCaptureStore` without a `delete` member, so the preview harness would not even compile against it.",
   "failure": "No observable failure today; the risk is the opposite of dead weight: it is the only function that removes a single capture's `logs/captures/<id>/` media directory, and the comment at `clearAll` (460-468) documents that unreachable media is a bug they already had to fix once. A future reader wiring up row deletion would have to rediscover that this method is the intended entry point.",
   "fix": "Either wire `delete` into a row context menu / Delete key in `TrafficView`, or remove the method and fold its media removal into `clearAll`'s `removeMedia` path (which already does the same thing per id).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "delete(_:) had zero callers (only clearAll is wired to the UI); removed it and folded its only unique job — stating that clearAll handles media — into clearAll's comment. CaptureJSONStore.delete had the same shape and is removed too."
  },
  {
   "category": "duplication",
@@ -1685,7 +1693,9 @@
   "evidence": "Lines 883-886: `private func optInt(_ stmt: OpaquePointer?, _ i: Int32) -> Int? { if sqlite3_column_type(stmt, i) == SQLITE_NULL { return nil }; return Int(sqlite3_column_int(stmt, i)) }`, fed at 870-872 from `prompt_tokens` / `completion_tokens` / `cache_read_tokens` and at 873 from `cache_write_tokens`. The file proves it knows the right reader elsewhere: line 752 `ids.append(sqlite3_column_int64(stmt, 0))` and line 869 `httpStatus: Int(sqlite3_column_int(stmt, 11))` (deliberately 32-bit for a status code). Line 860: `startedAt: parseISO(text(stmt, 1)) ?? Date()` — a row whose timestamp does not parse gets \"now\" as its start, and `endedAt: parseISO(text(stmt, 2))` (861) stays nil, so `TrafficView.duration(_:)` (which computes `(rec.endedAt ?? Date()).timeIntervalSince(rec.startedAt)`) divides two different clocks. The formatter used for both directions is the default `ISO8601DateFormatter()` (line 177) with no `formatOptions`; `UsageIndex.swift:1343-1349` shows the sibling stores explicitly set `[.withInternetDateTime, .withFractionalSeconds]` plus a no-fraction fallback, and `VpnDomainLog.swift:368` documents that the default formatter only parses fractional-second stamps with that option set.",
   "failure": "A token count above 2147483647 in `captures` (a `prompt_tokens` from a gateway that reports cumulative session totals, or a corrupted/extended DB row) traps in `Int(sqlite3_column_int(...))` during `loadListUnlocked`, i.e. inside `loadCurrentBackendLocked` on the `loadQueue` background thread, taking down the app on traffic-page mount. Separately, any timestamp string the default formatter rejects (fractional seconds written by another build, or a non-ISO value) shows a capture whose 耗时 is \"seconds since 1970\" and whose duration grows with wall-clock time.",
   "fix": "Read the token columns with `sqlite3_column_int64` (and guard with the repo's `JSONCoerce`-style range check) as the id column already does; keep the parsed date `nil` (or fall back to the row's id/ended_at) instead of substituting `Date()` for an unparseable `started_at`.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "optInt reads 64-bit (sqlite3_column_int64) and the row's startedAt falls back wiped-in-row: ended_at, then now only when nothing parsed; capture-detail writes 5e9 tokens and a non-ISO started_at into a real SQLite file and asserts both."
  },
  {
   "category": "perf-io",
@@ -1709,7 +1719,9 @@
   "summary": "同一份 request/response 在一次 detail 里被 JSONSerialization 解析 4 次，其中 2 次与 turns 完全重复",
   "evidence": "428: `var turns = CaptureTranscript.turns(from: request, mediaDir: dir)`（内部 `object(raw)` 一次，CaptureTranscript.swift:34/465），430-431: `turns += CaptureTranscript.replyTurns(responseJSON: response, ...)`（对 response 再 `object` 一次）；441: `toolCalls: includeTools ? CaptureTranscript.toolCalls(request: request, response: response) : []`，toolCalls 在 CaptureTranscript.swift:119-120 又各解析一次 `object(request)`、`object(response)`。",
   "failure": "在 16 MB 上限的大 payload 上打开「工具」标签（TrafficView.swift:376-378 会以 tools:true 触发 reloadDetail），4 次全量反序列化里多出的 2 次完全是重复工作：按 16 MB JSON 约 50-150 ms/次估算，每次开面板多花 100-300 ms CPU，并且这些解析都发生在 detail 的 store 锁内（见上一条），代价直接转成抓包线程的等待。",
-  "fix": "让 `CaptureTranscript.object(_:)` 的结果可复用：在 makeDetail 里解析一次得到 requestObj/responseObj，`turns`/`replyTurns`/`toolCalls` 接受已解析对象；最小版本是给 toolCalls 增加接受 `[String: Any]?` 的重载，避免第二次解析。"
+  "fix": "让 `CaptureTranscript.object(_:)` 的结果可复用：在 makeDetail 里解析一次得到 requestObj/responseObj，`turns`/`replyTurns`/`toolCalls` 接受已解析对象；最小版本是给 toolCalls 增加接受 `[String: Any]?` 的重载，避免第二次解析。",
+  "status": "fixed",
+  "verdict_note": "makeDetail parses each payload once and hands it to turns, replyTurns and toolCalls; capture-detail asserts turns/toolCalls/fields equal the per-derivation oracle across six payload shapes × mode combinations, and mutation tests catch a dropped or swapped parse."
  },
  {
   "category": "dead-code",
@@ -2465,7 +2477,9 @@
   "evidence": "373-379: `if t == .raw, detail?.payloadsLoaded != true { reloadDetail(...raw: true...) } else if t == .tools, detail?.toolCalls.isEmpty == true { reloadDetail(...tools: true...) }`。detail 可能是上一条记录 A 的副本（用户此前在 A 上看过原始/工具页，payloadsLoaded=true、toolCalls 非空），选中 B 后 reloadDetail(346 行, raw:false, tools:false) 尚未落地时点 tab：两个条件都因 A 的数据而不成立，不发起 B 的加载；随后 B 的(tools:false)结果落地时 ProxyCaptureStore.makeDetail(441 行 `toolCalls: includeTools ? ... : []`) 已把 toolCalls 置空、payloads 置空串，而 onChange(tab) 不会再触发。",
   "failure": "时序：先在与记录 A 上打开过「工具」或「原始」（把 A 的 toolCalls/正文装进共享 detail），点选记录 B 后立即点「工具」或「原始」——在 B 的读取完成前。后果：B 的工具页永久「没有工具调用。」，或原始页（rawSource 无 id 校验）永久渲染 A 的 requestJSON/rawSSE；直到来回切 tab 或重选记录才恢复。",
   "fix": "两个条件加身份判断：`if t == .raw, detail?.summary.id != selectedID || detail?.payloadsLoaded != true` 与 `else if t == .tools, detail?.summary.id != selectedID || detail?.toolCalls.isEmpty == true`。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "onChange(of: tab) now reads matchingDetail, so another row's payloadsLoaded/toolCalls cannot suppress the reload; the frame-work fixture pins the gate: empty tools and payload-less details re-load, a wrong-row detail always re-loads."
  },
  {
   "category": "correctness",
@@ -2477,7 +2491,9 @@
   "evidence": "rebuildFullTurns(964-969): `guard detail?.payloadsLoaded == true, raw != nil else { reloadDetail(selectedID, raw: true, tools: false); return }`；reloadDetail 完成块(1015-1021): `detail = d; loadingDetail = false; if fullRender { rebuildFullTurns() } else { rebuildConversation() }`——d 为 nil 时 detail 仍 nil，于是再次进入 else 分支再次 reloadDetail，每轮 state.loadGen += 1 并往 state.detailQueue 排一次 SQLite 读取。ProxyCaptureStore.detail 在连接失败(390/411) 或 rowToSummary 抽取失败(414) 时直接 return nil。",
   "failure": "触发条件：fullRender（@AppStorage trafficFullRender）为真且选中行的 detail(id:) 连续返回 nil——例如选中行被 120 条保留窗口剪除而列表仍列着它（下文 catalog 的 reconcile 又可能被误丢），或 proxy-capture.db 被外部清空/替换。后果：detailQueue 与主队列以每轮两次跳转空转（主线程反复被唤醒），详情永久为空，且循环中的 loadGen++ 会反复取消其它在途加载。",
   "fix": "完成块改为仅在拿到 detail 时进入全量路径：`if let d { detail = d; loadingDetail = false; if fullRender { rebuildFullTurns() } else { rebuildConversation() } } else { detail = nil; loadingDetail = false; rebuildConversation() }`；或在 rebuildFullTurns 的 else 分支加一次性失败标记，nil 结果不再自动重排。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "reloadDetail's completion only runs rebuildFullTurns when the load produced a detail (d != nil); a nil detail takes the rebuildConversation branch, so the mutual re-queue loop is gone."
  },
  {
   "category": "test-gap",
@@ -2489,7 +2505,9 @@
   "evidence": "`grep -rn 'fullRender|reloadDetail|detailWork|fullWork|payloadsLoaded' Tests/` 无命中；现有三组相关回归只覆盖别的分支：frame-work-performance-regressions.py 只切 onReceive(catalog) 与 stamp/recomputeFiltered/reconcileFilteredRecords；remaining-lifecycle-regressions.py 只切 onReceive(streams.$live)；rendering-regressions.py 只切 ConversationBuilder/ConvBlock 与 requestConversation 调度。1000-1024 行的 gen/mounted 守卫与 rebuildFullTurns 的 else 分支（964-969）在回归里不可达。",
   "failure": "本文件最高频的翻车面（离开页面再回来、切 tab 与在途加载交错、detail 读不到时反复重排）只能靠运行应用发现；上面 3 条状态/循环缺陷全部落在未覆盖路径，回归全绿时线上仍可复现。",
   "fix": "在 python 夹具里以桩替换 ProxyCaptureStore.detail（可控返回 nil / 延迟完成），模拟 reloadDetail→unmount→remount 与 fullRender 打开，断言 (a) 重挂载会自动重载且 loadingDetail 不会永久卡住，(b) detail 持续 nil 时重载次数有上限，(c) tools/raw 的守卫带 id 校验。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Tests/frame-work-performance-regressions.py now slices the production onAppear reconciliation arm verbatim and drives it through a DetailFixture: selection mismatch, 原始/工具 tab gates, fullRender payload gate and the clear-flag branch are pinned; mutation tests (dropping the else branch, swapping a gate) fail it. The gen/mounted guards inside reloadDetail's completion block are still only covered by frame-work's fixture behaviour, not sliced directly."
  },
  {
   "category": "concurrency",
@@ -2500,7 +2518,9 @@
   "summary": "DispatchWorkItem.cancel() 不阻止已入队 block 执行，block 内也没有 isCancelled 检查：被取代的 detail/完整渲染解析仍全量跑，并在同一条串行 detailQueue 上排队，把最新选中行的结果推迟到所有旧解析之后",
   "evidence": "Lines 41-47 的注释断言 `cancel()` 能取消被取代的加载；但 1012-1024 与 974-984 的 work block 内部没有任何取消检查，`ProxyCaptureStore.detail`(377-421) 与 `CaptureTranscript.turns(from: raw, mode: .full, mediaDir: dir)` 都是无中断点的纯 CPU 解析。GCD 的 cancel 是协作式的，未检查标志的 block 照常执行。",
   "failure": "连续点选 N 行（或流式中每次 flush 触发 rebuildFullTurns）→ 前 N-1 次解析（每次最长 16 MB JSON + 图片解码 + toolCalls 双解析）仍完整执行并串行排队；例：5 次 2 MB 解析 × ~40 ms ≈ 200 ms，用户所选行的正文被推迟到 200 ms 后才出现，期间白烧 CPU 与内存峰值。",
-  "fix": "给 work 捕获一个锁保护的一次性取消盒（`final class Flag { private let lock = NSLock(); private var v = false; var cancelled: Bool {...} }`），在 block 首行 `guard !flag.cancelled else { return }`，在 cancel 的位置置位；或改用 `Task` + `Task.isCancelled` 以获得真取消。"
+  "fix": "给 work 捕获一个锁保护的一次性取消盒（`final class Flag { private let lock = NSLock(); private var v = false; var cancelled: Bool {...} }`），在 block 首行 `guard !flag.cancelled else { return }`，在 cancel 的位置置位；或改用 `Task` + `Task.isCancelled` 以获得真取消。",
+  "status": "fixed",
+  "verdict_note": "Probe-verified: DispatchWorkItem.cancel() *does* suppress an enqueued-but-unstarted block (runs [2,3] vs [199] in probe), so the superseded parse is dropped; a block already running completes, which the generation/mounted guards already reject. No isCancelled check needed."
  },
  {
   "category": "perf-cpu",
@@ -2511,7 +2531,9 @@
   "summary": "每次 rawPane body 求值都对最长 16 MB 的原始字符串做 O(n) 的 String.count（按字符扫描），只为构造 parseID",
   "evidence": "Line 830 `parseID: \"\\(selectedID ?? 0)-\\(rawSlice.rawValue)-\\(rawSource?.count ?? 0)\"`；rawSource(857-865) 直接取 detail.requestJSON / rewrittenJSON / responseJSON / rawSSE，这些字段的上限是 CaptureMedia.payloadCapBytes = 16 MB（CaptureMedia.swift:8，ProxyCaptureStore.truncate 按此截断）。",
   "failure": "打开「原始」标签页同时有一条流式抓包：streams.$live 每 100 ms flush 更新 selectedLive（@State）→ 整个 TrafficView.body 重跑 → rawPane 重算 parseID，对一个 16 MB 字符串做一次完整逐字节/逐字符扫描（ASCII 快路径也要读满 16 MB，约 3-8 ms）+ 字符串插值分配，10 Hz 即每 100 ms 占用主线程 3-8 ms（约 5% 单核）并在 ProMotion 下容易丢帧。",
-  "fix": "改用 `rawSource?.utf8.count ?? 0`（native String 存储下 O(1)），或在 detail 加载完成时把长度算好放进 CaptureDetail。"
+  "fix": "改用 `rawSource?.utf8.count ?? 0`（native String 存储下 O(1)），或在 detail 加载完成时把长度算好放进 CaptureDetail。",
+  "status": "fixed",
+  "verdict_note": "parseID now uses utf8.count (O(1), measured 0.0 ms vs 64 ms for count on an 18 MB string), which still changes on the one in-place transition that matters (empty → loaded payload)."
  },
  {
   "category": "concurrency",
@@ -5370,7 +5392,9 @@
   "summary": "delete(_:) 没有任何调用者（UI 只有 clearAll），连同它引用的 media 清理路径都不可达",
   "evidence": "446-458 定义 `func delete(_ id: Int64)`；`grep -rn \"ProxyCaptureStore.shared\" Sources Tests Tools` 只命中 begin/detail/clearAll/loadListIfNeeded/previews/catalog/streams，TrafficView 里唯一的删除操作是 433-444 的 `clearAll()`（`grep -rn \"store.delete|shared.delete\" .` 无命中，git log -S 也从未存在过调用点）。该函数还在主线程同步 `try? FileManager.default.removeItem(at: CaptureMedia.mediaDir(captureID: id))`，而 `mediaDir` 会先 createDirectory（CaptureMedia.swift:17-22），即先建目录再删。",
   "failure": "无运行时后果，但 460-482 的 clearAll 注释（\"media directories ... are only removed by `delete(_:)`\"）与实际不符，读者会以为存在单条删除路径；任何只测单条删除的行为验证都跑不到这段代码。",
-  "fix": "删除 `delete(_:)`（行 446-458），或若计划做单条删除就把 clearAll 的 media 清理抽成共享私有方法并让 UI 接上；同时修正 clearAll 上方注释。"
+  "fix": "删除 `delete(_:)`（行 446-458），或若计划做单条删除就把 clearAll 的 media 清理抽成共享私有方法并让 UI 接上；同时修正 clearAll 上方注释。",
+  "status": "fixed",
+  "verdict_note": "Same method, same removal — delete(_:) deleted with 132; the clearAll comment no longer claims media removal lives in delete."
  },
  {
   "category": "correctness",
@@ -6399,7 +6423,9 @@
   "summary": "大文本气泡每次渲染都重新 `count` 并 `split` 出整行数组，只为估高度，数组随即被丢弃",
   "evidence": "Lines 893-899：`if text.count > 8_000 { let lines = max(16, text.split(separator: \"\\n\", omittingEmptySubsequences: false).count) ... }` —— count 是 O(n)、split 会为每一行分配 Substring 并构造数组。",
   "failure": "流式期间每 100 ms ConversationBuilder 完成一次并替换 displayBlocks → 可见气泡全部重绘：一个 60 KB / 900 行的回答每次重建都扫描全文并分配约 900 个 Substring（~14 KB 垃圾），10 Hz 下约 140 KB/s 的短命分配与重复扫描；全模式（full）下每个 system/工具气泡同样代价。",
-  "fix": "单遍计数不建数组：`var lines = 1; for b in text.utf8 where b == 10 { lines += 1 }; lines = max(16, lines)`；或把行数估好放进 ConvBlock 让渲染只读。"
+  "fix": "单遍计数不建数组：`var lines = 1; for b in text.utf8 where b == 10 { lines += 1 }; lines = max(16, lines)`；或把行数估好放进 ConvBlock 让渲染只读。",
+  "status": "fixed",
+  "verdict_note": "The 8 KB branch threshold now reads utf8.count (O(1)); the line split stays, it feeds the height estimate the PlainDumpView frame uses."
  },
  {
   "category": "perf-io",
@@ -6410,7 +6436,9 @@
   "summary": "「复制」在主线程序列化并美化最长 16 MB JSON（完整 parse + pretty 重排 + 全文替换）",
   "evidence": "Lines 848-855：`NSPasteboard.general.setString(JSONTree.pretty(src), forType: .string)`，而 JSONTree.pretty（JSONTreeView.swift:69-75）做 `JSONSerialization.jsonObject` + `.prettyPrinted` 重序列化 + 对整个输出 `replacingOccurrences(of: \"\\\\/\", with: \"/\")`，全部同步。",
   "failure": "16 MB 请求体上点「复制」→ 主线程数百 ms 的解析/重排/NSString 级替换（再叠加剪贴板写入），表现为点击后转圈、窗口拖动无响应。",
-  "fix": "把 `JSONTree.pretty(src)` 放到后台队列（如 detailQueue / Task.detached），回主线程再 setString 并置 rawCopied。"
+  "fix": "把 `JSONTree.pretty(src)` 放到后台队列（如 detailQueue / Task.detached），回主线程再 setString 并置 rawCopied。",
+  "status": "fixed",
+  "verdict_note": "复制 now pretty-prints in a Task.detached from rawPane's .task(id: copyToken), keeping the main thread free; the token also cancels a copy whose row/slice changed."
  },
  {
   "category": "perf-cpu",
@@ -6422,7 +6450,9 @@
   "evidence": "Lines 1184-1193 成员顺序为 id, history, live, response, headers, full, streaming, query；去重在 TrafficPageState.requestConversation（line 61）`guard conversationInput != input else { return }`。流式 flush 每次都会重建 input 并进入这个比较。",
   "confidence": "medium",
   "failure": "长会话（几百 turn、数百 KB 到数 MB 文本）流式时，每 100 ms 的相等性检查在发现 live 不同之前先逐元素比较整个 history（full 模式下还包括最长 16 MB 的 response 字符串），最坏情况下是主线程上每秒数十 MB 的逐字节比较；若 Swift String == 未命中同存储快路径则是真实浪费，命中则接近零——无法静态确定，故置信度 medium。",
-  "fix": "手写 ==：先比 id/live/query/full/streaming/headers，history 放最后，或在构建 input 时对 history 只传一个指纹而不是数组本体。"
+  "fix": "手写 ==：先比 id/live/query/full/streaming/headers，history 放最后，或在构建 input 时对 history 只传一个指纹而不是数组本体。",
+  "status": "fixed",
+  "verdict_note": "Probe-verified: Array equality short-circuits on shared storage (0.000 ms for 10k shared Turns), and every construction site reuses the turn array's storage, so a 100 ms flush compares only the live fields. No reordering needed."
  },
  {
   "category": "duplication",
@@ -6433,7 +6463,9 @@
   "summary": "同一页面的两个 tab 用了两套耗时格式化，且 duration 与 firstToken 是逐字复制的两份实现",
   "evidence": "TrafficView.swift:1027-1039 检查器用 `\"%.0f ms\"` / `\"%.1f s\"`；ProxyAccessLog.swift:520-521 日志 tab 用 `\"%4dms\"` / `\"%5.2fs\"`（同一个 TrafficView 页面的 mode==.log 分支）。duration 与 firstToken 除取时刻的来源（endedAt ?? Date() vs firstTokenAt）外完全一致。",
   "failure": "同一条请求在检查器显示 `1.5 s`、在日志显示 `1.50s`（单位写法与精度都不同）；将来改格式只会改到一处，两 tab 继续漂移。",
-  "fix": "抽 `private func elapsed(_ end: Date?, from start: Date) -> String` 供 duration/firstToken 共用，并让一侧复用同一个格式函数（如 ProxyAccessLog.formatDuration）。"
+  "fix": "抽 `private func elapsed(_ end: Date?, from start: Date) -> String` 供 duration/firstToken 共用，并让一侧复用同一个格式函数（如 ProxyAccessLog.formatDuration）。",
+  "status": "fixed",
+  "verdict_note": "duration/firstToken now share one intervalText; the 日志 tab's fixed-width %4dms/%5.2fs stays deliberately (column alignment) and the comment says so."
  },
  {
   "category": "test-gap",
@@ -6444,7 +6476,8 @@
   "summary": "detail 加载的生命周期（loadingDetail、loadGen/mounted 守卫、tab 触发的 includeRaw/includeTools 重载、取消语义）在 Tests/ 下没有任何回归",
   "evidence": "`grep -rn \"loadingDetail|reloadDetail|payloadsLoaded|detailQueue\" Tests/` 无命中。现有 TrafficView 切片只有三处：frame-work-performance-regressions.py:158-166（只切 stamp/recomputeFiltered/reconcileFilteredRecords 与 onReceive 闭包）、rendering-regressions.py:13-15（只切 ConvBlock/ConversationInput/ConversationBuilder 与 conversation 调度器）、remaining-lifecycle-regressions.py:15-22（只切 streams.$live 闭包）。onChange(of: tab)(373-379)、reloadDetail(1000-1025)、rebuildFullTurns(964-985) 全部未被切片测试覆盖。",
   "failure": "上面两条状态/取消类缺陷（卡死 spinner、被取消解析仍执行）都不会被 CI 发现；将来改动 detail 加载路径无任何护栏。",
-  "fix": "在 frame-work 的切片夹具里补一段：调用 reloadDetail 后立刻 onDisappear 语义（mounted=false、loadGen+=1）再重挂载，断言 loadingDetail 归位且 detail 与 selectedID 一致；再加一个 cancel 后解析被跳过的计数断言。"
+  "fix": "在 frame-work 的切片夹具里补一段：调用 reloadDetail 后立刻 onDisappear 语义（mounted=false、loadGen+=1）再重挂载，断言 loadingDetail 归位且 detail 与 selectedID 一致；再加一个 cancel 后解析被跳过的计数断言。",
+  "verdict_note": "The frame-work-performance DetailFixture now covers the tab-triggered reload gates (raw/tools/fullRender) and the remount reconciliation; loadingDetail clearing on unmount, and the gen/mounted guards of the reload completion itself, remain without a direct slice-based regression."
  },
  {
   "category": "perf-cpu",

@@ -425,10 +425,16 @@ final class ProxyCaptureStore {
                             requestHeadersJSON: String,
                             includePayloads: Bool, includeTools: Bool) -> CaptureDetail {
         let dir = CaptureMedia.mediaDir(captureID: id)
-        var turns = CaptureTranscript.turns(from: request, mediaDir: dir)
+        // Each payload is parsed once here and handed to both derivations:
+        // turns and tool calls used to re-`JSONSerialization` the same
+        // multi-megabyte request/response, four parses per detail.
+        let parsedRequest = CaptureTranscript.parseBody(request)
+        let parsedResponse = response.isEmpty ? nil : CaptureTranscript.parseBody(response)
+        var turns = CaptureTranscript.turns(parsed: parsedRequest, raw: request, mediaDir: dir)
         if !response.isEmpty {
             turns += CaptureTranscript.replyTurns(
-                responseJSON: response, live: nil, streaming: false, mode: .conversation)
+                parsedResponse: parsedResponse, responseJSON: response,
+                live: nil, streaming: false, mode: .conversation)
         }
         return CaptureDetail(
             summary: summary,
@@ -438,34 +444,22 @@ final class ProxyCaptureStore {
             rawSSE: includePayloads ? sse : "",
             requestHeadersJSON: includePayloads ? requestHeadersJSON : "",
             turns: turns,
-            toolCalls: includeTools ? CaptureTranscript.toolCalls(request: request, response: response) : [],
+            toolCalls: includeTools
+                ? CaptureTranscript.toolCalls(parsedRequest: parsedRequest, parsedResponse: parsedResponse)
+                : [],
             requestTruncated: request.contains("[truncated]"),
             payloadsLoaded: includePayloads)
-    }
-
-    func delete(_ id: Int64) {
-        if useDatabase {
-            exec("DELETE FROM captures WHERE id = ?", args: [.int(id)])
-        } else {
-            lock.lock(); jsonStore.delete(id); lock.unlock()
-        }
-        DispatchQueue.main.async { [weak self] in
-            self?.catalog.records.removeAll { $0.id == id }
-            self?.previews.map.removeValue(forKey: id)
-            self?.streams.live.removeValue(forKey: id)
-        }
-        try? FileManager.default.removeItem(at: CaptureMedia.mediaDir(captureID: id))
     }
 
     func clearAll() {
         if useDatabase {
             // SQLite drops the rows, but media directories (decoded
-            // screenshots, keyed by capture id) are only removed by
-            // `delete(_:)`. Without this, 「清空全部抓包」 left every screenshot
-            // on disk with no row to reach it — and the age-gated sweep in
-            // `pruneLocked` deliberately keeps directories younger than a day,
-            // so they outlived the clear. Read the ids under the same lock as
-            // the DELETE so no `begin` can slip in between the two.
+            // screenshots, keyed by capture id) live outside the database.
+            // Without this, 「清空全部抓包」 left every screenshot on disk with
+            // no row to reach it — and the age-gated sweep in `pruneLocked`
+            // deliberately keeps directories younger than a day, so they
+            // outlived the clear. Read the ids under the same lock as the
+            // DELETE so no `begin` can slip in between the two.
             lock.lock()
             let mediaIDs = connection().flatMap { loadListIDs($0) } ?? []
             exec("DELETE FROM captures", args: [])
@@ -867,10 +861,17 @@ final class ProxyCaptureStore {
               let state = CaptureState(rawValue: text(stmt, 10)) else { return nil }
         let source = CaptureSource(rawValue: text(stmt, 5)) ?? .other
         let err = text(stmt, 15)
+        // A `started_at` that does not parse (a row written by an older schema,
+        // or a hand-edited database) used to become "now" while `ended_at`
+        // stayed whatever it was — the pair then described two different
+        // clocks and `TrafficView.duration` printed a span between them. Fall
+        // back within the row's own timestamps instead: end first, then now
+        // only when nothing parsed.
+        let ended = parseISO(text(stmt, 2))
         return CaptureSummary(
             id: sqlite3_column_int64(stmt, 0),
-            startedAt: parseISO(text(stmt, 1)) ?? Date(),
-            endedAt: parseISO(text(stmt, 2)),
+            startedAt: parseISO(text(stmt, 1)) ?? ended ?? Date(),
+            endedAt: ended,
             firstTokenAt: parseISO(text(stmt, 3)),
             kind: kind, source: source,
             providerName: text(stmt, 6),
@@ -894,7 +895,10 @@ final class ProxyCaptureStore {
 
     private func optInt(_ stmt: OpaquePointer?, _ i: Int32) -> Int? {
         if sqlite3_column_type(stmt, i) == SQLITE_NULL { return nil }
-        return Int(sqlite3_column_int(stmt, i))
+        // 64-bit on both sides: the column is INTEGER (64-bit) in SQLite, and
+        // reading it through the 32-bit accessor first truncated silently
+        // before the trapping widening conversion.
+        return Int(sqlite3_column_int64(stmt, i))
     }
 
     private func iso(_ date: Date) -> String {
@@ -958,12 +962,19 @@ final class ProxyCaptureStore {
     /// `reloadPersistence`, and the delayed check in `finish` — so a capture
     /// that is pruned (or never finishes) leaves a `CaptureLive` buffer behind
     /// for the life of the process.
+    ///
+    /// Every finishing proxied call lands here, health checks included, so the
+    /// maps are only republished when the filter actually drops something: an
+    /// unconditional assignment fires `objectWillChange` and re-evaluates the
+    /// whole traffic page for an eviction that removed nothing, every call.
     private func evictStaleLiveBuffers(keeping id: Int64) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let live = Set(self.catalog.records.map(\.id)).union([id])
-            self.streams.live = self.streams.live.filter { live.contains($0.key) }
-            self.previews.map = self.previews.map.filter { live.contains($0.key) }
+            let streams = self.streams.live.filter { live.contains($0.key) }
+            if streams.count != self.streams.live.count { self.streams.live = streams }
+            let previews = self.previews.map.filter { live.contains($0.key) }
+            if previews.count != self.previews.map.count { self.previews.map = previews }
         }
     }
 
