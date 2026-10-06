@@ -435,6 +435,12 @@ struct ExternalSessionMonitor {
         let title: String
         let source: String
         let threadSource: String
+        /// The thread's model as the index records it. A long-lived rollout's
+        /// first `turn_context` sits past the bounded head read and its newest
+        /// sits past the tail window, so for exactly the sessions running right
+        /// now neither file route can see it — measured on 7 of 24 rollouts on
+        /// this machine, every one of them large and recent.
+        let model: String
     }
 
     /// Whether a thread is a main (user) session, as opposed to a helper or an
@@ -492,7 +498,7 @@ struct ExternalSessionMonitor {
         for row in rows {
             let meta = fileMeta(path: row.path, cutoff: 0)
             // Membership is authoritative even for idle or missing rollouts.
-            let parsed = meta.map { codexFields(path: row.path, meta: $0) }
+            let parsed = meta.map { codexFields(path: row.path, meta: $0, modelHint: row.model) }
             let updated = meta?.mtime ?? row.updated
             // A rollout is a helper when the index says so or the file header
             // carries a parent; `threadSource` alone is not enough for rows
@@ -512,7 +518,10 @@ struct ExternalSessionMonitor {
                 kind: .codex, sessionId: row.id,
                 cwd: parsed.map { $0.cwd.isEmpty ? row.cwd : $0.cwd } ?? row.cwd,
                 updatedAt: updated * 1000,
-                model: parsed?.model ?? "", isAlive: true,
+                // `codexFields` has already folded the routes — newest
+                // `turn_context`, then the deeper head read, then the index row.
+                model: parsed?.model ?? row.model,
+                isAlive: true,
                 isActive: running,
                 hasStalledTurn: parsed?.hasOpenTask == true && !running,
                 completionID: parsed?.completionID,
@@ -549,14 +558,21 @@ struct ExternalSessionMonitor {
         }
         sqlite3_finalize(info)
         let hasThreadSource = columns.contains("thread_source")
+        // Optional like `thread_source`: the column is younger than the table,
+        // and its absence must not take the whole index path down.
+        let hasModel = columns.contains("model")
         var stmt: OpaquePointer?
         let sql = """
         SELECT id, rollout_path, cwd, updated_at, source, title\
         \(hasThreadSource ? ", thread_source" : "") \
+        \(hasModel ? ", model" : "") \
         FROM threads WHERE archived = 0 ORDER BY updated_at DESC
         """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(stmt) }
+        // The SELECT appends optional columns in a fixed order; the model's
+        // ordinal depends on which of the two precede it.
+        let modelColumn: Int32 = hasThreadSource ? 7 : 6
         var rows: [IndexedThread] = []
         func string(_ column: Int32) -> String {
             guard let value = sqlite3_column_text(stmt, column) else { return "" }
@@ -570,7 +586,8 @@ struct ExternalSessionMonitor {
             if kind != .excluded {
                 rows.append(IndexedThread(id: string(0), path: string(1), cwd: string(2),
                                           updated: sqlite3_column_double(stmt, 3),
-                                          title: string(5), source: source, threadSource: threadSource))
+                                          title: string(5), source: source, threadSource: threadSource,
+                                          model: hasModel ? string(modelColumn) : ""))
             }
             step = sqlite3_step(stmt)
         }
@@ -616,7 +633,18 @@ struct ExternalSessionMonitor {
     }
 
     /// Head/tail fields for `path`, re-reading only when mtime or size moved.
-    private static func codexFields(path: String, meta: (mtime: TimeInterval, size: Int)) -> CodexFileCache {
+    ///
+    /// The model, in precedence order — most current source first:
+    ///   1. the newest `turn_context`, from the tail window;
+    ///   2. the index row's `model` column (`modelHint`), which Codex keeps at
+    ///      the thread's current model;
+    ///   3. the *earliest* `turn_context`, from the shallow head read and then
+    ///      from the deeper `firstModel` read — historical, but better than
+    ///      nothing when the index cannot be read.
+    /// Nothing beyond (1) names the model a thread is on *now*; that is why
+    /// the index outranks the first `turn_context` rather than the reverse.
+    private static func codexFields(path: String, meta: (mtime: TimeInterval, size: Int),
+                                    modelHint: String = "") -> CodexFileCache {
         codexCacheLock.lock()
         let hit = codexFileCache[path].flatMap { cached -> CodexFileCache? in
             cached.mtime == meta.mtime && cached.size == meta.size ? cached : nil
@@ -626,13 +654,17 @@ struct ExternalSessionMonitor {
         let head = readHead(path: path, bytes: 32_000)
         let ctx = readCodexContext(path: path)
         let spawn = codexSpawnInfo(head: head)
+        var model = ctx.model
+        if model.isEmpty { model = modelHint }
+        if model.isEmpty { model = headModel(in: head) }
+        if model.isEmpty { model = firstModel(path: path) }
         let entry = CodexFileCache(
             mtime: meta.mtime,
             size: meta.size,
             cwd: spawn?.cwd ?? "",
             metadataKnown: spawn != nil,
             sourceKind: spawn?.sourceKind ?? "",
-            model: ctx.model.isEmpty ? headModel(in: head) : ctx.model,
+            model: model,
             contextUsed: ctx.used,
             contextLimit: ctx.limit,
             parentThreadId: spawn?.parentThreadId,
@@ -716,6 +748,27 @@ struct ExternalSessionMonitor {
     /// How far past the window to start reading, so trimming to `codexTailWindow`
     /// leaves the window starting at a record boundary rather than mid-line.
     private static let codexTailLineSlack = 48_000
+
+    /// The *earliest* `turn_context`'s model, from a deeper bounded read.
+    ///
+    /// Neither the 32 KB head nor the 512 KB tail window can see it on a
+    /// long-lived rollout: the first record (`session_meta`) runs to tens of
+    /// KB, so the 32 KB read ends mid-line before any `turn_context`, and the
+    /// newest `turn_context` sits megabytes before EOF once the session has
+    /// written a large tool body. Measured on this machine: for 7 of 24
+    /// rollouts — the largest and most recent, i.e. the ones a user is
+    /// actually running — the first `turn_context` sits at byte ~102 KB.
+    /// 256 KB covers every measured rollout head; a miss here is a miss, not a
+    /// scan, and the callers only read when the newer routes came up empty.
+    private static let codexModelHeadWindow = 262_144
+
+    private static func firstModel(path: String) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return "" }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: Self.codexModelHeadWindow),
+              !data.isEmpty else { return "" }
+        return headModel(in: String(decoding: data, as: UTF8.self))
+    }
 
     private static func headModel(in head: String) -> String {
         for line in head.split(separator: "\n") {

@@ -6,9 +6,9 @@ root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
     work = Path(folder)
     db = sqlite3.connect(work / 'state_5.sqlite')
-    db.execute('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, archived INTEGER, title TEXT)')
+    db.execute('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, archived INTEGER, title TEXT, model TEXT)')
     now = int(time.time())
-    def thread(name, *, age=0, archived=0, child=False, missing=False, open_turn=False, malformed=False, source='vscode'):
+    def thread(name, *, age=0, archived=0, child=False, missing=False, open_turn=False, malformed=False, source='vscode', model=''):
         path = work / 'sessions' / (name + '.jsonl')
         path.parent.mkdir(exist_ok=True)
         if child:
@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
             event = {'type': 'event_msg', 'payload': {'type': 'task_started' if open_turn else 'task_complete'}}
             path.write_text(('invalid\n' if malformed else json.dumps(meta)+'\n')+json.dumps(event)+'\n')
             os.utime(path, (now-age, now-age))
-        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)', (name,str(path),'/tmp/project',now-age,now-age,json.dumps(source) if child else source,archived,'Title '+name))
+        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)', (name,str(path),'/tmp/project',now-age,now-age,json.dumps(source) if child else source,archived,'Title '+name,model))
     thread('idle', age=86400*30)
     thread('running', open_turn=True)
     thread('stale-open', age=86400, open_turn=True)
@@ -38,15 +38,17 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
     # 120s is past the 90s recency fallback and inside the 5-minute open-turn
     # window, so only a lookback that actually finds task_started stays running.
     pad = 'x' * 600_000
-    def buried(name, events, age):
+    def buried(name, events, age, extra=None):
         path = work / 'sessions' / (name + '.jsonl')
         lines = [json.dumps({'type': 'session_meta', 'payload': {'cwd': '/tmp/project', 'source': 'vscode'}})]
         lines.extend(json.dumps(event) for event in events)
+        if extra:
+            lines.extend(json.dumps(event) for event in extra)
         lines.append(json.dumps({'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'output': pad}}))
         path.write_text('\n'.join(lines) + '\n')
         os.utime(path, (now - age, now - age))
-        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)',
-                   (name, str(path), '/tmp/project', now - age, now - age, 'vscode', 0, 'Title ' + name))
+        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)',
+                   (name, str(path), '/tmp/project', now - age, now - age, 'vscode', 0, 'Title ' + name, ''))
     call = {'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec'}}
     buried('buried-open', [
         {'type': 'event_msg', 'payload': {'type': 'task_started'}},
@@ -57,6 +59,44 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
         {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
         call,
     ], 30)
+    # The shape finding 46 measured on this machine: the head's 32 KB read
+    # (session_meta ~23 KB, then a partial record) ends before the first
+    # turn_context, and a body below buries the newest one past the 512 KB
+    # tail window — so *both* file routes for `model` return "". The index
+    # row's `model` column is the surviving source, and `deep-head`'s is the
+    # deeper bounded head read (the only route when there is no index row).
+    def long_lived(name, turn_model, index_model, age=30):
+        path = work / 'sessions' / (name + '.jsonl')
+        lines = [json.dumps({'type': 'session_meta',
+                             'payload': {'cwd': '/tmp/project', 'source': 'vscode', 'pad': 'x' * 23_000}})]
+        for _ in range(4):
+            lines.append(json.dumps({'type': 'response_item',
+                                     'payload': {'type': 'custom_tool_call_output', 'output': 'y' * 20_000}}))
+        lines.append(json.dumps({'type': 'turn_context', 'payload': {'model': turn_model}}))
+        lines.append(json.dumps({'type': 'event_msg', 'payload': {'type': 'task_complete'}}))
+        # One record larger than the tail window, so the window holds no
+        # turn_context at all.
+        lines.append(json.dumps({'type': 'response_item',
+                                 'payload': {'type': 'custom_tool_call_output', 'output': 'z' * 700_000}}))
+        path.write_text('\n'.join(lines) + '\n')
+        os.utime(path, (now - age, now - age))
+        db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)',
+                   (name, str(path), '/tmp/project', now - age, now - age, 'vscode', 0, 'Title ' + name, index_model))
+    long_lived('long-lived', turn_model='gpt-hidden', index_model='gpt-6.1-sol', age=30)
+    long_lived('deep-head', turn_model='gpt-deep', index_model='', age=20)
+    # …and the other direction: when the tail window *can* see the newest
+    # turn_context, it outranks the index row — a thread that switched models
+    # mid-life must show the model it is on now.
+    switched = work / 'sessions' / 'switched.jsonl'
+    switched.write_text('\n'.join([
+        json.dumps({'type': 'session_meta', 'payload': {'cwd': '/tmp/project', 'source': 'vscode'}}),
+        json.dumps({'type': 'turn_context', 'payload': {'model': 'gpt-old'}}),
+        json.dumps({'type': 'event_msg', 'payload': {'type': 'task_complete'}}),
+        json.dumps({'type': 'turn_context', 'payload': {'model': 'gpt-new'}}),
+    ]) + '\n')
+    os.utime(switched, (now - 10, now - 10))
+    db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)',
+               ('switched', str(switched), '/tmp/project', now - 10, now - 10, 'vscode', 0, 'Title switched', 'gpt-old'))
     db.commit()
     harness = work / 'Main.swift'
     harness.write_text('''import Foundation
@@ -72,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
         static func main() {
             let sessions = ExternalSessionMonitor.fetchActive()
             let ids = Set(sessions.map(\\.sessionId))
-            precondition(ids == Set(["idle", "running", "stale-open", "stalled", "missing", "malformed", "buried-open", "buried-done"]), "Unarchived main threads must remain visible: \\(ids)")
+            precondition(ids == Set(["idle", "running", "stale-open", "stalled", "missing", "malformed", "buried-open", "buried-done", "long-lived", "deep-head", "switched"]), "Unarchived main threads must remain visible: \\(ids)")
             precondition(sessions.filter(\\.isActive).map(\\.sessionId) == ["running", "buried-open"],
                          "an open turn behind a huge tool body stays running: \\(sessions.filter(\\.isActive).map(\\.sessionId))")
             precondition(sessions.first { $0.sessionId == "buried-open" }?.currentActivity == "exec",
@@ -87,6 +127,23 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-') as folder:
                          "a stopped open turn is what cleanup acts on: \\(sessions.filter(\\.hasStalledTurn).map(\\.sessionId))")
             precondition(sessions.allSatisfy { $0.displayName == "Title " + $0.sessionId })
             precondition(sessions.allSatisfy { !$0.isSubagent })
+
+            // The model is what every surface prints as the session's identity
+            // (`ExternalSessionCardView` falls back to the cwd, the island drops
+            // its "model · 运行中" line, the sessions page prints a placeholder).
+            // Precedence: newest `turn_context` in the tail window, then the
+            // index row's `model` column, then the deeper head read.
+            func model(_ id: String) -> String { sessions.first { $0.sessionId == id }?.model ?? "<missing>" }
+            precondition(model("switched") == "gpt-new",
+                         "the newest turn_context outranks the index row: \\(model("switched"))")
+            precondition(model("long-lived") == "gpt-6.1-sol",
+                         "a long-lived rollout takes its model from the index row: \\(model("long-lived"))")
+            precondition(model("deep-head") == "gpt-deep",
+                         "with no index column, the deeper head read finds the first turn_context: \\(model("deep-head"))")
+            for named in ["running", "buried-open"] {
+                precondition(model(named) == "",
+                             "\\(named)'s rollout carries no turn_context, so no route invents a model: \\(model(named))")
+            }
 
             // The swarm tree joins children to parents by `parentThreadId`, so
             // the monitor has to hand back the helpers too — for years it did
@@ -218,9 +275,9 @@ with tempfile.TemporaryDirectory(prefix='claudebar-codex-legacy-') as legacy_fol
                     str(harness),'-o',str(binary)], check=True)
     subprocess.run([str(binary)], env={**os.environ, 'CODEX_HOME':legacy_folder}, check=True)
 
-# A second, tiny harness for the holder rule itself.
-#
-# No test here can *be* a holder: `CodexProcessScan.openRollouts()` reads the
+    # A second, tiny harness for the holder rule itself.
+    #
+    # No test here can *be* a holder: `CodexProcessScan.openRollouts()` reads the
 # live process table of whatever process runs the fixture, and CI has no
 # `codex` executable holding a rollout open, so the holder branch is
 # unreachable end to end. That is exactly the branch a stuck thread hangs off,
