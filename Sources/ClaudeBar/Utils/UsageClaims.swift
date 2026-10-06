@@ -151,25 +151,43 @@ enum UsageClaims {
 
         let additions = encode(fresh, dead)
         guard !additions.isEmpty else { return }
-        if lines * 2 > ledger.count + 4096 {
+        // Compact when the *dead* lines outnumber the live ones. Written the
+        // other way round (`lines * 2 > ledger.count + 4096`) this fires for
+        // every ledger above ~4,096 live ids — a tombstone-free corpus has
+        // lines ≈ count, so 2·lines beats count + 4096 on every flush and each
+        // pass rewrote the whole file instead of appending the few lines that
+        // changed.
+        if lines > ledger.count * 2 + 4096 {
             let compacted = encode(ledger.keys.sorted().map { Claim(id: $0, owner: ledger[$0]!) }, [])
             if (try? Data(compacted.utf8).write(to: FilePaths.usageClaimsJSONL, options: .atomic)) != nil {
                 lines = ledger.count
+                return
             }
-            return
+            // The rewrite failed — fall through to appending this pass's
+            // additions rather than returning with them dropped. `lines` is
+            // advanced only by a write that verified.
         }
         guard let handle = try? FileHandle(forWritingTo: FilePaths.usageClaimsJSONL) else {
             // First write: create the file. A failure here costs nothing — the
             // next parse finds no owner and claims the id, which is exactly
             // the pre-ledger behaviour rather than a new double booking.
-            try? Data(additions.utf8).write(to: FilePaths.usageClaimsJSONL, options: .atomic)
-            lines = fresh.count + dead.count
+            // `lines` counts lines *on disk*, so it is advanced only by a
+            // write that actually landed — advancing it after a failed write
+            // would make the compaction test believe a shorter file exists.
+            if (try? Data(additions.utf8).write(to: FilePaths.usageClaimsJSONL, options: .atomic)) != nil {
+                lines = fresh.count + dead.count
+            }
             return
         }
         defer { try? handle.close() }
         _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(additions.utf8))
-        lines += fresh.count + dead.count
+        do {
+            try handle.write(contentsOf: Data(additions.utf8))
+            lines += fresh.count + dead.count
+        } catch {
+            // Left for the next flush; the claims are also still in memory
+            // (`ledger`), so a re-parse reproduces them.
+        }
     }
 
     private static func loadLocked() {

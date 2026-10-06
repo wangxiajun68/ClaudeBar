@@ -324,6 +324,46 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             require(familyTokens("cx-family",source:.codex) == 0)
             require(familyTokens("cx-unrelated",source:.codex) == 165)
             require(UsageIndex.fetchSessionFamilies(source:.thirdParty,sessionIds:["family"]).isEmpty)
+
+            // The claims ledger appends only what changed and rewrites itself
+            // only when dead lines outnumber live ones. The inverted comparison
+            // (`lines * 2 > count + 4096`) rewrote the file on every flush once
+            // the corpus passed ~4,096 ids; assert the two behaviours the
+            // corrected test encodes, through the real flush path. A fresh root
+            // keeps this phase's ledger away from the scenario's own claims.
+            FilePaths.root = base.appendingPathComponent("claims-\(sqlite)")
+            try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
+            let claimsURL = FilePaths.usageClaimsJSONL
+            UsageClaims.reset()
+            let steady = (0..<5000).map { "steady-\($0)" }
+            for id in steady { UsageClaims.record(id, owner: "claude:steady") }
+            UsageClaims.flush()
+            let afterFirst = try String(contentsOf: claimsURL, encoding: .utf8)
+            require(afterFirst.split(separator: "\n").count == 5000, "first flush must write every claim")
+            // One changed id: the file gains a line, and is not rewritten.
+            UsageClaims.record("steady-0", owner: "claude:other")
+            UsageClaims.flush()
+            let afterAppend = try String(contentsOf: claimsURL, encoding: .utf8)
+            require(afterAppend.split(separator: "\n").count == 5001,
+                    "a single change must append one line, not rewrite \(afterAppend.count) bytes")
+            require(afterAppend.hasPrefix(afterFirst), "an append must not disturb the prefix")
+            // Now bury the live set. With dead lines dominating, the flush
+            // compacts back to one line per live id.
+            FilePaths.root = base.appendingPathComponent("claims-compact-\(sqlite)")
+            try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
+            UsageClaims.reset()
+            for id in 0..<20000 { UsageClaims.record("dead-\(id)", owner: "claude:dead") }
+            UsageClaims.flush()
+            for id in 0..<19000 { UsageClaims.release("dead-\(id)") }
+            UsageClaims.record("live-1", owner: "claude:live")
+            UsageClaims.flush()
+            let compacted = try String(contentsOf: FilePaths.usageClaimsJSONL, encoding: .utf8)
+            require(compacted.split(separator: "\n").count == 1001,
+                    "a dead-dominated ledger must compact to its live ids, got \(compacted.split(separator: "\n").count)")
+            require(UsageClaims.owner(of: "live-1") == "claude:live"
+                    && UsageClaims.owner(of: "dead-3") == nil
+                    && UsageClaims.owner(of: "dead-19000") == "claude:dead",
+                    "compaction lost the live set or kept a freed id")
         }
         let a = ModelUsage(model: "shared-medium", inputTokens: 10)
         let b = ModelUsage(model: "shared", inputTokens: 100)
