@@ -96,7 +96,7 @@ final class ProxyUsageStore {
     /// Per-model third-party usage in `[startDay, endDay]`.
     func fetch(startDay: String, endDay: String) -> [ModelUsage] {
         var byModel: [String: ModelUsage] = [:]
-        for row in allRows() where row.day >= startDay && row.day <= endDay {
+        for row in allRows(startDay: startDay, endDay: endDay) {
             var usage = byModel[row.model] ?? ModelUsage(model: row.model)
             usage.calls += row.calls
             usage.inputTokens += row.input
@@ -110,7 +110,7 @@ final class ProxyUsageStore {
 
     func fetchDailyModels(startDay: String, endDay: String) -> [String: [ModelUsage]] {
         var days: [String: [ModelUsage]] = [:]
-        for row in allRows() where row.day >= startDay && row.day <= endDay {
+        for row in allRows(startDay: startDay, endDay: endDay) {
             days[row.day, default: []].append(ModelUsage(model: row.model, calls: row.calls,
                 inputTokens: row.input, outputTokens: row.output,
                 cacheReadTokens: row.cacheRead, cacheCreationTokens: row.cacheWrite))
@@ -121,7 +121,7 @@ final class ProxyUsageStore {
     /// Per-day totals, for the usage river.
     func fetchDaily(startDay: String, endDay: String) -> [DayUsage] {
         var byDay: [String: DayUsage] = [:]
-        for row in allRows() where row.day >= startDay && row.day <= endDay {
+        for row in allRows(startDay: startDay, endDay: endDay) {
             var day = byDay[row.day] ?? DayUsage(day: row.day)
             day.inputTokens += row.input
             day.outputTokens += row.output
@@ -132,18 +132,28 @@ final class ProxyUsageStore {
         return byDay.values.filter { $0.totalTokens > 0 }.sorted { $0.day < $1.day }
     }
 
-    private func allRows() -> [Row] {
+    private func allRows(startDay: String, endDay: String) -> [Row] {
         lock.lock()
         defer { lock.unlock() }
         if !useDatabase {
             loadJSONLocked()
-            return Array(rows.values)
+            return rows.values.filter { $0.day >= startDay && $0.day <= endDay }
         }
         guard let db = connectionLocked() else { return [] }
         var stmt: OpaquePointer?
-        let sql = "SELECT day, model, calls, input, output, cache_read, cache_write FROM usage"
+        // The table is WITHOUT ROWID with `PRIMARY KEY (day, model)`, so this
+        // range is the primary key's own order — the window is an index scan
+        // over exactly the days asked for. Selecting the whole table and
+        // filtering in Swift made every query O(all history) instead of
+        // O(days × models).
+        let sql = """
+            SELECT day, model, calls, input, output, cache_read, cache_write
+            FROM usage WHERE day BETWEEN ?1 AND ?2
+            """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, startDay, -1, Self.transient)
+        sqlite3_bind_text(stmt, 2, endDay, -1, Self.transient)
         var out: [Row] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             out.append(Row(
