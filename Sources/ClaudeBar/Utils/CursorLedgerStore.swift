@@ -60,19 +60,75 @@ final class CursorLedgerStore: ObservableObject {
     /// The window a read is currently in flight for, so repeat `refresh` calls
     /// for the same one coalesce instead of stacking.
     private var inFlightWindow: DateInterval?
+    /// The last window `refresh` was asked for — kept so a regrant can re-read
+    /// it without the page having to re-appear.
+    private var lastRequestedWindow: DateInterval?
     private let cache = LedgerCache()
+    /// Watches the 读取 Cursor 会话 switch. See `revoke`/`revive`.
+    private var permissionObserver: NSObjectProtocol?
 
     private init() {
         // Warm start, same reason as `CursorUsageStore`: at launch the first
         // probe cannot succeed (it fires before the VPN writes the system
         // proxy), and the money figure from a minute ago is still the right
         // thing to draw. Replaced in place when the live reading lands.
-        if let last = cache.load() {
+        //
+        // Gated on the switch: the persisted reading is Cursor's own bill, and
+        // with the switch off it must not be drawn even for the frame before
+        // the first `refresh` — same rule `CursorUsageStore.start()` applies to
+        // its own warm start.
+        if PermissionGate.allows(.cursorData), let last = cache.load() {
             rows = CursorLedger.folded(last.rows)
             window = DateInterval(start: last.windowStart, end: last.windowEnd)
             truncated = last.truncated
             fetchedAt = last.at
         }
+        // Revocation has to be *observed*, not merely checked at the next
+        // read: with the switch off nothing calls `refresh` (the usage page is
+        // usually not even open), so without this the last reading — and the
+        // money figure drawn from it — survived the switch indefinitely.
+        // Same observer shape as `CursorUsageStore.start()`.
+        permissionObserver = NotificationCenter.default.addObserver(
+            forName: .permissionDidChange, object: nil, queue: .main) { [weak self] note in
+                guard (note.object as? AppPermission) == .cursorData else { return }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if PermissionGate.allows(.cursorData) { self.revive() }
+                    else { self.revoke() }
+                }
+            }
+    }
+
+    deinit {
+        if let permissionObserver { NotificationCenter.default.removeObserver(permissionObserver) }
+    }
+
+    /// Drop everything a reading owns, including the warm-start file: the
+    /// switch promises that Cursor's data is not read while it is off, and a
+    /// snapshot left on disk would be read again at the next launch's warm
+    /// start. Cancelling the task is what stops an in-flight read — which
+    /// cannot be aborted mid-request — from republishing when it lands.
+    private func revoke() {
+        task?.cancel()
+        task = nil
+        inFlightWindow = nil
+        lastProbe = nil
+        loading = false
+        rows = [:]
+        window = nil
+        truncated = false
+        fetchedAt = nil
+        note = nil
+        cache.clear()
+    }
+
+    /// Re-read the window the page last asked for, so flipping the switch back
+    /// on restores the figure without the user having to page away and back.
+    /// Nothing to re-read (the switch was off before any request) leaves the
+    /// page's own `.task(id:)` to make the first one.
+    private func revive() {
+        guard let window = lastRequestedWindow else { return }
+        refresh(window: window)
     }
 
     // MARK: - Reading
@@ -110,17 +166,13 @@ final class CursorLedgerStore: ObservableObject {
     /// `force` skips both the freshness window and the coalescing check — that
     /// is the manual refresh button, where the whole point is a new reading.
     func refresh(window: DateInterval, billingCycle: DateInterval? = nil, force: Bool = false) {
+        // Recorded before the gate: a request made while the switch is off is
+        // still the window a regrant should read.
+        lastRequestedWindow = window
         // Same switch as the allowance store, same reason: this read opens
         // Cursor's `state.vscdb` and sends the account token to cursor.com.
         guard PermissionGate.allows(.cursorData) else {
-            task?.cancel()
-            task = nil
-            loading = false
-            self.rows = [:]
-            self.window = nil
-            truncated = false
-            fetchedAt = nil
-            note = nil
+            revoke()
             return
         }
         let plan = CursorLedger.plan(for: window, billingCycle: billingCycle)
@@ -310,5 +362,11 @@ private final class LedgerCache {
                             at: Date())
         guard let data = try? encoder.encode(stored) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// Forget the persisted reading — the switch was turned off, and the warm
+    /// start must not re-load Cursor's bill on the next launch.
+    func clear() {
+        try? FileManager.default.removeItem(at: url)
     }
 }
