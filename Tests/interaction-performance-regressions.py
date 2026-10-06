@@ -49,17 +49,56 @@ enum UIWakePolicy {
     static func observe(_ body: @escaping () -> Void) -> AnyCancellable { subject.sink { body() } }
     static func set(_ visible: Bool) { hasVisibleWindow = visible; subject.send() }
 }
-enum FanHelperInstaller { static func isInstalled() -> Bool { false } }
+enum BuildChannel { static let allowsSystemIntegration = true }
+enum FanHelperInstaller {
+    static var installed = false
+    static var resets = 0
+    static var failSpeed = false
+    static var speeds: [String] = []
+    static func isInstalled() -> Bool { installed }
+    static func setFanSpeed(fanID: Int, rpm: Int) -> String? {
+        if failSpeed { return "synthetic failure" }
+        speeds.append("max\(fanID)@\(rpm)"); return nil
+    }
+    static func setAutomatic(fanID: Int) -> String? { return nil }
+    static func resetAll() -> String? { resets += 1; return nil }
+}
+enum FanMode: Int {
+    case automatic = 0
+    case forced = 1
+    case auto3 = 3
+    var isAutomatic: Bool { self == .automatic || self == .auto3 }
+}
+struct FanInfo: Identifiable, Equatable {
+    let id: Int
+    var name = "fixture"
+    var rpm = 1200
+    var minRPM = 0
+    var maxRPM = 6000
+    var mode: FanMode = .automatic
+}
 @MainActor final class FanFixture {
     var subscribers = 0
     var helperInstalled = false
     var timer: Timer?
     var wakeObservation: AnyCancellable?
     var reads = 0
+    var fans: [FanInfo] = []
+    var lastError: String?
+    var pendingSpeedTasks: [Int: DispatchWorkItem] = [:]
+    var commandRevision: UInt64 = 0
+    var tookFans = false
+    let commandQueue = DispatchQueue(label: "fan-fixture")
     func refresh() { reads += 1 }
+    func postPermissionNeeded() {}
+    func setMaxSpeed(_ id: Int) { setManual(id, rpm: fans.first { $0.id == id }?.maxRPM ?? 6000) }
 FAN_START
 FAN_SYNC
 FAN_STOP
+FAN_SETMANUAL
+FAN_SUBMIT
+FAN_QUIT
+FAN_DUTY
 }
 final class FixtureTimer {
     var schedules = 0
@@ -77,9 +116,16 @@ final class SamplerFixture {
 SAMPLER_PERIOD
 }
 '''
+duty = fan[fan.index('    private enum Duty'):].replace('private enum', 'enum', 1)
+duty = duty[:duty.index('\n    }') + len('\n    }')]
+low_load = low_load.replace('FAN_DUTY', duty)
+
 for token, body in [('FAN_START', method(fan, '    func start()')),
                     ('FAN_SYNC', method(fan, '    private func syncPolling()')),
                     ('FAN_STOP', method(fan, '    func stop()')),
+                    ('FAN_SETMANUAL', method(fan, '    func setManual(')),
+                    ('FAN_SUBMIT', method(fan, '    private func submit(')),
+                    ('FAN_QUIT', method(fan, '    func adoptSystemControlOnQuit()')),
                     ('SAMPLER_PERIOD', method(sampler, '    private func applyPeriod()'))]:
     low_load = low_load.replace(token, body)
 
@@ -162,6 +208,33 @@ final class FixtureWindow: NSWindow {
         precondition(fan.timer == nil && fan.wakeObservation == nil)
         UIWakePolicy.set(false); UIWakePolicy.set(true)
         precondition(fan.reads == 2, "No subscriber may restart polling")
+
+        // The quit hand-back must follow what was *commanded*, not a polled
+        // snapshot: with the window hidden the snapshot never moves, and a
+        // session that pinned a rotor owes the release anyway.
+        FanHelperInstaller.installed = true
+        fan.fans = [FanInfo(id: 0)]
+        fan.setMaxSpeed(0)
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(FanHelperInstaller.speeds == ["max0@6000"], "manual command must reach the helper")
+        precondition(fan.fans[0].mode.isAutomatic, "fixture snapshot stays stale on purpose")
+        fan.adoptSystemControlOnQuit()
+        precondition(FanHelperInstaller.resets == 1, "a commanded session must hand the fans back on quit")
+        precondition(!fan.tookFans, "the hand-back has to clear the duty")
+        // Nothing was commanded by this second fixture: no write, no reset.
+        let idle = FanFixture()
+        idle.fans = [FanInfo(id: 0)]
+        idle.adoptSystemControlOnQuit()
+        precondition(FanHelperInstaller.resets == 1, "an untouched session must not reset the fleet")
+        // A failed command does not take on the duty.
+        FanHelperInstaller.speeds = []
+        FanHelperInstaller.failSpeed = true
+        let failing = FanFixture()
+        failing.fans = [FanInfo(id: 0)]
+        failing.setMaxSpeed(0)
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(!failing.tookFans, "a failed write must not create a quit duty")
+        FanHelperInstaller.failSpeed = false
 
         let a = UUID(), b = UUID()
         var applied: [Int] = []

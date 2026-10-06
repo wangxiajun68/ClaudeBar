@@ -18,6 +18,15 @@ final class FanMonitor {
     /// All privileged commands execute in submission order, away from the UI thread.
     private let commandQueue = DispatchQueue(label: "com.claudebar.fan-commands", qos: .userInitiated)
     private var commandRevision: UInt64 = 0
+    /// Set when this session has actually commanded a rotor, and cleared once
+    /// a whole-fleet reset has been *confirmed* applied.
+    ///
+    /// `adoptSystemControlOnQuit` used to decide from `fans` alone, and `fans`
+    /// only moves while a surface is visible (`refresh`'s own gate) — so a user
+    /// who took the fans and then hid the window quit with a snapshot still
+    /// reading 自动, skipped the hand-back, and left the rotors pinned at max
+    /// with nothing left to release them.
+    private var tookFans = false
     private let readQueue = DispatchQueue(label: "com.claudebar.fan-read", qos: .utility)
     @ObservationIgnored private var reading = false
 
@@ -77,7 +86,7 @@ final class FanMonitor {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingSpeedTasks.removeValue(forKey: fanID)?.cancel()
-            self.submit { FanHelperInstaller.setAutomatic(fanID: fanID) }
+            self.submit(.release) { FanHelperInstaller.setAutomatic(fanID: fanID) }
         }
     }
 
@@ -91,7 +100,7 @@ final class FanMonitor {
             let task = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 self.pendingSpeedTasks.removeValue(forKey: fanID)
-                self.submit { FanHelperInstaller.setFanSpeed(fanID: fanID, rpm: rpm) }
+                self.submit(.take) { FanHelperInstaller.setFanSpeed(fanID: fanID, rpm: rpm) }
             }
             self.pendingSpeedTasks[fanID] = task
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
@@ -133,7 +142,7 @@ final class FanMonitor {
             guard let self else { return }
             self.pendingSpeedTasks.values.forEach { $0.cancel() }
             self.pendingSpeedTasks.removeAll()
-            self.submit { FanHelperInstaller.resetAll() }
+            self.submit(.releaseAll) { FanHelperInstaller.resetAll() }
         }
     }
 
@@ -152,7 +161,11 @@ final class FanMonitor {
     /// 拉满/恢复自动 toggles wrote through.
     func adoptSystemControlOnQuit() {
         guard BuildChannel.allowsSystemIntegration else { return }
-        guard fans.contains(where: { !$0.mode.isAutomatic }) else { return }
+        // `tookFans` is the authoritative record: a session that pinned a
+        // rotor owes the hand-back even when the last poll — or no poll at
+        // all — still reads 自动. `fans` stays as the fallback for a session
+        // whose command predates the flag.
+        guard tookFans || fans.contains(where: { !$0.mode.isAutomatic }) else { return }
         pendingSpeedTasks.values.forEach { $0.cancel() }
         pendingSpeedTasks.removeAll()
         // Synchronous on the command queue: `applicationWillTerminate` is
@@ -161,9 +174,10 @@ final class FanMonitor {
         commandQueue.sync {
             _ = FanHelperInstaller.resetAll()
         }
+        tookFans = false
     }
 
-    private func submit(_ command: @escaping @Sendable () -> String?) {
+    private func submit(_ effect: Duty, _ command: @escaping @Sendable () -> String?) {
         lastError = nil
         // Re-stat before deciding: `helperInstalled` is written in `start()`
         // and by nothing else, and `start()` only runs again from a fresh
@@ -179,10 +193,31 @@ final class FanMonitor {
             let error = command()
             Task { @MainActor in
                 guard let self, self.commandRevision == revision else { return }
+                // The session's hand-back duty follows what was *commanded*,
+                // not what the last poll saw. Recorded only on a successful
+                // write, so a failed command does not leave the quit path
+                // running a reset for a fan this app never moved.
+                if error == nil {
+                    switch effect {
+                    case .take: self.tookFans = true
+                    case .releaseAll: self.tookFans = false
+                    case .release: break
+                    }
+                }
                 self.lastError = error
                 self.refresh()
             }
         }
+    }
+
+    /// What a submitted command does to the session's hand-back duty.
+    private enum Duty {
+        /// Pins a rotor at a target the SMC keeps after this process is gone.
+        case take
+        /// Hands one rotor back. The duty is unchanged: another may be pinned.
+        case release
+        /// Hands the whole fleet back on a confirmed write.
+        case releaseAll
     }
 
     /// 首次调速时若辅助工具未安装，弹窗引导安装 / 打开系统设置。

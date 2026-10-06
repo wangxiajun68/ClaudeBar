@@ -77,7 +77,9 @@
   "summary": "退出时是否把风扇交还系统，取决于一份只在窗口可见时才更新的 fan 快照；命令已生效但快照仍停留在「自动」时，退出会跳过 autoall，风扇继续锁在最高转速。",
   "evidence": "L155 `guard fans.contains(where: { !$0.mode.isAutomatic }) else { return }` 是唯一判据，而 `fans` 只在 `refresh()` 的 L71 `if next != self.fans { self.fans = next }` 里被写。`refresh()` 入口 L61 `guard !reading, UIWakePolicy.hasVisibleWindow || fans.isEmpty else { return }` —— 窗口不可见且已检测到风扇时直接返回。命令完成回调 L178-184 `commandQueue.async { … Task { @MainActor in … self.refresh() } }` 走的正是这个被拒的 `refresh()`（提交路径 L176-177 只维护 commandRevision，不写 fans）。窗口关闭时 MachineKpiStrip/ResourceStrip 的 onDisappear → `stop()` 会 invalidate timer（L49-55），`syncPolling()` 也不会再建 timer，所以此后没有任何代码能刷新 fans。",
   "failure": "用户在 popup 的 KPI 条（MachineKpiStrip L31/L188）或概览的「风扇」卡点击「拉满/最大风速」，随后在命令完成的前后关闭 popup（或最小化主窗口）：写入已在 SMC 生效（fanctl 置 F%dMd/F%dTg），但 `refresh()` 因 `!hasVisibleWindow && !fans.isEmpty` 被拒绝，`fans` 永远停在自动模式。此后退出应用 → `adoptSystemControlOnQuit()` 判定所有风扇都是自动 → 不执行 `resetAll()` → 进程消失后风扇仍被 SMC 锁在 maxRPM（噪音/发热），直到下次启动再退出才交还。这正是提交 0367a0a 想杜绝的「退出后风扇锁死」。",
-  "fix": "不要用 2 秒前的 SMC 快照决定退出动作：在 `submit` 真正下发「手动」命令时置一个会话标志（在 L176 `commandRevision &+= 1` 旁加 `fansTakenThisSession = true`），`adoptSystemControlOnQuit` 先判该标志（保留 `fans` 判据作为兜底）；或让命令完成这一路用 `refresh(force: true)` 绕过可见性门槛（它不是轮询）。"
+  "fix": "不要用 2 秒前的 SMC 快照决定退出动作：在 `submit` 真正下发「手动」命令时置一个会话标志（在 L176 `commandRevision &+= 1` 旁加 `fansTakenThisSession = true`），`adoptSystemControlOnQuit` 先判该标志（保留 `fans` 判据作为兜底）；或让命令完成这一路用 `refresh(force: true)` 绕过可见性门槛（它不是轮询）。",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "correctness",
@@ -614,7 +616,9 @@
   "summary": "发现门控被 `||` 优先级拆成两个独立条件，attribution 关闭时仍会跑全进程表扫描，结果随即被丢弃",
   "evidence": "第 398 行原文：`if wantsAttribution, now - lastDiscoveryAt >= discoveryInterval || lastDiscoveryAt == 0 {`。Swift 的 `,` 比 `||` 绑定更松，实际语义是 `(wantsAttribution && now - lastDiscoveryAt >= 10) || lastDiscoveryAt == 0`，而不是注释/设计意图的 `wantsAttribution && (lastDiscoveryAt == 0 || now - lastDiscoveryAt >= 10)`。`lastDiscoveryAt` 只在 400 行被写为当前 uptime；`setAgentPIDs`（334-344）在 pid 集合变化时把 `lastDiscoveryAt = 0`。第 499 行 `guard wantsAttribution else { publish(... byKey: [:], shares: []) ; return }` 在 `index.buildChildIndex()`（514）之前，所以这一 tick 的扫描结果没有任何消费方。实测本机进程表规模：`proc_listallpids(nil, 0)` 返回 579，`/bin/ps -axo pid=,rss=,comm=` 563 行。",
   "failure": "窗口不可见（`UIWakePolicy.hasVisibleWindow == false`，timer 走 6/12 s 档）时，`ProviderStore.refreshSessions` 仍每 8 s 调一次 `setAgentPIDs`；任何会话启动/退出都会改变 pid 集合 → `lastDiscoveryAt = 0` → 下一 tick 右侧为真 → 后台跑完整扫描（每个 pid 一次 `proc_name` + 一次 `PROC_PIDTBSDINFO`，每个 node 还要一次 `KERN_PROCARGS2`），随后在 499 行把 `byKey` 清空发布。用户什么都看不到，采样器却按最贵路径走了一遍，并且这与 `start()` 注释里“Nobody's watching → suspend it”的承诺相反。",
-  "fix": "把条件加上括号：`if wantsAttribution, lastDiscoveryAt == 0 || now - lastDiscoveryAt >= discoveryInterval {`（即 `wantsAttribution && (...)`）。"
+  "fix": "把条件加上括号：`if wantsAttribution, lastDiscoveryAt == 0 || now - lastDiscoveryAt >= discoveryInterval {`（即 `wantsAttribution && (...)`）。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Measured with a standalone -O probe of the exact condition shape: Swift's `if a, b || c` is a condition *list* — `a` AND (`b || c`) — so `||` already binds inside the second element. With `wantsAttribution = false` the body does not run at any `lastDiscoveryAt`; with it true and `lastDiscoveryAt == 0` the body runs. The claim that `||` splits the comma into two independent conditions does not hold, so the discovery scan is already gated on attribution."
  },
  {
   "category": "correctness",
@@ -1086,7 +1090,9 @@
   "summary": "「退出时把风扇交还系统」这条路径在 Tests/ 下没有任何回归，改坏了整套测试仍然全绿。",
   "evidence": "grep \"adoptSystemControlOnQuit\" 只命中 Sources/ClaudeBar/Utils/FanMonitor.swift:153 与 Sources/ClaudeBar/ClaudeBarApp.swift:237。Tests/interaction-performance-regressions.py:80-82 从 FanMonitor.swift 切出的只有 `start()` / `syncPolling()` / `stop()`（FAN_START/FAN_SYNC/FAN_STOP），`submit`、`adoptSystemControlOnQuit`、`resetAllToAutomatic`、`setManual` 的合并逻辑都没有切片或断言；Tests/build-isolation-regressions.py:72-73 只覆盖 dev 通道下 `setAutomatic`/`resetAll` 返回 restrictionMessage；fan-rotor-regressions.py 只测转子渲染。",
   "failure": "把 L155 的 guard 写反（或删掉 L161-163 的 autoall），`make test` 依旧全绿，而后果恰是最近一次提交 0367a0a 修的「退出后风扇锁死在最高转速」；上一批修复（例如 L174 的重新 stat）同样没有防回归。",
-  "fix": "在现有的 Python 切片夹具里补一个用例：用 `mode: .forced` 的 `FanInfo` 列表调用 `adoptSystemControlOnQuit()`，用假的 FanHelperInstaller 计数断言 `resetAll()` 恰好触发一次；再加一条「快照仍为 automatic 但本会话下发过手动命令」的断言，把本次的 state 缺陷固定下来。"
+  "fix": "在现有的 Python 切片夹具里补一个用例：用 `mode: .forced` 的 `FanInfo` 列表调用 `adoptSystemControlOnQuit()`，用假的 FanHelperInstaller 计数断言 `resetAll()` 恰好触发一次；再加一条「快照仍为 automatic 但本会话下发过手动命令」的断言，把本次的 state 缺陷固定下来。",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "perf-io",
@@ -2961,7 +2967,9 @@
   "evidence": "155: `guard fans.contains(where: { !$0.mode.isAutomatic }) else { return }` 之后才 156-157 取消 pendingSpeedTasks、161-163 `commandQueue.sync { _ = FanHelperInstaller.resetAll() }`。但 fans 只在读路径刷新（60-74 `refresh()`：readQueue 读 SMC → 主 actor 发布；178-184 submit 完成后才 `self.refresh()`），而一次「最大」要经过 88-98 的 `DispatchQueue.main.async` + 0.1 s defer + 命令队列里的 helper 调用（FanHelperInstaller.swift:26-42，最长 10 s）才回写 fans。函数自己的注释 146-148 说「每一次已是自动的退出只花一条 fanctl autoall，写的是 SMC 已有的值」，即无条件重置被判定为廉价。",
   "failure": "用户点「最大」后 0.1 s 内（或 helper 调用尚未返回、refresh 尚未落地的任意时刻）退出：fans 仍读作自动 → 直接 return，既不取消 pendingSpeedTasks 也不 resetAll；若那个 pending 的 set 在终止流程的其他同步工作（VpnManager.stopCore + clearSystemProxy 需要数秒）期间落地，SMC 的 F%dTg/F%dMd 目标就留在机器上，正是 commit 0367a0a 要修的故障。",
   "fix": "把判据从「上次读到什么」换成「是否提交过命令」：在 submit 里置一个 dirty 位（读回全自动后再清），或按 146-148 自己的论证直接删掉 155 这一行 guard（helper 未安装时 resetAll() 会立刻返回 restrictionMessage，不产生副作用）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "perf-frame",
@@ -2973,7 +2981,9 @@
   "evidence": "43-46: `timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }; timer?.tolerance = 0.25` —— scheduledTimer 只把计时器加入当前 run loop 的 .default mode，且 tolerance 是在已被添加之后才赋的。同仓三处同类高频轮询都显式进了 .common 并写明原因：SystemThroughput.swift:49-56「`.common` mode: the default mode is suspended while a menu tracks or a scroll runs, which is exactly when a rate is worth reading」、BatteryChargeController.swift:307、CodexProviderStore.swift:455。",
   "failure": "主窗口 Dashboard 的 ResourceStrip 在 ScrollView 内（DashboardView.swift:21），用户 live-scroll 时、或按住菜单栏弹窗里的菜单时，默认 mode 的计时器不触发：`fans` 在整个滚动过程里不更新，转子（LucideRotor 读 rpm）和转速数字静止；松手后第一拍才补上一次读，两个转子同时跳变。",
   "fix": "let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }; t.tolerance = 0.25; RunLoop.main.add(t, forMode: .common); self.timer = t（与 SystemThroughput 同形）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "concurrency",
@@ -2985,7 +2995,9 @@
   "evidence": "158-163 的同步等待没有任何超时：`commandQueue.sync { _ = FanHelperInstaller.resetAll() }`。FanHelperInstaller.swift:36-40 每次调用自身就有 10 s 上限（`let deadline = Date().addingTimeInterval(10)`），而 Sources/fanctl/fanctl.c:119-140 的 Ftst 回退路径实测更长：100×50 ms 写 + `usleep(3000000)` + 300×100 ms 写 ≈ 5 s+，即排队中的 set 与本次 autoall 各自最长 10 s。",
   "failure": "用户「拉满」后立刻 Cmd-Q：主线程先等队列里那条 set 走完（最长 10 s），再等 autoall（最长 10 s），界面先彩球；ClaudeBarApp.swift:244-251 的 `VpnSystemProxyController.clearSystemProxy()`（注释自陈是唯一必须同步做的代理/DNS 还原）和 ScreenshotHotKey 得等这之后才执行，用户在彩球期间强退就会留下未还原的系统代理。",
   "fix": "把同步等待换成有界的信号量：`let done = DispatchSemaphore(value: 0); commandQueue.async { _ = FanHelperInstaller.resetAll(); done.signal() }; _ = done.wait(timeout: .now() + 2)`，超时就放弃交还而不是拖住终止。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "dead-code",
@@ -4702,7 +4714,9 @@
   "summary": "`helperInstalled` 是无人消费的 @Observable 状态：三处写入，唯一读取紧挨着写入。",
   "evidence": "L12 `var helperInstalled = FanHelperInstaller.isInstalled()`；L28 `helperInstalled = FanHelperInstaller.isInstalled()`；L174-175 `helperInstalled = FanHelperInstaller.isInstalled()` / `guard helperInstalled else { postPermissionNeeded(); return }`。grep \"helperInstalled\" 在 Sources/ 下只命中 FanMonitor.swift（BatteryChargeController 的同名属性与 PermissionsSection 用的是自己的），视图读的是 `fans` / `lastError` / `allAtMax`，因此 L12/L28 的赋值与属性本身对任何界面都不可观测。",
   "failure": "无功能后果，但它是「以为有消费方」的死状态：属性存在意味着有人可以通过它判断安装状态，实际只有紧随其后的一行读；删除属性（改成局部常量）行为完全不变。",
-  "fix": "删除 L12 的属性与 L28 的写入，把 L174-175 改成 `let installed = FanHelperInstaller.isInstalled(); guard installed else { postPermissionNeeded(); return }`。"
+  "fix": "删除 L12 的属性与 L28 的写入，把 L174-175 改成 `let installed = FanHelperInstaller.isInstalled(); guard installed else { postPermissionNeeded(); return }`。",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "dead-code",
@@ -6975,7 +6989,9 @@
   "evidence": "FanMonitor.swift:60-74 每拍调用 `smc.loadFans()`；SMCController.swift:226-242 每个风扇读 `F{i}ID`（2 次 user-client 往返）、`F{i}Mn`、`F{i}Mx`、`F{i}Md`、`F{i}Ac`，加 `FNum` —— 双风扇机合计 22 次 80 字节结构调用，其中只有 Ac（以及用户动过开关后的 Md）会变；SMCController.swift:166-176 对同类问题的处理是缓存（`temperatureKeys`「Sweep all of them once, then read just the ones that answered」），loadFans 没有对应缓存。",
   "failure": "不是崩溃而是持续成本：22 次/2 s ≈ 11 次/s 的白读，且都在 SMCController 的 ioLock 下（SMCController.swift:118-120），与 ProcessSampler 每秒的温度读取互相排队；Dashboard 上风扇卡与温度读数共用这一把锁，冗余读直接延长对方的等待。",
   "fix": "在 SMCController 内按 fan id 缓存 name/min/max（缓存随 FNum 变化或连接重开失效），每拍只读 Md/Ac：22 → 10 次往返（约 -55 %）。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Code: `tookFans` is set on every confirmed `.take` write and cleared on a confirmed whole-fleet reset; `adoptSystemControlOnQuit` gates on it first and keeps the `fans` snapshot as the fallback. Test: `interaction-performance-regressions.py` now splices `setManual`/`submit`/`adoptSystemControlOnQuit` into the fan fixture and asserts a commanded session hands back on quit even while the polled snapshot still reads 自动, that an untouched session does not reset, and that a failed write does not create the duty. `make test TEST=interaction-performance` passes."
  },
  {
   "category": "dead-code",
