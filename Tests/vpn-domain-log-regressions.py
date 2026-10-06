@@ -471,9 +471,30 @@ ASYNC_HARNESS
         precondition(cache.pendingRows == 1_000 && cache.page == 3)
         await cache.recompute()
         precondition(cache.pendingRows == 1_000, "same revision must not double count pending rows")
+
+        // The shape finding 38 called untested: the ring **at capacity**, count
+        // fixed at 2,000, ids rolling forward, the user paused. Each run counts
+        // only ids above `lastSeenID` and then advances it to the snapshot's
+        // newest id — a partition of the id range, so a repeated run over one
+        // snapshot adds zero and every rolling flush adds exactly its arrivals.
+        // (In production each flush also bumps `revision`, which restarts the
+        // task; driving `recompute()` directly at a fixed key is the stricter
+        // same-revision form of the same shape.)
+        cache.log.entries = Array(batch[1_001..<3_001])            // one arrival, count still 2,000
+        await cache.recompute()
+        precondition(cache.pendingRows == 1_001, "a full ring rolling forward counts exactly the arrivals")
+        await cache.recompute()
+        precondition(cache.pendingRows == 1_001, "no double count after the ring rolled")
+        for step in 2...50 {
+            cache.log.entries = Array(batch[(1_000 + step)..<(3_000 + step)])
+            await cache.recompute()
+        }
+        precondition(cache.pendingRows == 1_050 && cache.page == 3,
+                     "fifty rolling flushes count fifty arrivals, page stays put")
         cache.followTail = true
         await cache.recompute()
-        precondition(cache.visibleRows.first?.id == 1_001 && cache.visibleRows.last?.id == 3_000)
+        precondition(cache.visibleRows.first?.id == 1_051 && cache.visibleRows.last?.id == 3_050,
+                     "resuming follow replaces the frozen snapshot with the ring as it stands now")
         cache.followTail = false
         cache.query = "no-such-host"
         cache.resetFollow()

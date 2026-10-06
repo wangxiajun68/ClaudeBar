@@ -714,6 +714,12 @@ struct VpnDomainLogSection: View {
             await worker.value
         } onCancel: { worker.cancel() }
         guard !Task.isCancelled, requestKey == key else { return }
+        // Each arrival counts at most once: ids only grow and `lastSeenID` is
+        // advanced to the snapshot's newest id on every run, so successive runs
+        // partition the id range. A repeat run over the same snapshot adds
+        // zero, and a full ring rolling forward (count fixed, ids shifting)
+        // adds exactly the arrivals. A double count would need a run that
+        // counts without advancing.
         if !followTail, let lastSeenID {
             pendingRows += result.rows.reduce(0) { $0 + ($1.id > lastSeenID ? 1 : 0) }
         }
