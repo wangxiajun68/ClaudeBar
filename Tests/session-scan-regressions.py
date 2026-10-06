@@ -56,7 +56,10 @@ func runScanChecks() throws {
     }
 
     /// A session record plus its transcript, scanned the way the store scans it.
-    func scan(_ sessionId: String, transcript: String) -> ContextScan {
+    /// `stamp` mirrors `ProviderStore`: when given, the scan is told the
+    /// file's identity and the first-prompt cache may answer from it.
+    func scan(_ sessionId: String, transcript: String,
+              stamp: SessionMonitor.TranscriptIdentity? = nil) -> ContextScan {
         let record: [String: Any] = [
             "pid": Int(ProcessInfo.processInfo.processIdentifier),
             "sessionId": sessionId,
@@ -74,7 +77,7 @@ func runScanChecks() throws {
         guard let session = SessionMonitor.fetchActive().first(where: { $0.sessionId == sessionId }) else {
             fatalError("fixture session \(sessionId) did not parse")
         }
-        return SessionMonitor.fetchContext(for: session)
+        return SessionMonitor.fetchContext(for: session, stamp: stamp)
     }
 
     func assistant(_ blocks: String) -> String {
@@ -166,7 +169,56 @@ func runScanChecks() throws {
         + "\"message\":{\"content\":\"/clear\"}}\n")
     check(none.title.isEmpty, "no human prompt means no title; got \(none.title)")
 
-    // 10. A session whose pid cannot be a `pid_t` is skipped, not fatal — and
+    // 10. The first-prompt cache must not pin a stale title: the same
+    //     transcript scanned twice keeps its answer, and a transcript that was
+    //     rewritten under the same sessionId reports the new one.
+    let first = scan("cached-prompt", transcript:
+        "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"First title\"}]}}\n")
+    check(first.title == "First title", "the cached case seeds a title; got \(first.title)")
+    let repeatScan = scan("cached-prompt", transcript:
+        "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"First title\"}]}}\n")
+    check(repeatScan.title == "First title", "a repeated scan keeps the title; got \(repeatScan.title)")
+    let rewritten = scan("cached-prompt", transcript:
+        "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Second title, longer\"}]}}\n")
+    check(rewritten.title == "Second title, longer",
+          "a rewritten transcript must not serve the cached title; got \(rewritten.title)")
+
+    // The cache driven the way the store drives it: a stamped scan answers
+    // from the stamp it was told, and a moved stamp re-reads. The 40 KB head
+    // makes a hit observable — with the file unchanged, a fresh read would
+    // find the same title, so only a moved stamp can produce the second one.
+    let bigPad = String(repeating: "z", count: 40_000)
+    let stampedA = SessionMonitor.TranscriptIdentity(size: 1, mtime: 1)
+    let stampedB = SessionMonitor.TranscriptIdentity(size: 2, mtime: 2)
+    let firstStamped = scan("stamped-prompt", transcript:
+        "{\"type\":\"user\",\"isMeta\":true,\"message\":{\"content\":\"\(bigPad)\"}}\n"
+        + "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Stamped one\"}]}}\n",
+        stamp: stampedA)
+    check(firstStamped.title == "Stamped one", "a stamped scan reads the head; got \(firstStamped.title)")
+    let movedStamp = scan("stamped-prompt", transcript:
+        "{\"type\":\"user\",\"isMeta\":true,\"message\":{\"content\":\"\(bigPad)\"}}\n"
+        + "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Stamped two\"}]}}\n",
+        stamp: stampedB)
+    check(movedStamp.title == "Stamped two",
+          "a new stamp must invalidate the cached title; got \(movedStamp.title)")
+    // The other half, and the point of the cache: the *same* stamp answers
+    // from memory. The file on disk is rewritten first, so a scan that reads
+    // the head must report the new title and only a skipped read can return
+    // the old one.
+    let sameStamp = scan("stamped-prompt", transcript:
+        "{\"type\":\"user\",\"isMeta\":true,\"message\":{\"content\":\"\(bigPad)\"}}\n"
+        + "{\"type\":\"user\",\"origin\":{\"kind\":\"human\"},"
+        + "\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Stamped three\"}]}}\n",
+        stamp: stampedB)
+    check(sameStamp.title == "Stamped two",
+          "an unchanged stamp must answer from the cache, not the file; got \(sameStamp.title)")
+
+    // 11. A session whose pid cannot be a `pid_t` is skipped, not fatal — and
     //     the valid session next to it still parses.
     let sessionsDir = FilePaths.claudeDir.appendingPathComponent("sessions")
     for (name, pid) in [("huge-pid", 4_294_967_296.0), ("zero-pid", 0.0), ("negative-pid", -1.0),

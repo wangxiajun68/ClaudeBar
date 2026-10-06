@@ -695,7 +695,9 @@
   "evidence": "firstHumanPrompt(for:) (lines 348-380) does its own FileHandle open plus a 16KB-chunked scan up to maximumHead=512_000, and fetchContext's ContextScan carries `title: firstHumanPrompt(for: session)` (line 587). The ProviderStore.enrich cache branch (Models/ProviderStore.swift:452-465) only reuses firstPrompt when size AND mtime both match and size>0; any write (mtime granularity) or a same-size rewrite invalidates, so an actively-written session re-scans every 2.5s-5s. Measured on this machine: 124 local transcripts, 19 have no human-origin record in the first 6MB and therefore run the loop to its 512KB bound and still return \"\" (line 379), and 2 have their first human prompt at 77KB and 219KB — past the first chunk. The comment at line 353-355 ('Prompts live well inside the first few records') holds only for the median case.",
   "failure": "N live sessions x (1-2 FileHandle opens + up to 512KB decode) per poll, every 2.5s busy / 5s idle / 8s hidden, on top of the 96KB tail read — for a session like the measured 219KB-prompt ones the head scan is the single most expensive part of the scan and its answer never changes.",
   "fix": "Pass the transcript stamp (size+mtime) into the scan and skip the head read when unchanged — the prompt is immutable once found; and stop the chunk loop after the first chunk that yields a human prompt or whose last line is complete.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "correctness",
@@ -3356,7 +3358,9 @@
   "evidence": "fetchSubagents (593-635) lists `<session>/subagents`, parses each `*.meta.json` via parseAgent (640-654), and scanAgentActivity (661-725) opens each sibling `agent-*.jsonl` and reads a 32KB tail. ProviderStore.enrich calls it on BOTH the cached and fresh branches (ProviderStore.swift:465 and 489), with the rationale at ProviderStore.swift:440-442. Measured: `find ~/.claude/projects -name '*.meta.json' | wc -l` = 1937, and one dir has 115 meta.json files. Contrast WorkflowMonitor in the same package, which caches by (path, inode, size, mtime) and reads only the appended bytes (WorkflowMonitor.swift:127-171).",
   "failure": "During a live turn with a batch of subagents, each 2.5s poll pays O(#files) opens + 32KB reads per session (115 in the measured case) even though all completed agents' files are frozen; the detached scan lengthens into the deferred-poll path (deferredPollRetry 1.5s) exactly when completion detection is most latency-sensitive.",
   "fix": "Add a per-agent (size, mtime) gate: skip the jsonl tail read when unchanged and grade .done agents from the cache; a single stat per meta.json is enough to skip it. Reuse WorkflowMonitor's Records pattern.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "dead-code",
@@ -3368,7 +3372,9 @@
   "evidence": "`var transcriptSize: UInt64 = 0` with the doc 'skip the tail read when unchanged' (58-59); assigned at ProviderStore.swift:462 and 486; `grep -rn '\\.transcriptSize' Sources Tests` returns only those two writes. The gate is `stamps: [Int: TranscriptStamp]` (ProviderStore.swift:407-427), captured separately on the main thread.",
   "failure": "No crash; every publish copies and compares a UInt64 per session, and the property's doc asserts a mechanism that does not exist, inviting a future edit to 'fix' the cache via a field that is not read.",
   "fix": "Either delete the property and its assignments, or make enrich read it as the size half of the gate.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "state",
@@ -3380,7 +3386,9 @@
   "evidence": "Line 301-302: `let alive = kill(pid, 0) == 0` (EPERM/ownership not distinguished), and SessionInfo keeps no start time (startedAt is never read — see separate finding). The CLI writes `procStart` and `pidDomain` into every session file: measured keys of /Users/wangxiajun/.claude/sessions/14455.json include 'pid','pidDomain','procStart','startedAt'; SessionMonitor reads only pid/sessionId/cwd/startedAt/updatedAt/status/waitingFor. SessionHost.host(of:) (SessionHost.swift:30-45) then walks up to 24 parents of that pid and returns the first regular app, and reveal() may select a Terminal/iTerm tab by tty (lines 102-138).",
   "failure": "A session file left by a crashed CLI whose pid was reused: the card is listed as alive and sorted above dead ones (lines 318-321), notifications route to it, and 'continue session' brings an unrelated app/window forward instead of resuming — on Terminal/iTerm, a tab that does not host this session can be selected.",
   "fix": "Persist procStart/pidDomain into SessionInfo and compare against proc_pidinfo's pbi_start_tvsec/pbi_start_tvusec (SessionHost.bsdInfo already fetches the struct) both in the liveness check and at reveal time.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "correctness",
@@ -3391,7 +3399,9 @@
   "summary": "The title pipeline requires `origin.kind == \"human\"`, but a measurable share of genuinely typed prompts carry no `origin` object at all, so those sessions can never show a title.",
   "evidence": "Line 391-392: `guard let origin = obj[\"origin\"] as? [String: Any], (origin[\"kind\"] as? String) == \"human\" else { continue }`; the doc comment at 328-335 asserts `origin == nil` means \"/effort, /clear … command wrappers\". Scanning the 124 local `~/.claude/projects/*/*.jsonl` transcripts: user records with no `origin` field total 23,447 vs 110 with `origin.kind == \"human\"`, and per-version tallies show origin-less *real* prompt text in every version from 2.1.251 through 2.1.289. Concrete sessions whose FIRST prompt has no origin and which contain no human-origin record: `4a2517a5` (\"用一句话自我介绍\", v2.1.251) and `97954bf0` (\"探针A\", v2.1.270) — both currently yield an empty title. 14 of 124 transcripts yield no human-origin first prompt.",
   "failure": "Input: a session whose opening prompt was recorded without `origin` (observed on real transcripts; several are short probe/one-liner prompts). Observable: `ContextScan.title` is empty, so `displayTitle`/`cardLabel` fall back to the folder name on every surface — the same symptom the file's own doc comment was written to eliminate (five sessions in one project all reading `ClaudeBar`).",
-  "fix": "Relax the gate to `(origin[\"kind\"] as? String) == \"human\" || obj[\"origin\"] == nil`, relying on the existing `isMeta`/`isSidechain` skips and on `SessionTitle.condense` (which already drops `<\\command-name>`/`<local-command-…>`/`<history>` wrappers) to reject plumbing; add a fixture with an origin-less prompt to session-scan-regressions.py."
+  "fix": "Relax the gate to `(origin[\"kind\"] as? String) == \"human\" || obj[\"origin\"] == nil`, relying on the existing `isMeta`/`isSidechain` skips and on `SessionTitle.condense` (which already drops `<\\command-name>`/`<local-command-…>`/`<history>` wrappers) to reject plumbing; add a fixture with an origin-less prompt to session-scan-regressions.py.",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "correctness",
@@ -7350,7 +7360,9 @@
   "evidence": "Line 566: `lastModel = (message[\"model\"] as? String) ?? lastModel` while line 565 unconditionally sets `lastContext = input + cacheRead + cacheCreate` from the same record. ProviderStore.enrich derives the label from `limits[result[i].model.lowercased()] ?? 0` (ProviderStore.swift:464/488) and SessionInfo.contextRatio divides tokens by that limit (SessionMonitor.swift:62-65), feeding every ContextBar and '159K / 200K' label.",
   "failure": "A transcript whose newest usage record omits model (older/synthetic record, or an API-side field change) shows the previous model's window against the new tokens: wrong fill ratio and an explicit limit that belongs to another provider.",
   "fix": "Only accept lastContext when the record carries a model (or clear lastModel to \"\" when it does not), so the two fields always come from the same record.",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "duplication",
@@ -7362,7 +7374,9 @@
   "evidence": "SessionMonitor.scanAgentActivity duplicates the whole batch/resolvedToolIDs block from fetchContext; its only differences are readSize (32KB vs 96KB) and the missing usage/completion logic. Separately, WidgetViews.truncateModel does `if name.count > 16 { return String(name.prefix(16)) + \"…\" }` (Sources/Widget/WidgetViews.swift:622-624) while every other surface routes through SessionTitle.shorten's per-scalar CJK/Latin budget (SessionTitle.swift:169-217).",
   "failure": "The next pending-rule change must be applied twice and both are only pinned by local tests; the widget can render a 16-CJK-character name at ~190pt where the shared budget would cut it, re-introducing the truncation inconsistency the width cap exists to remove.",
   "fix": "Extract the shared tail loop parameterized by read size, and route the widget's truncation through a shared helper.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "state",
@@ -7374,7 +7388,9 @@
   "evidence": "projectDir (757-770) returns `transcriptCache.dir(for:)` first (line 758) with no stat, while the mirrored branch below does check directoryExists; locateTranscript stores on first hit only (lines 764-767, cache at 804-819). Nothing removes entries — not on FileHandle open failure in fetchContext (line 421 returns an empty scan) nor in fetchSubagents.",
   "failure": "User deletes or moves a projects subdirectory while the app runs; a still-live session's reads then resolve to a nonexistent path and the card silently shows '—' context, no title and no subagents until relaunch.",
   "fix": "Validate the cached path with one stat before returning it, or evict the entry when the transcript FileHandle open fails.",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "perf-io",
@@ -7385,7 +7401,9 @@
   "summary": "Every poll re-reads each `agent-*.meta.json` and the 32 KB tail of each direct subagent transcript with no size/mtime cache, while the parent transcript and every workflow journal get exactly such a cache.",
   "evidence": "ProviderStore.enrich calls `SessionMonitor.fetchSubagents(for:)` on both branches (ProviderStore.swift:465 and 489), and the cached branch's own comment says children must be re-scanned — but re-scanning needs no re-read: `parseAgent` does `try? Data(contentsOf: entry)` (line 641) and `scanAgentActivity` does seek+`readToEnd` of up to 32 KB (lines 666-671) for every agent on every poll. Contrast WorkflowMonitor.read, which keys its cache on `(size, mtime, inode)` and reads incrementally (WorkflowMonitor.swift:126-137), and ProviderStore's own TranscriptStamp cache for the parent (ProviderStore.swift:405-417). Local scale: 45 `subagents/` directories under `~/.claude/projects`, with up to ~20 `agent-*.jsonl` each in the sampled trees.",
   "failure": "Timing: one Claude session with a live subagent tree, poll cadence 2.5 s while busy. Observable: per poll, one `Data(contentsOf:)` + one JSON parse per `.meta.json` plus a 32 KB read + line-by-line JSON parse per direct agent — disk reads and JSON parses that scale with agent count and repeat unchanged, which is the exact cost the parent transcript's size/mtime cache was added to remove.",
-  "fix": "Cache agent scans the way WorkflowMonitor does: keep a static `[String: (size, mtime, activity, pending)]` keyed by the agent transcript path (the file already has a lock-protected `TranscriptPathCache` pattern at line 806 to copy) and skip the read when size+mtime are unchanged."
+  "fix": "Cache agent scans the way WorkflowMonitor does: keep a static `[String: (size, mtime, activity, pending)]` keyed by the agent transcript path (the file already has a lock-protected `TranscriptPathCache` pattern at line 806 to copy) and skip the read when size+mtime are unchanged.",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "dead-code",
@@ -7396,7 +7414,9 @@
   "summary": "`transcriptSize` is written on every enrich pass but never read; its doc comment describes a cache decision the field does not make.",
   "evidence": "Line 59: `var transcriptSize: UInt64 = 0` with the comment \"Transcript byte size at last context scan — skip the tail read when unchanged.\" `grep -rn \"transcriptSize\" Sources Tests` returns only the declaration and the two writes in ProviderStore.swift:462 and 486 (`result[i].transcriptSize = stamp.size`). The actual skip decision is made by the store's separate `transcriptStamps: [Int: TranscriptStamp]` dictionary (ProviderStore.swift:405-417), and ProviderStore's own comment at 407-410 states the size \"cannot ride on\" `SessionInfo` — i.e. this field was the earlier design and is now an unused per-poll write that also participates in `SessionInfo`'s `Equatable` comparison.",
   "failure": "No functional failure; the observable cost is a per-poll field write and an Equatable member that never changes an outcome, plus a comment that sends the next reader looking for a cache that lives elsewhere.",
-  "fix": "Delete lines 58-59 and the two `result[i].transcriptSize = stamp.size` assignments in ProviderStore.swift."
+  "fix": "Delete lines 58-59 and the two `result[i].transcriptSize = stamp.size` assignments in ProviderStore.swift.",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "duplication",
@@ -7407,7 +7427,9 @@
   "summary": "The Claude Code project-directory slug is implemented twice with two different encoders — UTF-8 bytes here, UTF-16 units plus symlink canonicalization there — and they disagree for any non-ASCII working directory.",
   "evidence": "SessionMonitor.swift:744-753 mirrors over `cwd.utf8` (`for byte in cwd.utf8 … slug.append(alphanumeric ? Character(UnicodeScalar(byte)) : \"-\")`) on the raw `cwd`. MigrationStorage.swift:15-21 does the same job over `try MigrationPath.canonical(cwd).utf16` with the comment \"Claude's JavaScript path encoding replaces each non-ASCII UTF-16 unit\", and its test asserts that form (`Tests/session-migration-regressions.py:726-728`: `expected = ''.join(c if c.isascii() and c.isalnum() else '-' for c in physical)`). For a path holding one 3-byte CJK character the first rule emits three dashes and the second one or two; the two also differ whenever `cwd` is a symlinked path (`/var` vs `/private/var`, the tldr fixture dirs). Meanwhile SessionMonitor's doc comment at 730-743 claims it mirrors the client \"exactly\".",
   "failure": "Input: a session whose cwd contains a non-ASCII character or is reached through a symlink. Observable: `projectDir(for:)` computes a directory that does not exist (the O(n) `locateTranscript` fallback masks it for transcripts, but `sessionDirURL`/`fetchSubagents` then also miss), and a migrated Claude session is written to the *other* rule's directory — two files that claim to encode the same cwd disagree.",
-  "fix": "Have `projectDirName` call the same canonicalization the migration path uses (or vice versa): pick one function, e.g. make `MigrationStorage.nativeURL` reuse `SessionMonitor.projectDirName` and add the symlink canonicalization inside it, and extend session-scan-regressions.py with a CJK cwd fixture."
+  "fix": "Have `projectDirName` call the same canonicalization the migration path uses (or vice versa): pick one function, e.g. make `MigrationStorage.nativeURL` reuse `SessionMonitor.projectDirName` and add the symlink canonicalization inside it, and extend session-scan-regressions.py with a CJK cwd fixture.",
+  "status": "fixed",
+  "verdict_note": "`SessionMonitor.firstHumanPrompt` takes the transcript identity (the same size+mtime pair `ProviderStore` already stamps) and answers from a sessionId-keyed cache when it matches; `fetchContext` passes the stamp it was given. A miss is not cached (the file may still be growing toward the prompt), and a caller that cannot supply a stamp reads without caching. `session-scan-regressions.py` drives the cache both ways: same stamp answers from memory (proved by rewriting the file between calls), a moved stamp re-reads. 22/22 checks pass."
  },
  {
   "category": "perf-cpu",

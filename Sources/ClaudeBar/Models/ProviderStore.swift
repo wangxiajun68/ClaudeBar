@@ -411,10 +411,9 @@ class ProviderStore: ObservableObject {
     /// `previous` (which is `sessions`, itself already stripped) would compare
     /// a transcript against itself. The store holds them instead, captured on
     /// the main thread with the limits and handed to the detached scan.
-    private struct TranscriptStamp: Sendable {
-        var size: UInt64
-        var mtime: Double
-    }
+    /// The shared identity type — `SessionMonitor` keys its first-prompt cache
+    /// on the same pair, and `fetchContext` is handed one stat for both.
+    typealias TranscriptStamp = SessionMonitor.TranscriptIdentity
 
     /// One stat for both halves of the transcript identity: `transcriptSize`
     /// plus the file's own modification date. `attributesOfItem` returns both,
@@ -479,7 +478,7 @@ class ProviderStore: ObservableObject {
                 result[i].workflows = subs.workflows
                 continue
             }
-            let ctx = SessionMonitor.fetchContext(for: result[i])
+            let ctx = SessionMonitor.fetchContext(for: result[i], stamp: stamp)
             result[i].contextTokens = ctx.tokens
             result[i].model = ctx.model
             result[i].messageCount = ctx.count
