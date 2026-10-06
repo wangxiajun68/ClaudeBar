@@ -238,6 +238,14 @@ struct CaptureAssembler {
     var finish = ""
     var tokens = TokenTotals()
     var tools: [Tool] = []
+    /// Whether the event handed in most recently appended any visible text.
+    ///
+    /// The caller used to detect the first token by comparing
+    /// `content.count + reasoning.count` before and after the append, and
+    /// `String.count` is O(n): every streamed delta therefore cost the length
+    /// of the whole accumulated answer twice. The deltas themselves say whether
+    /// they carried text, which is O(delta).
+    private(set) var lastEventAppendedText = false
 
     var promptTokens: Int? { tokens.input }
     var completionTokens: Int? { tokens.output }
@@ -251,6 +259,7 @@ struct CaptureAssembler {
     }
 
     mutating func applyChat(_ parsed: [String: Any]) {
+        lastEventAppendedText = false
         if let m = parsed["model"] as? String, !m.isEmpty { model = m }
         if let i = parsed["id"] as? String, !i.isEmpty { id = i }
         tokens.applyChat(parsed)
@@ -258,9 +267,14 @@ struct CaptureAssembler {
         let choice = (parsed["choices"] as? [[String: Any]])?.first ?? [:]
         if let reason = choice["finish_reason"] as? String { finish = reason }
         let delta = (choice["delta"] as? [String: Any]) ?? (choice["message"] as? [String: Any]) ?? [:]
-        if let c = delta["content"] as? String { content += c }
-        if let r = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String) {
+        if let c = delta["content"] as? String, !c.isEmpty {
+            content += c
+            lastEventAppendedText = true
+        }
+        if let r = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String),
+           !r.isEmpty {
             reasoning += r
+            lastEventAppendedText = true
         }
         for tc in delta["tool_calls"] as? [[String: Any]] ?? [] {
             upsertTool(tc)
@@ -268,6 +282,7 @@ struct CaptureAssembler {
     }
 
     mutating func applyResponses(_ parsed: [String: Any]) {
+        lastEventAppendedText = false
         let type = (parsed["type"] as? String) ?? ""
         if let resp = parsed["response"] as? [String: Any] {
             if let m = resp["model"] as? String, !m.isEmpty { model = m }
@@ -275,9 +290,15 @@ struct CaptureAssembler {
         }
         tokens.applyResponses(parsed)
         if type.hasSuffix("output_text.delta") {
-            if let d = parsed["delta"] as? String { content += d }
+            if let d = parsed["delta"] as? String, !d.isEmpty {
+                content += d
+                lastEventAppendedText = true
+            }
         } else if type.contains("reasoning") && type.hasSuffix(".delta") {
-            if let d = parsed["delta"] as? String { reasoning += d }
+            if let d = parsed["delta"] as? String, !d.isEmpty {
+                reasoning += d
+                lastEventAppendedText = true
+            }
         } else if type == "response.function_call_arguments.delta" {
             let itemID = (parsed["item_id"] as? String) ?? ""
             let delta = (parsed["delta"] as? String) ?? ""
@@ -303,6 +324,7 @@ struct CaptureAssembler {
     }
 
     mutating func applyAnthropic(event: String, json: [String: Any]) {
+        lastEventAppendedText = false
         let type = event.isEmpty ? ((json["type"] as? String) ?? "") : event
         switch type {
         case "message_start":
@@ -321,8 +343,14 @@ struct CaptureAssembler {
         case "content_block_delta":
             let delta = json["delta"] as? [String: Any] ?? [:]
             let dtype = (delta["type"] as? String) ?? ""
-            if dtype == "text_delta", let t = delta["text"] as? String { content += t }
-            if dtype == "thinking_delta", let t = delta["thinking"] as? String { reasoning += t }
+            if dtype == "text_delta", let t = delta["text"] as? String, !t.isEmpty {
+                content += t
+                lastEventAppendedText = true
+            }
+            if dtype == "thinking_delta", let t = delta["thinking"] as? String, !t.isEmpty {
+                reasoning += t
+                lastEventAppendedText = true
+            }
             if dtype == "input_json_delta", let t = delta["partial_json"] as? String {
                 if !tools.isEmpty { tools[tools.count - 1].arguments += t }
             }

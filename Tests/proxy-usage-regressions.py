@@ -36,10 +36,23 @@ start = assembler.index('/// Token usage as one upstream call reported it.')
 end = assembler.index('/// Assembled assistant payload used by the Traffic page')
 tokens_source = assembler[start:end]
 
+# The capture assembler, driven to assert the visible-text signal the first-token
+# stamp is built from. Sliced verbatim so the delta shapes under test are the
+# production ones.
+assembler_body = assembler[assembler.index('struct CaptureAssembler {'):]
+assembler_body = assembler_body[:assembler_body.index('\n    func toResponseJSON(')]
+# `applyChat` delegates tool deltas to this helper, which sits further down the
+# file; carry it along so the slice compiles.
+upsert = assembler[assembler.index('    private mutating func upsertTool('):]
+upsert = upsert[:upsert.index('\n    }') + len('\n    }')]
+assembler_body += '\n' + upsert.replace('private mutating func', 'mutating func') + '\n}'
+
 swift = r'''
 import Foundation
 
 TOKENS
+
+ASSEMBLER
 
 @main struct Regression {
     static func main() {
@@ -187,10 +200,30 @@ TOKENS
         precondition(writeOnly.input == 20 && writeOnly.cacheWrite == 100 && writeOnly.total == 123,
                      "A first cache write must count even with no cache hit")
 
+        // 10. The visible-text signal the first-token stamp reads. Each event
+        //     must report its own delta, so the stamp never has to measure the
+        //     accumulated answer (which is O(n) per event).
+        var capture = CaptureAssembler()
+        capture.applyChat(["choices": [["delta": ["tool_calls": [["index": 0]]]]]])
+        precondition(!capture.lastEventAppendedText, "a tool-only delta is not visible text")
+        capture.applyChat(["choices": [["delta": ["content": ""]]]])
+        precondition(!capture.lastEventAppendedText, "an empty content delta is not visible text")
+        capture.applyChat(["choices": [["delta": ["content": "hi"]]]])
+        precondition(capture.lastEventAppendedText, "a text delta is visible text")
+        capture.applyChat(["choices": [["delta": ["reasoning_content": "r"]]]])
+        precondition(capture.lastEventAppendedText, "a reasoning delta is visible text")
+        capture.applyResponses(["type": "response.reasoning_summary_text.delta", "delta": "r"])
+        precondition(capture.lastEventAppendedText, "a reasoning summary delta is visible text")
+        capture.applyResponses(["type": "response.in_progress"])
+        precondition(!capture.lastEventAppendedText, "a non-text event clears the signal")
+        capture.applyAnthropic(event: "content_block_delta", json: ["delta": ["type": "thinking_delta", "thinking": "t"]])
+        precondition(capture.lastEventAppendedText, "an Anthropic thinking delta is visible text")
+        capture.applyAnthropic(event: "message_delta", json: ["delta": ["stop_reason": "end_turn"]])
+        precondition(!capture.lastEventAppendedText, "an Anthropic stop event clears the signal")
         print("PASS: proxy token buckets are disjoint across Anthropic, Chat and Responses shapes")
     }
 }
-'''.replace('TOKENS', tokens_source)
+'''.replace('TOKENS', tokens_source).replace('ASSEMBLER', assembler_body)
 
 # The rollup migration, asserted on the SQL text rather than by opening a DB:
 # this test compiles the parser standalone, which has no SQLite store behind it.

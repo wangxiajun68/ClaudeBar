@@ -1081,25 +1081,22 @@ final class CaptureTap {
 
     func applyChat(_ json: [String: Any]) {
         noteStreaming()
-        let before = assembler.content.count + assembler.reasoning.count
         assembler.applyChat(json)
-        tokenIfNeeded(before: before)
+        tokenIfNeeded()
         store?.pushLive(id, assembler: assembler)
     }
 
     func applyResponses(_ json: [String: Any]) {
         noteStreaming()
-        let before = assembler.content.count + assembler.reasoning.count
         assembler.applyResponses(json)
-        tokenIfNeeded(before: before)
+        tokenIfNeeded()
         store?.pushLive(id, assembler: assembler)
     }
 
     func applyAnthropic(event: String, json: [String: Any]) {
         noteStreaming()
-        let before = assembler.content.count + assembler.reasoning.count
         assembler.applyAnthropic(event: event, json: json)
-        tokenIfNeeded(before: before)
+        tokenIfNeeded()
         store?.pushLive(id, assembler: assembler)
     }
 
@@ -1152,11 +1149,15 @@ final class CaptureTap {
         }
     }
 
-    private func tokenIfNeeded(before: Int) {
-        let after = assembler.content.count + assembler.reasoning.count
-        if !firstToken, after > before {
-            firstToken = true
-            store?.markFirstToken(id)
-        }
+    /// First visible text in this stream.
+    ///
+    /// The assembler records whether the event it just folded appended text, so
+    /// this is O(1) per delta. Measuring `content.count + reasoning.count`
+    /// before and after instead made every streamed event cost the length of the
+    /// whole accumulated answer — `String.count` is O(n).
+    private func tokenIfNeeded() {
+        guard !firstToken, assembler.lastEventAppendedText else { return }
+        firstToken = true
+        store?.markFirstToken(id)
     }
 }
