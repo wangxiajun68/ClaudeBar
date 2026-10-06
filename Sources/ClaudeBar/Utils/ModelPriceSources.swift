@@ -173,6 +173,14 @@ enum ModelPriceSources {
         // the same rule `Tests/model-cost-regressions.py` applies to the
         // bundled table. Drop the row rather than import it.
         guard read > 0, write > 0 else { return nil }
+        // `ModelPriceCatalog.record` refuses a cache-read above the input price
+        // (it is a typo in the editor and has never been true of a vendor on
+        // this table). A fetched row that carries one must be dropped here as
+        // well: returned as a proposal, it would be listed as 待确认, fail the
+        // same validation on 应用, and never leave the card — while the page
+        // that could not be trusted for one bucket still leaves the bundled
+        // row in force, which is this source's contract for an unreadable row.
+        guard read <= input else { return nil }
         return ModelPricing.Rate(currency: .usd, input: input, output: output,
                                  cacheRead: read, cacheWrite: write)
     }

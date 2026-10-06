@@ -247,6 +247,18 @@ def main() -> int:
     check("dated snapshots fold onto the base id",
           all(not re.search(r"-\d{4,}$", r["slug"]) for r in usd),
           str([r["slug"] for r in usd if re.search(r"-\d{4,}$", r["slug"])]))
+    # A fetched row the catalog's own writer refuses (`cacheRead > input`, a
+    # zero bucket) must be dropped at parse time. Returned as a proposal, it
+    # lands in 待确认, fails the same validation on 应用/全部应用, and can never
+    # be applied — the button becomes a permanent no-op for that row.
+    refused = parse(binary, "modelsdev", fixture("models-dev-refused"))
+    refused_slugs = {r["slug"] for r in refused}
+    check("a fetched cache read above input never leaves the parser",
+          "read-above-input" not in refused_slugs and
+          refused_slugs == {"known-model", "write-above-input"},
+          str(sorted(refused_slugs)))
+    check("a fetched zero cache bucket never leaves the parser",
+          "zero-read" not in refused_slugs, str(sorted(refused_slugs)))
 
     if FAILURES:
         print(f"\nFAIL: {len(FAILURES)} assertion(s)")
