@@ -46,7 +46,13 @@ struct FeishuDocumentsView: View {
         }
         .onChange(of: store.selected?.id) { _, _ in tab = "正文"; showSource = false; componentFailure = nil }
         .onChange(of: store.activeDraftID) { _, _ in draftPreview = true; titleFocused = store.activeDraft?.isNew == true }
-        .task(id: store.activeDraft?.text) {
+        // The outline exists only for the source pane's left rail: the reader
+        // renders its own headings and never reads `draftHeadings`. Keying the
+        // task on the text alone made every keystroke in the reader re-parse
+        // the whole document (350 ms later) for a panel that is not on screen.
+        // `nil` while the reader is showing parks the task entirely; switching
+        // to the source pane re-keys it to the current text.
+        .task(id: draftPreview ? nil : store.activeDraft?.text) {
             do {
                 try await Task.sleep(for: .milliseconds(350)); try Task.checkCancellation()
                 let text = store.activeDraft?.text ?? ""
