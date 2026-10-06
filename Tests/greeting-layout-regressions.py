@@ -104,6 +104,16 @@ source += r'''
             let polar = SkyAstronomy.solarEvents(on: date(day), latitude: 69.65, longitude: 18.96, zone: oslo)
             require(polar.sunrise == nil && polar.sunset == nil, "Polar day/night must not invent events")
         }
+        // The polar-day shoulder: the civil day opens inside the previous
+        // day's tail, so the scan sees a setting before that day's rising.
+        // A pair in that order cannot be printed or arced — it must be
+        // dropped whole, not returned inverted.
+        for day in ["2026-05-18T12:00:00Z", "2026-05-16T12:00:00Z", "2026-07-27T12:00:00Z"] {
+            let shoulder = SkyAstronomy.solarEvents(on: date(day), latitude: 69.65, longitude: 18.96, zone: oslo)
+            if let rise = shoulder.sunrise, let set = shoulder.sunset {
+                require(set > rise, "Sunset must follow sunrise on a polar shoulder day (\(day))")
+            }
+        }
         let invalid = SkyAstronomy.solarEvents(on: today, latitude: .nan, longitude: 113, zone: zone)
         require(invalid.sunrise == nil && invalid.sunset == nil, "Invalid coordinates")
         let ny = TimeZone(identifier: "America/New_York")!

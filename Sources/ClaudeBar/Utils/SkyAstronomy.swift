@@ -72,6 +72,17 @@ enum SkyAstronomy {
             start = end
             previous = next
         }
+        // On a shoulder day of the polar-day onset the civil day opens inside
+        // the previous day's tail: a setting is seen before that day's rising,
+        // and the scan records the pair in the wrong order (Tromsø 2026-05-18:
+        // set 00:14, rise 01:06). An inverted pair is impossible to print as
+        // 日出/日落 and makes `SunPath.progress` compute a negative daylight
+        // length and vanish, so it is dropped like any other unresolvable
+        // crossing. A half pair from the same day-family (a rise whose setting
+        // falls on the next civil day) stays as it already was.
+        if let rise = result.sunrise, let set = result.sunset, set <= rise {
+            result = missing
+        }
         if solarCache.order.count >= 32 {
             solarCache.values.removeValue(forKey: solarCache.order.removeFirst())
         }
