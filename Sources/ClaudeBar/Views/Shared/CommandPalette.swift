@@ -127,6 +127,19 @@ struct CommandPalette: View {
             guard isPresented else { return }
             refreshItems()
         }
+        // Escape, then ⌘K again *inside* the dismissal's fade: the panel never
+        // leaves the hierarchy (measured — no `onDisappear`, no re-mount, so
+        // `onAppear` never runs again), yet `dismiss()` has already cleared the
+        // query while `filtered` still holds the previous search's rows. The
+        // reopened panel would draw that subset under an empty box — and
+        // return would fire a row the user can no longer see a reason for —
+        // until the next publish or keystroke. Refreshing on the open edge
+        // closes the window; the mount path above still covers a real remount.
+        .onChange(of: isPresented) { _, presented in
+            guard presented else { return }
+            searchFocused = true
+            refreshItems(reselect: true)
+        }
     }
 
     private func moveSelection(_ delta: Int) {
@@ -281,6 +294,15 @@ struct CommandPalette: View {
         withAnimation(Theme.Animation.bouncy) {
             isPresented = false
         }
+        // The query is cleared here so the fade-out already shows the empty
+        // field. `filtered`/`items`/`selection` deliberately stay: clearing
+        // them wiped the list under the animation's last frame, and the one
+        // hazard they do carry — a re-open *inside* the fade, which reuses this
+        // instance with `filtered` still holding the old search's rows — is
+        // closed by the `onChange(of: isPresented)` refresh in `body`, which
+        // rebuilt and reselected before the panel's first frame
+        // (`Tests/command-palette-reopen-regressions.py` measures both that
+        // same-transaction path and the settle-past-the-fade remount).
         query = ""
     }
 }
