@@ -159,7 +159,7 @@ struct TokenTotals: Equatable {
             if let siblingWrite { cacheWrite = siblingWrite }
             setPrompt(total: prompt, includesCacheRead: false)
         } else {
-            setPrompt(total: prompt, includesCacheRead: true)
+            setPrompt(total: prompt, includesCacheRead: nil)
         }
     }
 
@@ -198,12 +198,23 @@ struct TokenTotals: Equatable {
     /// pass `total: nil` when this event did not carry one: the remembered
     /// total is then re-derived against the cache hit, which may have arrived
     /// in a different event.
-    private mutating func setPrompt(total: Int?, includesCacheRead: Bool) {
+    private mutating func setPrompt(total: Int?, includesCacheRead: Bool?) {
         if let total {
             promptTotal = total
-            promptIncludesCacheRead = includesCacheRead
+            // The shape is latched per stream, not re-decided per event. A
+            // gateway that reports the prompt total on one event and the cache
+            // fields on later ones (or `response.completed` carrying a total
+            // after a `response.in_progress` that carried none) would otherwise
+            // have the remembered shape overwritten by an event that knows
+            // nothing about it — the hit would stop being folded out, and the
+            // fresh-input bucket would jump to the full prompt.
+            if let includesCacheRead { promptIncludesCacheRead = includesCacheRead }
         }
         guard let total = promptTotal else { return }
+        // Only when this stream has established that the total contains the
+        // hit. A stream that never said so leaves the hit as its own bucket
+        // rather than subtracting it from a total that may not contain it —
+        // the Anthropic shape, where `input_tokens` is fresh input already.
         let hit = promptIncludesCacheRead ? (cacheRead ?? 0) : 0
         input = max(0, total - hit)
     }

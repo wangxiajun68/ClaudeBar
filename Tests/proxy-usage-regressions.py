@@ -200,6 +200,31 @@ ASSEMBLER
         precondition(writeOnly.input == 20 && writeOnly.cacheWrite == 100 && writeOnly.total == 123,
                      "A first cache write must count even with no cache hit")
 
+        // 10b. The prompt shape is latched per stream. Anthropic's
+        //      `input_tokens` is fresh input with the hit beside it; an event
+        //      that later reports only the total must not retroactively fold a
+        //      hit out of it (which would under-report by the whole cache read).
+        var anthropicShape = TokenTotals()
+        anthropicShape.applyAnthropic(event: "message_start",
+            json: ["message": ["usage": ["input_tokens": 1_000, "cache_read_input_tokens": 800]]])
+        precondition(anthropicShape.input == 1_000 && anthropicShape.cacheRead == 800,
+                     "a sibling hit is a bucket of its own")
+        anthropicShape.applyAnthropic(event: "message_delta", json: ["usage": ["input_tokens": 1_000]])
+        precondition(anthropicShape.input == 1_000 && anthropicShape.cacheRead == 800,
+                     "a later total must not fold the hit out of fresh input")
+        // A stream that has not declared a shape keeps the hit as its own
+        // bucket, and the first subset-shaped hit latches the fold on.
+        var undeclared = TokenTotals()
+        undeclared.applyResponses(["response": ["usage": ["prompt_tokens": 1_000]]])
+        precondition(undeclared.input == 1_000 && undeclared.cacheRead == nil,
+                     "an undeclared shape must not invent a cache read")
+        undeclared.applyChat(["usage": ["prompt_tokens": 1_000, "prompt_cache_hit_tokens": 800]])
+        precondition(undeclared.input == 200 && undeclared.cacheRead == 800,
+                     "the first subset-shaped hit latches the fold")
+        undeclared.applyResponses(["response": ["usage": ["prompt_tokens": 1_000]]])
+        precondition(undeclared.input == 200 && undeclared.cacheRead == 800,
+                     "the latched fold survives a later total without cache fields")
+
         // 10. The visible-text signal the first-token stamp reads. Each event
         //     must report its own delta, so the stamp never has to measure the
         //     accumulated answer (which is O(n) per event).
