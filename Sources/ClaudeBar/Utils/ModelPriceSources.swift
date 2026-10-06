@@ -207,10 +207,16 @@ enum ModelPriceSources {
         if let tag = http.value(forHTTPHeaderField: "ETag") {
             UserDefaults.standard.set(tag, forKey: etagKey)
         }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw SourceError.badJSON
-        }
-        return rowsFromModelsDev(json)
+        // Parse and scan the 5 MB payload off the main actor. `check` is
+        // `@MainActor`, so everything up to this line ran there; JSON-parsing a
+        // payload this size on the main actor is a visible hitch in the
+        // settings card. `nonisolated` because the work is pure.
+        return try await Task.detached(priority: .userInitiated) {
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw SourceError.badJSON
+            }
+            return rowsFromModelsDev(json)
+        }.value
     }
 
     enum SourceError: LocalizedError {

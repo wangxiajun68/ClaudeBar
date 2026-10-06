@@ -299,7 +299,11 @@ final class ModelPriceCatalog: ObservableObject {
         for vendor in ModelPriceSources.vendors {
             do {
                 let html = try await ModelPriceSources.fetchPage(vendor.url)
-                let rows = vendor.parse(html)
+                // The vendor pages are 1-3 MB of markup and the parsers run
+                // regexes over all of it (`tables(in:)` alone scans every
+                // `<table>`); `parse` is `@Sendable`, so it runs detached
+                // rather than on the main actor this class is isolated to.
+                let rows = await Task.detached(priority: .userInitiated) { vendor.parse(html) }.value
                 if rows.isEmpty {
                     report.failures.append(.init(vendor: vendor.name,
                                                  reason: "页面结构与解析器不符，未能读取"))
