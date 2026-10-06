@@ -620,8 +620,16 @@ final class ProxyCaptureStore {
         let id = sqlite3_last_insert_rowid(db)
         let req = Self.truncate(CaptureMedia.compact(requestJSON, captureID: id), cap: payloadCap)
         let rew = Self.truncate(CaptureMedia.compact(rewrittenJSON, captureID: id), cap: payloadCap)
-        exec("INSERT INTO payloads (capture_id, request_json, rewritten_json, request_headers) VALUES (?, ?, ?, ?)",
-             args: [.int(id), .text(req), .text(rew), .text(requestHeadersJSON)])
+        // The summary row is useless without its payload: `detail(id:)` reads
+        // `captures LEFT JOIN payloads`, so a payload INSERT that never reaches
+        // SQLITE_DONE leaves a row listed in the UI that opens onto nothing, and
+        // nothing repairs it later (`recoverOrphans` rewrites state only, `prune`
+        // only deletes). Undo the summary row when the payload cannot land.
+        guard exec("INSERT INTO payloads (capture_id, request_json, rewritten_json, request_headers) VALUES (?, ?, ?, ?)",
+                   args: [.int(id), .text(req), .text(rew), .text(requestHeadersJSON)]) else {
+            execRaw("DELETE FROM captures WHERE id = \(id)")
+            return nil
+        }
         pruneLocked()
         return CaptureSummary(
             id: id, startedAt: Date(), endedAt: nil, firstTokenAt: nil,
@@ -829,11 +837,15 @@ final class ProxyCaptureStore {
         exec("UPDATE captures SET \(sets.joined(separator: ", ")) WHERE id = ?", args: args)
     }
 
-    private func exec(_ sql: String, args: [Bind]) {
+    /// Runs one statement and reports whether it reached `SQLITE_DONE`. The
+    /// result used to be dropped, which hid `SQLITE_BUSY`, `SQLITE_FULL` and
+    /// constraint failures from every caller.
+    @discardableResult
+    private func exec(_ sql: String, args: [Bind]) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard useDatabase, let db = connection() else { return }
+        guard useDatabase, let db = connection() else { return false }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         for (i, arg) in args.enumerated() {
             switch arg {
@@ -842,7 +854,7 @@ final class ProxyCaptureStore {
             case .null: sqlite3_bind_null(stmt, Int32(i + 1))
             }
         }
-        sqlite3_step(stmt)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     private func bind(_ stmt: OpaquePointer?, _ idx: Int32, _ text: String) {
