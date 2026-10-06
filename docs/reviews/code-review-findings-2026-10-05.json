@@ -459,7 +459,9 @@
   "summary": "每追加一行都开一个 0.18s 的 scrollTo 动画事务，0.1s 的并发发布节奏让事务几乎永不空闲，滚动期间整个宿主视图每帧重跑布局；文件自己的注释引用实测 31% vs 13% 的宿主 layout 占比来反对在别的路径这么做。",
   "evidence": "第 233-247 行：\n```swift\nprivate func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {\n    DispatchQueue.main.async {\n        guard let last = filtered.last else { return }\n        if animated {\n            withAnimation(Theme.Motion.page) { proxy.scrollTo(last.id, anchor: .bottom) }\n        } else {\n            proxy.scrollTo(last.id, anchor: .bottom)\n        }\n    }\n}\n```\n调用点 207-214：`.onChange(of: log.entries.last?.id)` → `guard UIWakePolicy.hasVisibleMainWindow` → `scrollToEnd(proxy, animated: true)`；发布节奏见 `/Users/wangxiajun/Project/ClaudeBar/Sources/ClaudeBar/Utils/ProxyAccessLog.swift:336`（`publishQueue.asyncAfter(deadline: .now() + 0.1)`，即流式期间每 100ms 一行）。同一成本在本仓库有实测：`/Users/wangxiajun/Project/ClaudeBar/Sources/ClaudeBar/Views/Shared/Interaction.swift:463-464` 记录“`.animation(_:value:)` keyed on a per-second value … `+[NSAnimationContext runAnimationGroup:]` inside `NSHostingView.layout()` for 31 % of main-thread samples with it, 13 % without”；`337-338` 是同一 31%/13% 的另一处引用。渲染对照：`docs/reviews/performance-frame-audit-2026-10-05.json` HelpView 单次 body 0.67ms，`docs/reviews/performance-release-audit-2026-10-04.json` HelpBlockView 单次 3.35ms、HelpView 1.25ms，即整棵树每帧重跑的代价是毫秒级。",
   "failure": "代理流式期间（行追加间隔约 0.1s < 0.18s 动画时长）：每一行到达都启动一个真实动画的滚动事务，事务永久在飞 → 每一个显示周期（ProMotion 120Hz 下最多 120 次/秒）都重跑 ProxyLogView 整棵视图的布局与显示列表。32 行/秒的突发 = 32 个/秒的新事务，而导航切换的过渡动画（`MainWindowView.navigate` → `withAnimation(Theme.Motion.page)`，`Sources/ClaudeBar/Views/MainWindowView.swift:292`）同时与这些滚动事务在同一事务里组合。",
-  "fix": "把追加行时的 `withAnimation(Theme.Motion.page) { proxy.scrollTo(...) }` 改成无动画的 `proxy.scrollTo(last.id, anchor: .bottom)`，并优先改用 `.defaultScrollAnchor(.bottom, for: .initialOffset)` 承载初始定位；若必须保留滚动动效，至少在与 VpnDomainLogSection 相同的滚动相位门（`onScrollPhaseChange` 里 tracking/decelerating 时不发动）内发起。"
+  "fix": "把追加行时的 `withAnimation(Theme.Motion.page) { proxy.scrollTo(...) }` 改成无动画的 `proxy.scrollTo(last.id, anchor: .bottom)`，并优先改用 `.defaultScrollAnchor(.bottom, for: .initialOffset)` 承载初始定位；若必须保留滚动动效，至少在与 VpnDomainLogSection 相同的滚动相位门（`onScrollPhaseChange` 里 tracking/decelerating 时不发动）内发起。",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "state",
@@ -662,7 +664,9 @@
   "evidence": "Line 436 `let snapshot = rows` takes the whole ring, pending rows included (a row is in `rows` from `begin`, line 254, but is not on disk until `finish`). Line 439 `snapshot.compactMap { encode($0) }` then writes those pending rows out. `finish` appends unconditionally (line 302) once the request ends. Measured on this machine: `~/Library/Application Support/ClaudeBar/logs/proxy.jsonl` = 500 rows / 172 KB, `grep -c '\"end\":\"\"'` = 2, and ids 95246 / 95254 each appear on two adjacent lines (line 458 pending `'end':''`, line 459 sealed `'end':'2026-09-30T10:16:19Z'`). Loading such a file (loadHistory line 213-226, decode line 469-506, both ids > 0 with different `end` values) appends *both* rows to `rows`, and `ProxyLogView` renders `ForEach(filtered)` keyed on `row.id` (Views/Pages/ProxyLogView.swift:175) plus `scrollTo(last.id)` (line 240-245).",
   "failure": "Every traffic burst that quiets down for 2 s while a second request is still streaming (the normal case: `streamSSE` calls go out while another finishes) writes one pending line, and the eventual `finish` appends a second line for the same id. After the next launch the ring holds two entries with identical `id`: SwiftUI's `ForEach` gets duplicate identities (undefined behaviour — wrong row reused/animated), `scrollTo(last.id)` can target the stale copy, and 复制 emits the same call twice in one console line pair. Left unchecked this grows by one duplicate per compaction window.",
   "fix": "Write only sealed rows in compaction: line 439 becomes `snapshot.compactMap { $0.endedAt == nil ? nil : encode($0) }`; and keep `loadHistory` tolerant by deduping on id (keep the row with the non-nil `endedAt`), since older sidecars already contain such pairs.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "crash",
@@ -673,7 +677,9 @@
   "summary": "`nextID` is derived from the sidecar's own `id` with no upper bound, and `begin()` then does `nextID += 1`; a corrupt or hostile `id` of 18446744073709551615 (accepted because `decode` only checks `id > 0` after the lossy `NSNumber.uint64Value` conversion) makes the next request trap on UInt64 overflow inside the proxy's forwarding path.",
   "evidence": "Line 221: `nextID = (history.map(\\.id).max() ?? 0) + 1`; line 234-235: `let id = nextID; nextID += 1`; line 472-473: `let id = (obj[\"id\"] as? NSNumber)?.uint64Value ?? 0; guard id > 0`. Verified with swift: the JSON literal `18446744073709551615` decodes to NSNumber.uint64Value == UInt64.max, and `UInt64.max + 1` is a runtime trap under -O.",
   "failure": "A single line `{\"id\":18446744073709551615,...}` in proxy.jsonl (path traversal aside, the file is user-writable and survives `clear`'s removeItem only if removal failed) makes the first proxied request after launch trap in `ProxyAccessLog.begin`, taking the proxy and the app down.",
-  "fix": "Clamp while reading: `nextID = min(history.map(\\.id).max() ?? 0, 1 << 62) + 1`, and reject ids above a sane ceiling in `decode` rather than only `id > 0`."
+  "fix": "Clamp while reading: `nextID = min(history.map(\\.id).max() ?? 0, 1 << 62) + 1`, and reject ids above a sane ceiling in `decode` rather than only `id > 0`.",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "perf-io",
@@ -2355,7 +2361,9 @@
   "summary": "每行 5 个滚动数字：第 500 行的完成会把整个可见窗口的「…」占位翻成实值，而依据 RollingNumberModifier 自己写下的规则（>1Hz 的值不应滚动），这些 token 计数本应 rolls: false。",
   "evidence": "第 270-281 行每行渲染 `figure(entry.totalTokens, ...)` + 4 个 `labeled(...)`，第 293-299 行全部落到 `RollingNumberText(text)`（默认 `rolls: true`）。规则原文在 `/Users/wangxiajun/Project/ClaudeBar/Sources/ClaudeBar/Views/Shared/Interaction.swift:437-443`：“**a value fed at >1 Hz.** … At that rate the transition never settles … Coat every other figure in the app”；既有反例：`Sources/ClaudeBar/Views/Island/NotchIslandView.swift:219`、`Sources/ClaudeBar/Views/Shared/ResourceStrip.swift:267` 都显式 `rolls: false`。同时 `ProxyLogView.swift:195` 用 `row.id == filtered.last?.id` 在 ForEach 内做 O(行数) 查找。",
   "failure": "环形缓冲到 500 行后，任何一行 `finish`（含流式每秒多次）都触发条目驱逐：`filtered` 中每行的 id / 内容整体平移一位，可见的 20-30 行里所有 token 列的键同时变化 → 同一次发布里 5×N 个滚动事务同时启动（N=可见行数）。滚动动效与滚动位置动画叠加，事务永不落定，每个显示周期重跑整棵控制台布局。",
-  "fix": "`LogTokenColumn` 里的 `RollingNumberText` 统一加 `rolls: false`（token 计数是读数不是动画）；若想保留滚动列头/尾行的滚动，只对 `isPending` 解除的那一行放行。"
+  "fix": "`LogTokenColumn` 里的 `RollingNumberText` 统一加 `rolls: false`（token 计数是读数不是动画）；若想保留滚动列头/尾行的滚动，只对 `isPending` 解除的那一行放行。",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "perf-cpu",
@@ -2366,7 +2374,9 @@
   "summary": "行数组发生驱逐或任何非搜索字段变更时，过滤遍历会连续三遍 lowercased 全部 500 行（stamp + filtered + body），且没有 TrafficView 已有的「仅补丁」路径。",
   "evidence": "第 65-81 行：`recomputeFiltered()` 里先 `entriesStamp = Self.stamp(log.entries)`（46-63 行逐行 combine 13 个字段，其中 path/model/provider/error 是字符串哈希，需读完整存储），再 `filtered = log.entries.filter { ... }`，闭包内 76-79 行对 `row.path`/`row.model`/`row.provider`/`row.error` 各自 `.lowercased()`。同仓对照：`Sources/ClaudeBar/Views/Pages/TrafficView.swift:254-276` 的 `reconcileFilteredRecords()` 在 stamp 未变时只做「按 id 取最新副本」：\n```swift\nif recordsStamp != Self.stamp(catalog.records) {\n    recomputeFiltered()\n} else {\n    let ids = Set(filteredCache.map(\\.id))\n    let latest = catalog.records.filter { ids.contains($0.id) }\n    if latest != filteredCache { filteredCache = latest }\n}\n```\nProxyLogView 没有这一层。",
   "failure": "流式期间每 100ms 发布一次：只要有一次驱逐（第 500 行每次 finish 都驱逐）或 status/token 之外的字段变化，就重新分配 500×4 个小写字符串；此后 body 求值（`filtered.count`、`filtered.isEmpty`、ForEach 身份）再触发一次完整数组重建。25 个并发流（仓库记录的实测规模）时每秒 250 次对 500 行的过滤与 2000 次 lowercased。",
-  "fix": "照搬 TrafficView 的 `reconcileFilteredRecords` 分支：stamp 未变时用 id 集合把 status/token 补丁合并进 `filtered`，不重跑谓词；谓词里 `let lowered = row.path.lowercased()` 一类的小写值在 stamp 未变时复用。"
+  "fix": "照搬 TrafficView 的 `reconcileFilteredRecords` 分支：stamp 未变时用 id 集合把 status/token 补丁合并进 `filtered`，不重跑谓词；谓词里 `let lowered = row.path.lowercased()` 一类的小写值在 stamp 未变时复用。",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "test-gap",
@@ -3212,7 +3222,9 @@
   "evidence": "`rows.firstIndex(where: { $0.id == id })` (line 278) seals exactly one of N rows with that id; `decode` (line 472) accepts any `id > 0` and `loadHistory` (line 221) only takes `max(id)` for `nextID`. The sibling store defends against exactly this shape: `CaptureJSONStore.load` sorts by id and `recoverOrphans` (Utils/CaptureJSONStore.swift:98-107, ProxyCaptureStore.swift:544-560) rewrites stale pending/streaming rows — `ProxyAccessLog` has no equivalent.",
   "failure": "A sidecar with a duplicated id (produced by the compaction bug above, or by an interrupted append) loads as two rows: the sealed copy plus a `…`-styled copy that no `finish` will ever seal (its connection is long gone), so the log view shows one request twice — one of them permanently 'running' — and the toolbar's 清空/复制 count includes the phantom.",
   "fix": "In `loadHistory`, collapse by id before assigning: keep the last-written (sealed) row, e.g. `var seen = Set<UInt64>(); rows = history.reversed().filter { seen.insert($0.id).inserted }.reversed()`; optionally also filter ids <= 0 as today.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "state",
@@ -3224,7 +3236,9 @@
   "evidence": "Lines 219-222 assign `rows = history` with `loaded = true`; a decoded row with `end` empty gets `endedAt = nil` (line 486) → `isPending` true (line 60) → `consoleBody` prints `…` for status and duration (lines 90-97) and `color(for:)` keeps it grey (ProxyLogView.swift:219). The real sidecar currently has 2 such rows, from 2026-09-30, still loaded 6 days later. `applicationWillTerminate` (ClaudeBarApp.swift:232) stops the VPN and fans but does nothing for in-flight proxy rows.",
   "failure": "Open the 代理日志 page: rows from a previous launch display `HH:mm:ss.SSS …        …` with the original wall-clock time and never resolve, and the pending row is excluded from the 复制 column (line 128 returns `\"  …\"`), so the user cannot even copy what is on disk.",
   "fix": "Seal them at load, mirroring `ProxyCaptureStore.recoverOrphans`: `rows = history.map { var r = $0; if r.endedAt == nil { r.endedAt = r.startedAt; r.error = \"interrupted\" }; return r }` (or drop them entirely).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "perf-io",
@@ -3236,7 +3250,9 @@
   "evidence": "Line 438 `guard snapshot.count >= limit else { return }`; the ring sits at exactly `limit` in steady state (`begin` evicts to `limit`, line 255-257), and `scheduleCompact` is re-armed on every `finish` (lines 403-431). Measured file: 500 rows / 172 KB → one `JSONSerialization.data` per row (line 463) plus a full `blob.write(..., .atomic)` (temp file + rename) per window. Append already wrote those exact bytes via `encode`; the compaction pays for them a second time. VpnManager's log writer documents the same waste removal for the sibling file (Utils/VpnManager.swift:1195-1213).",
   "failure": "During an active session (a finish every few seconds), every quiet 2 s window triggers a 172 KB write amplification cycle — ~500 JSON serializations and a 172 KB temp-file + rename — on the shared utility-qos queue, for a file whose byte content is almost always identical to what was just appended.",
   "fix": "Only compact when something actually needs dropping: `guard snapshot.count > limit else { return }`; and, when it does run, rebuild the blob by splicing the already-encoded lines kept in an `ioQueue`-confined array instead of re-encoding the ring.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "perf-io",
@@ -3248,7 +3264,9 @@
   "evidence": "Lines 414-419: `FileManager.default.fileExists(atPath: url.path)` → `FileHandle(forWritingTo: url)` → `handle.seekToEnd()` → `write` → `defer close()`: ~5 syscalls per finished call. Utils/VpnManager.swift:1195-1213 carries the counter-argument in-tree ('Track the byte count here instead of asking the file system on every chunk. The core writes several lines per second, so every one of them used to cost an `fstat` (and a `seekToEnd` syscall on the handle) just to decide whether rotation was due.'). `scheduleWrite` (line 403) exists precisely to keep this off the request path, but it is still per-request syscall traffic on the io queue.",
   "failure": "N finished proxied calls cost 5N syscalls and N open/close cycles on the sidecar; measuring this machine's ring (500 lines in one session) that is ~2500 syscalls where ~500 writes plus one open would do.",
   "fix": "Hold one long-lived writer `FileHandle` in `ioQueue`-confined state (opened once, `seekToEnd` once per open), keep the byte counter in the store, and reopen only after `clear()`/compaction replaces the file.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "state",
@@ -3259,7 +3277,9 @@
   "summary": "Both write paths assume the log file's directory exists, but nothing in this class creates it: `appendJSONL` takes the `FileHandle(forWritingTo:)` branch whenever the file exists and then discards every error with `try?`, and `compactIfNeeded` uses `.atomic` (which requires the target directory to exist). If `~/Library/Application Support/<app>/logs` is absent at first write, both fail silently and the access log never reaches disk — while the in-memory ring keeps showing the user 500 rows.",
   "evidence": "Line 414-422: `if FileManager.default.fileExists(atPath: url.path) { if let handle = try? FileHandle(forWritingTo: url) { ... try? handle.write(contentsOf: data) } } else { try? data.write(to: url, options: .atomic) }`; line 440: `try? blob.write(to: FilePaths.proxyLogFile, options: .atomic)`. The only directory creation is inside `FilePaths.logsDir` (FilePaths.swift:72-76), which `FilePaths.proxyLogFile` (line 93) does not call.",
   "failure": "User (or a helper/tool) removes the logs directory while the proxy is running; the next 100 requests show up in the console but after relaunch the history is empty — the user's evidence of their own traffic is lost with no error shown.",
-  "fix": "Create the parent directory once on `ioQueue` (`try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)`) before the first append, and fall back to `.atomic` write when `FileHandle(forWritingTo:)` returns nil instead of dropping the line."
+  "fix": "Create the parent directory once on `ioQueue` (`try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)`) before the first append, and fall back to `.atomic` write when `FileHandle(forWritingTo:)` returns nil instead of dropping the line.",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "perf-frame",
@@ -3270,7 +3290,9 @@
   "summary": "The 2-second compaction debounce is built on `DispatchWorkItem.cancel()` + `asyncAfter`, which does not cancel work whose deadline has not yet been enqueued — so the cancel is a no-op and `compactIfNeeded()` fires once per debounce window regardless. During continuous traffic that is a full JSONSerialization re-encode of up to 500 rows plus an atomic rewrite of the whole file every ~2 s, racing the appended lines in front of it on the same queue.",
   "evidence": "Line 427-432: `compactWork?.cancel(); let work = DispatchWorkItem { ... }; compactWork = work; ioQueue.asyncAfter(deadline: .now() + 2, execute: work)`. Verified with a standalone swift repro of exactly this pattern: after canceling the previous item four times, both the 100-iteration and 104-iteration bodies still ran (`runs: [0, 1, 2, 3, 4, 104]`) — the canceled items executed 0.5 s after their deadline, i.e. cancel-before-deadline is ignored. Line 439-440 then re-encodes the entire snapshot and does `blob.write(..., options: .atomic)` (new inode).",
   "failure": "With the proxy busy (e.g. an agent loop making back-to-back calls), every ~2 s the app re-serializes 500 rows and rewrites the sidecar; appends issued in that window land in the old inode and are discarded, so finished rows intermittently vanish from history after relaunch. Note the identified bug is one-directional (older-format line loses to newer), never the reverse, so an id-monotonic merge on load would also stop the visible loss.",
-  "fix": "Guard with a flag instead of relying on cancel: `if compactWork != nil { return }`, and clear it inside `compactIfNeeded` on `ioQueue`; or use `SourceTimer` with a `cancel()` that actually invalidates."
+  "fix": "Guard with a flag instead of relying on cancel: `if compactWork != nil { return }`, and clear it inside `compactIfNeeded` on `ioQueue`; or use `SourceTimer` with a `cancel()` that actually invalidates.",
+  "status": "fixed",
+  "verdict_note": "Measured with a standalone -O slice of the production class (temporary dirs only): a sidecar with a duplicate id and an unsealed row loads as 2 rows, the later line wins, the orphan is sealed with `interrupted`; `{\"id\":18446744073709551615,…}` no longer traps the next `begin` (next id 1); a 700-call burst leaves exactly 500 sealed, unique, ordered lines on disk that reload as the same 500; `clear` removes the file and the next append recreates exactly one line; a note-only `finish` still exports its buckets."
  },
  {
   "category": "test-gap",
@@ -4025,7 +4047,9 @@
   "evidence": "ProxyLogView.swift:137 `ActionButton(\"清空\", tone: .destructive) { log.clear() }`; ProxyAccessLog.clear() (ProxyAccessLog.swift:321-329) does `rows = []; pendingTokens = [:]` and `ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }` — the in-memory ring plus `logs/proxy.jsonl` are the only copy of the access history. The sibling clears both gate on an alert: TrafficView.swift:433-444 (\"将删除 ... 条记录及其请求 / 响应正文，无法恢复。\") and VpnDomainLogSection.swift:126-127 (\"清空流量日志？\"), and TrafficView.swift:459 routes its button through `confirmClear = true`.",
   "failure": "One misclick on 清空 (adjacent to 复制 in the toolbar) wipes up to 500 rows and deletes logs/proxy.jsonl with no confirmation and no undo.",
   "fix": "Add `@State private var confirmClear = false`, change the toolbar action to `confirmClear = true`, and add `.alert(\"清空访问日志？\", isPresented: $confirmClear)` whose destructive button calls `log.clear()` — the shape TrafficView.swift:433-444 already uses.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "test-gap",
@@ -6226,7 +6250,9 @@
   "summary": "注释引用的 `publishUpdated` 在当前代码树中已不存在（`git log -S` 显示它只被删除、从未被重新添加），这段注释描述的是旧实现。",
   "evidence": "第 19-24 行注释：“`publishUpdated` fires on *every* completion, so without this every sealed request re-ran the pass below over all 500 rows (up to 2000 `lowercased()` allocations) plus a 500-element struct-array diff”。`grep -rn \"publishUpdated\" Sources Tests docs` 仅命中此处注释与 `docs/reviews/performance-round2-baseline-2026-10-04.patch:41,92`（该 patch 显示 `- publishUpdated(row)` / `- private func publishUpdated(_ row: ProxyLogEntry)` 两行删除）。`ProxyAccessLog.swift` 现仅通过 `schedulePublishLocked`（330-350 行）发布。",
   "failure": "读代码的人按注释去查 `publishUpdated` 会一无所获；这类注释漂移随后被当作「实现仍在」的依据，掩盖真正需要重建的性能论据（当前发布路径的合批/判等见 ProxyAccessLog.swift:333-350）。",
-  "fix": "把这句改成引用现存的 `schedulePublishLocked` 与 `entries != snapshot` 判等（或直接删掉该人名引用），保持注释与 346 行的发布路径一致。"
+  "fix": "把这句改成引用现存的 `schedulePublishLocked` 与 `entries != snapshot` 判等（或直接删掉该人名引用），保持注释与 346 行的发布路径一致。",
+  "status": "fixed",
+  "verdict_note": "The comment now names `schedulePublishLocked`, which is the publisher that exists."
  },
  {
   "category": "duplication",
@@ -8418,7 +8444,9 @@
   "evidence": "`.onChange(of: log.entries.last?.id)` (207-214) unconditionally calls `scrollToEnd(proxy, animated: true)` while the window is visible, and `scrollToEnd` (233-247) always scrolls to `filtered.last`. The sibling console solved this: VpnDomainLogSection has `@State private var followTail = true` (line 33), sets it false when the user scrolls away from the bottom (351-357), guards the chase with `guard followTail, !scrollingDetail` (369-372), and offers a 回到最新 pill (380-388).",
   "failure": "With the proxy busy (publishes are coalesced to >=0.1 s), a user who scrolls up to read an earlier line is pulled back to the bottom on the next seal — reading history requires stopping traffic.",
   "fix": "Track a `followTail` flag (set false in an `onScrollGeometryChange` when the view leaves the bottom) and skip `scrollToEnd` when it is false, with a 回到最新 pill that resets it.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "duplication",
@@ -8430,7 +8458,9 @@
   "evidence": "On screen, `figure(_:)` renders `value.map(UsageStats.formatTokens) ?? \"—\"` (ProxyLogView.swift:293-294), so a nil bucket shows `—`. In the copy path, `ProxyLogEntry.tokenField` (ProxyAccessLog.swift:114-129) uses `\"入 \\(f(promptTokens ?? 0))\"`, `\"出 \\(f(completionTokens ?? 0))\"`, `\"缓存 \\(f(cacheReadTokens ?? 0))\"`, turning the same nil into a real `0`, and drops `写入` entirely while the column shows `写入 —`. The module's own contract is that nil is \"the upstream never reported usage\" and \"never a real zero\" (ProxyAccessLog.swift:52-58, 101-105).",
   "failure": "Copy a row whose upstream reported prompt but no cache counters: the pasted line claims 缓存 0 (and 出 0) while the screen shows —, so a pasted bug report asserts usage that was never reported.",
   "fix": "Build the copy buckets with the same optional-preserving fold as the column (`cacheReadTokens.map { \"缓存 \\(f($0))\" }` etc., `—` for nil), or have `tokenField` reuse the column's per-bucket formatter.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Verified by source review plus `make build`: the chase is now gated on `followTail`/`tracking`/window visibility and runs without `withAnimation`; `defaultScrollAnchor(.bottom, for: .initialOffset)` carries the initial landing; `LogTokenColumn` figures are `rolls: false`; 清空 routes through a confirm alert shaped like TrafficView's; the stamp-miss path is now `recomputeFiltered`, the hit path a by-id patch (`reconcileFiltered`)."
  },
  {
   "category": "perf-memory",

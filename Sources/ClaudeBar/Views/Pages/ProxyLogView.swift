@@ -9,19 +9,32 @@ struct ProxyLogView: View {
     @State private var filter: Filter = .all
     @State private var query = ""
     @State private var copied = false
+    @State private var confirmClear = false
     /// Filtering is O(rows × 4 lowercased()) and used to run in every `body`
     /// evaluation — including the ones the scroll animation drove. Cache it
     /// and recompute only when an input actually changes.
     @State private var filtered: [ProxyLogEntry] = []
-    /// The console auto-scrolls to the tail exactly once per mount; a
-    /// re-entrant `onAppear` (LazyVStack rebuilds) used to fire it forever.
-    @State private var didInitialScroll = false
-    /// What the filter pass actually reads: row identity plus the four fields
-    /// the predicate looks at. `publishUpdated` fires on *every* completion, so
-    /// without this every sealed request re-ran the pass below over all 500 rows
-    /// (up to 2000 `lowercased()` allocations) plus a 500-element struct-array
-    /// diff — the same cost `TrafficView` guards with its own stamp.
+    /// Tail-following, as on the VPN page's traffic console: the chase used to
+    /// be unconditional, so a reader who scrolled up was yanked back to the
+    /// bottom by the next sealed request, and every appended line opened a
+    /// fresh 0.18 s scroll transaction whose re-evaluated content closure
+    /// re-entered `onAppear` on the rebuilt `LazyVStack`. Appends now scroll
+    /// without animation and only while the user is at the tail.
+    @State private var followTail = true
+    /// Whether the viewport's bottom edge is at the last line, and whether a
+    /// scroll gesture is what put it there — a new row also moves the tail
+    /// away, and only a *gesture* may turn `followTail` off.
+    @State private var atTail = true
+    @State private var tracking = false
+    /// What the filter pass actually reads: row identity plus the fields a
+    /// *seal* patches in place. `schedulePublishLocked` publishes on every
+    /// completion, so without this every sealed request re-ran the pass below
+    /// over all 500 rows (up to 2000 `lowercased()` allocations) plus a
+    /// 500-element struct-array diff — the same cost `TrafficView` guards with
+    /// its own stamp.
     @State private var entriesStamp = 0
+
+    private static let tailTolerance: CGFloat = 24
 
     enum Filter: String, CaseIterable, Identifiable {
         case all, claude, codex, other
@@ -64,8 +77,15 @@ struct ProxyLogView: View {
 
     private func recomputeFiltered() {
         entriesStamp = Self.stamp(log.entries)
+        filtered = Self.matching(log.entries, query: query, filter: filter)
+    }
+
+    /// The predicate over the ring, lifted out so the reconcile path can tell
+    /// "membership could have changed" from "a cached value needs a patch"
+    /// without running it.
+    private static func matching(_ rows: [ProxyLogEntry], query: String, filter: Filter) -> [ProxyLogEntry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        filtered = log.entries.filter { row in
+        return rows.filter { row in
             switch filter {
             case .all: break
             case .claude: if row.source != .claude { return false }
@@ -80,6 +100,21 @@ struct ProxyLogView: View {
         }
     }
 
+    /// The stamp's inputs (see `stamp`) are exactly the fields the predicate
+    /// reads plus the ones a seal patches. When the stamp is unchanged the
+    /// predicate would return the same members, so only the patched values
+    /// need copying — otherwise a streaming `finish` re-ran up to 2,000
+    /// `lowercased()` allocations to change nothing but four numbers.
+    private func reconcileFiltered() {
+        if entriesStamp != Self.stamp(log.entries) {
+            recomputeFiltered()
+            return
+        }
+        let ids = Set(filtered.map(\.id))
+        let latest = log.entries.filter { ids.contains($0.id) }
+        if latest != filtered { filtered = latest }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             toolbar
@@ -92,16 +127,28 @@ struct ProxyLogView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgPrimary)
-        .onAppear { log.loadListIfNeeded(); recomputeFiltered() }
-        .onChange(of: log.entries) { _, rows in
-            // `@Published` emits before assignment for the incremental
-            // publishers, and the pass is only worth running when it would read
-            // something different.
-            guard entriesStamp != Self.stamp(rows) else { return }
+        .onAppear {
+            log.loadListIfNeeded()
             recomputeFiltered()
+        }
+        .onChange(of: log.entries) { _, _ in
+            // The pass is only worth running when it would read something
+            // different; `reconcileFiltered` still has to run every time,
+            // because a seal patches values the *predicate* does not read.
+            reconcileFiltered()
         }
         .onChange(of: filter) { _, _ in recomputeFiltered() }
         .onChange(of: query) { _, _ in recomputeFiltered() }
+        .alert("清空访问日志？", isPresented: $confirmClear) {
+            Button("清空", role: .destructive) {
+                log.clear()
+                filtered = []
+                entriesStamp = 0
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将删除 \(log.entries.count) 行访问记录及其磁盘日志，无法恢复。")
+        }
     }
 
     private var toolbar: some View {
@@ -134,7 +181,7 @@ struct ProxyLogView: View {
                 ActionButton(copied ? "已复制" : "复制") { copyVisible() }
             }
             if !log.entries.isEmpty {
-                ActionButton("清空", tone: .destructive) { log.clear() }
+                ActionButton("清空", tone: .destructive) { confirmClear = true }
             }
         }
         .padding(.horizontal, Theme.Space.s16)
@@ -199,18 +246,52 @@ struct ProxyLogView: View {
                 }
                 .padding(.vertical, Theme.Space.s8)
             }
-            .onAppear {
-                guard !didInitialScroll else { return }
-                didInitialScroll = true
-                scrollToEnd(proxy, animated: false)
+            // The initial landing is the scroll view's own, resolved as the
+            // content is laid out; the one-shot `onAppear` jump it replaces
+            // raced the first layout.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .onScrollGeometryChange(for: Bool.self) { geo in
+                geo.contentSize.height + geo.contentInsets.bottom
+                    - (geo.contentOffset.y + geo.containerSize.height) <= Self.tailTolerance
+            } action: { _, tail in
+                atTail = tail
+                if tracking && !tail { followTail = false }
+            }
+            .onScrollPhaseChange { _, phase in
+                switch phase {
+                case .tracking, .interacting, .decelerating:
+                    tracking = true
+                case .idle:
+                    if tracking && atTail && query.isEmpty && filter == .all { followTail = true }
+                    tracking = false
+                default: break
+                }
             }
             .onChange(of: log.entries.last?.id) { _, _ in
                 // Only chase the tail while this view is actually on screen;
                 // an off-screen page has no reason to animate its scroll
                 // position (that loop used to run at 170 scrolls/s with the
-                // page hidden behind opacity(0)).
-                guard UIWakePolicy.hasVisibleMainWindow else { return }
-                scrollToEnd(proxy, animated: true)
+                // page hidden behind opacity(0)). `followTail` is false while
+                // the user is reading history, and a chase restarts only when
+                // they return to the bottom.
+                guard followTail, !tracking, UIWakePolicy.hasVisibleMainWindow else { return }
+                scrollToEnd(proxy)
+            }
+            // Returning to the default filter re-establishes the tail; leaving
+            // it hides new rows from the console entirely, and chasing an id
+            // that is not rendered is a no-op.
+            .onChange(of: filter) { _, next in
+                guard next == .all, query.isEmpty, followTail else { return }
+                scrollToEnd(proxy)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !followTail {
+                    ActionButton("回到最新", tone: .neutral) {
+                        followTail = true
+                        scrollToEnd(proxy)
+                    }
+                    .padding(Theme.Space.s8)
+                }
             }
         }
     }
@@ -223,14 +304,16 @@ struct ProxyLogView: View {
         return Theme.textPrimary
     }
 
-    /// `animated: false` for the one-shot jump on mount — `withAnimation` here
-    /// turns every appended line into a scroll transaction, which re-evaluates
-    /// the content closure and re-enters `onAppear` on the rebuilt LazyVStack.
+    /// No `withAnimation` on the chase: every appended line used to open a
+    /// 0.18 s scroll transaction, and at the 0.1 s publish cadence of a busy
+    /// proxy the transactions never settled — each display refresh re-ran the
+    /// page's whole layout and display list for an effect nobody sees on a
+    /// one-line shift.
     ///
     /// Targets `filtered.last` because that is the row the console actually
     /// ends on; with a filter active the *buffer's* last row is not rendered at
     /// all, and scrolling to an id that is not in the view is a no-op.
-    private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
         // Read `filtered` *inside* the deferred block, not before it: the two
         // `.onChange` handlers on `log.entries` (this one and the filter's) run
         // in the same update pass in an order SwiftUI does not promise, so
@@ -238,11 +321,7 @@ struct ProxyLogView: View {
         // appended line.
         DispatchQueue.main.async {
             guard let last = filtered.last else { return }
-            if animated {
-                withAnimation(Theme.Motion.page) { proxy.scrollTo(last.id, anchor: .bottom) }
-            } else {
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
+            proxy.scrollTo(last.id, anchor: .bottom)
         }
     }
 
@@ -290,9 +369,14 @@ struct LogTokenColumn: View {
         }
     }
 
+    /// `rolls: false`: these are readings, not animations. A seal flips a
+    /// whole visible window of `…` placeholders into values at once, and a
+    /// ring already at its cap shifts every row's identity on the same
+    /// publish — the rolling transition would start five transactions per
+    /// visible row and never settle.
     private func figure(_ value: Int?, pending: Bool, strong: Bool) -> some View {
         let text = pending ? "…" : (value.map(UsageStats.formatTokens) ?? "—")
-        return RollingNumberText(text)
+        return RollingNumberText(text, rolls: false)
             .font(Theme.Font.console)
             .foregroundStyle(strong ? Theme.textSecondary : Theme.textTertiary())
             .frame(width: Self.number, alignment: .trailing)

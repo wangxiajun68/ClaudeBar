@@ -115,30 +115,36 @@ struct ProxyLogEntry: Identifiable, Equatable {
     }
 
     /// Copy-all form of the token column. The on-screen column is
-    /// `LogTokenColumn`, which keeps each bucket in a fixed-width slot;
-    /// this string is the same buckets, in the same order, without the
-    /// parentheses the old line used.
-    ///
-    /// `入` is fresh input: `TokenTotals` has already folded the cache hit
-    /// out of the upstream's prompt count, so `入 + 缓存` is the prompt the
-    /// model actually saw. `""` when the call is over and the upstream never
-    /// reported usage — that absence is not a row of zeros.
+    /// `LogTokenColumn`, which keeps each bucket in a fixed-width slot; this
+    /// string is the same buckets, in the same order, and — like the column —
+    /// a bucket the upstream never reported reads as `—`, not as a real zero.
+    /// `""` when the call is over and the upstream never reported usage at
+    /// all; that absence is not a row of zeros either.
     var tokenField: String {
         if let totalTokens {
             let f: (Int) -> String = UsageStats.formatTokens
-            var parts = [
-                f(totalTokens),
-                "入 \(f(promptTokens ?? 0))",
-                "出 \(f(completionTokens ?? 0))",
-                "缓存 \(f(cacheReadTokens ?? 0))",
-            ]
-            if let written = cacheWriteTokens {
-                parts.append("写入 \(f(written))")
+            func bucket(_ label: String, _ value: Int?) -> String {
+                "\(label) \(value.map(f) ?? "—")"
             }
+            let parts = [
+                f(totalTokens),
+                bucket("入", promptTokens),
+                bucket("出", completionTokens),
+                bucket("缓存", cacheReadTokens),
+                bucket("写入", cacheWriteTokens),
+            ]
             return "  " + parts.joined(separator: "  ")
         }
         return isPending ? "  …" : ""
     }
+}
+
+/// One already-encoded sidecar line, kept so compaction can rewrite the file
+/// by dropping bytes instead of re-serializing every row. The id is what ties
+/// it back to the ring; `data` is the exact bytes `appendJSONL` wrote.
+struct SealedLine {
+    var id: UInt64
+    var data: Data
 }
 
 /// In-memory ring + JSONL sidecar for proxy access logs.
@@ -147,6 +153,13 @@ struct ProxyLogEntry: Identifiable, Equatable {
 /// and published state belongs to the main actor.
 final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
     static let shared = ProxyAccessLog()
+
+    /// Ceiling for a row id read from, or written to, disk. `nextID += 1`
+    /// traps at `UInt64.max`, and the sidecar is a user-writable file: a
+    /// single hand-edited line used to take the proxy down on the next
+    /// request. Anything at or above this is dropped at decode, and the
+    /// continuation is clamped for rows already in memory.
+    static let maxID: UInt64 = 1 << 62
 
     static let clock: DateFormatter = {
         let f = DateFormatter()
@@ -188,14 +201,23 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
     private let ioQueue = DispatchQueue(label: "com.claudebar.proxy-access-log.io", qos: .utility)
     /// `ioQueue`-only state, deliberately not lock-guarded.
     ///
-    /// This used to be read and replaced from whichever cooperative thread
-    /// finished a request first. Two overlapping calls both did
-    /// `compactWork = work`, and the released-then-swapped strong reference
-    /// was deallocated twice — the crash landed in
-    /// `ProxyAccessLog.scheduleCompact` → `swift_deallocClassInstance` →
-    /// `objc_destructInstance`, faulting on a garbage isa. Confining the item
-    /// to one serial queue removes the shared reference entirely.
-    private var compactWork: DispatchWorkItem?
+    /// This used to be a `DispatchWorkItem` that each `finish` cancelled before
+    /// re-arming with `asyncAfter`. That cancel lands too late to matter: a work
+    /// item whose deadline has already passed executes regardless, so on a busy
+    /// io queue the debounce did not debounce — every finished call still
+    /// produced one full compaction. A plain deadline keeps the same "one
+    /// rewrite after the burst settles" shape without the item.
+    private var compactDeadline: DispatchTime?
+    /// Sealed rows whose exact `encode` output is on disk, oldest first, so
+    /// the rewrite in `compactIfNeeded` splices bytes instead of re-serializing
+    /// the ring through `JSONSerialization` a second time. Parallel to the
+    /// sidecar's own lines, not to `rows`: a request still streaming has not
+    /// been written yet.
+    private var writtenLines: [SealedLine] = []
+    /// One long-lived append handle. The previous shape opened, sought, wrote
+    /// and closed the sidecar per finished request — five syscalls where one
+    /// write will do. Dropped by `clear` and by any whole-file rewrite.
+    private var writer: FileHandle?
 
     private init() {}
 
@@ -224,17 +246,46 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
 
     private func loadHistory() {
         guard needsHistoryLoad() else { return }
-        let history = readRecentEntries()
+        let history = Self.settled(readRecentEntries())
         lock.lock()
         // A clear during the read marks the history consumed. Never resurrect
         // its old rows, even if new traffic has already arrived afterwards.
         if !loaded {
             rows = history
-            nextID = (history.map(\.id).max() ?? 0) + 1
+            // `decode` rejects ids at or above `maxID`, and the clamp is the
+            // second stop for anything already in memory: the sidecar is
+            // user-writable, and `nextID += 1` on a hand-edited `UInt64.max`
+            // would trap inside the proxy's next request.
+            nextID = min(history.map(\.id).max() ?? 0, Self.maxID) + 1
             loaded = true
             schedulePublishLocked()
         }
         lock.unlock()
+    }
+
+    /// What `readRecentEntries` hands back, made safe to install as the ring.
+    ///
+    /// A row read from disk has no live connection behind it, so it can never
+    /// receive the `finish` that would seal it — leaving it pending would
+    /// render a request from days ago as still running, forever. And any
+    /// append/rewrite interleaving can leave the same id on two lines
+    /// (`compactIfNeeded` snapshots the ring once, `finish` appends once; an
+    /// append already in flight when the rewrite runs lands after it). A
+    /// duplicated `ForEach` identity is undefined behaviour, so the audit
+    /// keeps the later line — the file is append-ordered, and the later line
+    /// is the one `finish` wrote.
+    private static func settled(_ history: [ProxyLogEntry]) -> [ProxyLogEntry] {
+        var seen = Set<UInt64>(minimumCapacity: history.count)
+        var out: [ProxyLogEntry] = []
+        out.reserveCapacity(history.count)
+        for var row in history.reversed() where seen.insert(row.id).inserted {
+            if row.endedAt == nil {
+                row.endedAt = row.startedAt
+                row.error = "interrupted"
+            }
+            out.append(row)
+        }
+        return out.reversed()
     }
 
     // MARK: - Proxy API (any thread)
@@ -336,7 +387,16 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         pendingTokens = [:]
         loaded = true
         schedulePublishLocked()
-        ioQueue.async { try? FileManager.default.removeItem(at: FilePaths.proxyLogFile) }
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            // ioQueue-confined, so the reset happens on the same serial queue
+            // that owns these fields; a compaction already queued behind this
+            // block sees an empty `writtenLines` and writes nothing back.
+            self.writer = nil
+            self.writtenLines = []
+            self.compactDeadline = nil
+            try? FileManager.default.removeItem(at: FilePaths.proxyLogFile)
+        }
         lock.unlock()
     }
 
@@ -419,6 +479,12 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         ioQueue.async { [weak self] in
             guard let self else { return }
             self.appendJSONL(row)
+            // `writtenLines` mirrors the file's bytes, so an unbounded file —
+            // a proxy busy for hours with no 2-second gap — would also be
+            // unbounded memory here. Past twice the ring there is provably
+            // something to drop (`rows` never exceeds the limit), so trim now
+            // instead of waiting for a quiet window that may not come.
+            if self.writtenLines.count > self.limit * 2 { self.compactIfNeeded() }
             self.scheduleCompact()
         }
     }
@@ -426,40 +492,67 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
     private func appendJSONL(_ row: ProxyLogEntry) {
         guard let data = encode(row) else { return }
         let url = FilePaths.proxyLogFile
-        if FileManager.default.fileExists(atPath: url.path) {
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
-            }
-        } else {
-            try? data.write(to: url, options: .atomic)
+        do {
+            try append(data, at: url)
+        } catch {
+            // The handle went stale under us (the file was replaced or
+            // removed); reopen once and retry before giving up, so a rotation
+            // does not silently cost the line.
+            writer = nil
+            do { try append(data, at: url) } catch { return }
         }
+        writtenLines.append(SealedLine(id: row.id, data: data))
+    }
+
+    /// Write through the cached handle, opening it lazily. A missing parent
+    /// directory is created first — nothing else on this path does, and
+    /// without it every write fails while the console keeps showing rows that
+    /// never reached disk.
+    private func append(_ data: Data, at url: URL) throws {
+        if writer == nil {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            _ = try handle.seekToEnd()
+            writer = handle
+        }
+        try writer?.write(contentsOf: data)
     }
 
     /// Debounce: each finished call pushes the rewrite out another 2s, so a
-    /// burst of traffic compacts once at the end instead of per request.
+    /// burst of traffic compacts once at the end instead of per request. The
+    /// deadline is shared state on `ioQueue`: a later `scheduleWrite` that
+    /// slides it leaves the earlier timer inert, and a timer whose deadline
+    /// has already passed is the one that runs.
     private func scheduleCompact() {
-        compactWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.compactIfNeeded() }
-        compactWork = work
-        ioQueue.asyncAfter(deadline: .now() + 2, execute: work)
+        compactDeadline = .now() + 2
+        ioQueue.asyncAfter(deadline: compactDeadline!) { [weak self] in
+            guard let self, let deadline = self.compactDeadline, deadline <= .now() else { return }
+            self.compactDeadline = nil
+            self.compactIfNeeded()
+        }
     }
 
+    /// Drop the lines whose rows have left the ring — the only thing a
+    /// rewrite deletes. `writtenLines` is append-ordered and holds one line
+    /// per sealed call, so filtering it against the ring rebuilds the file
+    /// byte-for-byte without a single `JSONSerialization` pass. When nothing
+    /// has been evicted the filter is the identity and no write happens at
+    /// all; a ring at exactly `limit` is the steady state, and re-encoding
+    /// 500 rows every two quiet seconds bought nothing.
     private func compactIfNeeded() {
         lock.lock()
-        let snapshot = rows
+        let keep = Set(rows.map(\.id))
         lock.unlock()
-        guard snapshot.count >= limit else { return }
-        // Only sealed rows. `rows` holds requests still streaming, and writing
-        // one now puts a `"end":""` copy on disk that `finish` then appends
-        // again under the same id — the loader would list the call twice, once
-        // pending forever. A pending row is also the one most likely to change
-        // a millisecond later, so skipping it is what the next compaction (or
-        // its own `scheduleWrite`) will pick up.
-        let blob = snapshot.compactMap { $0.endedAt == nil ? nil : encode($0) }
-            .reduce(into: Data(), { $0.append($1) })
+        let kept = writtenLines.filter { keep.contains($0.id) }
+        guard kept.count != writtenLines.count else { return }
+        let blob = kept.reduce(into: Data(), { $0.append($1.data) })
         try? blob.write(to: FilePaths.proxyLogFile, options: .atomic)
+        writer = nil
+        writtenLines = kept
     }
 
     private func encode(_ row: ProxyLogEntry) -> Data? {
@@ -495,7 +588,7 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         // The ceiling keeps `begin`'s `nextID += 1` away from UInt64 overflow:
         // a truncated or hand-edited sidecar can hold any value that fits, and
         // `NSNumber.uint64Value` converts a larger one without complaining.
-        guard id > 0, id < 1 << 62,
+        guard id > 0, id < Self.maxID,
               let atRaw = obj["at"] as? String,
               let at = iso.date(from: atRaw),
               let method = obj["method"] as? String,
@@ -505,6 +598,21 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
               let kindRaw = obj["kind"] as? String,
               let kind = ProxyLogKind(rawValue: kindRaw) else { return nil }
         let endRaw = obj["end"] as? String ?? ""
+        // Absent on every line written before usage was recorded, and on lines
+        // for requests whose upstream never reported it. Present but
+        // implausible counts read as absent (see `tokenCount`).
+        let prompt = (obj["promptTokens"] as? NSNumber).flatMap(Self.tokenCount)
+        let cacheRead = (obj["cacheReadTokens"] as? NSNumber).flatMap(Self.tokenCount)
+        // Whether `promptTokens` is fresh input, recorded on write since the
+        // fold exists. A line without the key is not repaired here: unkeyed
+        // lines span both writers — the old one stored the upstream's raw
+        // prompt count with the cache hit still inside it, the current one
+        // stores the folded count — and the two cannot be told apart by the
+        // numbers or by the route. Guessing would corrupt the newer rows to
+        // fix the older ones, so an unkeyed value is shown exactly as the
+        // writer stored it, which is also what the console showed before the
+        // key existed. The one-time re-derivation is `ProxyUsageStore`'s
+        // migrate, whose table carries the v1 marker this file lacks.
         return ProxyLogEntry(
             id: id,
             startedAt: at,
@@ -522,12 +630,9 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
                 let s = obj["error"] as? String ?? ""
                 return s.isEmpty ? nil : s
             }(),
-            // Absent on every line written before usage was recorded, and on
-            // lines for requests whose upstream never reported it. Present but
-            // implausible counts read as absent (see `tokenCount`).
-            promptTokens: (obj["promptTokens"] as? NSNumber).flatMap(Self.tokenCount),
+            promptTokens: prompt,
             completionTokens: (obj["completionTokens"] as? NSNumber).flatMap(Self.tokenCount),
-            cacheReadTokens: (obj["cacheReadTokens"] as? NSNumber).flatMap(Self.tokenCount),
+            cacheReadTokens: cacheRead,
             cacheWriteTokens: (obj["cacheWriteTokens"] as? NSNumber).flatMap(Self.tokenCount))
     }
 
