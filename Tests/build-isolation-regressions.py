@@ -257,4 +257,15 @@ hotkey = (root / 'Sources/ClaudeBar/Utils/ScreenshotHotKey.swift').read_text()
 register = hotkey[hotkey.index('    func register() {'):hotkey.index('    func unregister() {')]
 assert register.index('guard BuildChannel.promptsForSystemPermissions') < register.index('installTap()'), \
     'the screenshot hotkey must be gated before installing the tap'
-print('PASS: safe build defaults, channel validation, packaging constraints, VPN launch and hotkey registration guards')
+# `reloadConfig` waits up to 5 s for the old core to release its ports before
+# spawning the replacement. That delayed spawn is a side effect a stop must be
+# able to cancel: turning the VPN off in that window used to leave the timer
+# running, and the core came back up with the system proxy behind the user's
+# back. Both halves are asserted — the task is held, and `stopCore` cancels it.
+reload = manager[manager.index('    func reloadConfig() {'):manager.index('    /// Yield until the process is gone')]
+assert 'relaunchTask = Task {' in reload and 'self.prefs.vpnEnabled' in reload, \
+    'the delayed relaunch must be held and re-check vpnEnabled'
+stop = manager[manager.index('    func stopCore(clearLists: Bool = true'):]
+assert stop.index('relaunchTask?.cancel()') < stop.index('let old = process'), \
+    'stopCore must cancel the delayed relaunch before the stop completes'
+print('PASS: safe build defaults, channel validation, packaging constraints, VPN launch/hotkey guards, cancelable relaunch')
