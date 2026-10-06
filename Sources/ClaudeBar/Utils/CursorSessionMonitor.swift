@@ -199,19 +199,32 @@ struct CursorSessionMonitor {
         // Read the recent header set before imposing a display budget. A long
         // run can have an old submission/recency but a fresh checkpoint, and
         // must not disappear behind newer idle conversations or a row limit.
+        //
+        // `checkpointAt` is read but not filtered on: `ORDER BY recency DESC`
+        // already decides the walk order, and `checkpointAt >= cutoff` cannot
+        // use `idx_composerHeaders_1 (recency, composerId)` — the plan is a
+        // full SCAN of the index every 2.5 s poll (measured 1.3 ms vs 0.4 ms
+        // on 875 rows; the gap widens with the table). The arm was also
+        // redundant in practice: a fresh checkpoint belongs to a composer
+        // Cursor is still writing, and every write advances recency too.
+        // Measured over all 611 real rows that carry both clocks, a checkpoint
+        // leads its recency by at most 34 minutes, and the one composer the
+        // 2026-09-28 investigation was written about ended with recency
+        // *later* than its checkpoint. `inFlight` still consumes the selected
+        // `checkpointAt`, so the long-run case keeps its clock — only the
+        // prefilter that could never see it is gone.
         var sessions: [CursorSessionInfo] = []
         let sql = """
             SELECT composerId, recency, value, checkpointAt
             FROM composerHeaders
             WHERE isArchived = 0 AND isSubagent = 0
-              AND (recency >= ? OR checkpointAt >= ?)
+              AND recency >= ?
             ORDER BY recency DESC
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, cutoff)
-        sqlite3_bind_double(stmt, 2, cutoff)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let composerId = CursorDB.cString(stmt, 0)
@@ -286,8 +299,11 @@ struct CursorSessionMonitor {
     /// visible session to attach to).
     ///
     /// The parent id lives inside the `value` JSON blob, so the grouping
-    /// filter runs after parsing the recent header set. Checkpoint recency
-    /// keeps long-running helpers in scope just as it does their parents.
+    /// filter runs after parsing the recent header set. Checkpoint recency is
+    /// selected but not filtered on, for the same reason as `fetchActive`:
+    /// the `OR checkpointAt >= ?` arm makes the plan a full index SCAN on
+    /// every poll, and a helper with a fresh checkpoint always has a fresh
+    /// recency too.
     private static func fetchSubagents(db: OpaquePointer, parentIDs: Set<String>) -> [String: [CursorSubagentInfo]] {
         var map: [String: [CursorSubagentInfo]] = [:]
         guard !parentIDs.isEmpty else { return map }
@@ -296,14 +312,13 @@ struct CursorSessionMonitor {
         let sql = """
             SELECT value, checkpointAt FROM composerHeaders
             WHERE isArchived = 0 AND isSubagent = 1
-              AND (recency >= ? OR checkpointAt >= ?)
+              AND recency >= ?
             ORDER BY recency DESC
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, cutoff)
-        sqlite3_bind_double(stmt, 2, cutoff)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let value = CursorDB.textColumn(stmt, 0),

@@ -39,7 +39,7 @@ func runTests() throws {
         precondition(sqlite3_exec(db, "DELETE FROM composerHeaders", nil, nil, nil) == SQLITE_OK)
         try? fm.removeItem(at: FilePaths.cursorProjectsDir)
     }
-    func add(_ id: String, headAge: Double = 1, checkpointAge: Double? = nil,
+    func add(_ id: String, headAge: Double = 1, recencyAge: Double? = nil, checkpointAge: Double? = nil,
              unfinishedAge: Double? = nil, transcript: String? = nil,
              transcriptAge: Double = 1, locationActive: Bool = true,
              archived: Bool = false, parent: String? = nil, rootParent: String? = nil,
@@ -61,7 +61,7 @@ func runTests() throws {
         precondition(sqlite3_prepare_v2(db, "INSERT INTO composerHeaders VALUES (?, ?, ?, ?, ?, ?)", -1, &stmt, nil) == SQLITE_OK)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, id, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_double(stmt, 2, now - headAge * 1000)
+        sqlite3_bind_double(stmt, 2, now - (recencyAge ?? headAge) * 1000)
         if let checkpointAge { sqlite3_bind_double(stmt, 3, now - checkpointAge * 1000) }
         sqlite3_bind_int(stmt, 4, archived ? 1 : 0)
         sqlite3_bind_int(stmt, 5, parent == nil ? 0 : 1)
@@ -162,8 +162,20 @@ func runTests() throws {
           "the 14-session display budget must not discard running sessions")
 
     reset()
-    try add("old-submission", headAge: 4 * 86400, checkpointAge: 5, unfinishedAge: 4 * 86400)
-    check(busy("old-submission"), "recent checkpoints must rescue headers outside the three-day submission window")
+    // The 2026-09-28 investigation's composer had a *submission* clock 21
+    // minutes old when the checkpoint was 30 seconds old — the case the
+    // checkpoint-augmented `inFlight` clock exists for (and still handles:
+    // `checkpointAt` is still selected and still feeds `inFlight`). What
+    // changed is the SQL *prefilter*, and the investigated composer's own
+    // final row shows why it is safe: its recency (09-29 21:34) ended up
+    // *later* than its checkpoint (09-28 21:28), because Cursor advances
+    // recency on every composer write. Measured across all 611 real rows that
+    // carry both clocks, a checkpoint leads its recency by at most 34 min.
+    // The fixture models that: submission four days old, recency fresh.
+    try add("checkpoint-live-old-submission", headAge: 4 * 86400, recencyAge: 5,
+            checkpointAge: 5, unfinishedAge: 4 * 86400)
+    check(busy("checkpoint-live-old-submission"),
+          "a fresh checkpoint must keep a long run visible although the submission is four days old")
 
     reset()
     try add("parent", headAge: 1000, checkpointAge: 5, unfinishedAge: 1000)
