@@ -373,13 +373,24 @@ final class BatteryChargeController {
         // Track connectivity/sleep without treating that older revision as an ack.
         if sleeping { measurementGeneration = UUID(); measuredText = ""; return }
         guard status.revision == revision else { return }
-        dischargeSupported = status.dischargeSupported
-        lastError = status.error.isEmpty ? nil : Self.message(for: status.error)
+        if dischargeSupported != status.dischargeSupported { dischargeSupported = status.dischargeSupported }
+        let nextError = status.error.isEmpty ? nil : Self.message(for: status.error)
+        if lastError != nextError { lastError = nextError }
         if state != status.state { stateChangedAt = lastResponseAt }
-        mode = Mode(rawValue: status.mode) ?? .system
-        state = status.state; appliedLimit = status.limit; sleeping = status.sleeping
-        notice = Self.noticeText(status.notice)
-        recoveryUnconfirmed = status.error == "restore_failed"
+        // Every one of these writes is guarded: the controller publishes every
+        // ~2 s while managing, and an unguarded assignment to a value that did
+        // not change still invalidates every observing surface (finding 544).
+        // `mode`/`appliedLimit`/`notice` in particular only move on a real
+        // user- or helper-initiated transition, not on each status echo.
+        let nextMode = Mode(rawValue: status.mode) ?? .system
+        if mode != nextMode { mode = nextMode }
+        if state != status.state { state = status.state }
+        if appliedLimit != status.limit { appliedLimit = status.limit }
+        if sleeping != status.sleeping { sleeping = status.sleeping }
+        let nextNotice = Self.noticeText(status.notice)
+        if notice != nextNotice { notice = nextNotice }
+        let nextRecovery = status.error == "restore_failed"
+        if recoveryUnconfirmed != nextRecovery { recoveryUnconfirmed = nextRecovery }
         if let request = inFlight, request.revision == status.revision {
             inFlight = nil
             responseTimeout?.cancel(); responseTimeout = nil
