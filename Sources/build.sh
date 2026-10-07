@@ -265,7 +265,7 @@ fi
 # Release keeps WMO. Object/dependency caches survive bundle reconstruction.
 APP_MAP_FLAGS=()
 if [ "$CLAUDEBAR_CHANNEL" = dev ]; then
-    APP_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/app" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "${swift_files[@]}")"
+    APP_MAP="$(python3 "$PROJECT_DIR/Tools/build-cache.py" filemap "$BUILD_DIR/objects/app" "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" "${swift_files[@]}")"
     APP_MAP_FLAGS=(-emit-executable -emit-module-path "$BUILD_DIR/objects/app/$APP_EXECUTABLE.swiftmodule" -output-file-map "$APP_MAP")
 fi
 swiftc "${SWIFT_FLAGS[@]}" ${APP_MAP_FLAGS[@]+"${APP_MAP_FLAGS[@]}"} \
@@ -289,11 +289,16 @@ swiftc "${SWIFT_FLAGS[@]}" ${APP_MAP_FLAGS[@]+"${APP_MAP_FLAGS[@]}"} \
     -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$SDK_PATH/System/Library/Frameworks" \
     "$PROJECT_DIR/Sources/Shared/BuildChannel.swift" \
+    "$PROJECT_DIR/Sources/Shared/CLISnapshot.swift" \
     "${swift_files[@]}"
 
 # Drop local symbols from the shipped binary (16 MB → 7 MB). `-x` keeps the
 # global/undefined symbols the dynamic linker needs. Must run before codesign.
 if [ "$CLAUDEBAR_CHANNEL" = release ]; then strip -x "$MACOS_DIR/$APP_EXECUTABLE"; fi
+
+# Native terminal client is nested code, signed before the containing bundle.
+CLI_OUT="$CONTENTS/Helpers/$CLI_EXECUTABLE"
+bash "$PROJECT_DIR/Sources/build-cli.sh" "$CLI_OUT"
 
 echo "Binary created: $MACOS_DIR/$APP_EXECUTABLE"
 
@@ -490,6 +495,7 @@ AENT
 # or similar detritus not allowed" and can prevent the widget from loading.
 echo "=== Code-signing ==="
 xattr -cr "$APP_BUNDLE"
+codesign --force --sign "$SIGN_IDENTITY" --options runtime --identifier "$BUNDLE_ID.cli" "$CLI_OUT"
 
 # `--identifier` is pinned on both helpers: without it codesign derives the
 # identifier from the output **filename** plus the Mach-O uuid it just embedded
@@ -529,6 +535,10 @@ printf '%s\n' "$BUILD_FINGERPRINT" > "$STAMP_FILE"
 fi
 
 # --- Release artifacts (DMG + zip) for GitHub Releases ---
+mkdir -p "$BUILD_DIR/bin"
+ln -sfn "../$APP_NAME.app/Contents/Helpers/$CLI_EXECUTABLE" "$BUILD_DIR/bin/$CLI_EXECUTABLE"
+ln -sfn "$CLI_EXECUTABLE" "$BUILD_DIR/bin/$CLI_ALIAS"
+
 if [ "${CLAUDEBAR_PACKAGE:-}" = "1" ]; then
     DIST_DIR="$PROJECT_DIR/.build/dist"
     mkdir -p "$DIST_DIR"

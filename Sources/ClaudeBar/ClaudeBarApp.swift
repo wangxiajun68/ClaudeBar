@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A widget tap that arrived before the menu-bar controller existed (see
     /// `application(_:open:)`). Replayed at the end of launch.
     private var pendingOpenURL = false
+    private var pendingCLIURLs: [URL] = []
+    private var cliSnapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // .regular: the app has a Dock icon, standard app menu, and proper
@@ -84,6 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // first one included — schedules the next poll from the reset instant
         // it carries (`QuotaPollScheduler`), so there is no poll to arm here.
         store.refresh()
+        store.publishCLISnapshot()
+        cliSnapshotTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak store] _ in
+            MainActor.assumeIsolated { store?.publishCLISnapshot() }
+        }
+        RunLoop.main.add(cliSnapshotTimer!, forMode: .common)
 
         // Cursor's allowance reads the account directly (no login, no CLI), so
         // it has no reader in `store.refresh()` to piggyback on — arm its poll
@@ -115,6 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingOpenURL = false
             menuBarController?.showPanel()
         }
+        for url in pendingCLIURLs { handleCLIURL(url) }
+        pendingCLIURLs.removeAll()
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(fanPermissionNeeded),
@@ -203,11 +212,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Park the request instead and replay it once the controller is up.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == BuildChannel.urlScheme {
+            if url.host == "cli" {
+                if mainWindowController == nil {
+                    pendingCLIURLs.append(url)
+                } else {
+                    handleCLIURL(url)
+                }
+                continue
+            }
             guard let menuBarController else {
                 pendingOpenURL = true
                 continue
             }
             menuBarController.showPanel()
+        }
+    }
+
+    @MainActor private func handleCLIURL(_ url: URL) {
+        guard url.scheme == BuildChannel.urlScheme, url.host == "cli" else { return }
+        switch url.path {
+        case "/weather-refresh":
+            // Explicit city fetch only: CLI never requests a location permission or fix.
+            WeatherStore.shared.refreshCityForCLI()
+            providerStore?.publishCLISnapshot()
+        case "/refresh":
+            providerStore?.refresh()
+            CursorUsageStore.shared.refresh()
+            Task { @MainActor [weak self] in
+                await ConnectorManager.shared.refresh(projectPath: nil)
+                self?.providerStore?.publishCLISnapshot()
+            }
+        case "/open":
+            let pageName = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "page" })?.value ?? "dashboard"
+            guard let page = AppPage(rawValue: pageName) else { return }
+            mainWindowController?.showWindow(on: .page(page))
+        default: break
         }
     }
 
@@ -230,6 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ports. `VpnManager.reapOrphanCore()` covers the crash case; this covers
     /// the ordinary Quit menu item.
     func applicationWillTerminate(_ notification: Notification) {
+        cliSnapshotTimer?.invalidate()
+        cliSnapshotTimer = nil
         BatteryChargeController.shared.shutdown()
         SystemThroughput.shared.stop()
         // Fans pinned at max keep that target in the SMC after the process is

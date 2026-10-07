@@ -22,6 +22,8 @@
 
 ### 新增
 
+- **Matrix CLI 系统观测台**：新增原生 `mtx` / `mtx-dev` 短命令（Matrix，兼容 `claudebar` / `claudebar-dev`），提供多色终端总览、大字问候、日期日历、缓存天气与城市刷新、资源专用命令、Agent 统计、模型排名、健康提示、完整会话数量与状态、本机资源、用量、额度、供应商、VPN、代理、连接器及 JSON/NDJSON。支持同版本应用启动、正常退出、页面打开和刷新；私有快照带时间与过期标记，开发版保持独立身份与系统集成限制。见 [CLI 使用说明](CLI.md)。
+
 - **会话迁移**：会话卡片可把已结束的 Claude Code、Codex 或 Cursor 正文创建为 Claude Code、Codex 当前配置/官方登录、Cursor CLI 或 Cursor 桌面的新原生会话；迁移记录关联来源及再次迁移。Claude Code / Codex / Cursor 桌面可选择携带已完成工具。Claude Code 与 Codex 写成相邻的原生工具调用和结果，并生成新的调用 ID；Cursor 桌面只写回样本里已有的工具编号。也可选择把 png、jpeg、webp、gif 或图片地址写入目标图片字段；Cursor 桌面写入该项目的图片目录。两个选项同时打开时，工具结果里的图片不放进工具输出文本。Cursor CLI 仍不写入图片，`attachedFiles`、文档和音频仍拒绝。官方套餐请求去掉订阅不接受的采样参数，且不读取 Codex 登录文件。Cursor 桌面跟随项目已有模型，并直接定位打开迁移聊天。新增「Claude Code · Codex 自定义模型」，以独立会话路由沿用已保存的 Responses / Chat 供应商和模型，不改全局选择；Kimi、DeepSeek 的真实 Read/Write、错误结果和冷恢复已验证。固定已验证客户端版本，未知版本、压缩、子代理、文档音频及不完整历史明确拒绝。开发版保持系统集成禁用，官方套餐跨客户端授权尚未接入。见 [会话迁移契约](technical/session-migration.md) 与 [第三阶段完整报告](reviews/session-migration-phase3-implementation-2026-10-03.md)。
 
 ## [1.15.0] — 2026-10-03

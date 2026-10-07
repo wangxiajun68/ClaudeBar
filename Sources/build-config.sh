@@ -22,6 +22,8 @@ case "$CLAUDEBAR_CHANNEL" in
 esac
 WIDGET_ID="${BUNDLE_ID}.widget"
 APP_GROUP_ID="$WIDGET_ID"
+if [ "$CLAUDEBAR_CHANNEL" = release ]; then CLI_EXECUTABLE=claudebar; else CLI_EXECUTABLE=claudebar-dev; fi
+if [ "$CLAUDEBAR_CHANNEL" = release ]; then CLI_ALIAS=mtx; else CLI_ALIAS=mtx-dev; fi
 BUILD_DIR="$PROJECT_DIR/.build/$CLAUDEBAR_CHANNEL"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 INSTALLED_APP="$INSTALL_DIR/$APP_NAME.app"

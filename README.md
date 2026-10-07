@@ -130,3 +130,19 @@ make ci
 ## 许可证
 
 ClaudeBar 项目代码采用 [MIT License](LICENSE)。第三方组件与素材遵循各自许可证：界面图标使用 Lucide（ISC），其声明位于 [Lucide.txt](Sources/Licenses/Lucide.txt)；字体及其他素材声明见 [ASSET-LICENSES.md](Sources/ClaudeBar/Resources/ASSET-LICENSES.md)；VPN 内核的打包方式见 [mihomo 说明](vendor/mihomo/README.md)。
+
+## CLI 系统观测台
+
+![Matrix CLI 示例数据预览](docs/assets/cli-matrix-preview.png)
+
+短命令 `mtx`（Matrix），带彩色资源条、大字问候、日期、天气和日历的原生终端面板，支持会话数量与状态、本机 CPU/GPU/内存/电池/网络、用量、模型排名、Agent 统计、健康提示、额度、VPN、供应商、连接器、JSON 和实时刷新。
+
+```bash
+make build
+.build/dev/bin/mtx-dev start
+.build/dev/bin/mtx-dev watch
+.build/dev/bin/mtx-dev sessions count
+.build/dev/bin/mtx-dev system --json
+```
+
+正式版命令为 `.build/release/bin/mtx`。完整命令与显式 CLI 安装说明见 [docs/CLI.md](docs/CLI.md)。

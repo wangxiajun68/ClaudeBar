@@ -842,6 +842,13 @@ final class WeatherStore {
         fetch(query: city, fallbackNote: nil)
     }
 
+    /// CLI requests never enter the location-aware refresh/rerun path.
+    /// An existing fetch is allowed to finish; a repeated command can retry.
+    func refreshCityForCLI() {
+        guard inflight == nil else { return }
+        fetch(query: city, fallbackNote: nil)
+    }
+
     /// Location failed or was refused. The city name is the fallback, and the
     /// note is why the card is not showing where you are.
     func refreshFromCity(note: String) {

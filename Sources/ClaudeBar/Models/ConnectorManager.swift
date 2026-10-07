@@ -333,6 +333,7 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
     @Published private(set) var pluginContents: [String: PluginBundleContents] = [:]
     @Published private(set) var localCLIs: [LocalCLIRecord] = []
     @Published private(set) var isLoading = false
+    private(set) var hasScanned = false
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
     private var scanGeneration = 0
@@ -409,6 +410,7 @@ struct LocalCLIRecord: Identifiable, Sendable, Equatable {
         }
         scanTask = nil
         isLoading = false
+        hasScanned = true
     }
 
     func remove(_ record: ConnectorRecord, projectPath: String?) async {

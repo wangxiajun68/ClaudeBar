@@ -516,7 +516,7 @@ final class ProxyCaptureStore {
         // the same silent no-op as the no-op.
         if !hasColumn(db, table: "payloads", column: "request_headers"),
            sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil) != SQLITE_OK {
-            Self.logger.error("payloads.request_headers migration failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
+            Self.logger.error("payloads.request_headers migration failed: \(String(cString: sqlite3_errmsg(self.db)), privacy: .public)")
         }
         // Older databases predate the cache-write column. The capture rows are
         // a rolling 120-entry window of raw traffic, so a NULL here means "not
@@ -524,7 +524,7 @@ final class ProxyCaptureStore {
         // rebuild that would throw away the rows.
         if !hasColumn(db, table: "captures", column: "cache_write_tokens"),
            sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil) != SQLITE_OK {
-            Self.logger.error("captures.cache_write_tokens migration failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
+            Self.logger.error("captures.cache_write_tokens migration failed: \(String(cString: sqlite3_errmsg(self.db)), privacy: .public)")
         }
         // Every statement against `captures` orders or filters by id, its
         // INTEGER PRIMARY KEY, so the secondary index on `started_at` written

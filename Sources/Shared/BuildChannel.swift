@@ -38,6 +38,8 @@ enum BuildChannel {
     static let allowsSystemIntegration = false
 #endif
     static let widgetBundleID = bundleID + ".widget"
+    static var cliExecutable: String { name == "release" ? "claudebar" : "claudebar-dev" }
+    static var cliShortExecutable: String { name == "release" ? "mtx" : "mtx-dev" }
     static let appGroupID = widgetBundleID
 
     /// The snapshot contract between the app and its widget extension.

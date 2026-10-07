@@ -11,6 +11,8 @@ make setup                 # 测试依赖仅安装在项目 .venv
 make doctor                # 只读环境检查
 make build                 # 开发测试版；增量编译，不安装、不启动
 make run                   # 构建并启动开发测试版
+make cli                   # 仅编译开发版 CLI
+.build/dev/bin/mtx-dev watch  # Matrix 风格实时状态面板
 make test-fast             # 隔离、端点、配置持久化的快速单元回归
 make test TEST=core        # 只验证当前修改涉及的一组
 make test TEST="core local-endpoint"  # 指定多组，也支持逗号分隔
@@ -24,6 +26,8 @@ make test                  # 全部回归；CI/发布门禁
 JSON 用量后端、MCP 取消和访问日志尾部读取可运行 `make test TEST="backend-performance access-log-tail"`。夹具仅使用临时文件及自身的模拟 MCP 子进程，不启动真实客户端或 VPN。前后对照与基线重建命令见 [第二轮性能审查](reviews/apple-performance-followup-2026-10-04.md)。日志已异步载入，`module-performance` 的 `log_construct_ms` 是构造成本，`log_load_ms` 包含后台载入与发布等待，不能直接当作旧同步读取函数的耗时；单独读盘工作见 `access-log-tail`。
 
 UI 原生动效增量更新用 `make test TEST=ui-animation-performance`；前后对照运行 `python3 Tests/ui-animation-performance-regressions.py --compare --baseline-ref <修改前提交> --output-json <输出路径>`。使用生产曲线和图层代码、不可见夹具窗口，验证外观及播放生命周期。组件 CPU 时间与 model-layer 像素对照不能替代整窗口 FPS / GPU trace；详见 [UI 与动效审查](reviews/apple-ui-performance-2026-10-04.md)。
+
+CLI 命令、数据时效、JSON、启动与退出说明见 [CLI.md](CLI.md)。应用构建会内置对应版本的 CLI，正式版短名为 `mtx`，开发版为 `mtx-dev`，兼容 `claudebar` / `claudebar-dev`；显式安装命令是 `make install-cli` / `make install-cli-release`，仅安装命令链接，不安装或启动应用。
 
 ## 两个版本的隔离
 

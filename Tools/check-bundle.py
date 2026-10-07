@@ -8,6 +8,7 @@ alone, a user-level `PYTHONOPTIMIZE=1` made a bundle with the wrong App Group
 print PASS and stay "verified" for every later build. `build.sh` also invokes
 this with `-E -s` so the environment cannot change how it reads the bundle.
 """
+import json
 import plistlib
 import subprocess
 import sys
@@ -45,6 +46,14 @@ check(info['CFBundleShortVersionString'] == version and widget_info['CFBundleSho
 check(info['CFBundleVersion'] == version and widget_info['CFBundleVersion'] == version,
       'CFBundleVersion does not match VERSION')
 check((app / 'Contents/MacOS' / executable).is_file(), 'the app executable is missing')
+cli_name = 'claudebar' if channel == 'release' else 'claudebar-dev'
+cli = app / 'Contents/Helpers' / cli_name
+check(cli.is_file() and cli.stat().st_mode & 0o111, 'the channel CLI executable is missing')
+subprocess.run(['codesign', '--verify', '--strict', str(cli)], check=True)
+cli_signature = subprocess.run(['codesign', '-dv', str(cli)], check=True, capture_output=True, text=True)
+check(f'Identifier={bundle_id}.cli' in cli_signature.stderr.splitlines(), 'CLI signing identity does not match channel')
+cli_version = json.loads(subprocess.check_output([str(cli), 'version', '--json'], text=True))
+check(cli_version['channel'] == channel and cli_version['version'] == version, 'CLI compiled channel/version does not match app')
 if channel == 'dev':
     # A dev build must wear the DEV icon; the release icon is the only other
     # possibility, and a swapped pair is how a dev build ships as a release.

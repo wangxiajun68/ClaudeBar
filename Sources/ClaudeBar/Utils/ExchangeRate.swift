@@ -39,6 +39,7 @@ final class ExchangeRate: ObservableObject {
     @Published private(set) var lastError: String?
 
     private var cancel: AnyCancellable?
+    private var manualCancel: AnyCancellable?
     private var inflight: Task<Void, Never>?
 
     /// Cached in UserDefaults rather than a file: it is three scalars, and it
@@ -71,6 +72,15 @@ final class ExchangeRate: ObservableObject {
                 guard display.needsRate else { return }
                 self?.refreshIfStale()
             }
+
+        // A manual-rate edit lands in AppPreferences, but every reader
+        // observes *this* object (`fx.effectiveRate`), so the converted
+        // figures and the note's text used to keep the old rate until some
+        // unrelated publish (finding 386). Forward the change as our own.
+        manualCancel = AppPreferences.shared.$manualUSDToCNY
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     /// Called once at launch. Fetches only if the saved preference already
@@ -103,7 +113,12 @@ final class ExchangeRate: ObservableObject {
         let amount = String(format: "%.4g", rate)
         if isManual { return "手动汇率 1 USD = \(amount) CNY" }
         guard let providerDate else { return "1 USD = \(amount) CNY" }
-        let day = UsageStats.formatter("yyyy-MM-dd").string(from: providerDate)
+        // Rendered with the same UTC-pinned formatter the date was parsed
+        // with: the provider's `yyyy-MM-dd` names *its* day, and formatting it
+        // in `TimeZone.current` showed the previous day to every user behind
+        // UTC (a 00:02 UTC stamp is still yesterday in the Americas) —
+        // finding 385.
+        let day = Self.isoDay.string(from: providerDate)
         let suffix = isStale ? "，已超过 12 小时未更新" : ""
         return "1 USD = \(amount) CNY · \(day)\(suffix)"
     }
@@ -183,9 +198,7 @@ final class ExchangeRate: ObservableObject {
         guard let url = URL(string: "https://latest.currency-api.pages.dev/v1/currencies/usd.json") else { return nil }
         guard let json = await getJSON(url), let usd = json["usd"] as? [String: Any],
               let rate = number(usd["cny"]), rate > 0 else { return nil }
-        let date = (json["date"] as? String).flatMap { day in
-            formatter("yyyy-MM-dd").date(from: day)
-        }
+        let date = (json["date"] as? String).flatMap { Self.isoDay.date(from: $0) }
         return Quote(rate: rate, date: date)
     }
 
@@ -221,13 +234,18 @@ final class ExchangeRate: ObservableObject {
         return made
     }()
 
-    private static func formatter(_ format: String) -> DateFormatter {
+    /// The fallback host's `date` field, in both directions: parsed to a
+    /// `Date` and rendered back for the note. One cached instance instead of a
+    /// per-call `DateFormatter` factory — `DateFormatter` construction is
+    /// expensive enough that the app caches even its heatmap-tooltip
+    /// formatters, and this pair had no cache at all (finding 578).
+    private static let isoDay: DateFormatter = {
         let made = DateFormatter()
         made.locale = Locale(identifier: "en_US_POSIX")
         made.timeZone = TimeZone(identifier: "UTC")
-        made.dateFormat = format
+        made.dateFormat = "yyyy-MM-dd"
         return made
-    }
+    }()
 
     private static func number(_ value: Any?) -> Double? {
         if let n = value as? NSNumber {
