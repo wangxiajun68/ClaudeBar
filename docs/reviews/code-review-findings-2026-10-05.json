@@ -509,7 +509,9 @@
   "summary": "activate 在 busyID == nil 时直接 return，但成对操作（更新/查询流量）在自身完成回调里把 busyID 置回 nil —— 并发第二次点击时该守卫是空操作，仍会触发 reloadConfig 并重启内核。",
   "evidence": "L87-97: `guard busyID == nil else { return }` 之后立刻 `store.browse(sub.id)`；`busyID` 只在 L127-131（更新节点配置）与 L135-139（查询流量）被写。L88 的守卫读的是 `@State busyID`，而写入发生在两处 `Task { busyID = sub.id … busyID = nil }` 的异步 completion 里，两次点击之间 SwiftUI 已把 busyID 清回 nil，守卫读到的永远是 nil。",
   "failure": "用户在「更新节点配置」菜单项仍在下载时点到「启用」：busyID 已被前一个任务写为 nil，guard 通过，随后 L92-96 若 manager 未运行会同时改写 `vpnEnabled` / `vpnSystemProxyEnabled` 并 `reloadConfig()`，一次点击触发内核重启（控制端口 9097 与 mixed-port 需等旧核退出），页面出现「启动中…」并丢掉刚启动的内核。",
-  "fix": "把 busy 态做成成对的真源（例如 `activeOperationID: UUID?`，只在唯一入口 `withBusy { }` 里设置/清除），并让 activate 在 `manager.state == .starting` 之外也检查 `activeOperationID != nil`；或至少把 L88 的守卫改为检查 `manager.launchTask != nil` 之类的真实进行中状态，而不是自身刚被清空的 busyID。"
+  "fix": "把 busy 态做成成对的真源（例如 `activeOperationID: UUID?`，只在唯一入口 `withBusy { }` 里设置/清除），并让 activate 在 `manager.state == .starting` 之外也检查 `activeOperationID != nil`；或至少把 L88 的守卫改为检查 `manager.launchTask != nil` 之类的真实进行中状态，而不是自身刚被清空的 busyID。",
+  "status": "fixed",
+  "verdict_note": "Root cause was wider than the activate guard: three loose @State flags (busyID, queryingAll, adding) were written inside Task closures, whose bodies run a main-actor turn after the click, so any second click in the same event batch passed every guard — and activate additionally could not see the restart it itself started. Replaced with SubscriptionBusy, a value type holding a single Owner (.add / .queryAll / .update(UUID)): claim() is called synchronously in each click (menu paths via startBusy, the sheet save before its Task, delete/activate guard against isIdle), release(owner) only frees the lock if the releasing operation still holds it (a straggler cannot clear a newer claim), and activate's guard now reads busy.isIdle + manager.state != .starting (reloadConfig sets .starting synchronously). Covered by Tests/vpn-subscription-reentry-regressions.py: the production lock is sliced and executed (single claimant, owner-scoped release, straggler rejection, finding-37 interleaving shown), the section wiring is pinned, and 4 mutants trip (activate dropping the restart check, release freeing any owner, menu path setting a local flag, delete alert skipping the lock)."
  },
  {
   "category": "state",
@@ -2597,7 +2599,9 @@
   "summary": "删除订阅的破坏性按钮不受菜单的 `.disabled(busyID != nil || queryingAll)` 约束：菜单项被 `.disabled` 挡住，但同一 `pendingDelete` 状态可以通过 alert 在其他任务写盘时执行删除。",
   "evidence": "L147 `Button(\"删除\", role: .destructive) { pendingDelete = sub }` 所在的 Menu 带 L150 的 `.disabled(busyID != nil || queryingAll)`；alert 侧 L71-77 的 `Button(\"删除\", role: .destructive) { if let sub = pendingDelete { store.removeSubscription(sub.id) … } }` 没有任何 busy 检查。",
   "failure": "用户在「查询流量与到期时间」进行中时打开删除确认（菜单在打开确认框前仍可点，或确认框在任务完成前弹出）：删除会删掉文件并把 `activeID` 移到另一份订阅，而并发中的 `refresh(id)` 随后 `save()` 会把已经被删掉的订阅写回 `subscriptions.json`（refresh 只查 `subscriptions`，不查文件是否还存在）—— 订阅列表出现「文件已不存在但卡片还在」的幽灵条目。",
-  "fix": "在删除确认按钮内部同样加 `guard busyID == nil, !queryingAll else { return }`（或关闭确认框），并让 `refresh` / `queryAll` 在写入前校验 `subscriptions.contains(where: { $0.id == id })`。"
+  "fix": "在删除确认按钮内部同样加 `guard busyID == nil, !queryingAll else { return }`（或关闭确认框），并让 `refresh` / `queryAll` 在写入前校验 `subscriptions.contains(where: { $0.id == id })`。",
+  "status": "fixed",
+  "verdict_note": "The delete confirmation now guards `busy.isIdle, manager.state != .starting` before removing — the same lock and restart check every other write path uses (see finding 37); pinned in Tests/vpn-subscription-reentry-regressions.py (delete-alert mutant trips)."
  },
  {
   "category": "test-gap",
@@ -8785,7 +8789,9 @@
   "evidence": "VPNSubscriptionSection.swift:195-200 `case .add: await store.addSubscription(name: name, url: url); if store.errorMessage == nil, manager.isRunning { manager.reloadConfig() }` —— 不设 busyID；而同文件的「更新节点配置」(126-133) 与「查询流量」(134-140) 都先 `busyID = sub.id`，菜单/按钮也以 `busyID != nil` 禁用（150、166）。addSubscription 内部对同一 URL 不做去重（VpnSubscriptionStore.swift:82-105 直接 append）。downloadProfile 最多尝试 4 个 UA，每个 timeout 45 s。",
   "failure": "机场慢（或超时重试）时，sheet 保存即关闭、界面没有任何「添加中」反馈；用户在无反馈窗口里再点一次「保存」，列表里出现两条同名同 URL 的订阅，节点预览/激活目标都变成双份。",
   "fix": "在 .add 分支加一个页级 `adding = true`（复用 busyID 语义或独立 @State），期间禁用「添加订阅」按钮与保存回调；或在 addSubscription 内按规范化 URL 去重。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "The add path now claims the page lock (SubscriptionBusy.Owner.add) synchronously in the sheet's save click, so the add button, the menu and both write guards are disabled for its duration; the add is also serialised against updates/queries/deletes. Pinned in Tests/vpn-subscription-reentry-regressions.py (menu-path mutant trips). URL-level dedupe inside addSubscription was not added: the finding's own fix left it as an alternative, and with re-entry closed the duplicate-add window (double click) is gone; identical URLs remain a deliberate user choice."
  },
  {
   "category": "test-gap",

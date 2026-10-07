@@ -1,6 +1,59 @@
 import SwiftUI
 import AppKit
 
+/// The subscription page's write lock.
+///
+/// One operation at a time: an add, a whole-list query, or one subscription's
+/// update — each downloads and may reload the core, and two overlapping ones
+/// would write the same profile or restart the core twice. Two rules hold the
+/// lock sound, and both used to be violated by three loose `@State` flags:
+///
+/// - **Every claim happens synchronously in the click that starts the work**,
+///   not inside the `Task` that performs it — a task's closure begins after
+///   the current event batch is dispatched, so a second click delivered in
+///   the same batch would still see the old state and pass every guard.
+/// - **A release only frees the lock if it still belongs to the releasing
+///   operation.** A straggling completion must not clear a claim that a newer
+///   click has already taken.
+///
+/// It is a value type rather than view state scattered across the section so
+/// `Tests/vpn-subscription-reentry-regressions.py` can execute the real
+/// policy without launching the app.
+struct SubscriptionBusy: Equatable {
+    enum Owner: Equatable {
+        case add
+        case queryAll
+        case update(UUID)
+
+        var updatingID: UUID? {
+            if case .update(let id) = self { return id }
+            return nil
+        }
+    }
+
+    private(set) var owner: Owner?
+
+    var isIdle: Bool { owner == nil }
+    /// The subscription currently updating, for that card's spinner.
+    var updatingID: UUID? { owner?.updatingID }
+    /// An add has no subscription id yet, so its spinner cannot be scoped to
+    /// one card — it shows on every card, as it always has.
+    var isAdding: Bool { owner == .add }
+    var isQueryingAll: Bool { owner == .queryAll }
+
+    /// Take the lock for `next`; false when another operation holds it.
+    mutating func claim(_ next: Owner) -> Bool {
+        guard owner == nil else { return false }
+        owner = next
+        return true
+    }
+
+    /// Give the lock back, but only if this operation still holds it.
+    mutating func release(_ held: Owner) {
+        if owner == held { owner = nil }
+    }
+}
+
 /// Subscription URL manager: add / edit / copy, remaining traffic, expiry.
 /// Mirrors clash-verge's profile extra (`subscription-userinfo`).
 struct VpnSubscriptionSection: View {
@@ -11,11 +64,7 @@ struct VpnSubscriptionSection: View {
 
     @State private var pendingDelete: VpnSubscription?
     @State private var editor: SubEditor?
-    @State private var busyID: UUID?
-    @State private var queryingAll = false
-    /// A download in flight that has no subscription id yet — the add path.
-    /// Same role as `busyID`, which needs an id to hang the spinner on.
-    @State private var adding = false
+    @State private var busy = SubscriptionBusy()
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -27,21 +76,12 @@ struct VpnSubscriptionSection: View {
                 Spacer(minLength: 0)
                 Button { editor = .add } label: { AppGlyph(name: "plus", size: 14) }
                     .buttonStyle(.plain).help("添加订阅")
-                    .disabled(adding || busyID != nil || queryingAll)
+                    .disabled(!busy.isIdle)
                 Menu {
-                    Button(queryingAll ? "查询中…" : "查询全部流量") {
-                        // Acquired synchronously, like every other operation —
-                        // see `runBusy`. The guard is for a second click
-                        // delivered from the same event batch, before the
-                        // disabled state has re-rendered.
-                        guard !queryingAll, busyID == nil, !adding else { return }
-                        queryingAll = true
-                        Task {
-                            await store.queryAll()
-                            queryingAll = false
-                        }
+                    Button(busy.isQueryingAll ? "查询中…" : "查询全部流量") {
+                        startBusy(.queryAll) { await store.queryAll() }
                     }
-                    .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil || adding)
+                    .disabled(store.subscriptions.isEmpty || !busy.isIdle)
                 } label: { AppGlyph(name: "ellipsis", size: 14) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("订阅操作")
@@ -80,7 +120,21 @@ struct VpnSubscriptionSection: View {
         }
         .sheet(item: $editor) { item in
             VpnSubscriptionEditor(draft: item) { name, url in
-                Task { await saveEditor(item, name: name, url: url) }
+                // Claimed here, synchronously in the click that dismisses the
+                // sheet — not inside the Task below, which starts a main-actor
+                // turn later. The page's re-entrancy guards read this lock.
+                //
+                // An edit whose URL is unchanged renames only and downloads
+                // nothing; the claim it still takes is released in
+                // `saveEditor`. `claim` failing means another operation owns
+                // the page, and the save is refused rather than racing it.
+                let owner: SubscriptionBusy.Owner
+                switch item.kind {
+                case .add: owner = .add
+                case .edit(let id): owner = .update(id)
+                }
+                guard busy.claim(owner) else { return }
+                Task { await saveEditor(item, name: name, url: url, owner: owner) }
             }
         }
         .alert("删除订阅？", isPresented: Binding(
@@ -88,10 +142,16 @@ struct VpnSubscriptionSection: View {
             set: { if !$0 { pendingDelete = nil } }
         )) {
             Button("删除", role: .destructive) {
-                if let sub = pendingDelete {
-                    store.removeSubscription(sub.id)
-                    if manager.isRunning { manager.reloadConfig() }
-                }
+                guard let sub = pendingDelete else { return }
+                // Delete is a write like the others: it must not run while a
+                // download could still write this subscription's profile, and
+                // must not start a config reload over one already in flight.
+                // The lock is the same one every path claims, so there is no
+                // flag combination to keep in sync. The alert closes either
+                // way.
+                guard busy.isIdle, manager.state != .starting else { return }
+                store.removeSubscription(sub.id)
+                if manager.isRunning { manager.reloadConfig() }
                 pendingDelete = nil
             }
             Button("取消", role: .cancel) { pendingDelete = nil }
@@ -103,8 +163,18 @@ struct VpnSubscriptionSection: View {
     /// Reload the core onto `sub`. Card taps only browse; this button is the
     /// switch. Turning the module on here matches the main power control, so
     /// a stopped core still comes up with the system proxy.
+    ///
+    /// Refuses while any other write is in flight (`busy` — every claim is
+    /// taken synchronously by the click that starts the work, so this sees a
+    /// download that just began) and while a restart this very method already
+    /// began is under way — that one is `manager.state`, set to `.starting`
+    /// synchronously by `reloadConfig`. The busy lock alone could not see it:
+    /// it is released as soon as the operation that started the restart
+    /// returns. This is the page's most expensive effect (core stop → port
+    /// release → relaunch, seconds of 启动中), so it refuses rather than
+    /// races.
     private func activate(_ sub: VpnSubscription) {
-        guard busyID == nil else { return }
+        guard busy.isIdle, manager.state != .starting else { return }
         store.browse(sub.id)
         guard sub.id != store.activeID || !manager.isRunning else { return }
         store.setActive(sub.id)
@@ -118,7 +188,9 @@ struct VpnSubscriptionSection: View {
     private func card(_ sub: VpnSubscription) -> some View {
         let active = sub.id == store.activeID
         let browsing = (store.browsingID ?? store.activeID) == sub.id
-        let busy = busyID == sub.id
+        // The spinner is scoped to the card the operation names; an add has
+        // no card yet, so it spins every row (the pre-refactor behaviour).
+        let busyHere = busy.updatingID == sub.id || busy.isAdding
         let runningHere = active && manager.isRunning
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -138,23 +210,19 @@ struct VpnSubscriptionSection: View {
                 }
                 .buttonStyle(.plain)
                 .help("查看节点 · 不切换运行配置")
-                if busy { ProgressView().controlSize(.mini) }
+                if busyHere { ProgressView().controlSize(.mini) }
                 Menu {
                     Button("查看节点") { store.browse(sub.id); onBrowse() }
                     Button("更新节点配置") {
-                        Task {
-                            busyID = sub.id
+                        startBusy(.update(sub.id)) {
                             if await store.refresh(sub.id), store.activeID == sub.id {
                                 manager.reloadConfig()
                             }
-                            busyID = nil
                         }
                     }
                     Button("查询流量与到期时间") {
-                        Task {
-                            busyID = sub.id
+                        startBusy(.update(sub.id)) {
                             _ = await store.queryInfo(sub.id)
-                            busyID = nil
                         }
                     }
                     Divider()
@@ -166,7 +234,7 @@ struct VpnSubscriptionSection: View {
                     Button("删除", role: .destructive) { pendingDelete = sub }
                 } label: { AppGlyph(name: "ellipsis", size: 13) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .disabled(busyID != nil || queryingAll)
+                .disabled(!busy.isIdle)
                 .help("订阅详情与操作")
             }
             HStack(alignment: .center, spacing: 8) {
@@ -182,7 +250,7 @@ struct VpnSubscriptionSection: View {
                     Text("运行中").font(Theme.Font.caption).foregroundColor(Theme.Ink.claude)
                 } else {
                     ActionButton(active ? "启动" : "启用", tone: .neutral) { activate(sub) }
-                        .disabled(busyID != nil || manager.state == .starting || queryingAll)
+                        .disabled(!busy.isIdle || manager.state == .starting)
                         .help("切换并启用这份订阅")
                 }
             }
@@ -211,7 +279,22 @@ struct VpnSubscriptionSection: View {
         return "\(date) · \(max(0, Int(expires.timeIntervalSinceNow / 86400))) 天"
     }
 
-    private func saveEditor(_ item: SubEditor, name: String, url: String) async {
+    /// The menu paths' entry point: claims the lock through `busy` (the
+    /// caller has already checked `isIdle` via `.disabled`, but the claim is
+    /// the authority — a second click in the same event batch finds the lock
+    /// taken), then runs the download and releases it. The release names its
+    /// owner, so a completion that lands after a newer claim cannot clear it.
+    private func startBusy(_ owner: SubscriptionBusy.Owner, _ body: @escaping () async -> Void) {
+        guard busy.claim(owner) else { return }
+        Task {
+            await body()
+            busy.release(owner)
+        }
+    }
+
+    private func saveEditor(_ item: SubEditor, name: String, url: String,
+                            owner: SubscriptionBusy.Owner) async {
+        defer { busy.release(owner) }
         switch item.kind {
         case .add:
             await store.addSubscription(name: name, url: url)
@@ -224,11 +307,9 @@ struct VpnSubscriptionSection: View {
             // profile and restart the active core for nothing.
             let next = url.trimmingCharacters(in: .whitespacesAndNewlines)
             if current != next {
-                busyID = id
                 if await store.replaceURL(id, url: next), store.activeID == id, manager.isRunning {
                     manager.reloadConfig()
                 }
-                busyID = nil
             }
         }
         editor = nil
