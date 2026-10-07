@@ -432,6 +432,12 @@ final class MenuBarController: NSObject {
         guard let panel = panel, isOpen else { return }
         if panel.frame.contains(NSEvent.mouseLocation) { return }
         if let window = event.window, window !== panel, window.parent === panel { return }
+        // A `confirmationDialog` off the panel is an `_NSAlertPanel` attached
+        // by `sheetParent`, not `parent` (see the comment above), so without
+        // this clause the first click in the cleanup dialog dismissed the
+        // popup underneath it (finding 218 — the dialog is mounted by
+        // `SessionsPanel.codexCleanupDialog`).
+        if let window = event.window, window.sheetParent === panel { return }
         hide(deferringMonitorRemoval: true)
         // Only the status item's own mouse-down is followed by
         // `statusItemClicked`, and only that one has to be swallowed. Matching
