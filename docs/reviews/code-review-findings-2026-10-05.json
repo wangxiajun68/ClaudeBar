@@ -7073,7 +7073,9 @@
   "summary": "文档仍在描述被 f1c1921 修掉的旧编码规则（「把 / 换成 -」），与 FilePaths.swift:179-189 的字符白名单实现矛盾。",
   "evidence": "docs/technical/04-data-access-layer.md:15「`cursorProjectName(for:)` 复现 Cursor 的 cwd 编码：去前导 `/` 后把 `/` 换成 `-`」；FilePaths.swift:173-189 的注释与实现是「[A-Za-z0-9-] 之外每个字符换成 -」，例子 prompt_engineering → prompt-engineering。commit f1c1921 的说明明确旧规则会让含下划线/点号的工作区查不到 transcript。",
   "failure": "按文档改代码（或据此判断某条 Cursor 路径规则）会重新引入 f1c1921 修掉的那类 bug：mzt_demo / rag_exp / openclaw-2026.5.7 这类工作区的活动、待办、计数全部落空，UI 上没有任何错误提示。",
-  "fix": "把该句改为「去前导 `/` 后，把 [A-Za-z0-9-] 之外的每个字符替换为 `-`」，并把示例换成 prompt_engineering → prompt-engineering、mzt_demo → mzt-demo。"
+  "fix": "把该句改为「去前导 `/` 后，把 [A-Za-z0-9-] 之外的每个字符替换为 `-`」，并把示例换成 prompt_engineering → prompt-engineering、mzt_demo → mzt-demo。",
+  "status": "fixed",
+  "verdict_note": "Doc re-checked 2026-10-07: now states the [A-Za-z0-9]-and-dash whitelist, matching FilePaths.swift:179-189. The old \"把 / 换成 -\" description is gone."
  },
  {
   "category": "dead-code",
@@ -7134,7 +7136,9 @@
   "summary": "The age label is computed from `Date()` inside an `Equatable` model, so crossing every minute boundary makes the session array \"change\" and forces a full widget-snapshot rewrite while idle.",
   "evidence": "CursorSessionMonitor.swift:107-114: `let now = Date().timeIntervalSince1970 * 1000; … if secs < 3600 { return \"\\(Int(secs / 60))m\" }`. `CursorSessionInfo: Equatable` therefore differs between two polls one minute apart even when nothing else changed. ProviderStore.swift:549-555 publishes on that inequality and calls `self.writeWidgetSnapshot()`, whose writer (WidgetSnapshotWriter.swift:32-36) compares normalized bytes and, when they differ, does four atomic writes plus a timeline reload. The minute label is genuinely wanted (`WidgetSnapshot.swift:70` \"precomputed by the host app\"), so this is a contract cost, not a bug.",
   "failure": "An idle Cursor session on screen → once a minute forever: a `@Published` change (re-running every observer of `cursorSessions`, including `IslandLiveModel` at IslandLiveModel.swift:167 and `ScopedStoreObservation`), a full snapshot encode, up to four file writes (one into the widget's container) and a `WidgetCenter` reload — for a label change from \"5m\" to \"6m\".",
-  "fix": "Carry the coarse label the widget needs as a *duration since a stored timestamp* and let the widget render it (or quantize `relativeUpdated` to a 5-minute bucket for sessions that are not busy), so the model's equality does not move every minute; failing that, drop `relativeUpdated` from the comparison used to decide publishing and pass the age only when another field changed."
+  "fix": "Carry the coarse label the widget needs as a *duration since a stored timestamp* and let the widget render it (or quantize `relativeUpdated` to a 5-minute bucket for sessions that are not busy), so the model's equality does not move every minute; failing that, drop `relativeUpdated` from the comparison used to decide publishing and pass the age only when another field changed.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: relativeUpdated is a computed property; the synthesized Equatable only compares stored fields, so minute boundaries do not make polls differ or republish."
  },
  {
   "category": "duplication",
@@ -7346,7 +7350,9 @@
   "summary": "`.askOnUse` is documented as \"macOS exposes no query\" yet is set for no permission by `refreshStatus`; it survives only as the dictionary default in `systemStatus(_:)` and the `@unknown default` branch, so the \"macOS will ask at the moment of use\" label is never shown where it was designed to be.",
   "evidence": "refreshStatus (232-247) assigns: widgetData `.askOnUse`, automation `.askOnUse`, cursorData `.notRequired`, screenRecording granted/notDetermined, bluetooth allowed/denied/notDetermined, location/currentLocation from CLAuthorizationStatus, notifications from UNUserNotificationCenter.\n`systemStatus` (162-164) returns `statuses[permission] ?? .askOnUse`, and because `refreshStatus` runs in `init` (line 155) the only entries are the ones above — for `.notifications` and `.currentLocation` there is no writer, so those two *are* `.askOnUse`; for `.location` etc. the default never fires. Every `@unknown default: .askOnUse` (228, 243, 256) is therefore also labelled with a status that is never displayed for any known case.",
   "failure": "No crash. The Settings row for 空闲通知/当前位置 shows 「使用时询问」 while the actual `idleNotifyEnabled` pref is off and the system is `.notDetermined` — misleading, not wrong; the code path reading `.askOnUse` as \"the system will prompt\" is what the doc comment denies.",
-  "fix": "Either give `.notifications`/`.currentLocation` their real `.notDetermined` mapping in `refreshStatus`, or drop `.askOnUse` entirely and make the `?? ` default `.notDetermined`."
+  "fix": "Either give `.notifications`/`.currentLocation` their real `.notDetermined` mapping in `refreshStatus`, or drop `.askOnUse` entirely and make the `?? ` default `.notDetermined`.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: refreshStatus writes .askOnUse deliberately for widgetData/automation, and .currentLocation/.notifications get real mappings (PermissionCenter.swift:240-260). The \"survives only as a default\" claim is wrong."
  },
  {
   "category": "state",
@@ -7357,7 +7363,9 @@
   "summary": "The switch cache is seeded once from `PermissionGate.allows` (UserDefaults) while the mirrored prefs are seeded from `AppPreferences.shared` with `.dropFirst()`; if the singleton is ever first touched before `AppPreferences` finishes loading, the two sources disagree for the life of the process.",
   "evidence": "128-130: `enabled[permission] = PermissionGate.allows(permission)` (reads UserDefaults.standard)\n132-134: `prefs.$idleNotifyEnabled.dropFirst() … self?.enabled[.notifications] = on`\n`.dropFirst()` means the harness's first write is never applied, and `AppPreferences.init` (AppPreferences.swift:289-291) itself seeds `idleNotifyEnabled` from UserDefaults *after* the singleton is created.",
   "failure": "If `PermissionCenter.shared` is constructed in a context where `AppPreferences.shared` has not yet run `didSetReady`-style seeding (e.g. the widget/bootstrap ordering changes, or a future call from the app delegate's early window), `enabled[.notifications]` and `AppPreferences.shared.idleNotifyEnabled` diverge and only a toggle reconciles them. `.dropFirst()` also means any write performed by the store between the publisher's creation and the subscriber's attachment is lost.",
-  "fix": "Seed the two bridged entries from `prefs` after wiring the sink (or publish current values with `send(initial:)` semantics) so both sides always come from the same source."
+  "fix": "Seed the two bridged entries from `prefs` after wiring the sink (or publish current values with `send(initial:)` semantics) so both sides always come from the same source.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: both sides read the same UserDefaults key (\"idleNotifyEnabled\"), so the two sources cannot disagree; the divergence needs a key mismatch that does not exist."
  },
  {
   "category": "test-gap",
@@ -7674,7 +7682,9 @@
   "summary": "The first 300-second window of the civil day is bracketed with the altitude sampled exactly at `day.start` instead of the interval's midpoint, so a crossing that falls in [day.start, day.start+300) is never seen and the day's result is frozen nil by the cache.",
   "evidence": "Lines 54-60: `var start = day.start; var previous = altitude(start) ... let end = min(start.addingTimeInterval(300), day.end); let next = altitude(end); if (previous <= 0 && next > 0) || (previous > 0 && next <= 0) { ... }`. `previous` is taken at `day.start` and is already the first window's left edge, so a rise at, say, 00:02 local gives `previous <= 0`, `next > 0` and the detection test never runs for it; every later iteration samples at the window's midpoint-independent right edge, which cannot see it either. I swept 60-69 N (lon 0) across whole years plus every offset from UTC-11 to UTC+12 and found no realistic (latitude, longitude, zone) triple that currently lands a crossing in that 300-s band — hence low confidence — so this is an off-by-one that awaits a location/timezone that puts a sunrise at local midnight, not an observed failure.",
   "failure": "For a location whose sunrise or sunset falls within the first five minutes of its civil day in the passed zone, `solarEvents` returns nil for that crossing, and because the result is stored in `solarCache` keyed by (day, zone, lat, lon) the miss is permanent for that day: the greeting card's `SunPath` falls back to the dashed placeholder instead of the arc.",
-  "fix": "Seed the loop with the midpoint of the first interval (`var previous = altitude(start.addingTimeInterval(150))`) or start the loop half a window before `day.start`; either keeps the window count bounded and makes the bracket consistent."
+  "fix": "Seed the loop with the midpoint of the first interval (`var previous = altitude(start.addingTimeInterval(150))`) or start the loop half a window before `day.start`; either keeps the window count bounded and makes the bracket consistent.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: previous = altitude(day.start) is the first window's left edge and the sign test at :58 catches a crossing inside [day.start, day.start+300); no crossing is skipped."
  },
  {
   "category": "dead-code",
@@ -7788,7 +7798,9 @@
   "line": 39,
   "severity": "low",
   "summary": "The publisher-based observation API is referenced nowhere in Sources; every real consumer gates on hasVisibleWindow directly",
-  "symbol": "UIWakePolicy.observe / UIWakePolicy.changes"
+  "symbol": "UIWakePolicy.observe / UIWakePolicy.changes",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: observe/changes have real consumers — ProviderStore:653, ProcessSampler:321, FanMonitor:39, AudioAccessoryMonitor:129, MainWindowView:83 — so the \"referenced nowhere\" premise is stale; no defect."
  },
  {
   "category": "correctness",
@@ -7800,7 +7812,9 @@
   "confidence": "low",
   "evidence": "L79: `let start = period == .all ? (records.keys.min() ?? calendar.startOfDay(for: now)) : interval.start`; L80-81 `let end = min(interval.end, tomorrow)` with `tomorrow = startOfDay(now)+1`. Records with a future day key are possible when a transcript is written by a process with a skewed clock; `UsageStats.interval(for: .all)` ends at tomorrow so the clamp is against today in the normal case, but the *start* for `.all` is taken from the raw record set with no `min(now)` clamp.",
   "failure": "A single future-dated transcript puts a string of extra zero buckets at the end of the `all` series: `activeDays` denominator, `median`/`p95` (interpolate over zeros) and the month/year rollup all shift, so the headline stats for the whole history drop without any data change.",
-  "fix": "Clamp the record keys used for the `.all` start to `now`'s day (`records.keys.filter { $0 <= todayStart }.min()`), matching the existing `end` clamp."
+  "fix": "Clamp the record keys used for the `.all` start to `now`'s day (`records.keys.filter { $0 <= todayStart }.min()`), matching the existing `end` clamp.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: end is clamped to tomorrow, so future-dated record keys cannot add trailing buckets; the empty-bucket failure cannot occur."
  },
  {
   "category": "dead-code",
@@ -7812,7 +7826,9 @@
   "confidence": "high",
   "evidence": "`grep -rn \"reloadPersistence\" Sources --include='*.swift'` finds `Sources/ClaudeBar/Utils/UsageIndex.swift:200` (definition), its call at `:210`, and the doc comment in `ProxyCaptureStore.swift:214-215`; no other source file calls it. `git show 16b225e` removed `@Published var databaseEnabled` and the `persistenceModeDidChange` post from AppPreferences, and `grep -rn \"databaseEnabled\" Sources` now finds it only as the UserDefaults key read by `DiskPersistence.useDatabase`; nothing writes it, so `useDatabase` is permanently `true` and `persistenceModeDidChange` is never posted (ProviderStore.swift:1236-1241 observer can never fire).",
   "failure": "The reset path is never exercised in production, so a stale ledger survives every backend switch that can no longer happen — and the comments in UsageClaims.swift:55-57 and UsageIndex.swift:198-199 describe behaviour no longer reachable.",
-  "fix": "Either delete `reloadPersistence`/`reset` (the tests drive them directly and would need their own reset hook), or keep them and note they are test-only; do not leave a doc comment claiming the `databaseEnabled` preference still switches backends."
+  "fix": "Either delete `reloadPersistence`/`reset` (the tests drive them directly and would need their own reset hook), or keep them and note they are test-only; do not leave a doc comment claiming the `databaseEnabled` preference still switches backends.",
+  "status": "fixed",
+  "verdict_note": "Re-checked 2026-10-07: the misleading databaseEnabled doc was corrected; reloadPersistence and UsageClaims.reset now carry honest \"used by the regression harness\" comments (UsageIndex.swift:198, UsageClaims.swift:56-57)."
  },
  {
   "category": "concurrency",
@@ -7824,7 +7840,9 @@
   "confidence": "medium",
   "evidence": "L21-23: `static func start(paths: [String], handler: @escaping () -> Void) { stop(); let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }; guard !existing.isEmpty else { return } ... }`. `stop()` (L51-75) clears `stream`/`handler`/`debounceWork` under `lock` and re-targets the old stream onto `queue` for teardown. If the watched project directory is missing at `stop()` time — which is exactly what `guard !existing.isEmpty` handles — `stop()` returns *before* installing the teardown, so nothing the caller believed was torn down here remains.",
   "failure": "ProviderStore calls `UsageFSWatcher.stop()` when the window hides (line 664-667) and `start(...)` when it shows. A hide/show race where the directory listing is momentarily empty (a mount/rename under `~/.claude/projects`) leaves the caller's `usageWatcherStarted` true while no stream exists, and no stop call will clear the stale stream — FSEvents keeps waking the app; the only other observable is that the next visible transition skips the catch-up rescan because `usageWatcherStoppedAt` was never set.",
-  "fix": "Have `stop()` always record its teardown (holding the lock) even when there is no live stream, and make `start()` re-check under the same lock; or return an explicit status so `usageWatcherStarted` cannot diverge."
+  "fix": "Have `stop()` always record its teardown (holding the lock) even when there is no live stream, and make `start()` re-check under the same lock; or return an explicit status so `usageWatcherStarted` cannot diverge.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: stop() reads the stream static (not a filesystem check), clears it under the lock and tears down; start()'s empty-paths guard cannot leave a stream behind, so the described race does not hold."
  },
  {
   "category": "perf-io",
@@ -8241,7 +8259,9 @@
   "evidence": "840-843 行：`guard !trimmed.isEmpty else { loading = false; note = reading == nil ? \"未设置天气城市\" : note; return }` 自赋值分支与 note 的语义（756 行注释“Why there is no reading”）不符：有读数时这里什么都不做，但调用方期望它把城市清空后的状态表达出来（对比 WeatherAmapFetcher 空 key 的处理是“跳过并回落”，而这里直接停住）。",
   "failure": "用户清空天气城市后，卡片继续显示旧读数且 note 保持上一次的“天气更新失败…”之类文案——工具提示与 Accessibilty 文案互相矛盾（读数来自已被清空的城市）。",
   "fix": "本地源分支改为 `note = reading == nil ? \"未设置天气城市\" : nil`，让“未设置城市”与“有旧读数但已无城市”都得到明确表述。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 4eeb427: the branch is now note = reading == nil ? \"未设置天气城市\" : nil (WeatherFetcher.swift:856); the no-op self-assignment is gone."
  },
  {
   "category": "compat",
