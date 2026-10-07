@@ -6,10 +6,15 @@ import Combine
 /// What a command-palette selection resolves to. The palette builds a flat list
 /// of `CommandItem`s (pages, sessions, providers); picking one yields one of
 /// these, which the window routes to the right destination.
+///
+/// The session/provider cases carry **no payload**: the destination pages have
+/// no per-row selection to route into, so a pid or UUID here would exist only
+/// to be discarded at the switch (findings 505/549), and the session pid's
+/// `Int32` conversion was the one unchecked step in the chain.
 enum CommandResult: Equatable {
     case page(AppPage)
-    case session(pid: Int)
-    case provider(id: UUID)
+    case session
+    case provider
 }
 // MARK: - Command item
 
@@ -263,7 +268,7 @@ struct CommandPalette: View {
                         subtitle: s.name.isEmpty ? "Claude Code · PID \(s.pid)" : s.name,
                         icon: "rectangle.connected.to.line.below",
                         tint: Theme.statusBusy,
-                        result: .session(pid: s.pid))
+                        result: .session)
         }
         // Cursor sessions carry no UUID, so they route to the sessions page.
         items += providerStore.cursorSessions.map { s in
@@ -284,7 +289,7 @@ struct CommandPalette: View {
                         subtitle: p.activeModel?.name ?? "供应商",
                         icon: "cube",
                         tint: Theme.accent,
-                        result: .provider(id: p.id))
+                        result: .provider)
         }
         return items
     }

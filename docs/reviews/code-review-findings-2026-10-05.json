@@ -6392,7 +6392,9 @@
   "evidence": "MainWindowView.swift:130-139 `case .session: navigate(to: .sessions)` and `case .provider: providerStore.requestNavigation(.editor(.providers))` - neither reads the associated value. CommandPalette.swift:11-12 `case session(pid: Int)` / `case provider(id: UUID)`, built at :222-227 (`.session(pid: s.pid)`) and :243-249 (`.provider(id: p.id)`). `grep -rn CommandResult Tests Tools` finds only the fixture stub at Tests/remaining-performance-regressions.py:67 `enum CommandResult { case fixture }`.",
   "failure": "User types a session name in ⌘K and presses Return: the app lands on 会话 with no indication of which session was chosen although the palette advertised a per-session row; same for the provider id.",
   "fix": "Either make the cases payload-free or route the pid/id into the destination page's selection; add a source-slice regression asserting the switch consumes the payloads.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: CommandResult.session and .provider are payload-free — the routing switch cannot silently drop a payload that no destination consumes, and there is no unchecked pid conversion. (The alternative, adding per-row selection to the pages, would be new routing behaviour, not a fix to the drop.)"
  },
  {
   "category": "perf-cpu",
@@ -6949,7 +6951,9 @@
   "summary": "`CommandResult.session(pid: Int)` carries a payload nothing reads, and the only conversion of it would be an unchecked `Int32` truncation.",
   "evidence": "Built at 222-227 (`result: .session(pid: s.pid)`); the sole consumer switches without binding it: MainWindowView.swift:134-135 `case .session: navigate(to: .sessions)` - the pid is never read anywhere (grep for `CommandResult` returns only CommandPalette.swift plus that one switch). `SessionsView` has no focus/scroll-to-session machinery (grep for focusedPid/scrollTo/ScrollViewReader in SessionsView.swift: no hits), so the payload cannot currently be honoured. `pid` is `Int` (`SessionInfo.pid`), i.e. Int64 on arm64.",
   "failure": "The payload is dead weight now, and the moment anyone honours it the obvious spelling (`Int32(s.pid)` for a `posix_spawn`/`NSRunningApplication` call) traps on any pid above `Int32.max` (Darwin pids can wrap into that range), i.e. a crash on the very first ⌘K session pick of that process's life. `CommandResult`'s `Equatable` conformance is likewise load-bearing for nothing (no comparison exists).",
-  "fix": "Either drop the associated value (`case session`) so no incorrect conversion is available, or store the pid as a `String`/`Int64` and have the consumer guard the conversion."
+  "fix": "Either drop the associated value (`case session`) so no incorrect conversion is available, or store the pid as a `String`/`Int64` and have the consumer guard the conversion.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 with 505: the session case carries no pid; construction sites updated (CommandPalette buildItems) and the routing switch simplified. Palette suites pass."
  },
  {
   "category": "duplication",
