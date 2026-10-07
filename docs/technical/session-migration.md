@@ -10,7 +10,7 @@ Claude Code、Codex、Cursor CLI 与 Cursor 桌面的原生正文适配器已实
 
 「包含已完成工具的输入与结果」默认关闭。开启后预览显示记录数量，并提示这些资料会发送给目标模型。迁移只携带已配对完成的工具历史，保留 CC 的错误标记。文档里保留工具名称、输入和输出，不保留原来的调用 ID。写入 Claude Code 时成为紧邻的 `tool_use` 与 `tool_result`，写入 Codex 时成为紧邻的 `function_call` 与 `function_call_output`。结果行和调用行一起写入，恢复时没有待执行的调用。Cursor 桌面只在来源气泡带有已核对的 `tool` 编号时写回 `toolFormerData`，不给其他客户端的工具名编造编号。
 
-「包含用户图片」对 Claude Code、Codex 和 Cursor 桌面来源显示，默认关闭。关闭时，用户消息里的图片、音频或文档仍让整段会话拒绝。开启后，同一条用户消息里的 png、jpeg、webp、gif 或 http(s) 图片地址跟文字留在同一条消息。Claude Code 用 `image` block，Codex 同时写 `input_image` 和用户事件的 `images`。Cursor 桌面按 3.23.12 的样本把图片写进该项目 `workspaceStorage/<id>/images`，气泡只保存 `uuid` 与尺寸，`context.selectedImages` 保存路径。两个选项同时打开时，工具结果里的图片挂在该条工具记录上，不进入工具输出文本：Claude Code 写在 `tool_result` 里，Codex 写成紧随的用户图片，Cursor 桌面写成下一条用户图片气泡。助手消息里的图片、文档、音频、视频和 Cursor 的 `attachedFiles` 仍然拒绝。只打开图片、不打开工具记录时，工具结果整体仍省略。Cursor CLI 仍不能写入图片。带图片的准备指纹与纯正文不同，不会复用旧的纯文本目标。
+「包含用户图片」对 Claude Code、Codex 和 Cursor 桌面来源显示，默认关闭。关闭时，用户消息里的图片、音频或文档仍让整段会话拒绝。开启后，同一条用户消息里的 png、jpeg、webp、gif 或 http(s) 图片地址跟文字留在同一条消息。Claude Code 用 `image` block，Codex 同时写 `input_image` 和用户事件的 `images`。Cursor 桌面按 3.23.12 的样本把图片写进该项目 `workspaceStorage/<id>/images`，气泡只保存 `uuid` 与尺寸，`context.selectedImages` 保存路径。两个选项同时打开时，工具结果里的图片挂在该条工具记录上，不进入工具输出文本：Claude Code 写在 `tool_result` 里，Codex 写成紧随的用户图片，Cursor 桌面写成下一条用户图片气泡。助手消息里的图片、文档、音频、视频和 Cursor 的 `attachedFiles` 仍然拒绝。只打开图片、不打开工具记录时，工具结果整体仍省略。**工具结果的内容无论两个选项如何组合都会被检查**：文档或音频嵌在 `tool_result` / `function_call_output` 里时整段会话拒绝——它们在任何模式下都不迁移，不能随着「工具结果整体省略」悄悄消失；工具结果里的图片在只开图片不开工具记录时随工具记录一起省略。Cursor CLI 仍不能写入图片。带图片的准备指纹与纯正文不同，不会复用旧的纯文本目标。
 
 开发版在真实历史读取、客户端版本探测、写入和终端打开入口拒绝系统集成；不会迁移真实账号或凭据。纯转换器通过临时目录和模拟进程测试，不提供环境变量绕过 App 的闸。
 

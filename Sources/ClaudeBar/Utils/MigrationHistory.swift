@@ -206,7 +206,14 @@ enum MigrationHistory {
                                                       output: split.content, images: split.images, kind: "codex")
                         projected.append(summary); if paginated { canonical.append(summary) }
                         completedTools += 1
-                    } else { omissions.append("历史工具调用未重放；请在来源查看完整工具结果。") }
+                    } else {
+                        // Same rule as the Claude path (finding 11): the output
+                        // is dropped with the tool record, so an attachment
+                        // inside it must still be seen and refused rather than
+                        // vanish behind the 未重放 note.
+                        try checkTextOnly(payload["output"], omissions: &omissions, includeImages: includeImages)
+                        omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
+                    }
                 default: break // Private reasoning and provider IDs never cross the boundary.
                 }
             }
@@ -437,6 +444,18 @@ enum MigrationHistory {
             }
             if ["tool_use", "tool_result"].contains(type) {
                 omissions.append("历史工具调用未重放；请在来源查看完整工具结果。")
+                // A tool result's payload is one more place an attachment
+                // lives — the classic case is a Read of a PDF or screenshot.
+                // When 包含已完成工具 is off that payload is dropped with the
+                // tool record, so an uninspected document/audio inside it used
+                // to vanish behind the generic omission above: no refusal, no
+                // note, an attachment silently gone. Inspect it recursively so
+                // the nested kinds get exactly the verdict they get at the
+                // top level (this is also the ON path's verdict —
+                // `splitToolResult` checks the result payload itself).
+                if type == "tool_result" {
+                    try checkTextOnly(block["content"], omissions: &omissions, includeImages: includeImages)
+                }
             }
         }
     }

@@ -359,6 +359,31 @@ import SQLite3
         mustFail { _ = try MigrationHistory.codex(data(legacyTools + [
             ["type":"response_item","payload":["type":"custom_tool_call_output","call_id":"never-opened","output":"x"]]]),
             source: cxSource, includeCompletedTools: true) }
+        // Codex, 包含已完成工具 OFF (finding 11): the output is dropped with
+        // the tool record, so its nested content must still be inspected —
+        // the same verdict `splitToolResult` gives on the ON path. Images
+        // OFF: a tool-result image refuses. Images ON: the whole tool result
+        // is omitted (the pinned `toolImageSkipped` contract on the Claude
+        // path), so the migration proceeds with the generic 未重放 note.
+        var codexImageOutput = legacyTools
+        let imageOutputIndex = codexImageOutput.firstIndex { ($0["payload"] as? [String: Any])?["type"] as? String == "custom_tool_call_output" }!
+        var imageOutputPayload = codexImageOutput[imageOutputIndex]["payload"] as! [String: Any]
+        imageOutputPayload["output"] = [["type":"image","source":["type":"base64","media_type":"image/png","data":png]]]
+        codexImageOutput[imageOutputIndex]["payload"] = imageOutputPayload
+        mustFail { _ = try MigrationHistory.codex(data(codexImageOutput), source: cxSource) }
+        let codexImageSkipped = try MigrationHistory.codex(data(codexImageOutput), source: cxSource, includeImages: true)
+        precondition(codexImageSkipped.completedToolCount == 0 && codexImageSkipped.imageCount == 0
+            && codexImageSkipped.omissions.contains("历史工具调用未重放；请在来源查看完整工具结果。"),
+            "a tool-result image with 包含已完成工具 off is omitted with the tool record, not carried")
+        var codexDocumentOutput = legacyTools
+        var documentOutputPayload = codexDocumentOutput[imageOutputIndex]["payload"] as! [String: Any]
+        documentOutputPayload["output"] = [["type":"document","source":["type":"base64","media_type":"application/pdf","data":png]]]
+        codexDocumentOutput[imageOutputIndex]["payload"] = documentOutputPayload
+        mustFail { _ = try MigrationHistory.codex(data(codexDocumentOutput), source: cxSource, includeImages: true) }
+        let codexTextOff = try MigrationHistory.codex(data(legacyTools), source: cxSource)
+        precondition(codexTextOff.completedToolCount == 0
+            && codexTextOff.omissions.contains("历史工具调用未重放；请在来源查看完整工具结果。"),
+            "a text-only Codex tool output must still migrate when 包含已完成工具 is off")
         let archivedCodex = String(decoding: try MigrationHistory.codexData(cxTools.messages, sessionID: sourceID, cwd: cwd, providerKey: "fixture"), as: UTF8.self)
         precondition(archivedCodex.contains("\"function_call\"") && archivedCodex.contains("\"function_call_output\""), "codex native")
         precondition(!archivedCodex.contains("迁移的已完成工具记录") && !archivedCodex.contains("foreign-call"), "codex leaked")
@@ -395,6 +420,31 @@ import SQLite3
             "content":[["type":"document","source":["type":"base64","media_type":"application/pdf","data":png]]]]]
         toolDocument[toolDocument.count - 2]["message"] = documentMessage
         mustFail { _ = try MigrationHistory.claude(data(toolDocument), source: ccSource, includeCompletedTools: true, includeImages: true) }
+        // finding 11 (2026-10-05 review): the identical nested document with
+        // 包含已完成工具 OFF used to migrate and drop the attachment silently
+        // — the tool_result block was filtered out before `checkTextOnly` saw
+        // it, so the document was neither refused nor noted. The filter is
+        // gone; the nested payload is inspected either way, and the OFF and
+        // ON paths now give the same verdict.
+        mustFail { _ = try MigrationHistory.claude(data(toolDocument), source: ccSource, includeImages: true) }
+        // Same door, image instead of document: with 包含用户图片 off, a
+        // tool-result image can no longer be carried (the tool record that
+        // would hold it is dropped), so it gets the top-level refusal rather
+        // than the silent drop the old OFF path performed.
+        mustFail { _ = try MigrationHistory.claude(data(toolImage), source: ccSource) }
+        var toolAudio = toolRows
+        var audioResult = toolAudio[toolAudio.count - 2]["message"] as! [String: Any]
+        audioResult["content"] = [["type":"tool_result","tool_use_id":"foreign-call-private-1",
+            "content":[["type":"audio","source":[:]]]]]
+        toolAudio[toolAudio.count - 2]["message"] = audioResult
+        mustFail { _ = try MigrationHistory.claude(data(toolAudio), source: ccSource, includeImages: true) }
+        // And a nested *text* tool result still migrates under the OFF branch,
+        // with the generic 未重放 note — the recursive inspection must not
+        // turn ordinary tool history into a refusal.
+        let plainResultOff = try MigrationHistory.claude(data(toolRows), source: ccSource)
+        precondition(plainResultOff.completedToolCount == 0
+            && plainResultOff.omissions.contains("历史工具调用未重放；请在来源查看完整工具结果。"),
+            "a text-only tool result must still migrate when 包含已完成工具 is off")
 
         let physicalCwd = try MigrationPath.canonical(cwd)
         let logicalAlias = fixtureRoot.appendingPathComponent("project-alias")
