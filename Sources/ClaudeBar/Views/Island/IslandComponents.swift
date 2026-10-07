@@ -135,9 +135,16 @@ struct IslandSessionRow: View {
     let cost: ModelPricing.Estimate?
     let action: () -> Void
     @State private var hovered = false
+    /// The same inputs every other money surface uses, subscribed
+    /// individually: the row renders through `ModelPricing.present` so
+    /// 显示货币（分列 / 人民币 / 美元）holds on the island too, and observing
+    /// all of `AppPreferences` would re-render every row for unrelated writes.
+    @State private var costDisplay = AppPreferences.shared.costDisplay
+    @ObservedObject private var fx = ExchangeRate.shared
 
     var body: some View {
-        Button(action: action) {
+        let shown = cost.map { presented($0.cost) }
+        return Button(action: action) {
             HStack(spacing: 8) {
                 IslandAgentBadge(agent: session.agent, busy: session.isBusy)
                 VStack(alignment: .leading, spacing: 3) {
@@ -156,9 +163,9 @@ struct IslandSessionRow: View {
                     HStack(spacing: 6) {
                         subtitle
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        RollingNumberText(costLabel)
+                        RollingNumberText(costLabel(shown))
                             .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
-                            .foregroundStyle(hasPricedCost ? IslandStyle.amber : IslandStyle.textTertiary)
+                            .foregroundStyle(shown?.primary != nil ? IslandStyle.amber : IslandStyle.textTertiary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .layoutPriority(1)
@@ -180,24 +187,33 @@ struct IslandSessionRow: View {
         .buttonStyle(.plain)
         .onHover { if hovered != $0 { hovered = $0 } }
         .animation(IslandStyle.hoverSpring, value: hovered)
-        .help("\(session.cwd)\n\(costDetail)")
+        .help("\(session.cwd)\n\(costDetail(shown))")
+        .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }
 
-    private var costLabel: String {
-        if let dominant = cost?.cost.dominant {
-            return ModelPricing.format(dominant.amount, currency: dominant.currency)
+    /// The headline figure after 显示货币 is applied — one converted total in
+    /// 折算 modes, the larger raw currency in 分列, exactly as the usage page
+    /// and the greeting card render it. `present` itself degrades to 分列 with
+    /// `fallbackReason` when a converted mode has no rate, so the row never
+    /// invents a conversion.
+    private func costLabel(_ shown: ModelPricing.Presented?) -> String {
+        if let primary = shown?.primary {
+            return ModelPricing.format(primary.amount, currency: primary.currency)
         }
         if let cost, cost.unpricedModels > 0 { return "未计价" }
         return "—"
     }
 
-    private var hasPricedCost: Bool { cost?.cost.dominant != nil }
+    private func presented(_ cost: ModelPricing.Cost) -> ModelPricing.Presented {
+        ModelPricing.present(cost, display: costDisplay, rate: fx.effectiveRate)
+    }
 
-    private var costDetail: String {
-        guard let cost else {
+    private func costDetail(_ shown: ModelPricing.Presented?) -> String {
+        guard let cost, let shown else {
             return session.agent == .cursor ? "Cursor 暂无独立会话 token 用量" : "该会话暂无可计价用量"
         }
-        return "会话累计估算（含子代理与 workflow） · " + cost.detailParts(includeDominant: true).joined(separator: " · ")
+        return "会话累计估算（含子代理与 workflow） · "
+            + cost.detailParts(presented: shown, includeDominant: true).joined(separator: " · ")
     }
 
     @ViewBuilder private var subtitle: some View {
@@ -304,6 +320,10 @@ struct IslandUsageCard: View {
     /// Re-identifies this card's figures when the token unit style changes —
     /// see `TokenStyleGenerationKey`.
     @Environment(\.tokenStyleGeneration) private var tokenStyle
+    /// 显示货币 and the rate it needs, subscribed individually — same inputs
+    /// as `UsageModelCard` / `GreetingCard`; see `IslandSessionRow`.
+    @State private var costDisplay = AppPreferences.shared.costDisplay
+    @ObservedObject private var fx = ExchangeRate.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -341,6 +361,7 @@ struct IslandUsageCard: View {
         // Scoped to this card's own figures: the identity change that re-renders
         // them must not reach the session strip or the header beside it.
         .id(tokenStyle)
+        .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }
 
     private func index(at x: CGFloat) -> Int? {
@@ -382,17 +403,21 @@ struct IslandUsageCard: View {
     private var costHero: some View {
         let day = scrubbed
         let estimate = day?.cost ?? usage.todayCost
+        let shown = ModelPricing.present(estimate.cost, display: costDisplay, rate: fx.effectiveRate)
+        // Derived once: the caption runs the full `detailParts` / formatting
+        // pipeline, and the emptiness check used to run it a second time.
+        let caption = costCaption(shown, estimate: estimate)
         return VStack(alignment: .leading, spacing: 2) {
             Text(day.map { IslandFormat.dayLabel($0.date) + " 花费" } ?? "今日花费")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(IslandStyle.textTertiary)
-            RollingNumberText(estimate.cost.dominant.map { ModelPricing.format($0.amount, currency: $0.currency) } ?? "—")
+            RollingNumberText(shown.primary.map { ModelPricing.format($0.amount, currency: $0.currency) } ?? "—")
                 .font(.system(size: 24, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(IslandStyle.amber)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            if !costCaption(estimate).isEmpty {
-                RollingNumberText(costCaption(estimate))
+            if !caption.isEmpty {
+                RollingNumberText(caption)
                     .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
                     .foregroundStyle(IslandStyle.textSecondary)
                     .lineLimit(1)
@@ -400,11 +425,12 @@ struct IslandUsageCard: View {
         }
     }
 
-    private func costCaption(_ estimate: ModelPricing.Estimate) -> String {
-        // The card headlines the dominant figure itself, so it prints only the
-        // first caveat under it — the secondary currency leads the list and is
-        // therefore the one that shows when the two are present.
-        estimate.detailParts().first ?? estimate.emptyCaption
+    private func costCaption(_ shown: ModelPricing.Presented, estimate: ModelPricing.Estimate) -> String {
+        // The card headlines the figure itself, so it prints only the first
+        // part under it — `detailParts` leads with the caveat that matters:
+        // the fallback reason when a conversion failed, otherwise the other
+        // currency (or the original amount behind a converted figure).
+        estimate.detailParts(presented: shown).first ?? estimate.emptyCaption
     }
 
     private func heroCaption(_ day: IslandDay?) -> String {

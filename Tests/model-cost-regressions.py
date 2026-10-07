@@ -406,6 +406,46 @@ struct ModelUsage {
             precondition(empty.isConverted == false)
         }
 
+        // 14b. A caption follows its presentation. The caveat under a money
+        //      headline is built from the same `Presented` that drew the
+        //      headline — the island card, the session row's tooltip and the
+        //      popup all print these parts — so a converted total never
+        //      carries the other currency as if the preference had been 分列,
+        //      and a failed conversion says why.
+        let mixedParts = ModelPricing.Estimate(lines: [
+            .init(model: "a", cost: ModelPricing.Cost(cny: 700, usd: 100), unpriced: nil),
+            .init(model: "b", cost: ModelPricing.Cost(), unpriced: .unknownSlug),
+        ], cost: ModelPricing.Cost(cny: 700, usd: 100), pricedModels: 1, unpricedModels: 1)
+        precondition(mixedParts.detailParts(presented: split) == ["另有 $100.00", "1 个模型未计价"],
+                     "分列's caption is the second currency (the larger ¥ leads the headline), then the unpriced count")
+        precondition(mixedParts.detailParts(presented: split, includeDominant: true)
+                     == ["¥700.00", "$100.00", "1 个模型未计价"],
+                     "the tooltip form repeats the headline, so the second currency needs no 「另有」 lead")
+        precondition(mixedParts.detailParts(presented: at7) == ["1 个模型未计价"],
+                     "the converted ¥ figure already contains the ¥700; repeating it beside the headline would be the same money twice")
+        let fellAgain = ModelPricing.present(both, display: .cny, rate: nil)
+        precondition(mixedParts.detailParts(presented: fellAgain)
+                     == ["未取得汇率，暂按两种货币分列", "另有 $100.00", "1 个模型未计价"],
+                     "a failed conversion states why, then keeps both real figures")
+        // Converting the *other* way: the dominant is $, the headline lands in
+        // ¥ — the original $ amount stays legible so the rate can be checked.
+        let dollarLed = ModelPricing.Estimate(lines: [],
+            cost: ModelPricing.Cost(cny: 100, usd: 700), pricedModels: 2, unpricedModels: 0)
+        let toCNY = ModelPricing.present(ModelPricing.Cost(cny: 100, usd: 700), display: .cny, rate: 7)
+        precondition(dollarLed.detailParts(presented: toCNY) == ["$700.00"],
+                     "a converted ¥ total keeps the $ amount beside it")
+        // A fully priced single-currency estimate has nothing to caveat.
+        let settled = ModelPricing.Estimate(lines: [.init(model: "a", cost: ModelPricing.Cost(usd: 2), unpriced: nil)],
+            cost: ModelPricing.Cost(usd: 2), pricedModels: 1, unpricedModels: 0)
+        let usdSplit = ModelPricing.present(ModelPricing.Cost(usd: 2), display: .split, rate: nil)
+        precondition(settled.detailParts(presented: usdSplit).isEmpty,
+                     "a fully priced estimate needs no caption")
+        precondition(ModelPricing.Estimate()
+                        .detailParts(presented: ModelPricing.present(ModelPricing.Cost(),
+                                                                      display: .split, rate: nil))
+                        .isEmpty
+                     && ModelPricing.Estimate().emptyCaption == "暂无用量")
+
         // `converted` itself refuses a bad rate rather than dividing by zero.
         precondition(both.converted(to: .usd, rate: 0) == nil)
         precondition(both.converted(to: .cny, rate: Double.nan) == nil)
@@ -482,7 +522,8 @@ struct ModelUsage {
 
         print("PASS: slug canonicalization, longest-match, disjoint currency buckets, "
               + "\(ModelPriceTable.entries.count) rate cards + \(ModelPriceTable.unpriced.count) stated-unpriced, "
-              + "grouped formatting, opt-in conversion with no silent rate")
+              + "grouped formatting, opt-in conversion with no silent rate, "
+              + "presentation-consistent captions")
     }
 }
 '''
@@ -506,3 +547,46 @@ with tempfile.TemporaryDirectory(prefix='claudebar-cost-tests-') as folder:
     binary = Path(folder) / 'regression'
     subprocess.run(['swiftc', '-parse-as-library', str(path), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+# --- the preference reaches every money surface ------------------------------
+# The compiled assertions above prove `present` / `detailParts(presented:)`
+# behave; these pins prove the surfaces the user actually reads go through
+# them. A surface that prints `cost.dominant` directly — the island card and
+# the session row used to, which is what finding 31 in the 2026-10-05 review
+# was — silently ignores 显示货币, and no behavioural test can see inside a
+# SwiftUI view body without launching the app. Stated as source pins instead
+# of dropped: the doc (docs/technical/15-model-cost.md) claims every money
+# surface renders per the preference, so a fourth surface must either follow
+# the pattern or fail here.
+MONEY_SURFACES = [
+    'Sources/ClaudeBar/Views/Island/IslandComponents.swift',
+    'Sources/ClaudeBar/Views/Popup/UsagePanel.swift',
+    'Sources/ClaudeBar/Views/Shared/UsageModelCard.swift',
+    'Sources/ClaudeBar/Views/Shared/GreetingCard.swift',
+]
+for relative in MONEY_SURFACES:
+    text = (root / relative).read_text()
+    assert 'ModelPricing.present(' in text, \
+        f'{relative} must render through present(_:display:rate:)'
+    assert 'AppPreferences.shared.$costDisplay.removeDuplicates()' in text, \
+        f'{relative} must subscribe the 显示货币 preference'
+    assert 'ExchangeRate.shared' in text, f'{relative} must observe ExchangeRate.shared'
+
+island = (root / 'Sources/ClaudeBar/Views/Island/IslandComponents.swift').read_text()
+# Both island surfaces, not just the card: the row's headline was the second
+# place the raw dominant leaked.
+assert island.count('AppPreferences.shared.$costDisplay.removeDuplicates()') == 2, \
+    'both the usage card and the session row must subscribe 显示货币'
+assert island.count('ModelPricing.present(estimate.cost') + island.count('ModelPricing.present(cost') >= 2, \
+    'the card and the row each present their own estimate'
+assert '.cost.dominant' not in island, \
+    'the island must not bypass ModelPricing.present with the raw dominant currency'
+# Scoped to each surface's own caption, not `'detailParts(presented:' in island`:
+# both island captions would satisfy a file-wide pin, so the card's caption
+# could regress to the raw pair while the row's kept the file green (measured —
+# that mutant survived this pin before it was scoped).
+assert 'detailParts(presented: shown).first' in island.split('private func costCaption', 1)[1][:600], \
+    'the island caption must come from the same Presented that drew the headline'
+popup = (root / 'Sources/ClaudeBar/Views/Popup/UsagePanel.swift').read_text()
+assert 'detailParts(presented: shown)' in popup.split('private func costDetail', 1)[1][:400], \
+    'the popup caption must come from the same Presented that drew the headline'

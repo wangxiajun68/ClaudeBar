@@ -104,7 +104,7 @@
 | `Views/Pages/ConnectorDetailSheet.swift` | 连接器详情：Skill Markdown、MCP 工具列表、插件组成 |
 | `Views/Shared/SkillMarkdownPreview.swift` | SKILL.md 的原生 SwiftUI 渲染（标题 / 列表 / 引用 / 代码块 / 表格） |
 | `Models/DocumentMarkup.swift` | 上面那套 Markdown 的**解析**：块模型与 `parse` 从视图文件里提出来，供渲染、飞书文档预览与两条回归共用一份实现（`interaction-performance-regressions.py` 直接切这个文件，不再从视图里抠切片） |
-| `Views/Shared/ExchangeRateTile.swift` | 设置 → 通用 → 用量与花费 → 美元兑人民币：显示当前汇率与日期、手动钉值（清空恢复自动查询） |
+| `Views/Shared/ExchangeRateTile.swift` | 设置 → 用量与计费 → 美元兑人民币：显示当前汇率与日期、手动钉值（清空恢复自动查询） |
 | `Views/Shared/VpnTopChrome.swift` | `VpnStatusPill`（popup 状态行的节点 / 延迟药丸）+ `CursorUsagePanel`（Cursor chip 的面板）+ `VpnDelayStyle`。`VpnNodePickerPanel` 已无调用点，已删除 |
 | `Views/Shared/ProxyUpstreamPickers.swift` | 本地代理上游：只保留第三方 OpenAI / Anthropic 两个选择（默认跟随 Codex / Claude Code 当前供应商，不写 `config.toml` / `settings.json`）；CC / Codex 的只读卡已删——它们的选择在「模型」页 |
 | `Sources/ensure-dev-cert.sh` | 本机 ClaudeBar Dev 代码签名身份 |

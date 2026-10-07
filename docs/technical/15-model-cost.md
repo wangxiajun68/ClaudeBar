@@ -190,10 +190,10 @@ ProviderStore.publishUsage → usageStats / usageCostLines / usageEstimate
 ProviderStore.costEstimate            （popup 用量区的「花费」）
 ProviderStore.costLine(for:)          （按模型逐条取用；用量页走 usageCostLines）
         ↓  ModelPricing.present(_:display:rate:)   ← ExchangeRate.effectiveRate
-UsageModelCard（用量页）
+UsageModelCard（用量页） / popup 用量区 / 灵动岛用量卡 / 灵动岛会话行 / 问候卡
 ```
 
-概览的今日读数与灵动岛花费各有一处独立入口：问候卡用 `ProviderStore.todayUsage.cost`（固定今日窗口，`ModelPricing.estimate(_:on:)`），灵动岛 hero 由 `IslandLiveModel` 自己按日算 `ModelPricing.Estimate`；两者都再经 `ModelPricing.present` 渲染。
+概览的今日读数与灵动岛花费各有一处独立入口：问候卡用 `ProviderStore.todayUsage.cost`（固定今日窗口，`ModelPricing.estimate(_:on:)`），灵动岛 hero 由 `IslandLiveModel` 自己按日算 `ModelPricing.Estimate`。**每个金额表面都经 `ModelPricing.present` 渲染**：表面各自持有 `costDisplay`（订阅 `AppPreferences.$costDisplay`）并观察 `ExchangeRate.shared`，标题下/旁的备注行用 `Estimate.detailParts(presented:includeDominant:)` 从同一个 `Presented` 生成，所以折算后的总额旁边不会再冒出分列口径的第二币种，换算失败时也由 `fallbackReason` 说明。
 
 `costEstimate` 与周期选择天然联动：`usageStats` 就是周期聚合，换日 / 月 / 年 / 全部自动跟着变，不需要额外查询。折算只发生在**渲染**这一步，`Estimate` 本身始终保留两种货币的原值——切换显示模式不会丢失任何信息，也不会把折算结果写回数据。
 

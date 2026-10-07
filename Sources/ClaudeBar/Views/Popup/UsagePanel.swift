@@ -5,6 +5,11 @@ import SwiftUI
 struct UsagePanel: View {
     @ProviderState(.usage) var providerStore: ProviderStore
     @State private var showCustomDatePicker = false
+    /// 显示货币 and the rate it needs, subscribed individually — the popup
+    /// renders through `ModelPricing.present` so the preference holds here
+    /// too; `providerStore` publishes usage, not preferences.
+    @State private var costDisplay = AppPreferences.shared.costDisplay
+    @ObservedObject private var fx = ExchangeRate.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -48,6 +53,7 @@ struct UsagePanel: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .frame(height: 244, alignment: .top)
+        .onReceive(AppPreferences.shared.$costDisplay.removeDuplicates()) { costDisplay = $0 }
     }
 
     /// The date picker hangs off an empty sibling of the header, not off the
@@ -97,12 +103,13 @@ struct UsagePanel: View {
 
     private var usageSummary: some View {
         let estimate = providerStore.costEstimate
+        let shown = ModelPricing.present(estimate.cost, display: costDisplay, rate: fx.effectiveRate)
         return HStack(alignment: .top, spacing: 16) {
             summaryMetric("Token 用量", value: providerStore.totalUsageLabel,
                           detail: "所选时段累计")
-            summaryMetric("花费", value: estimate.cost.dominant.map {
+            summaryMetric("花费", value: shown.primary.map {
                 ModelPricing.format($0.amount, currency: $0.currency)
-            } ?? "—", detail: costDetail(estimate))
+            } ?? "—", detail: costDetail(estimate, shown: shown))
         }
         .padding(.vertical, 6)
     }
@@ -126,8 +133,8 @@ struct UsagePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func costDetail(_ estimate: ModelPricing.Estimate) -> String {
-        let details = estimate.detailParts()
+    private func costDetail(_ estimate: ModelPricing.Estimate, shown: ModelPricing.Presented) -> String {
+        let details = estimate.detailParts(presented: shown)
         return details.isEmpty ? estimate.emptyCaption : details.joined(separator: " · ")
     }
 

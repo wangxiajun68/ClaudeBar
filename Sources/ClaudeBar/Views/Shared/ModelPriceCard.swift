@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置 ▸ 用量与花费 ▸ 模型定价.
+/// 设置 ▸ 用量与计费 ▸ 模型定价.
 ///
 /// The price table used to be a constant the user could neither see nor correct.
 /// This is the surface that makes it a live document: every row the app can bill

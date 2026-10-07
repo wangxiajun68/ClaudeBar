@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The exchange-rate control behind 设置 → 通用 → 用量与花费.
+/// The exchange-rate control behind 设置 → 用量与计费.
 ///
 /// Only shown once the display is set to a converted mode. Two things live
 /// here that the user needs in order to trust a converted total: the rate and

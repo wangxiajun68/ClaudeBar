@@ -98,7 +98,7 @@ ClaudeBar 的核心对象是**正在运行的 Agent 会话**（Claude Code / Cod
 ### 3.2 用量
 
 - 今日 / 昨日 / 本月至今 / 上月同期 / 近 30 天逐日，全部来自 `UsageIndex.fetchBySource` 与 `fetchDailyModels`（rollup 查询，不扫描 transcript）；会话行上的估算金额走 `UsageIndex.fetchSessionFamilies`。
-- 今日同时给出花费估算（与概览「模型花费」同一套刊例价，见 [技术 §15](../technical/15-model-cost.md)），主数字旁副行写「另有 $43.20」或「N 个模型未计价」。
+- 今日同时给出花费估算（与概览「模型花费」同一套刊例价，见 [技术 §15](../technical/15-model-cost.md)），主数字旁副行写「另有 $43.20」或「N 个模型未计价」；金额与副行都经 `ModelPricing.present` / `detailParts(presented:)` 按「显示货币」渲染——折算模式下一共一个数，分列模式才有「另有」行。
 - 「同期」按天对齐：本月至今的逐日总量对比上月 1 日到同一天；上月天数不足时截到月末。直方图悬停某一天时，hero 换成该日总量与「峰值的 N%」。
 - 今日 hero 的副行写「昨日的 112%」这类节奏与「1,204 次」调用数。
 - 本月超过上月同期时节奏文字转琥珀（本月 line 的「上月同期 N%」），未超过时用次级文字色。

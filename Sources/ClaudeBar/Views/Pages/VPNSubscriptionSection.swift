@@ -13,6 +13,9 @@ struct VpnSubscriptionSection: View {
     @State private var editor: SubEditor?
     @State private var busyID: UUID?
     @State private var queryingAll = false
+    /// A download in flight that has no subscription id yet — the add path.
+    /// Same role as `busyID`, which needs an id to hang the spinner on.
+    @State private var adding = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -24,15 +27,21 @@ struct VpnSubscriptionSection: View {
                 Spacer(minLength: 0)
                 Button { editor = .add } label: { AppGlyph(name: "plus", size: 14) }
                     .buttonStyle(.plain).help("添加订阅")
+                    .disabled(adding || busyID != nil || queryingAll)
                 Menu {
                     Button(queryingAll ? "查询中…" : "查询全部流量") {
+                        // Acquired synchronously, like every other operation —
+                        // see `runBusy`. The guard is for a second click
+                        // delivered from the same event batch, before the
+                        // disabled state has re-rendered.
+                        guard !queryingAll, busyID == nil, !adding else { return }
+                        queryingAll = true
                         Task {
-                            queryingAll = true
                             await store.queryAll()
                             queryingAll = false
                         }
                     }
-                    .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil)
+                    .disabled(store.subscriptions.isEmpty || queryingAll || busyID != nil || adding)
                 } label: { AppGlyph(name: "ellipsis", size: 14) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("订阅操作")

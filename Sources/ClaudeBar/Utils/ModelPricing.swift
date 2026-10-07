@@ -316,26 +316,49 @@ enum ModelPricing {
             unpricedModels > 0 ? "\(unpricedModels) 个模型未计价" : ""
         }
 
-        /// The parts of the detail line under a money headline, in the order
-        /// every surface shows them. Each surface lays the parts out its own
-        /// way — the session row and the popup join them with `" · "`, the
-        /// island card prints only the first — which is why this returns parts
-        /// rather than a finished sentence.
+        /// The parts of the caption under a money headline, in the order every
+        /// surface shows them. Each surface lays the parts out its own way —
+        /// the session row's tooltip, the popup and the island tooltips join
+        /// them with `" · "`, the island card and the model tiles print only
+        /// the first — which is why this returns parts rather than a finished
+        /// sentence.
         ///
-        /// `includeDominant` is the row's form: it repeats the headline figure
-        /// it prints beside the badge, so the second currency needs no 「另有」
-        /// lead. Without it the parts are the caveat alone, printed under a
-        /// headline the surface draws itself.
-        func detailParts(includeDominant: Bool = false) -> [String] {
+        /// `presented` is the amount **after 显示货币 was applied**
+        /// (`present(_:display:rate:)`), and taking it here is what keeps a
+        /// caption consistent with the headline above it. A caption built from
+        /// the raw pair instead contradicts a converted headline: 分列's
+        /// 「另有 $43.20」 under a ¥ total is the one thing the user did not
+        /// ask to see. So the parts follow the presentation:
+        ///
+        /// - a stated fallback comes before the figures it qualifies — it
+        ///   explains why the headline is not what was requested;
+        /// - then the *other* money: the second currency in 分列, or the
+        ///   original dominant behind a converted figure, so the conversion
+        ///   can be checked against the vendor's own currency;
+        /// - then the merged unpriced-model count.
+        ///
+        /// `includeDominant` is the tooltip form: it repeats the headline
+        /// figure it describes, so the second currency needs no 「另有」 lead.
+        /// Without it the parts are the caveat alone, printed under a headline
+        /// the surface draws itself.
+        func detailParts(presented: Presented, includeDominant: Bool = false) -> [String] {
             var parts: [String] = []
-            if includeDominant, let dominant = cost.dominant {
-                parts.append(ModelPricing.format(dominant.amount, currency: dominant.currency))
+            if includeDominant, let primary = presented.primary {
+                parts.append(ModelPricing.format(primary.amount, currency: primary.currency))
             }
-            if let secondary = cost.secondary {
+            if let reason = presented.fallbackReason { parts.append(reason) }
+            if let secondary = presented.secondary {
                 let figure = ModelPricing.format(secondary.amount, currency: secondary.currency)
                 // The lead the second figure takes follows the role it plays:
                 // beside the headline it is a peer of it, under it an addition.
                 parts.append(includeDominant ? figure : "另有 " + figure)
+            } else if presented.isConverted, let source = cost.dominant,
+                      source.currency != presented.primary?.currency {
+                // The converted figure folds two currencies together; the
+                // original amount stays legible beside it. Skipped when the
+                // conversion landed on the dominant's own currency — there is
+                // no second number left to check.
+                parts.append(ModelPricing.format(source.amount, currency: source.currency))
             }
             if !unpricedCaption.isEmpty { parts.append(unpricedCaption) }
             return parts
