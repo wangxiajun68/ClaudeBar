@@ -21,7 +21,7 @@ let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_
 /// `rollup` is (path, day, model) in the user's local timezone.
 ///
 /// Incremental maintenance:
-///   - Unchanged files (mtime+size match) are skipped entirely.
+///   - Files unchanged in mtime, size *and* first-256-byte hash are skipped.
 ///   - Append-only growth parses only the new bytes from `offset`; the new
 ///     rows are *added* to the existing rollup (upsert-with-add).
 ///   - Shrink/rewrite (size decreased or new file) re-parses from byte 0 and
@@ -253,8 +253,8 @@ struct UsageIndex {
     }
 
     /// Bring the index up to date with every transcript source. Incremental:
-    /// unchanged files are skipped (mtime+size); cost is changed bytes, not
-    /// corpus size.
+    /// unchanged files are skipped (mtime+size+head hash); cost is changed
+    /// bytes, not corpus size.
     static func updateIndex() {
         let candidates = collectTranscripts()
         guard let db = connection() else { return }
@@ -619,7 +619,7 @@ struct UsageIndex {
     /// exclusive, so the last day that actually belongs to the period is the
     /// one containing `end - 1s`.
     private static func dayBounds(_ interval: DateInterval) -> (start: String, end: String) {
-        (dayString(interval.start), dayString(interval.end.addingTimeInterval(-1)))
+        (ModelPricing.dayKey(interval.start), ModelPricing.dayKey(interval.end.addingTimeInterval(-1)))
     }
 
     private static func taggedFetch(startDay: String, endDay: String, prefix: String) -> [ModelUsage] {
@@ -752,11 +752,20 @@ struct UsageIndex {
         let kind = file.key.prefix(while: { $0 != ":" })
         let isCodex = kind == "codex"
 
-        if let prior, prior.mtime == file.mtime, prior.size == file.size, prior.offset <= file.size {
+        let storedHash = prior?.headHash ?? 0
+        // A file whose mtime and size are unchanged is normally skipped
+        // without opening it, which is what makes a rescan cost one `stat` per
+        // transcript. But a restore that preserves both — `cp -p`, `rsync -a`,
+        // an unarchive — can still have different bytes, and skipping on the
+        // metadata alone would keep its stale rollup rows forever (every later
+        // pass takes the same early return). The 256-byte head hash is the
+        // tie-breaker; a row written before the column existed (`storedHash`
+        // of 0) keeps the old metadata-only behaviour until its next rewrite.
+        if let prior, prior.mtime == file.mtime, prior.size == file.size, prior.offset <= file.size,
+           storedHash == 0 || headHash(file.path, length: 256) == storedHash {
             return
         }
 
-        let storedHash = prior?.headHash ?? 0
         let currentHash = (prior != nil && file.size >= prior!.size) ? headHash(file.path, length: 256) : 0
         let headMatches = storedHash != 0 && currentHash == storedHash
         let canAppend = prior != nil && file.size > prior!.size && prior!.offset <= file.size
@@ -1187,7 +1196,7 @@ struct UsageIndex {
             let turn = (info["last_token_usage"] as? [String: Any]) ?? cumulativeDelta
             guard let turn, !model.isEmpty else { continue }
             let cached = JSONCoerce.intVal(turn["cached_input_tokens"])
-            var e = record(dayString(date), model,
+            var e = record(ModelPricing.dayKey(date), model,
                            input: max(0, JSONCoerce.intVal(turn["input_tokens"]) - cached),
                            output: JSONCoerce.intVal(turn["output_tokens"]),
                            read: cached,
@@ -1226,14 +1235,6 @@ struct UsageIndex {
     }
 
 
-    /// Local-timezone "yyyy-MM-dd" for a date (matching how the user reads
-    /// the panel). Built from calendar components — no DateFormatter on the
-    /// hot path.
-    private static func dayString(_ date: Date) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
-
     private static func record(_ day: String, _ model: String, input: Int, output: Int, read: Int = 0, create: Int = 0) -> ParsedEntry {
         var e = ParsedEntry(day: day, model: model)
         e.input = input; e.output = output; e.cacheRead = read; e.cacheCreate = create
@@ -1257,7 +1258,7 @@ struct UsageIndex {
                   let usage = message["usage"] as? [String: Any],
                   let date = isoDate(obj["timestamp"]) else { continue }
             let create = JSONCoerce.intVal(usage["cache_creation_input_tokens"])
-            var e = record(dayString(date), model,
+            var e = record(ModelPricing.dayKey(date), model,
                            input: JSONCoerce.intVal(usage["input_tokens"]),
                            output: JSONCoerce.intVal(usage["output_tokens"]),
                            read: JSONCoerce.intVal(usage["cache_read_input_tokens"]),

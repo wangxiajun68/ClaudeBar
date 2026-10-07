@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 import AppKit
+import os
 
 extension Notification.Name {
     /// Posted when the user taps an idle notification (or its Resume action).
@@ -35,6 +36,7 @@ extension Notification.Name {
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationService()
 
+    private static let logger = Logger(subsystem: "com.claudebar.app", category: "Notifications")
     private static let categoryID = "IDLE_SESSION"
     /// The parked-on-you category. Separate from `IDLE_SESSION` because the
     /// action is different — a parked prompt is answered in place ("去确认"),
@@ -56,13 +58,23 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// (see `BuildChannel.promptsForSystemPermissions`). The status read itself
     /// is non-prompting and stays ungated, which is what lets
     /// `PermissionCenter` still answer "已授权 / 未授权" off a dev build.
+    ///
+    /// The result is logged rather than dropped: when the user denies the
+    /// prompt, every later banner fails silently and this is the only record
+    /// that says why.
     func requestAuthorizationIfNeeded() {
         guard BuildChannel.promptsForSystemPermissions else { return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+                center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                    if let error {
+                        Self.logger.error("notification authorization request failed: \(error.localizedDescription, privacy: .public)")
+                    } else if !granted {
+                        Self.logger.notice("notification authorization was denied by the user")
+                    }
+                }
             default:
                 break
             }
@@ -100,64 +112,78 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     /// keeps a parked Claude session from going silent. The caller decides when
     /// the strip could not carry it; this only posts.
     func notifyNeedsInput(session: SessionInfo) {
-        post(
-            title: "Claude 需要你确认",
-            body: "\(session.projectFolder) · \(session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)",
-            subtitle: "waiting-\(session.pid)",
-            categoryID: Self.waitingCategoryID,
-            route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
-                               pid: session.pid, inDesktop: false)
-        )
+        post(delivery: .always,
+             title: "Claude 需要你确认",
+             body: "\(session.projectFolder) · \(session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)",
+             subtitle: "waiting-\(session.pid)",
+             categoryID: Self.waitingCategoryID,
+             route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
+                                pid: session.pid, inDesktop: false))
     }
 
     /// Cursor flavor of the parked-on-user banner.
     func notifyNeedsInput(cursor session: CursorSessionInfo) {
-        post(
-            title: "Cursor 需要你确认",
-            body: "\(session.projectFolder) · 等待你确认计划",
-            subtitle: "waiting-cursor-\(session.composerId)",
-            categoryID: Self.waitingCategoryID,
-            route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
-                               pid: nil, inDesktop: false)
-        )
+        post(delivery: .always,
+             title: "Cursor 需要你确认",
+             body: "\(session.projectFolder) · 等待你确认计划",
+             subtitle: "waiting-cursor-\(session.composerId)",
+             categoryID: Self.waitingCategoryID,
+             route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
+                                pid: nil, inDesktop: false))
     }
 
     /// A confirmed final answer, never the last intermediate tool name.
     func notifyIdle(session: SessionInfo) {
-        post(
-            title: "Claude 已完成",
-            body: "\(session.projectFolder) · 最终答复已就绪",
-            subtitle: "session-\(session.pid)",
-            categoryID: Self.categoryID,
-            route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
-                               pid: session.pid, inDesktop: false)
-        )
+        post(delivery: .idlePreference,
+             title: "Claude 已完成",
+             body: "\(session.projectFolder) · 最终答复已就绪",
+             subtitle: "session-\(session.pid)",
+             categoryID: Self.categoryID,
+             route: ResumeRoute(agent: "claude", sessionId: session.sessionId, cwd: session.cwd,
+                                pid: session.pid, inDesktop: false))
     }
 
     /// Cursor flavor — same state machine, violet distinct label.
     func notifyIdle(cursor session: CursorSessionInfo) {
-        post(
-            title: "Cursor 已完成",
-            body: "\(session.projectFolder) · 最终答复已就绪",
-            subtitle: "cursor-\(session.composerId)",
-            categoryID: Self.categoryID,
-            route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
-                               pid: nil, inDesktop: false)
-        )
+        post(delivery: .idlePreference,
+             title: "Cursor 已完成",
+             body: "\(session.projectFolder) · 最终答复已就绪",
+             subtitle: "cursor-\(session.composerId)",
+             categoryID: Self.categoryID,
+             route: ResumeRoute(agent: "cursor", sessionId: session.composerId, cwd: session.cwd,
+                                pid: nil, inDesktop: false))
     }
 
     /// Codex flavor — the tool name
     /// leads so sessions from different agents stay distinguishable.
     func notifyIdle(external session: ExternalSessionInfo) {
-        post(
-            title: "\(session.kind.displayName) 已完成",
-            body: "\(session.projectFolder) · 最终答复已就绪",
-            subtitle: session.id,
-            categoryID: Self.categoryID,
-            route: ResumeRoute(agent: "codex", sessionId: session.sessionId, cwd: session.cwd,
-                               pid: session.holderPID,
-                               inDesktop: session.inDesktop)
-        )
+        post(delivery: .idlePreference,
+             title: "\(session.kind.displayName) 已完成",
+             body: "\(session.projectFolder) · 最终答复已就绪",
+             subtitle: session.id,
+             categoryID: Self.categoryID,
+             route: ResumeRoute(agent: "codex", sessionId: session.sessionId, cwd: session.cwd,
+                                pid: session.holderPID,
+                                inDesktop: session.inDesktop))
+    }
+
+    /// What gates one banner, and why the parked ones are different.
+    ///
+    /// `idleNotifyEnabled` is the 「空闲通知」 switch (default off, an opt-in
+    /// permission — see docs/design/10-notch-island.md §5). It gates the
+    /// **completion** banners, whose island alert is a repeatable one-shot edge
+    /// the user can catch later. A park is the other edge: the strip refuses a
+    /// `.needsInput` alert while the island is off, alerts are off, or the
+    /// strip is open (`.expanded`), the menu-bar icon reads *idle* by design,
+    /// and the edge never fires again — so `NotchIslandController` posts this
+    /// banner exactly when the strip could not carry it. Letting the idle
+    /// switch silence that fallback resurrects the silent park the fallback
+    /// exists to prevent, so it posts whenever notifications are permitted.
+    enum Delivery {
+        /// Completion banner: requires the 「空闲通知」 switch.
+        case idlePreference
+        /// Parked-on-user fallback: gated by the system authorization only.
+        case always
     }
 
     /// What a banner's tap should open, in a form `UNNotificationContent`
@@ -170,12 +196,44 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         var inDesktop: Bool
     }
 
-    private func post(title: String, body: String, subtitle: String,
+    private func post(delivery: Delivery, title: String, body: String, subtitle: String,
                       categoryID: String, route: ResumeRoute) {
-        guard AppPreferences.shared.idleNotifyEnabled else { return }
+        if delivery == .idlePreference, !AppPreferences.shared.idleNotifyEnabled { return }
         ensureCategory()
-        requestAuthorizationIfNeeded()
+        // The parked fallback is a sole-signal path, so it must not reach the
+        // prompting API at all: asking here would post a TCC prompt from a
+        // background island event, and a dev build must never write that grant
+        // (`BuildChannel.promptsForSystemPermissions` is the first gate inside
+        // this call). The two non-prompting statuses below cover every state
+        // that can exist without this build having asked.
+        if delivery == .idlePreference {
+            requestAuthorizationIfNeeded()
+        } else {
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                switch settings.authorizationStatus {
+                case .authorized, .provisional:
+                    self.submit(title: title, body: body, subtitle: subtitle,
+                                categoryID: categoryID, route: route)
+                case .denied, .notDetermined:
+                    // Denied: macOS drops the banner anyway — submitting would
+                    // buy one silent XPC round trip per park. Not determined:
+                    // the user never opted in to notifications, which is
+                    // exactly what the 「空闲通知」 switch-collection means.
+                    Self.logger.notice("parked-session banner skipped (authorization not granted)")
+                @unknown default:
+                    break
+                }
+            }
+            return
+        }
+        submit(title: title, body: body, subtitle: subtitle, categoryID: categoryID, route: route)
+    }
 
+    /// Build the notification and hand it to the system. Every argument comes
+    /// from the shipped builders above, so this is the one place the content
+    /// shape (category, identifier, tap payload) exists.
+    private func submit(title: String, body: String, subtitle: String,
+                        categoryID: String, route: ResumeRoute) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -183,10 +241,17 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         content.categoryIdentifier = categoryID
         content.userInfo = Self.userInfo(for: route)
 
+        // The identifier is keyed on the session (`waiting-<pid>`,
+        // `session-<pid>`, …), so a re-post for the same session *replaces*
+        // the pending banner instead of stacking on it.
         let request = UNNotificationRequest(
             identifier: subtitle, content: content, trigger: nil)
-        // Replace any pending notification for the same session.
-        UNUserNotificationCenter.current().add(request)
+        // The error used to be dropped with the single-argument form: a banner
+        // that never appeared had no trace anywhere.
+        UNUserNotificationCenter.current().add(request) { error in
+            guard let error else { return }
+            Self.logger.error("notification \(subtitle, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate

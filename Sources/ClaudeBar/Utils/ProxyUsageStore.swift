@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import os
 
 /// Per-(day, model) token aggregate for **third-party** traffic only.
 ///
@@ -17,6 +18,8 @@ import SQLite3
 final class ProxyUsageStore {
     static let shared = ProxyUsageStore()
     static let didChange = Notification.Name("ClaudeBar.proxyUsageDidChange")
+
+    private static let logger = Logger(subsystem: "com.claudebar.app", category: "ProxyUsage")
 
     /// One (day, model) bucket. Disjoint by construction: `input` is fresh
     /// input only — `TokenTotals` folds the cache hit out of the upstream's
@@ -65,14 +68,21 @@ final class ProxyUsageStore {
         let name = model.isEmpty ? "unknown" : model
         let day = ModelPricing.dayKey(date)
         guard input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0 else { return }
+        var stored = false
         lock.lock()
         if let db = connectionLocked() {
-            upsertSQL(db, day: day, model: name, input: input, output: output,
-                      cacheRead: cacheRead, cacheWrite: cacheWrite)
+            stored = upsertSQL(db, day: day, model: name, input: input, output: output,
+                               cacheRead: cacheRead, cacheWrite: cacheWrite)
         }
         lock.unlock()
         // Transcript watchers cannot see third-party requests. Refresh the
-        // cached usage snapshot when this independent rollup advances.
+        // cached usage snapshot when this independent rollup advances — and
+        // only then: the observer's `refreshUsage(rescan: false)` walks ~14
+        // tables, and a write that never landed has nothing new to show.
+        guard stored else {
+            Self.logger.error("token rollup write failed; this request's usage was not recorded")
+            return
+        }
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChange, object: nil)
         }
@@ -233,8 +243,11 @@ final class ProxyUsageStore {
         sqlite3_exec(db, "PRAGMA user_version = 1", nil, nil, nil)
     }
 
+    /// Write one bucket, reporting whether the statement reached `SQLITE_DONE`.
+    /// The result used to be dropped, which made a `prepare` or `step` failure
+    /// indistinguishable from a landed write at every caller.
     private func upsertSQL(_ db: OpaquePointer, day: String, model: String,
-                           input: Int, output: Int, cacheRead: Int, cacheWrite: Int) {
+                           input: Int, output: Int, cacheRead: Int, cacheWrite: Int) -> Bool {
         var stmt: OpaquePointer?
         let sql = """
             INSERT INTO usage(day, model, calls, input, output, cache_read, cache_write)
@@ -246,15 +259,16 @@ final class ProxyUsageStore {
                 cache_read = cache_read + excluded.cache_read,
                 cache_write = cache_write + excluded.cache_write
             """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         sqlite3_bind_text(stmt, 1, day, -1, Self.transient)
         sqlite3_bind_text(stmt, 2, model, -1, Self.transient)
         sqlite3_bind_int64(stmt, 3, Int64(input))
         sqlite3_bind_int64(stmt, 4, Int64(output))
         sqlite3_bind_int64(stmt, 5, Int64(cacheRead))
         sqlite3_bind_int64(stmt, 6, Int64(cacheWrite))
-        sqlite3_step(stmt)
+        let stepped = sqlite3_step(stmt) == SQLITE_DONE
         sqlite3_finalize(stmt)
+        return stepped
     }
 
     // MARK: - Helpers

@@ -51,6 +51,13 @@ struct UsageStats {
     private static let formatterLock = NSLock()
     private static var labelFormatters: [String: DateFormatter] = [:]
 
+    /// Larger than any plausible run of distinct zones, so the sweep only ever
+    /// fires on real zone churn (travel, a DST rules update) rather than on a
+    /// normal 4-pattern day. The entries are all of a few microsecond
+    /// constructions, so the bound only needs to keep the resident count near
+    /// its steady state.
+    private static let labelFormatterLimit = 32
+
     /// Cached `DateFormatter` for a fixed pattern, in the app's zh_CN locale.
     /// Shared with the heatmap tooltips, which build one per cell.
     static func formatter(_ format: String) -> DateFormatter {
@@ -58,6 +65,15 @@ struct UsageStats {
         let key = format + "\u{1}" + zone
         formatterLock.lock(); defer { formatterLock.unlock() }
         if let cached = labelFormatters[key] { return cached }
+        // The zone is part of the key so a machine that changes zone never
+        // renders old-zone dates from the cache, but nothing else ever drops a
+        // key: a couple of trips a day would leave every zone's formatters
+        // (each carrying its localized data) resident until the process exits.
+        // Sweep the zones that are no longer current once the cache has grown
+        // past any steady number of them.
+        if labelFormatters.count >= labelFormatterLimit {
+            labelFormatters = labelFormatters.filter { $0.key.hasSuffix("\u{1}" + zone) }
+        }
         let made = DateFormatter()
         made.locale = Locale(identifier: "zh_CN")
         // Resolved by identifier so the formatter shares the process's own
@@ -124,30 +140,13 @@ struct UsageStats {
         formatTokens(n, style: AppPreferences.shared.tokenUnitStyle)
     }
 
-    /// Style-explicit variant (Widget and previews pass their own style).
+    /// Style-explicit variant, for callers that already resolved the style
+    /// (previews) or that are not in the app's process at all. The arithmetic
+    /// itself lives in `TokenMagnitude` so the widget extension — which cannot
+    /// see this file — formats the same number the same way instead of
+    /// carrying a second copy whose thresholds could drift unnoticed.
     static func formatTokens(_ n: Int, style: TokenUnitStyle) -> String {
-        switch style {
-        case .chinese:
-            if n >= 100_000_000 {
-                return String(format: "%.1f亿", Double(n) / 100_000_000)
-            } else if n >= 10_000 {
-                return String(format: "%.1f万", Double(n) / 10_000)
-            } else if n >= 1_000 {
-                return String(format: "%dK", Int(round(Double(n) / 1_000)))
-            } else {
-                return "\(n)"
-            }
-        case .metric:
-            if n >= 1_000_000_000 {
-                return String(format: "%.2fB", Double(n) / 1_000_000_000)
-            } else if n >= 1_000_000 {
-                return String(format: "%.1fM", Double(n) / 1_000_000)
-            } else if n >= 1_000 {
-                return String(format: "%dK", Int(round(Double(n) / 1_000)))
-            } else {
-                return "\(n)"
-            }
-        }
+        TokenMagnitude.format(n, style: style.rawValue)
     }
 
     /// Context-window sizes on session tiles: always k, never 万/亿.

@@ -162,7 +162,7 @@ struct WidgetEntryView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(p.textSecondary)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(formatTokens(s.todayTotalTokens, style: s.unitStyle))
+                    Text(TokenMagnitude.format(s.todayTotalTokens, style: s.unitStyle))
                         .font(.system(size: 28, weight: .semibold))
                         .widgetRollingNumber()
                         .foregroundColor(p.textPrimary)
@@ -600,24 +600,6 @@ struct WidgetEntryView: View {
     }
 
     // MARK: - Formatting
-
-    /// `style` is the raw `TokenUnitStyle` from the snapshot. The widget
-    /// process has its own `UserDefaults.standard` — the app's domain is not
-    /// visible to it, so reading the key here always missed and every widget
-    /// silently used the 万/亿 default.
-    private func formatTokens(_ n: Int, style: String?) -> String {
-        if style == "metric" {
-            if n >= 1_000_000_000 { return String(format: "%.2fB", Double(n) / 1_000_000_000) }
-            if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
-            if n >= 1_000 { return String(format: "%dK", Int(round(Double(n) / 1_000))) }
-            return "\(n)"
-        }
-        // Mirrors UsageStats.formatTokens(.chinese): one decimal, no padding.
-        if n >= 100_000_000 { return String(format: "%.1f亿", Double(n) / 100_000_000) }
-        if n >= 10_000 { return String(format: "%.1f万", Double(n) / 10_000) }
-        if n >= 1_000 { return String(format: "%dK", Int(round(Double(n) / 1_000))) }
-        return "\(n)"
-    }
 
     private func truncateModel(_ name: String) -> String {
         if name.count > 16 { return String(name.prefix(16)) + "…" }

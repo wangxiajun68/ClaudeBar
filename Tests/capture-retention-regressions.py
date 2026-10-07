@@ -44,6 +44,43 @@ bind_helper = method('bind(_ stmt: OpaquePointer?, _ idx: Int32, _ text: String)
 live_ids = method('loadListIDs(_ db: OpaquePointer)')
 sweep = method('sweepOrphanMedia()').replace(
     'let live = Set(currentLiveIDs())', 'let live = Set(Self.loadListIDs(Self.db!) ?? [])')
+# `connection()` keeps its production shape — the two migration ALTERs included
+# — with the opened path supplied by the fixture. The migration is the only
+# writer of the `payloads.request_headers` schema, so a database file is the
+# only place its two rules can actually be observed.
+connection_open = method('openConnectionLocked()').replace(
+    'if let db { return db }\n        if let failedAt = openFailedAt, Date().timeIntervalSince(failedAt) < Self.openRetryInterval { return nil }\n        guard sqlite3_open_v2(Self.dbURL.path, &db,',
+    'if let db { return db }\n        guard sqlite3_open_v2(PruneHarness.dbPath, &db,').replace(
+    'Self.openRetryInterval', 'PruneHarness.openRetryInterval').replace(
+    'Self.dbURL.path', 'PruneHarness.dbPath').replace(
+    'openFailedAt = Date()', 'openFailedAt = nil').replace(
+    '    private func openConnectionLocked', '    static func openConnectionLocked').replace(
+    '    private func hasColumn', '    static func hasColumn').replace(
+    'private static let openRetryInterval', 'static let openRetryInterval').replace(
+    'sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT \'\'", nil, nil, nil)',
+    'PruneHarness.alter(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT \'\'")').replace(
+    'sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil)',
+    'PruneHarness.alter(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER")')
+assert 'SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX' in connection_open
+assert 'hasColumn(db, table: "payloads", column: "request_headers")' in connection_open, \
+    'the migration guard must be part of the spliced connection()'
+has_column = method('hasColumn(_ db: OpaquePointer?, table: String, column: String)').replace(
+    '    private func hasColumn', '    static func hasColumn')
+
+# The status writes are the ones whose silent failure forks the list from the
+# database (a row the UI shows as done while SQLite still says pending, with the
+# interrupt button then doing nothing). `exec` reports whether the statement
+# landed; the call sites that write state must act on that report — a log line
+# is the store's only surface, so one is what this pins.
+assert 'if !exec("UPDATE captures SET' in store, \
+    'a failed state write must be reported, not discarded'
+assert 'if !exec("""' in store and 'UPDATE payloads SET response_json' in store, \
+    'a failed payload write must be reported, not discarded'
+assert 'let cleared = exec("DELETE FROM captures", args: [])' in store, \
+    'the clear-all DELETE must be read, not discarded'
+assert 'exec("DELETE FROM captures", args: [])' not in store.replace(
+    'let cleared = exec("DELETE FROM captures", args: [])', ''), \
+    'no bare clear-all DELETE may remain'
 
 harness = r'''
 import Foundation
@@ -60,8 +97,28 @@ enum FilePaths {
 enum PruneHarness {
     static let listLimit = 120
     static let vacuumThresholdPages: Int64 = 8_192
+    static let openRetryInterval: TimeInterval = 5
     static var lastMediaSweep = Date.distantPast
     static var db: OpaquePointer?
+    static var openFailedAt: Date?
+    /// The file `openConnectionLocked` opens; the cases below point it at a
+    /// fresh, a reopened and a pre-column database in turn.
+    static var dbPath = CommandLine.arguments[2]
+
+    /// How many statements the spliced `connection()` gave the two migration
+    /// ALTERs. The count is what separates "the guard skipped the statement"
+    /// from "the statement ran and failed" — both leave the same schema.
+    static var alterCount = 0
+
+    /// Issues one migration ALTER and counts it.
+    static func alter(_ db: OpaquePointer?, _ sql: String) -> Int32 {
+        alterCount += 1
+        return sqlite3_exec(db, sql, nil, nil, nil)
+    }
+
+    /// The production analyzer's member, so the spliced `connection()` compiles
+    /// for diagnostics only — the fixture never reads a log line.
+    static let logger = Logger(subsystem: "com.claudebar.fixture", category: "capture-retention")
 
     static func connection() -> OpaquePointer? { db }
 
@@ -111,6 +168,64 @@ PLACEHOLDER
         sqlite3_finalize(stmt)
         sqlite3_exec(PruneHarness.db, "COMMIT", nil, nil, nil)
         sqlite3_exec(PruneHarness.db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+        sqlite3_close(PruneHarness.db)
+        PruneHarness.db = nil
+        let pruneURL = PruneHarness.dbPath
+
+        // 1. The two column migrations, on the three database shapes they have
+        //    to handle — asserted through the production `connection()`, not by
+        //    re-stating its SQL. The ALTER count matters because a skipped
+        //    ALTER and a failed one leave the same schema: only the count can
+        //    tell "the guard avoided the statement" from "the statement ran and
+        //    errored invisibly".
+        //
+        //    (a) a database this build creates: the columns come from the
+        //        CREATE TABLEs, so not one ALTER is issued. The ALTER used to
+        //        run on every connection open and could only fail with
+        //        "duplicate column name" — once per process, invisibly.
+        PruneHarness.dbPath = CommandLine.arguments[2] + ".fresh"
+        var freshBefore = PruneHarness.alterCount
+        precondition(PruneHarness.openConnectionLocked() != nil, "must open a fresh database")
+        precondition(PruneHarness.hasColumn(PruneHarness.db, table: "payloads", column: "request_headers"),
+                     "the payloads CREATE must carry request_headers")
+        precondition(PruneHarness.hasColumn(PruneHarness.db, table: "captures", column: "cache_write_tokens"),
+                     "the captures CREATE must carry cache_write_tokens")
+        precondition(PruneHarness.alterCount == freshBefore,
+                     "a current database must issue no ALTER; issued \(PruneHarness.alterCount - freshBefore)")
+        //    (b) the same file reopened: still no ALTER, even though the
+        //        columns are now found on an existing table.
+        PruneHarness.db = nil
+        freshBefore = PruneHarness.alterCount
+        precondition(PruneHarness.openConnectionLocked() != nil, "must reopen the database")
+        precondition(PruneHarness.hasColumn(PruneHarness.db, table: "payloads", column: "request_headers"),
+                     "…and must keep the column")
+        precondition(PruneHarness.alterCount == freshBefore,
+                     "reopening must issue no ALTER; issued \(PruneHarness.alterCount - freshBefore)")
+        PruneHarness.db = nil
+        //    (c) a *pre-column* database: the legacy ALTER still runs, once per
+        //        column, and the columns come out present.
+        let legacyURL = CommandLine.arguments[2] + ".legacy"
+        PruneHarness.dbPath = legacyURL
+        var legacy: OpaquePointer?
+        precondition(sqlite3_open(legacyURL, &legacy) == SQLITE_OK)
+        sqlite3_exec(legacy, """
+            CREATE TABLE payloads (capture_id INTEGER PRIMARY KEY, request_json TEXT);
+            CREATE TABLE captures (id INTEGER PRIMARY KEY, started_at TEXT NOT NULL);
+            """, nil, nil, nil)
+        sqlite3_close(legacy)
+        let legacyBefore = PruneHarness.alterCount
+        precondition(PruneHarness.openConnectionLocked() != nil, "must open a pre-column database")
+        precondition(PruneHarness.hasColumn(PruneHarness.db, table: "payloads", column: "request_headers"),
+                     "a pre-column payloads table must gain request_headers")
+        precondition(PruneHarness.hasColumn(PruneHarness.db, table: "captures", column: "cache_write_tokens"),
+                     "a pre-column captures table must gain cache_write_tokens")
+        precondition(PruneHarness.alterCount == legacyBefore + 2,
+                     "each missing column must be added exactly once; issued \(PruneHarness.alterCount - legacyBefore)")
+        PruneHarness.db = nil
+        //    The prune case runs on the database the launch path created; its
+        //    own connection() is not re-run (the rows are inserted by hand).
+        PruneHarness.dbPath = pruneURL
+        sqlite3_open(pruneURL, &PruneHarness.db)
 
         // The freelist is only populated *by* the deletes, so the size that
         // matters is measured around them: `page_count` before the prune, and
@@ -141,9 +256,10 @@ PLACEHOLDER
 }
 '''
 
-source = ('import Foundation\nimport SQLite3\n' + harness).replace(
+source = ('import Foundation\nimport SQLite3\nimport os\n' + harness).replace(
     'PLACEHOLDER',
-    '\n'.join([bind_helper, prune, exec_body, exec_raw, live_ids, sweep]))
+    '\n'.join([bind_helper, prune, exec_body, exec_raw, live_ids, sweep,
+               connection_open, has_column]))
 
 with tempfile.TemporaryDirectory(prefix='claudebar-capture-') as tmp:
     folder = Path(tmp)

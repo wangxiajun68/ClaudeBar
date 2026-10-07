@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SQLite3
+import os
 
 /// One captured proxy request. Summaries stay in memory for the list;
 /// payloads live in SQLite and are loaded on demand.
@@ -158,6 +159,8 @@ final class CaptureStreams: ObservableObject {
 final class ProxyCaptureStore {
     static let shared = ProxyCaptureStore()
 
+    private static let logger = Logger(subsystem: "com.claudebar.app", category: "Capture")
+
     let catalog = CaptureCatalog()
     let streams = CaptureStreams()
     let previews = CaptureLivePreview()
@@ -285,13 +288,15 @@ final class ProxyCaptureStore {
             "error": error.map { .text($0) } ?? .null,
             "model": assembler.model.isEmpty ? .null : .text(assembler.model),
         ])
-        exec("""
+        if !exec("""
             UPDATE payloads SET response_json = ?, raw_sse = ? WHERE capture_id = ?
             """, args: [
             .text(Self.truncate(assembler.toResponseJSON(), cap: payloadCap)),
             .text(Self.truncate(rawSSE, cap: payloadCap)),
             .int(id),
-        ])
+        ]) {
+            Self.logger.error("capture \(id, privacy: .public) payload write failed; the inspector will open empty")
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let live = CaptureLive(content: assembler.content,
@@ -433,8 +438,13 @@ final class ProxyCaptureStore {
         // between the two.
         lock.lock()
         let mediaIDs = connection().flatMap { loadListIDs($0) } ?? []
-        exec("DELETE FROM captures", args: [])
+        let cleared = exec("DELETE FROM captures", args: [])
         lock.unlock()
+        // A clear that did not reach SQLite still wipes the on-screen list,
+        // which would read as success until the next launch reloads every
+        // deleted row. Leave the trace; the store has no user-facing error
+        // surface of its own.
+        if !cleared { Self.logger.error("clearAll did not reach SQLite; rows remain on disk") }
         removeMedia(ids: mediaIDs)
         DispatchQueue.main.async { [weak self] in
             self?.catalog.records = []
@@ -495,20 +505,43 @@ final class ProxyCaptureStore {
                 rewritten_json TEXT,
                 response_json TEXT,
                 raw_sse TEXT,
+                request_headers TEXT DEFAULT '',
                 FOREIGN KEY (capture_id) REFERENCES captures(id) ON DELETE CASCADE
             );
             """, nil, nil, nil)
-        sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil)
+        // Legacy databases predate the column, which is why it also sits in
+        // the CREATE above: on a database this build made, the ALTER can only
+        // fail ("duplicate column name") — noise per process, and it hid the
+        // case that matters. Gated on the schema and logged, a real failure
+        // (read-only file, a lock held past the timeout) no longer reads as
+        // the same silent no-op as the no-op.
+        if !hasColumn(db, table: "payloads", column: "request_headers"),
+           sqlite3_exec(db, "ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''", nil, nil, nil) != SQLITE_OK {
+            Self.logger.error("payloads.request_headers migration failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
+        }
         // Older databases predate the cache-write column. The capture rows are
         // a rolling 120-entry window of raw traffic, so a NULL here means "not
         // recorded then" — not defensible to re-derive, and not worth a
         // rebuild that would throw away the rows.
-        sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil)
+        if !hasColumn(db, table: "captures", column: "cache_write_tokens"),
+           sqlite3_exec(db, "ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER", nil, nil, nil) != SQLITE_OK {
+            Self.logger.error("captures.cache_write_tokens migration failed: \(String(cString: sqlite3_errmsg(db)), privacy: .public)")
+        }
         // Every statement against `captures` orders or filters by id, its
         // INTEGER PRIMARY KEY, so the secondary index on `started_at` written
         // by older builds is maintenance with no reader. Drop it once.
         sqlite3_exec(db, "DROP INDEX IF EXISTS captures_started", nil, nil, nil)
         return db
+    }
+
+    /// Whether `table.column` exists on this connection. `sqlite3_table_
+    /// column_metadata` answers without compiling a statement — a PRAGMA
+    /// `table_info` query is the same answer with a statement to finalize, and
+    /// this runs on every connection open.
+    private func hasColumn(_ db: OpaquePointer?, table: String, column: String) -> Bool {
+        var datatype: UnsafePointer<Int8>?
+        return sqlite3_table_column_metadata(db, nil, table, column, &datatype, nil, nil, nil, nil) == SQLITE_OK
+            && datatype != nil
     }
 
     private func recoverOrphans() {
@@ -748,7 +781,15 @@ final class ProxyCaptureStore {
             args.append(v)
         }
         args.append(.int(id))
-        exec("UPDATE captures SET \(sets.joined(separator: ", ")) WHERE id = ?", args: args)
+        // The state machine writes come through here (`finish`'s terminal
+        // state, `markStreaming`, …). A failure only used to come back as the
+        // `false` this call discarded, so a disk-full or busy-timeout left the
+        // in-memory row done while SQLite still said pending — the list shows
+        // a permanently "live" row whose interrupt button does nothing. At
+        // least make the divergence traceable.
+        if !exec("UPDATE captures SET \(sets.joined(separator: ", ")) WHERE id = ?", args: args) {
+            Self.logger.error("capture \(id, privacy: .public) update failed; disk state diverged from the list")
+        }
     }
 
     /// Runs one statement and reports whether it reached `SQLITE_DONE`. The

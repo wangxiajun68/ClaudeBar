@@ -113,6 +113,18 @@ func digest(_ rows: [UsageModelInventory.Row]) -> [String] {
         let aliases = [ModelUsage(model: "gpt-5.4-20250101", inputTokens: 100), ModelUsage(model: "gpt-5.4", outputTokens: 20), ModelUsage(model: "zero")]
         let missing = UsageModelInventory.rows(local: aliases, sources: [.codex: aliases], cursor: [], costs: [:])
         require(missing.count == 1 && missing[0].local.totalTokens == 120 && missing[0].costLine?.unpricedTokens == 120, "aliases, zero rows or missing costs changed")
+        // Partial coverage: `costs` comes from the period-wide estimate, whose
+        // keys are computed model names. An alias whose *own* slug has no
+        // entry must contribute its tokens to the unpriced total rather than
+        // vanish from the money picture — the same 102 all-missing case above
+        // cannot see this, because with no line at all every name is missing.
+        let partial = UsageModelInventory.rows(local: aliases, sources: [.codex: aliases], cursor: [],
+            costs: [ModelPricing.canonical("gpt-5.4"): .init(model: ModelPricing.canonical("gpt-5.4"), cost: .init(usd: 1), unpriced: nil)])
+        require(partial.count == 1, "aliases must still merge to one row")
+        require(partial[0].costLine?.cost.usd == 1 && partial[0].costLine?.unpricedTokens == 100,
+                "only the priced alias is costed; the unpriced one stays counted as tokens: \(String(describing: partial[0].costLine))")
+        require(partial[0].costLine?.unpriced == .unknownSlug,
+                "a partially priced row must say part of it has no table entry")
         var metrics: [String: Double] = [:]; var checksum = 0
         metrics["inventory_single_prepare_ms"] = ms { checksum += UsageModelInventory.rows(local: stats, sources: sources, cursor: cursor, costs: costs).count }
         metrics["inventory_prepare_and_20_reads_ms"] = ms {

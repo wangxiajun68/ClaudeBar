@@ -16,6 +16,13 @@ enum PrivateFileWriter {
         }
         try handle.write(contentsOf: data)
         try handle.synchronize()
+        // Close *before* the rename, like the sibling `ConnectorManager.
+        // secureReplace` ("Flush before the rename"). `write`/`synchronize`
+        // can both succeed while `close` — which reports the final metadata
+        // and delayed-allocation errors (ENOSPC, EIO) — fails; left to the
+        // `defer`, that failure was swallowed and `write` returned success for
+        // credentials the caller then treated as durably on disk.
+        try handle.close()
         guard rename(staged.path, destination.path) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }

@@ -20,7 +20,7 @@ def declaration(text, marker):
 
 
 models = (root / 'Sources/ClaudeBar/Models/ModelUsage.swift').read_text()
-source = 'import Foundation\nimport SQLite3\nimport Combine\nstruct Color {}\nenum Theme { static let claude = Color(); static let codex = Color(); static let cursor = Color(); enum Ink { static let claude = Color(); static let codex = Color(); static let cursor = Color() } }\n'
+source = 'import Foundation\nimport SQLite3\nimport Combine\nimport os\nstruct Color {}\nenum Theme { static let claude = Color(); static let codex = Color(); static let cursor = Color(); enum Ink { static let claude = Color(); static let codex = Color(); static let cursor = Color() } }\n'
 source += '\n'.join(declaration(models, m) for m in [
     'enum UsageSource', 'struct ModelUsage', 'struct DayUsage', 'enum UsageProviderAttribution'])
 source += r'''
@@ -173,6 +173,49 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             try fullBody.write(to: archivedRollout)
             UsageIndex.updateIndex()
             require(total() == 190, "restored transcript \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
+
+            // A rewrite that preserves mtime *and* byte count — `cp -p`,
+            // `rsync -a`, an unarchive — must still be re-read. The skip is
+            // normally decided on (mtime, size) alone and never opens the
+            // file, so without the head hash this file kept its first body's
+            // rollup rows on every later pass, forever: each pass took the
+            // same early return and no FSEvents burst could reach the new
+            // bytes. Its own day keeps the assertion off the scenario totals.
+            let preserved = sessions.appendingPathComponent("rollout-preserved.jsonl")
+            let preservedDay = period("2026-09-25", "2026-09-26")
+            func preservedTotal() -> Int {
+                UsageIndex.fetch(in: preservedDay).reduce(0) { $0 + $1.totalTokens }
+            }
+            let preservedHeader = line(["type": "turn_context", "payload": ["model": "preserved-model"]])
+            let firstBody = preservedHeader + event(100, 10, 60, day: "2026-09-25")
+            try Data(firstBody.utf8).write(to: preserved)
+            UsageIndex.updateIndex()
+            require(preservedTotal() == 110, "preserved-first-body \(preservedTotal())")
+            // Exact nanosecond stamp, read and restored through `stat` /
+            // `utimensat` rather than `FileManager.attributesOfItem`, whose
+            // Date round-trip lands one ULP off and would make the next pass
+            // re-read the file for the wrong reason (an mtime mismatch).
+            func statStamp(_ path: String) -> timespec {
+                var info = stat(); stat(path, &info); return info.st_mtimespec
+            }
+            let stamp = statStamp(preserved.path)
+            // Same number of bytes, different digits: the metadata is
+            // indistinguishable and only the bytes can tell the two apart.
+            let secondBody = preservedHeader + event(200, 20, 80, day: "2026-09-25")
+            require(secondBody.utf8.count == firstBody.utf8.count,
+                    "the rewrite fixture must keep the byte count")
+            try Data(secondBody.utf8).write(to: preserved)
+            var restored = [stamp, stamp]
+            require(utimensat(AT_FDCWD, preserved.path, &restored, 0) == 0,
+                    "the fixture must restore the exact mtime")
+            let check = statStamp(preserved.path)
+            require(check.tv_sec == stamp.tv_sec && check.tv_nsec == stamp.tv_nsec,
+                    "the restored mtime must compare equal to the stored one")
+            UsageIndex.updateIndex()
+            require(preservedTotal() == 220,
+                    "a same-mtime same-size rewrite must be re-read, got \(preservedTotal())")
+            try fm.removeItem(at: preserved)
+            UsageIndex.updateIndex()
             func assistant(_ output: Int, id: String = "message-id") -> String {
                 line(["type": "assistant", "timestamp": "2026-10-01T12:00:00Z",
                     "message": ["id": id, "model": "audit-model",
@@ -545,6 +588,56 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             }
             require(refused >= 16, "the fast path must refuse every non-canonical shape, refused \(refused)")
         }
+
+        // The two flags that drive the usage page's spinner and first-query
+        // gate, asserted directly — nothing else in the suite reads either, so
+        // a lifecycle regression (cached before the first build, never reset,
+        // or the DB probe turning a hit into a miss) would leave the page
+        // spinning (or empty) with no failing test. The contract, in the order
+        // the app exercises it:
+        //   1. A fresh process needs its first build and has no rows to show.
+        //   2. Any completed pass ends the build *and* sets the in-memory flag —
+        //      `hasCachedData` is not asked of SQLite once a pass has run, so
+        //      even an empty corpus reports "cached" (the spinner's condition
+        //      is `!hasCachedData && needsInitialBuild`, so this is what lets
+        //      the period chips query immediately after launch).
+        //   3. Against a *database* with rows, the first `hasCachedData` of a
+        //      process probes SQLite (no pass yet) and must find them.
+        do {
+            FilePaths.root = base.appendingPathComponent("flags")
+            try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
+            UsageIndex.reloadPersistence(); ProxyUsageStore.shared.reset()
+            require(UsageIndex.needsInitialBuild, "a fresh process must need its first build")
+            require(!UsageIndex.hasCachedData, "an empty index cannot report cached rollup rows")
+            UsageIndex.updateIndex()
+            require(!UsageIndex.needsInitialBuild, "the first pass must end the initial build")
+            require(UsageIndex.hasCachedData, "a completed pass must report cached data")
+            // With no corpus the database holds no rows, so the SQL probe a
+            // reloaded process runs answers false — the other side of the
+            // asymmetry above.
+            UsageIndex.reloadPersistence()
+            require(UsageIndex.needsInitialBuild, "a reload must need a fresh build")
+            require(!UsageIndex.hasCachedData, "the DB probe must find the empty rollup empty")
+            // A rollout makes the probe hit, and the flag must stay per-process:
+            // a reload still needs the build while the rows are on disk.
+            let flagRollout = FilePaths.root.appendingPathComponent("codex/sessions/rollout-flag.jsonl")
+            try fm.createDirectory(at: flagRollout.deletingLastPathComponent(), withIntermediateDirectories: true)
+            func flagLine(_ obj: [String: Any]) -> String {
+                String(decoding: try! JSONSerialization.data(withJSONObject: obj), as: UTF8.self) + "\n"
+            }
+            let flagBody = flagLine(["type": "turn_context", "payload": ["model": "flag-model"]])
+                + flagLine(["type": "event_msg", "timestamp": "2026-10-01T12:00:00Z",
+                            "payload": ["type": "token_count",
+                                        "info": ["total_token_usage": ["input_tokens": 40, "output_tokens": 4,
+                                                                       "cached_input_tokens": 10, "total_tokens": 44]]]])
+            try Data(flagBody.utf8).write(to: flagRollout)
+            UsageIndex.updateIndex()
+            require(UsageIndex.hasCachedData, "a booked rollout must report cached rows")
+            UsageIndex.reloadPersistence()
+            require(UsageIndex.needsInitialBuild && UsageIndex.hasCachedData,
+                    "a reload must need the build while still seeing the rows on disk")
+        }
+
         let a = ModelUsage(model: "shared-medium", inputTokens: 10)
         let b = ModelUsage(model: "shared", inputTokens: 100)
         let other = ModelUsage(model: "local-only", inputTokens: 20)

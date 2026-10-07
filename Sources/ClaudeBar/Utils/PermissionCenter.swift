@@ -229,12 +229,33 @@ final class PermissionCenter: ObservableObject {
         }
     }
 
+    /// The screen-recording row's status from the two facts that exist.
+    ///
+    /// `CGPreflightScreenCaptureAccess` is binary — there is no "denied" to
+    /// read — so "off" is either "never asked" or "the user said no". The
+    /// switch is the user's intent and is off by default, so intent-on +
+    /// preflight-false can only mean the request was made and refused (macOS
+    /// keeps the switch on after a denial). Mapping both to `.notDetermined`
+    /// made `PermissionStatus.denied` unreachable for this row, which hid the
+    /// 请在系统设置中允许 guidance and the jump button — the only place the
+    /// denial was visible was `ScreenshotHotKey.lastError` after a real ⌘⇧A.
+    /// A build that must not prompt (dev) records intent without ever raising
+    /// the request, so there "off" stays `.notDetermined`.
+    static func screenRecordingStatus(preflight: Bool, userEnabled: Bool,
+                                      promptsForSystemPermissions: Bool) -> PermissionStatus {
+        if preflight { return .granted }
+        return userEnabled && promptsForSystemPermissions ? .denied : .notDetermined
+    }
+
     func refreshStatus() {
         var next = statuses
         next[.widgetData] = .askOnUse
         next[.automation] = .askOnUse
         next[.cursorData] = .notRequired
-        next[.screenRecording] = CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
+        next[.screenRecording] = Self.screenRecordingStatus(
+            preflight: CGPreflightScreenCaptureAccess(),
+            userEnabled: PermissionGate.allows(.screenRecording),
+            promptsForSystemPermissions: BuildChannel.promptsForSystemPermissions)
         next[.bluetooth] = {
             switch CBManager.authorization {
             case .allowedAlways: return .granted

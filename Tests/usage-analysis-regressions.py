@@ -203,8 +203,13 @@ struct UsageIndex {
     static var db: OpaquePointer?
     private static func connection() -> OpaquePointer? { db }
 '''
-for marker in ['static func fetchOfficialCodex(', 'private static func dayBounds(', 'private static func dayString(']:
+for marker in ['static func fetchOfficialCodex(', 'private static func dayBounds(']:
     probe += slice_declaration(index, marker) + '\n'
+# `dayBounds` keys its SQL bounds with the shared rollup day-key format
+# (`ModelPricing.dayKey`), so the probe compiles that same production
+# function inside the type it belongs to rather than restating it.
+probe += 'enum ModelPricing {\n' + slice_declaration(
+    (root / 'Sources/ClaudeBar/Utils/ModelPricing.swift').read_text(), 'static func dayKey(') + '\n}\n'
 # `fetchOfficialCodex` memoizes each rollout's official verdict on the
 # `files` row's (mtime, size); the fixture carries the same statics so the
 # sliced production function compiles and the memo path itself is exercised.

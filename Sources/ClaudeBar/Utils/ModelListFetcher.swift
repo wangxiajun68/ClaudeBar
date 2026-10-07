@@ -1,5 +1,119 @@
 import Foundation
 
+/// The one place a response body is read into memory for a non-streaming
+/// request, with a hard cap.
+///
+/// `URLSession.data(for:)` buffers whatever the server sends before any of it
+/// is handed over, so a base URL answering with a large body — a vendor outage
+/// serving an error page, or a URL pointing at a big non-API endpoint — is
+/// fully materialised in this menu-bar app for as long as the link takes, and
+/// only then refused. Every other bounded reader in the repo caps what it
+/// buffers; this is the one that does it for `URLSession`.
+///
+/// A **session-level** delegate, not a per-call one: measured on this machine
+/// (Swift 6.4), the completion-handler API resolves through a different code
+/// path and the delegate callbacks never fire for it, while `bytes(for:)`'s
+/// per-byte async sequence is ~12 µs/byte (~0.35 s for a 60 KB list at the
+/// app's own `-O`). A delegate session with `data(for:)` has neither problem:
+/// the callbacks fire and a 60 KB list costs microseconds, the same as the
+/// unbounded path.
+///
+/// Cancellation of the surrounding task cancels in-flight requests, so the list
+/// fetch stays interruptible.
+final class BoundedResponseReader: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate {
+
+    /// The body was larger than the cap. Callers turn this into their own text.
+    struct Overflow: Error {}
+
+    private let cap: Int
+    private let delegateQueue = OperationQueue()
+    private let lock = NSLock()
+
+    private struct Pending {
+        let continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>
+        var body = Data()
+        var response: HTTPURLResponse?
+        var overflowed = false
+    }
+    private var pending: [Int: Pending] = [:]
+
+    init(cap: Int) { self.cap = cap }
+
+    /// Build the session this reader owns. `data(for:)` must be called on it,
+    /// and the session must not be reused for other work.
+    func makeSession(_ configuration: URLSessionConfiguration) -> URLSession {
+        delegateQueue.maxConcurrentOperationCount = 1
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
+    }
+
+    func load(_ request: URLRequest, in session: URLSession) async throws -> (Data, HTTPURLResponse) {
+        let task = session.dataTask(with: request)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                pending[task.taskIdentifier] = Pending(continuation: continuation)
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    // MARK: - URLSessionTaskDelegate
+
+    /// A request carrying a credential must not be re-pointed elsewhere.
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+
+    // MARK: - URLSessionDataDelegate
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        lock.lock()
+        pending[dataTask.taskIdentifier]?.response = response as? HTTPURLResponse
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        var overflowed = false
+        if var entry = pending[dataTask.taskIdentifier] {
+            if entry.body.count + data.count > cap {
+                entry.overflowed = true
+                entry.body.removeAll()
+                overflowed = true
+            } else {
+                entry.body.append(data)
+            }
+            pending[dataTask.taskIdentifier] = entry
+        }
+        lock.unlock()
+        if overflowed { dataTask.cancel() }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let entry = pending.removeValue(forKey: task.taskIdentifier)
+        lock.unlock()
+        guard let entry else { return }
+        if entry.overflowed {
+            entry.continuation.resume(throwing: Overflow())
+        } else if let error {
+            entry.continuation.resume(throwing: error)
+        } else if let response = entry.response {
+            entry.continuation.resume(returning: (entry.body, response))
+        } else {
+            entry.continuation.resume(throwing: URLError(.badServerResponse))
+        }
+    }
+}
+
 /// Fetches model IDs from an OpenAI-compatible `GET /models` endpoint.
 enum ModelListFetcher {
 
@@ -11,6 +125,23 @@ enum ModelListFetcher {
         case success(ModelListPayload)
         case failure(String)
     }
+
+    /// The message the 拉取模型 button shows for one outcome, or nil when it
+    /// should show none. Here rather than in the button so the wording is a
+    /// value a regression can read: the button itself is a view, and the
+    /// 「也可手动填写」 suffix is the one thing a failure must always say —
+    /// a fetch that cannot run never means the user cannot type the ids.
+    static func buttonMessage(for outcome: Outcome) -> String? {
+        switch outcome {
+        case .success: return nil
+        case .failure(let text): return text + "。也可手动填写模型 ID。"
+        }
+    }
+
+    /// A models list is ids and metadata, tens of KB even for a large vendor.
+    /// The cap is well above that and far below "this will not fit in a
+    /// menu-bar app's memory".
+    private static let responseCap = 4 * 1024 * 1024
 
     static func fetch(baseURL: String, apiKey: String, wireAPI: String = "chat") async -> Outcome {
         let urlText = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,9 +159,15 @@ enum ModelListFetcher {
         }
 
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The user's own base URL is tried first (`candidateURLs` returns it
+        // ahead of the guessed `/models` variants), so its typed 401/403 — the
+        // one answer that says 换个 Key — is kept and returned even when every
+        // other candidate fails for a reason of its own. Without this the last
+        // endpoint's 404 masked the real cause and the user edited the URL.
+        var definitiveAuth: String?
         var lastError = "未能从 API 获取模型列表"
 
-        for candidate in candidateURLs(urlText, wireAPI: wireAPI) {
+        for (index, candidate) in candidateURLs(urlText, wireAPI: wireAPI).enumerated() {
             guard !Task.isCancelled else { return .failure("已取消") }
             switch await requestModels(url: candidate.url, apiKey: key, authStyle: candidate.authStyle) {
             case .success(let models) where !models.isEmpty:
@@ -38,10 +175,13 @@ enum ModelListFetcher {
             case .success:
                 lastError = "接口返回空模型列表（\(candidate.url.path)）"
             case .failure(let message):
+                if message.hasPrefix("鉴权失败"), index == 0, definitiveAuth == nil {
+                    definitiveAuth = message
+                }
                 lastError = message
             }
         }
-        return .failure(lastError)
+        return .failure(definitiveAuth ?? lastError)
     }
 
     /// Whether a request carrying an API key may go to this URL. https always;
@@ -68,6 +208,9 @@ enum ModelListFetcher {
         case both
     }
 
+    /// The URLs one fetch may try, in order. The first is always the address
+    /// the user typed or the catalog's documented models route; the rest are
+    /// path guesses. `fetch` relies on that first slot for its auth verdict.
     private static func candidateURLs(_ raw: String, wireAPI: String) -> [Candidate] {
         var seen = Set<String>()
         var out: [Candidate] = []
@@ -116,8 +259,10 @@ enum ModelListFetcher {
         c.urlCache = nil
         c.httpCookieStorage = nil
         c.waitsForConnectivity = false
-        return URLSession(configuration: c, delegate: NoModelListRedirects(), delegateQueue: nil)
+        return reader.makeSession(c)
     }()
+
+    private static let reader = BoundedResponseReader(cap: responseCap)
 
     private enum RequestOutcome {
         case success([String])
@@ -132,15 +277,15 @@ enum ModelListFetcher {
         if authStyle != .bearer { req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version") }
 
         do {
-            let (data, response) = try await session.data(for: req)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let (data, response) = try await reader.load(req, in: session)
+            let status = response.statusCode
             if status == 401 || status == 403 {
                 if authStyle == .both, !apiKey.isEmpty {
                     var retry = req
                     applyAuth(apiKey, style: .apiKeyHeader, to: &retry)
-                    let (retryData, retryResponse) = try await session.data(for: retry)
-                    let retryStatus = (retryResponse as? HTTPURLResponse)?.statusCode ?? 0
-                    if (200..<300).contains(retryStatus), let models = parseModelIDs(retryData), !models.isEmpty {
+                    let (retryData, retryResponse) = try await reader.load(retry, in: session)
+                    if (200..<300).contains(retryResponse.statusCode),
+                       let models = parseModelIDs(retryData), !models.isEmpty {
                         return .success(models)
                     }
                 }
@@ -155,7 +300,8 @@ enum ModelListFetcher {
             }
             return .success(models)
         } catch {
-            return .failure(describeError(error, host: url.host ?? url.absoluteString))
+            if error is BoundedResponseReader.Overflow { return .failure("响应过大") }
+            return .failure(HTTPErrorText.describe(error, host: url.host ?? url.absoluteString))
         }
     }
 
@@ -234,7 +380,7 @@ enum ModelListFetcher {
         default: prefix = "HTTP \(status)"
         }
         if let msg = jsonError(data), !msg.isEmpty {
-            return "\(prefix)（\(path)）：\(clip(msg))"
+            return "\(prefix)（\(path)）：\(HTTPErrorText.clip(msg))"
         }
         return "\(prefix)（\(path)）"
     }
@@ -253,38 +399,8 @@ enum ModelListFetcher {
         return String(data: data.prefix(160), encoding: .utf8)
     }
 
-    private static func describeError(_ error: Error, host: String) -> String {
-        let e = error as NSError
-        if e.domain == NSURLErrorDomain {
-            switch e.code {
-            case NSURLErrorTimedOut: return "请求超时（\(host)）"
-            case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost: return "无法连接 \(host)"
-            case NSURLErrorNotConnectedToInternet: return "无网络"
-            default: break
-            }
-        }
-        return clip(error.localizedDescription)
-    }
-
     private static func trimSlash(_ s: String) -> String {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    }
-
-    private static func clip(_ s: String) -> String {
-        let flat = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if flat.count <= 140 { return flat }
-        return String(flat.prefix(137)) + "…"
-    }
-}
-
-/// A models endpoint must not redirect a credential-bearing request elsewhere.
-private final class NoModelListRedirects: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }

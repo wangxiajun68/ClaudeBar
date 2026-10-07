@@ -85,59 +85,18 @@ enum ConnectivityProbe {
         return parts.joined(separator: " · ")
     }
 
+    // The error-response and NSError text lives in `HTTPErrorText`, shared with
+    // `ModelListFetcher` — the two probes used to carry near-identical copies
+    // that had already drifted (the fetcher's was missing 连接中断 / TLS 失败).
     private static func describeBody(_ data: Data, status: Int) -> String {
-        let prefix: String
-        switch status {
-        case 401, 403: prefix = "鉴权失败"
-        case 404: prefix = "接口不存在"
-        case 429: prefix = "限流"
-        default: prefix = "HTTP \(status)"
-        }
-        if let msg = jsonError(data), !msg.isEmpty {
-            return "\(prefix)：\(clip(msg))"
-        }
-        return prefix
-    }
-
-    private static func jsonError(_ data: Data) -> String? {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) else { return nil }
-        if let dict = obj as? [String: Any] {
-            if let err = dict["error"] as? [String: Any] {
-                if let m = err["message"] as? String { return m }
-                if let m = err["msg"] as? String { return m }
-            }
-            if let m = dict["error"] as? String { return m }
-            if let m = dict["message"] as? String { return m }
-            if let m = dict["msg"] as? String { return m }
-        }
-        return String(data: data.prefix(180), encoding: .utf8)
+        HTTPErrorText.describeBody(data, status: status)
     }
 
     private static func describeError(_ error: Error, host: String) -> String {
-        let e = error as NSError
-        if e.domain == NSURLErrorDomain {
-            switch e.code {
-            case NSURLErrorTimedOut: return "超时（\(host)）"
-            case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost:
-                return "无法连接 \(host)"
-            case NSURLErrorNotConnectedToInternet: return "无网络"
-            case NSURLErrorNetworkConnectionLost: return "连接中断"
-            case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted:
-                return "TLS 失败（\(host)）"
-            default: break
-            }
-        }
-        return clip(error.localizedDescription)
+        HTTPErrorText.describe(error, host: host)
     }
 
     private static func millis(since date: Date) -> Int {
         Int((Date().timeIntervalSince(date) * 1000).rounded())
-    }
-
-    private static func clip(_ s: String) -> String {
-        let flat = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if flat.count <= 160 { return flat }
-        return String(flat.prefix(157)) + "…"
     }
 }

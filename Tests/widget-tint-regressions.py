@@ -33,6 +33,16 @@ def slice_body(text, signature):
     return text[opening + 1:index - 1]
 
 
+def declaration(text, marker):
+    start = text.index(marker)
+    end = text.index('{', start) + 1
+    depth = 1
+    while depth:
+        depth += (text[end] == '{') - (text[end] == '}')
+        end += 1
+    return text[start:end]
+
+
 theme_djb2 = slice_body(theme, 'static func djb2(')
 widget_color = slice_body(widget, 'static func color(for model: String) -> Color')
 
@@ -45,8 +55,32 @@ if len(slugs) < 30:
         'the table\'s shape changed and this suite is no longer reading it')
 names = '\n'.join(f'        "{slug}",' for slug in slugs)
 
+# The widget's token formatter must equal the app's, the same way its tint
+# must. `TokenMagnitude.swift` is compiled into both targets (the widget gets
+# it through a symlink, like `WidgetSnapshot.swift`), so this asserts the
+# shared file is really the one both sides use rather than a private copy that
+# has drifted. The magnitudes are read from the shared source, and the app's
+# `UsageStats.formatTokens` must keep delegating to it.
+magnitude = (root / 'Sources/ClaudeBar/Utils/TokenMagnitude.swift').read_text()
+stats = (root / 'Sources/ClaudeBar/Utils/UsageStats.swift').read_text()
+if 'TokenMagnitude.format(n, style: style.rawValue)' not in stats:
+    raise SystemExit(
+        'widget-tint-regressions.py: UsageStats.formatTokens no longer delegates to '
+        'TokenMagnitude — the widget and the app can drift on token magnitudes again')
+link = root / 'Sources/Widget/TokenMagnitude.swift'
+if not link.exists() or not link.is_symlink() or not link.samefile(root / 'Sources/ClaudeBar/Utils/TokenMagnitude.swift'):
+    raise SystemExit(
+        'widget-tint-regressions.py: Sources/Widget/TokenMagnitude.swift must be a symlink to '
+        'Sources/ClaudeBar/Utils/TokenMagnitude.swift, or the widget compiles a stale copy')
+widget_tokens = (root / 'Sources/Widget/WidgetViews.swift').read_text()
+if 'TokenMagnitude.format(' not in widget_tokens or 'private func formatTokens(' in widget_tokens:
+    raise SystemExit(
+        'widget-tint-regressions.py: WidgetViews must call the shared TokenMagnitude, not carry its own copy')
+
 harness = f'''
 import Foundation
+
+{declaration(magnitude, 'enum TokenMagnitude')}
 
 enum Theme {{
     static func djb2(_ s: String) -> Int {{
@@ -76,11 +110,30 @@ for slug in slugs {{
         failures += 1
     }}
 }}
+
+// Tile magnitudes: every boundary the shared formatter keys on, in both
+// styles, plus the nil style the widget placeholder sends (万/亿 default).
+let cases: [(Int, String, String?)] = [
+    (0, "0", nil), (999, "999", "chinese"), (1_000, "1K", "chinese"),
+    (9_999, "10K", "chinese"), (10_000, "1.0万", "chinese"),
+    (99_999_999, "10000.0万", "chinese"), (100_000_000, "1.0亿", "chinese"),
+    (3_289_063_800, "32.9亿", "chinese"),
+    (1_000, "1K", "metric"), (999_999, "1000K", "metric"),
+    (1_000_000, "1.0M", "metric"), (999_999_999, "1000.0M", "metric"),
+    (1_000_000_000, "1.00B", "metric"), (999_999, "100.0万", nil),
+]
+for (n, expected, style) in cases {{
+    let got = TokenMagnitude.format(n, style: style)
+    if got != expected {{
+        print("FAIL: format(\\(n), style: \\(style ?? "nil")) = \\(got), expected \\(expected)")
+        failures += 1
+    }}
+}}
 if failures > 0 {{
-    print("\\(failures)/\\(slugs.count) slugs disagree between the app and the widget")
+    print("\\(failures) disagreements between the app and the widget")
     exit(1)
 }}
-print("PASS: all \\(slugs.count) bundled model slugs hash to the same palette slot in Theme and the widget")
+print("PASS: all \\(slugs.count) bundled model slugs hash to the same palette slot in Theme and the widget, and every token magnitude boundary agrees")
 '''
 
 with tempfile.TemporaryDirectory(prefix='claudebar-widget-tint-') as folder:

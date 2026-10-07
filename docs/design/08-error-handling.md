@@ -12,7 +12,7 @@
 | 无活跃会话 | 会话区显示 `StandbyEmptyState`「暂无会话」 |
 | Cursor 未安装 / DB 不存在 | Cursor 段整段省略（空族不占一行），不影响 Claude 段 |
 | 余额请求失败 / 无可用读数 | `ProviderStore.balanceAmounts` 留空、`balanceText = nil`（只有 DeepSeek / Kimi / 硅基流动 / OpenRouter 有官方余额接口，其余不显示数字） |
-| 通知权限被拒 | `NotificationService.requestAuthorizationIfNeeded()` 仅在 `.notDetermined` 时请求，被拒后静默降级：不再请求、不发送通知，其余功能不受影响 |
+| 通知权限被拒 | `NotificationService.requestAuthorizationIfNeeded()` 仅在 `.notDetermined` 时请求，被拒后不再请求：完成横幅静默降级（`idleNotifyEnabled` 仍记录用户意图）；停在用户身上的兜底横幅以授权状态为准，被拒时不发，其余功能不受影响。发送与授权失败均记入 `Notifications` 日志类别 |
 | Widget 读不到快照 | 依次试 UserDefaults → App Group 文件 → `~/.claude`（仅 `allowsSystemIntegration` 时）→ Widget 沙盒容器，全部失败或解码失败则回退 `WidgetEntry.placeholder`，视图显示「暂无数据」 |
 | mihomo 二进制缺失 | VPN 状态 `missingCore`；VPN 页给出内核缺失提示（内含放置路径 `FilePaths.vpnCoreBin`）与「打开目录」按钮（打开 `FilePaths.vpnDir`） |
 | 内核启动失败 | `VpnError` 经 `fail(_:)` 写入 `VpnLogStore`（VPN 页控制台）与 vpn.log，内核自身输出进 core.log；常见为 YAML 重复键、非法 `skip-auth-prefixes`、或端口被占导致的 `address already in use` |
