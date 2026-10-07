@@ -82,6 +82,22 @@ final class FixtureWindow: NSWindow {
         assert(rotor.speed == 0, "A detached rotor must pause")
         view.stop()
         assert(rotor.animationKeys()?.isEmpty != false)
+        // The overlay placement the panel uses for each rotor center. The two
+        // axes scale by *different* denominators (1536 and 1024): a single
+        // width fraction would leave the blades off their crops on any frame
+        // that is not 1.5:1, and nothing else asserts that (finding 567).
+        let frame = CGSize(width: 900, height: 450)   // 2:1, not the artwork's 1.5:1
+        let leftSpot = FanArtwork.rotorPosition(FanArtwork.leftRotorCenter, in: frame)
+        let rightSpot = FanArtwork.rotorPosition(FanArtwork.rightRotorCenter, in: frame)
+        assert(abs(leftSpot.x - 300.0 / 1536.0 * 900) < 0.0001, "left rotor x must scale by canvas width")
+        assert(abs(leftSpot.y - 315.0 / 1024.0 * 450) < 0.0001, "left rotor y must scale by canvas height")
+        assert(abs(rightSpot.x - 1237.0 / 1536.0 * 900) < 0.0001, "right rotor x must scale by canvas width")
+        assert(leftSpot.y == rightSpot.y, "both rotors sit on one horizontal line in the artwork")
+        let fit = CGSize(width: 1536, height: 1024)   // the artwork's own aspect: fractions must agree
+        let atFit = FanArtwork.rotorPosition(FanArtwork.leftRotorCenter, in: fit)
+        assert(atFit == FanArtwork.leftRotorCenter, "at the artwork's own size the placement is the identity")
+        assert(abs(FanArtwork.rotorDiameterFraction - 216.0 / 1536.0) < 0.000001,
+               "the overlay scales the rotor by the canvas *width* fraction")
         print("PASS: illustration and turbine crops decode; symbol fallback renders; retiming, pause and resume preserve phase")
     }
 }

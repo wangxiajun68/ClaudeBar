@@ -7177,7 +7177,9 @@
   "summary": "插画叠加位置公式（两轴不同分母缩放）没有回归；Tests/ 下没有任何 FanInternalsPanel / rotorPosition 的引用",
   "evidence": "grep -rn \"rotorPosition\" Sources/ 仅命中 FanInternalsPanel.swift:58/60 与 LucideRotor.swift:236；grep -rl \"FanInternalsPanel\" Tests/ 无结果（fan-rotor-regressions.py 只探测 RotorLayerView/FanArtwork 的 crop 与 retime，见该文件第 20-58 行）。rotorPosition 的注释明确说「两轴用不同分母（1536 与 1024），单一宽度比例会让叶片在非 1.5:1 画面上偏离裁切位置」——这正是需要夹具覆盖的公式，但 .aspectRatio(1.5, contentMode: .fit)（第 67 行）在真实布局里保证比例，公式第二轴的实际生效路径没有测试。",
   "failure": "若未来改动 aspectRatio 或 canvas 尺寸，叶片会与插画裁切错位，而 make test 不会失败。",
-  "fix": "在 fan-rotor-regressions.py 增加对 FanArtwork.rotorPosition 的纯函数断言（给定非 1.5:1 的 size，验证 x/y 分母不同），并把 FanInternalsPanel 的 aspectRatio 常量纳入检查。"
+  "fix": "在 fan-rotor-regressions.py 增加对 FanArtwork.rotorPosition 的纯函数断言（给定非 1.5:1 的 size，验证 x/y 分母不同），并把 FanInternalsPanel 的 aspectRatio 常量纳入检查。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: Tests/fan-rotor-regressions.py now asserts FanArtwork.rotorPosition on a 2:1 frame — each axis scaling by its own denominator (1536/1024), the identity at the artwork-size frame, both rotors on one horizontal line, and rotorDiameterFraction = 216/1536. A single-width-fraction regression would trip the y assertion."
  },
  {
   "category": "test-gap",
