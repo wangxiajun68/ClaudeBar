@@ -150,9 +150,27 @@ struct VPNView: View {
         .alert("端口被占用，未启动代理", isPresented: portConflictBinding, presenting: manager.portConflict) { conflict in
             if conflict.port == prefs.vpnMixedPort {
                 Button("换个端口") {
-                    applySuggestedPort()
+                    // The candidate search spawns one `lsof` per port tried
+                    // (15–40 ms each, measured): run it off the main actor,
+                    // then commit the port and retry once it lands. Inline,
+                    // the click froze the UI for as long as the first free
+                    // port was away.
+                    let start = prefs.vpnMixedPort
                     manager.portConflict = nil
-                    manager.retryStart()
+                    Task {
+                        let candidate = await Task.detached(priority: .userInitiated) {
+                            VpnManager.suggestedFreePort(after: start)
+                        }.value
+                        if let candidate {
+                            prefs.vpnMixedPort = candidate
+                            portDraft = String(candidate)
+                            // Whatever picked the old port (including our own
+                            // guard loop) must follow, or the browser/CLI
+                            // traffic still points at the dead one.
+                            syncSystemProxy()
+                        }
+                        manager.retryStart()
+                    }
                 }
             }
             Button("好") { manager.portConflict = nil }
@@ -313,26 +331,6 @@ struct VPNView: View {
     private var portConflictBinding: Binding<Bool> {
         Binding(get: { manager.portConflict != nil },
                 set: { if !$0 { manager.portConflict = nil } })
-    }
-
-    /// Move the mixed port to the first free port above the current one and
-    /// apply it, so the caller can retry immediately.
-    ///
-    /// Only ever called for the *mixed* port: that one is ours to choose. The
-    /// controller port is fixed on both sides of the app, so a conflict there
-    /// is reported but never auto-worked-around.
-    private func applySuggestedPort() {
-        var candidate = prefs.vpnMixedPort + 1
-        while candidate < 65_535 {
-            if VpnManager.isPortFree(candidate) { break }
-            candidate += 1
-        }
-        guard candidate < 65_535 else { return }
-        prefs.vpnMixedPort = candidate
-        portDraft = String(candidate)
-        // Whatever picked the old port (including our own guard loop) must
-        // follow, or the browser/CLI traffic still points at the dead one.
-        syncSystemProxy()
     }
 
     /// What to tell the user: which port, who holds it, and what their options

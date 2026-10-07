@@ -4327,7 +4327,9 @@
   "evidence": "VPNSubscriptionSection.swift:71-77 `Button(\"删除\", role: .destructive) { if let sub = pendingDelete { store.removeSubscription(sub.id); if manager.isRunning { manager.reloadConfig() } } }`。VpnManager.reloadConfig（VpnManager.swift:799-809）会 stopCore + startCore，注释也承认端口切换/TUN 变更时用户正在使用的隧道会被重建；这里没有比较被删的 id 与 store.activeID（VpnSubscriptionStore.swift:107-116 里只有 `if activeID == id` 才需要换 activeID）。",
   "failure": "活动订阅 A 正在运行，用户删掉一份闲置订阅 C：内核被 SIGTERM 后重启，流量中断数百毫秒到数秒、节点宫格清空（clearLists:false 只保 groups）、测速结果丢失，且没有任何界面理由。",
   "fix": "删除前记录 `let wasActive = store.activeID == sub.id`，仅当 `wasActive && manager.isRunning` 时才 `manager.reloadConfig()`。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The delete reload now only fires when the removed subscription was the active one (`wasActive = sub.id == store.activeID` captured before removeSubscription, which reassigns activeID exactly in that case). The generated config inlines the active profile alone, so deleting any other card no longer restarts the kernel for a file the core never read. Pinned in Tests/vpn-subscription-reentry-regressions.py (the delete-alert block asserts the wasActive form)."
  },
  {
   "category": "perf-io",
@@ -4339,7 +4341,9 @@
   "evidence": "VPNView.swift:325-329 `var candidate = prefs.vpnMixedPort + 1; while candidate < 65_535 { if VpnManager.isPortFree(candidate) { break }; candidate += 1 }` 由 alert 的 Button 动作（主 actor）直接调用。VpnManager.swift:434-436 `static func isPortFree(_ port: Int) -> Bool { listenerPID(on: port) == nil }`，listenerPID（443-451）走 `Process.runAndRead(\"/usr/sbin/lsof\", …)`；VpnSystemProxyController.swift:304-324 的 runAndRead 是同步 `proc.waitUntilExit()`（注释自称 15–40 ms/次）。VpnManager.swift:489-492 的注释明确写了同一件事的正确做法：「The probe spawns `lsof`, so it runs off the main actor」。",
   "failure": "当 prefs.vpnMixedPort 之上有一段连续被占用端口（本机常见的连续开发端口、或另一个 Clash 系应用占 7891–7900），点「换个端口」会连续同步 spawn lsof：50 个占用端口 ≈ 1.5–2 s 完全卡死主线程，期间窗口无响应；而 startCore 的探针本身是异步的，只有这里把同一探针搬回了主线程。",
   "fix": "把扫描放进 Task.detached（或在 startCore 那个 detached 任务里先算好 suggestedPort 并发布），主 actor 只接收结果；再加一个扫描上限（如 200 个候选）后放弃并提示用户手动改端口。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The candidate search moved into VpnManager.suggestedFreePort(after:), nonisolated; the alert's 换个端口 click now runs it on a detached userInitiated task and commits the port + retryStart once it lands, so the click no longer blocks the main actor on one lsof spawn per port tried (each 15–40 ms of blocking read). The view-local applySuggestedPort duplicate is deleted."
  },
  {
   "category": "perf-frame",

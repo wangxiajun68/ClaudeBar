@@ -451,6 +451,26 @@ final class VpnManager: ObservableObject {
         listenerPID(on: port) == nil
     }
 
+    /// First free port above `start`, or nil when the range is exhausted.
+    ///
+    /// Each probe spawns `lsof` — 15–40 ms of blocking read, measured — so
+    /// this belongs off the main actor. The alert's 换个端口 click runs it in
+    /// a detached task; doing it inline froze the UI for as long as the first
+    /// free port was away. The search is bounded by the port space itself;
+    /// the typical case is one or two probes.
+    ///
+    /// Only ever offered for the *mixed* port: that one is ours to choose.
+    /// The controller port is fixed on both sides of the app, so a conflict
+    /// there is reported but never auto-worked-around.
+    nonisolated static func suggestedFreePort(after start: Int) -> Int? {
+        var candidate = start + 1
+        while candidate < 65_535 {
+            if isPortFree(candidate) { return candidate }
+            candidate += 1
+        }
+        return nil
+    }
+
     /// PID of whoever is listening on `port`, or nil when it is free.    ///
     /// `lsof` rather than a Swift `bind()` probe: a successful bind would tell
     /// us only *that* the port is taken, while the dialog needs to name the

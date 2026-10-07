@@ -125,6 +125,12 @@ alert = section[section.index('.alert("删除订阅？"'):]
 alert = alert[:alert.index('\n    }')]
 assert 'guard busy.isIdle, manager.state != .starting else { return }' in alert, \
     'the delete confirmation is a write too: it must respect the same lock and the restart state'
+# Only deleting the active subscription changes what the core runs (the
+# generated config inlines the active profile alone). A delete of any other
+# card used to restart the kernel for a file the core never read.
+assert 'let wasActive = sub.id == store.activeID' in alert \
+    and 'if wasActive, manager.isRunning { manager.reloadConfig() }' in alert, \
+    'the delete may only restart the core when it removed the active subscription'
 assert '.disabled(!busy.isIdle)' in section, \
     'the add button and the menu disable from the lock, not from a local flag'
 assert '.disabled(!busy.isIdle || manager.state == .starting)' in section, \

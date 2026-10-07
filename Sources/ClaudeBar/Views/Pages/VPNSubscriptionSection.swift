@@ -150,8 +150,17 @@ struct VpnSubscriptionSection: View {
                 // flag combination to keep in sync. The alert closes either
                 // way.
                 guard busy.isIdle, manager.state != .starting else { return }
+                // Only deleting the *active* subscription changes what the
+                // core is running — the generated config inlines the active
+                // profile alone, so removing any other card used to restart
+                // the kernel (stop → port release → relaunch, seconds of
+                // 启动中) for a file the core never read. `removeSubscription`
+                // reassigns `activeID` exactly when the removed id was active,
+                // so the captured comparison is the same truth the reload
+                // needs.
+                let wasActive = sub.id == store.activeID
                 store.removeSubscription(sub.id)
-                if manager.isRunning { manager.reloadConfig() }
+                if wasActive, manager.isRunning { manager.reloadConfig() }
                 pendingDelete = nil
             }
             Button("取消", role: .cancel) { pendingDelete = nil }
