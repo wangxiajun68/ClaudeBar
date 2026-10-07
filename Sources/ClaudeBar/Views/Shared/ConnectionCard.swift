@@ -59,7 +59,6 @@ struct LinkCard: View {
                 // draws its mark.
                 ConnectInterfaceMark(interface: interface,
                                      accessory: accessory,
-                                     accessoryCount: accessoryCount,
                                      strength: signalFraction,
                                      state: markState)
                     .frame(width: ResourceStrip.markSlot.width, height: ResourceStrip.markSlot.height)
@@ -97,7 +96,7 @@ struct LinkCard: View {
     /// of the meters' caption band.
     private var caption: String {
         if let rssi = status.rssi {
-            let grade = WiFiBars.label(for: rssi).map { $0 + " · " } ?? ""
+            let grade = WiFiBars.label(for: rssi) + " · "
             return "\(grade)\(rssi) dBm"
         }
         return status.subtitle
@@ -156,10 +155,13 @@ struct LinkCard: View {
         var lines: [String] = []
         lines.append(host.wifiOn ? "Wi-Fi 开" : "Wi-Fi 关")
         if !host.wifiName.isEmpty { lines.append(host.wifiName) }
-        if host.wifiOn, host.wifiRSSI < 0 { lines.append("\(host.wifiRSSI) dBm \(WiFiBars.label(for: host.wifiRSSI) ?? "")") }
+        if host.wifiOn, host.wifiRSSI < 0 { lines.append("\(host.wifiRSSI) dBm \(WiFiBars.label(for: host.wifiRSSI))") }
         if host.wiredOn { lines.append("以太网 已接入") }
         if let accessory {
-            lines.append("\(accessory.name) \(accessoryValue(accessory, count: accessoryCount)) · \(accessory.connection.label)")
+            // `accessoryValue` already ends with the connection word
+            // (已连接 / 未连接 / 已离开) in every branch; appending
+            // `connection.label` again printed it twice (finding 550).
+            lines.append("\(accessory.name) \(accessoryValue(accessory, count: accessoryCount))")
         } else if let unavailableReason {
             lines.append(unavailableReason)
         }
@@ -215,7 +217,6 @@ enum ConnectMarkState {
 struct ConnectInterfaceMark: View {
     var interface: ConnectInterface
     var accessory: AudioAccessoryMonitor.Accessory?
-    var accessoryCount: Int
     /// 0…1, the signal reading. `nil`-free: no reading is 0.
     var strength: Double
     var state: ConnectMarkState
@@ -310,7 +311,10 @@ enum WiFiBars {
         min(1, max(0, Double(rssi + 100) / 60))
     }
 
-    static func label(for rssi: Int) -> String? {
+    /// The grade word for an RSSI reading. Non-optional: the switch is
+    /// exhaustive over the Int range, so the three call sites' `??` fallbacks
+    /// were unreachable (finding 553).
+    static func label(for rssi: Int) -> String {
         switch rssi {
         case ..<(-75): return "弱"
         case ..<(-62): return "一般"

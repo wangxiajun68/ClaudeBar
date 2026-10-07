@@ -199,7 +199,7 @@ struct ConnectionDetailPanel: View {
                         .font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
                     Spacer()
                     if let rssi = status.rssi {
-                        Text(WiFiBars.label(for: rssi) ?? "未知").font(Theme.Font.chromeEmph)
+                        Text(WiFiBars.label(for: rssi)).font(Theme.Font.chromeEmph)
                         RollingNumberText("\(rssi)")
                             .font(.system(size: 24, weight: .semibold, design: .rounded)).monospacedDigit()
                         Text("dBm").font(Theme.Font.caption).foregroundColor(Theme.textSecondary)
