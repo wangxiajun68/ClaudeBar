@@ -43,8 +43,10 @@ struct APIKeyField: View {
                         // The key's read state is still a *field*: the same
                         // recessed well and rim as the editable state above it,
                         // so toggling edit does not swap one box design for
-                        // another.
-                        .instrumentWell(radius: Theme.Radius.md)
+                        // another. `onCard: true` matches the well the
+                        // editable `ProviderInputStyle` draws — without it the
+                        // two states were different fills (finding 211).
+                        .instrumentWell(radius: Theme.Radius.md, onCard: true)
                 }.buttonStyle(.plain).accessibilityLabel(text.isEmpty ? placeholder : "编辑已保存的 API Key")
             }
             Button {
