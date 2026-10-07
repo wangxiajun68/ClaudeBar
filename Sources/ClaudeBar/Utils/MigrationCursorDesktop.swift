@@ -115,7 +115,17 @@ enum MigrationCursorDesktop {
         let state = "~" + encoded.root.base64EncodedString(), stamp = ISO8601DateFormatter().string(from: record.createdAt)
         let now = Int64(record.createdAt.timeIntervalSince1970 * 1000), sid = record.targetSessionID
         var headers: [[String: Any]] = [], rows: [(String, Data)] = []
-        let workspaceID = profile.workspace["id"] as? String ?? ""
+        // Non-empty and allowlisted: `profile(_:cwd:)` already validates both,
+        // and an empty workspaceId would file the composer under no project
+        // while `contains`/`exists` (composerId only) kept reporting success.
+        guard let workspaceID = profile.workspace["id"] as? String, !workspaceID.isEmpty else {
+            throw MigrationFailure.invalidHistory
+        }
+        // The array of URLs crossing into the closure would be copied if it
+        // were captured; `ImageLedger` keeps one identity so the loop's writes
+        // and the rollback's cleanup see the same list.
+        let imageLedger = ImageLedger()
+        defer { if !imageLedger.committed { imageLedger.removeAll() } }
         func appendBubble(_ message: MigrationMessage, pictures: [MigrationImage]) throws {
             let id = UUID().uuidString.lowercased()
             let nativeTool = message.tool?.cursorTool != nil
@@ -151,6 +161,7 @@ enum MigrationCursorDesktop {
                 for image in pictures {
                     let stored = try MigrationCursorHistory.storedImage(database: path, workspaceID: workspaceID,
                                                                         image: image, loadedAt: now)
+                    imageLedger.written.append(URL(fileURLWithPath: stored.selected["path"] as? String ?? ""))
                     refs.append(stored.bubble); selected.append(stored.selected)
                 }
                 bubble["images"] = refs
@@ -215,7 +226,7 @@ enum MigrationCursorDesktop {
                                 -1, &statement, nil) == SQLITE_OK else { throw MigrationFailure.storage }
         defer { sqlite3_finalize(statement) }
         sqlite3_bind_text(statement, 1, sid, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(statement, 2, profile.workspace["id"] as? String ?? "", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, 2, workspaceID, -1, SQLITE_TRANSIENT)
         for index: Int32 in [3, 4, 5, 6] { sqlite3_bind_int64(statement, index, now) }
         let headerJSON = String(decoding: try MigrationHistory.json(header), as: UTF8.self)
         sqlite3_bind_text(statement, 7, headerJSON, -1, SQLITE_TRANSIENT)
@@ -224,6 +235,23 @@ enum MigrationCursorDesktop {
         try publish()
         try Task.checkCancellation()
         guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else { throw MigrationFailure.storage }
+        // Past this point the composer row points at the files: a cancellation
+        // or a synthetic failure raised by the caller after COMMIT must not
+        // delete them.
+        imageLedger.committed = true
+    }
+
+    /// Reference identity for the image files a migration wrote, so the
+    /// cleanup `defer` in `insert` and the write loop share one list (a plain
+    /// `[URL]` captured by both would be copied).
+    private final class ImageLedger {
+        var written: [URL] = []
+        var committed = false
+
+        func removeAll() {
+            for file in written { try? FileManager.default.removeItem(at: file) }
+            written = []
+        }
     }
 
     private static func existingKV(_ db: OpaquePointer, key: String) throws -> Data? {

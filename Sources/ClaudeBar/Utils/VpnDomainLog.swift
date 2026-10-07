@@ -6,9 +6,8 @@ import Combine
 /// Three buckets, because the interesting question on the VPN page is exactly
 /// this split: a domain that *should* go through a node but is in `direct` is
 /// the one thing this log can tell the user that the node mosaic cannot.
-enum VpnDomainRoute: String, CaseIterable, Identifiable {
+enum VpnDomainRoute: String {
     case proxied, direct, reject
-    var id: String { rawValue }
 
     var label: String {
         switch self {
@@ -340,11 +339,9 @@ final class VpnDomainFeed: @unchecked Sendable {
                 String(routing[routing.index(after: open)..<close]))
             outbound = String(routing[dial.upperBound..<open])
                 .trimmingCharacters(in: .whitespaces)
-        } else if let m = routing.range(of: " match ", options: .caseInsensitive) {
-            // No `using` and no parens: take the rule, leave the outbound empty
-            // — the guard below drops the line rather than guessing an exit.
-            rule = String(routing[m.upperBound...]).trimmingCharacters(in: .whitespaces)
         }
+        // No `using` and no parens: nothing names the exit, and the guard below
+        // drops the line rather than guessing one.
         guard !outbound.isEmpty else { return nil }
 
         // id stays 0 here; `ingest` assigns one under its lock so the counter is

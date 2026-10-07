@@ -65,7 +65,7 @@ actor SessionMigrationService {
         case .cursorCLI:
             let path = try locations.nativeURL(client: .cursorCLI, sessionID: source.sessionID, cwd: source.cwd)
             guard locations.containsNative(path, client: .cursorCLI) else { throw MigrationFailure.invalidHistory }
-            return try MigrationCursorHistory.cli(path, source: source)
+            return try await MigrationCursorHistory.cli(path, source: source)
         }
     }
 

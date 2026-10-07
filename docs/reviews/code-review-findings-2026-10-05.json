@@ -6914,7 +6914,9 @@
   "summary": "Return is wired to `fireSelected()` twice - the search field's `.onSubmit` and the ancestor `.onKeyPress(.return)` - and the ancestor claims the key with `.handled` for the whole palette subtree.",
   "evidence": "Line 147-152: `TextField(..., text: $query).focused($searchFocused).submitLabel(.go).onSubmit { fireSelected() }`; line 113, on the `VStack` that *contains* that field: `.onKeyPress(.return) { fireSelected(); return .handled }`. `fireSelected` (272-278) calls `select` (267-270), which runs `onSelect(item.result)` then `dismiss()`. The palette's only focused control is the search field (`searchFocused = true` at line 117), so one of the two handlers is either dead or duplicated.",
   "failure": "If the ancestor handler also sees the Return (SwiftUI `onKeyPress` handlers are consulted outward from the focused view), one press runs `select` twice: `onSelect` fires twice per Return - for a `.provider` result that is two `requestNavigation(.editor(.providers))` bumps (MainWindowView.swift:137, ProviderStore.swift:196-199) and `route()`/`openRequestedEditor` re-running on the second publish, re-assigning `connectionEdit` (ProvidersView.swift:102-107) after the sheet was already presented. If the field consumes the key first, the ancestor's Return line is dead code for the palette's only focused control.",
-  "fix": "Keep one path: drop the ancestor `.onKeyPress(.return)` line and let `.onSubmit` fire the selection (the ruler keys can stay on the ancestor), or drop `.onSubmit` and keep the key handler."
+  "fix": "Keep one path: drop the ancestor `.onKeyPress(.return)` line and let `.onSubmit` fire the selection (the ruler keys can stay on the ancestor), or drop `.onSubmit` and keep the key handler.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the ancestor .onKeyPress(.return) is removed; the search field’s .onSubmit is the single fireSelected path, so one Return can no longer run the activation twice."
  },
  {
   "category": "dead-code",
@@ -6950,7 +6952,9 @@
   "summary": "`ConnectInterfaceMark.accessoryCount` 是只写不读的存储属性。",
   "evidence": "第 218 行声明，第 62 行由 `LinkCard` 传入（ResourceStrip.swift:67 的 `audioMonitor.accessories.count`）；结构体 body 215-266 行内没有任何读取：`glyph` 用 `interface`，`label` 只读 `accessory`（第 261 行），`SignalCellRow` 只读 `strength`。第 250-253 行注释提到的\"more than one thing to name\"对应的 \"等 N 台\" 逻辑只存在于 `accessoryValue`。",
   "failure": "该参数随每次 body 求值被拷贝却从无消费方——上一轮清理（10cfc84）明确要清掉\"只写不读\"的字段，这一处漏网。",
-  "fix": "删掉第 218 行属性、第 62 行实参与 `LinkCard` 对应的转发（或真正在 `label` 里用它拼 \"等 N 台\"）。"
+  "fix": "删掉第 218 行属性、第 62 行实参与 `LinkCard` 对应的转发（或真正在 `label` 里用它拼 \"等 N 台\"）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 with 553’s guard-free label: ConnectInterfaceMark’s write-only accessoryCount parameter deleted along with the pass-through."
  },
  {
   "category": "duplication",
@@ -7094,7 +7098,9 @@
   "evidence": "Line 66: `Text(session.cardSubtitle.isEmpty ? \" \" : session.cardSubtitle)` — the condition evaluates the property and the else-branch evaluates it again. The property is not a stored value: CursorSessionMonitor.swift:102-104 `var cardSubtitle: String { SessionTitle(authored: title, folder: projectFolder, subtitle: subtitle).cardSubtitle }`, and SessionTitle.swift:108-111 runs `condense` (a tag-strip loop + four `replacingOccurrences` + two more replacements + split/join) then `shorten` (a full per-scalar width pass, plus a second per-character pass when over budget). The file already hoisted the same class of read: lines 28-31 '`cardLabel` runs the full condense/shorten pipeline and was read twice ... `runningAgents` walked `subagents` again for the same render' — `cardSubtitle` was left behind.",
   "failure": "Every Cursor card re-render (sessions publish on the 2.5 s busy / 5 s idle poll, up to 14 cards in the popup column and again in the sessions grid) pays two condense/shorten passes for one visible string: ~28 pipeline runs per poll where 14 suffice, counted against the popup's most frequently repainted list.",
   "fix": "Hoist it once at the top of body — `let subtitle = session.cardSubtitle` — and render `Text(subtitle.isEmpty ? \" \" : subtitle)`.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: session.cardSubtitle is hoisted once at the top of body (comment updated), so the condense/shorten pipeline no longer runs twice per render."
  },
  {
   "category": "dead-code",
@@ -7129,7 +7135,9 @@
   "summary": "heightChanged 回调只有赋值方与默认闭包，从未被调用（完全死代码）",
   "evidence": "var heightChanged: (CGFloat) -> Void = { _ in }（第 125 行），仅在 updateNSView 中被赋值：view.heightChanged = onHeight（第 82 行）。grep -rn \"heightChanged\" 全仓只返回这两行，DocumentTextView 的 body 内无任何调用点；高度实际经由 sizeThatFits（第 84-93 行）与 Coordinator.textDidChange（第 38 行）走 onHeight。测试也不引用（grep Tests/ 无命中）。",
   "failure": "无功能后果，但这是一个「看起来会通知高度变化」的钩子：调用方若以为它生效而在别处依赖，或后续维护者把 onHeight 接到 heightChanged 上，会得到静默无效果的回调。",
-  "fix": "删除 var heightChanged 与第 82 行的赋值（两行）。"
+  "fix": "删除 var heightChanged 与第 82 行的赋值（两行）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: DocumentTextView.heightChanged and its assignment are deleted (only writer + default closure existed; the live path is onHeight via sizeThatFits)."
  },
  {
   "category": "test-gap",

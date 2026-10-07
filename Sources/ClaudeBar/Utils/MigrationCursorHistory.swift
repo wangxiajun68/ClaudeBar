@@ -3,7 +3,12 @@ import CryptoKit
 import SQLite3
 
 enum MigrationCursorHistory {
-    struct Field { let number: Int; let bytes: Data?; let integer: UInt64? }
+    /// `number` is the field number; `bytes` is the payload of a
+    /// length-delimited field. A wire-type-0 (varint) field is consumed — it
+    /// must arrive at the right offset — but its value is not kept: every
+    /// field the root blob carries is length-delimited, so a varint value has
+    /// no reader, and keeping it would only suggest one exists.
+    struct Field { let number: Int; let bytes: Data? }
 
     static func varint(_ input: UInt64) -> Data {
         var value = input, output = Data()
@@ -33,7 +38,16 @@ enum MigrationCursorHistory {
         while offset < bytes.count {
             let tag = try read()
             guard tag >> 3 > 0 else { throw MigrationFailure.invalidHistory }
-            if tag & 7 == 0 { output.append(.init(number: Int(tag >> 3), bytes: nil, integer: try read())); continue }
+            // A wire-type-0 field is consumed so the offset stays correct, and
+            // it is *kept* as an entry with no `bytes`: a reference the root
+            // blob expects to be length-delimited must stay visible to the
+            // readers that validate `bytes` — dropping it here would turn a
+            // wrong-wire-type root into an empty preview instead of a refusal.
+            if tag & 7 == 0 {
+                _ = try read()
+                output.append(.init(number: Int(tag >> 3), bytes: nil))
+                continue
+            }
             let count: Int
             switch tag & 7 {
             case 2:
@@ -45,7 +59,7 @@ enum MigrationCursorHistory {
             default: throw MigrationFailure.invalidHistory
             }
             guard count <= bytes.count - offset else { throw MigrationFailure.invalidHistory }
-            output.append(.init(number: Int(tag >> 3), bytes: Data(bytes[offset..<offset + count]), integer: nil))
+            output.append(.init(number: Int(tag >> 3), bytes: Data(bytes[offset..<offset + count])))
             offset += count
         }
         return output
@@ -154,15 +168,19 @@ enum MigrationCursorHistory {
                                             omissions: omissions, completedToolCount: completedTools)
     }
 
-    static func cli(_ path: URL, source: MigrationSource) throws -> MigrationPreview {
+    static func cli(_ path: URL, source: MigrationSource) async throws -> MigrationPreview {
         // The native CLI can return its answer before all referenced blobs
         // finish landing. Each retry gets a fresh read transaction.
+        //
+        // The backoff suspends the caller instead of blocking the (shared)
+        // migration actor's thread: a cancel during the wait throws from the
+        // sleep itself rather than after the current backoff expires.
         for attempt in 0..<6 {
             try Task.checkCancellation()
             do { return try cliSnapshot(path, source: source) }
             catch MigrationFailure.pendingPersistence {
                 guard attempt < 5 else { throw MigrationFailure.pendingPersistence }
-                Thread.sleep(forTimeInterval: 0.1 * pow(2, Double(attempt)))
+                try await Task.sleep(nanoseconds: UInt64(0.1 * pow(2, Double(attempt)) * 1_000_000_000))
             }
         }
         throw MigrationFailure.pendingPersistence

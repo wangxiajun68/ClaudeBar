@@ -507,6 +507,11 @@ enum MigrationHistory {
         guard projectedMessageCount(messages) <= maxMessages else { throw MigrationFailure.tooLarge }
         var parent: String?
         var output = Data()
+        // One formatter for the whole write: every row carries the same `now`,
+        // and a fresh `ISO8601DateFormatter` per row measured ~50× the cost of
+        // a single `string(from:)` call (the 8,000-message cap made that ~0.4 s
+        // of CPU for no product). `codexData` below already hoists it.
+        let stamp = ISO8601DateFormatter().string(from: now)
         func append(_ message: MigrationMessage, blocks: [[String: Any]]? = nil, stop: String = "end_turn") throws {
             let id = UUID().uuidString.lowercased()
             let userContent: Any
@@ -523,7 +528,7 @@ enum MigrationHistory {
             let row: [String: Any] = ["type": message.role.rawValue, "uuid": id,
                 "parentUuid": parent as Any? ?? NSNull(), "isSidechain": false,
                 "sessionId": sessionID, "cwd": cwd, "version": "2.1.288", "userType": "external",
-                "timestamp": ISO8601DateFormatter().string(from: now), "message": body]
+                "timestamp": stamp, "message": body]
             output.append(try json(row)); output.append(0x0a)
             parent = id
         }

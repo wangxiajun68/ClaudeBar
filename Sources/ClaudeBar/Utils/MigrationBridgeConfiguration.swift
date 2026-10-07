@@ -6,7 +6,6 @@ struct MigrationBridgeEndpoint: Sendable {
     let apiKey: String
     let wireAPI: String
     let model: String
-    let name: String
     var reasoningEffort = ""
 }
 
@@ -18,11 +17,25 @@ enum MigrationBridgeConfiguration {
         return SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
     }
 
-    static func responsesURL(_ base: String) -> URL? {
+    /// The one base-URL join rule, shared by the migration bridge's two wire
+    /// paths so they cannot drift. Both append onto a trimmed base and refuse
+    /// to guess: `nil` becomes `AgentProtocolBridge.Failure.malformed`, never a
+    /// request to some fallback host.
+    static func url(_ base: String, operation: String, versionedAlready: Bool) -> URL? {
         let trimmed = base.trimmingCharacters(in:CharacterSet(charactersIn:"/"))
-        if trimmed.hasSuffix("/responses") { return URL(string:trimmed) }
-        let versioned = trimmed.hasSuffix("/openai") || trimmed.range(of:#"/v\d+$"#,options:.regularExpression) != nil
-        return URL(string:trimmed + (versioned ? "/responses" : "/v1/responses"))
+        if trimmed.hasSuffix(operation) { return URL(string:trimmed) }
+        if trimmed.hasSuffix("/openai") || trimmed.range(of:#"/v\d+$"#,options:.regularExpression) != nil {
+            return URL(string:trimmed + operation)
+        }
+        return URL(string:trimmed + (versionedAlready ? "" : "/v1") + operation)
+    }
+
+    static func responsesURL(_ base: String) -> URL? {
+        url(base, operation: "/responses", versionedAlready: true)
+    }
+
+    static func chatCompletionsURL(_ base: String) -> URL? {
+        url(base, operation: "/chat/completions", versionedAlready: false)
     }
 
     static func route(_ path: String) -> (id: UUID, countTokens: Bool)? {
@@ -59,7 +72,7 @@ enum MigrationBridgeConfiguration {
             throw MigrationFailure.unsupported("此模型的推理强度尚未验证，请使用默认或标准强度。")
         }
         return .init(baseURL: base, apiKey: key, wireAPI: wire, model: model,
-            name: provider["name"] as? String ?? "自定义模型", reasoningEffort: effort)
+            reasoningEffort: effort)
     }
 }
 

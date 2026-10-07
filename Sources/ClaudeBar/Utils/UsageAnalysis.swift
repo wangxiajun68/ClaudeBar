@@ -50,6 +50,18 @@ struct UsageAnalysis {
     let temporalTotal: Int
     let calendarRows: [Bucket]
     let calendarMaximum: Int
+    /// One `yyyy-MM-dd` parser for every build. The pattern and locale are
+    /// fixed; only the zone moves, which is a property write rather than a new
+    /// ICU formatter. Guarded because the analysis runs on a detached task and
+    /// the lock is what makes sharing the mutable formatter safe.
+    private static let dayParserLock = NSLock()
+    private static let dayParser: DateFormatter = {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        return parser
+    }()
+
     init(days: [DayUsage], stats: [ModelUsage], period: UsagePeriod,
          interval: DateInterval, now: Date = Date(), calendar: Calendar = .current) {
         var parts = [0, 0, 0, 0]
@@ -62,12 +74,13 @@ struct UsageAnalysis {
         input = parts[0]; hit = parts[1]; write = parts[2]; output = parts[3]
         models = modelTotals.map { Model(name: $0.key, tokens: $0.value) }
             .filter { $0.tokens > 0 }.sorted { $0.tokens == $1.tokens ? $0.name < $1.name : $0.tokens > $1.tokens }
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.timeZone = calendar.timeZone; parser.dateFormat = "yyyy-MM-dd"
         var records: [Date: (total: Int, hit: Int)] = [:]
         for day in days {
-            guard let date = parser.date(from: day.day) else { continue }
+            Self.dayParserLock.lock()
+            Self.dayParser.timeZone = calendar.timeZone
+            let date = Self.dayParser.date(from: day.day)
+            Self.dayParserLock.unlock()
+            guard let date else { continue }
             let key = calendar.startOfDay(for: date)
             let old = records[key] ?? (0, 0)
             records[key] = (old.total + day.totalTokens,

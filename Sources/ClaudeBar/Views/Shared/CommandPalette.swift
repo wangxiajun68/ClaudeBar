@@ -116,7 +116,11 @@ struct CommandPalette: View {
                     .focusable()
                     .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
                     .onKeyPress(.downArrow) { moveSelection(1); return .handled }
-                    .onKeyPress(.return) { fireSelected(); return .handled }
+                    // Return is the search field's own submit (below), not a
+                    // second handler here: both were wired to fireSelected()
+                    // and one Return press could run it twice — the second
+                    // call activating a row `select` had already dismissed
+                    // past (finding 548).
                     .onKeyPress(.escape) { dismiss(); return .handled }
                 }
                 .onAppear {

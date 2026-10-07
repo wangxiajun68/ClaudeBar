@@ -31,10 +31,12 @@ struct CursorSessionCardView: View {
     @State private var isHovered = false
 
     var body: some View {
-        // Derived once: `cardLabel` runs the full condense/shorten pipeline and
-        // was read twice (the visible title and the accessibility label), and
+        // Derived once: `cardLabel` and `cardSubtitle` run the full
+        // condense/shorten pipeline and each was read twice (the visible line
+        // and the accessibility label / the height-reserving branch), and
         // `runningAgents` walked `subagents` again for the same render.
         let label = session.cardLabel
+        let subtitle = session.cardSubtitle
         let agentCount = session.subagents.count
         let running = session.subagents.filter { $0.status == .running }.count
         return VStack(alignment: .leading, spacing: 5) {
@@ -69,7 +71,7 @@ struct CursorSessionCardView: View {
             // row is always rendered (blank when absent) so a card with a
             // subtitle is not taller than one without — tiles in a grid row
             // share the tallest sibling.
-            Text(session.cardSubtitle.isEmpty ? " " : session.cardSubtitle)
+            Text(subtitle.isEmpty ? " " : subtitle)
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(1)

@@ -29,10 +29,4 @@ extension AppPreferences {
         let alphabet = Array("abcdefghijkmnopqrstuvwxyz23456789")
         return String((0..<24).map { _ in alphabet.randomElement()! })
     }
-
-    static func ensureVpnControllerSecret() {
-        if AppPreferences.shared.vpnControllerSecret.isEmpty {
-            AppPreferences.shared.vpnControllerSecret = makeVpnControllerSecret()
-        }
-    }
 }

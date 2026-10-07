@@ -546,8 +546,9 @@ final class VpnManager: ObservableObject {
         let tun = prefs.vpnTunEnabled
         let sysproxy = prefs.vpnSystemProxyEnabled
         let controller = controllerPort
-        AppPreferences.ensureVpnControllerSecret()
-
+        // The controller secret is generated and persisted once in
+        // `AppPreferences.vpnDefaults()` (init, before `shared` is visible),
+        // so there is nothing to top up here.
         let mixedPort = prefs.vpnMixedPort
         launchTask = Task.detached(priority: .userInitiated) { [weak self] in
             Self.extractBundledCoreIfNeeded(bundled: bundled, dest: dest)
@@ -1379,12 +1380,10 @@ extension VpnManager {
 
     private func consumeTrafficStream() async {
         // `Accept` is stream-specific — set on the request `makeRequest` hands
-        // back, not folded into the shared prelude.
+        // back, not folded into the shared prelude (which already injects the
+        // Bearer secret).
         var req = makeRequest("GET", "/traffic", timeout: 86_400)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !prefs.vpnControllerSecret.isEmpty {
-            req.setValue("Bearer \(prefs.vpnControllerSecret)", forHTTPHeaderField: "Authorization")
-        }
         // Shared session (see VpnHTTP.session) — explicitly NOT invalidated
         // here: `invalidateAndCancel` on a cached session tears it down for
         // every other caller and forces the next poll to rebuild the pool.
@@ -1399,20 +1398,41 @@ extension VpnManager {
                 return
             }
             trafficHandshakeLogged = false
-            for try await line in bytes.lines {
+            // The parse itself runs in a `nonisolated` helper: `bytes.lines` is
+            // an async sequence, so a plain `for await` here resumes on the
+            // main actor after every suspension and the JSON work would land
+            // back on main — the isolation the comment below promises. Only the
+            // two Int64s cross to the main actor.
+            for try await sample in Self.trafficSamples(bytes.lines) {
                 if Task.isCancelled { return }
-                // Parse *here*, on the stream's own thread. Only the two Int64s
-                // cross to the main actor: hopping the whole line meant a JSON
-                // parse plus a `Date()` on main for every line of a stream that
-                // never ends, which is the cost `VpnLiveRates` documents having
-                // moved off the main actor.
-                guard let sample = Self.parseTrafficLine(line) else { continue }
-                await MainActor.run { applyTrafficSample(sample) }
+                applyTrafficSample(sample)
             }
         } catch is CancellationError {
             return
         } catch {
             // Reconnect loop in startPolling; don't spam the log every second.
+        }
+    }
+
+    /// Parses every `/traffic` line **on the stream's own executor**: the
+    /// sequence's `next()` is not actor-isolated, so the JSON runs off the main
+    /// actor, and only the parsed counters cross back. `nil` lines (the blank
+    /// keep-alives the stream emits) are dropped here rather than on main.
+    private nonisolated static func trafficSamples<S: AsyncSequence & Sendable>(
+        _ lines: S) -> AsyncStream<(up: Int64, down: Int64)> where S.Element == String {
+        AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await line in lines {
+                        guard let sample = parseTrafficLine(line) else { continue }
+                        continuation.yield(sample)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

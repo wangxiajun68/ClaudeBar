@@ -467,7 +467,9 @@ final class CodexProxyServer: @unchecked Sendable {
             tap?.finish(state: capState, status: statusCode, error: capError)
             if capState != .error { log.finish(status: statusCode, tokens: tokens) }
         }
-        let upstreamURL = chatCompletionsURL(upstream.baseURL)
+        guard let upstreamURL = chatCompletionsURL(upstream.baseURL) else {
+            throw AgentProtocolBridge.Failure.malformed
+        }
         bindInterrupt(tap, connection: connection)
 
         do {
@@ -705,7 +707,9 @@ final class CodexProxyServer: @unchecked Sendable {
         }
         // Always hit /chat/completions when bridging — posting a Chat body
         // to /v1/responses is how the original 400 happens.
-        let upstreamURL = chatCompletionsURL(upstream.baseURL)
+        guard let upstreamURL = chatCompletionsURL(upstream.baseURL) else {
+            throw AgentProtocolBridge.Failure.malformed
+        }
         bindInterrupt(tap, connection: connection)
 
         do {
@@ -944,15 +948,13 @@ final class CodexProxyServer: @unchecked Sendable {
     /// Chat Completions URL for an OpenAI-compat root. Bases that already end
     /// in a version segment (`/v1`, `/v4`, …) append `/chat/completions`;
     /// bare hosts get `/v1/chat/completions`.
-    private func chatCompletionsURL(_ base: String) -> URL {
-        let s = base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if s.hasSuffix("/chat/completions") {
-            return URL(string: s) ?? URL(string: "http://127.0.0.1")!
-        }
-        if s.hasSuffix("/openai") || s.range(of: #"/v\d+$"#, options: .regularExpression) != nil {
-            return URL(string: s + "/chat/completions") ?? URL(string: "http://127.0.0.1")!
-        }
-        return URL(string: s + "/v1/chat/completions") ?? URL(string: "http://127.0.0.1")!
+    ///
+    /// Single joined rule shared with the migration bridge (see
+    /// `MigrationBridgeConfiguration.url`), so the two wire paths cannot drift.
+    /// `nil` means the base could not be turned into a URL; callers fail the
+    /// request instead of falling back to any fabricated host.
+    private func chatCompletionsURL(_ base: String) -> URL? {
+        MigrationBridgeConfiguration.chatCompletionsURL(base)
     }
 
     // MARK: - Anthropic passthrough (Claude Code)

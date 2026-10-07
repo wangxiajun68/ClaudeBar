@@ -87,7 +87,6 @@ struct DocumentInlineEditor: NSViewRepresentable {
         view.insertionPointColor = NSColor(Theme.textPrimary)
         view.extendMenu = contextMenu
         view.focusChanged = onFocus
-        view.heightChanged = onHeight
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: DocumentTextView, context: Context) -> CGSize? {
         let width = max(40, proposal.width ?? 600)
@@ -146,7 +145,6 @@ final class DocumentTextView: NSTextView {
     var openLink: (URL) -> Void = { NSWorkspace.shared.open($0) }
     var extendMenu: (NSMenu) -> Void = { _ in }
     var focusChanged: (Bool) -> Void = { _ in }
-    var heightChanged: (CGFloat) -> Void = { _ in }
     override var intrinsicContentSize: NSSize {
         guard let layoutManager, let textContainer else { return NSSize(width: NSView.noIntrinsicMetric, height: 28) }
         layoutManager.ensureLayout(for: textContainer)
