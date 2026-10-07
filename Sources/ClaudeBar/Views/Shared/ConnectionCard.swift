@@ -196,7 +196,11 @@ enum ConnectMarkState {
         switch self {
         case .attached: return Theme.chartBlue
         case .idle: return Theme.textSecondary
-        case .off: return Theme.statusIdle
+        // The same grey the idle *pill* uses (`Theme.Ink.idle`): this is a
+        // mark's fill, but an "off" state sharing one hue with every other
+        // quiet thing on the strip is what keeps the palette honest
+        // (finding 556; `statusIdle` stays the fill for lit/idle *dots*).
+        case .off: return Theme.Ink.idle
         }
     }
 }

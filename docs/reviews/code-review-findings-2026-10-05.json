@@ -7028,7 +7028,9 @@
   "evidence": "ConnectionCard.swift:193-199 `switch self { case .attached: return Theme.chartBlue; case .idle: return Theme.textSecondary; case .off: return Theme.statusIdle }`, painted at line 225-228 `Image(systemName: glyph).font(.system(size: 46, weight: .medium)).foregroundColor(state.tint)`. Theme.swift:71-82 reserves `Theme.Ink.*` for 'anything that is *text or a glyph*' and lists `statusIdle` at 2.92:1; the sibling card uses the ink token for the identical state (SessionCardView.swift:34 `Circle().fill(isBusy ? Theme.statusBusy : Theme.Ink.idle)`).",
   "failure": "Wi-Fi off (or unassociated radio) → the tile's largest glyph (46pt) is drawn in a grey-hued token measured at 2.92:1 against the white card, i.e. the mark that is supposed to say 'no link' is the faintest object on the tile; on a `Theme.chartBlue` hover wash it drops further.",
   "fix": "`case .off: return Theme.Ink.idle` (the same token SessionCardView uses for the idle dot).",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: ConnectMarkState.off returns Theme.Ink.idle — the same grey the idle pill uses — instead of the fixed statusIdle fill; the two dark-mode-adaptive quiet greys no longer disagree on the same card."
  },
  {
   "category": "dead-code",
