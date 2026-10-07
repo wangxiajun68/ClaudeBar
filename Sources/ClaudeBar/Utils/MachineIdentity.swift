@@ -50,9 +50,16 @@ enum MachineIdentity {
     ///   to parse). The `de` there *is* the pinyin 的, which is why the `de`
     ///   form is tried before the bare model.
     ///
-    /// A prefix shorter than two characters is not a name — it is a stray marker
-    /// (`的MacBook Pro`) — so the whole string is kept instead.
-    static var greetingName: String { displayName(for: person(in: computerName)) }
+    /// A prefix shorter than two characters is not a name — it is a stray
+    /// marker (`的MacBook Pro`) or a lone surname (`李的MacBook Pro`) — so the
+    /// whole string is kept instead: the transliterator must never draw a
+    /// person out of a fragment.
+    ///
+    /// Computed once, at first read: the rule is a chain of string scans and,
+    /// for a Han name, two `CFStringTransform` passes — and the greeting card
+    /// reads this on every `body` pass. Nothing downstream can change the
+    /// answer, because `computerName` is itself fixed for the process.
+    static let greetingName: String = displayName(for: person(in: computerName))
 
     /// The raw rule itself, split out so it can be driven over a table of
     /// machine names rather than only over this Mac's own — see
@@ -79,15 +86,37 @@ enum MachineIdentity {
             // a space the user typed — stripping there would eat the last
             // letter of a perfectly ordinary name. A possessive (`Chris’s iMac`)
             // never leaves a joiner, which is what keeps that `s`.
+            //
+            // The `的` joiner is the same shape in CJK: `李的MacBook Pro`
+            // reaches this branch only when the possessive split left a
+            // one-character name, and the 的 is still punctuation the user
+            // typed — without stripping it the greeting reads `李的`.
             let stripJoiner = hostMarkers.contains { $0.caseInsensitiveCompare(marker) == .orderedSame }
                 && raw.last != " "
             var prefix = raw.trimmingCharacters(in: CharacterSet(charactersIn: "-_ \u{2019}'"))
             if stripJoiner, prefix.last == "s", prefix.count >= 2 {
                 prefix = String(prefix.dropLast())
             }
-            if prefix.count >= 2 { return prefix }
+            if stripJoiner, prefix.last == "的", prefix.count >= 2 {
+                prefix = String(prefix.dropLast())
+            }
+            if prefix.count >= 2 || Self.isOneCharacterName(prefix) { return prefix }
         }
         return name
+    }
+
+    /// Whether a one-character prefix is a person's name.
+    ///
+    /// In Han script one character **is** a complete name — a surname, `李` —
+    /// so `李的MacBook Pro` greets `李`. In Latin script a lone character is
+    /// the joining letter the OS left behind (`sMacBook`), never a name. The
+    /// possessive particle itself (`的MacBook Pro`, no name at all) is Han
+    /// script too but is punctuation, so it stays part of the whole string.
+    private static func isOneCharacterName(_ prefix: String) -> Bool {
+        guard prefix.count == 1, prefix != "的",
+              let scalar = prefix.unicodeScalars.first,
+              (0x4E00...0x9FFF).contains(scalar.value) else { return false }
+        return true
     }
 
     /// How the person's name is **drawn** — the last step before it reaches the

@@ -64,6 +64,16 @@ IDENTITY
             ("王夏军", "王夏军"),
             // A bare marker is not a name — do not hand back the leftover.
             ("的MacBook Pro", "的MacBook Pro"),
+            // The possessive branch owns every `<prefix>的<model>` shape. A
+            // one-character prefix is a complete Han surname, so the split to
+            // it is right (`李的MacBook Pro` must never fall through to the
+            // host-marker branch and keep the 的, which drew "De Li"); a
+            // one-letter Latin prefix is the OS's joining character, never a
+            // name, so those shapes stay whole.
+            ("李的MacBook Pro", "李"),
+            ("王的iMac", "王"),
+            ("王的 MacBook", "王"),
+            ("sMacBook", "sMacBook"),
         ]
 
         var failures = 0
