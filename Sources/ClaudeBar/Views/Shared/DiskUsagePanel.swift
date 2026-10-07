@@ -14,8 +14,11 @@ struct DiskUsagePanel: View {
                 InstrumentBadge(kind: .disk, tint: Theme.Ink.cursor)
                 Text("启动磁盘空间").font(Theme.Font.displayHero)
             }
-            if total <= 1 {
-                Text("正在读取磁盘容量…").foregroundColor(Theme.textSecondary)
+            if !sampler.host.diskAvailable {
+                // A failed statfs read, not a pending one: the first tick has
+                // long resolved by the time this panel is open, so the honest
+                // caption is that the figure is unavailable.
+                Text("磁盘信息暂不可用").foregroundColor(Theme.textSecondary)
             } else {
                 HStack(spacing: 24) {
                     ZStack {

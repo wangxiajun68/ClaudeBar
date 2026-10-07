@@ -15,7 +15,12 @@ enum CommandResult: Equatable {
 
 /// A single searchable row in the command palette. `icon` and `tint` drive the
 /// row's glyph and accent; `subtitle` is secondary help text under the title.
-struct CommandItem: Identifiable {
+///
+/// `Equatable` so `CommandRow` can compare rows: an arrow keypress only flips
+/// the selection, and equality is what lets SwiftUI skip the body of every row
+/// whose identity, content and selection state did not change. A non-Equatable
+/// row re-rendered all N rows per keypress (finding 220).
+struct CommandItem: Identifiable, Equatable {
     let id: String
     let title: String
     let subtitle: String
@@ -76,6 +81,7 @@ struct CommandPalette: View {
     @State private var selection: String?
     @State private var items: [CommandItem] = []
     @State private var filtered: [CommandItem] = []
+    @State private var storeChanges: AnyCancellable?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -119,13 +125,18 @@ struct CommandPalette: View {
                 }
             }
         }
-        .animation(Theme.Animation.smooth, value: isPresented)
-        // While the palette is open a poll can add, finish or drop a session.
-        // Rebuilding on the store's own signals (rather than on every render)
-        // keeps the list current without re-deriving it per keystroke.
-        .onReceive(Publishers.MergeMany(providerStore.viewChanges([.configuration, .sessions]))) { _ in
-            guard isPresented else { return }
-            refreshItems()
+        .task {
+            // Subscribed once per presentation, not rebuilt per body pass.
+            // Constructed in `body`, the MergeMany chain (13 store publishers)
+            // was re-allocated and re-subscribed on every keystroke — the
+            // palette's body passes on each one (finding 223). The closed-
+            // palette guard stays inside the sink: publishes while closed are
+            // dropped, which is why the reopen refresh exists.
+            storeChanges = Publishers.MergeMany(providerStore.viewChanges([.configuration, .sessions]))
+                .sink { _ in
+                    guard isPresented else { return }
+                    refreshItems()
+                }
         }
         // Escape, then ⌘K again *inside* the dismissal's fade: the panel never
         // leaves the hierarchy (measured — no `onDisappear`, no re-mount, so
@@ -205,6 +216,7 @@ struct CommandPalette: View {
                 CommandRow(item: item, isSelected: selection == item.id) {
                     select(item)
                 }
+                .equatable()
             }
             if filtered.isEmpty {
                 Text("无匹配结果")
@@ -309,7 +321,15 @@ struct CommandPalette: View {
 
 // MARK: - Command row
 
-private struct CommandRow: View {
+private struct CommandRow: View, Equatable {
+    /// The closure is deliberately not compared: it calls `select`, which
+    /// captures nothing that changes what the row draws (same rule as
+    /// `TrafficRow`). Comparing the item and the selection flag is what lets
+    /// an arrow keypress skip every row but the two whose highlight moved.
+    static func == (lhs: CommandRow, rhs: CommandRow) -> Bool {
+        lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
+    }
+
     let item: CommandItem
     let isSelected: Bool
     let action: () -> Void

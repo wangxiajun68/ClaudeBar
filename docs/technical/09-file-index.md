@@ -50,7 +50,7 @@
 | `Views/Shared/ProviderControls.swift` | 供应商卡的状态、目标模型与激活控件 |
 | `Views/Shared/ProviderModelFetchButton.swift` | 拉取模型列表（导入前需勾选确认，已存在的模型不重复添加） |
 | `Views/Shared/APIKeyField.swift` | Key 输入：编辑用普通 TextField，失焦后遮蔽 |
-| `Views/Shared/DecorativeMotion.swift` | `DecorativeMotion`：Core Animation 装饰动效（`sparkles` / `sweep` / `orbit` / `pulse` / `scan` / `conveyor`），不跑 SwiftUI 时间线 |
+| `Views/Shared/DecorativeMotion.swift` | `DecorativeMotion`：Core Animation 装饰动效（`sparkles` / `sweep` / `orbit` / `pulse` / `conveyor` / `arc`），不跑 SwiftUI 时间线 |
 | `Views/Shared/LucideHardwareGeometry.swift` | **生成文件**：Lucide 官方 `cpu` / `gpu` / `memory-stick` / `hard-drive` 四枚机件 mark 转成的 `Path`，由 `Tools/gen-lucide-hardware.py` 从上游 SVG 生成；改图标要重跑脚本。生成物只留这四枚：它们由 `HardwareIllustration` / `HardwareKpiStrip` 经 `HardwareIllustration.mark(for:)` 使用，而风扇 popover 画的是随包插画 `Resources/macbook-internals-illustration.png`、转子用它的裁切（`FanArtwork`），不经过这份几何 |
 | `Views/Shared/HardwareIllustration.swift` | 本机负载的实时 mark，分两条 lane：上层是 Lucide 图标（说明这是哪个部件），下层是读数条 —— CPU 每个逻辑核心一条、GPU 每组图形子单元一条、内存 / 硬盘按容量区域，条高即读数；另有按读数调速的扫光（<4%、减弱动效或不可见时停止）。浮层共用同一 mark（`HardwareDetailPanel.swift`） |
 | `Views/Shared/LucideRotor.swift` | 插画涡轮裁切、SF Symbols 回退与 Core Animation 旋转层；就地改速，停转与恢复保持相位 |

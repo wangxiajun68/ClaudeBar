@@ -103,12 +103,12 @@ final class FixtureWindow: NSWindow {
         // did) have no lifecycle coverage at all. A list literal that drifts
         // from `Kind` is still possible, but the count and the loop can no
         // longer disagree with each other.
-        let kinds: [DecorativeMotion.Kind] = [.sparkles, .sweep, .orbit, .pulse, .scan, .conveyor, .arc]
+        let kinds: [DecorativeMotion.Kind] = [.sparkles, .sweep, .orbit, .pulse, .conveyor, .arc]
         for (index, kind) in kinds.enumerated() {
             // The belt is a *strip*, not a box: it only means anything at a
             // width several tick pitches across, and a 44pt frame would crop it
             // to two ticks and still pass every lifecycle assertion below.
-            let width: CGFloat = kind == .sweep ? 80 : (kind == .scan ? 2 : (kind == .conveyor ? 120 : 44))
+            let width: CGFloat = kind == .sweep ? 80 : (kind == .conveyor ? 120 : 44)
             let view = MotionLayerView(frame: NSRect(x: 0, y: 0, width: width, height: 44))
             window.contentView = view
             view.apply(kind: kind, tint: .systemPurple, active: true)

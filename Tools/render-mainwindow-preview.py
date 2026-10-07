@@ -690,6 +690,7 @@ final class ProcessSampler {
         var memoryPressureLevel: Int = 0
         var diskUsed: UInt64 = 0
         var diskTotal: UInt64 = 1
+        var diskAvailable = true
         var wifiOn: Bool = false
         var wifiName: String = ""
         var wifiRSSI: Int = 0
@@ -1883,6 +1884,7 @@ source += r'''
         host.memoryUsed = 13_400_000_000; host.memoryTotal = 16_000_000_000
         host.memoryActive = 6_700_000_000; host.memoryWired = 4_400_000_000; host.memoryCompressed = 1_900_000_000
         host.diskUsed = 443_000_000_000; host.diskTotal = 512_000_000_000
+        host.diskAvailable = true
         host.cpuTemperatureCelsius = 58; host.gpuTemperatureCelsius = 51
         host.wifiOn = true; host.wiredOn = false; host.wifiName = "CMCC-5G"; host.wifiRSSI = -47
         // A Mac with a battery: `PowerFlowCard` draws nothing at all without one

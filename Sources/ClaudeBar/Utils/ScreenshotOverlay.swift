@@ -60,10 +60,25 @@ final class ScreenshotOverlayController {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { capturing = false; return }
 
+        // One enumeration for every display: each `captureDisplay` used to run
+        // its own `SCShareableContent.excludingDesktopWindows`, a replayd
+        // round trip that walks every on-screen window — 2-3 times serially
+        // before the first frame appeared on a multi-display Mac, and only
+        // `content.displays` is ever read here (snapping uses the synchronous
+        // `CGWindowList` path).
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        } catch {
+            capturing = false
+            NSSound.beep()
+            return
+        }
+
         var shots: [(NSScreen, CGImage)] = []
         for screen in screens {
             do {
-                shots.append((screen, try await Self.captureDisplay(screen)))
+                shots.append((screen, try await Self.captureDisplay(screen, in: content)))
             } catch {
                 capturing = false
                 NSSound.beep()
@@ -232,6 +247,14 @@ final class ScreenshotOverlayController {
     /// No-permission fallback: register the editing keys as Carbon hotkeys for
     /// the duration of the capture. RegisterEventHotKey consumes the key
     /// system-wide, so Esc still cancels even though no tap is installed.
+    ///
+    /// 'CBOV' — deliberately not the ⌘⇧A registration's own 'CBSH' signature.
+    /// Both handlers sit on `GetApplicationEventTarget()`, so a shared
+    /// signature delivered *this* handler's Esc (id 1) every time the app's
+    /// ⌘⇧A went down, cancelling the capture the user meant to restart while
+    /// `ScreenshotHotKey`'s `begin()` was dropped by the `capturing` guard.
+    private static let fallbackSignature: OSType = 0x43424F56
+
     private func installFallbackHotKeys() {
         guard fallbackHandler == nil, let appTarget = GetApplicationEventTarget() else { return }
         var spec = EventTypeSpec(
@@ -246,7 +269,7 @@ final class ScreenshotOverlayController {
                     event, EventParamName(kEventParamDirectObject),
                     EventParamType(typeEventHotKeyID), nil,
                     MemoryLayout<EventHotKeyID>.size, nil, &id)
-                guard id.signature == 0x43425348 else { return noErr } // 'CBSH'
+                guard id.signature == ScreenshotOverlayController.fallbackSignature else { return noErr }
                 let overlay = ScreenshotOverlayController.shared
                 DispatchQueue.main.async { overlay.handleFallbackHotKey(id.id) }
                 return noErr
@@ -266,7 +289,7 @@ final class ScreenshotOverlayController {
         ]
         for (keyCode, mods, idx) in keys {
             var ref: EventHotKeyRef?
-            let id = EventHotKeyID(signature: 0x43425348, id: idx)
+            let id = EventHotKeyID(signature: Self.fallbackSignature, id: idx)
             let err = RegisterEventHotKey(keyCode, mods, id, appTarget, 0, &ref)
             if err == noErr { fallbackKeys.append(ref) }
         }
@@ -367,9 +390,8 @@ final class ScreenshotOverlayController {
         capturing = false
     }
 
-    private static func captureDisplay(_ screen: NSScreen) async throws -> CGImage {
+    private static func captureDisplay(_ screen: NSScreen, in content: SCShareableContent) async throws -> CGImage {
         let displayID = screen.displayID
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID })
                 ?? content.displays.first else {
             throw CaptureError.noDisplay
@@ -398,13 +420,15 @@ final class ScreenshotOverlayController {
         // snip twice.
         let item = NSPasteboardItem()
         // Prefer PNG so pixel-exact Retina resolution survives the round
-        // trip; TIFF is a fallback for apps that only read TIFF.
-        if let tiff = image.tiffRepresentation,
-           let rep = NSBitmapImageRep(data: tiff),
-           let png = rep.representation(using: .png, properties: [:]) {
-            item.setData(png, forType: .png)
-        }
+        // trip; TIFF is a fallback for apps that only read TIFF. The TIFF is
+        // encoded and decoded once and reused for both reps — it used to be
+        // requested twice, paying a second full-resolution encode whose result
+        // was thrown away, on the main thread, per ⌘C.
         if let tiff = image.tiffRepresentation {
+            if let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                item.setData(png, forType: .png)
+            }
             item.setData(tiff, forType: .tiff)
         }
         pb.writeObjects([item])
@@ -700,11 +724,15 @@ private final class SnipCanvas: NSView {
         markDraft = nil
     }
 
-    private static func markShape(_ mark: SnipMark, in sel: CGRect) -> CAShapeLayer {
+    private static func markShape(_ mark: SnipMark, in sel: CGRect, scale: CGFloat) -> CAShapeLayer {
         let l = CAShapeLayer()
         l.anchorPoint = .zero
         l.frame = CGRect(origin: .zero, size: sel.size)
-        l.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        // The canvas's own display, not `NSScreen.main`: a mark drawn on a 1x
+        // external display was rasterized at the built-in Retina's 2x (or the
+        // reverse), so a committed stroke came out softer/thicker than the
+        // draft the user had just dragged.
+        l.contentsScale = scale
         l.path = mark.path(in: sel)
         l.strokeColor = Self.markColor.cgColor
         l.fillColor = nil
@@ -718,7 +746,8 @@ private final class SnipCanvas: NSView {
     private func redrawDraft() {
         guard let draft = markDraft, let sel = selection else { return }
         if draftLayer == nil {
-            draftLayer = Self.markShape(draft, in: CGRect(origin: .zero, size: sel.size))
+            draftLayer = Self.markShape(draft, in: CGRect(origin: .zero, size: sel.size),
+                                        scale: screen.backingScaleFactor)
             marksLayer.addSublayer(draftLayer!)
         }
         draftLayer!.frame = CGRect(origin: .zero, size: sel.size)
@@ -730,7 +759,8 @@ private final class SnipCanvas: NSView {
         draftLayer?.removeFromSuperlayer()
         draftLayer = nil
         guard let last = marks.last else { return }
-        let l = Self.markShape(last, in: CGRect(origin: .zero, size: sel.size))
+        let l = Self.markShape(last, in: CGRect(origin: .zero, size: sel.size),
+                               scale: screen.backingScaleFactor)
         marksLayer.addSublayer(l)
         markLayers.append(l)
     }
@@ -796,8 +826,15 @@ private final class SnipCanvas: NSView {
     override func mouseMoved(with event: NSEvent) {
         cursor = convert(event.locationInWindow, from: nil)
         if !locked, !dragging {
-            hoverWindow = WindowSnapper.frontmostWindow(contains: cursor, in: windowRects)
-            refreshMask()
+            // Only rebuild the display-sized dim path when the hovered window
+            // actually changed: `frontmostWindow` scans the candidate list and
+            // `refreshMask` re-tessellates a screen-sized even-odd shape, and
+            // mouse-moved events arrive at the display's event rate (120 Hz).
+            let next = WindowSnapper.frontmostWindow(contains: cursor, in: windowRects)
+            if next != hoverWindow {
+                hoverWindow = next
+                refreshMask()
+            }
         }
     }
 
@@ -905,6 +942,9 @@ private final class SnipCanvas: NSView {
         // — default anchor (0.5, 0.5) shifted every rect/ellipse/arrow.
         marksLayer.anchorPoint = .zero
         marksLayer.frame = selection ?? .zero
+        // Same rasterization scale as the committed/draft mark layers
+        // (`markShape`): the backing factor of *this canvas's* display.
+        marksLayer.contentsScale = screen.backingScaleFactor
         let highlight = selection ?? (locked ? nil : hoverWindow)
         let path = CGMutablePath()
         path.addRect(bounds)
@@ -942,7 +982,11 @@ private final class SnipCanvas: NSView {
 
     private func positionToolbar() {
         guard let sel = selection, !toolbar.isHidden else { return }
-        toolbar.sizeToFit()
+        // `toolbar.frame.size` is final as soon as `init` returns (the buttons
+        // are built once and never resized): this used to call the toolbar's
+        // own `sizeToFit` on every reposition, i.e. an O(subviews) walk plus a
+        // redundant `setFrameSize` per drag event, on a size that cannot
+        // change.
         let size = toolbar.frame.size
         var origin = NSPoint(x: sel.midX - size.width / 2, y: sel.minY - size.height - 10)
         if origin.y < 8 {
@@ -1078,14 +1122,6 @@ private final class SnipToolbar: NSView {
             ? .white : .white.withAlphaComponent(0.35)
     }
 
-    override var intrinsicContentSize: NSSize { frame.size }
-
-    func sizeToFit() {
-        var w: CGFloat = 8
-        for v in subviews { w = max(w, v.frame.maxX) }
-        setFrameSize(NSSize(width: w + 8, height: 36))
-    }
-
     @objc private func toolTap(_ sender: NSButton) {
         guard let (b, tool) = toolButtons.first(where: { $0.0 === sender }) else { return }
         _ = b
@@ -1117,8 +1153,7 @@ private final class ScreenshotPinPanel: NSPanel {
     private let imageView = NSImageView()
     /// Scale vs. the original capture (1 = native size), stepped by ±.
     private var scale: CGFloat = 1
-    /// Hover chrome sits outside the photo; extra window padding hides it
-    /// until the cursor enters.
+    /// The bar sits just inside the photo's top edge, over the padding band.
     private let chromeBar = PinChromeBar()
     private let padding: CGFloat = 34
     /// Fired when the pin is dismissed, so the controller can release it.
@@ -1176,8 +1211,14 @@ private final class ScreenshotPinPanel: NSPanel {
         let photo = frame.size  // includes padding
         let photoSize = NSSize(width: photo.width - padding, height: photo.height - padding)
         imageView.frame = NSRect(x: padding / 2, y: padding / 2, width: photoSize.width, height: photoSize.height)
+        // Inside the window frame, hanging off the photo's top edge over its
+        // top-right corner. The old `photo.height - barHeight + 8` put the top
+        // 8pt of the bar — and of every button in it — past the contentView's
+        // edge; a window clips its content at its own frame, so every pin drew
+        // the close/copy/zoom symbols shaved at the top.
         chromeBar.frame = NSRect(x: photo.width - chromeBar.frame.width - 2,
-                                 y: photo.height - chromeBar.frame.height + 8, width: chromeBar.frame.width,
+                                 y: photo.height - chromeBar.frame.height - padding / 2 - 1,
+                                 width: chromeBar.frame.width,
                                  height: chromeBar.frame.height)
     }
 

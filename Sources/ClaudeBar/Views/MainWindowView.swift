@@ -102,7 +102,15 @@ struct MainWindowView: View {
             }
         }
         .background {
-            Button("") { showCommandPalette.toggle() }
+            Button("") {
+                // The open transaction lives here, at the writer, not in a
+                // `.animation(value:)` on the palette: a group-level animation
+                // keeps a transaction in flight that re-runs the hosting
+                // view's layout for the subtree on every display cycle while
+                // it lasts (finding 222). `dismiss()` already animates at its
+                // own writer the same way.
+                withAnimation(Theme.Animation.bouncy) { showCommandPalette.toggle() }
+            }
                 .keyboardShortcut("k", modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)

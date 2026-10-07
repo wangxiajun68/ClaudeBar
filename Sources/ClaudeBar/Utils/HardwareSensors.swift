@@ -155,9 +155,14 @@ enum HardwareSensors {
         return level
     }
 
-    static func bootDisk() -> (used: UInt64, total: UInt64) {
+    /// The boot volume's disk usage. `nil`, not `(0, 1)`, when `statfs` fails:
+    /// the two are different facts and the panel used to paint 「正在读取磁盘
+    /// 容量…」 forever on the failure, because (0, 1) is also what it shows
+    /// before the first sample. Callers keep their own default for
+    /// "not sampled yet"; this function answers only what the system said.
+    static func bootDisk() -> (used: UInt64, total: UInt64)? {
         var fs = statfs()
-        guard statfs("/", &fs) == 0 else { return (0, 1) }
+        guard statfs("/", &fs) == 0 else { return nil }
         let bsize = UInt64(fs.f_bsize)
         let total = max(UInt64(fs.f_blocks) * bsize, 1)
         let free = UInt64(fs.f_bavail) * bsize

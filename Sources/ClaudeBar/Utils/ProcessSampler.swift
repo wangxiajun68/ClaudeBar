@@ -130,6 +130,12 @@ final class ProcessSampler {
         var memoryPressureLevel: Int = 0
         var diskUsed: UInt64 = 0
         var diskTotal: UInt64 = 1
+        /// Whether the last `bootDisk()` read succeeded. `diskUsed/diskTotal`
+        /// default to (0, 1) so percentages stay finite, but that is the same
+        /// shape as a genuine read of an almost-full disk — the panel used to
+        /// read it as 「正在读取磁盘容量…」 forever when the statfs call had
+        /// already failed. This flag is the one bit that tells the two apart.
+        var diskAvailable: Bool = false
         var wifiOn: Bool = false
         var wifiName: String = ""
         var wifiRSSI: Int = 0
@@ -236,6 +242,9 @@ final class ProcessSampler {
     // Disk capacity changes slowly; keep filesystem queries off the live power cadence.
     private var diskSample: (used: UInt64, total: UInt64)?
     private var diskSampleAt: TimeInterval = 0
+    /// Whether the last statfs read succeeded; carried into `HostStats` so the
+    /// panel can tell 「尚未采样」 from 「读取失败」.
+    private var diskSampled = false
     private var linkSample: HardwareSensors.LinkStatus?
     private var linkSampleAt: TimeInterval = 0
     /// The battery reading, held between ticks — see the gate in `tick()`.
@@ -446,8 +455,12 @@ final class ProcessSampler {
         if let reported = gpu.temperatureCelsius { gpuTemperature = reported }
         if diskSample == nil || now - diskSampleAt >= 10 {
             diskSample = HardwareSensors.bootDisk()
+            diskSampled = diskSample != nil
             diskSampleAt = now
         }
+        // `nil` means the statfs call failed (the panel shows 磁盘信息暂不可用);
+        // (0, 1) only ever is the "not sampled yet" placeholder, which the
+        // first tick resolves — the two used to be the same tuple.
         let disk = diskSample ?? (used: 0, total: 1)
         // CoreWLAN + SCDynamicStore + IOBluetooth; a link state older than
         // 3 s is not stale for a status mark.
@@ -503,6 +516,7 @@ final class ProcessSampler {
             memoryPressureLevel: HardwareSensors.memoryPressureLevel(),
             diskUsed: disk.used,
             diskTotal: disk.total,
+            diskAvailable: diskSampled,
             wifiOn: links.wifiOn,
             wifiName: links.wifiName,
             wifiRSSI: links.wifiRSSI,

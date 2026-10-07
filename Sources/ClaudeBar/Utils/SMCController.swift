@@ -149,7 +149,7 @@ final class SMCController {
         var dataType: UInt32 = 0
         guard read(key, into: &bytes, size: &dataSize, type: &dataType) == KERN_SUCCESS, dataSize > 0 else { return nil }
         if bytes.prefix(Int(dataSize)).allSatisfy({ $0 == 0 }),
-           !["FS! ", "F0Md", "F1Md", "F0md", "F1md"].contains(key) {
+           !["F0Md", "F1Md", "F0md", "F1md"].contains(key) {
             return nil
         }
         return decode(bytes, dataSize: Int(dataSize), dataType: dataType)
@@ -206,8 +206,15 @@ final class SMCController {
         return (readings.reduce(0, +) / Double(readings.count), answered)
     }
 
+    /// The mode key the machine actually answers on: `F{i}md` on current
+    /// Apple Silicon, `F{i}Md` on older SMC layouts. Probed once against F0.
+    ///
+    /// Single-flavour on purpose: the `#if arch(arm64)` arms that used to wrap
+    /// this and `fanMode` had never been compiled (the build targets arm64
+    /// only, and the x86 arm was unreachable anyway — `fanModeKeyIsLower` is
+    /// only ever assigned here). `F{i}Md` naming and the `FS!` cross-frame
+    /// reads live in the `claudebar-fanctl` helper (`fanctl.c:unlock_fan`).
     func fanModeKey(_ id: Int) -> String {
-        #if arch(arm64)
         if fanModeKeyIsLower == nil {
             var bytes = [UInt8](repeating: 0, count: 32)
             var dataSize: UInt32 = 0
@@ -218,9 +225,6 @@ final class SMCController {
             fanModeKeyIsLower = (probe == KERN_SUCCESS)
         }
         return fanModeKeyIsLower! ? "F\(id)md" : "F\(id)Md"
-        #else
-        return "F\(id)Md"
-        #endif
     }
 
     func loadFans() -> [FanInfo] {
@@ -261,21 +265,16 @@ final class SMCController {
     // MARK: - Private
 
     private func fanMode(for id: Int) -> FanMode {
-        if let md = getValue(fanModeKey(id)), let parsed = FanMode(rawValue: Self.safeRPM(md)) {
+        // One read, reused: the old shape read the very same key a second time
+        // whenever the first read succeeded but decoded to a mode outside
+        // `FanMode` (e.g. an SMC reporting 2), paying another keyInfo+readBytes
+        // pair — two more IOConnectCallStructMethod round trips under `ioLock`,
+        // the lock ProcessSampler's temperature sweep contends for.
+        let raw = getValue(fanModeKey(id))
+        if let raw, let parsed = FanMode(rawValue: Self.safeRPM(raw)) {
             return parsed.isAutomatic ? .automatic : parsed
         }
-        #if arch(arm64)
-        let modeValue = Self.safeRPM(getValue(fanModeKey(id)) ?? 0)
-        return modeValue == 1 ? .forced : .automatic
-        #else
-        let fansMode = Self.safeRPM(getValue("FS! ") ?? 0)
-        switch (fansMode, id) {
-        case (0, _): return .automatic
-        case (3, _): return .forced
-        case (1, 0), (2, 1): return .forced
-        default: return .automatic
-        }
-        #endif
+        return Self.safeRPM(raw ?? 0) == 1 ? .forced : .automatic
     }
 
     /// Reads a key: first fetches keyInfo (data8=9), then the bytes (data8=5),
@@ -329,7 +328,12 @@ final class SMCController {
         switch dataType {
         case SMCDataType.ui8:
             if dataSize == 1 { return Double(bytes[0]) }
-            return Double(bytes[0] | (bytes[1] << 8)) // " 8iu"-style LE 16-bit
+            // " 8iu"-style LE 16-bit. Both sides must be widened *before* the
+            // shift: `bytes[1] << 8` on `UInt8` is `0` for every value, which
+            // is what used to drop the high byte here while fanctl.c's C
+            // (integer-promoted) version of the same line returned the full
+            // number.
+            return Double(UInt16(bytes[0]) | (UInt16(bytes[1]) << 8))
         case SMCDataType.ui16:
             return Double(UInt16(bytes[0]) << 8 | UInt16(bytes[1]))
         case SMCDataType.ui32:

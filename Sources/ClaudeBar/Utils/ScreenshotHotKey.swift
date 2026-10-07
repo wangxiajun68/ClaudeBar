@@ -98,7 +98,7 @@ final class ScreenshotHotKey: ObservableObject {
         unregister()
         installHandlerIfNeeded()
         installTap()
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: 1)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: Self.triggerID)
         var ref: EventHotKeyRef?
         let err = RegisterEventHotKey(
             UInt32(kVK_ANSI_A),
@@ -223,7 +223,7 @@ final class ScreenshotHotKey: ObservableObject {
                     MemoryLayout<EventHotKeyID>.size,
                     nil,
                     &id)
-                if id.signature == ScreenshotHotKey.signature {
+                if id.signature == ScreenshotHotKey.signature, id.id == ScreenshotHotKey.triggerID {
                     DispatchQueue.main.async {
                         ScreenshotOverlayController.shared.begin()
                     }
@@ -241,6 +241,11 @@ final class ScreenshotHotKey: ObservableObject {
     }
 
     private static let signature: OSType = 0x43425348 // 'CBSH'
+    /// The overlay's no-Accessibility fallback keys register their own
+    /// signature ('CBOV'), but both handlers receive every hotkey press on the
+    /// application event target — so this handler must also match the id, or an
+    /// overlay Esc would fire a spurious `begin()`.
+    private static let triggerID: UInt32 = 1
 
     private static func describe(_ err: OSStatus) -> String {
         switch err {

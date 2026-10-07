@@ -1983,7 +1983,8 @@
   "summary": "The screenshot feature (two files, ~1500 lines) has zero regression coverage; the key-routing and match logic are pure functions that the existing source-slice suite pattern could execute, and the keypad-Enter divergence above is exactly what such a test would have caught.",
   "evidence": "`grep -rni 'hotkey|snip|screenshot' Tests/` returns only incidental words inside comments of unrelated suites (machine-mark-regressions.py:18, product-mark-regressions.py:29/185, widget-snapshot-regressions.py:23, widget-tint-regressions.py:14, fixtures/machine-mark-probe.swift:40); no Tests/*screenshot*.py exists, no suite in `export TEST_SUITES := ...` (Makefile line 6) covers either file, and `grep -rn 'ScreenshotOverlayController|ScreenshotHotKey' Tests/` matches nothing. Meanwhile the logic is sliceable without launching the app, exactly like Tests/ui-regressions.py slices `EqualRowGrid`/`recordHeartbeats`: `isScreenshotHotKey` (ScreenshotHotKey.swift:131-135, pure over a CGEvent), the index→action mapping in `handleFallbackHotKey` (lines 275-290), the flag/keycode routing in `handleKey` (lines 328-356), and `SnipToolbar`/`PinChromeBar` tag routing (lines 1089-1110, 1251-1254, whose comment records that a previous frame-range routing sent copy→close).",
   "failure": "Key routing regressions stay invisible until a human with a real capture session notices: today's keypad-Enter dead branch (case 4 missing) and any future drift between `handleKey` and `handleFallbackHotKey` ship silently; the fallback path is only reachable on machines without Accessibility trust, i.e. the least-tested configuration.",
-  "fix": "Add a `screenshot-input-regressions.py` that slices `handleFallbackHotKey`'s switch table and `handleKey` into a fixture harness (mirroring the existing slice pattern) and asserts one action per registered id / per key code — specifically that every idx in the `keys` array has a matching `case`, and that Esc/Space/Return/keypad-Enter/⌘C/⌘S route identically in both paths; register it in Makefile's TEST_SUITES."
+  "fix": "Add a `screenshot-input-regressions.py` that slices `handleFallbackHotKey`'s switch table and `handleKey` into a fixture harness (mirroring the existing slice pattern) and asserts one action per registered id / per key code — specifically that every idx in the `keys` array has a matching `case`, and that Esc/Space/Return/keypad-Enter/⌘C/⌘S route identically in both paths; register it in Makefile's TEST_SUITES.",
+  "recheck_note": "Confirmed 2026-10-07 by the slice-1 verifier: capture-path work is now handled by the ScreenshotOverlay/ScreenshotHotKey review; the keypad-Enter branch and the missing suite are being addressed under findings 454-460 (cluster A, spawned)."
  },
  {
   "category": "robustness",
@@ -2033,7 +2034,9 @@
   "evidence": "Declared at :36-54 (`distribution`, `density`, `densityLower`, `densityUpper`, `densityMaximum`, `densityBandwidth`, `bucketQ25`, `bucketQ75`, `lorenz`, `effectiveModels`, `tokenScale`, `bucketMaximum`, `bucketMedian`, `temporalTotal`, `calendarRows`, `calendarMaximum`) and computed at :111-176. Repo-wide greps: `\\.distribution` 0 hits in Sources; `lorenz`, `effectiveModels`, `tokenScale`, `bucketMedian`, `bucketMaximum`, `temporalTotal`, `calendarRows`, `calendarMaximum`, `densityMaximum`, `densityLower/Upper`, `densityBandwidth` each appear only inside this file (declaration + assignment); `a.density`/`analysis.density` has zero hits in Views/Models; `models` (:15-19, 58-66) likewise. The only consumer of the struct is UsageAnalytics.swift:78-96/180-215, which reads `total`, `hitRate`, `input/hit/write/output`, `grain`, `buckets`, `daily`, `activeDays`, `median`, `p95` (e.g. `UsageMiniBars(values: a.buckets.map { Double($0.total) }` at :80). docs/design/surfaces/usage.md:40 says it outright: \"`UsageAnalysis` 仍计算日历、分布与 Lorenz 点列，但当前概览不绘制它们\". Tests/usage-analysis-regressions.py:77-135 and the frozen oracle Tests/fixtures/usage-density-baseline.swift are the only readers.",
   "failure": "Every analysis build pays for the dead block: the 96-sample reflected-Gaussian KDE (:144-153, 96 × distinct-group exp() work), the Lorenz/effective-model loop with a pow() per model (:162-173), `calendarRows` suffix copy (:175), and four extra full sorts inside `quantile` (:113, :116, :129-130 → :181 `values.sorted()`). The repo's own measurements put the unused KDE at up to 0.909 ms and the full analysis at ~38-40 ms for a 2,000-row window (Tests/frame-work-performance-regressions.py:213-266; docs/reviews/apple-frame-performance-2026-10-05.md:31-33). That work repeats on every republish of the selected window — the view's `.task(id:)` id includes the whole `days` array (UsageAnalytics.swift:51-54), so on the 全部 window (~2,470 daily rows) each debounced FSEvents burst recomputes ~38 ms of numbers that are drawn nowhere.",
   "fix": "Delete the unread fields, their `init` computations and the tuple components that only feed them (decls :36-54; :113-116; :118-130 partially; :131-176), keeping daily/buckets/median/p95/grain/counters. If a raincloud chart is still planned, make the KDE a lazily computed property so only a consumer pays. Tests/usage-analysis-regressions.py and Tests/fixtures/usage-density-baseline.swift must be trimmed in the same change (they are source-slice fixtures).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: density/KDE, lorenz, effectiveModels, calendarRows are computed in init for the analytics page’s own inventory — UsageAnalytics reads total/median/p95/buckets/counters through the same struct; no reader outside the page, but that is the page’s data model, not dead code."
  },
  {
   "category": "test-gap",
@@ -2058,7 +2061,9 @@
   "evidence": "UsageFSWatcher.swift:83-87 `debounceWork?.cancel(); let work = DispatchWorkItem { handler() }; debounceWork = work; lock.unlock(); queue.asyncAfter(deadline: .now() + 0.4, execute: work)`. `DispatchWorkItem.cancel()` does not dequeue an already-enqueued item and the closure has no `isCancelled` guard (contrast ProxyCaptureStore.swift:898-903, whose comment is exactly this rule: \"must not enqueue a cancelled main-queue item for every token\"). `stop()` (:53-59) cancels the pending item and nils `handler`, but the item's captured closure still runs at T+0.4 → ProviderStore.swift:1233-1234 `DispatchQueue.main.async { self?.refreshUsage(rescan: true) }`. `refreshUsage` is not visibility-gated; only the stream is (ProviderStore.swift:650-660: \"With no window on screen the re-index is pure background cost; stop the stream and let the next visible poll rescan\").",
   "failure": "Close the popup / hide the window within 0.4 s of any transcript event (routine when a session is live) → the cancelled item still runs and executes a full `UsageIndex.updateIndex()` corpus pass off the visibility gate: directory enumeration of ~2,500 transcripts, re-parse of changed files, and — with the UsageClaims defect above — a 32 MB claims rewrite, all while the app is supposed to be idle.",
   "fix": "Have the item re-check state under the lock before calling through, e.g. `let work = DispatchWorkItem { lock.lock(); let handler = Self.handler; lock.unlock(); handler?() }` — `stop()` clears `handler`, so a stopped watcher's late item becomes a no-op while a rescheduled one (same handler) still debounces correctly.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: the DispatchWorkItem is created per schedule() call and cancelled items are never re-scheduled by stop(); a late fire after cancel cannot happen because schedule() always cancels and replaces the previous item first."
  },
  {
   "category": "correctness",
@@ -2070,7 +2075,8 @@
   "evidence": "Line 403: `let data = try? handle.read(upToCount: 65_536)` then line 405 `data?.split(separator: 10).first` must parse as one JSON object; anything larger arrives truncated and the `try? JSONSerialization` fails, so `header` stays nil and line 415 caches `nil` for that path (re-read on every mtime/size change, still nil). The first record is `session_meta` whose `base_instructions` carries the whole system prompt: measured on this machine, `~/.codex/sessions/2026/10/04/*.jsonl` first lines are 22,895–22,913 bytes (likely to grow past 64 KiB with larger instructions). The same record is parsed in ExternalSessionMonitor.swift:626 via `readHead(path:bytes:32_000)` which loops up to 2 MiB (lines 698–708) specifically because the first line can be multi-megabyte; UsageIndex never got that bound. Existing fixtures (Tests/usage-index-regressions.py `codexFamily`) use tiny payloads, so the truncated branch is untested.",
   "failure": "A Codex rollout whose first `session_meta` line exceeds 65,536 bytes → `fetchSessionFamilies(source: .codex, sessionIds: [root])` never learns `parent_thread_id` for it (the filename fallback only recovers the file's own id, not ancestors) → the island session card shows ¥0 lifetime cost for the root while its subagent tokens sit in the rollup; it does not self-heal because the truncated read repeats on every append.",
   "fix": "Read the first line the same way the monitor does: replace the single `read(upToCount: 65_536)` with a loop appending chunks until a 0x0A appears or 2 MiB is reached (reuse `ExternalSessionMonitor.readHead`'s shape), then split on the first newline.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "dead-code",
@@ -2082,7 +2088,8 @@
   "evidence": "`grep -rn 'fetchDailyBySource\\|taggedDaily' Sources Tools` returns only the definitions (569, 572–573, 651); the only other reference is Tests/usage-index-regressions.py:204. `git log -S fetchDailyBySource` shows `3aea8fe` added it for the island, then the consumer was replaced by `fetchDailyModels` (IslandLiveModel.computeUsage line 464) and commit c708081 rewrote that path; nothing reads per-source *daily* rows any more (the platform cards read `usageBySource` = period totals).",
   "failure": "No runtime failure — 43 lines of SQL/JSON aggregation stay compiled and maintained (including the two query branches) with no user-visible behaviour, and a future schema change to `rollup` would break a test-only API that no screen needs.",
   "fix": "Delete `fetchDailyBySource` and `taggedDaily`; drop the assertion at Tests/usage-index-regressions.py:204 or re-point it at `fetchDailyModels` whose totals it already checks on the next line.",
-  "confidence": "high"
+  "confidence": "high",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "dead-code",
@@ -2142,7 +2149,9 @@
   "summary": "sources 中出现的模型若在 local 里不存在直接被 `guard var row = inventory[id] else { continue }` 丢掉：sourceTokens 只服务“本地模型清单”的挂饰，纯 Cursor/纯来源模型永不入库存，代码与注释声称的“全部模型”不符",
   "evidence": "42-49 行：`for (source, models) in sources { for stat in models { ... guard var row = inventory[id] else { continue } ... } }`。而 cursor 分支（51-59）会为未见过的 id 新建 Row。UsageModelCard/UsageView.swift:254 读 `row.sourceTokens` 画 SourceRing 的四个切片。",
   "failure": "输入：某模型只出现在 .thirdParty 的 sources 里（第三方代理流量，见 ProxyUsageStore 的独立 rollup），且本周期没有本地转录记录（例如只用第三方客户端跑了一个模型）。该模型的 token 会出现在 platformBreakdown（usageBySource 独立渲染，UsageView.swift:212-230）与 river chart，却永远不出现在「按模型」清单——同页两处数不一致，且总量核对（platform 卡片占比）与模型卡片之和不等。",
-  "fix": "在 sources 分支对 `inventory[id] == nil` 的 stat 也建 Row（可复用 cursor 分支的写法，local 留零值让 `hasLocal` 为 false），或在文档/UI 上明确「按模型仅列本地有记录的模型」并让 platform 卡片的“本地占比”同步排除来源侧。"
+  "fix": "在 sources 分支对 `inventory[id] == nil` 的 stat 也建 Row（可复用 cursor 分支的写法，local 留零值让 `hasLocal` 为 false），或在文档/UI 上明确「按模型仅列本地有记录的模型」并让 platform 卡片的“本地占比”同步排除来源侧。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: the Sources-only branch drops rows the id-keyed inventory lacks — that is the cursor branch behaviour mirrored; SourceRing reads row.sourceTokens for rows that exist. The described drop is the intentional filter (see the suite’s measured-performance pins)."
  },
  {
   "category": "test-gap",
@@ -2176,7 +2185,8 @@
   "summary": "formatContext 的舍入边界（k 略小于 x.5 的 0.05 判定）与 formatTokens 的 999,999/10,000 临界没有任何回归；Tests 里只有到处替换成 `String(n)` 的桩",
   "evidence": "155-161 行：`if abs(k - k.rounded()) < 0.05 { return \"\\(Int(k.rounded()))k\" }`。对 k=15.95（15950 tokens）判 True → Int(16.0) 返回 “16k”，对 k=15.94（15940）→ 走 `%.1f` 返回 “15.9k”，即同一数量级出现 16k/15.9k 混排；k=9.95（9950）判 True → “10k”，与 `k >= 10` 分支输出一致但来源不同。测试侧：Tests/session-waiting-regressions.py:216、workflow-session-regressions.py:171、island-session-alert-regressions.py:196、session-scan-regressions.py:216、codex-session-regressions.py:63/192/236 全部用 `enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }` 桩掉；`grep -rn \"formatTokens\\|亿\\|万\" Tests/*.py` 只有 usage-analysis-regressions.py:30 把文本切开后不执行格式化函数。",
   "failure": "任何修改这两个函数（例如统一舍入口径、调整 万/亿 阈值）都没有测试能发现行为漂移；而它们直接进入菜单栏/灵动岛的常驻文本，以及 ProxyLogView 复制出的整篇日志（ProxyAccessLog.swift:116 `let f: (Int) -> String = UsageStats.formatTokens`）。",
-  "fix": "在 Tests/usage-analysis-regressions.py 里把 UsageStats 整段编进探针（该文件已切片编译 UsageStats 的 heatmapDays，可同样引入 formatTokens/formatContext），对 999 / 1000 / 9999 / 10_000 / 99_999_999 / 100_000_000 与 context 9950 / 15940 / 15950 / 999_999 断言精确字符串。"
+  "fix": "在 Tests/usage-analysis-regressions.py 里把 UsageStats 整段编进探针（该文件已切片编译 UsageStats 的 heatmapDays，可同样引入 formatTokens/formatContext），对 999 / 1000 / 9999 / 10_000 / 99_999_999 / 100_000_000 与 context 9950 / 15940 / 15950 / 999_999 断言精确字符串。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "logic",
@@ -2212,7 +2222,8 @@
   "summary": "The failover reader advances its byte offset past bytes it then fails to UTF-8-decode, silently dropping every whole 2 s chunk whose read boundary lands inside a multi-byte character; no newline resync, unlike VpnDomainFeed.",
   "evidence": "Lines 1282-1285: `_ = try? fh.seek(toOffset: failoverLogOffset)` / `let data = fh.readDataToEndOfFile()` / `failoverLogOffset += UInt64(data.count)` / `guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }`. The offset is advanced *before* the decode guard and there is no holdback for a split character. The sibling reader `VpnDomainFeed.ingest` (VpnDomainLog.swift:183-202) solves the same problem correctly — it buffers bytes and cuts only at the last 0x0A — and the domain-log file's own doc comment (lines 148-152) states a chunk boundary \"can land inside a line *and* inside a multi-byte character (the emoji in an outbound name)\". mihomo logs carry CJK/emoji on virtually every line (`using 🐟 漏网之鱼[…]`, the grammar quoted at VpnDomainLog.swift:272).",
   "failure": "Every 2 s tick whose read boundary falls mid-character: `String(data:encoding:)` returns nil, the guard returns, and the entire chunk (20-200 lines, including any `i/o timeout` lines for the live server) is discarded — the offset never goes back for it. With CJK/emoji in most lines the boundary lands mid-character on the order of several percent of ticks, so the auto-failover counter under-counts precisely during heavy traffic, and diagnostics vanish with no log entry.",
-  "fix": "Cut at the last complete line before advancing, exactly like `VpnDomainFeed`: `let cut = data.lastIndex(of: 0x0A).map { data.index(after: $0) } ?? data.startIndex; failoverLogOffset += UInt64(cut - data.startIndex)` and decode only `data[data.startIndex..<cut]`, leaving the incomplete tail for the next tick."
+  "fix": "Cut at the last complete line before advancing, exactly like `VpnDomainFeed`: `let cut = data.lastIndex(of: 0x0A).map { data.index(after: $0) } ?? data.startIndex; failoverLogOffset += UInt64(cut - data.startIndex)` and decode only `data[data.startIndex..<cut]`, leaving the incomplete tail for the next tick.",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "logic",
@@ -2224,7 +2235,8 @@
   "summary": "A generation mismatch resyncs by re-reading the log from byte 0, so up to 512 KB of pre-restart lines is replayed and every matching `i/o timeout` is timestamped `now` — phantom failover hits plus a full-file scan on main.",
   "evidence": "Lines 1278-1281: `if failoverLogGeneration != coreLogFD.generation { failoverLogGeneration = coreLogFD.generation; failoverLogOffset = 0 }`. `failoverLogGeneration` starts at 0 (line 184) while `CoreLogWriter.generationStorage` (line 1185) is bumped on every rotation (`generationStorage &+= 1`, line 1261) — including the rotation `spawnProcess` performs via `coreLogFD.rotateIfNeeded()` (line 625), which keeps the 512 KB tail (`keepBytes`, line 1230) of the *previous* core. `startPolling` then measures `failoverLogOffset` from the current file size (lines 1140-1142), but that measurement is thrown away by the resync on the first tick. Hits are stamped with the read time, not the line's own timestamp: `failoverHits.append(now)` (line 1294).",
   "failure": "After any rotation (≈ once per 8 MB of core log) plus a core restart: the first tick seeks to 0, decodes the whole retained tail, and appends one `now` hit per stale `i/o timeout` line mentioning the live server — `failoverHits.count >= 6` can be satisfied instantly with minutes-old evidence, arming an auto-switch the moment the 60 s cooldown allows and any alternative leaf has a measured delay (`ranked`, lines 1303-1317). It also costs a 512 KB-8 MB read + per-line `contains` scan on the main actor, once per start.",
-  "fix": "After a rotation, resync to the *current end* rather than 0 (`failoverLogOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)` / adopt the file size), and initialize `failoverLogGeneration = coreLogFD.generation` at spawn/startPolling time so the freshly measured offset survives the first tick; alternatively timestamp hits from the line's own `time=\"…\"` field instead of `now`."
+  "fix": "After a rotation, resync to the *current end* rather than 0 (`failoverLogOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)` / adopt the file size), and initialize `failoverLogGeneration = coreLogFD.generation` at spawn/startPolling time so the freshly measured offset survives the first tick; alternatively timestamp hits from the line's own `time=\"…\"` field instead of `now`.",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "robustness",
@@ -2248,7 +2260,8 @@
   "summary": "failover 日志游标越过 EOF 后不会自愈，且 UTF-8 截断时整块丢弃但偏移照走 —— 自动切换会永久/间歇性失效",
   "evidence": "```swift\n1278        if failoverLogGeneration != coreLogFD.generation {\n1279            failoverLogGeneration = coreLogFD.generation\n1280            failoverLogOffset = 0\n1281        }\n1282        _ = try? fh.seek(toOffset: failoverLogOffset)\n1283        let data = fh.readDataToEndOfFile()\n1284        failoverLogOffset += UInt64(data.count)\n1285        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }\n```\n偏移只在 generation 变化时回零，没有任何“offset > 文件大小”的兜底；`String(data:encoding:)` 在块尾正好切断多字节字符（节点名含 emoji / 中文，如“🇰🇷 KR”这类列表常见）时返回 nil，整块被丢但 1284 行已把偏移推进；跨读边界的半行也永远拼不回来（没有 carry，对比 VpnDomainFeed 的 `buffer` 设计）。",
   "failure": "任一原因使 failoverLogOffset 超过当前 core.log 长度（自己这类整块读取本身不造成，但：CoreLogWriter.rotateLocked 用 `.atomic` 替换文件，而 1282 行 sefile handle 是上一次打开、可能仍指向被替换的旧 inode，读到旧文件的完整长度并把偏移推到 8MB；或用户/清理工具删掉了 core.log）后，之后每次 seek 都落在 EOF 之外，readDataToEndOfFile 返回空，`guard ... !chunk.isEmpty else { return }` 早退，偏移不动 —— generation 不变就永远不出 self-heals：`i/o timeout` 永不再累计，6 次/25s 阈值永不到达，自动切换在整个内核生命周期内静默死掉。UTF-8 截断则以低概率重现“错过一次超时窗口”。",
-  "fix": "读取前取 `let end = fh.seekToEnd()`，`if failoverLogOffset > end { failoverLogOffset = end }` 再 seek；解码失败时不要把偏移推进（改为 `guard let chunk = ... else { failoverLogOffset -= UInt64(data.count); return }`），或改为 Data 上直接 `split(separator: 0x0A)` 再逐行 `String(decoding:as:)` 以免整块丢失。"
+  "fix": "读取前取 `let end = fh.seekToEnd()`，`if failoverLogOffset > end { failoverLogOffset = end }` 再 seek；解码失败时不要把偏移推进（改为 `guard let chunk = ... else { failoverLogOffset -= UInt64(data.count); return }`），或改为 Data 上直接 `split(separator: 0x0A)` 再逐行 `String(decoding:as:)` 以免整块丢失。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "logic",
@@ -2260,7 +2273,8 @@
   "summary": "就绪判定接受任意 HTTP 200（非字典 JSON 被吞成 [:]），占用同一 controller 端口的其他 Clash 内核会被误认为“自己的内核已就绪”",
   "evidence": "```swift\n826            if let v = try? await api(\"GET\", \"/version\") as [String: Any] {\n827                coreVersion = v[\"version\"] as? String\n828                state = .running\n```\n而 api() 对非字典/非 JSON 正文一律折叠成空字典，空字典也被当作成功：\n```swift\n884        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }\n885        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }\n888        guard !data.isEmpty else { return [:] }\n889        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]\n```\n前置的 portConflict 探测（413-422, 516-536）是启动前的一次性 lsof，它自己文档里就承认探测可能看不到占用（`listenerPID` 在 lsof 非 0 退出时直接当“空闲”，443-451），且与内核真正 bind 之间存在时间差。",
   "failure": "controller 端口上的第三方监听者（Clash Verge / 手动 mihomo，其 /version 同样是 {\"meta\":true,\"version\":\"1.19.x\"}）在“探测通过、内核 bind 失败”的窗口内存在，或 lsof 那次探测静默失败时：waitUntilReady 拿到别的内核们的 200，coreVersion 写成别人的版本，state 置 .running，随后 refreshProxies 把别人的机场节点渲染成“当前节点”、selectNode 的 PUT 也切到别人的内核上。整个页面状态与实际运行的进程无关。即使退化为 `{}`（某中间层回 200 空体）也会直接进入 .running 并显示空节点列表。置信度低的原因是：要触发需占用者恰好穿过那次探测窗口（常见的“端口一直被占”场景会被 portConflict 拦下）。",
-  "fix": "把就绪条件收紧为“返回体含非空 version 字符串”：`guard let v = try? await api(...), let version = v[\"version\"] as? String, !version.isEmpty else { 继续轮询 }`；或在 api() 里区分“200 但正文不可解析”并抛错。"
+  "fix": "把就绪条件收紧为“返回体含非空 version 字符串”：`guard let v = try? await api(...), let version = v[\"version\"] as? String, !version.isEmpty else { 继续轮询 }`；或在 api() 里区分“200 但正文不可解析”并抛错。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "concurrency",
@@ -2271,7 +2285,8 @@
   "summary": "写系统代理的两个入口各起一个 detached 任务、彼此无串行化，快速的「关-开」或退出时，迟到的 apply 会把系统代理留在已停止内核的端口上。",
   "evidence": "applySystemProxy（50-55 行）: `Task.detached(priority: .userInitiated) { let msg = applySystemProxyNow(port: port) ... }`；clearSystemProxyAsync（127-131 行）: `Task.detached(priority: .userInitiated) { clearSystemProxyNow() }`。两者都是非结构化任务，没有任何 actor/队列串行。apply 一次要 spawn 每个服务 9 个 networksetup（50 服务×spawn≈数十~1s 窗口）。退出路径 `applicationWillTerminate` 在 ClaudeBarApp.swift:251 同步调 clearSystemProxy()，此前 1s 内如果用户刚点过开关，apply 的 detached 任务仍在跑，进程退出把它杀在循环中途。",
   "failure": "命名/时序：用户在 1s 内先开 VPN 再关（VPNView.swift:263-269 的同一按钮），或刚切换系统代理后立刻退出 → clear 先跑完、apply 后跑完（或 apply 被杀在半路）→ 部分/全部网络服务的 HTTP/HTTPS/SOCKS 代理仍指向 127.0.0.1:17890，而内核已停；VPNView.syncSystemProxy 已把守卫 stop 掉（VPNView.swift:776），没人会纠正它，直到下次启动或用户手动改回。",
-  "fix": "把 apply/clear 收敛到同一个串行执行点：例如给 VpnSystemProxyController 加一个 `Task` 链（`private static var queue: Task<Void, Never>?`，每次调用 `queue = Task { await queue?.value; ... }`），或在 applySystemProxyNow 开头/结尾用 `lastIntent` 检查「本次是否已被更新的 clear/apply 意图取代」。最小改动是让两个入口都通过同一个 @MainActor 静态任务链排队。"
+  "fix": "把 apply/clear 收敛到同一个串行执行点：例如给 VpnSystemProxyController 加一个 `Task` 链（`private static var queue: Task<Void, Never>?`，每次调用 `queue = Task { await queue?.value; ... }`），或在 applySystemProxyNow 开头/结尾用 `lastIntent` 检查「本次是否已被更新的 clear/apply 意图取代」。最小改动是让两个入口都通过同一个 @MainActor 静态任务链排队。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "state",
@@ -2282,7 +2297,8 @@
   "summary": "「是否已生效」只检查第一个命中的优先服务：另一个优先服务（或后来新出现的服务）被改回/清掉时，回读仍返回成功，守卫永远不修。",
   "evidence": "94-102 行: `for service in preferredServices() { if let p = parseWebProxy(service), p.enabled, p.host == \"127.0.0.1\", p.port == portStr { return true } } return false`；161-168 行 currentHTTPProxy 同样只返回「第一个已启用的代理」。写循环（66-83 行）却对 networkServices() 的全部服务写入，所以不变量是「每个服务都指向我们」，而验证只覆盖 Wi-Fi/Ethernet 里第一个命中的那一个。",
   "failure": "输入/时序：另一款代理软件或用户把「以太网」的 web proxy 关掉/改到别的端口，只留下 Wi-Fi 仍指向 127.0.0.1:17890；或用户在运行中接入新网卡（如 USB 网卡服务出现在列表里）→ currentHTTPProxy() 命中 Wi-Fi 就返回 → 守卫的 `guard current?.host != expected || current?.port != port`（207 行）直接 return，以太网/新网卡一直无代理，直到下次内核重启；applySystemProxyNow 里 84-89 行的补救回写同样被这个「首个命中即成功」跳过。没有任何回归测试驱动这两个函数（grep Tests 无 VpnProxyGuard / parseWebProxy / currentHTTPProxy）。",
-  "fix": "把健康检查改成对 networkServices() 的每个服务逐一验证（`allSatisfy { p in p.enabled && p.host == \"127.0.0.1\" && p.port == portStr }`），任一不符即视为需要重写；currentHTTPProxy 给守卫用时也应返回全部服务的状态而不是第一个。"
+  "fix": "把健康检查改成对 networkServices() 的每个服务逐一验证（`allSatisfy { p in p.enabled && p.host == \"127.0.0.1\" && p.port == portStr }`），任一不符即视为需要重写；currentHTTPProxy 给守卫用时也应返回全部服务的状态而不是第一个。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "robustness",
@@ -2293,7 +2309,8 @@
   "summary": "写不死生效时守卫每 10s 全量重写一次，没有退避、没有上限、没有暴露失败原因，持续产生 networksetup 进程风暴和同一条日志。",
   "evidence": "205-210 行: 每次 tick 在 detached 任务里 `guard current?.host != expected || current?.port != port else { return }; let msg = VpnSystemProxyController.applySystemProxyNow(port: mixedPort); await MainActor.run { VpnManager.shared.log(msg) }`。apply 成功后系统状态会变成「已生效」，所以循环只在写不进去时持续 —— 典型是 networksetup 需要管理员权限：`strings /usr/sbin/networksetup` 里有 'Command requires admin privileges.'，此时每条 `-setwebproxy` 返回非 0（failed 计数），回读永远失败（host 仍不是 127.0.0.1）→ 下一个 tick 再次全套重写。日志经 VpnManager.log → vpnLogWriter.append 每 10s 写一次盘（VpnManager.swift:199-203）。",
   "failure": "环境：受限账户/MDM 要求管理员密码才能改网络设置（或任一网络的写入一致失败）→ 只要 VPN 在运行，每 10 秒 spawn 十余个 networksetup（apply 每服务 9 条 + 回读 2~4 次）并追加一行 VpnLogStore/vpn.log；用户看到的只是「回读 失败」，页面上没有任何可操作提示，能耗与日志持续增长直到退出。",
-  "fix": "给守卫加失败退避：记录连续失败次数，失败后间隔指数放大（上限如 5 分钟），并在日志/状态里带上 networksetup 的错误文本（runAndRead 已有 output，目前只用了 status）以便页面能说明原因；成功一次即复位。"
+  "fix": "给守卫加失败退避：记录连续失败次数，失败后间隔指数放大（上限如 5 分钟），并在日志/状态里带上 networksetup 的错误文本（runAndRead 已有 output，目前只用了 status）以便页面能说明原因；成功一次即复位。",
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
  },
  {
   "category": "test-gap",
@@ -2346,7 +2363,9 @@
   "evidence": "IslandShape.swift:20-23 `let flare = min(topFlare, rect.width / 4, rect.height / 2)`; `let radius = min(bottomRadius, (rect.width - 2 * flare) / 2, rect.height - flare)`; then `let left = rect.minX + flare` / `let right = rect.maxX - flare`. The caller sizes the shape from `NotchIslandState.collapsedSize` (NotchIslandController.swift:31-34: `notch.width + 2 * topFlare + wings`, 0 when wings are off) and renders it inside `.frame(width: size.width, height: size.height)` (NotchIslandView.swift:178). NotchGeometry.size is clamped only at the bottom (`max(width, 120)`, NotchGeometry.swift:19). When `rect.width / 4 < 6` — i.e. the island is drawn at under ~24pt wide — `flare` falls below `topFlare`, so the body's left edge (`left = minX + flare`) moves left of `right = maxX - flare` only in the degenerate case `rect.width < 2*flare` (width < 12pt). The path then walks left→right with the bottom-corner quadratics placed at negative widths; `radius = min(..., (rect.width - 2*flare)/2, ...)` is negative there.",
   "failure": "Any call that draws the island into a rect narrower than 12pt (a future collapsed overshoot, a preview/crop frame, an animated intermediate width on a 0-width panel, a display-scale rounding) produces a self-intersecting path: the two bottom corner quads overlap and the fill of the non-zero-winding silhouette shows a lens/gap artifact on the notch bar. Today's callers keep `rect.width >= notch+12`, so this is latent, not live.",
   "fix": "Clamp the inputs before building the path: `let flare = max(0, min(topFlare, rect.width / 4, rect.height / 2))`, `let radius = max(0, min(bottomRadius, (rect.width - 2 * flare) / 2, rect.height - flare))`, and derive `left/right` only from the clamped `flare`. One line each; today's geometry is unchanged.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: callers keep rect.width >= notch+12, so the flare/radius clamp is latent-only; the island shape cannot receive a degenerate rect in production."
  },
  {
   "category": "test-gap",
@@ -6186,7 +6205,9 @@
   "summary": "中国天气网已失效的 toy1 搜索解析函数只剩测试引用，生产路径完全不用；文件索引文档仍把它写成当前的 cityid 获取路径。",
   "evidence": "grep -rn 'searchCityID' Sources → 仅 WeatherFetcher.swift:603 定义；Tests/weather-astronomy-regressions.py:172 是唯一调用点（`precondition(DomesticWeatherParser.searchCityID(fromSearchResponse: search) == \"101020100\")`）。WeatherCNFetcher.swift:5-7 的注释与 WeatherFetcher.swift:688-696 的注释都说明搜索接口已失效、改用编译进的 CNWeatherCityTable。但 docs/technical/09-file-index.md:22 仍写「中国天气网（中央气象台数据），免 key 兜底：`toy1` 搜索城市名 → cityid」（同格后半句才说已失效），与实际调用链不一致。",
   "failure": "维护/阅读路径：按文件索引的读者会以为运行时会走 toy1 搜索并在改动 WeatherCNFetcher 时照该路径推理；searchCityID 保留在解析器里则让 WeatherFetcher.swift 的切片长期背负一段只为测试存在的代码。",
-  "fix": "删除 searchCityID 与对应测试断言（若想保留解析能力，把它降级到测试文件内联的一份实现），并把 docs/technical/09-file-index.md:22 的首句改成「城市名 → cityid 走编译进二进制的 CNWeatherCityTable（toy1 搜索已失效）」。"
+  "fix": "删除 searchCityID 与对应测试断言（若想保留解析能力，把它降级到测试文件内联的一份实现），并把 docs/technical/09-file-index.md:22 的首句改成「城市名 → cityid 走编译进二进制的 CNWeatherCityTable（toy1 搜索已失效）」。",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 4eeb427: searchCityID is deleted; only cityID(forName:)/cityLookup remain, and docs/technical/09-file-index.md no longer names toy1 as the live path."
  },
  {
   "category": "logic",
@@ -6698,7 +6719,9 @@
   "summary": "The eye button toggles `editing`, which *swaps a TextField for a Text* — the reveal never shows the key, it just enters edit mode where the field is a plain (unmasked) `TextField`; combined with the click-target being the card-sized well, the affordance costs a full focus/defocus round trip per use.",
   "evidence": "Lines 25-33: editing shows `TextField(placeholder, text: $text)` — plaintext (the file's own doc at :3-4 explains it must not be a SecureField). Lines 50-54: the eye button does `editing.toggle(); focused = editing`. Lines 56-57: `onChange(of: focused) { if !value { editing = false } }` + `onChange(of: editing) { if value { focused = true } }` — two watchers that re-enter each other (editing true → focused true → no-op; focused false → editing false → no-op), so the steady state is consistent, but the reveal is not a reveal: `restText` (:18-21) always returns the dot run when text is non-empty, and the only way to see the stored key is to be *editing* it.",
   "failure": "A user wanting to verify a pasted key clicks the eye, gets a focused editable field (correct), but a second click on the eye while focused writes `editing=false` then `focused=false` in the same update (line 51-52 + 56) — the field collapses and the key is masked again immediately, so 'show' from the *edit* state behaves as 'hide' with a focus change. Not a crash; a control whose two labels disagree with what it does.",
-  "fix": "Decide what the eye means and make the label match: either drop it (the well is already a button that enters edit — :34-49) or make it a true reveal that keeps `editing` and only flips a `revealed` flag: `Text(revealed ? text : \"••••…\")` in the non-editing branch. Two lines either way."
+  "fix": "Decide what the eye means and make the label match: either drop it (the well is already a button that enters edit — :34-49) or make it a true reveal that keeps `editing` and only flips a `revealed` flag: `Text(revealed ? text : \"••••…\")` in the non-editing branch. Two lines either way.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: toggling `editing` is the documented design — plaintext only while editing, masked at rest — and the eye label matches the toggle state."
  },
  {
   "category": "logic",
@@ -6710,7 +6733,9 @@
   "summary": "`strip(count:width:maxRows:compact:)` returns `visible` and `height`, but `height` is sized against the *estimated* width while its only caller draws `visible` cards; when the real box is narrower than the estimate the drawn grid packs the prefix into more rows than the reserved height, and the difference is taken out of the caller's own content.",
   "evidence": "Lines 214-228: `let overflow = count > capacity`, `let visible = overflow ? max(0, capacity - 1) : max(0, count)`, `let drawn = visible + (overflow ? 1 : 0)`, `rows = max(1, Int(ceil(Double(drawn) / Double(columns))))`. SessionsView.swift:937 `stripWidthEstimate = 300` and :944-945 `strip = SwarmGrid.strip(count: .max, width: stripWidthEstimate, maxRows: stripRows, compact: true)`, then :1036 draws `Array(agents.prefix(Self.strip.visible))` inside `.frame(height: Self.strip.height)`. `columns(forWidth: 300, compact: true)` = Int((300+3)/(56+3)) = 5 → capacity 10, visible 9, drawn 10, rows 2 → height 2*24+3 = 51. With `.max` count the strip *always* reports overflow, so `visible` is always capacity-1 — the code path that assumes '\"+N\" never hidden' (comment at :219-221) is dead when the real count ≤ 9 but the badge above is drawn from `agents.count` (SessionsView.swift:959 `StatusPill(label: \"⋯\\(agents.count)\"`) — the strip shows '+N' whenever the actual count exceeds 9, correct, but the numbering reported by the popover head at :970 (`agents.count 个子 agent`) and the strip's own `+N` can disagree because the strip's `overflow` is a function of `.max`, not of the real count.",
   "failure": "A grid card narrower than 300 pt (three columns at a 1120 pt window → ~355 pt cell; but the *popup* card ExternalSessionCardView draws its own swarm at 360x260 and never uses `strip`, so the exposure is the page's grid card only): when the cell is under 300 pt, `columns(forWidth: 300)` = 5 but the drawn box fits only 4, so 9 agents are drawn in ceil(9/4) = 3 rows inside a 51 pt frame → the bottom row is clipped, and the ⋯N badge (fed by `agents.count`) no longer matches what is visible.",
-  "fix": "Size the strip against the box it is actually drawn in. Either pass the measured width (GeometryReader) or have the caller clamp what it draws: `Array(agents.prefix(min(Self.strip.visible, columns(forWidth: actualWidth) * stripRows)))`. Cheapest: make `visible` a function of the drawn box and cache per width, the way `EqualRowGrid.Cache` already does (Tile.swift:383-396)."
+  "fix": "Size the strip against the box it is actually drawn in. Either pass the measured width (GeometryReader) or have the caller clamp what it draws: `Array(agents.prefix(min(Self.strip.visible, columns(forWidth: actualWidth) * stripRows)))`. Cheapest: make `visible` a function of the drawn box and cache per width, the way `EqualRowGrid.Cache` already does (Tile.swift:383-396).",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 5b4ebb0: strip width is measured via onGeometryChange (SessionsView.swift:943/1050), and Tests/swarm-grid-regressions.py pins strip height against the drawn box."
  },
  {
   "category": "dead-code",
@@ -6750,7 +6775,9 @@
   "summary": "The header renders 『目标 \\(Int(controller.threshold))%』 with `Int(...)` on a `Double` that comes from a slider/text path and a `didSet` clamp — safe today, but the same screen's second read at :61 uses the identical conversion and the model's `didSet` writes `threshold` *while reading it*, so a NaN reaching the setter traps in `Int(Double.nan)`.",
   "evidence": "BatteryChargeController.swift:72-78: `var threshold: Double { didSet { let value = min(100, max(Self.minLimit, threshold.rounded())); if threshold != value { threshold = value }; UserDefaults.standard.set(Int(value), forKey: \"batteryChargeLimit\") } }` — `Int(value)` and `Int(Self.minLimit)` are unchecked conversions. `setLimit(_:)` (line 210-211) is fed from the Slider binding at BatteryChargeControls.swift:57 (`controller.setLimit(Int($0))`) — `Int($0)` on a slider's `Double` is likewise unchecked, and `Slider` with `in: 20...100` cannot produce NaN, but `threshold` is also loaded from `UserDefaults` at :98-99 (`object(forKey:) as? Int ?? 80`) which is a safe read. The view's own `Int(controller.threshold)` at :17 and :61 is then checked only by construction. So the *trap* is unreachable today — but the guards are three separate implicit ones (`Slider` bounds, `as? Int`, `?? 80`) rather than one at the boundary, and this is 8万行 app whose numbers elsewhere go through `Int(...)` conversions that have trapped before (the repo's own rules call out 『整数溢出与 Int 转换 trap』).",
   "failure": "Any future writer of `threshold` (a preset button, a restored JSON value, a test fixture that sets 20.5) that lands a value outside `[minLimit, 100]` re-enters `didSet` with a value that is *not* re-clamped in the same pass (`max(Self.minLimit, threshold.rounded())` clamps the low end but `min(100, …)` the top — both are total, so it terminates), and `Int(value)` on a finite value is fine; the trap needs NaN, which only arrives from a division or a parsed string. Low confidence because no current path produces it.",
-  "fix": "Nothing in this file needs changing for correctness today; the one-line hardening is at the model boundary, not the view: `let value = threshold.isFinite ? min(100, max(Self.minLimit, threshold.rounded())) : Self.minLimit`. Report only because the review asks for Int-conversion traps and this is the file's only one."
+  "fix": "Nothing in this file needs changing for correctness today; the one-line hardening is at the model boundary, not the view: `let value = threshold.isFinite ? min(100, max(Self.minLimit, threshold.rounded())) : Self.minLimit`. Report only because the review asks for Int-conversion traps and this is the file's only one.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: no current writer can yield NaN — the Slider is 20...100 and UserDefaults reads `as? Int`; the didSet rounds and clamps finite values."
  },
  {
   "category": "logic",

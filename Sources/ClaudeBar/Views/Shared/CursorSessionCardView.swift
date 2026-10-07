@@ -15,11 +15,17 @@ struct CursorSessionCardView: View {
                             accent: Theme.cursorAccent, ink: Theme.Ink.cursor)
     }
     private var ratio: Double { session.contextRatio }
+    /// The context figure is *text*, so it takes the `Theme.Ink` ladder of its
+    /// band — the raw signal fills measure ~1.8–3:1 on the ice canvas, and the
+    /// page tile beside this card already draws the same figure with
+    /// `Theme.contextInk`. The `.ok` band keeps Cursor's violet (`Ink.cursor`)
+    /// rather than the Claude blue `contextInk` uses, since purple is this
+    /// card's whole accent.
     private var accentColor: Color {
         switch Theme.ContextLevel(ratio) {
-        case .ok: return Theme.cursorAccent
-        case .warn: return Theme.statusWarning
-        case .critical: return Theme.statusError
+        case .ok: return Theme.Ink.cursor
+        case .warn: return Theme.Ink.warning
+        case .critical: return Theme.Ink.error
         }
     }
     @State private var isHovered = false
@@ -74,7 +80,7 @@ struct CursorSessionCardView: View {
             // `statusLine`.
             Text(statusLine)
                 .font(Theme.Font.micro)
-                .foregroundColor(isWaiting ? Theme.statusWarning
+                .foregroundColor(isWaiting ? Theme.Ink.warning
                                            : (isActive ? Theme.textPrimary.opacity(0.7)
                                                        : Theme.textTertiary()))
                 .lineLimit(1)

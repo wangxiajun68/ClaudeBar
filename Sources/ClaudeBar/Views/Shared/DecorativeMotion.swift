@@ -4,7 +4,7 @@ import SwiftUI
 /// Repeating decoration is interpolated by the render server. No timer,
 /// TimelineView, per-frame path construction, or SwiftUI layout is involved.
 struct DecorativeMotion: View {
-    enum Kind { case sparkles, sweep, orbit, pulse, scan, conveyor, arc }
+    enum Kind { case sparkles, sweep, orbit, pulse, conveyor, arc }
     let kind: Kind
     var tint: Color = .white
     var active: Bool
@@ -203,14 +203,6 @@ final class MotionLayerView: NSView {
             group.duration = 2.6
             group.repeatCount = .infinity
             tracks.append((dot, group))
-        case .scan:
-            let line = CAGradientLayer()
-            line.frame = bounds
-            line.cornerRadius = w / 2
-            line.colors = [NSColor.clear.cgColor, tint.cgColor, NSColor.clear.cgColor]
-            line.opacity = 0.85
-            layer.addSublayer(line)
-            tracks.append((line, motion("transform.translation.x", from: -24, to: 24, duration: 1.6)))
         case .conveyor:
             // The belt card's travelling ticks. One gradient carrying a whole
             // run of ticks slides by exactly one tick pitch per cycle, so the
