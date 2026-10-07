@@ -63,8 +63,8 @@ def harness(baseline):
 '''
     return '''import Foundation
 enum LocalProxyAddress { static let port = 23186; static let openaiRoot = "http://127.0.0.1:23186/v1" }
-struct Color { static let fixture = Color() }
-enum CommandResult { case fixture }
+struct Color: Equatable { static let fixture = Color() }
+enum CommandResult: Equatable { case fixture }
 enum BuildChannel { static var promptsForSystemPermissions = true }
 enum PermissionGate { enum Kind { case widgetData }; static var enabled = true; static func allows(_ kind: Kind) -> Bool { enabled } }
 final class WidgetCenter { static let shared = WidgetCenter(); var reloads = 0; func reloadAllTimelines() { reloads += 1 } }

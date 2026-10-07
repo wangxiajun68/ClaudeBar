@@ -80,7 +80,14 @@ struct MainWindowView: View {
             detailView
         }
         .environment(\.surfaceIsVisible, surfaceVisible)
-        .onReceive(UIWakePolicy.changes) { surfaceVisible = UIWakePolicy.hasVisibleMainWindow }
+        .onReceive(UIWakePolicy.changes) {
+            // The publisher fires for *any* surface's visibility edge — the
+            // popup opening, the island expanding — and this subscription only
+            // cares about the main window. Assigning the unchanged value still
+            // invalidates the body, so the write is guarded (finding 504).
+            let visible = UIWakePolicy.hasVisibleMainWindow
+            if surfaceVisible != visible { surfaceVisible = visible }
+        }
         .onReceive(AppPreferences.shared.$appearance.removeDuplicates()) { appearance = $0 }
         // A destination another surface asked for. Read through
         // `ProviderState` so the subscription lands on the store's scoped
