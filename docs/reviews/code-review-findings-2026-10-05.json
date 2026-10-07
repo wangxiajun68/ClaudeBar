@@ -6716,7 +6716,9 @@
   "evidence": "L548-555: `for _ in 0..<2 { guard !empty, let next = manager.groups.first(where: { $0.name == name }) else { break } … }`；L523、L532 两处在 body（`activeNodeSummary`）里直接调用。对比 L658-677 的注释：「The old computed property sorted from body … with a few hundred groups in a subscription that is a lot of O(n log n) string collation per render」——同一文件已认定「body 里按 name 查 groups」是负担，但这条路径仍是线性的。",
   "failure": "订阅含 300+ 组时，每次节点延迟测试（`proxies[idx].delay`、`testingNodes` 变更）都重跑 `activeNodeSummary`，即每次 300×2 次字符串相等的线性扫描；批量测速 50 个节点时是 6 万次比较，量级小但方向与已做的优化相反。",
   "evidence_gap": "",
-  "fix": "在 `refreshGroupOrder()` 的同一处把 `groups` 折叠成 `[String: VpnGroup]` 字典存进 @State（与 `groupOrder` 同寿命），`rememberedNode` 与 `currentGroup`（L715-720）改走字典查找。"
+  "fix": "在 `refreshGroupOrder()` 的同一处把 `groups` 折叠成 `[String: VpnGroup]` 字典存进 @State（与 `groupOrder` 同寿命），`rememberedNode` 与 `currentGroup`（L715-720）改走字典查找。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: refreshGroupOrder() now also folds groupOrder into @State groupIndex (same rebuild lifetime); rememberedNode and currentGroup read the dictionary instead of first(where:) over the whole array per body pass."
  },
  {
   "category": "correctness",
@@ -6727,7 +6729,9 @@
   "summary": "节点列表的 ForEach 用 `id: \\.offset`（在过滤后数组上的位置），身份完全由「当前搜索词下的序号」决定；筛选/排序一变化，所有行的身份都重新分配。",
   "evidence": "L461-474: `let nodes = browserNodes.enumerated().filter { nodeQuery.isEmpty || $0.element.localizedCaseInsensitiveContains(nodeQuery) }`，随后 `ForEach(nodes, id: \\.offset) { _, name in nodeCell(…) }`。`browserNodes` 来自 `currentGroup?.nodes ?? []`（L455-458），而 `manager.groups` 每次 /proxies 刷新都是新数组（VpnManager.swift:914-915 以整体替换发布）。",
   "failure": "搜索框输入过程中（每个字符触发一次重算）或组切换后，`offset` 代表的行身份大范围错位，LazyVStack 复用错误的行内容；对含 `Button`、`.contextMenu`、`delayControl` 的 48 pt 行，FlashList/复用错位表现为残留的旧节点名或测速 spinner 挂在错误行上。",
-  "fix": "改用节点名作身份：`ForEach(nodes, id: \\.element)`，或对 `browserNodes` 先做一次 `filter` 再 `ForEach(filtered, id: \\.self)`（同一分组内节点名唯一）。"
+  "fix": "改用节点名作身份：`ForEach(nodes, id: \\.element)`，或对 `browserNodes` 先做一次 `filter` 再 `ForEach(filtered, id: \\.self)`（同一分组内节点名唯一）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the node list ForEach uses id: \\.element (the node name, unique within one group) instead of the post-filter offset, so identity no longer reshuffles when the search term changes."
  },
  {
   "category": "state",
@@ -6738,7 +6742,9 @@
   "summary": "VPNView 自己也观察 VpnManager（L6），但 `refreshIP()` 已经由 VpnManager.waitUntilReady()（VpnManager.swift:838）在每次内核就绪时调用；两条路径都在 isRunning 变为 true 时打到最多 7 个出口 IP 端点。",
   "evidence": "L135-138: `.onChange(of: manager.isRunning) { _, on in if on { Task { await VpnNetProbe.shared.refreshIP() } } … }`；VpnManager.swift:822-839 `waitUntilReady()` 在 `/version` 应答后 `state = .running` 并 `Task { await VpnNetProbe.shared.refreshIP() }`。`refreshIP` 有单飞守卫（VpnNetProbe.swift:99 `guard ipLookup == nil`），所以第二次调用被丢弃 —— 真正被绕过的是「谁先到」的不确定性：若 UI 侧的 onChange 先命中，manager 侧那次（含 `afterNodeSwitch` 之外的重试逻辑）不会运行。",
   "failure": "网络稍慢时，UI 的 onChange 先发起一次未做「隧道已稳定」等待的查找：它拿到的是旧出口或直接失败，随后页面显示「无法取得出口 IP」且 12 s 内没有人再发起新查找（单飞守卫把它挡住），直到用户手动点出口 IP 按钮。",
-  "fix": "删除 L135-138 的 UI 侧触发（保留 `else { reset() }`），把 IP 刷新完全交给 VpnManager 的就绪路径；或在 probe 上暴露一个带 generation 的 queued 重试，让后到的调用者在当前查找结束后补发一次而非被丢弃。"
+  "fix": "删除 L135-138 的 UI 侧触发（保留 `else { reset() }`），把 IP 刷新完全交给 VpnManager 的就绪路径；或在 probe 上暴露一个带 generation 的 queued 重试，让后到的调用者在当前查找结束后补发一次而非被丢弃。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the UI-side refreshIP trigger is deleted (only the reset stays); VpnManager.waitUntilReady (line 891) remains the single kick-off on core readiness, so the two no longer race into the single-flight guard and silently drop one."
  },
  {
   "category": "duplication",

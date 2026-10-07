@@ -9,6 +9,8 @@ struct VPNView: View {
 
     @State private var testingAll = false
     @State private var groupOrder: [VpnGroup] = []
+    /// `groupOrder` folded by name, rebuilt together with it (finding 534).
+    @State private var groupIndex: [String: VpnGroup] = [:]
     @State private var selectedGroup: String?
     @State private var filePreview = VpnProfilePreview()
     @State private var previewGroupName: String?
@@ -133,8 +135,14 @@ struct VPNView: View {
             selectedGroup = manager.primaryGroup?.name ?? groupOrder.first?.name
         }
         .onChange(of: manager.isRunning) { _, on in
-            if on { Task { await VpnNetProbe.shared.refreshIP() } }
-            else { VpnNetProbe.shared.reset() }
+            // The IP refresh itself belongs to `VpnManager.waitUntilReady`,
+            // which fires it on the same edge with the core's own readiness as
+            // the witness (VpnManager.swift:891). This second trigger raced it
+            // into the single-flight guard: one of the two was silently
+            // dropped, and which one was the refresh — so it is deleted here
+            // and the reset (the branch that has no manager-side twin) stays
+            // (finding 536).
+            if !on { VpnNetProbe.shared.reset() }
         }
         .onChange(of: manager.state) { _, state in
             if case .failed = state { logsOpen = true }
@@ -469,7 +477,7 @@ struct VPNView: View {
                                       symbol: "network", tint: Theme.textSecondary)
                         .padding(.vertical, 40)
                 }
-                ForEach(nodes, id: \.offset) { _, name in
+                ForEach(nodes, id: \.element) { _, name in
                     if let group {
                         nodeCell(group: group, nodeName: name, proxy: proxies[name],
                                  live: live.contains(name), testing: manager.testingNodes.contains(name))
@@ -546,7 +554,7 @@ struct VPNView: View {
     private func rememberedNode(_ group: VpnGroup) -> String? {
         var name = group.current
         for _ in 0..<2 {
-            guard !name.isEmpty, let next = manager.groups.first(where: { $0.name == name }) else { break }
+            guard !name.isEmpty, let next = groupIndex[name] else { break }
             name = next.current
         }
         return name.isEmpty ? nil : name
@@ -670,6 +678,14 @@ struct VPNView: View {
             if ia != ib { return ia < ib }
             return a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
+        // Folded in the same pass as the sort: `rememberedNode` and
+        // `currentGroup` used to `first(where:)` over the whole array per body
+        // evaluation, and both are read on every render of a page that
+        // re-renders for every node test and traffic probe — a few hundred
+        // groups is a few hundred string compares per read (finding 534).
+        // Same lifetime as `groupOrder`: rebuilt together whenever the manager
+        // republishes `groups`.
+        groupIndex = Dictionary(groupOrder.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var orderedGroups: [VpnGroup] { groupOrder }
@@ -711,7 +727,7 @@ struct VPNView: View {
     }
 
     private var currentGroup: VpnGroup? {
-        if let selectedGroup, let g = manager.groups.first(where: { $0.name == selectedGroup }) {
+        if let selectedGroup, let g = groupIndex[selectedGroup] {
             return g
         }
         return orderedGroups.first
