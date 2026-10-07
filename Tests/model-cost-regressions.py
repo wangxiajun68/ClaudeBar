@@ -188,7 +188,7 @@ struct ModelUsage {
         ])
         precondition(estimate.cost.cny > 0, "the DeepSeek line must land in CNY")
         precondition(estimate.cost.usd > 0, "the Claude line must land in USD")
-        precondition(estimate.pricedModels == 2, "two models are priced")
+        precondition(estimate.lines.filter { $0.unpriced == nil }.count == 2, "two models are priced")
         precondition(estimate.unpricedModels == 1, "the unknown slug is reported, not dropped")
         precondition(estimate.unpricedTokens == 5_000_000, "its tokens are still counted")
 
@@ -224,7 +224,7 @@ struct ModelUsage {
             ModelUsage(model: "claude-sonnet-4-6", inputTokens: 1_000_000, outputTokens: 0,
                        cacheReadTokens: 0, cacheCreationTokens: 0),
         ])
-        precondition(mixed.pricedModels == 1, "only the Claude line is priced")
+        precondition(mixed.lines.filter { $0.unpriced == nil }.count == 1, "only the Claude line is priced")
         precondition(mixed.cost.cny == 0,
                      "an unpriced model must not leak any currency into the total")
         precondition(mixed.unpricedCount(of: .subscription) == 1)
@@ -415,7 +415,7 @@ struct ModelUsage {
         let mixedParts = ModelPricing.Estimate(lines: [
             .init(model: "a", cost: ModelPricing.Cost(cny: 700, usd: 100), unpriced: nil),
             .init(model: "b", cost: ModelPricing.Cost(), unpriced: .unknownSlug),
-        ], cost: ModelPricing.Cost(cny: 700, usd: 100), pricedModels: 1, unpricedModels: 1)
+        ], cost: ModelPricing.Cost(cny: 700, usd: 100), unpricedModels: 1)
         precondition(mixedParts.detailParts(presented: split) == ["另有 $100.00", "1 个模型未计价"],
                      "分列's caption is the second currency (the larger ¥ leads the headline), then the unpriced count")
         precondition(mixedParts.detailParts(presented: split, includeDominant: true)
@@ -430,13 +430,13 @@ struct ModelUsage {
         // Converting the *other* way: the dominant is $, the headline lands in
         // ¥ — the original $ amount stays legible so the rate can be checked.
         let dollarLed = ModelPricing.Estimate(lines: [],
-            cost: ModelPricing.Cost(cny: 100, usd: 700), pricedModels: 2, unpricedModels: 0)
+            cost: ModelPricing.Cost(cny: 100, usd: 700), unpricedModels: 0)
         let toCNY = ModelPricing.present(ModelPricing.Cost(cny: 100, usd: 700), display: .cny, rate: 7)
         precondition(dollarLed.detailParts(presented: toCNY) == ["$700.00"],
                      "a converted ¥ total keeps the $ amount beside it")
         // A fully priced single-currency estimate has nothing to caveat.
         let settled = ModelPricing.Estimate(lines: [.init(model: "a", cost: ModelPricing.Cost(usd: 2), unpriced: nil)],
-            cost: ModelPricing.Cost(usd: 2), pricedModels: 1, unpricedModels: 0)
+            cost: ModelPricing.Cost(usd: 2), unpricedModels: 0)
         let usdSplit = ModelPricing.present(ModelPricing.Cost(usd: 2), display: .split, rate: nil)
         precondition(settled.detailParts(presented: usdSplit).isEmpty,
                      "a fully priced estimate needs no caption")
@@ -458,7 +458,8 @@ struct ModelUsage {
             outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
         let partial = ModelPricing.estimate(days: ["2026-10-01": [daily], "2026-10-02": [daily]])
         precondition(partial.cost.usd == 2 && partial.unpricedTokens == 1_000_000)
-        precondition(partial.pricedModels == 1 && partial.unpricedModels == 1)
+        precondition(partial.lines.count == 1 && partial.lines[0].unpriced != nil,
+                     "the merged line must still report the day it could not price")
         precondition(partial.lines[0].isPartial && partial.lines[0].unpricedTokens == 1_000_000)
         ModelPricing.replaceOverrides([:])
 

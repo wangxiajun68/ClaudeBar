@@ -24,13 +24,29 @@ final class VpnLiveRates: ObservableObject {
     /// 4 Hz ceiling. Faster publishes do not change what the UI can show
     /// and they force SwiftUI to diff the rate strip during scroll.
     private static let minInterval: TimeInterval = 0.25
+    /// Injectable so the regression can drive the flush without real waiting
+    /// (same seam as the pure `publishInterval` chooser in VpnDomainLog).
+    private let clock: () -> Date
     private var lastFlush = Date.distantPast
     private var pendingUp: Int64 = 0
     private var pendingDown: Int64 = 0
     private var hasPending = false
     private var flushTask: Task<Void, Never>?
 
-    private init() {}
+    private init(clock: @escaping () -> Date = Date.init) { self.clock = clock }
+
+    /// Test seam: an instance whose clock the caller advances by hand, plus a
+    /// `testFlush` that runs the production flush synchronously. Not `shared`,
+    /// so the app's singleton is untouched.
+    static func testInstance(clock: @escaping () -> Date) -> VpnLiveRates { VpnLiveRates(clock: clock) }
+    func testFlush() { flush() }
+
+    /// Real time until the armed flush task fires; `0` when one is not armed or
+    /// is already due (the test advances its fake clock to this point).
+    var testArmedWait: TimeInterval {
+        guard let task = flushTask, !task.isCancelled else { return 0 }
+        return max(0, Self.minInterval - clock().timeIntervalSince(lastFlush))
+    }
 
     func reset() {
         flushTask?.cancel()
@@ -62,7 +78,7 @@ final class VpnLiveRates: ObservableObject {
     }
 
     private func scheduleFlush() {
-        let wait = Self.minInterval - Date().timeIntervalSince(lastFlush)
+        let wait = Self.minInterval - clock().timeIntervalSince(lastFlush)
         if wait <= 0 {
             flush()
             return
@@ -80,7 +96,7 @@ final class VpnLiveRates: ObservableObject {
         flushTask = nil
         guard hasPending else { return }
         hasPending = false
-        lastFlush = Date()
+        lastFlush = clock()
         if pendingDown == speedDown && pendingUp == speedUp {
             // The sample is still *recorded*, because the chart's x-axis is a
             // slot per flush: skipping an idle stretch would draw a two-minute

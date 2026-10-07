@@ -14,7 +14,7 @@ actor SessionMigrationService {
     func records() throws -> [MigrationRecord] { try MigrationStorage.records(at: Self.locations.records) }
 
     func preview(_ source: MigrationSource, includeCompletedTools: Bool = false,
-                 includeImages: Bool = false) throws -> MigrationPreview {
+                 includeImages: Bool = false) async throws -> MigrationPreview {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
         try Task.checkCancellation()
         guard UUID(uuidString: source.sessionID) != nil, !source.cwd.isEmpty,
@@ -71,9 +71,9 @@ actor SessionMigrationService {
 
     func prepare(source: MigrationSource, target: MigrationTarget, fingerprint: String,
                  officialModel: String, includeCompletedTools: Bool = false, includeImages: Bool = false,
-                 bridgeProviderID: UUID? = nil, bridgeModel: String = "") throws -> MigrationRecord {
+                 bridgeProviderID: UUID? = nil, bridgeModel: String = "") async throws -> MigrationRecord {
         guard BuildChannel.allowsSystemIntegration else { throw MigrationFailure.restricted }
-        let latest = try preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
+        let latest = try await preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         guard latest.fingerprint == fingerprint else { throw MigrationFailure.changed }
         let executable = try runtime(target.client)
         let configuration: URL?
@@ -119,7 +119,7 @@ actor SessionMigrationService {
             configurationFingerprint: routeFingerprint ?? configHash, executablePath: executable.path,
             bridgeProviderID: target == .claudeCodexModel ? bridgeProviderID : nil)
         // Version probing can take time; source must still be a complete unchanged snapshot.
-        let checked = try preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
+        let checked = try await preview(source, includeCompletedTools: includeCompletedTools, includeImages: includeImages)
         guard checked.fingerprint == latest.fingerprint else { throw MigrationFailure.changed }
         return try MigrationStorage.prepare(checked, target: target, route: route, locations: Self.locations)
     }

@@ -34,8 +34,23 @@ enum ModelPriceSources {
     struct Vendor {
         let name: String
         let url: String
-        /// App slug prefixes this vendor's page covers, for attaching a parsed
-        /// row to the slugs the app actually records.
+        /// The bundled slugs this vendor's page is known to carry, for
+        /// attaching a row to the slugs the app records — and therefore for
+        /// the card's 官方定价页 link and its 「内置」 provenance.
+        ///
+        /// Hand-maintained, and **pinned by
+        /// `Tests/model-price-source-regressions.py`**: the suite replays each
+        /// fixture through the vendor's own parser and requires this list to
+        /// cover every bundled row the page can price. That pin is what keeps
+        /// a page which grows a model (`glm-4.7`, `qwen3.8-max`) from being
+        /// parsed, proposed and applied while its built-in row still shows no
+        /// source link because this list did not mention it. The list cannot
+        /// be derived from `parse` at runtime — that needs the page text, which
+        /// is exactly what a link-less row does not have.
+        ///
+        /// Spellings are the lowercased, canonical slugs `ModelPricing` looks
+        /// up (`minimax-m3`, not the page's `MiniMax-M3`), because
+        /// `sourceURL(for:)` matches them against a recorded slug.
         let slugs: [String]
         /// How to read the page. A function so a vendor's parser and its URL
         /// stay in one place, and so adding a vendor is one entry.
@@ -73,8 +88,12 @@ enum ModelPriceSources {
         Vendor(name: "阶跃星辰", url: "https://platform.stepfun.com/docs/zh/guides/pricing/details",
                slugs: ["step-5-preview", "step-3.7-flash", "step-3.5-flash"],
                parse: parseStepFun),
+        // Spellings are the canonical, lowercased slugs every other part of
+        // the app uses: the page prints `MiniMax-M3`, but a recorded model
+        // resolves to `minimax-m3`, so a page-cased list here matched nothing
+        // and every MiniMax row showed no 官方定价页 link.
         Vendor(name: "MiniMax", url: "https://platform.minimaxi.com/docs/guides/pricing-paygo",
-               slugs: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+               slugs: ["minimax-m3", "minimax-m2.7", "minimax-m2.7-highspeed"],
                parse: parseMiniMax),
     ]
 
@@ -344,7 +363,13 @@ enum ModelPriceSources {
             let double = value.doubleValue
             return double.isFinite ? double : nil
         }
-        if let text = any as? String { return Double(text) }
+        // The string arm applies the same finiteness gate as the NSNumber arm:
+        // a row stating `"input": "1e999"` (or "inf"/"nan") parses to a
+        // non-finite Double, which would pass every `> 0` guard below and mint
+        // an infinite price card — the settings page would print ¥0.00 for it
+        // while the aggregate and the primary-figure choice were both polluted
+        // by a number larger than any real amount.
+        if let text = any as? String, let value = Double(text), value.isFinite { return value }
         return nil
     }
 

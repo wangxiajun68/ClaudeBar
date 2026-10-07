@@ -228,13 +228,21 @@ enum ModelPricing {
         /// explains why.
         var fallbackReason: String?
 
+        /// Compares only the two figures. The last two fields are derived —
+        /// `isConverted` is decided by the rate a conversion used, and
+        /// `fallbackReason` by the rate never arriving — so two presentations
+        /// whose figures and currencies agree are equal even when one of them
+        /// got there through a conversion; the report's 「无差异」 bucket is
+        /// about the numbers a user would read, not the path taken. A
+        /// hand-written `==` rather than the synthesised one because a
+        /// labelled tuple does not conform to `Equatable`; that is also the
+        /// hazard: a new stored property meant to be compared must be added
+        /// below by hand.
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.primary?.currency == rhs.primary?.currency
                 && lhs.primary?.amount == rhs.primary?.amount
                 && lhs.secondary?.currency == rhs.secondary?.currency
                 && lhs.secondary?.amount == rhs.secondary?.amount
-                && lhs.isConverted == rhs.isConverted
-                && lhs.fallbackReason == rhs.fallbackReason
         }
     }
 
@@ -291,8 +299,11 @@ enum ModelPricing {
 
         var lines: [Line] = []
         var cost = Cost()
-        /// Models with priced / unpriced usage; a partially priced model appears in both.
-        var pricedModels = 0
+        /// Models with unpriced usage — the count every surface prints. Its
+        /// companion counter for *priced* models was removed after a review
+        /// pass measured that no view, model or tool ever read it; the only
+        /// assertions on it lived in the regression harness, which counts
+        /// priced lines here just as well.
         var unpricedModels = 0
         /// Tokens behind `unpricedModels` — surfaced in the tooltip so the
         /// user can see how much of the total is not covered.
@@ -509,10 +520,17 @@ enum ModelPricing {
     /// The rate card for a recorded model slug, or nil when it has none —
     /// either because the slug is unknown or because its price is stated as
     /// unavailable. Use `resolve(_:)` when the distinction matters.
+    ///
+    /// **Test-only**: production code never calls this — it goes through
+    /// `resolve(_:)` or `cost(of:on:)` — and the regression harness is the
+    /// only reader. Kept rather than deleted because the harness reads the two
+    /// halves of a resolution through it on every run, and deleting it would
+    /// spread `resolve(model)?.rate` through the fixture that exists to check
+    /// the *other* path.
     static func rate(for model: String) -> Rate? { resolve(model)?.rate }
 
     /// Why the table has no price for this slug, or nil when it is priced (or
-    /// unknown). See `Unpriced`.
+    /// unknown). See `Unpriced`. Same test-only contract as `rate(for:)`.
     static func unpricedReason(_ model: String) -> Unpriced? { resolve(model)?.reason }
 
     /// Cost one model's aggregate, or nil when it has no rate card. Each token
@@ -575,7 +593,6 @@ enum ModelPricing {
             out.lines.append(Estimate.Line(model: usage.model, cost: cost, unpriced: nil))
             out.cost.cny += cost.cny
             out.cost.usd += cost.usd
-            out.pricedModels += 1
         }
         return out
     }
@@ -622,7 +639,6 @@ enum ModelPricing {
                                                unpricedTokens: unpricedTokensByModel[model] ?? 0))
                 out.cost.cny += cost.cny
                 out.cost.usd += cost.usd
-                out.pricedModels += 1
             } else {
                 out.lines.append(Estimate.Line(model: model, cost: Cost(),
                                                unpriced: unpricedByModel[model] ?? .unknownSlug,

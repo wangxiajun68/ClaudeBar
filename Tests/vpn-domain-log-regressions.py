@@ -40,6 +40,35 @@ stat_start = source.index('nonisolated static func stat(')
 stat_end = source.index('// MARK: - Flush', stat_start)
 stat = source[stat_start:stat_end].replace('nonisolated ', '', 1)
 
+# The exact `updateConnections` → accumulator → published-state integration,
+# minus the parts a fixture cannot touch (the private feed/ring and the two
+# @Published stores live on the same real @MainActor class the UI observes).
+apply = source[source.index('    /// The pure half of `updateConnections`'):
+              source.index('    func clear()')]
+apply = apply.replace('''    nonisolated static func preparedConnections(_ snapshot: [[String: Any]]) -> [VpnDomainConnection] {''',
+                      '''    nonisolated static func prepared(_ snapshot: [[String: Any]]) -> [VpnDomainConnection] {
+        ConnectionsFixture.lift(from: snapshot)
+    }
+
+    nonisolated static func lift(from snapshot: [[String: Any]]) -> [VpnDomainConnection] {
+        ConnectionsFixture.preparedConnections(snapshot)
+    }
+
+    nonisolated static func preparedConnections(_ snapshot: [[String: Any]]) -> [VpnDomainConnection] {''')
+apply = apply.replace('''    func applyConnections(_ next: [VpnDomainConnection]) {
+        trafficAccumulator.sample(next)''',
+                      '''    func applyConnections(_ next: [VpnDomainConnection]) {
+        published = []
+        trafficAccumulator.sample(next)''')
+apply = apply.replace('if totals != proxiedTraffic { proxiedTraffic = totals }',
+                      'if totals != proxiedTraffic { published.append("totals"); proxiedTraffic = totals }')
+apply = apply.replace('if byHost != trafficByHost { trafficByHost = byHost }',
+                      'if byHost != trafficByHost { published.append("byHost"); trafficByHost = byHost }')
+apply = apply.replace('connections = next',
+                      '{ published.append("connections"); connections = next }()')
+assert 'published.append("totals")' in apply and 'published.append("byHost")' in apply, \
+    'the equality-guard rewrite must have matched the production text'
+
 # The publish-cadence policy: the two ceilings and the pure chooser. Sliced
 # from production so the regression executes them, not a restatement; the
 # task/state fields between them are skipped (they need the real main actor).
@@ -50,6 +79,9 @@ cadence = (min_src + '\n' + source[pub_start:pub_end]).replace('private static l
 
 # The analysis table the summary's "常见服务走了直连" line reads.
 watchlist = source[source.index('enum VpnWatchlist {'):].rstrip() + '\n'
+
+# `preparedConnections` reads its counters through the production coercion.
+json_coerce = (root / 'Sources/ClaudeBar/Utils/JSONCoerce.swift').read_text()
 
 # --- wire-up assertions ------------------------------------------------------
 manager = (root / 'Sources/ClaudeBar/Utils/VpnManager.swift').read_text()
@@ -159,9 +191,26 @@ import Foundation
 
 MODELS_AND_FEED
 
+JSON_COERCE
+
 VPN_FORMAT
 
 enum DomainStat { STAT_FUNC }
+
+/// The production `updateConnections` integration, sliced from the real store:
+/// the accumulator, the two publish guards and the revision bump, against
+/// plain fixture state. `published` records each write so the assertions can
+/// see whether an unchanged snapshot republished.
+@MainActor final class ConnectionsFixture {
+    var published: [String] = []
+    var connections: [VpnDomainConnection] = []
+    var connectionRevision = 0
+    var proxiedTraffic = VpnDomainTraffic()
+    var trafficByHost: [String: VpnDomainTraffic] = [:]
+    private var trafficAccumulator = VpnDomainTrafficAccumulator()
+
+    APPLY
+}
 
 /// The production publish ceilings and their chooser, sliced whole.
 enum PublishCadence {
@@ -468,6 +517,77 @@ ASYNC_HARNESS
         extreme.add(upload: 1, download: 1)
         precondition(extreme.total == .max, "totals saturate without overflowing")
 
+        // 11c. /connections JSON → rows → accumulator → published state, the
+        //      exact integration finding 480 called untested: `preparedConnections`
+        //      is the only mapping of the core's own payload, and it must hand
+        //      `updateConnections` a route that agrees with the log parser.
+        let snapshot: [[String: Any]] = [
+            ["id": "1", "chains": ["🐟 漏网之鱼[Node A]"],
+             "metadata": ["host": "api2.cursor.sh", "destinationPort": 443, "process": "Claude"],
+             "upload": 1, "download": 2],
+            ["id": "2", "chains": ["REJECT[REJECT]"],
+             "metadata": ["destinationIP": "9.9.9.9", "destinationPort": 53, "processPath": "/usr/bin/dig"]],
+            ["id": "3", "chains": ["DIRECT"],
+             "metadata": ["host": "apple.com", "destinationPort": 443, "process": "curl"]],
+            // The bare `🎯 Direct` spelling the feed's own comment admits: the
+            // live tab must show 直连, exactly as the log side does.
+            ["id": "4", "chains": ["🎯 Direct"],
+             "metadata": ["host": "www.apple.com", "destinationPort": 443]],
+            ["id": "5", "chains": ["Proxy Group", "Node B"],
+             "metadata": ["host": "x.example.com", "destinationPort": 443]],
+            ["id": "6", "chains": [],
+             "metadata": ["host": "dropped.example.com"]],
+        ]
+        let prepared = ConnectionsFixture.prepared(snapshot)
+        precondition(prepared.map(\.id) == ["1", "2", "3", "4", "5"],
+                     "routes come from chains, not from the absent rule field: \(prepared.map(\.id))")
+        precondition(prepared[0].route == .proxied && prepared[0].endpoint == "api2.cursor.sh:443")
+        precondition(prepared[1].route == .reject && prepared[1].endpoint == "9.9.9.9:53")
+        precondition(prepared[1].process == "dig", "a sourceless process falls back to the path's basename")
+        precondition(prepared[2].route == .direct, "a bare DIRECT chain is 直连")
+        precondition(prepared[3].route == .direct, "🎯 Direct must read 直连 on the live tab too")
+        precondition(prepared[4].route == .proxied, "the entry (first) chain decides, not the leaf")
+        precondition(prepared[4].outbound == "Proxy Group → Node B", "chains render outermost first")
+        precondition(ConnectionsFixture.prepared([]).isEmpty)
+        for row in prepared {
+            precondition(!row.endpoint.isEmpty, "a connection without a host still resolves a target")
+        }
+
+        // The same fixture through the store's real update path: unchanged
+        // snapshots must not republish the two accumulator readings.
+        let fixture = ConnectionsFixture()
+        fixture.applyConnections(prepared)
+        precondition(fixture.published == ["totals", "byHost", "connections"], "first sample publishes all: \(fixture.published)")
+        precondition(fixture.connectionRevision == 1)
+        precondition(fixture.proxiedTraffic.total == 3 && fixture.trafficByHost["api2.cursor.sh"]?.total == 3)
+        fixture.applyConnections(prepared)
+        precondition(fixture.published.isEmpty,
+                     "an idle core's identical snapshot must not republish (finding 479): \(fixture.published)")
+        precondition(fixture.connectionRevision == 1, "bytes on an open connection are not a row change")
+        var moved = prepared
+        moved[0] = VpnDomainConnection(id: "1", endpoint: "api2.cursor.sh:443", process: "Claude",
+            route: .proxied, rule: "", outbound: "🐟 漏网之鱼[Node A]", upload: 10, download: 20)
+        fixture.applyConnections(moved)
+        precondition(fixture.published == ["totals", "byHost", "connections"],
+                     "a byte change is also a row change (counters are part of the row): \(fixture.published)")
+        precondition(fixture.connectionRevision == 2)
+        precondition(fixture.proxiedTraffic.total == 30 && fixture.trafficByHost["api2.cursor.sh"]?.total == 30)
+        var settled = moved
+        fixture.applyConnections(settled)
+        precondition(fixture.published.isEmpty,
+                     "the same rows with the same counters must not republish: \(fixture.published)")
+        settled[0] = VpnDomainConnection(id: "1", endpoint: "api2.cursor.sh:443", process: "Claude",
+            route: .proxied, rule: "", outbound: "🐟 漏网之鱼[Node A]", upload: 12, download: 25)
+        fixture.applyConnections(settled)
+        precondition(fixture.published == ["totals", "byHost", "connections"],
+                     "a counter move republishes both readings: \(fixture.published)")
+        precondition(fixture.proxiedTraffic.total == 37)
+        fixture.applyConnections([])
+        precondition(fixture.published == ["connections"],
+                     "closing connections must not republish unchanged totals: \(fixture.published)")
+        precondition(fixture.connectionRevision == 4)
+        precondition(fixture.proxiedTraffic.total == 37, "closed connections retain their traffic")
+
         // Capacity, order, eviction, wraparound, and reuse after clear.
         var ring = VpnDomainRing(capacity: 2_000)
         let batch = (1...25_000).map { id -> VpnDomainEntry in
@@ -587,8 +707,10 @@ ASYNC_HARNESS
 
 swift = (swift
          .replace('MODELS_AND_FEED', feed)
+         .replace('JSON_COERCE', json_coerce)
          .replace('VPN_FORMAT', manager[manager.index('enum VpnFormat {'):manager.index('/// The core\'s log ring.')])
          .replace('STAT_FUNC', stat)
+         .replace('APPLY', apply)
          .replace('CADENCE', cadence)
          .replace('WATCHLIST', watchlist)
          .replace('FILTER_HARNESS', filter_harness)

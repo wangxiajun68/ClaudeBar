@@ -567,11 +567,15 @@ final class VpnDomainLog: ObservableObject {
             let host = metadata["host"] as? String ?? ""
             let destination = host.isEmpty ? (metadata["destinationIP"] as? String ?? "未知目标") : host
             let port = metadata["destinationPort"].map { String(describing: $0) } ?? ""
-            let chains = item["chains"] as? [String] ?? []
-            guard !chains.isEmpty else { return nil }
-            let outbound = chains.joined(separator: " → ")
-            let route: VpnDomainRoute = chains.contains(where: { $0.uppercased().hasPrefix("REJECT") })
-                ? .reject : (chains.contains(where: { $0.uppercased() == "DIRECT" }) ? .direct : .proxied)
+            let chunks = item["chains"] as? [String] ?? []
+            guard !chunks.isEmpty else { return nil }
+            let outbound = chunks.joined(separator: " → ")
+            // One route decision for both halves of the page: the log parser
+            // and this snapshot must not disagree about the same outbound (a
+            // bare `🎯 Direct` is 直连 here because it is 直连 there). The
+            // first chunk carries the answer; `chains.last` is the innermost
+            // leaf and would call a direct connection behind a group proxied.
+            let route = VpnDomainFeed.route(outbound: chunks[0])
             let name = metadata["process"] as? String ?? ""
             let path = metadata["processPath"] as? String ?? ""
             let process = name.isEmpty ? (path.isEmpty ? "进程未知" : URL(fileURLWithPath: path).lastPathComponent) : name
@@ -586,8 +590,15 @@ final class VpnDomainLog: ObservableObject {
 
     func applyConnections(_ next: [VpnDomainConnection]) {
         trafficAccumulator.sample(next)
-        proxiedTraffic = trafficAccumulator.totals
-        trafficByHost = trafficAccumulator.byHost
+        // The accumulator mutates in place, so an idle core republishes the
+        // same totals every poll. `@Published` fires objectWillChange whether
+        // or not the value changed (measured), and the summary section writes
+        // its `@State` on every receipt — so publish only on a change, the
+        // same guard `VpnLiveRates.applyTotals` uses.
+        let totals = trafficAccumulator.totals
+        if totals != proxiedTraffic { proxiedTraffic = totals }
+        let byHost = trafficAccumulator.byHost
+        if byHost != trafficByHost { trafficByHost = byHost }
         if connections != next {
             connections = next
             connectionRevision &+= 1

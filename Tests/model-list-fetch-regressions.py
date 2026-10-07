@@ -67,8 +67,10 @@ for drifted in ('case NSURLErrorNetworkConnectionLost', 'NSURLErrorSecureConnect
 button = (ROOT / 'Sources/ClaudeBar/Views/Shared/ProviderModelFetchButton.swift').read_text()
 assert 'guard !Task.isCancelled else { return }' in button, \
     'the button must drop a cancelled fetch rather than render its outcome'
-assert 'ModelListFetcher.buttonMessage(for: outcome)' in button, \
+assert 'message = ModelListFetcher.buttonMessage(for: result)' in button, \
     'the button must render failures through ModelListFetcher.buttonMessage'
+assert '也可手动填写' not in button, \
+    'the suffix must live on the fetcher, not be restated by the view'
 assert 'HTTPErrorText.describe(error' in fetcher, 'ModelListFetcher must render through HTTPErrorText'
 assert 'NSURLErrorNetworkConnectionLost' not in fetcher, \
     'the fetcher must not carry a second NSError switch'

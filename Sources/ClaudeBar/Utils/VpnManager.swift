@@ -1398,33 +1398,17 @@ extension VpnManager {
                 return
             }
             trafficHandshakeLogged = false
-            // The parse itself runs in a `nonisolated` helper: `bytes.lines` is
-            // an async sequence, so a plain `for await` here resumes on the
-            // main actor after every suspension and the JSON work would land
-            // back on main — the isolation the comment below promises. Only the
-            // two Int64s cross to the main actor.
-            for try await sample in Self.trafficSamples(bytes.lines) {
-                if Task.isCancelled { return }
-                applyTrafficSample(sample)
-            }
-        } catch is CancellationError {
-            return
-        } catch {
-            // Reconnect loop in startPolling; don't spam the log every second.
-        }
-    }
-
-    /// Parses every `/traffic` line **on the stream's own executor**: the
-    /// sequence's `next()` is not actor-isolated, so the JSON runs off the main
-    /// actor, and only the parsed counters cross back. `nil` lines (the blank
-    /// keep-alives the stream emits) are dropped here rather than on main.
-    private nonisolated static func trafficSamples<S: AsyncSequence & Sendable>(
-        _ lines: S) -> AsyncStream<(up: Int64, down: Int64)> where S.Element == String {
-        AsyncStream { continuation in
-            let task = Task {
+            // `bytes.lines` suspends and resumes on this method's actor (main),
+            // so the JSON parse has to be moved out explicitly: the pump is a
+            // detached task — the claim this code always made — and only the
+            // two Int64s cross back. `nil` lines (the blank keep-alives) are
+            // dropped on the pump, not on main. The pump ends with the stream
+            // (URLSession ends it on cancellation) or with this scope's defer.
+            let (stream, continuation) = AsyncStream<(up: Int64, down: Int64)>.makeStream()
+            let pump = Task.detached { [lines = bytes.lines] in
                 do {
                     for try await line in lines {
-                        guard let sample = parseTrafficLine(line) else { continue }
+                        guard let sample = Self.parseTrafficLine(line) else { continue }
                         continuation.yield(sample)
                     }
                     continuation.finish()
@@ -1432,7 +1416,15 @@ extension VpnManager {
                     continuation.finish()
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            defer { pump.cancel(); continuation.finish() }
+            for await sample in stream {
+                if Task.isCancelled { return }
+                applyTrafficSample(sample)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            // Reconnect loop in startPolling; don't spam the log every second.
         }
     }
 

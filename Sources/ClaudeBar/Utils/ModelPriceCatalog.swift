@@ -111,6 +111,18 @@ final class ModelPriceCatalog: ObservableObject {
     /// which is what makes it defensible to run without being asked.
     static let checkInterval: TimeInterval = 7 * 24 * 3600
 
+    /// What this file last failed to write, shown under the list. Nothing here
+    /// throws back into a view — the editor closes on save — so without a
+    /// surface a full disk or a read-only Application Support directory left
+    /// the number on screen looking saved while `price-overrides.json` still
+    /// held the old value.
+    @Published private(set) var writeError: String?
+
+    /// Set when the file could not be decoded and was moved aside. The next
+    /// write creates a fresh file, and this is what says so instead of
+    /// silently overwriting whatever a hand-edited file held.
+    @Published private(set) var loadError: String?
+
     private let file = FilePaths.appSupportDir.appendingPathComponent("price-overrides.json")
 
     private init() {
@@ -238,15 +250,22 @@ final class ModelPriceCatalog: ObservableObject {
             checkedAt: Date(),
             note: note)
 
-        var rows = overrides[canonical] ?? []
-        // One row per (slug, effectiveFrom): re-editing the same day's entry
-        // replaces it rather than stacking a second row that would resolve to
-        // whichever sorted last.
-        rows.removeAll { $0.effectiveFrom == effectiveFrom }
-        rows.append(row)
-        overrides[canonical] = rows.sorted { $0.effectiveFrom < $1.effectiveFrom }
-
+        // Insert first, then commit: `commit` publishes the table and
+        // `replaceOverrides` must see the new row, or the notification would
+        // announce a change that has not happened yet.
+        let stored = insert(row)
         commit()
+        return stored
+    }
+
+    /// Put a validated row into the in-memory table **without** committing —
+    /// the one place the 「one row per (slug, effectiveFrom)」 rule lives, so a
+    /// batch write replaces today's entry exactly the way a single edit does.
+    private func insert(_ row: ModelPricing.PriceOverride) -> ModelPricing.PriceOverride {
+        var rows = overrides[row.slug] ?? []
+        rows.removeAll { $0.effectiveFrom == row.effectiveFrom }
+        rows.append(row)
+        overrides[row.slug] = rows.sorted { $0.effectiveFrom < $1.effectiveFrom }
         return row
     }
 
@@ -323,10 +342,15 @@ final class ModelPriceCatalog: ObservableObject {
         report.unchanged = found.filter(\.isUnchanged).count
 
         if autoApply {
+            // The whole batch is one commit: each accepted row is stored, then
+            // a single `commit()` resolves, prunes, writes and notifies. The
+            // per-row path (`apply(_:)`) is for the card's 应用 button.
             var refused: [Candidate] = []
+            var applied = 0
             for row in found where !row.isUnchanged {
-                if apply(row) {
-                    switch row.source {
+                if let stored = store(row) {
+                    applied += 1
+                    switch stored.source {
                     case .fetchedUSD: report.appliedUSD += 1
                     case .fetchedCNY: report.appliedCNY += 1
                     default: break
@@ -335,11 +359,10 @@ final class ModelPriceCatalog: ObservableObject {
                     refused.append(row)
                 }
             }
+            if applied > 0 { commit() }
             // A refused row is left on the card as 待确认 rather than dropped —
             // see `apply(_:)` — so the list is exactly what the write declined.
             candidates = refused
-            // `apply` already wrote each row; only the report and the timestamp
-            // are left.
             self.report = report
             lastCheckedAt = report.at
             saveMeta()
@@ -387,12 +410,22 @@ final class ModelPriceCatalog: ObservableObject {
 
     // MARK: - Check queue
     func applyAllCandidates() {
-        // Swift arrays are values, so the loop walks a snapshot while `apply`
-        // shortens the published list — each applied row removes itself, and a
-        // row the catalog refuses stays for the user to see.
+        // The write loop is the batch: every candidate goes through `store`,
+        // and the whole pass ends in one `commit()` — one resolve, one prune,
+        // one encode + atomic write, one notification — instead of one per
+        // row. A first-run batch is ~70 rows, and 70 notifications each drove
+        // a `ProviderStore.refreshUsage` pass even though the price table only
+        // changed in the aggregate.
+        var applied: [String] = []
         for candidate in candidates where !candidate.isUnchanged {
-            apply(candidate)
+            if store(candidate) != nil { applied.append(candidate.slug) }
         }
+        guard !applied.isEmpty else { return }
+        // A row the catalog refuses stays in `candidates` for the user to see —
+        // see `apply(_:)` — while the accepted ones leave together.
+        let accepted = Set(applied)
+        candidates.removeAll { accepted.contains($0.slug) }
+        commit()
     }
 
     func dismissAllCandidates() {
@@ -405,26 +438,48 @@ final class ModelPriceCatalog: ObservableObject {
 
     @discardableResult
     func apply(_ candidate: Candidate) -> Bool {
-        // A fetch always starts today. Backdating it would rewrite usage already
-        // recorded under the old price, which is the one thing a fetch must
-        // never do silently; the editor is where a user can pick an earlier
-        // date knowingly.
-        //
         // A row the catalog refuses — the same rules the editor enforces
         // (non-canonical slug, impossible date, a cache-read above input) — is
         // left *pending* rather than dropped: the fetch proposed it and the
         // write declined it, so the honest state is a 待确认 row the user can
         // still see, not a silent no-op behind a button they pressed.
-        let stored = (try? record(slug: candidate.slug,
-                                  rate: candidate.rate,
-                                  unpriced: candidate.unpriced,
-                                  effectiveFrom: ModelPricing.dayKey(Date()),
-                                  source: candidate.source,
-                                  sourceURL: candidate.sourceURL,
-                                  note: candidate.note)) != nil
-        if !stored { return false }
+        guard store(candidate) != nil else { return false }
         candidates.removeAll { $0.slug == candidate.slug }
+        commit()
         return true
+    }
+
+    /// Validate and store one candidate **without committing** — the caller
+    /// decides when the batch ends. `nil` means the catalog's own rules
+    /// refused the row and it must stay pending.
+    ///
+    /// A fetch always starts today. Backdating it would rewrite usage already
+    /// recorded under the old price, which is the one thing a fetch must never
+    /// do silently; the editor is where a user can pick an earlier date
+    /// knowingly.
+    private func store(_ candidate: Candidate) -> ModelPricing.PriceOverride? {
+        let trimmed = candidate.slug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty,
+              ModelPricing.canonical(trimmed) == trimmed,
+              Self.isDayKey(ModelPricing.dayKey(Date())) else { return nil }
+        var slate: ModelPricing.Rate?
+        if let rate = candidate.rate {
+            guard rate.input > 0, rate.output > 0,
+                  rate.cacheRead > 0, rate.cacheWrite > 0,
+                  rate.cacheRead <= rate.input else { return nil }
+            slate = rate
+        } else {
+            guard candidate.unpriced != nil else { return nil }
+        }
+        return insert(ModelPricing.PriceOverride(
+            slug: trimmed,
+            rate: slate,
+            unpriced: slate == nil ? (candidate.unpriced ?? .notPublished) : nil,
+            effectiveFrom: ModelPricing.dayKey(Date()),
+            source: candidate.source,
+            sourceURL: candidate.sourceURL,
+            checkedAt: Date(),
+            note: candidate.note))
     }
 
     func dismiss(_ candidate: Candidate) {
@@ -463,34 +518,68 @@ final class ModelPriceCatalog: ObservableObject {
         NotificationCenter.default.post(name: .modelPriceDidChange, object: nil)
     }
 
-    private func save() {
-        saveMeta()
-    }
+    @discardableResult
+    private func save() -> Bool { saveMeta() }
 
-    private func saveMeta() {
+    /// Encode and write the whole file. Returns false, and records why, when
+    /// either step fails: the in-memory table has already changed, so a silent
+    /// failure is a session billing from numbers that are not on disk.
+    @discardableResult
+    private func saveMeta() -> Bool {
         let rows = overrides.values.flatMap { $0 }
         let stored = Stored(version: Self.fileVersion, overrides: rows, lastCheckedAt: lastCheckedAt)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(stored) else { return }
-        // Atomic, and left at the default mode: this file holds prices, not
-        // credentials, exactly like cursor-ledger.json next to it.
-        try? data.write(to: file, options: .atomic)
+        do {
+            let data = try encoder.encode(stored)
+            // Atomic, and left at the default mode: this file holds prices, not
+            // credentials, exactly like cursor-ledger.json next to it.
+            try data.write(to: file, options: .atomic)
+            writeError = nil
+            return true
+        } catch {
+            writeError = "写入价格文件失败：\(error.localizedDescription)。本次改动的价格只在本次运行内有效。"
+            return false
+        }
     }
 
+    /// Read the file back. A file that cannot be read **or decoded** is moved
+    /// aside before anything can write over it: `try?` around the decode used
+    /// to fall through to "no overrides", and the next `commit()` then wrote
+    /// the empty-in-memory table over a file that may have held every custom
+    /// price the user had — atomically, so irreversibly. The version gate is
+    /// the one case that is not corruption (a future format is not a
+    /// casualty), so it also refuses to touch the file but says what it saw.
     private func load() {
         guard let data = try? Data(contentsOf: file) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let stored = try? decoder.decode(Stored.self, from: data),
-              stored.version == Self.fileVersion else { return }
+        guard let stored = try? decoder.decode(Stored.self, from: data) else {
+            quarantine(reason: "文件内容不是有效的价格表")
+            return
+        }
+        guard stored.version == Self.fileVersion else {
+            loadError = "价格文件的版本（\(stored.version)）高于本应用支持的 \(Self.fileVersion)，已保持原样未加载。"
+            return
+        }
         var table: [String: [ModelPricing.PriceOverride]] = [:]
         for row in stored.overrides where row.resolution != nil {
             table[row.slug, default: []].append(row)
         }
         overrides = table.mapValues { $0.sorted { $0.effectiveFrom < $1.effectiveFrom } }
         lastCheckedAt = stored.lastCheckedAt
+    }
+
+    /// Move an unreadable price file aside so the next write cannot destroy it,
+    /// and report it. A failed move leaves the file in place *and* the error
+    /// set, so the card still says the file is unreadable.
+    private func quarantine(reason: String) {
+        let backup = file.appendingPathExtension("bak")
+        try? FileManager.default.removeItem(at: backup)
+        let moved = (try? FileManager.default.moveItem(at: file, to: backup)) != nil
+        loadError = "价格文件无法读取（\(reason)）"
+            + (moved ? "，已备份为 \(backup.lastPathComponent)。" : "。")
     }
 
     /// `yyyy-MM-dd` — the day-key format the usage rollups use, so an override's

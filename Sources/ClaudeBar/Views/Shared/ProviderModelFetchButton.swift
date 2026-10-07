@@ -44,16 +44,22 @@ struct ProviderModelFetchButton: View {
         fetchTask?.cancel(); fetchTask = nil
         loading = false; candidates = []; message = nil; showPicker = false
     }
+
     private func fetch() {
         loading = true; message = nil
         let url = baseURL, key = apiKey, wire = wireAPI
         fetchTask = Task { @MainActor in
             let result = await ModelListFetcher.fetch(baseURL: url, apiKey: key, wireAPI: wire)
+            // A cancelled fetch's result must not be shown: `cancel()` has
+            // already cleared `message`, and its failure text ("已取消") is not
+            // something the user asked to see. The wording — including the
+            // manual-entry hint every failure carries — lives on the fetcher,
+            // where a regression can read it; this view only displays it.
             guard !Task.isCancelled else { return }
             loading = false
             switch result {
             case .success(let payload): candidates = payload.models; showPicker = true
-            case .failure(let error): message = error + "。也可手动填写模型 ID。"
+            case .failure: message = ModelListFetcher.buttonMessage(for: result)
             }
         }
     }

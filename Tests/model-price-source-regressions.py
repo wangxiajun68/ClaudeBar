@@ -96,6 +96,28 @@ struct Driver {
         case "modelsdev":
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             rows = ModelPriceSources.rowsFromModelsDev(json)
+        case "vendor-slugs":
+            // One line per vendor: `name|slug,slug,...`, straight from the
+            // production `Vendor.slugs`.
+            for vendor in ModelPriceSources.vendors {
+                print("\\(vendor.name)|\\(vendor.slugs.joined(separator: ","))")
+            }
+            rows = []
+        case "modelsdev-synthetic":
+            // Non-finite prices arriving as JSON *strings* — `"1e999"` parses
+            // to +inf, which every `> 0` guard downstream accepts. The row must
+            // not leave the parser at all: an infinite rate makes the settings
+            // page print ¥0.00 while the aggregate and the primary-figure
+            // choice are dominated by a number no vendor ever quoted.
+            let json: [String: Any] = ["openai": ["models": [
+                "finite-model": ["cost": ["input": 5, "output": 30,
+                                          "cache_read": 0.5, "cache_write": "inf"]],
+                "huge-model": ["cost": ["input": "1e999", "output": 30]],
+                "nan-model": ["cost": ["input": "nan", "output": 30]],
+                "ordinary-model": ["cost": ["input": 2.5, "output": 15,
+                                            "cache_read": 0.25, "cache_write": 2.5]],
+            ]]]
+            rows = ModelPriceSources.rowsFromModelsDev(json)
         default: rows = []
         }
         for row in rows {
@@ -259,6 +281,48 @@ def main() -> int:
           str(sorted(refused_slugs)))
     check("a fetched zero cache bucket never leaves the parser",
           "zero-read" not in refused_slugs, str(sorted(refused_slugs)))
+
+    # `number(_:)`'s string arm needs the same finiteness gate as its NSNumber
+    # arm. `"1e999"` parses to +inf and `"inf"` / `"nan"` likewise; all of them
+    # satisfy every `> 0` guard, so without the gate the parser emits a card
+    # whose numbers are not prices. The finite row beside them proves the gate
+    # did not simply drop the whole source.
+    synthetic = parse(binary, "modelsdev-synthetic", "")
+    synthetic_slugs = {r["slug"] for r in synthetic}
+    check("a non-finite string price never leaves the parser",
+          synthetic_slugs == {"finite-model", "ordinary-model"},
+          str(sorted(synthetic_slugs)))
+    check("the finite rows beside them are untouched",
+          find(synthetic, "ordinary-model") is not None
+          and find(synthetic, "finite-model")["input"] == 5.0,
+          str(find(synthetic, "ordinary-model")))
+
+    # `Vendor.slugs` decides which built-in rows show 官方定价页 and which can
+    # be claimed as 官方页 provenance, so it has to cover the vendor's page for
+    # every row the bundled table prices — and be spelled the way
+    # `ModelPricing` looks slugs up (lowercased; a `MiniMax-M3` entry never
+    # matches the emitted `minimax-m3`). A hand-maintained list had already
+    # drifted here: `glm-4.7` and `qwen3.8-max` were on the pages and in the
+    # table, parsed and applied, yet showed no link.
+    vendor_lines = subprocess.run([str(binary), "vendor-slugs"], input="",
+                                  capture_output=True, text=True).stdout.splitlines()
+    declared = {}
+    for line in vendor_lines:
+        name, _, slugs = line.partition("|")
+        declared[name] = {s for s in slugs.split(",") if s}
+
+    table_slugs = set(re.findall(r'slug:\s*"([^"]+)"', table))
+    parsed_pages = {
+        "DeepSeek": ds, "智谱 GLM": glm, "Kimi": kimi,
+        "阿里百炼": ali, "阶跃星辰": step, "MiniMax": mini,
+    }
+    for vendor, rows in parsed_pages.items():
+        emitted = {row["slug"] for row in rows} & table_slugs
+        covered = declared.get(vendor, set())
+        check(f"{vendor}'s coverage list reaches every built-in row its page prices",
+              emitted <= covered, str(sorted(emitted - covered)))
+        check(f"{vendor}'s coverage list is spelled the way lookups are done",
+              all(s == s.lower() for s in covered), str(sorted(s for s in covered if s != s.lower())))
 
     if FAILURES:
         print(f"\nFAIL: {len(FAILURES)} assertion(s)")

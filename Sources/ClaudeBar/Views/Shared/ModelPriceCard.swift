@@ -45,6 +45,14 @@ struct ModelPriceCard: View {
         VStack(spacing: 0) {
             header
             SettingsDivider()
+            // Both of these are states of *this file*, not of the check: an
+            // unreadable file and a failed write are the two ways the numbers
+            // on screen stop matching what is on disk, and neither has any
+            // other surface.
+            if let problem = catalog.loadError ?? catalog.writeError {
+                fileNotice(problem)
+                SettingsDivider()
+            }
             if !catalog.candidates.isEmpty {
                 candidates
                 SettingsDivider()
@@ -56,6 +64,23 @@ struct ModelPriceCard: View {
             search
             list
         }
+    }
+
+    /// One line, warning-toned, for the persistence failures above. It is not
+    /// dismissible: the condition it reports (no writable file / no backup of
+    /// an unreadable one) does not go away by ignoring it, and the alternative
+    /// is a user editing prices into a session that will not survive relaunch.
+    private func fileNotice(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            SignatureGlyph(name: "exclamationmark.triangle", tint: Theme.Ink.warning, size: 11)
+            Text(message)
+                .font(Theme.Font.micro)
+                .foregroundColor(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Header

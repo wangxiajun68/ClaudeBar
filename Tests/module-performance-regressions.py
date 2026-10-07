@@ -148,6 +148,16 @@ def harness(baseline):
     return '\n'.join([table, log, collector, layout_fixture,
                       'enum Canonical {\n' + regex + '\n' + canonical + '\n' + tier + '\n}']) + r'''
 import Combine
+// `ProxyAccessLog.clip` delegates to the production `CaptureTranscript.clip`
+// (finding 608); this harness compiles the log file alone, so only that
+// static is stubbed, mirroring the shape access-log-tail-regressions.py uses.
+enum CaptureTranscript {
+    static func clip(_ text: String, cap: Int = 160) -> String {
+        let folded = text.split(whereSeparator: { $0.isNewline || $0 == "\r" })
+            .joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return folded.count > cap ? String(folded.prefix(cap)) + "…" : folded
+    }
+}
 enum UsageStats { static func formatTokens(_ n: Int) -> String { String(n) } }
 struct TokenTotals {
     var input: Int?; var output: Int?; var cacheRead: Int?; var cacheWrite: Int?

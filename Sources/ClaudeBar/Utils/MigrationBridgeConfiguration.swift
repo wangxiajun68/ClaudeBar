@@ -18,24 +18,26 @@ enum MigrationBridgeConfiguration {
     }
 
     /// The one base-URL join rule, shared by the migration bridge's two wire
-    /// paths so they cannot drift. Both append onto a trimmed base and refuse
-    /// to guess: `nil` becomes `AgentProtocolBridge.Failure.malformed`, never a
-    /// request to some fallback host.
-    static func url(_ base: String, operation: String, versionedAlready: Bool) -> URL? {
+    /// paths so they cannot drift. A base that already carries the operation is
+    /// used as-is; a base ending in `/openai` or a version segment appends the
+    /// operation directly; a bare host gets `/v1`. `nil` becomes
+    /// `AgentProtocolBridge.Failure.malformed`, never a request to some
+    /// fabricated fallback host.
+    static func url(_ base: String, operation: String) -> URL? {
         let trimmed = base.trimmingCharacters(in:CharacterSet(charactersIn:"/"))
         if trimmed.hasSuffix(operation) { return URL(string:trimmed) }
         if trimmed.hasSuffix("/openai") || trimmed.range(of:#"/v\d+$"#,options:.regularExpression) != nil {
             return URL(string:trimmed + operation)
         }
-        return URL(string:trimmed + (versionedAlready ? "" : "/v1") + operation)
+        return URL(string:trimmed + "/v1" + operation)
     }
 
     static func responsesURL(_ base: String) -> URL? {
-        url(base, operation: "/responses", versionedAlready: true)
+        url(base, operation: "/responses")
     }
 
     static func chatCompletionsURL(_ base: String) -> URL? {
-        url(base, operation: "/chat/completions", versionedAlready: false)
+        url(base, operation: "/chat/completions")
     }
 
     static func route(_ path: String) -> (id: UUID, countTokens: Bool)? {

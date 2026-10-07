@@ -5246,7 +5246,9 @@
   "evidence": "Declared at line 9 (`let name: String`) and populated at line 62 (`name: provider[\"name\"] as? String ?? \"自定义模型\"`). `grep -rn \"endpoint\\.name\"` over Sources/, Tests/ and Tools/ returns nothing; the only other constructor is Tests/migration_bridge_harness.py:108, which also only sets it (named `\"Isolated fixture\"`). CodexProxyServer's migration path uses endpoint.model/baseURL/apiKey/wireAPI/reasoningEffort only (CodexProxyServer.swift:799-807).",
   "failure": "No runtime effect; the field keeps a provider display name alive in memory for the whole bridge lifetime (CodexProxyState.migrationEndpoints holds up to 128 endpoints) and invites a future reader to assume it is used for logging or routing.",
   "fix": "Drop `name` from the struct and from the two constructor call sites.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): MigrationBridgeEndpoint.name removed with its constructor arg; grep finds no reader."
  },
  {
   "category": "duplication",
@@ -5258,7 +5260,9 @@
   "evidence": "MigrationBridgeConfiguration.responsesURL (lines 21-26) trims \"/\", short-circuits on `/responses`, appends `/responses` after `/openai` or `/v\\d+$`, else `/v1/responses`, returning nil when URL(string:) fails. CodexProxyServer.chatCompletionsURL (CodexProxyServer.swift:947-956) is the same algorithm for `/chat/completions` but falls back to `URL(string: \"http://127.0.0.1\")!` instead of nil. Both are reachable from the same request path: forwardMigration picks between them at CodexProxyServer.swift:805-806 by `endpoint.wireAPI`; MigrationHistory.swift:509 and Tests/session-migration-regressions.py:614-615 pin only the responsesURL copy.",
   "failure": "A future change to the version-suffix rule (e.g. handling a base that already ends in `/chat/completions` on the responses path) has to be made in two files; the 127.0.0.1 fallback in one of them silently produces a request to the local machine instead of a MALFORMED failure, which for the migration bridge would surface as a confusing 502 rather than 「请求包含暂不支持的格式」.",
   "fix": "Extract one `MigrationBridgeConfiguration.url(_ base: String, operation: String, versioned...)` used by both call sites, and decide one failure mode (nil → AgentProtocolBridge.Failure.malformed).",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): one shared url(_:operation:) for /responses and /chat/completions; chatCompletionsURL returns URL? and both proxy call sites throw .malformed instead of falling back to http://127.0.0.1."
  },
  {
   "category": "dead-code",
@@ -5269,7 +5273,9 @@
   "summary": "`profile.workspace[\"id\"] as? String ?? \"\"` can write an empty workspaceId into composerHeaders",
   "evidence": "Line 118: `let workspaceID = profile.workspace[\"id\"] as? String ?? \"\"`; used at line 218 to bind the `workspaceId` column. Every profile produced by `profile(_:cwd:)` requires a non-empty id (lines 52-53), but `insert` takes the Profile as a parameter and is also reachable with an externally constructed Profile — the test constructs one by calling `profile(...)` (session-migration-regressions.py:528), so the fallback is never exercised.",
   "failure": "A caller that builds `Profile` from a different source (or a future refactor that drops the check) writes a composer row with an empty workspaceId, and Cursor then lists the composer under no project; the `contains` / `exists` checks still pass because they only look at `composerId`.",
-  "fix": "Validate once: `guard let workspaceID = profile.workspace[\"id\"] as? String, !workspaceID.isEmpty else { throw MigrationFailure.invalidHistory }`, or drop the fallback by making Profile own a non-optional workspaceID."
+  "fix": "Validate once: `guard let workspaceID = profile.workspace[\"id\"] as? String, !workspaceID.isEmpty else { throw MigrationFailure.invalidHistory }`, or drop the fallback by making Profile own a non-optional workspaceID.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): insert guards workspaceID non-empty and reuses it for both composer row and workspaceId binding; regression drives id:\"\" and expects refusal."
  },
  {
   "category": "state",
@@ -5281,7 +5287,9 @@
   "evidence": "storedImage (MigrationCursorHistory.swift:247-250) creates the directory and `PrivateFileWriter.write(bytes, to: file)`; it is invoked from appendBubble at line 152-155, which runs in the loop at line 167-172, i.e. before `sqlite3_exec(db, \"BEGIN IMMEDIATE\")` (line 204) and before the commit at line 226. Every later failure rolls back only the DB (`defer { sqlite3_exec(db, \"ROLLBACK\", ...) }`, line 205) — e.g. the collision path `guard existing == data else { throw MigrationFailure.invalidHistory }` (line 210) or `publish()` throwing — and the caller cleans up only the manifest (MigrationStorage.swift:147-150).",
   "failure": "A Cursor-desktop migration with images that fails on a cursorDiskKV collision or on the publish step leaves the freshly written image files behind in ~/Library/Application Support/Cursor/User/workspaceStorage/<id>/images/; retrying writes a second copy under a new UUID, so the same bytes accumulate with no record pointing at them.",
   "fix": "Collect the written image URLs during the loop and remove them in a `defer`/catch next to the ROLLBACK (or write the files only after the insert statements have been prepared and just before publish()).",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): ImageLedger + defer deletes every storedImage on pre-COMMIT throw; committed=true only after COMMIT. Mutation-verified."
  },
  {
   "category": "concurrency",
@@ -5293,7 +5301,9 @@
   "evidence": "Lines 160-168: `for attempt in 0..<6 { try Task.checkCancellation(); do { return try cliSnapshot(...) } catch MigrationFailure.pendingPersistence { guard attempt < 5 else { throw ... }; Thread.sleep(forTimeInterval: 0.1 * pow(2, Double(attempt))) } }` — 0.1+0.2+0.4+0.8+1.6 = 3.1 s of total blocking. The caller is the `SessionMigrationService` actor (SessionMigrationService.swift:68), and cli() is non-async so it cannot use `try await Task.sleep`. Cancellation is only observed at the top of the next attempt, i.e. after the current sleep finishes (up to 1.6 s late).",
   "failure": "A Cursor CLI chat whose blobs are still landing makes the shared migration actor unresponsive for up to 3.1 s; the dialog's 取消 / sheet dismiss sets cancel but the actor keeps sleeping until the current backoff expires, and every other migration request (records(), command(for:)) queues behind it.",
   "fix": "Make cli() async and use `try await Task.sleep(nanoseconds:)`, which suspends instead of occupying the actor's thread and throws CancellationError immediately on cancel.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): MigrationCursorHistory.cli is async throws with Task.sleep backoff; SessionMigrationService.preview/prepare await it."
  },
  {
   "category": "dead-code",
@@ -5305,7 +5315,9 @@
   "evidence": "Line 6 declares `let integer: UInt64?`; it is set at line 36 (`output.append(.init(number: Int(tag >> 3), bytes: nil, integer: try read()))`). `grep -rn \"\\.integer\\b\"` over Sources/ and Tests/ finds no field access — the consumers are cliSnapshot (`.first(where: { $0.number == 9 })?.bytes`, line 188), the field-1 loop (line 195-197) and the test at Tests/session-migration-regressions.py:427, all using `number`/`bytes` only.",
   "failure": "No runtime effect beyond retaining an unused UInt64 read for every wire-type-0 field; a reader of the decoder cannot tell whether varint values are validated or ignored.",
   "fix": "Remove the `integer` property (keep the `try read()` that advances the offset) or assert on it where a varint is expected.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): Field.integer removed; varint offset still advances, entry emitted with bytes: nil."
  },
  {
   "category": "perf-cpu",
@@ -5317,7 +5329,9 @@
   "evidence": "Line 500: `\"timestamp\": ISO8601DateFormatter().string(from: now)` sits inside the nested `append` function, so it runs once per message row (and twice per tool exchange, since toolContext emits a tool_use row plus a tool_result row). Measured in Swift on this machine: `ISO8601DateFormatter()` + string = 55.4 µs, a shared instance = 1.07 µs — a 50× difference on that line; codexData does it correctly at line 524 (`let stamp = ISO8601DateFormatter().string(from: now)` before the loop), which is the drift between the two writers.",
   "failure": "A 500-message import burns ~28 ms of extra CPU (8000-message maximum: ~0.44 s) inside the writer that already holds the whole output Data in memory; the same `now` is formatted repeatedly, so the repeated work has no observable product.",
   "fix": "Hoist `let stamp = ISO8601DateFormatter().string(from: now)` above `func append` exactly as codexData does (or use a static shared formatter).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): ISO8601DateFormatter string hoisted above append in MigrationHistory, matching codexData."
  },
  {
   "category": "state",
@@ -5330,7 +5344,9 @@
   "evidence": "MigrationCursorDesktop.swift:246-250 (`storedImage`) writes `<Cursor user>/workspaceStorage/<workspaceID>/images/<uuid>.<ext>` via PrivateFileWriter while building bubbles — i.e. at MigrationCursorDesktop.swift:152, which runs before the DB transaction is even opened (lines 198-206). The only failure cleanup is MigrationStorage.swift:148 (`try? FileManager.default.removeItem(at: manifest)`) plus the SQLite ROLLBACK at MigrationCursorDesktop.swift:205; `grep -rn removeItem` over MigrationStorage.swift, MigrationCursorDesktop.swift and MigrationCursorHistory.swift shows no removal of any image file.",
   "failure": "A later unsupported message (assistant image throws at MigrationCursorDesktop.swift:154), a size-limit trip at line 111/188, or cancellation at line 223/225 → DB unchanged, manifest removed, but N image blobs (up to the 16 MiB per-attempt budget) stay in the user's real Cursor data. Each retry writes a fresh UUID copy, so repeated failures accumulate files with no referencing composer.",
   "fix": "Return the written image URLs from `appendBubble`/`storedImage` and remove them in `insert`'s failure path (defer-collected list), or stage them beside the DB and move them in only after COMMIT succeeds.",
-  "_": ""
+  "_": "",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): same ledger/defer path covers manifest-publish failure, collision, size/cancellation; regression asserts the images dir is empty after refusal and holds exactly the committed image after success."
  },
  {
   "category": "duplication",
@@ -5343,7 +5359,9 @@
   "evidence": "ModelListFetcher.swift:238-249 vs ConnectivityProbe.swift:116-131 — identical apart from ConnectivityProbe having `case NSURLErrorNetworkConnectionLost: return \"连接中断\"` and `case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted: return \"TLS 失败（host）\"` that the fetcher lacks; `jsonError` is byte-identical except the fallback prefix (160 vs 180 bytes, lines 235 vs 113); `clip` differs in both thresholds (`<= 140` / `prefix(137)` at lines 259-260 vs `<= 160` / `prefix(157)` at ConnectivityProbe 140-141).",
   "failure": "A gateway with a bad certificate or a dropped connection fails 拉取模型 with `clip(error.localizedDescription)` — a locale-dependent raw system string — while the proxy probe on the same machine shows 'TLS 失败（host）' / '连接中断' for the same NSError class; users cannot tell 'my cert is wrong' from 'the server said no'.",
   "fix": "Hoist the three helpers into one shared Utils type (e.g. `HTTPErrorText`) and have both call sites use it, keeping ConnectivityProbe's fuller switch and a single clip cap.",
-  "_": ""
+  "_": "",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): shared HTTPErrorText (describe/describeBody/clip, one 160-char cap) in Sources/ClaudeBar/Utils/HTTPErrorText.swift; ConnectivityProbe and ModelListFetcher both route through it and the fetcher gained the connection-lost / TLS cases it was missing."
  },
  {
   "category": "logic",
@@ -5356,7 +5374,9 @@
   "evidence": "Lines 26-36: the loop assigns `lastError` from whichever candidate ran last; for a bare-host base URL `candidateURLs` (lines 81-86) yields `<base>/v1/models` then `<base>/models`. A gateway that only serves `/v1/*` answers 401/403 on the first candidate and 404 on the second, so the user sees '接口不存在（/models）' (line 214) rather than '鉴权失败（HTTP 401）' (line 129).",
   "failure": "Wrong-key input → the dialog tells the user the endpoint does not exist, so they edit the base URL instead of the API key; the reverse diagnosis (bad URL, valid key) is indistinguishable.",
   "fix": "Keep the first 401/403 encountered and return it when the loop ends without a success (or stop iterating as soon as the user's own base URL answers 401/403).",
-  "_": ""
+  "_": "",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): the first candidate's 401/403 (the user's own base URL / catalog models route) is kept in `definitiveAuth` and returned when the loop ends without success, so a later candidate's 404 no longer masks 换个 Key. Pinned in model-list-fetch."
  },
  {
   "category": "dead-code",
@@ -5369,7 +5389,9 @@
   "evidence": "ModelListFetcher.swift:27 returns `.failure(\"已取消\")`; ProviderModelFetchButton.swift:50-57 runs `fetch` inside its own `fetchTask` and immediately does `guard !Task.isCancelled else { return }` before reading `result`, so whenever fetch observed cancellation the button discards the value. Cancellation raised inside `requestModels` (URLSession `URLError.cancelled`) is instead reported through `describeError` as a clipped localized string — which is likewise discarded.",
   "failure": "No user-visible consequence today, but the message is dead: any future caller that trusts `Outcome.failure` for cancel handling will surface a raw locale-dependent string instead of '已取消', and a reviewer grepping for user-facing cancel text will find one that does not exist.",
   "fix": "Have `fetch` throw/propagate `CancellationError` (or return a dedicated `.cancelled` case) and let the button keep using `Task.isCancelled`; alternatively map `URLError.cancelled` to the '已取消' text in `describeError` so the string is honest.",
-  "_": ""
+  "_": "",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): measured — a mid-request cancel surfaces as NSURLErrorCancelled's localizedDescription (Task.isCancelled cannot catch it), so HTTPErrorText.describe maps that code to 已取消; the button's wording moved to ModelListFetcher.buttonMessage and the regression pins the cancel contract."
  },
  {
   "category": "perf-memory",
@@ -5382,7 +5404,9 @@
   "evidence": "Line 117 `let (data, response) = try await session.data(for: req)` — the only bounds are `timeoutIntervalForRequest = 20` / `timeoutIntervalForResource = 25` (lines 95-96); `parseModelIDs` then runs `JSONSerialization.jsonObject(with: data)` over the entire buffer (line 162). Repo norm is an explicit cap: Tests-adjacent readers cap at 2 MB (`Sources/ClaudeBar/Models/MCPToolDiscovery.swift:143`) and 16 MiB (`Sources/ClaudeBar/Utils/MigrationBridgeConfiguration.swift:38`, `MigrationStorage.readBounded` at line 97).",
   "failure": "A base URL that streams a large body (vendor incident serving a large error page, or a URL pointing at a big non-API endpoint) is fully buffered for up to 25 s of link bandwidth and then parsed in one go — a multi-hundred-MB transient allocation while the menu-bar app is resident.",
   "fix": "Use `URLSession.bytes(for:)` and accumulate into a bounded buffer (e.g. stop at 4 MiB with a clear '响应过大' failure) before calling `parseModelIDs`.",
-  "_": ""
+  "_": "",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): BoundedResponseReader in ModelListFetcher — session-level delegate accumulation, 4 MiB cap reporting 响应过大, redirects refused (prior semantics), task cancellation cancels the request. Measured (Swift 6.4): per-call delegates never fire for data(for:), and bytes(for:)'s per-byte sequence costs ~12 µs/byte under -O."
  },
  {
   "category": "correctness",
@@ -5394,7 +5418,9 @@
   "evidence": "`func autoCheckIfStale() { guard let lastCheckedAt else { return } ... Task { await check(autoApply: false) } }` (Sources/ClaudeBar/Utils/ModelPriceCatalog.swift:373-382) is invoked at launch (Sources/ClaudeBar/ClaudeBarApp.swift:105) after `ExchangeRate.shared.start()`. `check(autoApply: false)` sets `candidates` and posts `.modelPriceDidChange` (lines 342-351), which `ProviderStore`'s observer turns into `refreshUsage(rescan: false)` (ProviderStore.swift:1264-1270). The card's `applyAllCandidates()` (lines 385-392) then applies every candidate at *today's* date (line 414-420), including rows whose `current` snapshot was captured a week earlier.",
   "failure": "Launch after a week away → the background check proposes rows against a stale `current`; the user opens 设置, sees 待确认 N 条 and presses 全部应用 → overrides are written with `effectiveFrom` = today even though the diff was computed against a price table that may have changed in the meantime, and `.modelPriceDidChange` fires a full `refreshUsage` (daily-model query + estimate) on every candidate write, because `commit()` posts per row while `applyAllCandidates` loops.",
   "fix": "Have `applyAllCandidates` collect the rows and post one notification (or write once via a batch `record`), and re-resolve `current` at apply time so a stale proposal is dropped rather than written.",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): applyAllCandidates/check(autoApply:) store every accepted row then end the batch in one commit() — one resolve/prune/encode/atomic write/notification instead of one per row (~70 rows on a first run). The per-row notification claim was already refuted by the 427 re-verification; only commit() posts."
  },
  {
   "category": "perf-cpu",
@@ -5420,7 +5446,9 @@
   "evidence": "`private func save() { saveMeta() }` (lines 462-464) and `try? data.write(to: file, options: .atomic)` inside `saveMeta` (lines 466-476). `record` mutates `overrides[canonical]` *before* calling `commit()` (lines 241-249), and `commit()` calls `ModelPricing.replaceOverrides(overrides)` before saving (lines 455-460), so the live pricing changes even if the file write fails; `report` in `check` is likewise reported as applied (`report.appliedUSD += 1`, lines 321-333) with no check that persistence succeeded.",
   "failure": "Application Support is read-only or the disk is full → the user edits a price, the UI shows the new number and says 「已应用」, the costs change for this session, and the edit is gone at relaunch with nothing on screen having said so.",
   "fix": "Make `saveMeta` return a Bool and surface a `WriteError.persistence(String)` in the card (or at minimum a `report.error` note) when the write throws — the type already has a `WriteError` enum doing exactly this job for validation.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): saveMeta returns Bool and records writeError (shown by ModelPriceCard's new fileNotice line), so a failed write is no longer invisible while the session bills from the in-memory table."
  },
  {
   "category": "robustness",
@@ -5431,7 +5459,9 @@
   "summary": "load() 用 try? 吞掉 JSON 损坏与版本不符，静默回到内置价，下一次 commit 会用内存里的空状态原子覆盖该文件",
   "evidence": ":479-483 `guard let data = try? Data(contentsOf: file) else { return }` 与 `guard let stored = try? decoder.decode(Stored.self, from: data), stored.version == Self.fileVersion else { return }`——两种失败都是「静默无 overrides」；`saveMeta`（:466-476）没有任何保护地 `try? data.write(to: file, options: .atomic)` 覆盖 `FilePaths.appSupportDir/price-overrides.json`（:114）。文件本身是普通权限、注释里明确允许外部查看/编辑（:36-41）。",
   "failure": "price-overrides.json 被手工编辑坏或被非原子写截断 → 启动后所有自定义/抓取价格消失且卡片无任何提示；用户随后在设置页改任意一条价 → commit 把整份文件覆盖成只剩那一条，其余行永久丢失。",
-  "fix": "解码失败时保留错误（例如 `@Published private(set) var loadError: String?`，在 caption/report 里显示），或把损坏文件改名为 .bak 后再写新文件，至少不静默覆盖。"
+  "fix": "解码失败时保留错误（例如 `@Published private(set) var loadError: String?`，在 caption/report 里显示），或把损坏文件改名为 .bak 后再写新文件，至少不静默覆盖。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): load() quarantines an undecodable price file to .bak and sets loadError (a future-version file is reported but left untouched), so the next commit cannot atomically overwrite the user's only copy."
  },
  {
   "category": "test-gap",
@@ -5443,7 +5473,9 @@
   "evidence": "The GLM vendor declares `slugs: [\"glm-5.3\", \"glm-5.3-flash\", \"glm-5.3-flashx\", \"glm-5.2\", \"glm-5.1\", \"glm-5-turbo\", \"glm-5\"]` (line 65) while `parseGLM` over the shipped fixture emits 26 rows, including `glm-4.7`, `glm-4.5-air`, `glm-z1-flashx` and `glm-ocr`. The consumer is `sourceURL(for:)`: `for vendor in ModelPriceSources.vendors where vendor.slugs.contains(slug) { return vendor.url }` (Sources/ClaudeBar/Views/Shared/ModelPriceCard.swift:322-330). The Aliyun list is likewise 5 slugs against 30 emitted rows, and Kimi's list is 4 against 4 — the two disagree in size, so the list cannot be derived from the parser output either.",
   "failure": "A user adds a hand-typed override for `glm-4.7` → the row shows no 官方定价页 link and no 内置 provenance distinction, so the card's central promise (\"a number the user cannot trace is a number they cannot trust\") fails for the very rows the fetch can verify.",
   "fix": "Drop `slugs` from `Vendor` and match on the parser's own output (`vendor.parse` returns the rows; the card can check membership in `ModelPriceSources.parsedSlugs(vendor)`), or add a fixture-backed assertion in Tests/model-price-source-regressions.py that every emitted slug is covered by its vendor's `slugs` list.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): fixture-backed pin — a new vendor-slugs mode in Tests/model-price-source-regressions.py replays each fixture through the vendor's parser and requires `slugs` to cover every bundled row the page can price, spelled canonically. It caught a real defect: the MiniMax list carried page casing (MiniMax-M3) and matched nothing. The runtime-derivation route was measured infeasible (the card resolves links with no page text at hand)."
  },
  {
   "category": "robustness",
@@ -5454,7 +5486,9 @@
   "summary": "number(_:) 的 String 分支缺少 isFinite 检查（NSNumber 分支有），\"1e999\"/\"inf\" 会以 +inf 通过 usdRate 的 >0 门槛",
   "evidence": ":328-335：`if let value = any as? NSNumber { let double = value.doubleValue; return double.isFinite ? double : nil }` 之后是 `if let text = any as? String { return Double(text) }`——String 路径直接返回，`Double(\"1e999\")` 是 +infinity。下游 `usdRate`（:168-175）只有 `input > 0`（inf 通过）与 `read > 0`，`ModelPricing.Rate` 与 cost 算术（ModelPricing.swift:511-527）会得到 inf；`format`（:702-705）有 isFinite 兜底所以只显示 `$0.00`，但 `Cost.dominant`（:186-189，`cny >= usd`）与 `converted`（:205-211）拿到的是 inf。",
   "failure": "models.dev 某行以字符串给出超大/非有限数值（`\"input\": \"1e999\"`）→ 生成一条 inf 价卡：设置页显示 ¥0.00，而合计与「主数字」判定被 inf 污染（任何正常金额都小于它）。",
-  "fix": "`if let text = any as? String, let value = Double(text), value.isFinite { return value }`，与 NSNumber 分支保持同一门槛。"
+  "fix": "`if let text = any as? String, let value = Double(text), value.isFinite { return value }`，与 NSNumber 分支保持同一门槛。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): the String arm of number(_:) gained the NSNumber arm's isFinite gate; \"1e999\"/\"inf\"/\"nan\" no longer mint an infinite price card. New modelsdev-synthetic case in model-price-source."
  },
  {
   "category": "dead-code",
@@ -5466,7 +5500,9 @@
   "evidence": "`static func == (lhs: Self, rhs: Self) -> Bool { lhs.primary?.currency == rhs.primary?.currency && lhs.primary?.amount == rhs.primary?.amount && ... }` (Sources/ClaudeBar/Utils/ModelPricing.swift:231-238) — every stored property is either a `Bool`, a `String?`, or an optional tuple of `(Currency, Double)`; Swift synthesises `==` for optionals of tuples of Equatables, and `Currency` is `enum Currency: Int, Codable` (line 68) with no custom `==`. Removing the extension changes no behaviour and no test result.",
   "failure": "Not a runtime failure — it is a maintenance hazard: the next added field (e.g. a `conversionRate: Double?`) will be silently omitted from equality unless the author remembers to extend this hand-written function, which is exactly the class of bug the type's own doc comment at lines 217-229 warns about.",
   "fix": "Delete the custom `==` and let the compiler synthesise it; if a field must be excluded from equality, document that at the field rather than in an operator.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Dismissed 2026-10-07 (cluster B) with measurement: on this toolchain a labelled tuple (currency:amount:) is NOT Equatable, so deleting the hand-written `==` fails to compile (\"stored property type '(currency:amount:)?' does not conform to protocol 'Equatable'\"). Kept the hand-written operator and documented the deliberate two-figure comparison plus the add-new-fields-by-hand hazard at both the fields and the operator."
  },
  {
   "category": "dead-code",
@@ -5478,7 +5514,9 @@
   "evidence": "`grep -rn \"rate(for\" Sources/` matches only the declaration (Sources/ClaudeBar/Utils/ModelPricing.swift:489); production code goes through `resolve(_:)` (ModelPriceCatalog.swift:153) or `cost(of:on:)` (ModelPricing.swift:503). `unpricedReason` matches only its declaration and Tests/model-cost-regressions.py:202-209, 320, 336, 346. The wrappers are one line each, so the cost is not behavioural, but the \"only test references it\" distinction matters for anyone deleting: `unpricedCount(of:)` (line 307) and `Checkqueue`-adjacent helpers are in the same boat (only Tests/model-cost-regressions.py:217-231).",
   "failure": "No runtime failure; reported only so the next cleanup pass does not treat these as unreferenced dead code and delete them, and does not treat them as live API and build on them.",
   "fix": "Keep them, but add a `/// Only referenced by the regression harness` note, or have the harness call `resolve(_:)?.rate` directly and delete the wrappers.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): rate(for:)/unpricedReason(_:) documented as test-only (production goes through resolve(_:)/cost(of:on:)); kept because the harness reads both halves of a resolution through them."
  },
  {
   "category": "dead-code",
@@ -5489,7 +5527,9 @@
   "summary": "rate(for:) 与 unpricedReason(_:) 在生产代码里零调用（仅测试引用）；Estimate.pricedModels 只写不读",
   "evidence": "`grep -rn \"rate(for\\|unpricedReason(\" Sources` 只命中定义行本身（ModelPricing.swift:489、493），调用全在 Tests/model-cost-regressions.py:88、137、202-209；`pricedModels` 在 Sources 只有 `var pricedModels = 0`（:295）与两处 `+= 1`（:555、:602），没有任何视图/模型读取，而它的同伴 `unpricedModels` 被 IslandComponents.swift:190 与 unpricedCaption（:316）真正使用（文档 :305 也写明只有回归 harness 读 unpricedCount）。本仓库有先例：4559dd8「删掉无读者的 history(for:)」。",
   "failure": "不产生运行时故障；属于死接口维护成本——改动 ModelPricing 时这两条包装必须同步维护，而它们唯一的读者是测试，删除后测试应直接调 resolve(_:)?.rate / ?.reason。",
-  "fix": "删除 rate(for:)/unpricedReason 并把测试改成 `ModelPricing.resolve(slug)?.rate` / `?.reason`；`pricedModels` 若确认不再展示则一并删除（或加 // test-only 注释并保留）。"
+  "fix": "删除 rate(for:)/unpricedReason 并把测试改成 `ModelPricing.resolve(slug)?.rate` / `?.reason`；`pricedModels` 若确认不再展示则一并删除（或加 // test-only 注释并保留）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster B): Estimate.pricedModels deleted (its only readers were the regression harness and the island preview tool, both updated to count priced lines from `lines`); the field's doc now records that."
  },
  {
   "category": "logic",
@@ -5501,7 +5541,9 @@
   "evidence": "`post` 第一行 `guard AppPreferences.shared.idleNotifyEnabled else { return }`（178）；`notifyNeedsInput`（105-114、117-126）全部经 post；唯一调用点在 NotchIslandController.swift:432-435，即 `canShowStripAlert == false`（岛关、提醒关、或 strip 已 .expanded）时才走的分支；docs/design/10-notch-island.md:186 把 NEEDS_INPUT 的关闭行为单独定义为「不发通知」，与「空闲通知」是两行；AppPreferences.swift:291 `idleNotifyEnabled = … ?? false`。",
   "failure": "默认配置（灵动岛开、提醒开、空闲通知默认关）下，用户展开着 strip 时某个 Claude 会话 park：`alertDeadline` 路径走 `notifyParkedFallback` → `notifyNeedsInput` → post 在 178 行返回，strip 提醒与系统横幅都没有，菜单栏图标读 idle——正是这段代码要防的「静默 park」。",
   "fix": "拆门：`notifyNeedsInput` 走一条不读 idleNotifyEnabled 的发送路径（或改读通知授权状态），`idleNotifyEnabled` 只保留给 `notifyIdle` 家族。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): post() split by Delivery — the parked-session fallback (notifyNeedsInput, both flavors) posts under .always, gated only by the system authorization read non-promptingly (getNotificationSettings: authorized/provisional post, denied/notDetermined log and skip — no prompting API from a background island event); completion banners keep .idlePreference (idleNotifyEnabled). Docs design/10 §5 + the island alert paragraph and design/08's 通知权限被拒 row updated to match. waiting-notify drives the real post: switch-off park still requests, switch-off completion silent, denied skips, provisional posts, undetermined never prompts, identifier reuse."
  },
  {
   "category": "correctness",
@@ -5527,7 +5569,9 @@
   "evidence": "192 行 `UNUserNotificationCenter.current().add(request)` 是单参形式（不带 completion handler），UNError 不会到达任何人；68 行 `center.requestAuthorization(options: [.alert, .sound]) { _, _ in }` 同样忽略 granted 与 error。",
   "failure": "开关开着、系统里通知被关/被撤销时，每条完成与 park 横幅都静默失败——设置页仍显示开关与状态，日志与 UI 都没有任何记录说明横幅为何没出现。当前代价：每次失败一次 XPC 往返 + 0 条错误信息；优化后同一次往返里带错误回到 PermissionCenter 的状态。",
   "fix": "给 add 传 completion handler（或在 Task 里 `try await center.add`）把 error 记录/上报，并让 PermissionCenter 据此刷新 .notifications 的状态；requestAuthorization 的回调同样记录 granted。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): add(request) now takes its completion handler and logs failures via os.Logger(subsystem: com.claudebar.app, category: Notifications); requestAuthorization records granted/denied/error. requestAuthorizationIfNeeded itself unchanged, so build-isolation ordering assertions hold."
  },
  {
   "category": "test-gap",
@@ -5539,7 +5583,9 @@
   "evidence": "Tests/waiting-notify-regressions.py 只 slice `notifyNeedsInput(session:)` 并注入 `func post(...) { posted = … }` 桩；Tests/ 下对 UNUserNotificationCenter 的提及仅存在于注释（waiting-notify-regressions.py:124），没有任何用例 splice `post` 本体或断言 add/标识符行为。",
   "failure": "任何发生在 post 内部的回归（例如 178 行多出一个/改错一个 guard、identifier 不再按会话替换导致通知堆叠）都会让整套回归保持绿色，而用户端表现为横幅不再出现或重复堆积。",
   "fix": "把 post 本体也 splice 进 waiting-notify 夹具（UNUserNotificationCenter 用桩替换），按既定规则断言 park 在「空闲通知」开关两种取值下是否发请求、以及同一 session 的 identifier 是否复用。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): Tests/waiting-notify-regressions.py now splices post/submit/ensureCategory/notifyIdle into the fixture (only UNUserNotificationCenter stubbed), 28 checks."
  },
  {
   "category": "state",
@@ -5551,7 +5597,9 @@
   "evidence": "237 行 `next[.screenRecording] = CGPreflightScreenCaptureAccess() ? .granted : .notDetermined`；PermissionsSection.swift:56 的提示与 84 行的「打开系统设置」按钮都以 `status == .denied` / `.granted` 为前提，所以被拒后行里只有「未授权」四个字、没有按钮也没有说明；同时 202 行 `if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }` 会在每次把开关打开时再发一次请求。对照其它权限（notifications / bluetooth / location）都有三态映射。",
   "failure": "用户在系统弹窗里点了不允许之后：设置页显示「未授权」而不是「已拒绝」，既看不到「请在系统设置的屏幕录制中允许」的提示，也点不到跳转按钮；只有实际按 ⌘⇧A 后从 `ScreenshotHotKey.lastError` 才能发现失败。",
   "fix": "在「用户曾开启过该功能且 preflight 为 false」时映射为 .denied（或用 ScreenshotHotKey.lastError 驱动 .denied），让现有提示与按钮分支可达。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): pure static PermissionCenter.screenRecordingStatus(preflight:userEnabled:promptsForSystemPermissions:) — granted / denied (switch on + no preflight + prompting build) / notDetermined; refreshStatus routes through it; dev build cannot show a false denied. Pinned by new Tests/permission-status-regressions.py."
  },
  {
   "category": "robustness",
@@ -5563,7 +5611,9 @@
   "evidence": "13-16 行 `defer { try? handle.close(); try? FileManager.default.removeItem(at: staged) }`；正文顺序是 17 `try handle.write(contentsOf: data)` → 18 `try handle.synchronize()` → 19 `guard rename(staged.path, destination.path) == 0`；close 在 rename 之后才执行，失败静默。对照同仓库兄弟实现 ConnectorManager.secureReplace（1039-1046）刻意先 `try handle.synchronize()` + `try handle.close()` 再 `rename`，注释写明「Flush before the rename」。",
   "failure": "close() 报错（元数据写失败、ENOSPC、EIO）时 write 仍返回成功：settings.json / providers.json / 迁移清单这些带凭据的文件被告知已落盘，实际字节可能只停在 page cache 甚至未完整提交——调用方据此继续写下一步状态。当前代价：一次 close 的系统调用；优化后代价相同，只是失败可见。",
   "fix": "在 18 行后、rename 之前插入 `try handle.close()`（defer 里的 `try?` 对已关闭句柄自然变成 no-op）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): `try handle.close()` before rename in PrivateFileWriter.write; the defer's try? on an already-closed handle is a measured no-op."
  },
  {
   "category": "robustness",
@@ -5575,7 +5625,9 @@
   "evidence": "Lines 522-529 create `payloads` with only `capture_id, request_json, rewritten_json, response_json, raw_sse`, and line 531 issues `sqlite3_exec(db, \"ALTER TABLE payloads ADD COLUMN request_headers TEXT DEFAULT ''\", nil, nil, nil)` with no callback and no return-code check. On any database where the column already exists (every database this build creates, since the CREATE never includes it and the ALTER supplies it on first open) the statement is a guaranteed \"duplicate column name\" failure executed once per process; note that the sibling migration on line 536 (`ALTER TABLE captures ADD COLUMN cache_write_tokens INTEGER`) has the same shape but at least has the column in its CREATE path only on the legacy side. Conversely, if the ALTER ever fails for a reason that matters (a read-only or locked database), `requestHeaders` silently reads as \"\" through `COALESCE(p.request_headers, '')` (398/407) and the inspector's 请求头 section disappears with no signal.",
   "failure": "Routine case: one failed prepare per `connection()` open, invisible. Real case: on a DB that predates the column and cannot be altered, the capture inspector loses the request headers for every row and nothing reports it (the `[truncated]` marker bug fixed by adding an explicit `requestTruncated` flag is the same class).",
   "fix": "Add `request_headers TEXT DEFAULT ''` to the `payloads` CREATE TABLE and keep the ALTER only as a best-effort legacy step, or gate the ALTER on `PRAGMA table_info(payloads)` so the common case issues no statement and the failure case can be logged.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): payloads CREATE TABLE carries request_headers; both legacy ALTERs gated on sqlite3_table_column_metadata (hasColumn) and their return codes logged."
  },
  {
   "category": "dead-code",
@@ -5615,7 +5667,9 @@
   "summary": "所有抓包状态写入都丢弃 sqlite3_step 的返回码，写入失败静默、库与 UI 分叉",
   "evidence": "832-846: `guard sqlite3_prepare_v2(...) == SQLITE_OK else { return }` 之后 845 直接 `sqlite3_step(stmt)`，返回值与 sqlite3_errmsg 都不看；同一个文件 691-692 的注释已经承认这类丢弃的代价（\"execRaw discards the return code, so leaving the pragma inside its own defer scope made every one of these a silent no-op\"），但只修了 VACUUM 那一处。exec 承载的是 finish 的状态/用量 UPDATE、DELETE、recoverOrphans 等全部状态机写入。",
   "failure": "磁盘满、SQLite 文件被替换为只读、或 2 秒 busy_timeout 用尽（500 行有 2000ms 超时）时，一次 `UPDATE captures SET state=...` 失败：内存里的 catalog.records 已经是 done，库里仍是 pending/streaming，用户看到行永远「实时」且中断按钮无效；下次启动 recoverOrphans 才把它改成 aborted/interrupted，用量与错误信息丢失。",
-  "fix": "`let rc = sqlite3_step(stmt); if rc != SQLITE_DONE { /* os_log + 可选：把该 id 标为持久化失败 */ }`，至少把返回值用于诊断；不必在此改状态机。"
+  "fix": "`let rc = sqlite3_step(stmt); if rc != SQLITE_DONE { /* os_log + 可选：把该 id 标为持久化失败 */ }`，至少把返回值用于诊断；不必在此改状态机。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): finish/clearAll/update now read exec()'s Bool and log via os.Logger(category: Capture)."
  },
  {
   "category": "test-gap",
@@ -5627,7 +5681,9 @@
   "summary": "cancel/attach 竞态是文件里唯一被文档强调的不变量，但没有任何回归",
   "evidence": "44-61 行注释写明「the cancelled check happens *inside* the lock — read outside it, an attach that lost the race by nanoseconds would store a hook on a handle whose cancel() already copied the two hooks and unlocked, leaving the abort client alive」，随后才是 `private func runOrStore(_ immediate: @escaping () -> Void, store: () -> Void)` 的锁内判断。grep 全仓 Tests/ 对 `ProxyInflight`、`CaptureTap`、`attachAbort`、`attachUpstreamAbort` 命中 0 条（Tools/render-mainwindow-preview.py:469-471 只有 `final class ProxyInflight { static let shared = ...; func cancel(captureID: Int64) {} }` 空壳替身）。",
   "failure": "把 cancelled 判断挪到锁外（或把 immediate() 收进锁内）不会有任何测试失败，而真实时序下表现为：中断按钮把 capture 标成已中断、`isInterrupted` 变 true，但客户端连接从未被断开（abort 被存进了已经 cancel 过的 handle），Claude Code/Codex 那侧继续等一个永远不会结束的流。",
-  "fix": "加一个不启应用的 Swift 切片回归，直接用 Handle 跑两种顺序并断言：cancel→attachAbort 时 abort 恰被立刻调用一次；attachAbort→cancel 时 abort 恰被调用一次且 `cancel()` 第二次返回 false；混入 detach 后 attach 的 hook 不再被执行。"
+  "fix": "加一个不启应用的 Swift 切片回归，直接用 Handle 跑两种顺序并断言：cancel→attachAbort 时 abort 恰被立刻调用一次；attachAbort→cancel 时 abort 恰被调用一次且 `cancel()` 第二次返回 false；混入 detach 后 attach 的 hook 不再被执行。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): new Tests/proxy-inflight-regressions.py (216 checks) — cancel/attach order, idempotence, double-cancel, late attach, detach, re-opened id, and a 200-iteration threaded race asserting abort runs exactly once. Test-gap only; ProxyInflight.swift unchanged."
  },
  {
   "category": "logic",
@@ -5639,7 +5695,9 @@
   "evidence": "256 行 `guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }`，sqlite3_step 的返回值也未检查；返回后 record() 继续执行 89-91 行 `DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didChange, object: nil) }` → ProviderStore.swift:1255-1260 的观察者调 `refreshUsage(rescan: false)`。",
   "failure": "磁盘满 / 库被外部进程锁定导致 prepare 或 step 失败时，请求的 token 静默丢失（无日志、无 UI 提示），同时每次失败仍触发一轮约 14 次全表扫描的用量刷新——数据没变，代价照付。",
   "fix": "让 upsertSQL 返回 Bool（step 结果 == SQLITE_DONE），record 只在成功时 post didChange；失败路径记一条日志（或置一个 lastError）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster C): upsertSQL returns Bool; record() posts didChange only on success and logs otherwise."
  },
  {
   "category": "perf-cpu",
@@ -5843,7 +5901,9 @@
   "summary": "The only regression on this function pins the inner escape fragment, not the enclosing quotes, so a mutation that drops the quotes still passes while the security property is gone.",
   "evidence": "Tests/session-migration-regressions.py:455 asserts `precondition(ShellQuote.single(\"a'$(touch NEVER)\").contains(\"'\\\\''\"))`. A hypothetical `single` that returns `value.replacingOccurrences(of: \"'\", with: \"'\\\\''\")` (no outer quotes) still contains `'\\''` and passes, yet every path handed to the installers' `sh -c` scripts becomes word-split and `$`/backtick live again. The same test does build the real `MigrationCommand.shell` (line 456) and the installers are compiled for real in Tests/build-isolation-regressions.py:25, but neither round-trips a quote-bearing value through a shell.",
   "failure": "A refactor that removes or narrows the enclosing quoting passes the suite, and the two privileged installers (BatteryHelperInstaller.swift:89-100, FanHelperInstaller.swift:91-103) would then execute a path such as `/Library/PrivilegedHelperTools/$(...)` with administrator privileges.",
-  "fix": "Add two assertions to the existing test: `precondition(ShellQuote.single(\"a\") == \"'a'\")` and a round trip through `/bin/sh -c \"printf %s \" + ShellQuote.single(value)` for a value containing a quote, a `$` and a backtick, comparing stdout to the raw value."
+  "fix": "Add two assertions to the existing test: `precondition(ShellQuote.single(\"a\") == \"'a'\")` and a round trip through `/bin/sh -c \"printf %s \" + ShellQuote.single(value)` for a value containing a quote, a `$` and a backtick, comparing stdout to the raw value.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): session-migration pins ShellQuote.single for a hostile value plus a real /bin/sh round trip; mutation (dropping quotes) fails the suite."
  },
  {
   "category": "perf-cpu",
@@ -5855,7 +5915,9 @@
   "summary": "Each of the ~288 scan samples computes the full sun+moon snapshot to read only the sun's altitude, roughly doubling the transcendental work of the one uncached path in this file.",
   "evidence": "Line 51: `snapshot(date: instant, ...).sun.altitude + 0.833`; `snapshot` (84-105) computes lunarMean/lunarAnomaly/lunarDistance, the lunar longitude and latitude, a second `position(...)` (and thereby a second `horizon()`), plus the phase, all discarded by the caller. Per sample that is about 6 extra transcendental calls over a sun-only evaluation; the 300 s grid plus a bisection per crossing means roughly 300 full snapshots per call. Amortization is real: the key includes the day start, so the path runs once per (day, zone, latitude, longitude) — first render of a day, a location/zone change, or the day boundary while the canvas is up — and `GreetingCard.trackColors` rebuilds 25 scenes on its own key change (GreetingCard.swift:1063-1078) without touching solarEvents. So the current cost is a one-off main-actor spike on those events, not per-frame work; it is the largest single computation in this otherwise cached file.",
   "failure": "No user-visible failure today — the observable effect is a ~2x longer main-actor stall on the first sun-path render after a coordinate or zone change and at local midnight, on the same thread that rebuilds the greeting card body.",
-  "fix": "Factor a sun-only helper (`sunAltitude(date:latitude:longitude:)` using lines 85-88 and one `horizon()` call) and use it inside the `altitude` closure; `snapshot` keeps its current shape for the renderer."
+  "fix": "Factor a sun-only helper (`sunAltitude(date:latitude:longitude:)` using lines 85-88 and one `horizon()` call) and use it inside the `altitude` closure; `snapshot` keeps its current shape for the renderer.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): the solar-events scan now calls a sun-only `sunAltitude(date:latitude:longitude:)` (sun terms + one `horizon()` call) instead of building the full sun+moon `Snapshot` per sample; `snapshot` unchanged. Differential vs HEAD over 5,000 instants: max altitude delta 0.0; 60 day/zone solarEvents combos identical."
  },
  {
   "category": "dead-code",
@@ -5895,7 +5957,9 @@
   "evidence": "UsageAnalysis.swift:67-69 `let parser = DateFormatter(); parser.locale = Locale(identifier: \"en_US_POSIX\"); parser.timeZone = calendar.timeZone; parser.dateFormat = \"yyyy-MM-dd\"` inside `init`. Sibling paths do the opposite: UsageStats.swift:51-63 keeps a lock-guarded `[String: DateFormatter]` keyed by pattern + zone with the note that uncached formatters \"allocated on every layout pass of the densest views of the app\", and UsageIndex.swift:1259-1266 builds day keys from calendar components with \"no DateFormatter on the hot path\". Nothing caches this one: UsageAnalyticsSection rebuilds it whenever `.task(id: Request(...))` fires, and that id contains the whole `days` array (UsageAnalytics.swift:51-54).",
   "failure": "Each republish of the selected window (each debounced FSEvents burst that changes today's totals while the usage page is open) pays an ICU formatter construction plus its calendar setup — tens of µs — even when `days` is empty and the parse loop never runs. Small, but pure per-tick waste in a value rebuilt far more often than it is read.",
   "fix": "Hoist to `private static let dayParser` (pattern and locale are fixed) and set `timeZone` before use, or mirror UsageStats.formatter's zone-keyed cache; alternatively parse via `calendar.date(from: DateComponents(...))` the way UsageIndex.dayString does in reverse.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): one `private static let dayParser` (fixed pattern/locale) hoisted to UsageAnalysis with its zone set under a lock before use; the per-build DateFormatter construction is gone."
  },
  {
   "category": "dead-code",
@@ -5907,7 +5971,9 @@
   "evidence": "UsageAnalysis.swift:13 `var hitRate: Double? { prompt > 0 ? Double(hit) / Double(prompt) : nil }`. Grep for `.hitRate` across Sources returns only the struct-level property (UsageAnalytics.swift:94, :96, :188), which uses the `input + hit + write` denominator of :30 — a second, differently-defined hit-rate formula one level down. `Bucket.prompt` is assigned at :76, :87, :102, :107 and read nowhere except :13; views read only `daily.count`/`daily.isEmpty`/`\\.total` and `buckets.map { $0.total }`.",
   "failure": "No runtime failure — dead weight plus a duplicated ratio definition: every day bucket carries an unused `prompt` Int and an unused computed rate whose denominator can drift from the one the UI shows.",
   "fix": "Delete `hitRate` and `prompt` from `Bucket` and the `prompt` component of the records tuple (:70-77, :85-89, :97-107), keeping total/hit; or unify on one shared hit-rate helper so the two definitions cannot disagree.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): `Bucket.prompt` and `Bucket.hitRate` deleted (records/grouped tuples reduced to total/hit). The struct-level `UsageAnalysis.prompt`/`hitRate` were kept — `UsageAnalytics.swift:94/188` read them (the evidence grep only covered `.hitRate`, the field one level down)."
  },
  {
   "category": "perf-cpu",
@@ -5933,7 +5999,9 @@
   "evidence": "Lines 764–766: `if let prior, prior.mtime == file.mtime, prior.size == file.size, prior.offset <= file.size { return }`; only afterwards, line 769, is `currentHash = headHash(file.path, length: 256)` computed. That hash is therefore only ever consulted to *permit* the Codex append path (line 774-775), never to reject a same-size/same-mtime rewrite of a Claude transcript — whose rollup contract is full-replace on re-parse (line 829-835). The same blind spot exists in the session-header cache at line 399 (`header?.mtime != meta.mtime || header?.size != meta.size`). Tests never exercise it: Tests/usage-index-regressions.py rewrites files either to a different size (header-only body) or through a move to a new path.",
   "failure": "A transcript restored or synced back with its original mtime and an equal byte count after its content changed (e.g. the same message ids with different usage, or a file replaced by a same-length edit) → the pass skips it → Usage page / island keep the previous file's tokens indefinitely (no FSEvents pass can ever fix it, since every pass takes the same early return).",
   "fix": "Move the head-hash read before the early return and require `storedHash == 0 || currentHash == storedHash` in the skip condition (one 256-byte read per candidate per pass), or drop `mtime`/`size` equality to a prefix check that also compares the stored hash.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): the unchanged-file fast path now requires `storedHash == 0 || headHash(path, length: 256) == storedHash` before returning, so a restore/sync that preserves mtime+size is re-read; pre-column rows keep metadata-only behaviour until their next rewrite. Regression at Tests/usage-index-regressions.py (same-mtime same-size rewrite with an exact nanosecond stamp via stat/utimensat); mirror mutation fails it."
  },
  {
   "category": "robustness",
@@ -5959,7 +6027,9 @@
   "evidence": "UsageIndex.swift:1263–1266 `Calendar.current.dateComponents([.year,.month,.day])` + `String(format: \"%04d-%02d-%02d\", ...)`; ModelPricing.swift:481–484 is the same code, documented as 'the day-key format both usage rollups store (`UsageIndex`, `ProxyUsageStore`)'. The proxy rollup already delegates (`ProxyUsageStore.record` line 66 calls `ModelPricing.dayKey(date)`), and ModelPricing.swift:387/479 explicitly assert the two key formats are comparable as strings.",
   "failure": "No live divergence today, but a calendar/timezone fix applied to one of the two (e.g. passing an explicit calendar or handling the `year ?? 0` fallback) leaves the other emitting a different key; rows written by the proxy would then fall outside `day BETWEEN ?1 AND ?2` bounds derived from `dayString`, silently splitting a day's totals.",
   "fix": "Delete `dayString` and call `ModelPricing.dayKey(_:)` in `dayBounds`/`parseCodex`/`parseClaude` (or move one implementation into a shared helper both use).",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): `dayString` deleted from UsageIndex; dayBounds/parseCodex/parseClaude call `ModelPricing.dayKey(_:)`; Tests/usage-analysis-regressions.py slices `ModelPricing.dayKey` instead of the deleted copy."
  },
  {
   "category": "perf-io",
@@ -5985,7 +6055,9 @@
   "evidence": "`grep -rn 'hasCachedData\\|needsInitialBuild' Tests Tools Makefile` → no matches (the flags are touched only indirectly by `reloadPersistence`/`updateIndex` in Tests/usage-index-regressions.py). Consumers are ProviderStore.swift:1025 (`initialLoading = !UsageIndex.hasCachedData && UsageIndex.needsInitialBuild`) feeding `usageLoading`, which UsageView.swift:139–140 turns into the spinner opacity and UsageView.swift:248/283 into the '暂无用量' empty state. `hasCachedData` runs under `flagLock` and caches `_hasCachedData` (lines 226–243), while `updateIndex` sets it `true` unconditionally at line 278 — including for an empty corpus and for a pass where `connect` fell back to no rows.",
   "failure": "A regression in the flag lifecycle (e.g. `_hasCachedData` cached before the first build, or `_initialBuildDone` never reset after a backend switch) would leave the usage page showing the spinner (or the empty state) forever; no test would fail, because nothing asserts either flag.",
   "fix": "Add a case to Tests/usage-index-regressions.py that asserts `needsInitialBuild` is true before the first `updateIndex()`, false after, and that `hasCachedData` flips false→true across the first pass on an empty corpus, for both backends.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): Tests/usage-index-regressions.py gained the flag-lifecycle case — fresh process needs the build with no rows; a completed pass ends it and reports cached; a reloaded process probes SQLite (false on an empty index, true once a rollout is booked) while still needing a fresh build. Mirror mutation (drop the reloadPersistence resets) fails it."
  },
  {
   "category": "correctness",
@@ -6007,7 +6079,9 @@
   "summary": "成本合并的“缺失快照累加 recordedNames 全量 tokensByName”分支只在测试的 missing-costs 断言里出现，取数逻辑与 costs 的键口径（canonical vs 原始名）缺乏交叉验证",
   "evidence": "63 行 `let lines = row.recordedNames.sorted().compactMap { costs[$0] }` 用**原始记录名**查 costs；75-79 行对 `costs[name] == nil` 的名字按 `tokensByName[name] ?? 0` 计未计价。ProviderStore.swift:1134-1138 的 costs 由 `ModelPricing.estimate(days:)` 的 line.model 建键——ModelPricing.estimate(days:) 合并键是**原始 slug**（tokensByModel[usage.model]），因此双方口径一致；但 UsageModelInventory.Row.id 用 canonical，同一 canonical 的两个原始名会各查一次 costs，可能一条命中一条未命中（例如 `gpt-5.4` 与 `gpt-5.4-20250101` 都有价时正常，只有别名无价时 missing 会按名字部分累加）。",
   "failure": "输入：别名 slug 在价目表里无条目、主 slug 有条目。该行 costLine.unpriced 会被置为 .unknownSlug 且 missing 只加别名那部分 tokens，UI 显示“N Token 未计价”偏小；目前只有 Tests/inventory-performance-regressions.py:113-115 的 `costs: [:]` 全空场景断言 `unpricedTokens == 120`，没有“部分命中”场景。",
-  "fix": "补一条 costs 只含主 slug 的正向断言（别名部分应计入 unpricedTokens），或在 75 行的循环里改用 canonical 归一后再查 costs，与 lines 的口径统一。"
+  "fix": "补一条 costs 只含主 slug 的正向断言（别名部分应计入 unpricedTokens），或在 75 行的循环里改用 canonical 归一后再查 costs，与 lines 的口径统一。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): Tests/inventory-performance-regressions.py gained the partial-coverage case — `costs` holding only the canonical key must cost that alias and leave the other name's tokens in `unpricedTokens` with `.unknownSlug`. The frozen usage-density oracle was reverted after a first attempt (editing it kills frame-work-performance's byte parity)."
  },
  {
   "category": "duplication",
@@ -6017,7 +6091,9 @@
   "summary": "formatTokens(_:style:) 只被 `formatTokens(_:)` 自己调用（Sources 与 Widget 均无调用方），而 Widget 保有一份已漂移风险的私有镜像；模型行上的注释“Widget and previews pass their own style”已不成立",
   "evidence": "128 行签名，124 行是唯一 Sources 调用点；`grep -rn \"formatTokens(.*style:\" Sources` 只命中 WidgetViews.swift:165 的同名**私有方法**定义（WidgetViews.swift:608-620，注释自称 mirrors UsageStats.formatTokens）。Tools/render-popup-preview.py:278 提到 style: .chinese，但那是它自己拼接的桩不是本文件。Widget 与主应用的真实共享面仅剩 WidgetSnapshot.unitStyle 字符串（WidgetSnapshot.swift:19）。",
   "failure": "两份实现各自演进时不会有编译或测试报错：Tests/widget-tint-regressions.py 只比 Theme.barColor 与颜色索引，不碰数值格式。改动主应用阈值（例如把 万 的界从 10_000 调走）会让 Widget 数字与主窗口不一致且无回归能发现。",
-  "fix": "把 formatTokens(_:style:) 通过 Sources/Shared/BuildChannel.swift 同级的共享文件暴露给 widget 目标（build.sh 已经给 widget 编 BuildChannel.swift 与 WidgetSnapshot 符号链接，加一个纯函数文件即可），删掉 WidgetViews.swift:608-620 的私有拷贝；previews 因已用 `.chinese` 可直接改用共享版。"
+  "fix": "把 formatTokens(_:style:) 通过 Sources/Shared/BuildChannel.swift 同级的共享文件暴露给 widget 目标（build.sh 已经给 widget 编 BuildChannel.swift 与 WidgetSnapshot 符号链接，加一个纯函数文件即可），删掉 WidgetViews.swift:608-620 的私有拷贝；previews 因已用 `.chinese` 可直接改用共享版。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): new `Sources/ClaudeBar/Utils/TokenMagnitude.swift` + `Sources/Widget/TokenMagnitude.swift` symlink (same shape as WidgetSnapshot.swift); `UsageStats.formatTokens(_:style:)` delegates to it and the widget's 13-line private copy is deleted. Tests/widget-tint-regressions.py pins the delegation, the symlink, the widget call site and all 14 magnitude boundaries; mutation (10_000→20_000) fails it."
  },
  {
   "category": "robustness",
@@ -6027,7 +6103,9 @@
   "summary": "labelFormatters 缓存按 zone 为键却从不清理：每次 TimeZone.current.identifier 变化（旅行、DST 规则更新、系统时区自动切换）都会永久新增一份 DateFormatter，旧时区条目连同其本地化数据常驻进程",
   "evidence": "51-70 行：`private static var labelFormatters: [String: DateFormatter] = [:]`，`let key = format + \"\\u{1}\" + zone`，命中才复用，无淘汰分支。调用点 8 处（UsageHeatmap.swift:134/193、VpnTopChrome 229/231、IslandComponents 543、ExchangeRate 106、CursorLedgerStore 179、label/compactLabel 内部），zones 数量等于用户旅程中出现的时区数。",
   "failure": "一台经常跨时区的笔记本（机场 Wi-Fi 自动切到当地时间）一天可能产生 2-4 个 zone 键；每新增一个 zone 就多 8 个 DateFormatter（每个自带 ICU 格式与 locale 数据），全部活到进程结束。属于缓慢膨胀而非硬错误；命中路径本身是 O(1) 锁内查表，正常。",
-  "fix": "在插入新 key 时若 `labelFormatters.count` 超过一个小上限（例如 4 个 zone × patterns）就清掉非当前 zone 的条目，即 `labelFormatters = labelFormatters.filter { $0.key.hasSuffix(zone) }`。"
+  "fix": "在插入新 key 时若 `labelFormatters.count` 超过一个小上限（例如 4 个 zone × patterns）就清掉非当前 zone 的条目，即 `labelFormatters = labelFormatters.filter { $0.key.hasSuffix(zone) }`。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster D): `labelFormatters` sweeps to the current zone once it reaches 32 entries, so zone churn no longer keeps every zone's formatters (and their localized data) resident for the process lifetime."
  },
  {
   "category": "perf-cpu",
@@ -6037,7 +6115,8 @@
   "summary": "formatter(_:) 每次调用都要取一次 TimeZone.current.identifier（进程级环境读 + NSString 构造），而它被 body 级视图在每次 layout 调用",
   "evidence": "56-58 行 `let zone = TimeZone.current.identifier; let key = format + \"\\u{1}\" + zone`。UsageHeatmap.swift:193 `helpText` 注释自述“runs once per strip cell on every render”（7 格 × 每帧/每次 hover 变化），UsageView.swift:105 也从 body 调 label(for:)。`TimeZone.current` 是 Foundation 的进程缓存读，但 `.identifier` 会构造 String。",
   "failure": "一次展开 7 个 cell 的热力图 hover 提示刷新 = 7 次 identifier 取用 + 7 次加锁查表；量级小（微秒级），但它发生在滚动/悬停路径上，且与 5c45f70 修复时把 zone 塞进 key 的动机（正确性）无关，可以在不改语义的前提下省掉。",
-  "fix": "把当前 zone 缓存在一个按调用计时/通知失效的静态变量里（如启动时读一次 + NSLocale/locale 变化通知里刷新），或在调用点缓存该 zone 字符串；若嫌复杂可以只把 `label(for:)` 的调用改成先取一次 `formatter` 再复用（UsageView 已这么做）。"
+  "fix": "把当前 zone 缓存在一个按调用计时/通知失效的静态变量里（如启动时读一次 + NSLocale/locale 变化通知里刷新），或在调用点缓存该 zone 字符串；若嫌复杂可以只把 `label(for:)` 的调用改成先取一次 `formatter` 再复用（UsageView 已这么做）。",
+  "recheck_note": "Measured 2026-10-07 (cluster D), left open deliberately: `TimeZone.current.identifier` is ~36 ns on this machine and the string-key lookup already dominates (`formatter(_:)` end-to-end ~279 ns of a ~1 µs format), so a cached-zone static would add concurrent-state risk for a sub-noise gain on the path that dominates the total. Callers that format in a loop already hoist the formatter (as UsageView does)."
  },
  {
   "category": "dead-code",
@@ -6049,7 +6128,9 @@
   "summary": "ensureVpnControllerSecret() 的 `isEmpty` 分支不可达：vpnDefaults() 在 AppPreferences.init() 内就已生成并持久化非空 secret，之后 AppPreferences.shared 才可见。",
   "evidence": "VPNPreferences.swift:14-21 `if let s = ... , !s.isEmpty { return s }; let generated = Self.makeVpnControllerSecret(); UserDefaults.standard.set(generated, ...)`，位于 init()（AppPreferences.swift:318-324 读取该字典给属性赋值）；唯一调用点 VpnManager.swift:513 在 shared 初始化完成之后；grep 显示没有任何 UI/其他代码会把 vpnControllerSecret 清空。",
   "failure": "无观测量后果，但该函数与调用点是死路径，会给「secret 可能为空、这里兜底」的错觉；若将来 secret 改由其他来源（如导入配置）注入空值，这段兜底仍不会生效（它只在 AppPreferences.shared 属性为空时生效，而那时 vpnDefaults 已执行过）。",
-  "fix": "删除 makeVpnControllerSecret 之外的 ensureVpnControllerSecret 与 VpnManager.swift:513 调用（生成逻辑留在 vpnDefaults 一处），或反过来只在 ensure 处生成、vpnDefaults 不写盘。"
+  "fix": "删除 makeVpnControllerSecret 之外的 ensureVpnControllerSecret 与 VpnManager.swift:513 调用（生成逻辑留在 vpnDefaults 一处），或反过来只在 ensure 处生成、vpnDefaults 不写盘。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): unreachable ensureVpnControllerSecret() and its startCore call deleted; generation stays in vpnDefaults()."
  },
  {
   "category": "perf-cpu",
@@ -6061,7 +6142,9 @@
   "summary": "每次 /connections 轮询都无条件写 proxiedTraffic（@Published）与 trafficByHost，字节没变也发布；与同仓 VpnLiveRates.applyTotals 的相等守卫相悖。",
   "evidence": "第 552-554 行 `trafficAccumulator.sample(next) / proxiedTraffic = trafficAccumulator.totals / trafficByHost = trafficAccumulator.byHost`，没有相等判断（第 555 行的 `if connections != next` 只保护了 connections/connectionRevision）。调用方 VpnManager.swift:1127-1133 每 2 秒（有窗口）/10 秒（无窗口）调一次。对照 VpnLiveRates.swift:60 `guard next != traffic else { return }`；VpnLiveRates.swift:91-92 注释明确「@Published 写会 fire objectWillChange whether or not the value changed (measured)」。VpnDomainLogSection.swift:101-103 `.onReceive(log.$proxiedTraffic)` 收到即 `proxiedTraffic = value`。",
   "failure": "内核空闲（只有 keep-alive 连接）时，每 2 秒仍触发一次 $proxiedTraffic 发布 → 汇总模式的 section 每 2 秒写一次 @State 并重跑 body（可见约 15-20 行 + 表头），画面没有任何变化；同时 trafficByHost 因 accumulator 与 published 两份强引用，在下次 sample 时整字典 COW 拷贝（N 个域名，N 可达数百）。",
-  "fix": "照 VpnLiveRates.applyTotals 的模式加相等守卫：`let totals = trafficAccumulator.totals; if totals != proxiedTraffic { proxiedTraffic = totals }`，byHost 同样先比较（VpnDomainTraffic 已 Equatable）。"
+  "fix": "照 VpnLiveRates.applyTotals 的模式加相等守卫：`let totals = trafficAccumulator.totals; if totals != proxiedTraffic { proxiedTraffic = totals }`，byHost 同样先比较（VpnDomainTraffic 已 Equatable）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): applyConnections guards totals/byHost equality before the connections guard; regression pins identical-snapshot silence, byte-move republish, close-only change."
  },
  {
   "category": "duplication",
@@ -6073,7 +6156,9 @@
   "summary": "/connections 的 route 判定与 VpnDomainFeed.route(outbound:) 是两份实现且已经漂移：裸适配器名 `🎯 Direct` 在 parser 里判 direct，在 snapshot 里判 proxied；且该分支在 Tests/ 下零覆盖。",
   "evidence": "第 540-541 行 `let route: VpnDomainRoute = chains.contains(where: { $0.uppercased().hasPrefix(\"REJECT\") }) ? .reject : (chains.contains(where: { $0.uppercased() == \"DIRECT\" }) ? .direct : .proxied)`；对照 VpnDomainFeed.route 第 426-435 行的括号优先 + 裸名末词规则（第 420 行注释承认内建直连就写作 `🎯 Direct`）。grep `chains`/`metadata`/`updateConnections` 在 Tests/ 下无任何命中——Tests/vpn-domain-log-regressions.py:397-401 是直接构造 VpnDomainConnection 字面量，JSON→模型这段从不经过回归。",
   "failure": "若 mihomo 对直连连接给出的 chains 只含 `[\"🎯 Direct\"]`（feed 注释承认这个名字存在），snapshot 里 `== \"DIRECT\"` 不成立 → 实时连接页把直连显示成「已代理」，正是该文件开头声明绝不能犯的错。confidence low：chains 的确切内容是外部进程契约，本机没有可断言的样本。",
-  "fix": "让 updateConnections 复用 `VpnDomainFeed.route(outbound: chains.last ?? \"\")`（单一判定入口），并补一条用真实 /connections JSON（含 chains/metadata/destinationIP/processPath）驱动 updateConnections 的回归，覆盖 direct/reject/裸名三种形状。"
+  "fix": "让 updateConnections 复用 `VpnDomainFeed.route(outbound: chains.last ?? \"\")`（单一判定入口），并补一条用真实 /connections JSON（含 chains/metadata/destinationIP/processPath）驱动 updateConnections 的回归，覆盖 direct/reject/裸名三种形状。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): updateConnections/preparedConnections reuse VpnDomainFeed.route(outbound: chunks[0]) — innermost adapter decides (chains.first), pinned against real /connections shapes; reverting fails the suite."
  },
  {
   "category": "energy",
@@ -6099,7 +6184,9 @@
   "summary": "parse 的第三个分支只给 rule 赋值、不给 outbound 赋值，紧接着的 guard 必然把该行丢弃——这行 rule 赋值是死代码。",
   "evidence": "第 343-347 行 `} else if let m = routing.range(of: \" match \", options: .caseInsensitive) { rule = String(routing[m.upperBound...]).trimmingCharacters(in: .whitespaces) }`；outbound 只在第 326-341 行的两个分支被赋值（初始为空串第 324 行），第 348 行 `guard !outbound.isEmpty else { return nil }`。",
   "failure": "一条无 `using`、无括号但含 `match` 的行（注释设想的新形状）：解析恒为 nil，rule 文本永远不可达，每行还白付一次 String 分配 + trim；副作用是维护者以为该形状被支持。",
-  "fix": "删掉该分支（把「无 using 无括号即丢弃」的说明留在 guard 上），若要支持则需从规则文本之后的剩余部分取 outbound，而不是只写 rule。"
+  "fix": "删掉该分支（把「无 using 无括号即丢弃」的说明留在 guard 上），若要支持则需从规则文本之后的剩余部分取 outbound，而不是只写 rule。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): dead ' match ' else-if branch removed from VpnDomainLog."
  },
  {
   "category": "dead-code",
@@ -6111,7 +6198,9 @@
   "summary": "VpnDomainRoute 的 CaseIterable / Identifiable conformance 无人使用：没有 allCases 遍历，也没有把该枚举放进 ForEach。",
   "evidence": "`grep -rn \"VpnDomainRoute\\.\" Sources Tests` 无命中（无 .allCases/.id 用法）；唯一的枚举遍历是 VpnDomainLogSection.swift:188 `ForEach(RouteFilter.allCases)`（视图自己的 RouteFilter）；counts 只是 `[VpnDomainRoute: Int]` 字典，键不需要 Identifiable。",
   "failure": "纯冗余：无行为后果。",
-  "fix": "去掉 `CaseIterable, Identifiable` 与 `var id`，保留 String 原始值即可。"
+  "fix": "去掉 `CaseIterable, Identifiable` 与 `var id`，保留 String 原始值即可。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): VpnDomainRoute reduced to String raw value; CaseIterable/Identifiable/id removed (no readers)."
  },
  {
   "category": "test-gap",
@@ -6123,7 +6212,9 @@
   "summary": "VpnLiveRates 的三条关键分支（0.25s 节流、等值样本仍记槽、全零窗口冻结）在 Tests/ 下零覆盖",
   "evidence": "`grep -rln 'VpnLiveRates|speedHistory|applyStream|applyTotals' Tests/` 无任何命中（Tests 目录全部 .py 都搜过）；引用 VpnManager.swift 的测试只有 vpn-format-regressions.py（只切出 `enum VpnFormat` 一段）、vpn-domain-log-regressions.py（只断言 `VpnDomainLog.shared.ingest`/`resetCarry` 接线）、build-isolation-regressions.py（只断言 startCore 里 guard 顺序）。即 79-105 行的 flush 分支、110-113 行的 `windowIsAllFlat`、35-44 行的 reset 全部没有回归。",
   "failure": "该文件把“等值样本也要 append（否则图表把静默画成一步台阶）”与“整窗全零则停止 append（否则空闲时仍 1Hz 触发 objectWillChange）”写成了互相牵制的两个条件，任何一次抖动（阈值 60、`pendingDown == speedDown` 的先后、reset 与在飞 flushTask 的竞争）都会静默改变图表节奏或让空闲期重新出现 1Hz 发布，而全套 make test 不会报。",
-  "fix": "仿照 vpn-format-regressions.py 的切片方式：把 flush/scheduleFlush/windowIsAllFlat/appendHistory 连同最小字段抽成独立 Swift 回归，用假时钟（注入 now）驱动 4Hz 上限、等值样本计数、全零窗口后 count 不再增长、reset 取消在飞任务四个断言。"
+  "fix": "仿照 vpn-format-regressions.py 的切片方式：把 flush/scheduleFlush/windowIsAllFlat/appendHistory 连同最小字段抽成独立 Swift 回归，用假时钟（注入 now）驱动 4Hz 上限、等值样本计数、全零窗口后 count 不再增长、reset 取消在飞任务四个断言。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): VpnLiveRates gains an injectable clock seam; new Tests/vpn-live-rates-regressions.py pins the 0.25 s ceiling, equal-sample slots, all-flat freeze, reset cancellation. Production singleton untouched."
  },
  {
   "category": "dead-code",
@@ -6135,7 +6226,9 @@
   "summary": "The Authorization header is set twice: makeRequest already injects the Bearer token, and consumeTrafficStream re-sets the identical header three lines later.",
   "evidence": "`makeRequest` lines 869-871: `if !prefs.vpnControllerSecret.isEmpty { req.setValue(\"Bearer \\(prefs.vpnControllerSecret)\", forHTTPHeaderField: \"Authorization\") }`. `consumeTrafficStream` lines 1331-1334: `req.setValue(\"application/json\", forHTTPHeaderField: \"Accept\")` (stream-specific, correct) followed by the same `if !prefs.vpnControllerSecret.isEmpty { req.setValue(\"Bearer …\", forHTTPHeaderField: \"Authorization\") }`. The comment even says only `Accept` is stream-specific and \"not folded into the shared prelude\".",
   "failure": "No runtime failure — a duplicated branch that can silently drift if the auth format changes in one place only (e.g. a scheme change would leave a stale copy behind).",
-  "fix": "Delete lines 1332-1334; the Accept line is the only stream-specific header."
+  "fix": "Delete lines 1332-1334; the Accept line is the only stream-specific header.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): duplicate Bearer branch deleted from consumeTrafficStream; makeRequest is the one auth injector."
  },
  {
   "category": "test-gap",
@@ -6147,7 +6240,9 @@
   "summary": "CoreLogWriter's rotation, tail-keeping and generation contract — which the failover offset and `extractFatal` both depend on — is untested; no test drives the class or asserts the offset-resync invariant.",
   "evidence": "`grep -rn \"CoreLogWriter\" Tests/` returns nothing, and none of the existing VPN suites slice it. The class is file-backed but fully drivable with a temp URL (init(url:) is public-internal, `append`/`rotateIfNeeded`/`generation` are the whole surface, lines 1216-1263), and the invariants are exactly the kind a fixture can pin: `written` adoption via `rotateIfNeeded`, tail == 512 KB after rotation, `generation` increments, and \"a reader offset taken before a rotation is invalid after it\" — the premise of the `tickFailover` resync.",
   "failure": "A change to `written` accounting or to `rotateLocked` (e.g. not resetting `written = UInt64(tail.count)`) would make rotation either never fire or fire every append, and neither the 86 MB-growth regression nor the failover offset validity would be caught until it reaches a user machine.",
-  "fix": "Extend the VPN regression family with a slice test that writes > 8 MB through the production class in a temp dir and asserts: rotation happened, file size is ~512 KB, `generation` incremented, and content after rotation is the tail of what was written."
+  "fix": "Extend the VPN regression family with a slice test that writes > 8 MB through the production class in a temp dir and asserts: rotation happened, file size is ~512 KB, `generation` incremented, and content after rotation is the tail of what was written.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): new Tests/vpn-core-log-writer-regressions.py slices CoreLogWriter and drives rotation/tail/size-adoption/generation in a temp dir; mutation-verified. No core process."
  },
  {
   "category": "perf-cpu",
@@ -6159,7 +6254,9 @@
   "summary": "/traffic 每行仍在主 actor 上做 JSON 解析，注释声称的“off the main actor”并不成立（MainActor.run 是空跳）",
   "evidence": "```swift\n1330        var req = makeRequest(\"GET\", \"/traffic\", timeout: 86_400)\n...\n1349            for try await line in bytes.lines {\n1350                if Task.isCancelled { return }\n1351                // Parse *here*, on the stream's own thread. Only the two Int64s\n...\n1356                guard let sample = Self.parseTrafficLine(line) else { continue }\n1357                await MainActor.run { applyTrafficSample(sample) }\n```\n该 Task 由 @MainActor 类的方法 startPolling()（1116-1124，`trafficStreamTask = Task { ... await self.consumeTrafficStream() }`）创建，Task 继承 actor 隔离，consumeTrafficStream 也是该类的隔离方法：`for await` 每次挂起后都在主 actor 上恢复，parseTrafficLine（1368-1375：trimmingCharacters / data(using:) / JSONSerialization）就在主线程执行，1357 行的 MainActor.run 与当前隔离相同，等于无操作。",
   "failure": "每行 /traffic（约 1 Hz，重连时更密）在主 actor 上跑一次 JSONSerialization + 两次 String 构造；单次量级只有几微秒，所以不是卡顿来源，但注释记录的优化意图（“moved off the main actor”）在代码里并未生效，后续误以为这里已隔离。",
-  "fix": "把 `bytes.lines` 的解析循环放进一个 nonisolated 辅助函数（`nonisolated private static func pump(_ bytes: URLSession.AsyncBytes, into: VpnLiveRates)` 之类）里执行，或至少把 1356 行读到的行原样 `await` 交给一个 `nonisolated` 解析函数；顺手删掉 1357 行多余的 MainActor.run。"
+  "fix": "把 `bytes.lines` 的解析循环放进一个 nonisolated 辅助函数（`nonisolated private static func pump(_ bytes: URLSession.AsyncBytes, into: VpnLiveRates)` 之类）里执行，或至少把 1356 行读到的行原样 `await` 交给一个 `nonisolated` 解析函数；顺手删掉 1357 行多余的 MainActor.run。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster E): traffic stream parse loop moved into Task.detached yielding an AsyncStream; only the two Int64s hop to main."
  },
  {
   "category": "perf-cpu",

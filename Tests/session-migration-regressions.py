@@ -515,7 +515,7 @@ import SQLite3
         let decodedCC = try MigrationHistory.claude(Data(contentsOf:URL(fileURLWithPath:b.nativePath)),source:b.targetSource)
         precondition(decodedCC.messages == cc.messages)
         let c = try MigrationStorage.prepare(cc,target:.cursorCLI,route:route,locations:locations)
-        let cursor = try MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
+        let cursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
         precondition(cursor.messages == cc.messages)
         // A native root may become visible before its message blob. Simulate
         // delayed persistence, not a model response.
@@ -539,7 +539,7 @@ import SQLite3
             precondition(sqlite3_step(stmt) == SQLITE_DONE)
             sqlite3_finalize(stmt);sqlite3_close(writer)
         }
-        let recoveredCursor = try MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
+        let recoveredCursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
         precondition(recoveredCursor.messages == cursor.messages)
         precondition(tryRecords(locations.records).count == 3)
         // Containment must remain stable after parent directories are created.
@@ -553,6 +553,26 @@ import SQLite3
             precondition(mode.intValue & 0o077 == 0, "history must be private")
         }
         precondition(ShellQuote.single("a'$(touch NEVER)").contains("'\\''"))
+        // The enclosing quotes are the security property: the fragment alone
+        // survives a `single` that drops them, and both privileged installers
+        // feed the result to `sh -c` with administrator rights. Pin the exact
+        // quoting and round-trip a hostile value through a real shell.
+        precondition(ShellQuote.single("a") == "'a'")
+        let hostile = "a'$(touch NEVER)`touch ALSO_NEVER`\\\" z"
+        precondition(ShellQuote.single(hostile) == "'a'\\''$(touch NEVER)`touch ALSO_NEVER`\\\" z'")
+        let quoted = Process()
+        quoted.executableURL = URL(fileURLWithPath:"/bin/sh")
+        quoted.arguments = ["-c","printf %s " + ShellQuote.single(hostile)]
+        // Inside the fixture: if the enclosing quotes ever broke, the
+        // substitutions would land their files exactly where this checks.
+        quoted.currentDirectoryURL = fixtureRoot
+        quoted.standardError = FileHandle.nullDevice
+        let quotedOutput = Pipe(); quoted.standardOutput = quotedOutput
+        try quoted.run(); quoted.waitUntilExit()
+        precondition(String(decoding:quotedOutput.fileHandleForReading.readDataToEndOfFile(),as:UTF8.self) == hostile,
+                     "a quote-bearing path must survive sh -c verbatim")
+        precondition(!FileManager.default.fileExists(atPath:fixtureRoot.appendingPathComponent("NEVER").path)
+                     && !FileManager.default.fileExists(atPath:fixtureRoot.appendingPathComponent("ALSO_NEVER").path))
         let command = try MigrationCommand.shell(for:a,locations:locations)
         try command.write(to:fixtureRoot.appendingPathComponent("command.txt"),atomically:true,encoding:.utf8)
         precondition(!command.contains("--dangerously"))
@@ -597,6 +617,28 @@ import SQLite3
         mustFail { try MigrationCursorDesktop.insert(cc.messages,record:desk,profile:profile,database:FilePaths.cursorStateDB) {} }
         let deskUnchanged = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:desk.targetSource)
         precondition(deskUnchanged.messages == deskRead.messages)
+        // A refused desktop migration must not leave the image files it wrote
+        // into Cursor's workspaceStorage (finding 417/421): the DB rolls back,
+        // the manifest is removed, and the files must go with them.
+        let rejectedWorkspace = (profile.workspace["id"] as? String)!
+        let rejectedImages = MigrationCursorHistory.imageDirectory(
+            database:FilePaths.cursorStateDB, workspaceID:rejectedWorkspace)
+        mustFail { try MigrationCursorDesktop.insert(imagePreview.messages,record:rejected,profile:profile,database:FilePaths.cursorStateDB) {
+            throw MigrationFailure.storage
+        } }
+        let leftoverImages = (try? FileManager.default.contentsOfDirectory(at:rejectedImages,
+                                                                            includingPropertiesForKeys:nil)) ?? []
+        precondition(leftoverImages.isEmpty, "a refused migration must remove its images: \(leftoverImages.map(\.lastPathComponent))")
+        // …and a collision refusal is the same rollback path.
+        mustFail { try MigrationCursorDesktop.insert(imagePreview.messages,record:desk,profile:profile,database:FilePaths.cursorStateDB) {} }
+        let collisionImages = (try? FileManager.default.contentsOfDirectory(at:rejectedImages,
+                                                                            includingPropertiesForKeys:nil)) ?? []
+        precondition(collisionImages.isEmpty, "a colliding insert must remove its images: \(collisionImages.map(\.lastPathComponent))")
+        // An empty workspaceID is refused instead of writing a composer under
+        // no project (finding 416).
+        let badWorkspace = MigrationCursorDesktop.Profile(workspace:["id":"","uri":["fsPath":cwd]], model:profile.model)
+        mustFail { try MigrationCursorDesktop.insert(imagePreview.messages,record:rejected,
+            profile:badWorkspace,database:FilePaths.cursorStateDB) {} }
         var collisionDB: OpaquePointer?
         precondition(sqlite3_open(FilePaths.cursorStateDB.path,&collisionDB) == SQLITE_OK)
         // Same model name with changed maxMode must not reuse a stale target.
@@ -635,6 +677,11 @@ import SQLite3
         let cursorImage = try MigrationStorage.prepare(imagePreview,target:.cursorDesktop,route:desktopRoute,locations:locations)
         let cursorImageRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:cursorImage.targetSource,includeImages:true)
         precondition(cursorImageRead.imageCount == 1 && cursorImageRead.messages[0].images.first?.mediaType == "image/png")
+        // A committed migration keeps the files it wrote: the composer row
+        // points at them, and the rollback must not have taken them with it.
+        let keptImages = (try? FileManager.default.contentsOfDirectory(at:rejectedImages,
+                                                                       includingPropertiesForKeys:nil)) ?? []
+        precondition(keptImages.count == 1, "a committed migration keeps exactly its image: \(keptImages.count)")
         let cursorToolImage = try MigrationStorage.prepare(toolImages,target:.cursorDesktop,route:desktopRoute,locations:locations)
         let cursorToolImageRead = try MigrationCursorHistory.desktop(FilePaths.cursorStateDB,source:cursorToolImage.targetSource,includeImages:true)
         precondition(cursorToolImageRead.imageCount == 1)
@@ -713,6 +760,15 @@ import SQLite3
             catch MigrationFailure.changed {}
             precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/api/v3")?.path == "/api/v3/responses")
             precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/v1")?.path == "/v1/responses")
+            precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/v1/responses")?.path == "/v1/responses")
+            precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example/openai")?.path == "/openai/responses")
+            precondition(MigrationBridgeConfiguration.responsesURL("https://upstream.example")?.path == "/v1/responses")
+            // The chat path shares the same join rule (finding 415): version
+            // suffixes append directly, a bare host gets /v1, and a base that
+            // already carries the operation must not double it.
+            precondition(MigrationBridgeConfiguration.chatCompletionsURL("https://upstream.example/v4")?.path == "/v4/chat/completions")
+            precondition(MigrationBridgeConfiguration.chatCompletionsURL("https://upstream.example")?.path == "/v1/chat/completions")
+            precondition(MigrationBridgeConfiguration.chatCompletionsURL("https://upstream.example/v1/chat/completions")?.path == "/v1/chat/completions")
             var localProvider = fakeProvider; localProvider["baseURL"] = "http://127.0.0.1:15721/v1"
             let localData = try MigrationHistory.json(["providers":[localProvider]])
             mustFail { _ = try MigrationBridgeConfiguration.endpoint(localData,providerID:providerID,model:"fixture-model",localProxyPort:15721) }

@@ -107,7 +107,7 @@ class CodexProxyServer: @unchecked Sendable {
         let id = UUID(uuidString:settings["id"] as! String)!
         let endpoint = MigrationBridgeEndpoint(baseURL:settings["baseURL"] as! String,
             apiKey:settings["apiKey"] as! String,wireAPI:settings["wireAPI"] as! String,
-            model:settings["model"] as! String,name:"Isolated fixture",reasoningEffort:settings["reasoningEffort"] as? String ?? "")
+            model:settings["model"] as! String,reasoningEffort:settings["reasoningEffort"] as? String ?? "")
         try await state.setMigrationEndpoint(endpoint,for:id)
         let server = CodexProxyServer(state:state,tokenPath:tokenPath)
         _ = try CodexProxyServer.loadOrCreateToken(at:tokenPath)
