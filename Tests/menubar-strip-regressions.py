@@ -55,6 +55,20 @@ assert 'SystemThroughput.shared' in tick, (
     'the strip no longer reads the machine throughput, so its rates would be '
     'blank (or stale) whenever no tunnel is up')
 
+# The popup's width is two constants that must stay equal: `MenuBarView`'s own
+# `.frame(width:)` and the panel frame `MenuBarController.sizeAndPosition`
+# computes from `let width: CGFloat = 460`. The values are read from the two
+# sources and compared here — the divergence would not fail anywhere else; the
+# popup would just clip or letterbox against its panel (finding 685).
+menu_bar_view = (root / 'Sources/ClaudeBar/Views/MenuBarView.swift').read_text()
+view_width = menu_bar_view[menu_bar_view.index('.frame(width:'):]
+view_width = float(view_width[len('.frame(width:'):].split(')')[0].strip())
+panel_width = source[source.index('let width: CGFloat ='):]
+panel_width = float(panel_width[len('let width: CGFloat ='):].split('\n')[0].strip())
+assert view_width == panel_width, (
+    f'the popup shell frames itself at {view_width}pt but the panel is positioned '
+    f'at {panel_width}pt — the two must name the same width')
+
 swift = r'''
 import AppKit
 

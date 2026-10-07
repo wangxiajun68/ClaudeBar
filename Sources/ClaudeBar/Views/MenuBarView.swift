@@ -164,11 +164,14 @@ struct MenuBarView: View {
             .confirmationDialog("还原官方配置", isPresented: $confirmRestore, titleVisibility: .visible) {
                 Button("还原 Claude Code") {
                     providerStore.restoreOfficial()
-                    panel.showFeedback("Claude Code 已还原为官方")
+                    // The store records its own failure and leaves
+                    // `errorMessage` set; the toast must repeat that, not
+                    // announce a restore that did not happen (finding 684).
+                    panel.showFeedback(providerStore.errorMessage ?? "Claude Code 已还原为官方")
                 }
                 Button("还原 Codex") {
                     codexStore.restoreOfficial()
-                    panel.showFeedback("Codex 已还原为官方")
+                    panel.showFeedback(codexStore.errorMessage ?? "Codex 已还原为官方")
                 }
                 Button("取消", role: .cancel) {}
             } message: {

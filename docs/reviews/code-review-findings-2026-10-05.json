@@ -4224,7 +4224,9 @@
   "summary": "popup 的确认弹窗属于 sheetParent 而非 parent，点击其内部会走点击外部路径 hide() 掉提出该弹窗的视图树",
   "evidence": "MenuBarView.swift:162-174 在 popup 内挂 `.confirmationDialog(\"还原官方配置\", isPresented: $confirmRestore, ...)`；MenuBarController.handleLocalMouseDown 的豁免只有两句：`panel.frame.contains(NSEvent.mouseLocation)`（:433）与 `window !== panel, window.parent === panel`（:434），随后 `hide(deferringMonitorRemoval: true)`。仓库自己测过这类窗口的形状：`_NSAlertPanel parentIsPanel=false sheetParent=Optional(\"KeyablePanel\")`（docs/reviews/ui-audit-backlog.md:218-230），并写明“the day a dialog lands in this panel it needs its own clause there”——而该弹窗自 7fb70c8（2026-09-22）就已存在，条款至今没加。",
   "failure": "在「还原官方配置」确认弹窗上按下鼠标：只要落点不在 panel.frame 内（sheet 挂在无标题栏面板上、其外沿/未来更宽更高的 alert），本地监视器先判定“点在外面”→ `hide()` 执行 `hostingView?.removeFromSuperview(); hostingView = nil`，提出并持有 `confirmRestore` 的那棵视图树在用户尚未做出破坏性决定时被拆掉，弹窗消失/成为孤儿；此后仍可能执行还原却没有确认界面。",
-  "fix": "在 handleLocalMouseDown 的豁免里补上 sheet 形态：`if let window = event.window, window !== panel, window.parent === panel || window.sheetParent === panel { return }`（与 backlog §6 的测量结论一致）。"
+  "fix": "在 handleLocalMouseDown 的豁免里补上 sheet 形态：`if let window = event.window, window !== panel, window.parent === panel || window.sheetParent === panel { return }`（与 backlog §6 的测量结论一致）。",
+  "status": "fixed",
+  "verdict_note": "Already fixed: `handleLocalMouseDown` (MenuBarController.swift:431-440) exempts `window.sheetParent === panel` alongside `window.parent === panel`, exactly the fix requested; the comment names finding 218 and `SessionsPanel.codexCleanupDialog`."
  },
  {
   "category": "robustness",
@@ -8745,7 +8747,9 @@
   "summary": "外壳 body 内读 ProcessSampler.shared.host，使每次采样 tick 都重算整个 popup 外壳",
   "evidence": "MenuBarView.swift:143 `if ProcessSampler.shared.host.batteryInstalled {` 直接写在 actionBar（body 的一部分）里；ProcessSampler 是 `@Observable`（ProcessSampler.swift:18-19），`host` 是每 tick 更新一次的存储属性（:205，publish 每秒~数秒一次），Observation 会把 MenuBarView 的 body 注册成 `host` 的观察者。该文件开头的注释（:36-40、:103-106）明确说外壳只订阅 appearance/idleNotify/hasSettingsFile/是否空供应商，就是为了避免无关更新重算 header/KPI/两个面板/操作栏；MainWindowView:48-55 也记录了同类形状（闭包不可 diff → 子视图 body 全部重跑）。",
   "failure": "popup 打开期间（1–6 s 一个采样 tick，`host.cpu` 几乎每 tick 都在动）MenuBarView 的外壳 body 每个 tick 重跑一次，进而重建带闭包参数的 PanelHeader/面板/操作栏（闭包不可 diff，子 body 随之重跑）——正是这些注释宣称已消除的失效形状，只是被一行电池判断重新引入。",
-  "fix": "把电池判断收进一个只读 `ProcessSampler.shared.host` 的小子视图（如 `private struct BatteryChargeActionSlot: View`，内部再决定是否画 CompactBatteryChargeControl），让 `host` 的观察者落在那棵子树而不是外壳 body。"
+  "fix": "把电池判断收进一个只读 `ProcessSampler.shared.host` 的小子视图（如 `private struct BatteryChargeActionSlot: View`，内部再决定是否画 CompactBatteryChargeControl），让 `host` 的观察者落在那棵子树而不是外壳 body。",
+  "status": "fixed",
+  "verdict_note": "Already fixed (finding 506's batch): `MenuBarBatteryChip` (MenuBarView.swift:269-279) is the leaf that reads `ProcessSampler.shared.host.batteryInstalled`; the shell body no longer reads `host`."
  },
  {
   "category": "robustness",
@@ -8756,7 +8760,9 @@
   "summary": "还原官方配置失败时 popup 仍无条件报“已还原”，且 popup 不渲染任何 errorMessage",
   "evidence": "MenuBarView.swift:163-170 `Button(\"还原 Claude Code\") { providerStore.restoreOfficial(); panel.showFeedback(\"Claude Code 已还原为官方\") }`、Codex 同形。两个 store 的 restoreOfficial 在失败时写入 `errorMessage` 并提前 return（ProviderStore.swift:824-826、CodexProviderStore.swift:363-366），而 `errorMessage` 在 Views/Popup/ 与 MenuBarView 里没有任何读取点（grep 全无），popup 也没有错误带。",
   "failure": "settings.json 不可读/写入被拒（私有文件权限、磁盘只读）→ 还原什么都没做，popup 仍弹出“Claude Code 已还原为官方”；用户据此认为第三方中转覆盖已去掉，新开会话仍走中转——对配置安全动作给出假成功。",
-  "fix": "调用后读取 store 的错误再决定文案：如 `providerStore.restoreOfficial(); panel.showFeedback(providerStore.errorMessage ?? \"Claude Code 已还原为官方\")`（Codex 分支同理），必要时把 errorMessage 纳入外壳订阅。"
+  "fix": "调用后读取 store 的错误再决定文案：如 `providerStore.restoreOfficial(); panel.showFeedback(providerStore.errorMessage ?? \"Claude Code 已还原为官方\")`（Codex 分支同理），必要时把 errorMessage 纳入外壳订阅。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: both restore branches in the popup's confirmation dialog now read the store's own `errorMessage` and repeat it via `panel.showFeedback(store.errorMessage ?? \"…已还原为官方\")`, so a failed restore no longer reports success."
  },
  {
   "category": "test-gap",
@@ -8767,7 +8773,9 @@
   "summary": "「popup 宽度两处必须相等」这一已文档化不变量没有任何回归锁定",
   "evidence": "MenuBarView.swift:81-89 的注释写明 `MenuBarController.sizeAndPosition` 里的宽度与这里“must stay equal”，MenuBarController.swift:369-372 有同样声明，docs/design/04-popup-layout.md 也写着“两处必须相等”；但 `grep -rn \"MenuBarView\" Tests/` 无命中，`grep -rn \"460\" Tests/*.py` 只有 core-regressions.py:207 的 mihomo 归档大小——相比之下 menubar-strip-regressions.py 已经用源码切片钉住了同一文件里的 VpnMenuBarRateView 几何常量。",
   "failure": "只改一侧（例如把外壳加宽到 480 适配新控件，或把控制器宽度调回 424）：面板裁掉外壳右侧内容或留出空白条，全部现有回归仍然通过，只有人眼看得出。",
-  "fix": "在 Tests/menubar-strip-regressions.py（或新切片）里解析两处常量并断言相等：MenuBarView 的 `frame(width:` 数值 == MenuBarController.sizeAndPosition 里的 `let width: CGFloat`。"
+  "fix": "在 Tests/menubar-strip-regressions.py（或新切片）里解析两处常量并断言相等：MenuBarView 的 `frame(width:` 数值 == MenuBarController.sizeAndPosition 里的 `let width: CGFloat`。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: Tests/menubar-strip-regressions.py now parses both constants and asserts equality — MenuBarView's `.frame(width:)` vs MenuBarController.sizeAndPosition's `let width: CGFloat`."
  },
  {
   "category": "concurrency",
