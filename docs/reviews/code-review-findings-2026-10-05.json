@@ -6907,7 +6907,9 @@
   "summary": "`CursorMark` re-specifies the mark's size and shadow that `CodexModelMark.mark(side:)` exists to own, so the two can drift exactly the way this file's header says callers' copies used to.",
   "evidence": "This file's own rationale (lines 13-15): \"It is a view rather than a bare `Image` because it owns the mark's size and shadow - the two things every caller had to remember and one of them always got wrong.\" `CodexModelMark.mark` (37-41): `ProductBrandMark(codex: codex, well: false).frame(width: side, height: side).shadow(color: .black.opacity(codex ? 0.16 : 0.22), radius: 5, y: 2)`; `CursorMark.body` (52-57): `ProductBrandMark(brand: .cursor, well: false).frame(width: 13, height: 13).shadow(color: .black.opacity(0.2), radius: 5, y: 2)` - a hand-copied radius/y/opacity and a hardcoded 13 next to `CodexModelMark`'s `mark(side: 13)` call in PanelHeader.swift:39/49.",
   "failure": "The next retune of the chip mark (a 14pt mark, a softer shadow, a reduce-motion or page-dependent shadow) lands in `CodexModelMark.mark` and misses `CursorMark`; the Cursor chip then renders at a different size/shadow from the CC and Codex chips sitting in the same `EqualRowGrid` row - the mismatch class the file was written to prevent.",
-  "fix": "Give both marks one builder: e.g. a `private func mark(_ brand: ProductBrandMark.Brand, side: CGFloat)` in this file (or on `ProductBrandMark`) that owns frame + shadow, and have `CursorMark` call it with `.cursor`."
+  "fix": "Give both marks one builder: e.g. a `private func mark(_ brand: ProductBrandMark.Brand, side: CGFloat)` in this file (or on `ProductBrandMark`) that owns frame + shadow, and have `CursorMark` call it with `.cursor`.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: both header-chip marks now build through one MarkBuilder.mark(_:shadowOpacity:side:) in CodexModelMark.swift — the 13pt side, radius 5 and y 2 are declared once, and only the per-family shadow opacity differs. CursorMark no longer re-specifies the frame/shadow pair."
  },
  {
   "category": "dead-code",

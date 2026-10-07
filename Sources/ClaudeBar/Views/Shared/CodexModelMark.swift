@@ -35,9 +35,7 @@ struct CodexModelMark: View {
     /// inversion that made the island's marks invisible. Only a caller whose
     /// ground does *not* follow the theme passes `page:`.
     private func mark(side: CGFloat) -> some View {
-        ProductBrandMark(codex: codex, well: false)
-            .frame(width: side, height: side)
-            .shadow(color: .black.opacity(codex ? 0.16 : 0.22), radius: 5, y: 2)
+        MarkBuilder.mark(codex ? .codex : .claude, shadowOpacity: codex ? 0.16 : 0.22, side: side)
     }
 }
 
@@ -50,9 +48,31 @@ struct CodexModelMark: View {
 /// `ProductBrandMark.Brand.init(codex:)` documents.
 struct CursorMark: View {
     var body: some View {
-        ProductBrandMark(brand: .cursor, well: false)
-            .frame(width: 13, height: 13)
-            .shadow(color: .black.opacity(0.2), radius: 5, y: 2)
+        // One builder for both marks (finding 546): the frame and shadow are
+        // owned once, here, so the Cursor cube and the Claude/Codex marks
+        // cannot drift apart again.
+        MarkBuilder.mark(.cursor, shadowOpacity: 0.2)
             .accessibilityLabel("Cursor")
+    }
+}
+
+/// The file's one owner of a header-chip mark's size and shadow.
+///
+/// `CodexModelMark` used to keep the pair in its own `mark(side:)` while
+/// `CursorMark` re-specified them — the exact drift this file's header warns
+/// callers about (finding 546). Both callers come through here now: the
+/// side is the constant, the shadow opacity is the one thing that differs
+/// between the brand families (Codex's two files sit a touch heavier than the
+/// Cursor cube).
+private enum MarkBuilder {
+    static let side: CGFloat = 13
+    static let shadowRadius: CGFloat = 5
+    static let shadowY: CGFloat = 2
+
+    static func mark(_ brand: ProductBrandMark.Brand, shadowOpacity: Double,
+                     side: CGFloat = Self.side) -> some View {
+        ProductBrandMark(brand: brand, well: false)
+            .frame(width: side, height: side)
+            .shadow(color: .black.opacity(shadowOpacity), radius: shadowRadius, y: shadowY)
     }
 }
