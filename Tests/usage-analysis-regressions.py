@@ -205,6 +205,12 @@ struct UsageIndex {
 '''
 for marker in ['static func fetchOfficialCodex(', 'private static func dayBounds(', 'private static func dayString(']:
     probe += slice_declaration(index, marker) + '\n'
+# `fetchOfficialCodex` memoizes each rollout's official verdict on the
+# `files` row's (mtime, size); the fixture carries the same statics so the
+# sliced production function compiles and the memo path itself is exercised.
+probe += slice_declaration(index, 'private struct OfficialHead {') + '\n'
+probe += '    private static let officialHeadLock = NSLock()\n'
+probe += '    private static var officialHeadVerdicts: [String: OfficialHead] = [:]\n'
 probe += r'''
 }
 @main struct AttributionRegression {
@@ -239,6 +245,11 @@ probe += r'''
         precondition(sqlite3_open(":memory:", &UsageIndex.db) == SQLITE_OK)
         defer { sqlite3_close(UsageIndex.db) }
         precondition(sqlite3_exec(UsageIndex.db, "CREATE TABLE rollup(path TEXT, day TEXT, model TEXT, calls INTEGER, input INTEGER, output INTEGER, cache_read INTEGER, cache_create INTEGER)", nil, nil, nil) == SQLITE_OK)
+        // `fetchOfficialCodex` joins `files` for each rollout's (mtime, size)
+        // to memoize its official verdict; the fixture carries the same table,
+        // keyed the same way production keys it (`path` is the primary key —
+        // an unkeyed fixture would double every joined rollup row).
+        precondition(sqlite3_exec(UsageIndex.db, "CREATE TABLE files(path TEXT PRIMARY KEY, mtime REAL, size INTEGER)", nil, nil, nil) == SQLITE_OK)
         for row in rows {
             var stmt: OpaquePointer?
             precondition(sqlite3_prepare_v2(UsageIndex.db, "INSERT INTO rollup VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", -1, &stmt, nil) == SQLITE_OK)
@@ -249,6 +260,15 @@ probe += r'''
                 sqlite3_bind_int64(stmt, Int32(offset + 4), Int64(value))
             }
             precondition(sqlite3_step(stmt) == SQLITE_DONE); sqlite3_finalize(stmt)
+            guard row.path.hasPrefix("codex:") else { continue }
+            let file = URL(fileURLWithPath: String(row.path.dropFirst("codex:".count)))
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) else { continue }
+            var meta: OpaquePointer?
+            precondition(sqlite3_prepare_v2(UsageIndex.db, "INSERT OR REPLACE INTO files VALUES (?1,?2,?3)", -1, &meta, nil) == SQLITE_OK)
+            sqlite3_bind_text(meta, 1, row.path, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_double(meta, 2, (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+            sqlite3_bind_int64(meta, 3, Int64(attributes[.size] as? Int ?? 0))
+            precondition(sqlite3_step(meta) == SQLITE_DONE); sqlite3_finalize(meta)
         }
         let result = UsageIndex.fetchOfficialCodex(in: interval)
         precondition(result.count == 1 && result[0].calls == 2)

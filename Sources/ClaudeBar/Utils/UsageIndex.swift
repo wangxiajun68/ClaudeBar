@@ -217,6 +217,12 @@ struct UsageIndex {
         openFailedAt = nil
         lock.unlock()
         UsageClaims.reset()
+        officialHeadLock.lock()
+        officialHeadVerdicts = [:]
+        officialHeadLock.unlock()
+        sessionHeaderLock.lock()
+        sessionHeaders = [:]
+        sessionHeaderLock.unlock()
         flagLock.lock()
         _hasCachedData = nil
         _initialBuildDone = false
@@ -493,13 +499,16 @@ struct UsageIndex {
         lock.lock()
         var stmt: OpaquePointer?
         let sql = """
-            SELECT path, model, sum(calls), sum(input), sum(output), sum(cache_read), sum(cache_create)
-            FROM rollup WHERE day BETWEEN ?1 AND ?2 AND path LIKE 'codex:%' GROUP BY path, model
+            SELECT r.path, r.model, sum(r.calls), sum(r.input), sum(r.output), sum(r.cache_read), sum(r.cache_create),
+                   f.mtime, f.size
+            FROM rollup r LEFT JOIN files f ON f.path = r.path
+            WHERE r.day BETWEEN ?1 AND ?2 AND r.path LIKE 'codex:%' GROUP BY r.path, r.model
             """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { lock.unlock(); return [] }
         sqlite3_bind_text(stmt, 1, startDay, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, endDay, -1, SQLITE_TRANSIENT)
         var byPath: [String: [ModelUsage]] = [:]
+        var meta: [String: (mtime: Double, size: Int)] = [:]
         while sqlite3_step(stmt) == SQLITE_ROW {
             let path = String(cString: sqlite3_column_text(stmt, 0))
             var usage = ModelUsage(model: String(cString: sqlite3_column_text(stmt, 1)))
@@ -509,15 +518,46 @@ struct UsageIndex {
             usage.cacheReadTokens = Int(sqlite3_column_int64(stmt, 5))
             usage.cacheCreationTokens = Int(sqlite3_column_int64(stmt, 6))
             byPath[path, default: []].append(usage)
+            if sqlite3_column_type(stmt, 7) != SQLITE_NULL {
+                meta[path] = (sqlite3_column_double(stmt, 7), Int(sqlite3_column_int64(stmt, 8)))
+            }
         }
         sqlite3_finalize(stmt)
         lock.unlock()
         var models: [String: ModelUsage] = [:]
+        officialHeadLock.lock()
+        defer { officialHeadLock.unlock() }
+        // Drop verdicts for paths the period no longer mentions (deleted or
+        // pruned rollouts), so the memo cannot grow without bound — the same
+        // filter `fetchSessionFamilies` applies to `sessionHeaders`.
+        officialHeadVerdicts = officialHeadVerdicts.filter { byPath[$0.key] != nil }
         for (path, rows) in byPath {
-            guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: String(path.dropFirst("codex:".count)))) else { continue }
-            let header = try? handle.read(upToCount: 65_536)
-            try? handle.close()
-            guard let header, UsageProviderAttribution.isOfficialCodex(metadata: header) else { continue }
+            // The verdict only depends on the file's first line, and its
+            // `files` row already carries the (mtime, size) that says whether
+            // that line could have changed — the same memoization
+            // `fetchSessionFamilies` applies to rollout headers. Without it,
+            // every republish during an active session re-opened and re-read
+            // 64 KiB of *every* Codex rollout in the period (measured: a
+            // month window with ~200 rollouts, ~2.5 passes/s struck by the
+            // FSEvents watcher).
+            let isOfficial: Bool
+            if let fileMeta = meta[path], let cached = officialHeadVerdicts[path],
+               cached.mtime == fileMeta.mtime, cached.size == fileMeta.size {
+                isOfficial = cached.isOfficial
+            } else {
+                let url = URL(fileURLWithPath: String(path.dropFirst("codex:".count)))
+                var verdict = false
+                if let handle = try? FileHandle(forReadingFrom: url) {
+                    let header = try? handle.read(upToCount: 65_536)
+                    try? handle.close()
+                    if let header { verdict = UsageProviderAttribution.isOfficialCodex(metadata: header) }
+                }
+                if let fileMeta = meta[path] {
+                    officialHeadVerdicts[path] = OfficialHead(mtime: fileMeta.mtime, size: fileMeta.size, isOfficial: verdict)
+                }
+                isOfficial = verdict
+            }
+            guard isOfficial else { continue }
             for row in rows {
                 var merged = models[row.model] ?? ModelUsage(model: row.model)
                 merged.merge(row)
@@ -526,6 +566,14 @@ struct UsageIndex {
         }
         return models.values.sorted { $0.totalTokens > $1.totalTokens }
     }
+
+    private struct OfficialHead {
+        let mtime: Double
+        let size: Int
+        let isOfficial: Bool
+    }
+    private static let officialHeadLock = NSLock()
+    private static var officialHeadVerdicts: [String: OfficialHead] = [:]
 
     /// Per-day totals within `interval`, tagged by source (river chart).
     static func fetchDailyBySource(in interval: DateInterval) -> [UsageSource: [DayUsage]] {
@@ -711,11 +759,10 @@ struct UsageIndex {
         let storedHash = prior?.headHash ?? 0
         let currentHash = (prior != nil && file.size >= prior!.size) ? headHash(file.path, length: 256) : 0
         let headMatches = storedHash != 0 && currentHash == storedHash
+        let canAppend = prior != nil && file.size > prior!.size && prior!.offset <= file.size
+            && (storedHash == 0 || headMatches)
 
-        // Claude assistant lines can rewrite the same message.id (partial then
-        // final). Incremental add would double-count; only Codex is append-delta.
-        if isCodex, let prior, file.size > prior.size, prior.offset <= file.size,
-           storedHash == 0 || headMatches {
+        if isCodex, canAppend, let prior {
             let chunk = readBytes(file.path, from: prior.offset)
             guard !chunk.isEmpty else { return }
             // Parse complete lines only; the trailing partial line (if any)
@@ -748,6 +795,33 @@ struct UsageIndex {
                        cxTotal: last?.total ?? prior.cxTotal,
                        cxModel: parsed.model)
             return
+        }
+
+        // Claude's assistant stream rewrites the same `message.id` as a call
+        // finalizes (partial output 0 → real numbers), so an append can only
+        // be folded additively when **none** of its ids is one this file
+        // already books — measured on this machine's live transcripts, 64 %
+        // of assistant lines reprint an earlier id, almost always the
+        // immediately preceding line, which is why this check has to be by id
+        // and not by line. A chunk whose ids are all unseen is a pure append:
+        // parse the new bytes only and advance the offset, O(new bytes)
+        // instead of O(file). A reprint falls through to the full reparse,
+        // whose last-wins fold is the only thing that can replace a partial's
+        // numbers with the final ones without double counting.
+        if canAppend, let prior {
+            let chunk = readBytes(file.path, from: prior.offset)
+            guard !chunk.isEmpty else { return }
+            let (lines, consumed) = completeLines(chunk)
+            guard consumed > 0 else { return }
+            let parsed = parseClaude(lines)
+            let owned = UsageClaims.owned(by: file.key)
+            let reprints = parsed.contains { !$0.id.isEmpty && owned.contains($0.id) }
+            if !reprints {
+                let booked = claimClaudeAppend(parsed, path: file.key)
+                if !booked.isEmpty { addRollup(db, file.key, booked) }
+                upsertFile(db, file, prior.offset + consumed, cxIn: 0, cxOut: 0, cxCached: 0)
+                return
+            }
         }
 
         // Full (re)parse: brand-new file, or it shrank / was rewritten.
@@ -1235,6 +1309,28 @@ struct UsageIndex {
         return out + parsed.filter { $0.id.isEmpty }
     }
 
+    /// Book a chunk's entries additively — the pure-append half of
+    /// `claimClaude`. The caller has already established that none of the
+    /// chunk's ids is currently booked by `path` (a reprint hands the file to
+    /// the full reparse instead), so ids here are either fresh (claim and
+    /// book) or booked by another transcript (drop, exactly as the full path
+    /// does). No release pass: an append can only make the file print *more*
+    /// ids, never fewer.
+    private static func claimClaudeAppend(_ parsed: [ParsedEntry], path: String) -> [ParsedEntry] {
+        var out: [ParsedEntry] = []
+        out.reserveCapacity(parsed.count)
+        for e in parsed where !e.id.isEmpty {
+            switch UsageClaims.owner(of: e.id) {
+            case nil:
+                UsageClaims.record(e.id, owner: path)
+                out.append(e)
+            default:
+                continue
+            }
+        }
+        return out + parsed.filter { $0.id.isEmpty }
+    }
+
     private static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1242,8 +1338,71 @@ struct UsageIndex {
     }()
     private static let isoFormatterNoFrac = ISO8601DateFormatter()
 
+    /// The UTC calendar `fastStamp` composites in — hoisted because building
+    /// one per call was the only allocation left in its 0.27 µs.
+    private static let utcCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }()
+
     private static func isoDate(_ any: Any?) -> Date? {
         guard let s = any as? String else { return nil }
+        if let fast = fastStamp(s) { return fast }
         return isoFormatter.date(from: s) ?? isoFormatterNoFrac.date(from: s)
+    }
+
+    /// `YYYY-MM-DDTHH:MM:SS[.fff]Z` — the exact stamp shape both clients'
+    /// transcripts carry — parsed without `ISO8601DateFormatter`.
+    ///
+    /// The formatter was the single most expensive thing in `parseClaude`:
+    /// measured on this machine, one parse costs ~25.7 µs against ~2.9 µs for
+    /// the line's `JSONSerialization` alone, while this path costs 0.16 µs.
+    /// On a 13 MB / 30k-line synthetic transcript (the size class of the
+    /// largest live sessions) the full reparse fell from 3332 ms to 454 ms
+    /// (7.3×) and a first index pass from 3483 ms to 603 ms. The fast path is
+    /// exactly equivalent, including the formatter's truncation of fractional
+    /// seconds to milliseconds (`.062` and `.0629` both answer `.062` —
+    /// verified against the formatter). Any other shape — an offset instead
+    /// of `Z`, a 1-digit month, `24:00:00`, four or more fractional digits,
+    /// lowercase `t`/`z` — returns nil and falls back to the formatter, so
+    /// this can only be a faster route to the same value, never a different
+    /// one (`usage-index-regressions.py` diffs the two on 200k random stamps
+    /// plus adversarial shapes).
+    private static func fastStamp(_ s: String) -> Date? {
+        let b = Array(s.utf8)
+        guard b.count == 20 || b.count == 24 else { return nil }
+        guard b[4] == 0x2D, b[7] == 0x2D, b[10] == 0x54, b[13] == 0x3A, b[16] == 0x3A else { return nil }
+        func digit(_ i: Int) -> Int? {
+            let v = Int(b[i]) - 0x30
+            return (0...9).contains(v) ? v : nil
+        }
+        func two(_ i: Int) -> Int? {
+            guard let a = digit(i), let c = digit(i + 1) else { return nil }
+            return a * 10 + c
+        }
+        guard let d0 = digit(0), let d1 = digit(1), let d2 = digit(2), let d3 = digit(3),
+              let month = two(5), let day = two(8), let hour = two(11),
+              let minute = two(14), let second = two(17),
+              (1...12).contains(month), (1...31).contains(day),
+              hour <= 23, minute <= 59, second <= 59 else { return nil }
+        let year = d0 * 1000 + d1 * 100 + d2 * 10 + d3
+        var nanosecond = 0
+        if b.count == 24 {
+            guard b[19] == 0x2E, b[23] == 0x5A,
+                  let f0 = digit(20), let f1 = digit(21), let f2 = digit(22) else { return nil }
+            nanosecond = (f0 * 100 + f1 * 10 + f2) * 1_000_000
+        } else {
+            guard b[19] == 0x5A else { return nil }
+        }
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        components.second = second
+        components.nanosecond = nanosecond
+        return utcCalendar.date(from: components)
     }
 }

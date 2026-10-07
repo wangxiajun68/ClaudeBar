@@ -53,6 +53,13 @@ source += (utils / 'ModelPriceTable.swift').read_text()
 source += (utils / 'UsageModelInventory.swift').read_text()
 provider = (root / 'Sources/ClaudeBar/Models/ProviderStore.swift').read_text()
 source += r'''
+extension UsageIndex {
+    /// Same-file extensions may see the production `private` statics.
+    static func testFastStamp(_ s: String) -> Date? { fastStamp(s) }
+    static func testCurrentStamp(_ s: String) -> Date? {
+        isoFormatter.date(from: s) ?? isoFormatterNoFrac.date(from: s)
+    }
+}
 final class PublicationFixture {
     var usageStats: [ModelUsage] = []
     var usageBySource: [UsageSource: [ModelUsage]] = [:]
@@ -166,14 +173,45 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
             try fullBody.write(to: archivedRollout)
             UsageIndex.updateIndex()
             require(total() == 190, "restored transcript \(total()) rows \(UsageIndex.fetchBySource(in: interval))")
-            func assistant(_ output: Int) -> String {
+            func assistant(_ output: Int, id: String = "message-id") -> String {
                 line(["type": "assistant", "timestamp": "2026-10-01T12:00:00Z",
-                    "message": ["id": "message-id", "model": "audit-model",
+                    "message": ["id": id, "model": "audit-model",
                         "usage": ["input_tokens": 20, "output_tokens": output,
                                   "cache_read_input_tokens": 30, "cache_creation_input_tokens": 40]]])
             }
-            try Data((assistant(1) + assistant(10)).utf8).write(to: claude.appendingPathComponent("session.jsonl"))
+            let sessionURL = claude.appendingPathComponent("session.jsonl")
+            try Data((assistant(1) + assistant(10)).utf8).write(to: sessionURL)
             UsageIndex.updateIndex(); require(total() == 290) // last-wins message ID
+            // The Claude append fast path. A pure append — new bytes whose ids
+            // are all unseen — folds additively from the chunk alone, O(new
+            // bytes). Its last-wins obligation only arises when the chunk
+            // reprints an id this file books (measured on the live corpus:
+            // 64% of assistant lines are reprints, almost always of the line
+            // right before), and that case must still fall back to the full
+            // reparse: the reprint's final numbers replace the partial's,
+            // they are never added on top.
+            try append(assistant(7, id: "append-new"), to: sessionURL)
+            UsageIndex.updateIndex()
+            require(total() == 387, "a pure append books its new id additively: \(total())")
+            // A reprint of the last line rewrites, not adds: the file still
+            // holds two messages, the total does not grow.
+            try append(assistant(10), to: sessionURL)
+            UsageIndex.updateIndex()
+            require(total() == 387, "a reprint must replace the partial, not add: \(total())")
+            // Sandwich: a fresh id, then a reprint inside one append chunk —
+            // the reprint forces the full reparse, and the fresh id keeps its
+            // once-only booking through it.
+            try append(assistant(3, id: "sandwich") + assistant(10), to: sessionURL)
+            UsageIndex.updateIndex()
+            require(total() == 480, "a reprint anywhere in the chunk must reparse the file: \(total())")
+            // Back to the two-line original so the scenario below keeps its
+            // baseline. The rewrite shrinks the file (full reparse); the ids
+            // the file no longer prints are released like any other reparse.
+            try Data((assistant(1) + assistant(10)).utf8).write(to: sessionURL)
+            UsageIndex.updateIndex()
+            require(total() == 290, "restoring the transcript must drop the appended ids: \(total())")
+            require(UsageClaims.owner(of: "append-new") == nil && UsageClaims.owner(of: "sandwich") == nil,
+                    "a reparse that no longer prints an id must release it")
             // A resumed session copies the parent's assistant records verbatim
             // into a new transcript: same `message.id`, same usage, second
             // path. The id is one API call, so whichever file is indexed first
@@ -240,6 +278,40 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
                     "Codex custom models belong to Codex regardless of provider")
             require(UsageIndex.fetchOfficialCodex(in: customDay).isEmpty,
                     "official attribution is separate from the Codex platform total")
+            // Official attribution reads each rollout's first line once and
+            // memoizes the verdict on (mtime, size) — the same shape
+            // fetchSessionFamilies uses for rollout headers. A month window
+            // with a few hundred rollouts made a republish-per-FSEvents-fire
+            // re-open and re-read all of them: measured 200 opens + 12.8 MB of
+            // header reads per pass at ~2.5 passes/s during an active session.
+            let officialRollout = archive.appendingPathComponent("official-model.jsonl")
+            let officialHeader = line(["type": "session_meta", "payload": ["id": "official-1", "model_provider": "openai"]])
+                + line(["type": "turn_context", "payload": ["model": "gpt-official"]])
+            try Data((officialHeader + event(120, 12, 90, day: "2026-10-04")).utf8).write(to: officialRollout)
+            UsageIndex.updateIndex()
+            let officialDay = period("2026-10-04", "2026-10-05")
+            let official = UsageIndex.fetchOfficialCodex(in: officialDay)
+            require(official.contains { $0.model == "gpt-official" && $0.totalTokens == 132 },
+                    "an openai-provider rollout books to official: \(official.map(\.model))")
+            // A verdict memoized on the old (mtime, size) must be re-read —
+            // not trusted — when the file changes: rewriting the header from
+            // openai to a relay flips the attribution on the next pass.
+            try Data((line(["type": "session_meta", "payload": ["id": "official-1", "model_provider": "custom-relay"]])
+                      + line(["type": "turn_context", "payload": ["model": "gpt-official"]])
+                      + event(120, 12, 90, day: "2026-10-04")).utf8).write(to: officialRollout)
+            UsageIndex.updateIndex()
+            require(UsageIndex.fetchOfficialCodex(in: officialDay).isEmpty,
+                    "a rewritten provider must invalidate the memoized official verdict")
+            // Deleting the file must drop the verdict with the rollout.
+            try fm.removeItem(at: officialRollout)
+            UsageIndex.updateIndex()
+            require(UsageIndex.fetchOfficialCodex(in: officialDay).isEmpty,
+                    "a deleted rollout must not leave a stale verdict")
+            // Restore the openai shape for the remaining scenario state.
+            try Data((officialHeader + event(120, 12, 90, day: "2026-10-04")).utf8).write(to: officialRollout)
+            UsageIndex.updateIndex()
+            require(!UsageIndex.fetchOfficialCodex(in: officialDay).isEmpty,
+                    "the restored official rollout must book again")
             // Upgrade an inflated legacy cache without touching either transcript.
             UsageIndex.reloadPersistence()
             var db: OpaquePointer?
@@ -353,6 +425,125 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String = "", line:
                     && UsageClaims.owner(of: "dead-3") == nil
                     && UsageClaims.owner(of: "dead-19000") == "claude:dead",
                     "compaction lost the live set or kept a freed id")
+
+            // The claims file's load is a byte scanner with a JSONDecoder
+            // fallback (UsageClaims.fastClaim). Differential: whatever the
+            // scanner accepts must equal what a decoder-only reference load
+            // produces, and every shape the scanner refuses must still come
+            // back through the fallback with the same answer. The ledger here
+            // is written by the production flush path first (exactly the
+            // escaping Foundation writes), then adversarial lines are appended:
+            // swapped keys, whitespace, unknown trailing keys, \uXXXX and \"
+            // escapes, multibyte owners, tombstones and a truncated line.
+            FilePaths.root = base.appendingPathComponent("claims-diff")
+            try fm.createDirectory(at: FilePaths.root, withIntermediateDirectories: true)
+            UsageClaims.reset()
+            for id in 0..<20_000 where id % 3 != 1 {
+                UsageClaims.record("msg-\(id)", owner: "claude:/Users/corpus/project-\(id % 7)/session-\(id).jsonl")
+            }
+            for id in stride(from: 1, to: 20_000, by: 3) { UsageClaims.record("msg-\(id)", owner: "codex:/rollouts/\(id).jsonl") }
+            UsageClaims.flush()
+            var adversarial = try String(contentsOf: FilePaths.usageClaimsJSONL, encoding: .utf8).split(separator: "\n").map(String.init)
+            adversarial += [
+                #"{"owner":"claude:\/swapped.jsonl","id":"swapped"}"#,                      // key order the scanner refuses
+                #"{ "id" : "spaced" , "owner" : "claude:\/spaced.jsonl" }"#,               // whitespace
+                #"{"id":"trailing","owner":"claude:\/t.jsonl","extra":true}"#,             // unknown trailing key
+                #"{"id":"unicode","owner":"claude:\u0041.jsonl"}"#,             // \uXXXX escape the scanner refuses (decodes to "claude:A.jsonl")
+                #"{"id":"quoted","owner":"claude:\/a\"b.jsonl"}"#,                         // literal-quote escape
+                #"{"id":"multi","owner":"claude:\/项目\/会话😀.jsonl"}"#,                    // multibyte UTF-8, unescaped
+                #"{"id":"tombstone-me","owner":"claude:\/gone.jsonl"}"#,
+                #"{"id":"tombstone-me","owner":""}"#,
+                #"{"id":"msg-0","owner":"codex:\/moved.jsonl"}"#,                          // later line wins
+                #"{"id":"broken","owner":"claude:\/unterminated.jsonl""#,                  // truncated
+                #"{"id":"junk-tail","owner":"claude:\/j.jsonl"}junk"#,                     // trailing bytes the decoder rejects
+                "not json at all",
+                #"{"id":"","owner":""}"#,
+            ]
+            try Data((adversarial.joined(separator: "\n") + "\n").utf8)
+                .write(to: FilePaths.usageClaimsJSONL)
+            UsageClaims.reset()
+            // Force the load through the production entry point, then answer
+            // every id from production. A missing id is tracked in its own set:
+            // a `[String: String?]` subscript cannot express "present but nil"
+            // readably.
+            let decoderReference = JSONDecoder()
+            var reference: [String: String] = [:]
+            var queried: Set<String> = ["junk-tail"]   // decoded by neither: both routes must drop it
+            for line in adversarial {
+                guard let claim = try? decoderReference.decode(UsageClaims.Claim.self, from: Data(line.utf8)) else { continue }
+                queried.insert(claim.id)
+                if claim.owner.isEmpty { reference.removeValue(forKey: claim.id) }
+                else { reference[claim.id] = claim.owner }
+            }
+            var production: [String: String] = [:]
+            var missing: Set<String> = []
+            for key in queried {
+                if let owner = UsageClaims.owner(of: key) { production[key] = owner }
+                else { missing.insert(key) }
+            }
+            for (key, owner) in reference where production[key] != owner {
+                require(false, "the scanner and the decoder disagree on \(key): production=\(production[key] ?? "nil") reference=\(owner)")
+            }
+            for (key, owner) in production where reference[key] != owner {
+                require(false, "production booked \(key) that the reference dropped: \(key) → \(owner)")
+            }
+            for key in missing where reference[key] != nil {
+                require(false, "production dropped \(key) that the reference booked: \(reference[key]!)")
+            }
+            require(production["junk-tail"] == nil && missing.contains("junk-tail"),
+                    "trailing junk must be dropped by the scanner and by the decoder alike")
+            require(production["swapped"] == "claude:/swapped.jsonl", "a swapped-key line must fall back to the decoder")
+            require(production["spaced"] == "claude:/spaced.jsonl", "a spaced line must fall back to the decoder")
+            require(production["unicode"] == "claude:A.jsonl", "a \\uXXXX escape must fall back to the decoder")
+            require(production["quoted"] == "claude:/a\"b.jsonl", "a quote escape must fall back to the decoder")
+            require(production["multi"] == "claude:/项目/会话😀.jsonl", "multibyte owners must survive both routes")
+            require(missing.contains("tombstone-me"), "the last tombstone must win")
+            require(production.filter { $0.value != "claude:/gone.jsonl" }.count == production.count - 0
+                    || production["tombstone-me"] == nil,
+                    "the tombstone must not leave the earlier owner")
+            require(reference.count == production.count,
+                    "the two routes must book the same number of ids")
+
+            // fastStamp vs ISO8601DateFormatter. Differential on random stamps
+            // plus adversarial shapes: the fast path must agree with the
+            // formatter wherever it accepts (within float noise — the two
+            // differ by ~30 ns at ULP level, which no day bucket can see), and
+            // fall back to it wherever it refuses, so the two routes can never
+            // book a stamp on different days.
+            func currentStamp(_ s: String) -> Date? {
+                UsageIndex.testCurrentStamp(s)
+            }
+            var stampChecked = 0
+            for _ in 0..<20_000 {
+                let y = Int.random(in: 2000...2035), m = Int.random(in: 1...12), d = Int.random(in: 1...28)
+                let h = Int.random(in: 0...23), mi = Int.random(in: 0...59), se = Int.random(in: 0...59)
+                let frac = Int.random(in: 0...999)
+                for s in [String(format: "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", y, m, d, h, mi, se, frac),
+                          String(format: "%04d-%02d-%02dT%02d:%02d:%02dZ", y, m, d, h, mi, se)] {
+                    let a = currentStamp(s), f = UsageIndex.testFastStamp(s)
+                    switch (a, f) {
+                    case let (x?, y?):
+                        require(abs(x.timeIntervalSince(y)) <= 1e-6, "fastStamp disagrees on \(s)")
+                    default:
+                        require(false, "fastStamp presence disagrees on \(s)")
+                    }
+                    stampChecked += 1
+                }
+            }
+            require(stampChecked == 40_000)
+            var refused = 0
+            for s in ["2026-02-30T12:00:00Z", "2026-13-01T00:00:00Z", "2026-01-00T00:00:00Z",
+                      "2026-01-01T24:00:00Z", "2026-01-01T00:00:60Z", "2026-01-01T00:00:00.Z",
+                      "2026-01-01T00:00:00", "2026-01-01T00:00:00+08:00", "2026-1-01T00:00:00Z",
+                      "20260101T000000Z", "2026-01-01t00:00:00z", "2026-01-01T00:00:00.123456789Z",
+                      "2026-01-01T00:00:00.1Z", "2026-01-01T00:00:00.123456Z",
+                      "2026-01-01T00:00:00.123Z ", " 2026-01-01T00:00:00Z", "2026/01/01T00:00:00Z"] {
+                let a = currentStamp(s), f = UsageIndex.testFastStamp(s)
+                if f == nil { refused += 1; continue }
+                require(a != nil && abs(a!.timeIntervalSince(f!)) <= 1e-6,
+                        "fastStamp accepted \(s) with a different value than the formatter")
+            }
+            require(refused >= 16, "the fast path must refuse every non-canonical shape, refused \(refused)")
         }
         let a = ModelUsage(model: "shared-medium", inputTokens: 10)
         let b = ModelUsage(model: "shared", inputTokens: 100)
