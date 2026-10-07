@@ -84,7 +84,14 @@ struct VpnDomainQuery {
             if route == nil || entry.route == route { rows.append(entry) }
         }
         let stats = summary && !Task.isCancelled ? VpnDomainLog.stat(entries: rows) : []
-        return Result(rows: rows, stats: stats, leaks: summary ? directLeaks(stats) : [],
+        // Leak analysis only on the unfiltered summary. `directLeaks` asks
+        // "this known service went direct *at all*", a question the route and
+        // failed filters destroy: any filtered subset can show a normally
+        // proxied host with `proxied == 0` and report it as a leak (finding
+        // 170). Showing the line only where the question is well-posed beats
+        // showing a wrong answer.
+        let leaks = summary && route == nil && !failedOnly ? directLeaks(stats) : []
+        return Result(rows: rows, stats: stats, leaks: leaks,
                       counts: counts, matched: matched)
     }
 }

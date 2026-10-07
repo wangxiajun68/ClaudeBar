@@ -408,6 +408,34 @@ ASYNC_HARNESS
         precondition(VpnWatchlist.matches(host: "mycursor.com").isEmpty,
                      "suffix matching must not catch a lookalike")
 
+        // 11a. The leak line only appears where the question is well-posed.
+        //      `directLeaks` asks "did this known service go direct at all";
+        //      under a route or failed filter the rows are a subset, so a
+        //      normally proxied host would show `proxied == 0` and be reported
+        //      as a leak (finding 170). Unfiltered, only a host that never got
+        //      proxied reports.
+        let leakAll = VpnDomainQuery.run(entries: entries, query: "", route: nil,
+                                         failedOnly: false, summary: true)
+        precondition(leakAll.leaks.isEmpty,
+                     "a service with proxied rows is not a leak: \(leakAll.leaks)")
+        let leakDirect = VpnDomainQuery.run(entries: entries, query: "", route: .direct,
+                                            failedOnly: false, summary: true)
+        precondition(leakDirect.rows.count == 2 && leakDirect.leaks.isEmpty,
+                     "under a route filter the leak line must not be computed from the subset: \(leakDirect.leaks)")
+        let leakFailed = VpnDomainQuery.run(entries: entries, query: "", route: nil,
+                                            failedOnly: true, summary: true)
+        precondition(leakFailed.leaks.isEmpty,
+                     "under failedOnly the leak line must not be computed from the subset: \(leakFailed.leaks)")
+        // A row that really only ever went direct does report.
+        let leaked = feedAll([
+            "time=\"2026-09-29T11:41:04.000000000+08:00\" level=info "
+                + "msg=\"[TCP] 127.0.0.1:7 --> chatgpt.com:443 match Match using 🎯 Direct[DIRECT]\"",
+        ])
+        let leakedAll = VpnDomainQuery.run(entries: leaked, query: "", route: nil,
+                                           failedOnly: false, summary: true)
+        precondition(leakedAll.leaks.count == 1 && leakedAll.leaks[0].service == "OpenAI",
+                     "an all-direct watchlist service is a leak: \(leakedAll.leaks)")
+
         // 11b. The publish cadence is a pure function of visibility: full rate
         //      while any surface is on screen, the sleep rate when the app is
         //      background-only (the same 10 s /connections drops to in that
