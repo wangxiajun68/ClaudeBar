@@ -30,6 +30,7 @@ struct AgentSwarmView: View {
 
     @State private var hoveredId: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var packing = PackingCache()
 
     /// Callers mount this only when there is a fan-out to draw (every call site
     /// gates on `!agents.isEmpty`); an empty `children` still packs to zero
@@ -43,12 +44,20 @@ struct AgentSwarmView: View {
     /// not this: the cluster measures nothing per pass.
     var body: some View {
         GeometryReader { geo in
-            let grid = SwarmGrid(count: children.count, size: geo.size, compact: compact)
+            // The GeometryReader re-runs this body whenever the parent
+            // re-proposes geometry (any scroll or size pass over a LazyVGrid
+            // cell), and the packing + row naming then re-ran for an unchanged
+            // proposal. One-entry cache keyed on the actual inputs — same
+            // shape as `ProviderCatalogBrowser.partitionCache` (finding 216).
+            let packed = packing.resolve(children: children, size: geo.size, compact: compact) {
+                let grid = SwarmGrid(count: children.count, size: geo.size, compact: compact)
+                return (grid, cells(grid: grid))
+            }
+            let grid = packed.0
             let hovered = children.first { $0.id == hoveredId }
-            let rows = cells(grid: grid)
 
             VStack(alignment: .leading, spacing: grid.spacing) {
-                ForEach(rows) { row in
+                ForEach(packed.1) { row in
                     HStack(spacing: grid.spacing) {
                         ForEach(row.cells) { cell in
                             tile(cell.item, grid: grid)
@@ -69,6 +78,24 @@ struct AgentSwarmView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
+    }
+
+    /// One packing of the current inputs. `children` are compared by value
+    /// (they are `Equatable`), so a poll that changes nothing reuses the
+    /// previous grid and rows instead of rebuilding them per layout pass.
+    private final class PackingCache {
+        private var key: ([ExternalSessionInfo], CGSize, Bool)?
+        private var result: (SwarmGrid, [Row])?
+        func resolve(children: [ExternalSessionInfo], size: CGSize, compact: Bool,
+                     build: () -> (SwarmGrid, [Row])) -> (SwarmGrid, [Row]) {
+            if let key, key.0 == children, key.1 == size, key.2 == compact, let result {
+                return result
+            }
+            let next = build()
+            key = (children, size, compact)
+            result = next
+            return next
+        }
     }
 
     /// A cell's identity is the **agent**, not its slot: a poll that adds or
