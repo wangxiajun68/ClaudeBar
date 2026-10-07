@@ -6396,7 +6396,9 @@
   "evidence": "MenuBarView.swift:141-145 `private var actionBar: some View { IconChipRow(spacing: Theme.Space.s2) { if ProcessSampler.shared.host.batteryInstalled { CompactBatteryChargeControl() } ... } }`. ProcessSampler.swift:18-20 `@Observable final class ProcessSampler`, :205 `var host = HostStats()`, publish at :577-616 `if self.host != host { self.host = host }` on every tick; applyPeriod (:367-394) sets 1 s (live) / 2 s cadence while a resource surface is open.",
   "failure": "With the popup open (a resource scope, MachineKpiStrip.swift:44-48) one host change per second re-runs MenuBarView's body, re-evaluating PanelHeader, SessionsPanelView and UsagePanel per tick instead of per power event - exactly the invalidation scope the file's own comments (:35-40, :103-115) were written to avoid.",
   "fix": "Read the flag in a tiny leaf view (same pattern as `MainWindowSessionStatus`) so only that subtree invalidates, or expose `batteryInstalled` as its own observable property on ProcessSampler.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: MenuBarBatteryChip leaf view reads ProcessSampler.shared.host.batteryInstalled in its own body (same split as FeedbackToastHost / MainWindowSessionStatus), so 1 Hz host publishes invalidate only the chip, not the whole popup shell."
  },
  {
   "category": "perf-cpu",
@@ -6408,7 +6410,8 @@
   "line": 100,
   "severity": "low",
   "summary": "标题栏草稿菜单每次 body 都做一次全量排序，而它的输入只是 `store.drafts`。",
-  "symbol": "header → Menu { ForEach(store.drafts.values.sorted …) }"
+  "symbol": "header → Menu { ForEach(store.drafts.values.sorted …) }",
+  "recheck_note": "Fixed by the D-cluster worker (deferred note earlier): the draft menu sort moved into the expanded Menu content; verified as part of the Feishu batch."
  },
  {
   "category": "state",

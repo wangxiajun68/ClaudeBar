@@ -140,9 +140,11 @@ struct MenuBarView: View {
     /// surface a user sees most often, and the fix is the group, not the glyph.
     private var actionBar: some View {
         IconChipRow(spacing: Theme.Space.s2) {
-            if ProcessSampler.shared.host.batteryInstalled {
-                CompactBatteryChargeControl()
-            }
+            // The battery switch lives in a leaf view: read here, the shell
+            // body observed `ProcessSampler.host`, so every 1 Hz host tick
+            // re-evaluated the whole popup (header, both panels, this bar)
+            // for a flag that only changes on plug/unplug (finding 506).
+            MenuBarBatteryChip()
             iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary) {
                 providerStore.refresh()
                 panel.showFeedback("已刷新")
@@ -252,5 +254,26 @@ private struct FeedbackToastHost: View {
                 guard !Task.isCancelled else { return }
                 withAnimation(Theme.Animation.smooth) { panel.feedbackMessage = nil }
             }
+    }
+}
+
+/// The battery switch, isolated so the 1 Hz `ProcessSampler` host publishes
+/// only invalidate this chip.
+///
+/// Read directly in the shell's `actionBar`, `ProcessSampler.shared.host` made
+/// the whole popup body a reader of the host snapshot: every accepted sample
+/// re-evaluated the header, both panels and the action bar for a flag that
+/// changes only when the machine is plugged in or unplugged (finding 506).
+/// Same split as `FeedbackToastHost` above and `MainWindowSessionStatus` on the
+/// main window.
+private struct MenuBarBatteryChip: View {
+    /// `ProcessSampler` is `@Observable`: a plain read in `body` subscribes
+    /// this chip alone, exactly the way the strip's own sampler views do it.
+    private let sampler = ProcessSampler.shared
+
+    var body: some View {
+        if sampler.host.batteryInstalled {
+            CompactBatteryChargeControl()
+        }
     }
 }
