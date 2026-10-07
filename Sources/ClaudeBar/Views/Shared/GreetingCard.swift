@@ -1212,9 +1212,10 @@ struct GreetingStatusSheet: View {
     private var quotaHelp: String {
         guard !windows.isEmpty else { return quotaNote ?? "暂无额度数据" }
         return windows.map {
-            let used = Int(min(100, max(0, $0.usedPercent)).rounded())
+            // The headroom sentence is `CodexQuotaWindow`'s single spelling —
+            // the popup gauge's tooltip prints the identical text (finding 219).
             let wait = $0.resetWait.isEmpty ? "" : "（\($0.resetWait)）"
-            return "\($0.label)剩余 \(100 - used)%（已用 \(used)%），\($0.resetClock)\(wait)"
+            return "\($0.label)\($0.remainingPhrase)，\($0.resetClock)\(wait)"
         }
         .joined(separator: " · ")
     }

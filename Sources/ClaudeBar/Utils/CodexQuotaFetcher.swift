@@ -39,6 +39,18 @@ struct CodexQuotaWindow: Equatable, Identifiable {
         return String(format: "%.1f%%", usedPercent)
     }
 
+    /// The headroom sentence, spelled once: `剩余 82%（已用 18%）`.
+    ///
+    /// The popup gauge's tooltip and the dashboard's quota help each had their
+    /// own copy and had drifted on punctuation and on which number led
+    /// (finding 219); this is the single spelling both now print.
+    static func remainingPhrase(usedPercent: Double) -> String {
+        let used = Int(min(100, max(0, usedPercent)).rounded())
+        return "剩余 \(100 - used)%（已用 \(used)%）"
+    }
+
+    var remainingPhrase: String { Self.remainingPhrase(usedPercent: usedPercent) }
+
     /// Clock time of the next allowance refresh. Today omits the date.
     var resetClock: String {
         guard let resetsAt else { return "重置时间未知" }

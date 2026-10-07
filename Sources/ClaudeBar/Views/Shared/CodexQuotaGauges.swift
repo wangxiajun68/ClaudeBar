@@ -93,8 +93,9 @@ struct QuotaSwayGauge: View {
     static var height: CGFloat { 26 }
 
     private func help(_ metric: Metric) -> String {
-        let used = Int(min(100, max(0, metric.usedPercent)).rounded())
-        var parts = ["\(metric.label)：剩余 \(100 - used)%（已用 \(used)%）"]
+        // The sentence lives on `CodexQuotaWindow` — the dashboard's quota
+        // help prints the identical spelling (finding 219).
+        var parts = ["\(metric.label)：\(CodexQuotaWindow.remainingPhrase(usedPercent: metric.usedPercent))"]
         if !metric.resetCompact.isEmpty { parts.append(metric.resetCompact) }
         return parts.joined(separator: " · ")
     }
