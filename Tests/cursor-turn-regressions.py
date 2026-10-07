@@ -218,6 +218,25 @@ func runTests() throws {
     check(!parked("plain-idle") && !busy("plain-idle"),
           "a composer with neither flag is plain idle")
 
+    // The workspace-name encoding rule, pinned on its own (finding 90/92).
+    // f1c1921 fixed "replace only /" — which left underscore and dot names
+    // unresolvable, so every Cursor transcript lookup for `/Project/my_app.v2`
+    // missed and the card degraded to no-activity. The fixtures above use a
+    // clean ASCII path, which passed under the broken rule too, so the rule
+    // itself needs its own assertions.
+    check(FilePaths.cursorProjectName(for: "/Project/prompt_engineering")
+              == "Project-prompt-engineering",
+          "an underscore becomes a dash (the f1c1921 regression)")
+    check(FilePaths.cursorProjectName(for: "/openclaw-2026.5.7")
+              == "openclaw-2026-5-7",
+          "a dot becomes a dash")
+    check(FilePaths.cursorProjectName(for: "/fixture/my_project.v2")
+              == "fixture-my-project-v2",
+          "underscore and dot together")
+    check(FilePaths.cursorProjectName(for: "/Users/me/项目")
+              == "Users-me---",
+          "a CJK scalar is outside the whitelist and becomes one dash per scalar")
+
     print("\(checks - failures.count)/\(checks) Cursor monitor checks passed")
     if !failures.isEmpty { exit(1) }
 }

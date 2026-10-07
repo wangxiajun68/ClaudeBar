@@ -43,10 +43,15 @@ for filename, marker, name in [
     ('UsageIndex.swift', 'struct UsageIndex', 'index.db'),
     ('ProxyUsageStore.swift', 'final class ProxyUsageStore', 'proxy.db')]:
     text = declaration((utils / filename).read_text(), marker)
-    start = text.index('    private static let dbURL: URL = {')
-    end = text.index('    }()', start) + len('    }()')
-    # Inject only the storage URL. All production parsing, SQL and migration run unchanged.
-    text = text[:start] + f'    private static var dbURL: URL {{ FilePaths.root.appendingPathComponent("{name}") }}' + text[end:]
+    # The production URL is `FilePaths.appSupportDir.appendingPathComponent(...)`
+    # (the fourth copy of the root derivation is gone — findings 91/400); only
+    # the support root is redirected here. All production parsing, SQL and
+    # migration run unchanged.
+    db_name = 'usage-index.db' if name == 'index.db' else 'proxy-usage.db'
+    old = 'private static let dbURL = FilePaths.appSupportDir.appendingPathComponent("%s")' % db_name
+    assert old in text, f'{filename}: the storage URL moved — update the fixture redirect'
+    text = text.replace(
+        old, f'private static var dbURL: URL {{ FilePaths.root.appendingPathComponent("{name}") }}')
     source += text + "\n"
 source += (utils / 'ModelPricing.swift').read_text()
 source += (utils / 'ModelPriceTable.swift').read_text()

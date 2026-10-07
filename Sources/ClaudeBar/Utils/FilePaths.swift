@@ -102,9 +102,13 @@ enum FilePaths {
     static var sessionMigrationsDir: URL { appSupportDir.appendingPathComponent("SessionMigrations") }
 
     /// Fix the CLI's config root for migrated sessions; no credential copying.
-    static var cursorCLIConfigDir: URL {
-        BuildChannel.allowsSystemIntegration ? cursorDir : appSupportDir.appendingPathComponent(".cursor")
-    }
+    ///
+    /// The channel split already lives in `cursorDir` (release `~/.cursor`,
+    /// dev under the app's own support dir), so this is an alias, not a second
+    /// copy of the rule: the ternary that used to be here resolved to the same
+    /// URL on both branches and would have drifted silently the moment
+    /// `cursorDir`'s dev path changed (finding 399).
+    static var cursorCLIConfigDir: URL { cursorDir }
 
     // MARK: - VPN (mihomo core)
 

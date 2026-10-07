@@ -1198,7 +1198,9 @@
   "summary": "cursorProjectName 的字符白名单规则没有任何回归覆盖，而这条规则在生产上已经错过一次；现有 Cursor 套件用的 cwd 在旧实现下同样通过，改错不会被任何测试拦住。",
   "evidence": "FilePaths.swift:179-189 用 (65...90)/(97...122)/(48...57)/\"-\" 白名单逐 scalar 替换；git show f1c1921（\"旧实现只替换 '/'，导致含下划线/点号的项目 transcript 查找失败 (activity/count/pending 全部落空)。用 20 条真实 composer 验证\"）说明这条规则上次是靠人工对着真实目录核对出来的。Tests 目录里 grep cursorProjectName 零命中；唯一使用它的回归是 Tests/cursor-turn-regressions.py:27 `let cwd = \"/fixture/project\"`（纯 ASCII、只含 /），旧实现 `replacingOccurrences(of: \"/\", with: \"-\")` 对这条 cwd 产出完全相同的结果，因此夹具对两种实现都不敏感。本机真实目录里确实存在 `~/.cursor/projects/Users-wangxiajun-Project-mzt-demo`、`-rag-exp`、`-prompt-engineering`（对应 ~/Project/mzt_demo、rag_exp、prompt_engineering），任一处回退都会静默丢会话活动与标题。",
   "failure": "任何人把实现改回「只替换 /」（docs/technical/04-data-access-layer.md:15 至今仍这样描述），或用 cwd 含 `_`/`.`/非 ASCII 的真实工作区时——make test 全绿，Release 里这些 Cursor 会话的 activity/toolPending/lastUpdatedAt 全部落空、卡片退化成无活动状态，且没有任何日志或断言提示。",
-  "fix": "在 Tests/cursor-turn-regressions.py（已切真实 FilePaths）里加一条纯断言：precondition(FilePaths.cursorProjectName(for: \"/fixture/my_project.v2\") == \"fixture-my-project-v2\") 以及一条非 ASCII 用例（如 \"/fixture/记忆\" → \"fixture--\"，按当前白名单语义固定下来）。无需动实现。"
+  "fix": "在 Tests/cursor-turn-regressions.py（已切真实 FilePaths）里加一条纯断言：precondition(FilePaths.cursorProjectName(for: \"/fixture/my_project.v2\") == \"fixture-my-project-v2\") 以及一条非 ASCII 用例（如 \"/fixture/记忆\" → \"fixture--\"，按当前白名单语义固定下来）。无需动实现。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: Tests/cursor-turn-regressions.py pins FilePaths.cursorProjectName directly — underscore (`/Project/prompt_engineering` → `Project-prompt-engineering`, the f1c1921 regression), dot, underscore+dot together, and a CJK scalar (one dash per scalar, outside the whitelist). The old fixtures used a clean ASCII path that passed under the broken rule too."
  },
  {
   "category": "duplication",
@@ -1210,7 +1212,9 @@
   "summary": "应用数据根目录被 3 个 SQLite 存储各自重写一份，绕开 FilePaths，已经逼出按源码文本做替换的测试手术。",
   "evidence": "FilePaths.swift:61-66 定义 `urls(for: .applicationSupportDirectory)[0].appendingPathComponent(BuildChannel.appName, isDirectory: true)` + createDirectory。同一逻辑在 ProxyCaptureStore.swift:181-186（proxy-capture.db）、ProxyUsageStore.swift:42-47（proxy-usage.db）、UsageIndex.swift:37-42（usage-index.db）逐字重复，且各自再调一次 createDirectory。Tests/usage-index-regressions.py:48-53 因此必须 `text.index('    private static let dbURL: URL = {')` 后整段切掉再拼 `FilePaths.root.appendingPathComponent(\"index.db\")` —— 测试已经和这段源码文本耦合。",
   "failure": "改版本身份或应用名（BuildChannel.appName）、或把数据目录整体搬迁时：FilePaths 一处改不到另外三处，dev/release 的隔离断言（Tests/build-isolation-regressions.py:59-66 只覆盖 FilePaths.*）测不到它们，结果是 3 个数据库仍落在旧路径或真实路径，而测试全绿。",
-  "fix": "三处 dbURL 改成 `FilePaths.appSupportDir.appendingPathComponent(\"proxy-capture.db\"|\"proxy-usage.db\"|\"usage-index.db\")`，删掉各自的 createDirectory（FilePaths.appSupportDir 已建），测试的文本替换随之可删。"
+  "fix": "三处 dbURL 改成 `FilePaths.appSupportDir.appendingPathComponent(\"proxy-capture.db\"|\"proxy-usage.db\"|\"usage-index.db\")`，删掉各自的 createDirectory（FilePaths.appSupportDir 已建），测试的文本替换随之可删。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: all three SQLite stores now resolve their path from FilePaths — `FilePaths.appSupportDir.appendingPathComponent(\"proxy-capture.db\"/\"proxy-usage.db\"/\"usage-index.db\")`, each local createDirectory removed (appSupportDir owns it). Their fixtures redirect only FilePaths' support root now (usage-index's wrapper replaced by the same text substitution the other suites use)."
  },
  {
   "category": "test-gap",
@@ -1222,7 +1226,9 @@
   "summary": "这条函数是 f1c1921 修 bug 的主体（只换 \"/\" 会让下划线/点号项目全部查不到 transcript），但没有任何回归钉住编码规则；现有测试用的是纯 ASCII 路径，改回错误实现也会通过。",
   "evidence": "`grep -rn cursorProjectName Tests/` 零命中；唯一相关的 Tests/cursor-turn-regressions.py:27 `let cwd = \"/fixture/project\"`，第 73-76 行用 `FilePaths.cursorTranscriptURL(cwd: cwd, ...)` 造夹具 —— 该路径不含下划线/点号，旧规则（只替换 \"/\"）与现规则结果相同。f1c1921 的提交信息写明当时「用 20 条真实 composer 验证 6 hit + 5 修复」，也就是说这个 bug 只有靠真实数据才能发现。另外实现按 Unicode scalar 映射（第 181-188 行），而 Cursor 是 JS/Electron 的 `replace(/[^A-Za-z0-9-]/g,'-')`，按 UTF-16 code unit 作用 —— 仓库自己在 MigrationStorage.swift:15-18 对同类 JS 侧编码就用了 `utf16.map`，两处规则不一致；本机 116 个 projects 目录中未见 astral 字符样例，故该差异的实际影响未证实。",
   "failure": "有人把编码规则改回「只替换 /」，或改动标量范围（例如放宽到含下划线）：所有含下划线/点号的工作区 transcript 查找失败，CursorSessionMonitor 的 activity / 忙闲 / completionID 全部落空（这正是 f1c1921 的现象），而 `make test` 全绿。",
-  "fix": "在 Tests/cursor-turn-regressions.py 里补 3 行断言：`precondition(FilePaths.cursorProjectName(for: \"/Project/prompt_engineering\") == \"Project-prompt-engineering\")`、`...(\"/openclaw-2026.5.7\") == \"openclaw-2026-5-7\"`，并用一个含非 BMP 字符的路径把 scalar/UTF-16 的取舍显式钉住。"
+  "fix": "在 Tests/cursor-turn-regressions.py 里补 3 行断言：`precondition(FilePaths.cursorProjectName(for: \"/Project/prompt_engineering\") == \"Project-prompt-engineering\")`、`...(\"/openclaw-2026.5.7\") == \"openclaw-2026-5-7\"`，并用一个含非 BMP 字符的路径把 scalar/UTF-16 的取舍显式钉住。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: same suite, same four encoding assertions (see 90); the suite runs the real FilePaths slice (36/36 checks)."
  },
  {
   "category": "state",
@@ -5062,7 +5068,9 @@
   "summary": "cursorCLIConfigDir 的三元表达式在两条分支上都恒等于 cursorDir——它看起来按通道分流，实际是恒等别名；一旦 cursorDir 的 dev 分支改名就会静默漂移。",
   "evidence": "FilePaths.swift:106-108 `BuildChannel.allowsSystemIntegration ? cursorDir : appSupportDir.appendingPathComponent(\".cursor\")`；而 cursorDir（第 145-149 行）本身就是 `allowsSystemIntegration ? home/.cursor : appSupportDir/.cursor`。真分支返回 cursorDir，假分支是 cursorDir 假分支的原式，因此 expr ≡ cursorDir。它在 Sources 下唯一调用点是 SessionMigrationService.swift:10（作为 CURSOR_CONFIG_DIR）。",
   "failure": "无害于当前行为，但两份 dev 根目录的定义（cursorDir 的 dev 分支与这里的 `.cursor` 字面量）只有靠巧合相等：今后改 cursorDir 的 dev 路径（例如加通道子目录）时，迁移用的 CURSOR_CONFIG_DIR 仍指向旧位置，迁移预检与真实 Cursor CLI 目录不一致且没有编译错误。",
-  "fix": "`static var cursorCLIConfigDir: URL { cursorDir }`，或直接删掉该成员并在 SessionMigrationService.swift:10 用 FilePaths.cursorDir。"
+  "fix": "`static var cursorCLIConfigDir: URL { cursorDir }`，或直接删掉该成员并在 SessionMigrationService.swift:10 用 FilePaths.cursorDir。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: `cursorCLIConfigDir` is now `{ cursorDir }` — the ternary resolved to cursorDir on both branches, so it was an identity alias that could drift silently."
  },
  {
   "category": "duplication",
@@ -5074,7 +5082,9 @@
   "summary": "三个 SQLite 路径各自重写了一遍 appSupportDir 的推导（urls(for:.applicationSupportDirectory) + BuildChannel.appName + createDirectory），与 FilePaths 的通道/身份约定平行维护。",
   "evidence": "FilePaths.swift:61-66 是唯一权威实现；重复处：Utils/ProxyUsageStore.swift:42-47（dbURL → proxy-usage.db）、Utils/ProxyCaptureStore.swift:181-187（proxy-capture.db）、Utils/UsageIndex.swift:37-43（usage-index.db），三者逐字相同但都是 `private static let`，绕开了 FilePaths。AGENTS.md 要求「应用拥有的文件通过 FilePaths 或 BuildChannel.appName 定位」，它们是靠 BuildChannel.appName 侥幸合规。",
   "failure": "appSupportDir 的根一旦变化（加子目录、改按通道分层、改用 container），三个数据库仍落在旧根：用量页、流量抓包页、用量索引会各自读到「空库」而不是报错，表现为历史数据凭空消失。",
-  "fix": "三处 dbURL 改为 `FilePaths.appSupportDir.appendingPathComponent(\"proxy-usage.db\")` 等（appSupportDir 已负责建目录，可删掉各自的 createDirectory）。"
+  "fix": "三处 dbURL 改为 `FilePaths.appSupportDir.appendingPathComponent(\"proxy-usage.db\")` 等（appSupportDir 已负责建目录，可删掉各自的 createDirectory）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: same change as 91 — the three parallel derivations are gone; a future change to the support root (channel layering, container) moves the databases with it."
  },
  {
   "category": "compat",

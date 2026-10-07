@@ -45,12 +45,9 @@ final class ProxyUsageStore {
     private var openFailedAt: Date?
     private static let openRetryInterval: TimeInterval = 5
 
-    private static let dbURL: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(BuildChannel.appName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("proxy-usage.db")
-    }()
+    /// Under the app's own support root, from `FilePaths` — see the note on
+    /// `ProxyCaptureStore.dbURL` (findings 91/400).
+    private static let dbURL = FilePaths.appSupportDir.appendingPathComponent("proxy-usage.db")
 
     /// `SQLITE_TRANSIENT` equivalent — the constant in `UsageIndex.swift` is
     /// module-wide, but naming it here keeps this file independent of that

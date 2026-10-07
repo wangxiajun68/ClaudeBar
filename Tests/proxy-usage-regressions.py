@@ -281,12 +281,7 @@ rollup = (root / 'Sources/ClaudeBar/Utils/ProxyUsageStore.swift').read_text()
 declaration = rollup[rollup.index('final class ProxyUsageStore {'):].rstrip() + '\n'
 assert declaration.endswith('}\n')
 declaration = declaration.replace(
-    '''    private static let dbURL: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(BuildChannel.appName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("proxy-usage.db")
-    }()''',
+    '''    private static let dbURL = FilePaths.appSupportDir.appendingPathComponent("proxy-usage.db")''',
     '''    private static var dbURL: URL {
         FilePaths.root.appendingPathComponent("proxy-usage.db")
     }''')

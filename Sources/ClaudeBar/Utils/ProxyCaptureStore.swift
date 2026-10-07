@@ -183,12 +183,11 @@ final class ProxyCaptureStore {
     private let payloadCap = CaptureMedia.payloadCapBytes
     private let isoFormatter = ISO8601DateFormatter()
 
-    private static let dbURL: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(BuildChannel.appName, isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("proxy-capture.db")
-    }()
+    /// Under the app's own support root, from `FilePaths` rather than a fourth
+    /// copy of its derivation: the channel/identity rule (and the directory
+    /// creation) lives there, so a rename or a channel split cannot leave this
+    /// database behind at the old root (findings 91/400).
+    private static let dbURL = FilePaths.appSupportDir.appendingPathComponent("proxy-capture.db")
 
     private init() {}
 
