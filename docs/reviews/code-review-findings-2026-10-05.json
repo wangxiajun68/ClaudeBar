@@ -6301,7 +6301,9 @@
   "evidence": "IslandComponents.swift:256-260 `if ratio < 0.6 { return IslandStyle.mint }; if ratio < 0.85 { return IslandStyle.amber }; return IslandStyle.coral`. Theme.swift:243-256 documents `enum ContextLevel` with “a surface that keeps its own palette (CursorSessionCardView's violet, the island gauge's mint/coral) can map the band instead of re-spelling `0.6`/`0.85`”, and CursorSessionCardView.swift:18-23 already maps `Theme.ContextLevel(ratio)` instead. Other copies: Theme.swift:247-256 and Widget/WidgetViews.swift:49-53.",
   "failure": "A threshold change (project decision or Apple guidance) updates `Theme.ContextLevel` and the widget copy but misses the island's, so a session at 70 % turns amber on the sessions page and mint on the island — the exact class of 'same state, two rules' the extraction note says it removed.",
   "fix": "Replace the two literals with `switch Theme.ContextLevel(ratio) { case .ok: mint; case .warn: amber; case .critical: coral }` — the comment says the extraction covers this call site.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: IslandContextGauge switches on Theme.ContextLevel(ratio) instead of re-spelling 0.6/0.85; hues stay island-mint/amber/coral."
  },
  {
   "category": "compat",
@@ -6325,7 +6327,9 @@
   "evidence": "NotchIslandView.swift:526-537: `.needsInput` → `who + \" · \" + (session.waitingReason.isEmpty ? \"等待你确认\" : session.waitingReason)`, while `.finished` → `who + \" · 等待你的下一步\"` and the session-row subtitle (IslandComponents.swift:240-242) uses `session.waitingReason.isEmpty ? \"等待你确认\" : session.waitingReason`. The strip is reached both through `model.needsInput` (edge) and through `model.finished`, and `IslandLiveModel.flatten` leaves `waitingReason` empty for Codex (`waitingReason: s.isWaiting ? \"等待你确认\" : \"\"`, IslandLiveModel.swift:348) and non-empty for Claude/Cursor.",
   "failure": "A SessionInfo carrying `status == .waiting` but no `pendingTool` (the fall-through arm in SessionMonitor.swift:131-139) produces `waitingReason == \"等待你确认\"` and is fine; but any future reason-less park (a new CLI status string, a fixture-built session) prints a bare 「等待你确认」 in the strip while the session row beside it prints the same thing — the two surfaces cannot disagree today only because both defaults happen to be equal, and nothing pins that.",
   "fix": "Hoist the empty-aware line into one computed property on `IslandSession` (e.g. `waitingLine`) and use it from the row and both alert arms, so the default lives in one place.",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: IslandSessionRow.waitingLine(for:) is a shared static; the alert strip’s needsInput detail reads it, so the empty-aware fallback word lives in one place."
  },
  {
   "category": "dead-code",
@@ -6337,7 +6341,8 @@
   "evidence": "NotchIslandView.swift:51-58 `static var panelSize: CGSize { CGSize(width: panelWidth, height: expandedMaxHeight + 48) }` with `private static var expandedMaxHeight: CGFloat { let tallestNotch: CGFloat = 46; return tallestNotch + contentTopGap + expandedLaneHeight + sectionGap + usageCardHeight + bottomPadding }`, versus `NotchIslandState.expandedSize` (NotchIslandController.swift:45-49) which uses the live `state.notch.height`. docs/design/10-notch-island.md:127 documents the constant as “由展开态最高几何推出：刘海 46 … 不是手填数字”.",
   "failure": "On a display whose safe-area notch exceeds 46pt (a future hardware revision, or an external display reporting a tall auxiliary top area through NotchGeometry's pseudo path), the expanded island's real height (`notch.height + …`) exceeds `panelSize.height - 48`, so the bottom of the usage card is clipped by the fixed hosting frame while every static check still passes — the failure is geometric and invisible in any current test.",
   "fix": "Make the panel height follow the geometry it is positioned against (take `notch.height` as a parameter when the panel is installed, or size the capsule generously from the ratio the other constants already use) rather than pinning `46`.",
-  "confidence": "low"
+  "confidence": "low",
+  "recheck_note": "Deferred: the tallestNotch constant is a layout reservation independent of the runtime notch height; aligning it with the controller’s live measurement needs the panel-geometry work, tracked as open."
  },
  {
   "category": "perf-frame",
@@ -6349,7 +6354,9 @@
   "evidence": "NotchIslandView.swift:381-383 `RollingNumberText(\"\\(sessions.count) 个会话\")` (no `rolls:` argument, default `true`); contrast the collapsed wing's figure which passes `rolls: false` explicitly (NotchIslandView.swift:219) with the measured rationale in Interaction.swift:425-445 (“a surface nobody is looking at … the collapsed readout”), and the card's month line which passes figures the sampler feeds. `IslandLiveModel.apply` sets `sessions` only when the flattened array changes (removeDuplicates, IslandLiveModel.swift:169-171).",
   "failure": "Every session start/finish (and each poll that changes any session's activity string, since `IslandSession.activity` rides the same array) opens one animated transaction on the island panel; measured cost of the class is a full hosting-view layout per display cycle while the roll is in flight (docs/reviews/performance-measurements.md:20). The roll is invisible during the same update anyway because the island is usually in a non-visible window.",
   "fix": "`RollingNumberText(\"\\(sessions.count) 个会话\", rolls: false)` — the count still updates; the strip stops being a per-poll display-cycle source.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the island lane footer count uses RollingNumberText(..., rolls: false) — an aggregate count does not roll."
  },
  {
   "category": "perf-cpu",
@@ -7062,7 +7069,9 @@
   "evidence": "Line 21: `.frame(width: max(height, geo.size.width * min(max(ratio, 0), 1.0)))` — with ratio 0 the fill is `max(height, 0)` = `height` wide (4 pt at the default, 5–6 pt at the VpnTopChrome/Dashboard call sites). Every caller signals 'no reading' by *dimming* the whole bar (`.opacity(... ? 1 : 0.25)`: CursorSessionCardView.swift:54, SessionCardView.swift:63, DashboardView.swift:322, SessionsView.swift:386/583/989) — i.e. the bar is still drawn filled. The sibling `SignalCellRow` explicitly guards this case (ConnectionCard.swift:284-288: 'the `index / (count - 1)` formula would still light cell 0 at 0.0 ... The floor is what stops an offline card from claiming a bar's worth of signal'), and ConnectionSignalScale.append at HardwareDetailPanel.swift:443 has the matching `geometry.size.width > 0 && position != nil` gate.",
   "failure": "A session whose context ratio is 0 (unknown limit, no tokens — the exact state the call-site opacity is there to announce) renders as a full-height coloured dot, indistinguishable from a 1–3 % reading at 25 % opacity; a viewer cannot tell '0 %' from 'a sliver of context used'.",
   "fix": "Floor the fill to zero when the ratio is zero: `let clamped = min(max(ratio, 0), 1); .frame(width: clamped <= 0 ? 0 : max(height, geo.size.width * clamped))` (or drop the `max(height, ...)` floor entirely and let callers' 25 % dimmed track carry the empty state).",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: ContextBar computes the clamped ratio once and emits width 0 for an empty bar; the height-wide pill appears only for genuinely non-zero fills."
  },
  {
   "category": "test-gap",
