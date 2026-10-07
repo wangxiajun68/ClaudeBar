@@ -91,6 +91,12 @@ source += 'let brandMarkRoot = URL(fileURLWithPath: "' + str(brand_marks) + '")\
 # --- Theme + foundation ------------------------------------------------------
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'extension Color {')
 source += declaration('Sources/ClaudeBar/Theme/Theme.swift', 'enum Theme {')
+# The build's own identity: `FilePaths` and the Codex scanner read
+# `BuildChannel.allowsSystemIntegration`, so the probe compiles the real file
+# (dev channel — no macro at all, which is the fallback it documents).
+source += file_from('Sources/Shared/BuildChannel.swift')
+# The token formatter `UsageStats.formatTokens` delegates to.
+source += declaration('Sources/ClaudeBar/Utils/TokenMagnitude.swift', 'enum TokenMagnitude {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'enum UsageSource: String, CaseIterable, Identifiable {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'struct DayUsage: Identifiable, Equatable {')
 source += declaration('Sources/ClaudeBar/Models/ModelUsage.swift', 'struct ModelUsage: Identifiable, Hashable {')
@@ -107,6 +113,9 @@ source += declaration('Sources/ClaudeBar/Models/Provider.swift', 'struct Provide
 source += declaration('Sources/ClaudeBar/Models/Preset.swift', 'struct EnvConfig: Codable, Equatable {')
 source += declaration('Sources/ClaudeBar/Models/CodexProvider.swift', 'struct CodexModelConfig: Codable, Identifiable, Equatable {')
 source += declaration('Sources/ClaudeBar/Models/CodexProvider.swift', 'struct CodexProvider: Codable, Identifiable, Equatable {')
+
+# --- The real FilePaths ------------------------------------------------------
+source += declaration('Sources/ClaudeBar/Utils/FilePaths.swift', 'enum FilePaths {')
 
 # --- Sessions (values) -------------------------------------------------------
 source += declaration('Sources/ClaudeBar/Utils/WorkflowMonitor.swift', 'enum WorkflowStatus: String {')
@@ -191,6 +200,10 @@ source += file_from('Sources/ClaudeBar/Views/Popup/PanelState.swift')
 source += file_from('Sources/ClaudeBar/Views/Popup/PanelHeader.swift')
 source += file_from('Sources/ClaudeBar/Views/Popup/SessionsPanel.swift')
 source += file_from('Sources/ClaudeBar/Views/Popup/UsagePanel.swift')
+# The action bar's two state-dependent faces (bell on/off, theme sun/moon).
+# Production, not restated: the fixture used to keep its own literals and had
+# already drifted from the real bar (finding 571).
+source += declaration('Sources/ClaudeBar/Views/MenuBarView.swift', 'enum ActionBarFaces {')
 
 # --- Store stand-ins ---------------------------------------------------------
 source += '''
@@ -200,10 +213,22 @@ final class AppPreferences: ObservableObject {
     static let shared = AppPreferences()
     @Published var isDark = false
     @Published var appearance: AppearanceMode = .light
+    /// On, so the still shows the enabled bell the promo describes
+    /// (`FixtureActionBar` reads this through the production `ActionBarFaces`).
+    @Published var idleNotifyEnabled = true
     @Published var tokenUnitStyle: TokenUnitStyle = .chinese
+    /// `UsagePanel` reads this through the production `ModelPricing.present`.
+    @Published var costDisplay: CostDisplay = .split
     @Published var codexProxyPort: Int = 15721
     @Published var codexRoutingEnabled = true
     @Published var vpnMixedPort: Int = 7890
+}
+
+/// `ExchangeRate` reduced to the one member the sliced views read
+/// (`UsagePanel`'s `fx.effectiveRate`): a fixed rate, no fetch, no defaults.
+final class ExchangeRate: ObservableObject {
+    static let shared = ExchangeRate()
+    var effectiveRate: Double? { 7.12 }
 }
 
 /// `@ProviderState` in the app reads `\\.providerSource` off the environment and
@@ -284,8 +309,21 @@ final class ProviderStore: ObservableObject {
         var id: String { session.id }
         let session: ExternalSessionInfo
         let children: [ExternalSessionNode]
-        var flattened: [ExternalSessionInfo] { [session] + children.flatMap(\\.flattened) }
-        var descendantCount: Int { flattened.count - 1 }
+        /// Every sub-agent below this node, at any depth, in pre-order —
+        /// stored, exactly as the app builds it (`ProviderStore+Derived`).
+        let descendants: [ExternalSessionInfo]
+        let activeDescendantCount: Int
+
+        init(session: ExternalSessionInfo, children: [ExternalSessionNode]) {
+            self.session = session
+            self.children = children
+            self.descendants = children.flatMap { [$0.session] + $0.descendants }
+            self.activeDescendantCount = children.reduce(0) {
+                $0 + $1.activeDescendantCount + ($1.session.isActive ? 1 : 0)
+            }
+        }
+
+        var descendantCount: Int { descendants.count }
     }
     func externalSessionTree(kind: ExternalAgentKind) -> [ExternalSessionNode] {
         externalSessions.filter { $0.kind == kind && $0.isAlive && !$0.isSubagent }
@@ -379,7 +417,10 @@ extension Notification {
                      userInfo: ["page": page.rawValue, "editor": editor])
     }
 }
-enum FilePaths { static var settingsFile: URL { URL(fileURLWithPath: "/tmp/settings.json") } }
+/// The real `FilePaths` enum, sliced above the stand-ins: the Codex scanner
+/// reads `FilePaths.codexDir`, and a stub that dropped it is exactly how this
+/// probe stopped compiling. The real file resolves its roots under the app's
+/// own support dir on the dev channel, so nothing here touches `~/.claude`.
 enum TerminalLauncher {
     static func resumeClaudeSession(cwd: String, sessionId: String, pid: Int?) {}
     static func resumeCodexSession(cwd: String, sessionId: String, pid: Int?, inDesktop: Bool) {}
@@ -583,8 +624,18 @@ struct FixtureKpiStrip: View {
 /// installed. Production prepends the conditional `CompactBatteryChargeControl`
 /// when `ProcessSampler.shared.host.batteryInstalled` — a still cannot read
 /// that, so the fixture draws the no-battery set.
+///
+/// The two state-dependent faces (bell, theme) come from the *production*
+/// `ActionBarFaces` sliced above, and the state is drawn from the fixture's
+/// own `AppPreferences` — the same `idleNotifyEnabled` / `appearance` values
+/// the probe writes per theme. Nothing here restates an icon, a tooltip or a
+/// tint by hand (finding 571).
 struct FixtureActionBar: View {
+    @ObservedObject private var prefs = AppPreferences.shared
+
     var body: some View {
+        let bell = ActionBarFaces.idleNotify(enabled: prefs.idleNotifyEnabled)
+        let theme = ActionBarFaces.appearance(prefs.appearance)
         IconChipRow(spacing: Theme.Space.s2) {
             iconButton("arrow.clockwise", help: "刷新", color: Theme.textSecondary)
             iconButton("macwindow", help: "打开主窗口", color: Theme.accent)
@@ -592,8 +643,8 @@ struct FixtureActionBar: View {
             iconButton("arrow.uturn.backward", help: "还原官方配置", color: Theme.textSecondary)
             iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent)
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary)
-            iconButton("bell.fill", help: "会话空闲时发送系统通知", color: Theme.statusBusy)
-            iconButton("moon", help: "切换深色", color: Theme.textSecondary)
+            iconButton(bell.icon, help: bell.help, color: bell.tint)
+            iconButton(theme.icon, help: theme.help, color: theme.tint)
             Spacer(minLength: Theme.Space.s4)
             VerticalHairline().frame(height: 18).padding(.horizontal, Theme.Space.s2)
             iconButton("power", help: "退出", color: Theme.statusError)

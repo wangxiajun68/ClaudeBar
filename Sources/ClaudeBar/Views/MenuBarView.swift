@@ -177,9 +177,8 @@ struct MenuBarView: View {
             iconButton("pencil.line", help: "管理模型", color: Theme.cursorAccent) { openEditor() }
             iconButton("gearshape", help: "打开 settings.json", color: Theme.textSecondary) { openSettingsFile() }
                 .disabled(!hasSettingsFile)
-            iconButton(idleNotifyEnabled ? "bell.fill" : "bell.slash",
-                       help: "会话空闲时发送系统通知",
-                       color: idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary) {
+            let bell = ActionBarFaces.idleNotify(enabled: idleNotifyEnabled)
+            iconButton(bell.icon, help: bell.help, color: bell.tint) {
                 AppPreferences.shared.idleNotifyEnabled.toggle()
                 // Read the preference, not `idleNotifyEnabled`: this
                 // `@State` mirror is written by an `.onReceive` on a
@@ -189,9 +188,8 @@ struct MenuBarView: View {
                 // announced the opposite of what had just happened.
                 panel.showFeedback(AppPreferences.shared.idleNotifyEnabled ? "已开启空闲通知" : "已关闭空闲通知")
             }
-            iconButton(appearance == .dark ? "sun.max" : "moon",
-                       help: appearance == .dark ? "切换浅色" : "切换深色",
-                       color: Theme.textSecondary) {
+            let appearanceFace = ActionBarFaces.appearance(appearance)
+            iconButton(appearanceFace.icon, help: appearanceFace.help, color: appearanceFace.tint) {
                 AppPreferences.shared.appearance = appearance == .dark ? .light : .dark
             }
             Spacer(minLength: Theme.Space.s4)
@@ -275,5 +273,34 @@ private struct MenuBarBatteryChip: View {
         if sampler.host.batteryInstalled {
             CompactBatteryChargeControl()
         }
+    }
+}
+
+/// The two state-dependent action-bar faces, as pure functions of the state
+/// they print — icon, tooltip and tint in one place.
+///
+/// They are `static` and framework-free because the popup preview still
+/// (`Tools/render-popup-preview.py`) draws its action bar from production
+/// code: it slices this type out of the file, so the still cannot show an
+/// enabled-looking bell or the wrong theme icon for a state the popup never
+/// renders that way. The fixture previously restated the literals by hand and
+/// had already drifted (finding 571).
+enum ActionBarFaces {
+    struct Face: Equatable {
+        let icon: String
+        let help: String
+        let tint: Color
+    }
+
+    static func idleNotify(enabled: Bool) -> Face {
+        Face(icon: enabled ? "bell.fill" : "bell.slash",
+             help: "会话空闲时发送系统通知",
+             tint: enabled ? Theme.statusBusy : Theme.textSecondary)
+    }
+
+    static func appearance(_ mode: AppearanceMode) -> Face {
+        Face(icon: mode == .dark ? "sun.max" : "moon",
+             help: mode == .dark ? "切换浅色" : "切换深色",
+             tint: Theme.textSecondary)
     }
 }

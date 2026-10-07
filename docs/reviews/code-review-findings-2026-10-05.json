@@ -7224,7 +7224,9 @@
   "evidence": "Tools/render-popup-preview.py:595-596 `iconButton(\"bell.fill\", help: \"会话空闲时发送系统通知\", color: Theme.statusBusy)` and `iconButton(\"moon\", help: \"切换深色\", color: Theme.textSecondary)` versus Sources/ClaudeBar/Views/MenuBarView.swift:178-181 `iconButton(idleNotifyEnabled ? \"bell.fill\" : \"bell.slash\", help: \"会话空闲时发送系统通知\", color: idleNotifyEnabled ? Theme.statusBusy : Theme.textSecondary)` and :190-193 `iconButton(appearance == .dark ? \"sun.max\" : \"moon\", help: appearance == .dark ? \"切换浅色\" : \"切换深色\", ...)`. The fixture predates the conditional forms and was not updated; the file's own claim (line 10: \"Two subviews of the real MenuBarView are not drawn\") treats everything else as a faithful copy.",
   "failure": "Rendered popup stills (and derived promo assets) can show an enabled-looking bell or the wrong theme icon/label for states the real popup never renders that way, so the preview is no longer a trustworthy visual baseline for the action bar.",
   "fix": "Slice the production icon selection out of MenuBarView.swift into the probe (the tool already extracts other declarations) instead of restating literals.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the bell / theme selection moved into `ActionBarFaces` (pure `static func`s on `MenuBarView.swift`), which production and the preview both use — production calls it in its action bar, and `Tools/render-popup-preview.py` slices the type out of the file (`declaration(...)`) and drives it from the fixture's own `idleNotifyEnabled` / `appearance`. No icon, tooltip or tint literal is restated by the fixture any more, and `Tests/render-preview-regressions.py` fails if one comes back."
  },
  {
   "category": "logic",
@@ -9407,7 +9409,9 @@
   "summary": "The only automated consumer of the island preview tool is the promo-film script; its declaration-slice + compile guard never runs in `make test` or CI.",
   "evidence": "`grep -rn render-island-preview` finds no Makefile/CI/Tests reference — only `Tools/render-promo-film.py:92` invokes it. The tool has a windowless gate (`--check` at line 375-380: \"runs every declaration lookup and the compile, and stops before the launch\") and fails loudly when a slice moves (line 160-162: \"NotchIslandView.body no longer matches the shape this renderer strips preferences out of\"). The repo already has the precedent for gating another tool's `--check`: Tests/icon-minimal-regressions.py:7-11 records \"both claimed the test suite ran `--check`, and no suite did\" and now runs it.",
   "failure": "A refactor of `NotchIslandView.body`, or a moved/renamed declaration the probe slices, breaks only the promo-art path: nobody sees it until the film is rendered, while every other surface has a suite that fails at commit time. The island's views (shape math, histogram scrub, source split) have no compiled regression at all — only substring assertions in Tests/product-mark-regressions.py:111-141.",
-  "fix": "Add a one-line suite (e.g. Tests/island-preview-regressions.py) that runs `python3 Tools/render-island-preview.py --check` as a subprocess and asserts exit 0, and register it in TEST_SUITES; the `--check` path needs only swiftc, which CI already has."
+  "fix": "Add a one-line suite (e.g. Tests/island-preview-regressions.py) that runs `python3 Tools/render-island-preview.py --check` as a subprocess and asserts exit 0, and register it in TEST_SUITES; the `--check` path needs only swiftc, which CI already has.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: `Tests/render-preview-regressions.py` (registered as `render-preview` in `TEST_SUITES`) runs both tools' `--check` in `make test`. Wiring it flushed out that the failure was not hypothetical: the popup probe was already dead at HEAD (stub drift — `AppPreferences.costDisplay`, `ExchangeRate`, `TokenMagnitude`, the real `FilePaths`, `ExternalSessionNode.descendants`), and the island probe with it (`costDisplay` / `ExchangeRate`). Both now compile and render end to end."
  },
  {
   "category": "duplication",
@@ -9419,6 +9423,8 @@
   "summary": "The preview re-implements the three island-size formulas that are already available as `NotchIslandState.islandSize` inside the very fixture it compiles.",
   "evidence": "Tools/render-island-preview.py:290-303 hand-copies the formulas (`notch.width + 2 * IslandStyle.topFlare + 2 * IslandStyle.wingWidth`, `max(IslandStyle.minAlertWidth, ... + 200)`, `max(IslandStyle.minExpandedWidth, ... + 320)`) while the same file slices `final class NotchIslandState` from NotchIslandController.swift (line 106) — and that class already computes exactly these (`NotchIslandController.swift:31-58`: collapsedSize / alertSize / expandedSize / islandSize).",
   "failure": "Change `IslandStyle.minAlertWidth` or any padding constant and the probe keeps cropping to the old rectangle: the PNG is silently cut on the right edge (or padded) while `--check` still passes, because it asserts declarations exist, not values. The tool's stated purpose is to prevent exactly this kind of stale copy.",
-  "fix": "Build the state first and use `state.islandSize` for `target` (the fixture constructs `NotchIslandState` at line 331 anyway), deleting `islandTargetSize` and its three copies of the geometry."
+  "fix": "Build the state first and use `state.islandSize` for `target` (the fixture constructs `NotchIslandState` at line 331 anyway), deleting `islandTargetSize` and its three copies of the geometry.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the probe's crop is `state.islandSize` — the same formula the panel uses — and `islandTargetSize` plus its three restated branches are deleted. `Tests/render-preview-regressions.py` pins that no `IslandStyle` size constant is re-stated in the tool."
  }
 ]

@@ -93,6 +93,9 @@ source += declaration('Sources/ClaudeBar/Models/Provider.swift', 'struct ModelCo
 source += declaration('Sources/ClaudeBar/Models/Provider.swift', 'struct Provider')
 source += declaration('Sources/ClaudeBar/Models/AppPreferences.swift', 'enum TokenUnitStyle: String {')
 source += declaration('Sources/ClaudeBar/Utils/UsageStats.swift', 'struct UsageStats {')
+# The token formatter `UsageStats.formatTokens` delegates to (the slice above
+# names it).
+source += declaration('Sources/ClaudeBar/Utils/TokenMagnitude.swift', 'enum TokenMagnitude {')
 
 # --- Codex quota window (the alert's quota path and the popup's gauges) -------
 source += declaration('Sources/ClaudeBar/Utils/CodexQuotaFetcher.swift', 'struct CodexQuotaWindow: Equatable, Identifiable {')
@@ -170,13 +173,24 @@ source += '''
 // MARK: - Fixture stand-ins (synthetic; no store, no disk, no network).
 
 /// `AppPreferences` is `@Observable` in the app and reads/writes real defaults.
-/// The island only ever asks it for two values, so the fixture answers those
-/// and nothing else. `isDark` is set per render by the probe.
-final class AppPreferences: @unchecked Sendable {
+/// The island asks it for the token style, the VPN flag, the currency display
+/// and (through `ExchangeRate.effectiveRate`) the manual rate — nothing else.
+/// `isDark` is set per render by the probe.
+final class AppPreferences: ObservableObject, @unchecked Sendable {
     static let shared = AppPreferences()
     var isDark = false
     var tokenUnitStyle: TokenUnitStyle = .chinese
     var vpnEnabled = true
+    /// `@Published` because the island's two money rows subscribe to it
+    /// (`$costDisplay`), exactly as they do in the app.
+    @Published var costDisplay: CostDisplay = .split
+}
+
+/// `ExchangeRate` reduced to the one member the island's money rows read
+/// (`fx.effectiveRate`): a fixed rate, no fetch, no defaults.
+final class ExchangeRate: ObservableObject {
+    static let shared = ExchangeRate()
+    var effectiveRate: Double? { 7.12 }
 }
 private struct SurfaceVisibleKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
@@ -236,7 +250,6 @@ func fixtureCost(_ cny: Double, _ usd: Double) -> ModelPricing.Estimate {
     cost.cny = cny
     cost.usd = usd
     estimate.cost = cost
-    estimate.pricedModels = 2
     estimate.lines = [ModelPricing.Estimate.Line(model: "deepseek-v4.1-flash", cost: cost, unpriced: nil)]
     return estimate
 }
@@ -287,21 +300,6 @@ struct IslandProbe: View {
     }
 }
 
-@MainActor func islandTargetSize(_ mode: NotchIslandState.Mode, notch: CGSize) -> CGSize {
-    switch mode {
-    case .collapsed:
-        return CGSize(width: notch.width + 2 * IslandStyle.topFlare + 2 * IslandStyle.wingWidth,
-                      height: notch.height)
-    case .alert:
-        return CGSize(width: max(IslandStyle.minAlertWidth, notch.width + 2 * IslandStyle.topFlare + 200),
-                      height: notch.height + IslandStyle.alertBodyHeight)
-    case .expanded:
-        return CGSize(width: max(IslandStyle.minExpandedWidth, notch.width + 2 * IslandStyle.topFlare + 320),
-                      height: notch.height + IslandStyle.contentTopGap + IslandStyle.expandedLaneHeight
-                          + IslandStyle.sectionGap + IslandStyle.usageCardHeight + IslandStyle.bottomPadding)
-    }
-}
-
 @main struct Probe {
     @MainActor static func main() throws {
         _ = NSApplication.shared
@@ -339,7 +337,12 @@ struct IslandProbe: View {
                 model.sessionCosts = ["claude:1": fixtureCost(34.20, 0),
                                       "codex:2": fixtureCost(18.60, 2.10),
                                       "claude:3": fixtureCost(6.40, 0)]
-                let target = islandTargetSize(mode, notch: notch)
+                // The crop is the state's own `islandSize` — the one formula
+                // the panel uses. The tool used to re-implement all three
+                // branches here, so a changed `IslandStyle` constant cropped
+                // the PNG to the old rectangle while `--check` still passed
+                // (finding 747). `showsWings` matches the state built above.
+                let target = state.islandSize
                 let view = IslandProbe(state: state, model: model, target: target)
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .background(Theme.bgPrimary)
