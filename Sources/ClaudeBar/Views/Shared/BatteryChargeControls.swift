@@ -83,24 +83,13 @@ struct BatteryChargeControls: View {
             && (mode != .system || (!controller.processIsRunning && controller.savedMode == .system))
         let blocked = mode == .discharge && !controller.dischargeSupported
         return Button { controller.apply(mode) } label: {
-            VStack(spacing: 4) {
-                Image(systemName: mode.symbol)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(mode.label)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(selected ? Theme.chartBlue : Theme.textSecondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(selected ? Theme.chartBlue.opacity(0.14) : Theme.bgOverlay)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(selected ? Theme.chartBlue.opacity(0.55) : Color.clear, lineWidth: 1)
-            )
+            // One rounded plate, one shape: fill and border share a single
+            // `RoundedRectangle` and the radius is the Theme token, not a
+            // second hard-coded 12 (finding 543). The face is split out as an
+            // Equatable view so a ~2 s controller publish that changes neither
+            // `selected` nor `blocked` does not rebuild it.
+            ModeButtonFace(mode: mode, selected: selected)
+                .equatable()
         }
         .buttonStyle(.plain)
         .disabled(!controller.canApply(mode))
@@ -109,6 +98,38 @@ struct BatteryChargeControls: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+}
+
+/// The mode button's face — glyph, label and the selected plate — comparing
+/// only what it draws, so the controller's 2 s status publishes skip it.
+private struct ModeButtonFace: View, Equatable {
+    let mode: BatteryChargeController.Mode
+    let selected: Bool
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.mode == rhs.mode && lhs.selected == rhs.selected
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: mode.symbol)
+                .font(.system(size: 14, weight: .semibold))
+            Text(mode.label)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+        }
+        .foregroundStyle(selected ? Theme.chartBlue : Theme.textSecondary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 48)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .fill(selected ? Theme.chartBlue.opacity(0.14) : Theme.bgOverlay)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .strokeBorder(selected ? Theme.chartBlue.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+    }
 }
 
 struct CompactBatteryChargeControl: View {
