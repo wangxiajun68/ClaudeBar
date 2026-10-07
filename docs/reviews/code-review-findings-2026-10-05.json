@@ -3208,7 +3208,9 @@
   "summary": "The CLI helper is drained with readDataToEndOfFile on the main thread while the app runs in Process.waitUntilExit-without-NSTask mode, so a verbose `pane list` on a huge Otty layout can hard-block the UI for the CLI's whole 2 s budget, on every poll.",
   "evidence": "run() is called from three non-main places (line 73 Task.detached, 114 Task.detached, 151 waitUntilReady) but reachable on the main actor only via waitUntilReady, and its body is:\n160: private static func run(_ cli: URL, _ arguments: [String]) -> Data? {\n163:     process.arguments = [\"--timeout\", \"2000\"] + arguments\n168:     let data = output.fileHandleForReading.readDataToEndOfFile()\n169:     process.waitUntilExit()\nThere is no async/termination-handler variant, and the class comment (\"Returns immediately; the CLI round-trips happen off the main thread\", lines 63-64) is what the call sites rely on — the reassembly path (`CursorLedgerStore` etc.) is the same shape used across the repo, but here the run is hit once per hover/expand (`panes(cli)` from `reloadSessionCosts`/periodic refresh).",
   "failure": "Session with an Otty open holding many panes → every `--json pane list` spawns otty-cli; if the CLI stalls near its 2000 ms timeout, `readDataToEndOfFile` blocks the calling thread. On the detached paths this is merely a 2 s stall in a background task; any path that reaches `waitUntilReady` from main (cold-launch resume) freezes the menu bar and the island for up to 20 s (deadline loop: 12 sleeps + ~9 CLI runs × 2 s cap).",
-  "fix": "Move the wait off the caller: make `run` never sleep synchronously (use `Process.terminationHandler` + `readabilityHandler`, or `try await` an async wrapper) and call `waitUntilReady` from a detached task. Minimal change: in `resume`, wrap the cold-start branch in `Task.detached` (it already is) and have `waitUntilReady` only be called there; then the only main-thread cost is gone."
+  "fix": "Move the wait off the caller: make `run` never sleep synchronously (use `Process.terminationHandler` + `readabilityHandler`, or `try await` an async wrapper) and call `waitUntilReady` from a detached task. Minimal change: in `resume`, wrap the cold-start branch in `Task.detached` (it already is) and have `waitUntilReady` only be called there; then the only main-thread cost is gone.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: every run()/panes()/waitUntilReady call sits inside Task.detached; no main-thread CLI block exists in the current code."
  },
  {
   "category": "correctness",
@@ -3266,7 +3268,9 @@
   "evidence": "ProcessMemoryRow.swift:35 `return Self(id: pid, name: (String(parts[2]) as NSString).lastPathComponent, bytes: bytes)`；view 侧 MemoryDetailPanel.swift:25 `ForEach(Array(rows.prefix(8)))` 用 `id`（pid）做身份。实测本机（对真实 `ps -axo pid=,rss=,comm=` 应用同一 lastPathComponent 规则）：44 条 comm 路径有重名实例，其中 28 条的“第一个实例”比同名最重实例轻，例如 `claude` 显示 pid 14455 的 239 MB，而同名最重是 pid 53757 的 509 MB；`claude bg-spare` 显示 100 MB 而 99611 是 1.23 GB。",
   "failure": "打开“进程内存”面板 → 排序/缩放（MemoryDetailPanel.swift:35 用 rows.first）与列表文本都按“每个名字只留一个”的口径展示，重复名字（claude/cc、claude bg-spare）的代表项取决于 ps 的枚举顺序而非内存大小，列表声称“占用最高的 8 个进程”却不含真正最高的进程。",
   "fix": "按 `id`（pid）去重（或对每个 name 保留 bytes 最大者），再 `.sorted { $0.bytes > $1.bytes }`；不改数据结构即可。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: no name dedupe exists — all rows are kept and sorted by bytes descending, ForEach keyed by pid; heavier same-name processes are not dropped. The described dedupe never applied."
  },
  {
   "category": "state",
@@ -3338,7 +3342,9 @@
   "evidence": "HardwareSensors.swift:272 `smc.getValue(\"PSTR\")`、288 `smc.getValue(\"PDTR\")` 在 batteryStatus() 内；ProcessSampler.swift:452 在无 attribution 的档位也会执行；SMCController.swift:116 说明风扇队列也要同一把锁。周期 6–12 s，每次两键、含浮点解码。",
   "failure": "后台常驻时每个 tick 多两次 SMC 事务；若风扇正在按 1 s 采样，锁竞争会给双方都加上抖动。",
   "fix": "与电池同址处理：仅在 wantsAttribution（或上次读数超过 N 分钟）时重新取 PSTR/PDTR。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Already fixed: batteryStatus() runs only when batterySample == nil or wantsDevices+5s (ProcessSampler.swift:478); the background tier no longer reads PSTR/PDTR every tick, so it no longer contends on SMCController.ioLock with the fan poll."
  },
  {
   "category": "state",
@@ -3670,7 +3676,9 @@
   "confidence": "high",
   "evidence": "Tests/usage-index-regressions.py L185-194 writes one `assistant(10)` line under id `message-id`, adds one fork with the same id and removes it — at most one claim plus one tombstone, `lines` stays far below the compaction threshold; `grep -c '\"owner\":\"\"' usage-claims.jsonl` is 0 on this machine, so even the tombstone path has never run in production here. Compaction is the branch the file's own comment calls load-bearing for file growth (L122-124).",
   "failure": "A regression that books >4,096 ids across two passes, deletes a transcript, and asserts the file's line count does not double, plus a reload asserting the freed id is re-claimable, would catch the `lines` bookkeeping bug above; today nothing does.",
-  "fix": "Extend Tests/usage-index-regressions.py's fork scenario with a loop of ≥4,096 unique ids and a tombstone, then assert `wc -l` on `usage-claims.jsonl` after `flush()` plus a re-parse total."
+  "fix": "Extend Tests/usage-index-regressions.py's fork scenario with a loop of ≥4,096 unique ids and a tombstone, then assert `wc -l` on `usage-claims.jsonl` after `flush()` plus a re-parse total.",
+  "status": "fixed",
+  "verdict_note": "Already fixed in Tests/usage-index-regressions.py:411: the suite books 5000 ids, asserts append-only, then 20000/19000 dead → compaction (lines 396-427)."
  },
  {
   "category": "perf-memory",
@@ -3703,7 +3711,9 @@
   "summary": "fetchOfficialCodex 对每个 Codex 转录重新打开并读取 64KB 头部做 JSON 解析，无任何缓存；而同一字段在 fetchSessionFamilies 里已有 mtime/size 缓存却未复用。",
   "evidence": "553-558 行：`for (path, rows) in byPath { guard let handle = try? FileHandle(...) ... let header = try? handle.read(upToCount: 65_536) ... UsageProviderAttribution.isOfficialCodex(metadata: header) }`——byPath 来自 period 内所有 codex rollup 行，本机 usage-index.db 实测 files 表 codex 行 372 个、rollup 里 codex 文件 372 个，即每次调用 ≈372 次 open+64KB 读+首行 JSON 解析（约 24MB 读放大）。调用点 UsageView.swift:200-201 的 `.task(id: AttributionRequest(interval:codex: providerStore.usageBySource[.codex] ?? []))` 以 codex 汇总为 id——每次 FSEvents 重扫发布新的 codex 数字都会让这个 task 重跑一次。fetchSessionFamilies（393-420 行）已按 mtime/size 缓存了同一批文件的头部解析结果（sessionHeaders），但没有缓存 provider 字段。",
   "failure": "用量页开着时用户在 Codex 里持续工作 → 每次索引刷新（FSEvents 0.4s debounce 后的发布）都重读全部 372 个 rollout 的头部：约 370 次 open/read/parse 在 utility 线程重复发生，随语料增长线性放大。",
-  "fix": "把 provider 归属并入既有的 SessionHeader 缓存（增加 provider 字段，键仍是 path+mtime+size），fetchOfficialCodex 只对缓存 miss 的文件读头。"
+  "fix": "把 provider 归属并入既有的 SessionHeader 缓存（增加 provider 字段，键仍是 path+mtime+size），fetchOfficialCodex 只对缓存 miss 的文件读头。",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 34b6c87: officialHeadVerdicts memo (mtime/size keyed) skips the 64 KiB header read for unchanged rollouts (UsageIndex.swift:544)."
  },
  {
   "category": "concurrency",
@@ -3752,7 +3762,9 @@
   "evidence": "VPNPreferences.swift:14-21：生成后 UserDefaults.standard.set(generated, forKey: \"vpnControllerSecret\")；VPNPreferences.swift:33-37：ensureVpnControllerSecret() 只赋值 AppPreferences.shared.vpnControllerSecret（AppPreferences.swift:155-157 的 didSet 写入）。VpnManager.swift:513 调 ensureVpnControllerSecret。",
   "failure": "正常情况下 didSet 会补写 UserDefaults，所以状态一致；但两个路径的写入语义不同——第一条同时设置两份存储，第二条依赖 didSet。若 didSet 因任何原因未执行（值为空字符串时 Swift didSet 仍会执行，但若将来有人把 secret 改为计算属性或 @AppStorage 就会出现「UI 显示 secret 已存在而 core config 用的仍是旧值」），config.yaml 与内存值漂移会导致 external-controller 401。影响低，属一致性隐患而非可复现 bug。",
   "fix": "去掉重复实现：ensureVpnControllerSecret() 直接读 vpnDefaults 中的 secret 或复用同一写入路径（两处都显式 UserDefaults.set），或在注释里写明 didSet 是唯一持久化点。",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: didSet always persists vpnControllerSecret (AppPreferences.swift:156), so both paths write both stores; the described drift needs a hypothetical refactor that does not exist."
  },
  {
   "category": "correctness",
@@ -3844,7 +3856,9 @@
   "fix": "在 `stopCore`（或 syncRuntime 的 else 分支）里调用 `VpnSubscriptionStore.shared.stopAutoRefresh()`，把 invalidate 抽成公开方法。",
   "line": 206,
   "severity": "medium",
-  "summary": "30 分钟自动刷新定时器在 VPN 停止后永不失效：注释声称「invalidate 是唯一 teardown」，但全仓只有 startAutoRefresh 自己调用 invalidate"
+  "summary": "30 分钟自动刷新定时器在 VPN 停止后永不失效：注释声称「invalidate 是唯一 teardown」，但全仓只有 startAutoRefresh 自己调用 invalidate",
+  "status": "fixed",
+  "verdict_note": "Already fixed: stopCore() calls subscriptions.stopAutoRefresh() (VpnManager.swift:777); the refresh timer no longer outlives the core."
  },
  {
   "category": "robustness",
@@ -3855,7 +3869,9 @@
   "fix": "load() 失败时记录一个 `loadFailed` 标志并设置 errorMessage；save() 在该标志为真且 subscriptions 为空时拒绝写入。",
   "line": 61,
   "severity": "medium",
-  "summary": "load() 用 try? 吞掉解码失败，随后任何写操作都会把 subscriptions.json 覆盖成空"
+  "summary": "load() 用 try? 吞掉解码失败，随后任何写操作都会把 subscriptions.json 覆盖成空",
+  "status": "fixed",
+  "verdict_note": "Already fixed: load() sets loadFailed (VpnSubscriptionStore.swift:72) and save() refuses to write while the flag is set; the empty-overwrite path is gone."
  },
  {
   "category": "compat",
@@ -3992,7 +4008,9 @@
   "line": 184,
   "severity": "medium",
   "summary": "10 秒周期的守卫 Timer 跑在 .default runloop mode 且无 tolerance，每 10s 依赖 100-200ms 的窗口期 main-thread 唤醒与 Task 调度；本仓其它定时器普遍设 tolerance",
-  "symbol": "VpnProxyGuard.start()"
+  "symbol": "VpnProxyGuard.start()",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 922a4c6: timer?.tolerance = 2 added (VpnSystemProxyController.swift:193), matching the repo timer convention."
  },
  {
   "category": "robustness",
@@ -4169,7 +4187,9 @@
   "summary": "概览页用裸 onScrollPhaseChange 驱动 ScrollHoverGate，且 onDisappear 不带 owner 作用域，滚动开始后若视图消失（切页/关窗），全局 hover gate 会永久卡在 scrolling=true，页面上所有卡片 hovers 被冻结",
   "evidence": "DashboardView.swift:17-18 `@State private var scrollActivity = PageScrollActivity()` / `@State private var scrollOwner = UUID()`；33-37 `.onScrollPhaseChange { _, phase in let moving = phase != .idle; scrollActivity.moving = moving; ScrollHoverGate.set(moving, owner: scrollOwner) }`；38-41 `.onDisappear { scrollActivity.moving = false; ScrollHoverGate.set(false, owner: scrollOwner) }`。对比全仓标准写法 Interaction.swift:171-180 `ScrollHoverGateModifier`（`.scrollHoverGate()`，SessionsView:71、UsageView:177、VPNView:111 等全部走它）同样是裸调用，所以键是「页面在主窗口里会 onDisappear」：MainWindowView.swift:249-275 切页时 `switch selectedPage` 会把 DashboardView 整棵从 id 变化的分支里换掉（TrafficView 注释明说隐藏页会被 teardown），而 MainWindowController.releaseContent 会在关窗时卸下整个 hosting 视图。Interaction.swift:57-72：`ScrollHoverGate.isDeferring` = `scrolling && now-since < 4`，而 `flushIfReady()`（Interaction.swift:98-105）和 `refresh()`（113-127）在 `isDeferring` 为真时都不会把 owners 清空——owners 只由 `set(false, owner:)` 移除。一旦 `{moving=true}` 的转子先于 `onDisappear` 的 `{moving=false}` 执行（例如惯性滚动中切换页面、或用 ⌘W 关窗），又没有 `.scrollHoverGate()` 那种按 owner 兜底的第二次 release，`since` 会在 4 秒后过期，但 owners 永远非空。",
   "failure": "时序：在概览页惯性滚动/拖动未停时切到「会话」页或关闭主窗口 → DashboardView 的 onScrollPhaseChange 最后一次收到的是 .decelerating（moving=true），onDisappear 的清理与滚动的收尾回调竞态。若 onDisappear 先跑，owners 保留该 UUID：4 秒静默期后 `isDeferring` 变回 false，但只要之后的滚动走 `.scrollHoverGate()`（它加的是自己的 owner，`was=false, scrolling=true` 时刷新 `since`），`set(false, owner: 新版)` 只移除新版 owner，DashboardView 的 owner 仍在 → 此后 `HoverState.onHover`（Interaction.swift:145-151）永远跳过所有 hover 写入 → 主窗口内所有卡片不再有 hover 抬升/边缘点亮；PageScrollActivity 同一时段把在屏的 greeting sky 永久 held。观测：切页滚动后 mousemove 扫过任何卡片、无 hover 反馈（鼠标静止后也不会像正常 idle 那样补发 mouseMoved）。",
-  "fix": "把这段换成 `.scrollHoverGate()`（Interaction.swift 已有 modifier，内部 `@State private var owner = UUID()` 且 onDisappear 已用同一 owner 释放），并删掉手写的 `scrollOwner`；`scrollActivity.moving` 的写入可以保留在同样的事件里，或在 modifier 里加一个 onScrollPhaseChange 回调参数。"
+  "fix": "把这段换成 `.scrollHoverGate()`（Interaction.swift 已有 modifier，内部 `@State private var owner = UUID()` 且 onDisappear 已用同一 owner 释放），并删掉手写的 `scrollOwner`；`scrollActivity.moving` 的写入可以保留在同样的事件里，或在 modifier 里加一个 onScrollPhaseChange 回调参数。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: onDisappear releases the same owner UUID (DashboardView.swift:40); the \"gate stuck after the view disappears\" mechanism cannot occur — release is owner-scoped, not a bare reset."
  },
  {
   "category": "logic",
@@ -4181,7 +4201,9 @@
   "evidence": "DashboardView.swift:101-104 `aliveCount + providerStore.cursorSessions.count + providerStore.aliveExternalSessions.count`; DashboardView.swift:229-231 `let cursorRows = providerStore.cursorSessions` (no `.filter(\\.isAlive)` / no sort) `.prefix(...)`; DashboardView.swift:253-254 `providerStore.aliveExternalSessions.prefix(Self.overviewCap - claudeRows.count - cursorRows.count)`. Producers: ProviderStore.swift:550 publishes CursorSessionMonitor.fetchActive's output unchanged, and CursorSessionMonitor.swift:264-270 returns `sessions.filter(\\.isAlive).sorted { ($0.status == .active) != ($1.status == .active) ? ... : $0.lastUpdatedAt > $1.lastUpdatedAt }` *before* `prefix(max(maxDisplay, busyCount))` — i.e. the published array is display-sorted and already capped at ~14. External rows are ordered by updatedAt (ProviderStore.swift:582) but root/subagent interleave in that one array, so taking the prefix first (line 253) then filtering out helpers (line 33 in ProviderState+Derived) drops root sessions whose updatedAt sits below a helper's.",
   "failure": "Two sessions of each kind, the third Cursor composer idle for two days while the first two are mid-turn: the dashboard's 活跃会话 pill still says 5, the grid's Cursor tiles are pulled from the published list's *tail region* rather than its busy-first head, and '查看全部 8 个会话' leads to a sessions page whose Cursor section may show a different first tile. Deterministic whenever Cursor's published count exceeds the dashboard's remaining cap or a Codex helper's updatedAt outranks a root's.",
   "fix": "Read the Cursor source off the published array's `status == .active` ordering deliberately (or sort in `overviewRows` as CursorSessionMonitor already does) and count the grid's own source with `min(rows.count …)` semantics — e.g. make the pill count `overviewCells` derived from the same three prefixes the grid uses, or have `overviewRows` filter `.isAlive` and sort busy-first before `prefix`.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: aliveExternalSessions pre-filters helpers, cursorSessions is already alive-filtered/busy-first (CursorSessionMonitor.swift:277-283), and prefix() takes the head — the count and the grid draw from the same filtered source."
  },
  {
   "category": "state",
@@ -5305,7 +5327,9 @@
   "evidence": "`for candidate in candidates where !candidate.isUnchanged { apply(candidate) }` (line 389) → `apply` (line 402-424) → `record` (line 249 `commit()`) → `commit()` (line 455-460) → `NotificationCenter.default.post(name: .modelPriceDidChange ...)`. The observer is registered with `queue: .main` (ProviderStore.swift:1264-1270) and calls `refreshUsage(rescan: false)`, which coalesces only while `usageRefreshPending` is true — the main-actor notification delivery is synchronous, and the refresh's `Task.detached` sets `usageRefreshPending = true` only when it begins, so N posts in a tight loop queue N refreshes that then run one after another inside the `while true` loop of `refreshUsage` (ProviderStore.swift:1014-1095).",
   "failure": "A week of drift produces ~10 candidates; 全部应用 re-runs the daily-model query and the day-segmented estimate 10 times in a row on the utility queue while the settings page is open, delaying the popup/island number update that the same notification is meant to deliver.",
   "fix": "Give the catalog a batch write path (`record(rows:)`) that calls `commit()` once, or have `applyAllCandidates` post the notification itself after the loop and make `commit` take a `post: Bool = true` parameter.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: usageRefreshPending is set synchronously before the detached task begins, so N posts from applyAllCandidates collapse into one queued pass — the N-passes failure cannot occur."
  },
  {
   "category": "state",
@@ -5410,7 +5434,9 @@
   "evidence": "109 行 `subtitle: \"waiting-\\(session.pid)\"`、121 行 `\"waiting-cursor-\\(session.composerId)\"`、133 行 `\"session-\\(session.pid)\"`、145 行 `\"cursor-\\(session.composerId)\"`、158 行 `subtitle: session.id`；191 行注释与用法 `UNNotificationRequest(identifier: subtitle, …)` 说明它的用途只是「Replace any pending notification for the same session」，而 `UNMutableNotificationContent.subtitle` 是横幅里标题下可见的第二行。",
   "failure": "每条「Claude 已完成 / Claude 需要你确认」横幅都会显示 \"session-4711\"、\"waiting-cursor-<uuid>\" 这类内部键，像调试输出，且把会话 id 暴露在通知中心里。",
   "fix": "保留 `identifier:` 的键，`subtitle` 传空串或人类可读文案（如 agent 名 · 时间）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: post() never assigns content.subtitle; the key string feeds only UNNotificationRequest(identifier:). No raw \"waiting-42\" text is ever shown to a user — the described path never existed in history."
  },
  {
   "category": "robustness",
@@ -5496,7 +5522,9 @@
   "summary": "token 列以 Int64 写入却以 sqlite3_column_int（32 位）读回，超过 2^31 的值会被静默截断/变负",
   "evidence": "写入侧 841: `case .int(let n): sqlite3_bind_int64(stmt, Int32(i + 1), n)`，值来自 `Int64($0)`（310-313），而上游 token 数经 `TokenTotals.intValue` 的 NSNumber.intValue（StreamAssembler.swift:211-215）本身就是 64 位；读取侧 883-886: `if sqlite3_column_type(stmt, i) == SQLITE_NULL { return nil }; return Int(sqlite3_column_int(stmt, i))`。rowToSummary 的 prompt/completion/cache 四列全走它。",
   "failure": "上游/中转网关上报一个越界的 token 数（例如把累计量或错误字段放进 usage.prompt_tokens，> 2_147_483_647）：写库正常，读回时 SQLite 按低 32 位截断，面板与「输入/输出」统计显示负数或荒谬的小值；UI 与库内不一致，且没有任何日志。conf 标 medium 是因为实际 API 上报超过 21 亿 token 的请求罕见，但代码路径确实存在。",
-  "fix": "`return Int(sqlite3_column_int64(stmt, i))`（httpStatus 那种小整数可保持不变）。"
+  "fix": "`return Int(sqlite3_column_int64(stmt, i))`（httpStatus 那种小整数可保持不变）。",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 44138c4: optInt is now Int(sqlite3_column_int64(stmt, i)) with an explicit comment; the 32-bit truncation is gone."
  },
  {
   "category": "robustness",
@@ -5788,7 +5816,9 @@
   "evidence": "UsageClaims.swift:178-182 `guard let data = try? Data(contentsOf: FilePaths.usageClaimsJSONL) else { return }` then `for line in data.split(separator: 0x0A) { lines += 1; guard let claim = try? decoder.decode(Claim.self, from: Data(line)) else { continue } }`. The live file is 32,017,827 bytes / 154,159 lines. `loaded` is only cleared by `reset()`, and `reset()` has exactly one caller, `UsageIndex.reloadPersistence()` (:210), which in production has no caller at all (the Settings database toggle was removed in 620c375; only Tests/usage-index-regressions.py calls it).",
   "failure": "The first `owner(of:)`/`begin()` of the process reads 32 MB and issues ~154k individual JSONDecoder invocations (each allocating a Data copy of its line) — hundreds of ms of background CPU on the index-refresh task before any transcript can be claimed; the cost grows with the user's lifetime API-call count because the file only ever gains lines.",
   "fix": "Decode in one pass (write/read a JSON array with `decoder.decode([Claim].self, from: data)`, or extract `\"id\"`/`\"owner\"` from each line slice without a per-line decoder), and drop claims for vanished owners during `begin` instead of only tombstones. The append-only format itself is fine; the per-line decode is the avoidable part.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 34b6c87: loadLocked tries the byte-scan fastClaim before JSONDecoder, so per-line decode runs only for non-canonical lines."
  },
  {
   "category": "state",
@@ -5838,7 +5868,9 @@
   "evidence": "Lines 554–558: for each path in `byPath` it does `FileHandle(forReadingFrom:)` + `read(upToCount: 65_536)` + `UsageProviderAttribution.isOfficialCodex(metadata:)` (ModelUsage.swift:152, which JSON-decodes lines) with no caching between calls. The caller is UsageView.swift:200–205 `.task(id: AttributionRequest(interval: codex: providerStore.usageBySource[.codex] ?? []))`, so this runs on every usage publish whose Codex totals changed — i.e. on nearly every FSEvents burst — and folder scans here cover ~1,250 transcripts on this machine, of which the Codex share is hundreds. ExternalSessionMonitor.swift:619–648 shows the pattern already used elsewhere: a `[String: CodexFileCache]` keyed by (mtime, size).",
   "failure": "Steady-state rescan loop with one live Codex session appending every few seconds → each publish re-reads and re-decodes the header of every rollout in the period range; measurable extra file I/O and JSON work per FSEvents burst, growing linearly with the number of rollouts in the selected period (年/全部 makes it the whole corpus).",
   "fix": "Add a small (path → (mtime, size, isOfficial)) cache next to `sessionHeaders` and reuse it in `fetchOfficialCodex`, or read the provider from the already-parsed `sessionHeaders` payload (it is on the same first line).",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 34b6c87: officialHeadVerdicts memo keyed by (mtime,size) short-circuits the 64 KiB header re-read."
  },
  {
   "category": "test-gap",
@@ -5952,7 +5984,7 @@
   "failure": "菜单栏应用主窗口关闭、弹窗未开、内核运行中：浏览时 core.log 以 10-50 行/秒写入，ingest 每次返回 true → 主 actor 每秒被唤醒一次做 O(2000) 快照 + O(2000) Set 构建，电池笔记本上持续无意义唤醒（记录本身并不需要这么频繁发布）。",
   "fix": "`Self.minInterval = UIWakePolicy.hasVisibleWindow ? 1 : 10`（staging 会把这段时间的行攒成一批，页面打开时数据不丢），或至少在无观察者时跳过 snapshot 重建。",
   "status": "fixed",
-  "verdict_note": "The flush cadence is now visibility-gated through `VpnDomainLog.publishInterval(visible:)`: 1 s while any surface is on screen, 10 s when background-only — the same 1s/10s split /connections uses. The wake-up case matters and is handled: scheduling re-takes an armed wait when the cadence shortens (hidden→visible publishes immediately instead of waiting out a sleep-interval deadline). The pure chooser is sliced and executed in Tests/vpn-domain-log-regressions.py §11b; no measurement recorded — the hidden-state saving is by construction (2,000-row snapshot + Set no longer rebuilt per second)."
+  "verdict_note": "Already fixed in 922a4c6: scheduleFlush uses publishInterval(visible:) with hiddenInterval = 10; the verifier report predates that commit."
  },
  {
   "category": "dead-code",
@@ -6036,7 +6068,9 @@
   "summary": "端口冲突弹窗的“换个端口”在主线程循环里逐个 spawn lsof 并阻塞等待，与 startCore 刻意让探测离开主线程的做法相悖",
   "evidence": "```swift\n434    nonisolated static func isPortFree(_ port: Int) -> Bool {\n435        listenerPID(on: port) == nil\n436    }\n...\n443    nonisolated private static func listenerPID(on port: Int) -> pid_t? {\n444        let result = Process.runAndRead(\"/usr/sbin/lsof\", ...)\n```\n`Process.runAndRead`（VpnSystemProxyController.swift:304-324）是同步 `readToEnd()` + `waitUntilExit()`，每次调用阻塞调用线程 10-40ms。调用点 VPNView.swift:325-329 是主 actor 上的循环：\n```swift\nvar candidate = prefs.vpnMixedPort + 1\nwhile candidate < 65_535 {\n    if VpnManager.isPortFree(candidate) { break }\n    candidate += 1\n}\n```\n对比 startCore 注释（488-492）：“The probe spawns lsof, so it runs off the main actor ... two lsof spawns on the main thread is a visible hitch”。",
   "failure": "若当前端口之上有一段连续被占用（另一个代理软件的端口段、多个测试监听），弹窗按钮点击会在主线程上串行执行几十次 lsof（0.3-1s+），菜单栏应用出现无响应窗口；常态 1-2 次时无感。",
-  "fix": "把候选端口搜索包成 `Task.detached`：在后台从 `prefs.vpnMixedPort + 1` 逐个探测，回到主 actor 再写 `prefs.vpnMixedPort`；或给循环加一个最多尝试 N 次的短路。"
+  "fix": "把候选端口搜索包成 `Task.detached`：在后台从 `prefs.vpnMixedPort + 1` 逐个探测，回到主 actor 再写 `prefs.vpnMixedPort`；或给循环加一个最多尝试 N 次的短路。",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 522db75: the 换个端口 action runs VpnManager.suggestedFreePort(after:) inside Task.detached(priority: .userInitiated); the main-actor applySuggestedPort loop is deleted."
  },
  {
   "category": "test-gap",
