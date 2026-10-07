@@ -184,6 +184,13 @@ final class VpnProxyGuard {
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.check() }
         }
+        // Same tolerance rule as every other periodic timer in this app
+        // (FanMonitor 0.25, SystemThroughput 0.1, ProviderStore 10%): without
+        // it the wake-up cannot be coalesced with other work, and this timer
+        // outlives the VPN being on — `check()` early-returns at launch while
+        // the module is off, but the 10 s wake-ups continue for the life of
+        // the process on a machine where it is never turned on.
+        timer?.tolerance = 2
     }
 
     func stop() {

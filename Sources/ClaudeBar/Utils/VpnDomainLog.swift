@@ -515,10 +515,35 @@ final class VpnDomainLog: ObservableObject {
     /// connections (a page load opens dozens) should cost one view update, not
     /// dozens.
     private static let minInterval: TimeInterval = 1
+    /// The background-only ceiling. A flush is not cheap: it rebuilds the
+    /// 2,000-row snapshot and a 2,000-element `Set` of hosts on the main
+    /// actor, and nothing reads either while every surface is hidden —
+    /// /connections already drops to its 10 s sleep cadence in the same
+    /// state. The ring still receives every line; only the publish slows.
+    private static let hiddenInterval: TimeInterval = 10
     private var lastFlush = Date.distantPast
     private var flushTask: Task<Void, Never>?
+    /// The interval a pending `flushTask` promised to wait out, so a later
+    /// schedule call can tell whether the armed wait is still good enough.
+    private var armedInterval: TimeInterval?
+    private var wakeObservation: AnyCancellable?
 
-    private init() {}
+    /// The cadence a flush may run at, as a pure function so the regression
+    /// can execute it: full rate while anything is on screen, the sleep rate
+    /// when the app is background-only.
+    static func publishInterval(visible: Bool) -> TimeInterval {
+        visible ? minInterval : hiddenInterval
+    }
+
+    private init() {
+        // Coming back from background-only must publish immediately rather
+        // than wait out a hidden-rate deadline: the section's first frame
+        // after `isVisible` flips reads `revision`, and a staged batch that
+        // sat through the sleep interval would read as a log that stopped.
+        // Same subscription shape as `FanMonitor.syncPolling` — the closure
+        // is delivered on the main queue and inherits main-actor isolation.
+        wakeObservation = UIWakePolicy.observe { [weak self] in self?.scheduleFlush() }
+    }
 
     /// Called from the core's pipe thread. Parsing and line buffering stay off
     /// the main actor; only a scheduled flush hops over.
@@ -575,6 +600,7 @@ final class VpnDomainLog: ObservableObject {
     func clear() {
         flushTask?.cancel()
         flushTask = nil
+        armedInterval = nil
         feed.reset()
         ring.clear()
         entries = []
@@ -640,12 +666,22 @@ final class VpnDomainLog: ObservableObject {
     // MARK: - Flush
 
     private func scheduleFlush() {
-        let wait = Self.minInterval - Date().timeIntervalSince(lastFlush)
+        let interval = Self.publishInterval(visible: UIWakePolicy.hasVisibleWindow)
+        let wait = interval - Date().timeIntervalSince(lastFlush)
         if wait <= 0 {
             flush()
             return
         }
-        guard flushTask == nil else { return }
+        // A pending task was armed against the cadence in force when it was
+        // scheduled. If that cadence is still at least as short as the
+        // current one, the pending publish is due no later than the new
+        // interval allows — publishing early is always fine, so keep it.
+        // Only a longer armed wait (armed while hidden, now visible) is
+        // re-taken, so the section's first frame after a wake does not wait
+        // out a sleep-interval deadline.
+        if flushTask != nil, let armed = armedInterval, armed <= interval { return }
+        flushTask?.cancel()
+        armedInterval = interval
         let ns = UInt64(wait * 1_000_000_000)
         flushTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: ns)
@@ -656,6 +692,7 @@ final class VpnDomainLog: ObservableObject {
 
     private func flush() {
         flushTask = nil
+        armedInterval = nil
         lastFlush = Date()
         let batch = feed.drain()
         guard !batch.isEmpty else { return }

@@ -1883,7 +1883,9 @@
   "evidence": "237-241 行 `rpm: Int(getValue(\"F\\(i)Ac\") ?? 0)`、`minRPM: max(1, Int(getValue(\"F\\(i)Mn\") ?? 1))`、`maxRPM: max(1, Int(getValue(\"F\\(i)Mx\") ?? 1))`；这些键是 \"flt \" 类型，decode 在 328-329 行 `case SMCDataType.flt: return Double(Float(bytes) ?? 0)`——`Float(bytes)` 只在 bytes.count < 4 时返回 nil（这里的数组恒为 32），NaN/±Inf/1e30 全部原样返回，getValue 的唯一守卫是 151-154 行的「全零字节」检查，对 0x7FC00000 之类的 NaN 载荷无效。对照：HardwareSensors.plausibleWatts:309-311 对同类读数有 `value.isFinite && value >= 0 && value <= 500` 守卫，风向一致，这里缺。",
   "failure": "当某台机器的 F{i}Ac / F{i}Mn / F{i}Mx 返回 NaN 或超出 Int 范围的浮点（型号/固件差异、键半初始化），FanMonitor.refresh（readQueue，每 2 s）调用 loadFans 时 `Int(nan)` 触发 Swift 运行时 precondition 失败 → 进程直接崩溃；崩溃点在后台队列，无法捕获。",
   "fix": "在 decode 的 flt 分支加 `guard d.isFinite else { return nil }`（或 `return d.isFinite ? d : nil`），并给 loadFans 的四处 Int() 换成 `Int(...)` 前的 clamp 辅助（可复用现成的 JSONCoerce.intVal 语义）。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "safeRPM now clamps every SMC float-to-Int conversion: non-finite reads report 0, finite values clamp to ±2^20. The trap was reachable by construction (flt keys decode any bit pattern; FanMonitor polls every 2 s on a background queue). Tests/smc-sampling-regressions.py executes the production function at NaN/±inf/1e300/±bound; mutants (dropping isFinite, bypassing safeRPM in loadFans) trip. Note: no machine has been observed sending these patterns — fixed because it is a crash-on-data, not because it was seen."
  },
  {
   "category": "crash",
@@ -1895,7 +1897,9 @@
   "summary": "风扇采样把 SMC 浮点读数直接 Int() 转换，NaN/∞ 会 trap 整个应用",
   "evidence": "103-107 行 `private extension Float { init?(_ bytes: [UInt8]) { guard bytes.count >= MemoryLayout<Float>.size else { return nil }; self = bytes.withUnsafeBytes { $0.loadUnaligned(as: Float.self) } } }` 唯一失败条件是长度不足，0xFFFFFFFF/0x7F800000 这类位模式会解成 NaN/∞ 而不是 nil；decode 328 行 `return Double(Float(bytes) ?? 0)` 把它带出来，loadFans 直接转：238-240 行 `rpm: Int(getValue(\"F\\(i)Ac\") ?? 0), minRPM: max(1, Int(getValue(\"F\\(i)Mn\") ?? 1)), maxRPM: max(1, Int(getValue(\"F\\(i)Mx\") ?? 1))`，229 行 `for i in 0..<Int(count)` 同理。本机 Swift 实测 `Int(Double.nan)` 直接 abort（\"Fatal error: Double value cannot be converted to Int because it is either infinite or NaN\"，exit 133）。getValue 的 `allSatisfy == 0` 守卫只拦全零，110 上限只作用于温度路径，都不经过这里。",
   "failure": "任何一次 F0Ac/F0Mn/F0Mx（或浮点型 FNum）读到 inf/NaN 位模式（键未初始化、机型差异、SMC 回垃圾）时，FanMonitor 2 s 轮询的后台读队列直接 trap，常驻菜单栏应用整体崩溃。",
-  "fix": "在 SMCController 内加 `private func safeInt(_ v: Double, _ fallback: Int) -> Int { v.isFinite ? Int(clamping: Int64(v)) : fallback }`，把 229/238/239/240 行的 `Int(getValue(...))` 全部改走它；fanMode 249 行的 `Int(md)` 同样处理（与 16b225e 里修过的天气 JSON `Int(Double)` trap 同类）。"
+  "fix": "在 SMCController 内加 `private func safeInt(_ v: Double, _ fallback: Int) -> Int { v.isFinite ? Int(clamping: Int64(v)) : fallback }`，把 229/238/239/240 行的 `Int(getValue(...))` 全部改走它；fanMode 249 行的 `Int(md)` 同样处理（与 16b225e 里修过的天气 JSON `Int(Double)` trap 同类）。",
+  "status": "fixed",
+  "verdict_note": "Same fix as finding 146 — one clamp (`SMCController.safeRPM`) now serves loadFans and fanMode; pinned by Tests/smc-sampling-regressions.py (registered in the Makefile suite list)."
  },
  {
   "category": "test-gap",
@@ -5918,7 +5922,9 @@
   "summary": "日志刷新固定 1 秒节奏，不随 UIWakePolicy 降频；没有任何窗口时仍每秒在主 actor 重建 2000 条快照与 2000 元素 Set，而同期连接轮询已降到 10 秒。",
   "evidence": "第 517 行 `private static let minInterval: TimeInterval = 1`；flush() 第 643-654 行每次做 `entries = ring.snapshot()`（ring.limit=2000 的 compactMap + 取模）与 `trafficAccumulator.retainHosts(Set(entries.map(\\.host)))`（2000 个字符串哈希）以及整个 byHost 过滤。对照 VpnManager.swift:1129-1133 `let interval: UInt64 = UIWakePolicy.hasVisibleWindow ? 2 : 10` 的既有降频策略。",
   "failure": "菜单栏应用主窗口关闭、弹窗未开、内核运行中：浏览时 core.log 以 10-50 行/秒写入，ingest 每次返回 true → 主 actor 每秒被唤醒一次做 O(2000) 快照 + O(2000) Set 构建，电池笔记本上持续无意义唤醒（记录本身并不需要这么频繁发布）。",
-  "fix": "`Self.minInterval = UIWakePolicy.hasVisibleWindow ? 1 : 10`（staging 会把这段时间的行攒成一批，页面打开时数据不丢），或至少在无观察者时跳过 snapshot 重建。"
+  "fix": "`Self.minInterval = UIWakePolicy.hasVisibleWindow ? 1 : 10`（staging 会把这段时间的行攒成一批，页面打开时数据不丢），或至少在无观察者时跳过 snapshot 重建。",
+  "status": "fixed",
+  "verdict_note": "The flush cadence is now visibility-gated through `VpnDomainLog.publishInterval(visible:)`: 1 s while any surface is on screen, 10 s when background-only — the same 1s/10s split /connections uses. The wake-up case matters and is handled: scheduling re-takes an armed wait when the cadence shortens (hidden→visible publishes immediately instead of waiting out a sleep-interval deadline). The pure chooser is sliced and executed in Tests/vpn-domain-log-regressions.py §11b; no measurement recorded — the hidden-state saving is by construction (2,000-row snapshot + Set no longer rebuilt per second)."
  },
  {
   "category": "dead-code",
@@ -6025,7 +6031,9 @@
   "summary": "守卫的 10s 重复 Timer 没有 tolerance，唤醒无法被系统合并；同一仓库的其它周期 Timer 都设了 tolerance。",
   "evidence": "184-186 行: `timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { ... }`，全文件没有 `timer?.tolerance =`。对照同仓库：MenuBarController.swift:110 `batteryTimer?.tolerance = 0.8`、FanMonitor.swift:46 `timer?.tolerance = 0.25`、VpnSubscriptionStore.swift:214 `refreshTimer?.tolerance = 180`、SystemThroughput.swift:50 `timer.tolerance = 0.1`。",
   "failure": "时序：应用常驻运行、VPN 关闭状态（守卫在 start 后 check 提前 return，但 Timer 仍每 10s 精确唤醒一次）→ 系统无法把这次唤醒与其它工作合并，典型场景下每次唤醒都有一次 run loop 唤醒与后台 job 调度；配合 check() 里每次 tick 的 2 个 networksetup spawn，属于纯浪费的常驻电源占用。",
-  "fix": "`timer?.tolerance = 1.0`（10% 量级），与仓库其它循环定时器保持一致；或在 vpn 关闭时 stop 守卫（VPNView 已经这么做了，但启动路径 start 之后无对应 stop）。"
+  "fix": "`timer?.tolerance = 1.0`（10% 量级），与仓库其它循环定时器保持一致；或在 vpn 关闭时 stop 守卫（VPNView 已经这么做了，但启动路径 start 之后无对应 stop）。",
+  "status": "fixed",
+  "verdict_note": "VpnProxyGuard.start now sets `timer?.tolerance = 2`, matching the app-wide rule (FanMonitor 0.25 / SystemThroughput 0.1 / ProviderStore 10%). The comment records why: this timer outlives the VPN being enabled — check() early-returns while off, but the wake-ups continue for the process lifetime."
  },
  {
   "category": "robustness",

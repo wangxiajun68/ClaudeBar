@@ -235,25 +235,40 @@ final class SMCController {
             list.append(FanInfo(
                 id: i,
                 name: name ?? "风扇 #\(i)",
-                rpm: Int(getValue("F\(i)Ac") ?? 0),
-                minRPM: max(1, Int(getValue("F\(i)Mn") ?? 1)),
-                maxRPM: max(1, Int(getValue("F\(i)Mx") ?? 1)),
+                rpm: Self.safeRPM(getValue("F\(i)Ac") ?? 0),
+                minRPM: max(1, Self.safeRPM(getValue("F\(i)Mn") ?? 1)),
+                maxRPM: max(1, Self.safeRPM(getValue("F\(i)Mx") ?? 1)),
                 mode: mode))
         }
         return list
     }
 
+    /// A fan figure from an SMC float, clamped before it becomes an `Int`.
+    ///
+    /// `Int(_: Double)` **traps** on NaN or anything outside `Int64` — and
+    /// this data is whatever bytes the SMC kext returned: a `flt ` key that
+    /// was never initialised can hold an Infinity or NaN bit pattern (no
+    /// machine has been observed sending one, but the read path accepts any
+    /// bit pattern by construction). The trap would be on `readQueue`, once
+    /// per 2 s fan poll, taking the whole app with it. These are display
+    /// figures for a rotor gauge, so the honest bound is "something no fan
+    /// reaches": clamp into ±2^20 RPM instead of trapping.
+    static func safeRPM(_ value: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        return Int(min(1_048_576, max(-1_048_576, value)))
+    }
+
     // MARK: - Private
 
     private func fanMode(for id: Int) -> FanMode {
-        if let md = getValue(fanModeKey(id)), let parsed = FanMode(rawValue: Int(md)) {
+        if let md = getValue(fanModeKey(id)), let parsed = FanMode(rawValue: Self.safeRPM(md)) {
             return parsed.isAutomatic ? .automatic : parsed
         }
         #if arch(arm64)
-        let modeValue = Int(getValue(fanModeKey(id)) ?? 0)
+        let modeValue = Self.safeRPM(getValue(fanModeKey(id)) ?? 0)
         return modeValue == 1 ? .forced : .automatic
         #else
-        let fansMode = Int(getValue("FS! ") ?? 0)
+        let fansMode = Self.safeRPM(getValue("FS! ") ?? 0)
         switch (fansMode, id) {
         case (0, _): return .automatic
         case (3, _): return .forced

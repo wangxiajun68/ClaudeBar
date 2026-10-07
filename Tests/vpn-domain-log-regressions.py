@@ -40,6 +40,14 @@ stat_start = source.index('nonisolated static func stat(')
 stat_end = source.index('// MARK: - Flush', stat_start)
 stat = source[stat_start:stat_end].replace('nonisolated ', '', 1)
 
+# The publish-cadence policy: the two ceilings and the pure chooser. Sliced
+# from production so the regression executes them, not a restatement; the
+# task/state fields between them are skipped (they need the real main actor).
+min_src = source[source.index('private static let minInterval'):source.index('    private var lastFlush')]
+pub_start = source.index('static func publishInterval')
+pub_end = source.index('    private init()', pub_start)
+cadence = (min_src + '\n' + source[pub_start:pub_end]).replace('private static let', 'static let')
+
 # The analysis table the summary's "常见服务走了直连" line reads.
 watchlist = source[source.index('enum VpnWatchlist {'):].rstrip() + '\n'
 
@@ -154,6 +162,11 @@ MODELS_AND_FEED
 VPN_FORMAT
 
 enum DomainStat { STAT_FUNC }
+
+/// The production publish ceilings and their chooser, sliced whole.
+enum PublishCadence {
+CADENCE
+}
 
 WATCHLIST
 
@@ -345,6 +358,21 @@ ASYNC_HARNESS
                      "an unknown domain is not a leak")
         precondition(VpnWatchlist.matches(host: "mycursor.com").isEmpty,
                      "suffix matching must not catch a lookalike")
+
+        // 11b. The publish cadence is a pure function of visibility: full rate
+        //      while any surface is on screen, the sleep rate when the app is
+        //      background-only (the same 10 s /connections drops to in that
+        //      state). A regression that dropped this to a constant would make
+        //      a hidden menu-bar app rebuild the 2,000-row snapshot every
+        //      second forever; one that inverted it would starve the page.
+        precondition(PublishCadence.publishInterval(visible: true) == PublishCadence.minInterval
+                     && PublishCadence.minInterval == 1,
+                     "visible publishes ride the 1 s ceiling")
+        precondition(PublishCadence.publishInterval(visible: false) == PublishCadence.hiddenInterval
+                     && PublishCadence.hiddenInterval == 10,
+                     "background-only publishes ride the 10 s sleep cadence")
+        precondition(PublishCadence.hiddenInterval > PublishCadence.minInterval,
+                     "the sleep cadence must be the slower one")
 
         let filters = FilterHarness(entries)
         filters.recompute()
@@ -561,6 +589,7 @@ swift = (swift
          .replace('MODELS_AND_FEED', feed)
          .replace('VPN_FORMAT', manager[manager.index('enum VpnFormat {'):manager.index('/// The core\'s log ring.')])
          .replace('STAT_FUNC', stat)
+         .replace('CADENCE', cadence)
          .replace('WATCHLIST', watchlist)
          .replace('FILTER_HARNESS', filter_harness)
          .replace('ASYNC_HARNESS', async_harness))
