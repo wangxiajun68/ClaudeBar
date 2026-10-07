@@ -69,8 +69,9 @@ level=info    msg="[UDP] 127.0.0.1:63977 --> 39.108.156.189:6688 match GeoIP(cn)
 `networksetup` 写 HTTP / HTTPS / SOCKS → `127.0.0.1:<mixed-port>`。
 
 - 先关 PAC / 自动发现，再 `setwebproxy … off`（无认证）。
-- 回读看 Wi-Fi / Ethernet（`preferredServices`，按名字匹配 wi-fi / ethernet / usb / lan 等），不用 `listallnetworkservices` 第一行（常为 Thunderbolt Bridge）。
-- `VpnProxyGuard` 每 10s 检查（受 `vpnEnabled` / `vpnSystemProxyEnabled` / `vpnGuardEnabled` 与内核运行状态门控），被别的 App 清掉则重写。
+- 回读遍历 `networkServices()` 的每一项（含名字与 wi-fi / ethernet 无关的 USB 网卡），全部指向 127.0.0.1:mixed-port 才算写入成功；任一服务被改到别处，守卫会重写。
+- `VpnProxyGuard` 每 10s 检查（受 `vpnEnabled` / `vpnSystemProxyEnabled` / `vpnGuardEnabled` 与内核运行状态门控），被别的 App 清掉则重写。写不死生效时按连续失败次数退避（10s 起倍增，上限 5 分钟），恢复一次即回到 10s；失败原因随该次写入的消息进 vpn.log。
+- 系统代理的写入与清除（含退出时的同步清除）都走 `VpnSystemProxyController` 的同一条串行队列，后到的意图最后落盘 —— 快速关开不会把代理留在已停止内核的端口上。用户可在 VPN 页「网络设置」里关掉守卫。
 - 绕过列表不是只有默认项：`bypassDomains()` 在 clash-verge 那串默认值（全是地址与网段，绕不过域名）之外追加 `VpnProviderDirect.hosts()` —— 见下。
 
 ## 自建供应商的直连钉（`VpnProviderDirect`）

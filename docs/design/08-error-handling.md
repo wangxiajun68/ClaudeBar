@@ -16,4 +16,4 @@
 | Widget 读不到快照 | 依次试 UserDefaults → App Group 文件 → `~/.claude`（仅 `allowsSystemIntegration` 时）→ Widget 沙盒容器，全部失败或解码失败则回退 `WidgetEntry.placeholder`，视图显示「暂无数据」 |
 | mihomo 二进制缺失 | VPN 状态 `missingCore`；VPN 页给出内核缺失提示（内含放置路径 `FilePaths.vpnCoreBin`）与「打开目录」按钮（打开 `FilePaths.vpnDir`） |
 | 内核启动失败 | `VpnError` 经 `fail(_:)` 写入 `VpnLogStore`（VPN 页控制台）与 vpn.log，内核自身输出进 core.log；常见为 YAML 重复键、非法 `skip-auth-prefixes`、或端口被占导致的 `address already in use` |
-| 系统代理看起来没写上 | `applySystemProxyNow` 回读看 Wi-Fi / Ethernet（`preferredServices`），不是服务列表第一行；写入前先关 PAC 与自动发现，再开 HTTP / HTTPS / SOCKS 代理 |
+| 系统代理看起来没写上 | `applySystemProxyNow` 对 `networkServices()` 的每个服务写入并逐个回读，不是只看列表第一行；写入前先关 PAC 与自动发现，再开 HTTP / HTTPS / SOCKS 代理。写不进去时守卫按指数退避重试并把 networksetup 的失败计数带进消息 |

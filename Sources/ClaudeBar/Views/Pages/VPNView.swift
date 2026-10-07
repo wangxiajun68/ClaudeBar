@@ -338,6 +338,18 @@ struct VPNView: View {
                 .onChange(of: prefs.vpnAllowLan) { _, _ in
                     if manager.isRunning { manager.reloadConfig() }
                 }
+            Toggle("系统代理守卫", isOn: $prefs.vpnGuardEnabled)
+                .onChange(of: prefs.vpnGuardEnabled) { _, enabled in
+                    // The guard re-writes the system proxy other VPN / proxy
+                    // apps also manage; users running them side by side need a
+                    // way to turn it off (finding 318).
+                    if enabled, manager.isRunning, prefs.vpnSystemProxyEnabled {
+                        VpnProxyGuard.shared.start()
+                    } else {
+                        VpnProxyGuard.shared.stop()
+                    }
+                }
+                .help("其他软件清除系统代理时自动恢复")
             if let version = manager.coreVersion {
                 Text("mihomo \(version)").font(Theme.Font.captionMono)
                     .foregroundColor(Theme.textSecondary)

@@ -2304,7 +2304,9 @@
   "evidence": "applySystemProxy（50-55 行）: `Task.detached(priority: .userInitiated) { let msg = applySystemProxyNow(port: port) ... }`；clearSystemProxyAsync（127-131 行）: `Task.detached(priority: .userInitiated) { clearSystemProxyNow() }`。两者都是非结构化任务，没有任何 actor/队列串行。apply 一次要 spawn 每个服务 9 个 networksetup（50 服务×spawn≈数十~1s 窗口）。退出路径 `applicationWillTerminate` 在 ClaudeBarApp.swift:251 同步调 clearSystemProxy()，此前 1s 内如果用户刚点过开关，apply 的 detached 任务仍在跑，进程退出把它杀在循环中途。",
   "failure": "命名/时序：用户在 1s 内先开 VPN 再关（VPNView.swift:263-269 的同一按钮），或刚切换系统代理后立刻退出 → clear 先跑完、apply 后跑完（或 apply 被杀在半路）→ 部分/全部网络服务的 HTTP/HTTPS/SOCKS 代理仍指向 127.0.0.1:17890，而内核已停；VPNView.syncSystemProxy 已把守卫 stop 掉（VPNView.swift:776），没人会纠正它，直到下次启动或用户手动改回。",
   "fix": "把 apply/clear 收敛到同一个串行执行点：例如给 VpnSystemProxyController 加一个 `Task` 链（`private static var queue: Task<Void, Never>?`，每次调用 `queue = Task { await queue?.value; ... }`），或在 applySystemProxyNow 开头/结尾用 `lastIntent` 检查「本次是否已被更新的 clear/apply 意图取代」。最小改动是让两个入口都通过同一个 @MainActor 静态任务链排队。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed: both async entries now run their blocking body on one serial lane (`VpnSystemProxyController.serialQueue`), and the guard's re-assert (`reassertProxyIfNeeded`) shares it, so enqueue order is the order of user intent — a late apply can no longer land after a clear. Pinned by Tests/vpn-system-proxy-regressions.py case 5: apply→clear enqueued back to back must leave no apply write after the first clear write and no service pointing at us."
  },
  {
   "category": "state",
@@ -2316,7 +2318,9 @@
   "evidence": "94-102 行: `for service in preferredServices() { if let p = parseWebProxy(service), p.enabled, p.host == \"127.0.0.1\", p.port == portStr { return true } } return false`；161-168 行 currentHTTPProxy 同样只返回「第一个已启用的代理」。写循环（66-83 行）却对 networkServices() 的全部服务写入，所以不变量是「每个服务都指向我们」，而验证只覆盖 Wi-Fi/Ethernet 里第一个命中的那一个。",
   "failure": "输入/时序：另一款代理软件或用户把「以太网」的 web proxy 关掉/改到别的端口，只留下 Wi-Fi 仍指向 127.0.0.1:17890；或用户在运行中接入新网卡（如 USB 网卡服务出现在列表里）→ currentHTTPProxy() 命中 Wi-Fi 就返回 → 守卫的 `guard current?.host != expected || current?.port != port`（207 行）直接 return，以太网/新网卡一直无代理，直到下次内核重启；applySystemProxyNow 里 84-89 行的补救回写同样被这个「首个命中即成功」跳过。没有任何回归测试驱动这两个函数（grep Tests 无 VpnProxyGuard / parseWebProxy / currentHTTPProxy）。",
   "fix": "把健康检查改成对 networkServices() 的每个服务逐一验证（`allSatisfy { p in p.enabled && p.host == \"127.0.0.1\" && p.port == portStr }`），任一不符即视为需要重写；currentHTTPProxy 给守卫用时也应返回全部服务的状态而不是第一个。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed: `isOurHTTPProxyEnabledNow` now requires `networkServices()` to satisfy `allSatisfy` (enabled + 127.0.0.1 + port); the guard reads `currentHTTPProxy()` over every service, and the preferred-subset fallback branch was deleted because the write loop and the check now span the same complete set. The name-matching heuristic (preferredServices/isPreferredService) is gone with it. Pinned by cases 1–2 (AX88179A, which matches no preferred word, is written and read back; one service on a wrong port fails the whole check and the guard rewrites it)."
  },
  {
   "category": "robustness",
@@ -2328,7 +2332,9 @@
   "evidence": "205-210 行: 每次 tick 在 detached 任务里 `guard current?.host != expected || current?.port != port else { return }; let msg = VpnSystemProxyController.applySystemProxyNow(port: mixedPort); await MainActor.run { VpnManager.shared.log(msg) }`。apply 成功后系统状态会变成「已生效」，所以循环只在写不进去时持续 —— 典型是 networksetup 需要管理员权限：`strings /usr/sbin/networksetup` 里有 'Command requires admin privileges.'，此时每条 `-setwebproxy` 返回非 0（failed 计数），回读永远失败（host 仍不是 127.0.0.1）→ 下一个 tick 再次全套重写。日志经 VpnManager.log → vpnLogWriter.append 每 10s 写一次盘（VpnManager.swift:199-203）。",
   "failure": "环境：受限账户/MDM 要求管理员密码才能改网络设置（或任一网络的写入一致失败）→ 只要 VPN 在运行，每 10 秒 spawn 十余个 networksetup（apply 每服务 9 条 + 回读 2~4 次）并追加一行 VpnLogStore/vpn.log；用户看到的只是「回读 失败」，页面上没有任何可操作提示，能耗与日志持续增长直到退出。",
   "fix": "给守卫加失败退避：记录连续失败次数，失败后间隔指数放大（上限如 5 分钟），并在日志/状态里带上 networksetup 的错误文本（runAndRead 已有 output，目前只用了 status）以便页面能说明原因；成功一次即复位。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed: `check()` no longer rewrites from its own detached task — read, compare and rewrite run on the controller's serial lane, and the outcome only adjusts the timer. Consecutive failures reschedule at `VpnProxyGuard.backoffInterval(failures:)` = min(300, 10×2^(n−1)) (10s→20→40→80→160→300s cap); one success restores 10s. The failure reason reaches the page through the write's own message (`networksetup` non-zero count + 回读 失败). Pinned by cases 3–4."
  },
  {
   "category": "test-gap",
@@ -4067,7 +4073,9 @@
   "line": 84,
   "severity": "medium",
   "summary": "回读校验失败时，兜底分支只修 Wi-Fi/以太网，把列表里失败最可能来自的其他服务（iPhone USB 等 3 个）留在坏状态，回读自然再失败",
-  "symbol": "VpnSystemProxyController.applySystemProxyNow(port:)"
+  "symbol": "VpnSystemProxyController.applySystemProxyNow(port:)",
+  "status": "fixed",
+  "verdict_note": "Fixed: the fallback that re-wrote only preferred services is gone — the main loop writes every enabled service in one pass, so a failure in any of them (iPhone USB, USB NIC) is already followed by the read-back over the same set, and the message's 回读 result now reflects every service rather than a subset. Pinned by case 1 (bypass list written to each service) and case 3 (a denied service keeps the message at 回读 失败)."
  },
  {
   "category": "correctness",
@@ -4079,7 +4087,9 @@
   "line": 271,
   "severity": "medium",
   "summary": "restore 无条件删除 DNS 标记，即使在 DNS 从未被覆盖时也会删掉别人/上一代遗留的标记，恢复路径失去依据",
-  "symbol": "VpnTunDnsHelper.restoreSystemDNSNow()"
+  "symbol": "VpnTunDnsHelper.restoreSystemDNSNow()",
+  "status": "fixed",
+  "verdict_note": "Fixed: `restoreSystemDNSNow` consumes the marker only after a successful decode + restore; an undecodable marker is kept and the skip is logged (DNS 标记无法解析，保留以便诊断：<path>). Pinned by case 7 (marker left byte-identical, no -setdnsservers, log line present) and case 8 (a valid snapshot restores, skips removed services, then consumes the marker)."
  },
  {
   "category": "state",
@@ -4091,7 +4101,9 @@
   "line": 200,
   "severity": "medium",
   "summary": "vpnGuardEnabled（默认 true）在全仓没有任何 UI 写入点，用户无法关闭守卫循环；该字段的 didSet 持久化等于永远写回同一个值",
-  "symbol": "VpnProxyGuard.check()"
+  "symbol": "VpnProxyGuard.check()",
+  "status": "fixed",
+  "verdict_note": "Fixed: the VPN 网络设置 popover now has a 「系统代理守卫」 toggle bound to `$prefs.vpnGuardEnabled`; onChange starts the guard (when the VPN and system proxy are on) or stops it, matching `syncSystemProxy`'s gating. The key now has its single writer in the UI."
  },
  {
   "category": "perf-cpu",
@@ -6330,7 +6342,9 @@
   "summary": "原始 DNS 快照写盘失败被 `try?` 吞掉，而 setSystemDNSNow 之后仍无条件覆盖系统 DNS —— 快照丢失后 restoreSystemDNSNow 会静默返回，用户的静态 DNS 配置永远丢失。",
   "evidence": "274-281 行: `guard !FileManager.default.fileExists(atPath: dnsMarker.path) else { return }; let snapshot = ...; guard let data = try? JSONEncoder().encode(snapshot) else { return }; try? data.write(to: dnsMarker, options: .atomic)`；紧接着 setSystemDNSNow（241-247 行）不检查快照是否成功就 `-setdnsservers <service> 223.5.5.5 119.29.29.29`。恢复侧 257-259 行: `guard let data = try? Data(contentsOf: dnsMarker) else { return }` —— 没有 marker 就直接返回，不做任何补偿。",
   "failure": "环境：vpn 目录不可写/磁盘满/权限被改（早期版本或用户手动 chmod 都可能）→ 快照写不进，DNS 仍被改成公共解析器；会话结束（关 TUN、退出）时 restore 找不到 marker 静默返回 → 服务上原有手动 DNS（企业内网 DNS 等）消失，用户必须自己重配，应用也没有任何日志说明。",
-  "fix": "把 `try? data.write` 改成 do/catch 并在失败时返回 false；`setSystemDNSNow` 在快照失败时跳过 DNS 覆盖（或至少 `VpnManager.shared.log` 出原因），保证「没有快照就不改」。同样的 do/catch 也要放到 marker 删除上，但删除失败无害可保持现状。"
+  "fix": "把 `try? data.write` 改成 do/catch 并在失败时返回 false；`setSystemDNSNow` 在快照失败时跳过 DNS 覆盖（或至少 `VpnManager.shared.log` 出原因），保证「没有快照就不改」。同样的 do/catch 也要放到 marker 删除上，但删除失败无害可保持现状。",
+  "status": "fixed",
+  "verdict_note": "Fixed: `saveOriginalDNSIfNeeded` returns whether a snapshot exists on disk; `setSystemDNSNow` aborts before any `-setdnsservers` when it cannot be written and logs 「DNS 快照写入失败，本次不改动系统 DNS」. Pinned by case 6 (VPN dir chmod 0500 → zero -setdnsservers calls + the log line; the write used to be swallowed by try? while the override proceeded)."
  },
  {
   "category": "concurrency",
@@ -8343,7 +8357,9 @@
   "line": 84,
   "severity": "low",
   "summary": "除了「dev 版 guard 不执行」这一条，proxy/DNS 控制器的行为分支（回读、兜底、DNS 快照与跳过）没有任何回归覆盖",
-  "symbol": "VpnSystemProxyController.applySystemProxyNow / clearSystemProxyNow / restoreSystemDNSNow"
+  "symbol": "VpnSystemProxyController.applySystemProxyNow / clearSystemProxyNow / restoreSystemDNSNow",
+  "status": "fixed",
+  "verdict_note": "Fixed: new suite Tests/vpn-system-proxy-regressions.py (Makefile TEST_SUITES entry `vpn-system-proxy`) slices the production controller with BuildChannel/FilePaths and replaces only `Process.runAndRead` with a scripted fake modelling per-service web-proxy/DNS state. Nine cases pin: all-service write+read-back, guard healthy no-op, denied-write failure text, backoff curve, apply→clear serialization, snapshot-failure abort, undecodable-marker retention, restore with removed service, snapshot-before-override. Four reverts (178 first-hit, 491 swallow, 317 delete, 179 uncapped) were mutation-checked to fail the suite."
  },
  {
   "category": "dead-code",
