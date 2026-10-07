@@ -651,11 +651,15 @@ final class ProxyAccessLog: ObservableObject, @unchecked Sendable {
         return Int(double)
     }
 
+    /// The one clip rule for this file's strings, delegating to
+    /// `CaptureTranscript.clip` — the windowed, trim-aware fold the capture
+    /// side uses. This used to be a second hand-rolled variant
+    /// (`replacingOccurrences` over the whole string, no trim, prefix(cap-1)),
+    /// so the same model name could render differently on the console and in
+    /// the capture list (finding 608), and a multi-megabyte string was copied
+    /// twice before being truncated (finding 609).
     static func clip(_ s: String, _ cap: Int) -> String {
-        let flat = s.replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-        if flat.count <= cap { return flat }
-        return String(flat.prefix(cap - 1)) + "…"
+        CaptureTranscript.clip(s, cap: cap)
     }
 
     static func clipPath(_ path: String) -> String {

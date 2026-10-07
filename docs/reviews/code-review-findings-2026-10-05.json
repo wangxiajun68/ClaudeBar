@@ -7650,7 +7650,9 @@
   "summary": "`.clip` and `.clipPath` take an explicit cap and testify to a shared contract, but isolation is by convention only: `ProxyCaptureStore.clip` delegates to the shared `CaptureTranscript.clip` while the access log's own two `clip` variants do not. `CaptureTranscript.clip` trims whitespace and implements the `cap`/`cap-1` decision the same way; `CaptureTranscript.clip` already has the exact contract the log would need. Kept the surface duplication in the report because the caller's usage below is where it drifts.",
   "evidence": "Line 508-513 replaces only `\\n` and `\\r` (leaving tabs and vertical tabs inside provider/model/error fields), caps at `cap - 1` and does not trim; line 515-517 caps at 160 without trimming; by contrast `CaptureTranscript.clip(_ text: String, cap: Int = 160)` (CaptureTranscript.swift:85-92) trims and emits the character count of `cap` as an ellipsis by the letter of the comment. Both are called from begin() (lines 241-245) / finish() (line 297).",
   "failure": "No user-visible failure by itself; the reason it matters here is the caller below.",
-  "fix": "Route both through one shared helper (`CaptureTranscript.clip(s, cap:)`) or add the missing `.whitespaceAndNewlines` trim to `ProxyAccessLog.clip`."
+  "fix": "Route both through one shared helper (`CaptureTranscript.clip(s, cap:)`) or add the missing `.whitespaceAndNewlines` trim to `ProxyAccessLog.clip`.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: ProxyAccessLog.clip now delegates to CaptureTranscript.clip (the windowed, trim-aware fold), so the console and the capture list render one model name the same way; the divergent hand-rolled variant is gone."
  },
  {
   "category": "logic",
@@ -7661,7 +7663,9 @@
   "summary": "`model` and `provider` are clipped to 80 characters, but the value they carry is a client-supplied `model` field pulled straight out of the request body — `CodexProxyServer.peekJSON` returns `(json[\"model\"] as? String) ?? \"\"` with no length limit, and the body cap is 64 MiB. A 60 MiB `model` string is copied twice (peek + clip) on the proxy's hop, before the 80-char truncation that actually matters.",
   "evidence": "Line 244-245: `provider: Self.clip(provider, 80), model: Self.clip(model, 80)`; the model arrives from `startLog` (CodexProxyServer.swift:1196-1210) which calls `Self.peekJSON(request.body)` (line 1228-1234: `((json[\"model\"] as? String) ?? \"\", ...)`). `clip` first does two `replacingOccurrences` over the whole string and only then truncates (line 509-512).",
   "failure": "A client (or a buggy SDK) sends a multi-megabyte model name; the proxy burns CPU/memory copying it on the request path merely to throw almost all of it away — self-inflicted latency on every such call.",
-  "fix": "Bound before copying: `let m = model.count > 200 ? String(model.prefix(200)) : model` at the `startLog` call site, or make `clip` early-return once `s.count <= cap` before the two `replacingOccurrences` passes (also a wasted allocation for every ordinary short provider/model string)."
+  "fix": "Bound before copying: `let m = model.count > 200 ? String(model.prefix(200)) : model` at the `startLog` call site, or make `clip` early-return once `s.count <= cap` before the two `replacingOccurrences` passes (also a wasted allocation for every ordinary short provider/model string).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 with 608: the whole-string two-replace fold (which copied a multi-MB model string twice before truncating) is replaced by the windowed fold that stops once the window carries `cap` characters."
  },
  {
   "category": "dead-code",

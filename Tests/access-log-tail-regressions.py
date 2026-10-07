@@ -50,6 +50,18 @@ struct TokenTotals {
     var isEmpty: Bool { input + output + cacheRead + cacheWrite == 0 }
 }
 enum UsageStats { static func formatTokens(_ value: Int) -> String { String(value) } }
+/// `ProxyAccessLog.clip` delegates to the production `CaptureTranscript.clip`
+/// (finding 608); this harness compiles the log file alone, so the shape is
+/// stubbed here. The real implementation is driven by
+/// `Tests/capture-detail-regressions.py`, which checks the windowed fold
+/// against the pre-window reference.
+enum CaptureTranscript {
+    static func clip(_ text: String, cap: Int = 160) -> String {
+        let folded = text.split(whereSeparator: { $0.isNewline || $0 == "\r" })
+            .joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return folded.count > cap ? String(folded.prefix(cap)) + "…" : folded
+    }
+}
 enum Probe {
     static let lock = NSLock()
     static var bytes = 0, reads = 0
