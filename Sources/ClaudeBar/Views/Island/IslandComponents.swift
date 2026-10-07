@@ -254,6 +254,13 @@ struct IslandSessionRow: View {
     }
 
     private var waitingLine: String {
+        Self.waitingLine(for: session)
+    }
+
+    /// The empty-aware park line, shared with the alert strip's needs-input
+    /// arm so the two island surfaces cannot drift on the fallback word
+    /// (finding 501).
+    static func waitingLine(for session: IslandSession) -> String {
         session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason
     }
 }
@@ -270,9 +277,14 @@ struct IslandContextGauge: View {
     let ratio: Double
 
     private var color: Color {
-        if ratio < 0.6 { return IslandStyle.mint }
-        if ratio < 0.85 { return IslandStyle.amber }
-        return IslandStyle.coral
+        // The band thresholds live in one place — `Theme.ContextLevel` — since
+        // the same 0.6/0.85 edges color this figure, the page tiles and the
+        // context bars; only the hues differ per surface.
+        switch Theme.ContextLevel(ratio) {
+        case .ok: return IslandStyle.mint
+        case .warn: return IslandStyle.amber
+        case .critical: return IslandStyle.coral
+        }
     }
 
     var body: some View {

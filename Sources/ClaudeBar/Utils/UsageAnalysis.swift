@@ -7,10 +7,8 @@ struct UsageAnalysis {
         let date: Date
         let label: String
         let total: Int
-        let prompt: Int
         let hit: Int
         var id: Date { date }
-        var hitRate: Double? { prompt > 0 ? Double(hit) / Double(prompt) : nil }
     }
     struct Model: Identifiable {
         let name: String
@@ -67,13 +65,12 @@ struct UsageAnalysis {
         let parser = DateFormatter()
         parser.locale = Locale(identifier: "en_US_POSIX")
         parser.timeZone = calendar.timeZone; parser.dateFormat = "yyyy-MM-dd"
-        var records: [Date: (total: Int, prompt: Int, hit: Int)] = [:]
+        var records: [Date: (total: Int, hit: Int)] = [:]
         for day in days {
             guard let date = parser.date(from: day.day) else { continue }
             let key = calendar.startOfDay(for: date)
-            let old = records[key] ?? (0, 0, 0)
+            let old = records[key] ?? (0, 0)
             records[key] = (old.total + day.totalTokens,
-                            old.prompt + day.inputTokens + day.cacheReadTokens + day.cacheCreationTokens,
                             old.hit + day.cacheReadTokens)
         }
         let start = period == .all ? (records.keys.min() ?? calendar.startOfDay(for: now)) : interval.start
@@ -83,10 +80,10 @@ struct UsageAnalysis {
         var rows: [Bucket] = []
         while cursor < end {
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor), next > cursor else { break }
-            let values = records[cursor] ?? (0, 0, 0)
+            let values = records[cursor] ?? (0, 0)
             rows.append(Bucket(date: cursor,
                                label: "\(calendar.component(.month, from: cursor))/\(calendar.component(.day, from: cursor))",
-                               total: values.total, prompt: values.prompt, hit: values.hit))
+                               total: values.total, hit: values.hit))
             cursor = next
         }
         daily = rows
@@ -94,17 +91,17 @@ struct UsageAnalysis {
         let yearly = period == .all && rows.count > 730
         grain = yearly ? "年" : monthly ? "月" : "日"
         if monthly {
-            var grouped: [Date: (total: Int, prompt: Int, hit: Int)] = [:]
+            var grouped: [Date: (total: Int, hit: Int)] = [:]
             for row in rows {
                 let unit: Calendar.Component = yearly ? .year : .month
                 let date = calendar.dateInterval(of: unit, for: row.date)?.start ?? row.date
-                let old = grouped[date] ?? (0, 0, 0)
-                grouped[date] = (old.total + row.total, old.prompt + row.prompt, old.hit + row.hit)
+                let old = grouped[date] ?? (0, 0)
+                grouped[date] = (old.total + row.total, old.hit + row.hit)
             }
             buckets = grouped.keys.sorted().map { date in
                 let values = grouped[date]!
                 let label = yearly ? "\(calendar.component(.year, from: date))" : "\(calendar.component(.month, from: date))月"
-                return Bucket(date: date, label: label, total: values.total, prompt: values.prompt, hit: values.hit)
+                return Bucket(date: date, label: label, total: values.total, hit: values.hit)
             }
         } else { buckets = rows }
         activeDays = rows.filter { $0.total > 0 }.count

@@ -48,7 +48,7 @@ enum SkyAstronomy {
         defer { solarCache.lock.unlock() }
         if let cached = solarCache.values[key] { return cached }
         func altitude(_ instant: Date) -> Double {
-            snapshot(date: instant, latitude: latitude, longitude: longitude).sun.altitude + 0.833
+            sunAltitude(date: instant, latitude: latitude, longitude: longitude) + 0.833
         }
         var result = missing
         var start = day.start
@@ -113,6 +113,17 @@ enum SkyAstronomy {
         phase -= floor(phase)
         return Snapshot(sun: position(solarLongitude, 0), moon: position(lunarLongitude, lunarLatitude),
                         moonPhase: phase, sidereal: sidereal, latitude: latitude)
+    }
+    /// The sun alone — the solar-events scan runs this ~288 times per civil
+    /// day and reads nothing else, so it must not pay for the lunar terms.
+    private static func sunAltitude(date: Date, latitude: Double, longitude: Double) -> Double {
+        let d = date.timeIntervalSince1970 / 86400 + 2440587.5 - 2451545
+        let mean = (357.5291 + 0.98560028 * d) * rad
+        let solarLongitude = mean + (1.9148 * sin(mean) + 0.02 * sin(2 * mean) + 0.0003 * sin(3 * mean)) * rad + (102.9372 + 180) * rad
+        let sidereal = (280.16 + 360.9856235 * d + longitude) * rad
+        return horizon(ra: atan2(sin(solarLongitude) * cos(23.4397 * rad), cos(solarLongitude)),
+                       dec: asin(sin(23.4397 * rad) * sin(solarLongitude)),
+                       sidereal: sidereal, latitude: latitude).altitude
     }
     private static func horizon(ra: Double, dec: Double, sidereal: Double, latitude: Double) -> Position {
         let h = sidereal - ra, phi = latitude * rad

@@ -379,7 +379,10 @@ private struct IslandSessionStrip: View {
             .clipped()
 
             HStack {
-                RollingNumberText("\(sessions.count) 个会话")
+                // A count of the lane, not a live figure: rolling is noise on
+                // an aggregate that only changes when the lane above already
+                // redraws (finding 503).
+                RollingNumberText("\(sessions.count) 个会话", rolls: false)
                 Spacer(minLength: 0)
                 if canScroll {
                     Text("上下滑动查看更多")
@@ -530,7 +533,9 @@ private struct IslandAlertContent: View {
             return who + " · 等待你的下一步"
         case .needsInput(let session):
             let who = session.agent.label + (session.model.isEmpty ? "" : " · " + session.model)
-            return who + " · " + (session.waitingReason.isEmpty ? "等待你确认" : session.waitingReason)
+            // Same fallback word as the session row's own line — one helper,
+            // so the strip and the row cannot drift (finding 501).
+            return who + " · " + IslandSessionRow.waitingLine(for: session)
         case .quotaReset:
             return "额度已刷新 · 可以继续使用"
         }
