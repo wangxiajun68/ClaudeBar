@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := build
-.PHONY: help build dev release ci package install install-dev install-release run setup doctor test test-fast
+.PHONY: help build dev release ci package install install-dev install-release run setup doctor test test-fast cli cli-release install-cli install-cli-release
 
 PYTHON := $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 export TEST
-export TEST_SUITES := build-isolation ui core performance module-performance backend-performance measured-performance remaining-performance remaining-lifecycle inventory-performance island-coalescing detail-performance weather-card-performance dashboard-performance frame-work-performance module-scheduling document-navigation core-algorithms frontend-native page-frontend vpn-probe-lifecycle access-log-tail ui-animation-performance interaction-performance process-cpu process-argv audio-accessory rendering local-endpoint provider-icon product-mark session-title session-scan quota-reset quota-store cursor-usage cursor-ledger completion-notify session-waiting workflow-session island-session-alert waiting-notify greeting-data greeting-phrase greeting-layout greeting-name solar-term weather-astronomy menubar-strip connection-panel charge-limit model-cost proxy-usage proxy-inflight proxy-upstream cc-concurrency codex-session session-migration agent-protocol-bridge inflight-animation cursor-turn card-shadow machine-mark fan-rotor vpn-domain-log vpn-provider-direct vpn-format vpn-subscription-reentry vpn-core-log-writer vpn-live-rates smc-sampling usage-analysis usage-index model-price-source model-price-catalog model-list-fetch promo-key icon-minimal connector-batch provider-delete feishu-documents feishu-component widget-tint widget-snapshot capture-retention capture-detail swarm-grid cursor-ledger-lifecycle command-palette-reopen permission-status screenshot-overlay render-preview
+export TEST_SUITES := cli build-isolation ui core performance module-performance backend-performance measured-performance remaining-performance remaining-lifecycle inventory-performance island-coalescing detail-performance weather-card-performance dashboard-performance frame-work-performance module-scheduling document-navigation core-algorithms frontend-native page-frontend vpn-probe-lifecycle access-log-tail ui-animation-performance interaction-performance process-cpu process-argv audio-accessory rendering local-endpoint provider-icon product-mark session-title session-scan quota-reset quota-store cursor-usage cursor-ledger completion-notify session-waiting workflow-session island-session-alert waiting-notify greeting-data greeting-phrase greeting-layout greeting-name solar-term weather-astronomy menubar-strip connection-panel charge-limit model-cost proxy-usage proxy-inflight proxy-upstream cc-concurrency codex-session session-migration agent-protocol-bridge inflight-animation cursor-turn card-shadow machine-mark fan-rotor vpn-domain-log vpn-provider-direct vpn-format vpn-subscription-reentry vpn-core-log-writer vpn-live-rates failover-log-cursor smc-sampling usage-analysis usage-index model-price-source model-price-catalog model-list-fetch promo-key icon-minimal connector-batch provider-delete feishu-documents feishu-component widget-tint widget-snapshot capture-retention capture-detail swarm-grid cursor-ledger-lifecycle command-palette-reopen permission-status screenshot-overlay render-preview
 
 build: dev
 
@@ -37,6 +37,18 @@ setup:
 doctor:
 	bash Tools/doctor.sh
 
+cli:
+	CLAUDEBAR_CHANNEL=dev bash Sources/build-cli.sh
+
+cli-release:
+	CLAUDEBAR_CHANNEL=release bash Sources/build-cli.sh
+
+install-cli: dev
+	bash Tools/install-cli.sh dev
+
+install-cli-release: release
+	bash Tools/install-cli.sh release
+
 test:
 	$(PYTHON) Tests/run-tests.py
 
@@ -49,3 +61,4 @@ help:
 	@echo "release: production app only; package: production DMG + zip"
 	@echo "install-dev: ~/Applications; install-release: /Applications (quit that version first)"
 	@echo "setup: test dependencies; doctor: read-only checks"
+	@echo "cli/cli-release: native terminal client only; install-cli[-release]: link into ~/.local/bin"

@@ -184,6 +184,10 @@ final class VpnManager: ObservableObject {
     /// reads forward from here so a *previous* run's port conflict is never
     /// attributed to this one.
     private static var coreLogTailOffset: UInt64 = 0
+    /// The rotation generation `coreLogTailOffset` was measured against. A run
+    /// that rotated its own log moves the file's start, so the crash handler
+    /// re-adopts the tail only when this no longer matches (finding 174).
+    private static var coreLogGenerationAtSpawn: UInt64 = 0
     /// Owns the core's stdout/stderr file. Held as a file descriptor rather
     /// than re-opened by path on every write, so the log can be rotated
     /// underneath it (`core.log` reached 86 MB on this machine, appended to
@@ -661,6 +665,7 @@ final class VpnManager: ObservableObject {
         // already died on startup.
         coreLogFD.rotateIfNeeded()
         Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)
+        Self.coreLogGenerationAtSpawn = coreLogFD.generation
         let coreLog = coreLogFD
         for pipe in [outPipe, errPipe] {
             pipe.fileHandleForReading.readabilityHandler = { fh in
@@ -688,6 +693,15 @@ final class VpnManager: ObservableObject {
                 guard self.prefs.vpnEnabled, self.state != .idle else { return }
                 let stderr = self.readPipe(self.stderrPipe)
                 self.log("内核退出：code=\(code) stderr=\(stderr.isEmpty ? "(空)" : stderr)")
+                // A rotation during this core's run moved the log's start: the
+                // spawn-time offset now points past the rotated file, and the
+                // fatal line of the *current* run is what the tail holds.
+                // Only the rotation case adopts the new start — with no
+                // rotation the spawn offset is what keeps a previous run's
+                // port conflict out of this diagnosis (finding 174).
+                if self.coreLogFD.generation != Self.coreLogGenerationAtSpawn {
+                    Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)
+                }
                 let fatal = Self.extractFatal(stderr: stderr)
                 self.fail(.coreCrashed(exitCode: code, fatalLine: fatal))
             }
@@ -877,10 +891,18 @@ final class VpnManager: ObservableObject {
         let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
             if Task.isCancelled { return }
-            if let v = try? await api("GET", "/version") as [String: Any] {
-                coreVersion = v["version"] as? String
+            if let v = try? await api("GET", "/version") as [String: Any],
+               // A bare 200 is not readiness: another Clash core squatting on
+               // this controller port answers `/version` too (its body is the
+               // same shape), and a non-JSON 200 used to be swallowed into
+               // `[:]`. Both meant `state = .running` over a process that never
+               // bound anything, with `refreshProxies` rendering someone else's
+               // nodes (finding 176). Only a response that names a version
+               // counts — mihomo always includes one.
+               let version = v["version"] as? String, !version.isEmpty {
+                coreVersion = version
                 state = .running
-                log("内核就绪：version=\(coreVersion ?? "?")")
+                log("内核就绪：version=\(version)")
                 startPolling()
                 if prefs.vpnSystemProxyEnabled {
                     VpnSystemProxyController.applySystemProxy(port: prefs.vpnMixedPort)
@@ -1194,6 +1216,11 @@ final class VpnManager: ObservableObject {
         let sizeNum = try? FileManager.default.attributesOfItem(
             atPath: FilePaths.vpnCoreLogFile.path)[.size] as? NSNumber
         failoverLogOffset = sizeNum?.uint64Value ?? 0
+        // Record the generation the offset was measured against: a rotation
+        // between this launch and the first tick otherwise looks like "the
+        // offset predates the rotation" and resyncs away evidence the first
+        // poll had already earned (finding 173).
+        failoverLogGeneration = coreLogFD.generation
         failoverHits = []
         failoverTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -1318,25 +1345,65 @@ final class CoreLogWriter: @unchecked Sendable {
 }
 
 extension VpnManager {
+    /// One tick's read of `core.log` for the failover detector: whole lines
+    /// forward from `offset`, the offset advanced only over them, and a
+    /// generation change (a rotation) resyncing to the file's **current end**
+    /// — the retained tail is pre-restart history, and replaying it
+    /// timestamped `now` armed a switch on minutes-old `i/o timeout` lines
+    /// (finding 173).
+    ///
+    /// Pure byte arithmetic over a path, extracted so
+    /// `Tests/failover-log-cursor-regressions.py` can drive it against a temp
+    /// file without a core process; the evidence judgement (`i/o timeout`,
+    /// server name, cooldown) stays with the caller. Returns nil only when the
+    /// file cannot be opened; an empty `text` means "no complete line yet".
+    static func readFailoverChunk(url: URL, offset: UInt64, generation: UInt64,
+                                  currentGeneration: UInt64)
+        -> (text: String, offset: UInt64, generation: UInt64)? {
+        guard let fh = FileHandle(forReadingAtPath: url.path) else { return nil }
+        defer { try? fh.close() }
+        var offset = offset
+        var generation = generation
+        let end = fh.seekToEndOfFile()
+        if generation != currentGeneration {
+            generation = currentGeneration
+            offset = end
+        }
+        // An offset past EOF (the file replaced under our handle, a cleanup
+        // deleting it) used to seek nowhere and the empty read returned for
+        // ever, freezing failover until the next restart (finding 175).
+        if offset > end { offset = end }
+        fh.seek(toFileOffset: offset)
+        let data = fh.readDataToEndOfFile()
+        // Advance only over whole newline-terminated lines. A tick whose read
+        // boundary landed inside a multi-byte character used to fail the
+        // String decode and discard the entire chunk (up to 2 s of lines)
+        // while still moving the offset past it — the "i/o timeout" evidence
+        // it held was gone for good (finding 172). The incomplete tail stays
+        // at the offset for the next tick.
+        guard let cut = data.lastIndex(of: 0x0A) else {
+            return ("", offset, generation)
+        }
+        let complete = data[data.startIndex...cut]
+        offset += UInt64(complete.count)
+        // `String(decoding:as:)` never fails: a byte sequence that is not
+        // valid UTF-8 becomes U+FFFD rather than throwing the chunk away.
+        return (String(decoding: complete, as: UTF8.self), offset, generation)
+    }
+
     /// Consecutive `i/o timeout` on the live leaf's server → switch 主代理
     /// to the lowest-delay HY2 / KR leaf. Cooldown 60s so a bad airport
     /// cannot flap every few seconds.
     private func tickFailover() async {
         guard !failoverInFlight else { return }
-        let path = FilePaths.vpnCoreLogFile.path
-        guard let fh = FileHandle(forReadingAtPath: path) else { return }
-        defer { try? fh.close() }
-        // A rotation rewrites the file from its tail, so the byte offset we
-        // were holding now points into the middle of unrelated text (or past
-        // EOF). Resync instead of silently reading garbage forever.
-        if failoverLogGeneration != coreLogFD.generation {
-            failoverLogGeneration = coreLogFD.generation
-            failoverLogOffset = 0
-        }
-        _ = try? fh.seek(toOffset: failoverLogOffset)
-        let data = fh.readDataToEndOfFile()
-        failoverLogOffset += UInt64(data.count)
-        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }
+        guard let read = Self.readFailoverChunk(url: FilePaths.vpnCoreLogFile,
+                                                offset: failoverLogOffset,
+                                                generation: failoverLogGeneration,
+                                                currentGeneration: coreLogFD.generation) else { return }
+        failoverLogOffset = read.offset
+        failoverLogGeneration = read.generation
+        let chunk = read.text
+        guard !chunk.isEmpty else { return }
 
         let liveServer = proxies.first(where: { $0.name == liveLeafName })?.server ?? ""
         guard !liveServer.isEmpty else { return }

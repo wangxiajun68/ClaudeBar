@@ -2231,7 +2231,9 @@
   "evidence": "Lines 1282-1285: `_ = try? fh.seek(toOffset: failoverLogOffset)` / `let data = fh.readDataToEndOfFile()` / `failoverLogOffset += UInt64(data.count)` / `guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }`. The offset is advanced *before* the decode guard and there is no holdback for a split character. The sibling reader `VpnDomainFeed.ingest` (VpnDomainLog.swift:183-202) solves the same problem correctly — it buffers bytes and cuts only at the last 0x0A — and the domain-log file's own doc comment (lines 148-152) states a chunk boundary \"can land inside a line *and* inside a multi-byte character (the emoji in an outbound name)\". mihomo logs carry CJK/emoji on virtually every line (`using 🐟 漏网之鱼[…]`, the grammar quoted at VpnDomainLog.swift:272).",
   "failure": "Every 2 s tick whose read boundary falls mid-character: `String(data:encoding:)` returns nil, the guard returns, and the entire chunk (20-200 lines, including any `i/o timeout` lines for the live server) is discarded — the offset never goes back for it. With CJK/emoji in most lines the boundary lands mid-character on the order of several percent of ticks, so the auto-failover counter under-counts precisely during heavy traffic, and diagnostics vanish with no log entry.",
   "fix": "Cut at the last complete line before advancing, exactly like `VpnDomainFeed`: `let cut = data.lastIndex(of: 0x0A).map { data.index(after: $0) } ?? data.startIndex; failoverLogOffset += UInt64(cut - data.startIndex)` and decode only `data[data.startIndex..<cut]`, leaving the incomplete tail for the next tick.",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: `readFailoverChunk` (extracted from the ticker) cuts at the last newline and advances only over the decoded bytes; `String(decoding:as:)` replaces an invalid sequence instead of discarding the chunk. New Tests/failover-log-cursor-regressions.py drives the real helper (registered `failover-log-cursor`) — mid-character boundary keeps the line and stops the offset before the torn char; mutation (whole-chunk advance + `String(data:)`) crashes the suite."
  },
  {
   "category": "logic",
@@ -2244,7 +2246,9 @@
   "evidence": "Lines 1278-1281: `if failoverLogGeneration != coreLogFD.generation { failoverLogGeneration = coreLogFD.generation; failoverLogOffset = 0 }`. `failoverLogGeneration` starts at 0 (line 184) while `CoreLogWriter.generationStorage` (line 1185) is bumped on every rotation (`generationStorage &+= 1`, line 1261) — including the rotation `spawnProcess` performs via `coreLogFD.rotateIfNeeded()` (line 625), which keeps the 512 KB tail (`keepBytes`, line 1230) of the *previous* core. `startPolling` then measures `failoverLogOffset` from the current file size (lines 1140-1142), but that measurement is thrown away by the resync on the first tick. Hits are stamped with the read time, not the line's own timestamp: `failoverHits.append(now)` (line 1294).",
   "failure": "After any rotation (≈ once per 8 MB of core log) plus a core restart: the first tick seeks to 0, decodes the whole retained tail, and appends one `now` hit per stale `i/o timeout` line mentioning the live server — `failoverHits.count >= 6` can be satisfied instantly with minutes-old evidence, arming an auto-switch the moment the 60 s cooldown allows and any alternative leaf has a measured delay (`ranked`, lines 1303-1317). It also costs a 512 KB-8 MB read + per-line `contains` scan on the main actor, once per start.",
   "fix": "After a rotation, resync to the *current end* rather than 0 (`failoverLogOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)` / adopt the file size), and initialize `failoverLogGeneration = coreLogFD.generation` at spawn/startPolling time so the freshly measured offset survives the first tick; alternatively timestamp hits from the line's own `time=\"…\"` field instead of `now`.",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: a generation change resyncs to the file's current end (not 0), and `startPolling` records `failoverLogGeneration = coreLogFD.generation` alongside the measured offset so a first-tick rotation cannot replay the retained tail. Pinned in the new failover-log-cursor suite (rotation replays nothing; post-rotation bytes are read)."
  },
  {
   "category": "robustness",
@@ -2256,7 +2260,9 @@
   "summary": "core.log 在本次内核运行期间发生轮转后，spawn 时记录的静态偏移量失效，崩溃/超时诊断静默丢失",
   "evidence": "spawnProcess 在轮转之后取一次文件末尾偏移：\n```swift\n625        coreLogFD.rotateIfNeeded()\n626        Self.coreLogTailOffset = Self.tailOffset(of: FilePaths.vpnCoreLogFile)\n```\n而 extractFatal 只做 size 截断，不校验偏移是否仍落在文件内：\n```swift\n692        let end = fh.seekToEndOfFile()\n693        let start = max(Self.coreLogTailOffset, end > 64_000 ? end - 64_000 : 0)\n694        guard start < end else { return nil }\n```\nCoreLogWriter.append（1198-1212）在 `written > 8MB` 时调用 rotateLocked（1248-1263），把文件原子重写为 512KB 尾巴。文件里为 failover 明确写了“A rotation invalidates the offset; the ticker resyncs”（181-184、1278-1281），但 coreLogTailOffset 这条同源偏移没有任何 generation/size 复查。",
   "failure": "本次内核存活期间日志累计到 8MB（log-level: info 的 mihomo 数天即可），轮转把文件缩到 512KB。此后内核崩溃（terminationHandler:644-656）或 15s 未响应（waitUntilReady:849 调用 logDiagnosis()->extractFatal）时，coreLogTailOffset（可能是数 MB）> end（~512KB），第 694 行直接 return nil：`.coreCrashed` 落到“详见 core.log”兜底文案、`.coreStartTimeout(diagnosis:)` 丢掉那条 `listen tcp 127.0.0.1:9097: bind: address already in use` —— 恰好丢掉这个注释（678-686）说“报超时会把我们送回去手工翻 86MB 日志”的原因。",
-  "fix": "把静态 UInt64 换成 `(generation: UInt64, offset: UInt64)`，在 extractFatal 里先比对 `coreLogFD.generation`，不等或 `coreLogTailOffset >= end` 时退回 `end - 64_000`；或在第 694 行把 `guard start < end` 改成 `let start = min(max(...), end)` 并在 start>=end 时改读最后 64KB。"
+  "fix": "把静态 UInt64 换成 `(generation: UInt64, offset: UInt64)`，在 extractFatal 里先比对 `coreLogFD.generation`，不等或 `coreLogTailOffset >= end` 时退回 `end - 64_000`；或在第 694 行把 `guard start < end` 改成 `let start = min(max(...), end)` 并在 start>=end 时改读最后 64KB。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the crash handler re-adopts `coreLogTailOffset` from the rotated file's end when `coreLogFD.generation` no longer matches `coreLogGenerationAtSpawn` (set at spawn); with no rotation the spawn offset is untouched, so a previous run's port conflict still cannot be attributed to this one."
  },
  {
   "category": "robustness",
@@ -2269,7 +2275,9 @@
   "evidence": "```swift\n1278        if failoverLogGeneration != coreLogFD.generation {\n1279            failoverLogGeneration = coreLogFD.generation\n1280            failoverLogOffset = 0\n1281        }\n1282        _ = try? fh.seek(toOffset: failoverLogOffset)\n1283        let data = fh.readDataToEndOfFile()\n1284        failoverLogOffset += UInt64(data.count)\n1285        guard let chunk = String(data: data, encoding: .utf8), !chunk.isEmpty else { return }\n```\n偏移只在 generation 变化时回零，没有任何“offset > 文件大小”的兜底；`String(data:encoding:)` 在块尾正好切断多字节字符（节点名含 emoji / 中文，如“🇰🇷 KR”这类列表常见）时返回 nil，整块被丢但 1284 行已把偏移推进；跨读边界的半行也永远拼不回来（没有 carry，对比 VpnDomainFeed 的 `buffer` 设计）。",
   "failure": "任一原因使 failoverLogOffset 超过当前 core.log 长度（自己这类整块读取本身不造成，但：CoreLogWriter.rotateLocked 用 `.atomic` 替换文件，而 1282 行 sefile handle 是上一次打开、可能仍指向被替换的旧 inode，读到旧文件的完整长度并把偏移推到 8MB；或用户/清理工具删掉了 core.log）后，之后每次 seek 都落在 EOF 之外，readDataToEndOfFile 返回空，`guard ... !chunk.isEmpty else { return }` 早退，偏移不动 —— generation 不变就永远不出 self-heals：`i/o timeout` 永不再累计，6 次/25s 阈值永不到达，自动切换在整个内核生命周期内静默死掉。UTF-8 截断则以低概率重现“错过一次超时窗口”。",
   "fix": "读取前取 `let end = fh.seekToEnd()`，`if failoverLogOffset > end { failoverLogOffset = end }` 再 seek；解码失败时不要把偏移推进（改为 `guard let chunk = ... else { failoverLogOffset -= UInt64(data.count); return }`），或改为 Data 上直接 `split(separator: 0x0A)` 再逐行 `String(decoding:as:)` 以免整块丢失。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the helper clamps an offset past EOF to the file end and then reads normally; regression drives offset 999_999 against a 5-byte file and asserts the next append is recovered."
  },
  {
   "category": "logic",
@@ -2282,7 +2290,9 @@
   "evidence": "```swift\n826            if let v = try? await api(\"GET\", \"/version\") as [String: Any] {\n827                coreVersion = v[\"version\"] as? String\n828                state = .running\n```\n而 api() 对非字典/非 JSON 正文一律折叠成空字典，空字典也被当作成功：\n```swift\n884        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }\n885        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }\n888        guard !data.isEmpty else { return [:] }\n889        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]\n```\n前置的 portConflict 探测（413-422, 516-536）是启动前的一次性 lsof，它自己文档里就承认探测可能看不到占用（`listenerPID` 在 lsof 非 0 退出时直接当“空闲”，443-451），且与内核真正 bind 之间存在时间差。",
   "failure": "controller 端口上的第三方监听者（Clash Verge / 手动 mihomo，其 /version 同样是 {\"meta\":true,\"version\":\"1.19.x\"}）在“探测通过、内核 bind 失败”的窗口内存在，或 lsof 那次探测静默失败时：waitUntilReady 拿到别的内核们的 200，coreVersion 写成别人的版本，state 置 .running，随后 refreshProxies 把别人的机场节点渲染成“当前节点”、selectNode 的 PUT 也切到别人的内核上。整个页面状态与实际运行的进程无关。即使退化为 `{}`（某中间层回 200 空体）也会直接进入 .running 并显示空节点列表。置信度低的原因是：要触发需占用者恰好穿过那次探测窗口（常见的“端口一直被占”场景会被 portConflict 拦下）。",
   "fix": "把就绪条件收紧为“返回体含非空 version 字符串”：`guard let v = try? await api(...), let version = v[\"version\"] as? String, !version.isEmpty else { 继续轮询 }`；或在 api() 里区分“200 但正文不可解析”并抛错。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: `waitUntilReady` now requires `/version` to carry a non-empty `version` string before declaring `.running` — a bare 200 (another Clash core on the controller port, or a non-JSON 200 swallowed into [:] ) keeps polling to the timeout instead of rendering someone else's nodes."
  },
  {
   "category": "concurrency",
