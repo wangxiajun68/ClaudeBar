@@ -26,6 +26,11 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
     private(set) var status: CLAuthorizationStatus
     private var coordinate: CLLocationCoordinate2D?
     private var pending = false
+    /// The watchdog for a request in flight. Core Location has no timeout of
+    /// its own: when the when-in-use prompt is ignored or the request is
+    /// dropped, no delegate callback ever arrives, `pending` stays set and
+    /// every later request is a no-op — the card would show 获取中 forever.
+    private var fixTimeout: DispatchWorkItem?
 
     /// `lat,lon` for wttr.in, or nil until a fix lands.
     var query: String? {
@@ -50,6 +55,8 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
     func stop() {
         pending = false
         coordinate = nil
+        fixTimeout?.cancel()
+        fixTimeout = nil
         manager.stopUpdatingLocation()
     }
 
@@ -66,6 +73,7 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
             pending = true
             NSApplication.shared.activate(ignoringOtherApps: true)
             manager.requestWhenInUseAuthorization()
+            armFixTimeout()
         case .authorizedAlways, .authorizedWhenInUse:
             takeFix()
         default:
@@ -79,11 +87,42 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
         guard !pending else { return }
         pending = true
         manager.requestLocation()
+        armFixTimeout()
+    }
+
+    /// How long a fix may be outstanding before the request is treated as
+    /// lost. The same 8 s window (plus slack) `WiFiNameAuthorization` uses.
+    static let fixTimeoutSeconds: TimeInterval = 10
+
+    /// Core Location delivers no callback for a prompt the user ignores or a
+    /// when-in-use request dropped by an inactive app, and `pending` would
+    /// then block every later request while `WeatherStore.loading` stayed
+    /// true. The watchdog fails the attempt the way `didFailWithError` would,
+    /// so the card falls back to the city and the next refresh can ask again.
+    private func armFixTimeout() {
+        fixTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pending else { return }
+            self.pending = false
+            self.fixTimeout = nil
+            Task { @MainActor in
+                WeatherStore.shared.refreshFromCity(note: "未能取得当前位置，显示天气城市")
+            }
+        }
+        fixTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fixTimeoutSeconds, execute: work)
+    }
+
+    /// A callback arrived — the request is no longer outstanding.
+    private func disarmFixTimeout() {
+        fixTimeout?.cancel()
+        fixTimeout = nil
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let was = status
         status = manager.authorizationStatus
+        if status != .notDetermined { disarmFixTimeout() }
         guard BuildChannel.promptsForSystemPermissions, PermissionGate.allows(.currentLocation) else { return }
         switch status {
         case .authorizedAlways, .authorizedWhenInUse:
@@ -95,6 +134,7 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
         case .denied, .restricted:
             pending = false
             coordinate = nil
+            disarmFixTimeout()
             Task { @MainActor in
                 WeatherStore.shared.refreshFromCity(note: "定位未允许，显示天气城市")
             }
@@ -105,6 +145,7 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         pending = false
+        disarmFixTimeout()
         guard let location = locations.last else { return }
         coordinate = location.coordinate
         Task { @MainActor in
@@ -114,6 +155,7 @@ final class CurrentLocation: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         pending = false
+        disarmFixTimeout()
         Task { @MainActor in
             WeatherStore.shared.refreshFromCity(note: "未能取得当前位置，显示天气城市")
         }

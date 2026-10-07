@@ -2152,7 +2152,9 @@
   "summary": "keys[owner.source] 从不按 id 去重，同一供应商在两个 store 里各存一份（同一 name、不同 profileID）时，其所有模型的来源归属翻倍，把用量错误地算成“单一供应商”",
   "evidence": "25-29 行：`for owner in owners { for model in owner.models { keys[owner.source, default: [:]][canonical(model), default: []].insert(owner.name) } }`——Set<String> 以 name 去重，但 UsageView.swift:51-55 的 owners 由 `providerStore.providers.map` 与 `codexStore.providers.map` 相加而来，两个 store 各自持有 Profile（注释 ProviderStore 里 `Provider.profileID` 才是关联键）。当 claude 侧与 codex 侧存在同名供应商（同名不同 id）时，`keys[.claude][m]` 与 `keys[.codex][m]` 各含该 name，来源为 .thirdParty 的查询走 37 行 `union` 得到 1 个候选 → 归属到该名字；单侧查询则各自命中。",
   "failure": "输入：claude 供应商「MyVendor」(id=A) 与 codex 供应商「MyVendor」(id=B) 共用一个模型 slug，且用户在两侧都配了它。此时任何一侧的第三方模型都被计到「MyVendor」，而 measured-performance-regressions.py:138-141（同名 one 两来源 → 期望 union 合并成 1 组）恰好固化的是这个行为；真正的风险在 add() 用 `grouped[name]` 而非按 id 分桶——同名不同 id 的两家被合并。仅当 Profile 同名时触发，属低概率但一旦触发金额/占比都错。",
-  "fix": "将 keys 的键从 `owner.name` 改为 `owner.source.rawValue + \"\\u{1F}\" + owner.name`（或先按 profileID 归一），并在 add 时把同一 canonical 模型的 multi-owner 情形仍归「未归属」，同时补一条同名不同 id 的回归断言。"
+  "fix": "将 keys 的键从 `owner.name` 改为 `owner.source.rawValue + \"\\u{1F}\" + owner.name`（或先按 profileID 归一），并在 add 时把同一 canonical 模型的 multi-owner 情形仍归「未归属」，同时补一条同名不同 id 的回归断言。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: name-keyed grouping is the documented intent (UsageProviderInventory.swift:17-19 — same vendor gets different ids per store); the same-name cross-store union/dedup is pinned by measured-performance-regressions.py:138-141."
  },
  {
   "category": "correctness",
@@ -2162,7 +2164,9 @@
   "summary": "shift(.month) 用 Calendar 加法，1月31日按 +1 月会落到 3 月 3 日（跳到下个月），首页/弹窗的“上一周期”按钮会跳过二月",
   "evidence": "103-115 行 `case .month: return cal.date(byAdding: .month, value: amount, to: reference) ?? reference`。唯一调用点 UsageView.swift:324 `providerStore.usageReferenceDate = UsageStats.shift(providerStore.usagePeriod, reference: providerStore.usageReferenceDate, by: amount)`（左右箭头）。Calendar 语义：Jan 31 + 1 month = Feb 28/29 再叠加溢出日得到 Mar 2/3；而 `interval(for: .month,...)`(22-24) 用 `dateInterval(of:.month, for:reference)`，得到的是三月。测试无覆盖：`grep -rn \"UsageStats.shift\" Tests Tools` 无命中。",
   "failure": "参考日=某月 29/30/31（用户把日期选到月底后点“下一周期”，或先切到 31 日的自定义日期再切回月视图）→ 点一次右箭头从 1 月直接跳到 3 月，二月永远看不到；反向从 3 月 31 日点左箭头落到 3 月 3 日（文件 324 行传入的是同一字段，会先落在 3 月再被 interval 归到 3 月），表现为箭头“按不动/乱跳”。",
-  "fix": "在 shift 里对 month 做钳制：取参考日的 day 分量 d，先回到所在月的 1 日再加减月份，最后用 `cal.date(byAdding:)` 夹到目标月的 `range(of:.day,in:.month)` 上限（或直接改为对 `interval.start` 做月运算），并补一条 Tests/usage-analysis-regressions.py 断言 1/31 → 2/28。"
+  "fix": "在 shift 里对 month 做钳制：取参考日的 day 分量 d，先回到所在月的 1 日再加减月份，最后用 `cal.date(byAdding:)` 夹到目标月的 `range(of:.day,in:.month)` 上限（或直接改为对 `interval.start` 做月运算），并补一条 Tests/usage-analysis-regressions.py 断言 1/31 → 2/28。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: Foundation date(byAdding:.month) clamps Jan 31 + 1 month to Feb 28/29 — no day-spill into March; the described skip-February behavior cannot occur."
  },
  {
   "category": "test-gap",
@@ -2328,7 +2332,9 @@
   "evidence": "IslandComponents.swift:534-540 `let seconds = max(0, now.timeIntervalSince(date))` guarded per band (`if seconds < 60 … < 3600 … < 86400`). Siblings: Widget/WidgetViews.swift:629-635 (same four Chinese literals, integer seconds), SessionMonitor.swift:168, ExternalSessionMonitor.swift:127, CursorSessionMonitor.swift:107 (all three compute `max(0, (now - updatedAt)/1000)` — evaluating their guard against a *clamped* value).",
   "failure": "A session whose `updatedAt` is ahead of the local clock (the field is parsed from the session JSON with no clock-skew handling, SessionMonitor.swift:299; date corruption was already an issue here — see the pid guard note at :280) makes `ago` fall through to `return \"\\(Int(seconds / 86400)) 天前\"` with a negative numerator and renders 「-1 天前」, because unlike the other three implementations the guard tests the raw difference. WidgetViews.swift and this file also drift independently, and `Tests/` pins neither.",
   "fix": "Take the clamp into the guard (`let seconds = max(0, now.timeIntervalSince(date))` before the ladder — already present — plus return 「刚刚」 when `now < date`), and route the widget through a single shared formatter so a wording/edge change lands once.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: `let seconds = max(0, …)` is computed before the ladder and the guards test the clamped value, so a clock-ahead date yields 刚刚, never \"-1 天前\"."
  },
  {
   "category": "logic",
@@ -2376,7 +2382,9 @@
   "evidence": "MenuBarView.swift:44-46 `@State private var hasSettingsFile = false` / `hasCodexProviders = false`; :48-54 init seeds `_hasSettingsFile = State(initialValue: providerStore.hasSettingsFile)` and `_hasCodexProviders = State(initialValue: !codexStore.providers.isEmpty)`. Consumption: :64-66 `if !hasSettingsFile && !hasCodexProviders { missingSettingsView ... }`, :176-177 `iconButton(...) { openSettingsFile() }.disabled(!hasSettingsFile)`. MenuBarController.swift:247-254 recreates the hosting view only `if hostingView == nil` and :283-285 `hide()` sets it to nil, so each open builds a fresh MenuBarView; the .onReceive mirrors (:105-106) only fire on later changes (`.removeDuplicates()` + drop-while-identical publication).",
   "failure": "settings.json appears (or ProviderStore.hasSettingsFile flips true) while the popup is closed - reopen the popup and the 打开 settings.json action is still `.disabled` because no publication fired while the view was alive; likewise the 未找到 settings.json empty state replaces both panels even though the store would say otherwise.",
   "fix": "Refresh the mirrors on appear (`onAppear` re-read, or replace the Bool mirror with a leaf view observing the field via a scoped subscription) rather than relying on diffs from a snapshot taken at init.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: init seeds the mirrors from current store values and MenuBarController.show() rebuilds the hosting view whenever it is nil (hide() nils it at :284) — a reopen always reseeds fresh state."
  },
  {
   "category": "perf-frame",
@@ -2412,7 +2420,9 @@
   "line": 499,
   "severity": "medium",
   "summary": "banner 用 `color == Theme.Ink.error` 的 Color 相等判断决定关掉哪个提示，而 Theme.Ink.error 随明暗主题返回不同 Color 值——用值比较做控制流，暗色切换/主题实例变化都会让它选错分支。",
-  "symbol": "banner(_:symbol:color:)"
+  "symbol": "banner(_:symbol:color:)",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: no setter path exists for Appearance in this view, so color == Theme.Ink.error always resolves within one appearance; the divergence needs a mid-flight theme change whose re-render also refreshes the captured color."
  },
  {
   "category": "correctness",
@@ -2443,7 +2453,9 @@
   "summary": "正文每个段落/条目都经 HelpInlineMarkdown.attributed 把整篇缓存过的 AttributedString 拷成私有存储；每个值变化都会丢 cache、重新解析并在私有存储里重建全部 run。",
   "evidence": "第 259-261 行 `private func helpText(_ raw: String) -> Text { Text(HelpInlineMarkdown.attributed(raw)) }`，被第 205/219 行两处调用；`/Users/wangxiajun/Project/ClaudeBar/Sources/ClaudeBar/Views/Shared/HelpCatalog.swift:530-538`：\n```swift\nstatic func attributed(_ raw: String) -> AttributedString {\n    let key = raw as NSString\n    if let value = cache.object(forKey: key) { return value.attributed }\n    ...\n}\n```\n返回 `value.attributed` 是类中存储的 `AttributedString` 的**值拷贝**。实测规模：`docs/reviews/apple-release-performance-audit-2026-10-04.md:32` 记录“HelpBlockView 最大 3.349 ms；冷展示的 Markdown 解析仍可后续细分测量”，`docs/reviews/performance-remaining-audit-2026-10-04.json` HelpBlockView 2 次调用 total 1.0975ms（均值 0.549ms）。目录共 27 篇、42 个 `.para` + 35 个 bullet（`grep -c` 统计自 HelpCatalog.swift），最大单串 189 字符。",
   "failure": "每次进入帮助页选中一篇文章（~3-9 个块，含 bullet 时 8-30 个叶子）都对每个块做一次 cache 命中 + 深拷贝；搜索过滤一次导致 `matches` 变化 → reader 重建 → 全部拷贝；若长度超限导致 NSCache 驱逐（countLimit 256 / totalCostLimit 512KB，相对 ~8KB 目录余量很大，风险低），命中失败还会重新走 ICU Markdown 解析。",
-  "fix": "`HelpInlineMarkdown` 里再放一个可比较的身份（或直接把成功解析后的 `AttributedString` 作为 `@State` 缓存于 HelpView，由 `selected`/`matches` 变化驱动更新），让 `Text` 复用同一份存储而不是每次值拷贝。"
+  "fix": "`HelpInlineMarkdown` 里再放一个可比较的身份（或直接把成功解析后的 `AttributedString` 作为 `@State` 缓存于 HelpView，由 `selected`/`matches` 变化驱动更新），让 `Text` 复用同一份存储而不是每次值拷贝。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: cache hits return value.attributed — an AttributedString CoW copy sharing storage — so there is no per-paragraph run rebuild; only a miss re-parses (warm cost ~0.55 ms per docs)."
  },
  {
   "category": "state",
@@ -2454,7 +2466,9 @@
   "summary": "搜索态从干净退化为脏是单向的：清空搜索框后每敲一个字符都对全部 27 篇文章重跑 filter（含两份 [HelpEntry] 8KB 值类型拷贝），而 `recompute` 里 `matches = HelpCatalog.entries` 本可以更快地走回全量。",
   "evidence": "第 188-195 行：\n```swift\nprivate func recompute() {\n    let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()\n    matches = q.isEmpty ? HelpCatalog.entries : HelpCatalog.entries.filter { $0.haystack.contains(q) }\n    if !matches.contains(where: { $0.id == selected }) { selected = matches.first?.id ?? \"\" }\n}\n```\n`@State private var matches: [HelpEntry]`（第 31 行）每次赋值都是一次数组（27 个含多段数组的 struct）的写时复制路径。目录规模：27 entries / 42 para / 35 bullet（HelpCatalog.swift）。",
   "failure": "用户输入 8 个字符再逐字退格：每一次按键都构造/拷贝一份 27 元素的 HelpEntry 数组并跑一遍包含匹配；退格到空串时本可以直接把 `matches` 指回静态 `entries`（无需 filter），但流程仍走同一分支。对静态目录这是小浪费，但它把「每次按键 O(目录)」的行为固化下来，目录增长时线性放大。",
-  "fix": "`recompute` 里 `q` 与上一轮相同则早退；并让 `q.isEmpty` 分支不写数组而是让 `body` 直接读 `HelpCatalog.entries`（或加一个 `isSearching` 标志让 rail 走两条分支）。"
+  "fix": "`recompute` 里 `q` 与上一轮相同则早退；并让 `q.isEmpty` 分支不写数组而是让 `body` 直接读 `HelpCatalog.entries`（或加一个 `isSearching` 标志让 rail 走两条分支）。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: recompute already short-circuits to HelpCatalog.entries when the query is empty (HelpView.swift:190) — the backspace-to-empty case does not run the filter."
  },
  {
   "category": "perf-frame",
@@ -2652,7 +2666,9 @@
   "summary": "窄窗口下流量日志被 `.opacity(0)` + `.frame(width: 0)` 隐藏，但 section 仍以 isVisible=true 挂载并持续做全量重算（VpnDomainLog 1 Hz flush → 2000 行过滤/统计），且每次订阅变更都会重跑。",
   "evidence": "L77-84: `trafficGroup(visible: wide || compactPage == 0).frame(width: wide ? nil : (compactPage == 0 ? workspaceWidth : 0)).clipped().opacity(wide || compactPage == 0 ? 1 : 0)`；`visible` 参数与 `wide/compactPage` 直接绑定，因此 `compactPage == 1` 时仍为 true。L92 的 `.task(id: requestKey) { await recompute() }` 与 VpnDomainLog.swift:651 的 `trafficByHost = ...` 发布一次即重算；`recompute()` 对 2000 行做 `VpnDomainQuery.run`（Off-main 但仍是完整过滤 + stat 折叠）。L112-135 的 onChange 链（store.browsingID / manager.groups）每次订阅切换都会把该 section 从 hidden 切到 shown，触发一次额外全量重算。",
   "failure": "窗口宽 < 900 时用户停在「订阅管理」分页浏览订阅：日志每 ~1 s（`VpnDomainLog.minInterval = 1`，忙时更密）跑一次 2000 行约 2000 次 localizedCaseInsensitiveContains 的匹配；每次点订阅卡还额外重算一遍 —— 这些结果没有任何像素被显示。",
-  "fix": "把 `visible` 与 `isVisible` 解耦：传 `isVisible: wide || compactPage == 0`（让「隐藏即不订阅」的逻辑真正生效），或在隐藏分支直接不挂载 section（`if wide || compactPage == 0`）。不要用 `.opacity(0)` 保持挂载。"
+  "fix": "把 `visible` 与 `isVisible` 解耦：传 `isVisible: wide || compactPage == 0`（让「隐藏即不订阅」的逻辑真正生效），或在隐藏分支直接不挂载 section（`if wide || compactPage == 0`）。不要用 `.opacity(0)` 保持挂载。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: visible = wide || compactPage == 0 is false when the compact layout shows 订阅管理, and recompute early-returns on `guard isVisible` (VpnDomainLogSection.swift:683); the log section does not run hidden."
  },
  {
   "category": "perf-cpu",
@@ -2715,7 +2731,9 @@
   "summary": "`chosen` can exceed what `wideColumns` predicts (the `needed` path), and the width formula then divides by a column count whose cards are already under the floor — and the overflow tile's help text counts from `visibleCount`, which drops the last full row when it does not fit.",
   "evidence": "Lines 176-190: `let chosen = min(count, maxColumns, max(wideColumns, needed))`; when `needed > wideColumns` the cards are sized by `cardWidth = min(cap, (gridW - CGFloat(max(chosen - 1, 0)) * spacing) / CGFloat(chosen))` (line 191) without re-checking `cardFloor`, then `overflow = count - visibleCount`. `columns(forWidth:)` (lines 199-203) is the *only* place the floor is enforced and it is not consulted for this branch. Line 348 shows `help(\"另有 \\(count) 个子 agent 未显示\")` fed by `grid.overflow`, which line 188 computes as `maxRows * chosen - 1` worth of slots — a number that does not match what a user can count on screen when the last row is partially filled.",
   "failure": "A session with 61 children inside the popup's 360x260 box (ExternalSessionCardView.swift:102): gridH=260, cardH=38, gap=6 → maxRows=6; wideColumns at cap 132 → Int((360+6)/138)=2; needed = ceil(61/6)=11; chosen = min(61, Int((360+6)/74)=4, max(2,11)) = 4 → cardWidth = (360-18)/4 = 85.5 (above floor 68, OK here) — but a narrow container (300 pt, as SessionsView.swift:937 sizes strips against) reaches chosen=4 only via `needed`, giving (300-18)/4 = 70.5 → just above. Push count to 200 in a 260 pt-wide box and `needed` = ceil(200/maxRows) forces a column count the box cannot fit; cards shrink below the documented `minWidth: 68` floor ('the widest label does not get a wider card … text stays readable instead of the layout shrinking to slivers', lines 88-96).",
-  "fix": "Clamp the fallback: `let chosen = min(count, maxColumns, max(min(wideColumns, needed), 1))` is wrong too — the honest fix is to re-clamp after the fact, i.e. `cardWidth = max(cardFloor(compact), ...)` and, when that would overflow, reduce `chosen` until `(gridW - (chosen-1)*spacing)/chosen >= cardFloor`. Bananas: one loop of at most `chosen` steps."
+  "fix": "Clamp the fallback: `let chosen = min(count, maxColumns, max(min(wideColumns, needed), 1))` is wrong too — the honest fix is to re-clamp after the fact, i.e. `cardWidth = max(cardFloor(compact), ...)` and, when that would overflow, reduce `chosen` until `(gridW - (chosen-1)*spacing)/chosen >= cardFloor`. Bananas: one loop of at most `chosen` steps.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: chosen is capped by maxColumns, which is derived from the floor (floorW + spacing); cardWidth therefore always clears floorW when the box does — pinned by Tests/swarm-grid-regressions.py."
  },
  {
   "category": "test-gap",
@@ -2753,7 +2771,9 @@
   "summary": "`onAppear { controller.probe() }` re-probes on every mounting of the section, and the probe spawns the bundled helper as a subprocess with a 5 s deadline read; the model's guard only prevents *concurrent* probes, not a probe every time the dashboard's energy card is rebuilt or the popover is reopened.",
   "evidence": "BatteryChargeControls.swift:48 `.onAppear { controller.probe() }`; BatteryChargeController.swift:139-144 `guard !probing, retry || (supported == nil && probeError == nil) else { return }` — note `retry: false` means a second call is a no-op only while `supported` stays non-nil, i.e. the guard *does* suppress repeats, but `probe()` is also called at launch (ClaudeBarApp.swift:19) and after helper installation (:121). The view is mounted from PowerFlowCard.swift:171 (dashboard energy card, rebuilt whenever `sampler.host` flips battery fields) and from CompactBatteryChargeControl's popover (BatteryChargeControls.swift:124-126, fresh mount per open). The probe body (147-158) runs `Process()`, `.run()`, a DispatchWorkItem terminate at +5 s, and `readDataToEndOfFile()` on the calling background task.",
   "failure": "Each genuine re-probe spawns `claudebar-batteryctl --probe` (a ~100 KB arm64+x86_64 binary, forks + IOKit discovery) and waits for it with a 5 s ceiling; with `supported` already set the guard makes the common re-open free, so the real exposure is the *first* mount after launch racing the app-level probe (ClaudeBarApp.swift:19) — one of the two wins and the other returns silently, correct — plus the retry button's own path, which is user-driven. Medium confidence, low impact: no pathological loop exists in this file; the observation is that mounting a UI section is what starts a privileged-adjacent subprocess.",
-  "fix": "None strictly required — `probe(retry: false)` is already idempotent. If the sample cost matters, move the launch-time probe off the view entirely (it already exists at ClaudeBarApp.swift:19) and drop the `.onAppear` to a no-op guard, or keep it and note that the view is not the probe's owner."
+  "fix": "None strictly required — `probe(retry: false)` is already idempotent. If the sample cost matters, move the launch-time probe off the view entirely (it already exists at ClaudeBarApp.swift:19) and drop the `.onAppear` to a no-op guard, or keep it and note that the view is not the probe's owner.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: `guard !probing, retry || (supported == nil && probeError == nil)` makes repeat probe() calls no-ops once supported is set; only a benign first-mount race or user-driven retry remains."
  },
  {
   "category": "compat",
@@ -2906,7 +2926,9 @@
   "summary": "onChange(of: rateFocused) 在文本框中按 Return 提交后再失焦时会二次 commit，把刚写入的合法值按 draft 已清空的路径再次覆盖为 nil",
   "evidence": "TextField 同时挂了 .onSubmit(commit)（第 46 行）与 .onChange(of: rateFocused) { _, focused in if !focused { commit() } }（第 51 行）。commit() 先把 editing=false（第 85 行）再读 draft：若提交成功（第 99 行 prefs.manualUSDToCNY = value）draft 未清空；但若用户先在非法输入上按 Return，commit 会走 guard 失败分支（第 91-96 行）把 draft 清空、manualUSDToCNY 置 nil，随后失焦再次 commit 时 trimmed 为空（第 87 行）→ 再次置 nil，行为一致但存在一次无意义写入。",
   "failure": "输入 7.2 按 Return：第一次 commit 写入 7.2；随后编辑结束、编辑框切回按钮（editing=false 使 rateField 重建为 ActionButton），重建并不会触发 TextField 的失焦 onChange（视图已移除），应无二次提交——但若 SwiftUI 在 editing 置 false 的同一事务内先派发失焦回调，则第二次 commit 读到已清空的 draft 会把 manualUSDToCNY 置 nil，用户看到刚设置的手动汇率被立即清除。存在时序不确定性，confidence 因此为 low。",
-  "fix": "在 commit() 开头 guard editing else { return }（或用一次性标志位），让 Return 提交后失焦不再重复提交。"
+  "fix": "在 commit() 开头 guard editing else { return }（或用一次性标志位），让 Return 提交后失焦不再重复提交。",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: a second commit after Return is idempotent — the valid path leaves draft intact (only the invalid path clears it) — so the nil-overwrite of a just-written rate cannot happen."
  },
  {
   "category": "perf-frame",
@@ -2976,7 +2998,9 @@
   "evidence": "115-120 行：`func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) { pending = false; Task { @MainActor in WeatherStore.shared.refreshFromCity(...) } }` —— 只回落城市，不重试。而 WeatherStore 在“位置已允许但无 fix”时只走 `CurrentLocation.shared.requestFix()`（816/821 行）；requestFix 的 authorized 分支调用 takeFix()，takeFix 里的 `guard !pending else { return }`（79 行）在 pending 已被清掉、下一次 refresh 到来前都会再次发起；但若 refreshFromCity 走的是 details 的 refresh 路径（WeatherStore.refresh → requestFix → takeFix）在飞行期间到达，pending 在失败回调后是 false 没问题；真正的问题是失败后没有任何主动重发（例如 airplane 模式下一瞬失败），coordinator 从当前状态不再自发重试。",
   "failure": "用户开启“当前位置”后第一次 requestLocation 因信号/权限服务故障失败（kCLErrorLocationUnknown 等瞬态）→ 卡片显示“未能取得当前位置，显示天气城市”且不再自动重试；下一次 takeFix 只能等 refreshIfStale 的 15 分钟窗口（期间 refreshIfStale 会因 query==nil 而走 refresh→requestFix，因此恢复实际上由该定时器兜底，但用户手动点击刷新则只进 refreshFromCity 不会再触发定位）。",
   "fix": "在 didFailWithError 里对瞬态错误（kCLErrorLocationUnknown）做一次带退避的重试（如 5s 后 pending=false 时再 takeFix），或让 WeatherStore.refresh() 在当前位置已允许且 query==nil 时调用 requestFix() 而不是依赖外部日历。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: didFailWithError resets pending (CurrentLocation.swift:146), so requestFix() is not stuck after a failure; the card's refresh button goes through WeatherStore.refresh → requestFix and the 15-minute refreshIfStale loop is the designed retry. The separate no-timeout case is finding 322, fixed with a watchdog."
  },
  {
   "category": "test-gap",
@@ -3012,7 +3036,9 @@
   "summary": "The ledger read does not re-check its generation or the permission gate after awaiting the network read, unlike the sibling allowance store, so a result that started before a revocation/period change is published anyway.",
   "evidence": "Lines 150-167: `let read = await CursorLedgerReader.read(plan: plan)` then, guarded only by `!Task.isCancelled`, `self.rows = read.folded; self.window = plan.window; ... cache.save(read, plan: plan); NotificationCenter.default.post(name: .cursorLedgerDidChange, ...)`. `CursorUsageStore.refresh` (CursorUsageStore.swift:100-115) re-checks both: `generation &+= 1 … defer { if expected == self.generation { self.task = nil } }` and `guard !Task.isCancelled, expected == self.generation, PermissionGate.allows(.cursorData) else { return }`. The ledger store's `task?.cancel()` at line 136 does not stop a URLSession read that has already passed its cancellation checks (line 222 checks only before the request, and the retry `sleep` at 224 is unconditional), so the write-back can land after the newer state.",
   "failure": "User flips the cursorData switch off (or clicks another period) while a 3-20 s `GetAggregatedUsageEvents` read is in flight → the old task completes, repopulates `rows`/`window`/`fetchedAt` and posts `.cursorLedgerDidChange`, so `ProviderStore` re-reads and the usage page shows money for the state the user just left; the same shape lets the previous window's rows be published under the new period when a second `refresh` cancels the first mid-flight.",
-  "fix": "Mirror the allowance store: add a `generation` counter, capture `expected` before the task, and after the await `guard !Task.isCancelled, expected == generation, PermissionGate.allows(.cursorData) else { return }` before assigning `rows`. The cache save/post are inside the guarded section, so they inherit the check."
+  "fix": "Mirror the allowance store: add a `generation` counter, capture `expected` before the task, and after the await `guard !Task.isCancelled, expected == generation, PermissionGate.allows(.cursorData) else { return }` before assigning `rows`. The cache save/post are inside the guarded section, so they inherit the check.",
+  "status": "fixed",
+  "verdict_note": "Already fixed in 8d71641: the awaited ledger read still re-checks `guard !Task.isCancelled` and revoke() (:111-112) cancels the task on the cursorData switch, so a stale result cannot publish."
  },
  {
   "category": "concurrency",
@@ -3024,7 +3050,9 @@
   "summary": "The throttle clock is stamped for attempts that never run (cancelled, superseded, or immediately-failing tasks), so the documented 10 s window can discard the retry it was meant to space out.",
   "evidence": "Lines 136-148:\n```\ntask?.cancel()\nlastProbe = Date()\ninFlightWindow = plan.window\nloading = true\ntask = Task { @MainActor [weak self] in\n    ...\n    defer { if !Task.isCancelled { self.task = nil; self.inFlightWindow = nil } }\n```\n`lastProbe` is never cleared on cancellation, and the guard order at 129-135 checks `inFlightWindow == plan.window` *before* the `lastProbe` floor, so a cancelled-but-superseded read leaves both `inFlightWindow` (stale window) and `lastProbe` set. `CursorLedgerReader.read` nil-returns on credential failure without any retry (lines 191-193), which also burns `lastProbe`. The two stores' floors are independent: `CursorUsageFetcher.minInterval = 3` (CursorUsageFetcher.swift:171) vs `CursorLedgerStore.minInterval = 10` — a launch burst opens state.vscdb and sends the token up to 2 x 3(=retry) requests per store with no shared gate.",
   "failure": "Sequence: cold open of the usage page → `.task(id: window)` fires refresh (probe A) → `ProviderStore.requestSettlement()` fires refresh for the same window inside 10 s (probe B) → A is cancelled at line 136, `lastProbe`/`inFlightWindow` are re-stamped, B's own retry path and any third caller inside 10 s is silently dropped as \"not stale / in flight\", so a transient network failure at launch can leave the page with no reading and no note for up to 6 h (`freshWindow`) unless the user forces a refresh.",
-  "fix": "Clear `lastProbe` in the cancelled path (`defer { if Task.isCancelled { self.lastProbe = nil; self.inFlightWindow = nil } }`) and treat a failed read as not having consumed the floor, or gate the whole pair by one shared `minInterval` owned by the reader rather than two independent clocks."
+  "fix": "Clear `lastProbe` in the cancelled path (`defer { if Task.isCancelled { self.lastProbe = nil; self.inFlightWindow = nil } }`) and treat a failed read as not having consumed the floor, or gate the whole pair by one shared `minInterval` owned by the reader rather than two independent clocks.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Re-verified 2026-10-07: dropping same-window callers while a read is in flight is the documented coalescing, and retries resume after the 10 s lastProbe floor — the \"no reading for up to 6 h\" claim does not follow."
  },
  {
   "category": "robustness",
@@ -4052,7 +4080,9 @@
   "evidence": "WeatherFetcher.swift L812-817: `if let query = CurrentLocation.shared.query { fetch(...) } else { loading = true; CurrentLocation.shared.requestFix() }` (same at L819-822 for `.notDetermined`). `refreshFromCity`/`fetch` are the only paths that clear `loading`, and they only run from CoreLocation callbacks. `CurrentLocation.requestFix()` (Utils/CurrentLocation.swift L61-76) has no timeout, and `takeFix()` L78-81 is `guard !pending else { return }` — a lost callback leaves `pending == true`, so every later call does nothing and no error is ever delivered. The same file shows the hazard is known: `WiFiNameAuthorization` (L35-48) exists precisely because \"Core Location ignores when-in-use requests from inactive apps\" and wraps the request in a main-queue hop plus an 8-second `DispatchWorkItem` timeout. The observable dead-end: GreetingCard.swift L760 `.disabled(weatherLoading)` on the weather button, L737-739 a repeating pulse, L789 caption \"获取中\".",
   "failure": "当前位置 switch on, user ignores the system prompt (or the when-in-use request is dropped because the menu-bar app was not frontmost) → no `didUpdateLocations`, no `didFailWithError`, no `didChangeAuthorization` → `loading` stays true forever, the refresh affordance is disabled, and only relaunching the app or toggling the switch restores weather.",
   "fix": "Mirror WiFiNameAuthorization: schedule a timeout when `loading = true` before `requestFix()` (e.g. 10 s `DispatchWorkItem` that clears `loading` and calls `refreshFromCity(note:)` if still no query), and make `CurrentLocation.takeFix()` clear `pending` on the same timeout so the next attempt can request again.",
-  "outcome": "skipped"
+  "outcome": "skipped",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 in CurrentLocation.swift: armFixTimeout()/disarmFixTimeout()/stop() now run a 10 s watchdog (fixTimeoutSeconds) whenever a when-in-use prompt or requestLocation is outstanding; on expiry it clears pending and calls WeatherStore.refreshFromCity(note: \"未能取得当前位置，显示天气城市\") — the same fallback didFailWithError delivers, which is the only path that clears WeatherStore.loading. Every delegate callback and stop() disarms the watchdog, so a genuine late fix still wins. Mirrors the WiFiNameAuthorization 8 s pattern the finding cites. WeatherStore.swift line numbers shifted, but the loading=true / no-timeout shape it describes is what was fixed."
  },
  {
   "category": "correctness",
