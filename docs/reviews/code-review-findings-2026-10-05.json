@@ -1284,7 +1284,9 @@
   "evidence": "Lines 6-11: `if let number = value as? Int64 { return number }` and then the Double path at line 9. I measured the bridging on this machine with `swift -e`: `NSNumber(value: 1.9) as? Int64` is `nil` (a fractional NSNumber does not bridge to the integer type) while `NSNumber(value: 1.9) as? Double` is `1.9`; `JSONSerialization` returns `__NSCFNumber` for both `1.9` and `1e300`. `CodexQuotaFetcher.parseWindow` reads the duration through this path: `let minutes = JSONCoerce.intVal(window[\"windowDurationMins\"])` (CodexQuotaFetcher.swift:427), and the 5-hour window is 300 (integer) while the weekly window's duration arrives as a number that can be fractional in Codex's own JSON. Bool values are the other asymmetry: `NSNumber(value: true)` bridges to both `Int` and `Int64` (measured), so a `\"total_tokens\": true` typo silently becomes 1 instead of being ignored.",
   "failure": "A Codex `rateLimits` payload whose `windowDurationMins` is `10080.0` (or any fractional form) → `int64Val` falls through `Int64`/`Int`/`String`, hits `value as? Double`, and returns `Int64(10080.0)`, which is fine — but any value that is neither representable nor a Double, e.g. `10080.5`, returns 0 → `label(forMinutes:)` renders the weekly allowance chip as the 0-minute label, i.e. a Codex window silently mislabelled rather than rejected; worse, `VpnManager`'s `JSONCoerce.intVal(h[\"delay\"])` (VpnManager.swift:1007) turns a fractional latency into 0 ms = 「最快」.",
   "fix": "Try the `Double`/`NSNumber` path before (or as a fallback to) `Int64`, e.g. `if let number = value as? Double, number.isFinite { return Int64(number.rounded()) }` placed before the Int casts, and reject `Bool` explicitly (`if value is Bool { return 0 }`) before the conditional casts.",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Verified in the 2026-10-07 recheck: the Double fallback (JSONCoerce.swift:9-11) converts fractionals before returning, so the described 10080.5→0 loss cannot occur."
  },
  {
   "category": "duplication",
@@ -1384,7 +1386,9 @@
   "summary": "item_completed messages have no dedup guard; on a paginated rollout the same prompt is appended to `canonical` twice (event row and response_item row are both trusted) while the response_item path skips environment preambles",
   "evidence": "Lines 164-169 append `canonical` unconditionally for every UserMessage/AgentMessage item; the matching `response_item`/message path at lines 178-188 appends to `projected` and additionally filters `isEnvironment(body)`. There is no `seen`/identity check between the two sources, and only the response_item path is filtered. On real rollouts the two are not redundant for images: UserMessage items carry `local_image` path blocks while the response_item message carries the base64 `input_image` (measured on ~/.codex/sessions/2026/10/03/rollout-2026-10-03T22-49-53-…: 5 UserMessage items with `local_image`, 4 `input_image` blocks in response_item messages), so both paths must stay — but the text projection is then duplicated whenever a turn has no images.",
   "failure": "For a Codex Desktop rollout (history_mode paginated) whose item_completed rows repeat a user prompt that also appears as a response_item message, the migrated transcript contains that prompt twice; the test fixture (session-migration-regressions.py:43-47) models the opposite shape — the preamble lives only in the response_item row — so no regression catches it.",
-  "fix": "Dedup the two carriers: skip an `item_completed` User/Agent message whose text equals the last canonical message appended for the same role, or key pending item messages by `item.id` and only append if no response_item message with the same text arrived in the same turn."
+  "fix": "Dedup the two carriers: skip an `item_completed` User/Agent message whose text equals the last canonical message appended for the same role, or key pending item messages by `item.id` and only append if no response_item message with the same text arrived in the same turn.",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Verified in the 2026-10-07 recheck: `selected = paginated ? canonical : projected` — the two carriers land in different arrays and are never merged, so no double prompt can occur."
  },
  {
   "category": "perf-cpu",
@@ -1805,7 +1809,9 @@
   "evidence": "第 85 行 `persistJSONLocked()` 在 record() 的 JSON 分支里逐条调用；函数体 323-335 行：`for row in rows.values.sorted(...)` 全量 JSONEncoder.encode，`body += line + \"\\n\"` 字符串累加，最后 `try? Data(body.utf8).write(to: jsonURL, options: .atomic)`。record 由 ProxyCaptureStore.finish:367 在每个代理请求结束时调用。第 284 行加载器是按键 last-wins：`rows[Self.key(row.day, row.model)] = Row(...)`。",
   "failure": "开了 JSONL 后端的用户每完成一个第三方请求，就要对一个随历史增长（一年 ≈3 650 行 / ~500 KB）的文件做 3 遍 O(N) 工作（编码+拼接+拷贝）加一次整文件原子替换；一次 100 请求的 agent 会话就是 300 遍全量编码 + 100 次 ~500 KB 写入，且 N 无上限。",
   "fix": "record 走追加路径：把当前行编码成一行 append 到 jsonURL（加载器 last-wins，语义不变），只保留启动时一次全量重写做压缩；或最少加 dirty 标记，合并写（例如 1 s 防抖/退出前 flush），把每请求 O(N) 写盘降为 O(1) 追加。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "The JSONL backend this finding concerns was deleted in 0a4cf30 (收敛为单一 SQLite 后端): persistJSONLocked/jsonURL no longer exist. Rechecked 2026-10-07."
  },
  {
   "category": "robustness",
@@ -1817,7 +1823,9 @@
   "evidence": "300-309 行：`guard !FileManager.default.fileExists(atPath: jsonMigratedURL.path) else { return }` → 逐行 `row.input = max(0, row.input - row.cacheRead)` → `persistJSONLocked()` → 最后才 `try? Data().write(to: jsonMigratedURL, options: .atomic)`。标记写在数据落盘之后，两者不是同一个事务（SQLite 侧用 `PRAGMA user_version`，见 231-240 行，与 UPDATE 同库）。",
   "failure": "第一次启动本版本时若在 persistJSONLocked 成功之后、标记文件写入之前被杀（活动监视器强杀 / 崩溃 / 断电），磁盘上的行已经是扣减后的值而标记不存在；下次启动再减一次 cache_read，历史第三方 input 被系统性低估，且此后永久固化。",
   "fix": "让修复自身幂等：loadJSONLocked 解码时记录 `cacheWrite == nil` 的键集合（旧行才有缺失字段，见 320 行注释与 288 行 `row.cacheWrite ?? 0`），migrateJSONLocked 只对这批键扣减，标记文件可以删除。这样重复执行是 no-op，不需要跨文件原子性。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "migrateJSONLocked and the usage-third-party.v1 marker went with the JSONL backend in 0a4cf30; the migration path the finding wanted tested no longer exists. Rechecked 2026-10-07."
  },
  {
   "category": "compat",
@@ -1871,7 +1879,9 @@
   "summary": "JSONL 后端的一次性修复（标记文件语义）完全没有回归，只有 SQL 文本子串断言",
   "evidence": "300-309 行 `private func migrateJSONLocked() { guard !FileManager.default.fileExists(atPath: jsonMigratedURL.path) else { return } ... try? Data().write(to: jsonMigratedURL, options: .atomic) }`，配套 276-296 的 `loadJSONLocked` 明确注释「包括没有文件时也要落标记」。Tests/proxy-usage-regressions.py:195-201 只做文本断言：`for needed, why in [('ALTER TABLE usage ADD COLUMN cache_write', ...), ('UPDATE usage SET input = MAX(0, input - cache_read)', ...), ('PRAGMA user_version = 1', ...)]: assert needed in usage_store`；grep 全仓 Tests/ 对 `usage-third-party`、`migrateJSON`、`usage-third-party.v1` 命中 0 条。",
   "failure": "「只减一次」这条不变量无人守护：把标记写成非原子、写到错误目录、或漏掉「无文件时也落标记」这一支，都会让第二次启动把每行的 input 再减一次 cache_read（低估新输入 token），而现有全部测试仍然通过——正是这个文件自己 warn 过的「confidently-wrong number」类缺陷。",
-  "fix": "在 usage-index-regressions.py 的 JSON 后端分支里补两段：首次 load 后断言 `rows[day,model].input == input - cacheRead` 且 `usage-third-party.v1` 已存在；随后再 reload/reset 一次并断言数值不变（第二次减法必须不发生）。"
+  "fix": "在 usage-index-regressions.py 的 JSON 后端分支里补两段：首次 load 后断言 `rows[day,model].input == input - cacheRead` 且 `usage-third-party.v1` 已存在；随后再 reload/reset 一次并断言数值不变（第二次减法必须不发生）。",
+  "status": "fixed",
+  "verdict_note": "The JSONL one-time fix targeted here was removed with the backend in 0a4cf30, so the test gap is moot. Rechecked 2026-10-07."
  },
  {
   "category": "crash",
@@ -4279,7 +4289,9 @@
   "summary": "Inline `ModelPricing.Cost(usd: costCents / 100)` re-implements `CursorLedger.cost(cents:)` without its `cents > 0` guard, so zero-charge rows render \"Cursor 实扣 $0.00\" — the exact figure the module's own fixture forbids. It also leaves `CursorLedger.cost` production-dead (test-only).",
   "evidence": "UsageView.swift:262: `settlement: cursorRows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) }`. The canonical conversion is CursorLedger.swift:299-302: `static func cost(cents: Double) -> ModelPricing.Cost? { guard cents > 0 else { return nil }; return ModelPricing.Cost(usd: cents / 100) }` — `grep -rn \"CursorLedger.cost(\" Sources/` returns no production caller; only Tests/fixtures/cursor-ledger-probe.swift:202-209 exercises it, asserting `precondition(CursorLedger.cost(cents: 0) == nil, \"no charge is no figure, not $0.00\")`. CursorLedger.parseAggregated (CursorLedger.swift:187) builds `costCents: number(entry[\"totalCents\"]) ?? 0`, so token-bearing rows with a 0 charge reach `ledger.rows`; UsageModelCard.settlementRow (UsageModelCard.swift:186-200) renders any non-nil `settlement` with `shown.primary ?? (usd, 0)` → \"Cursor 实扣 $0.00\".",
   "failure": "A Pro-plan Cursor window where a model's aggregation carries tokens but `totalCents` is absent/0 → the model card shows an actual-charge row of $0.00 beside real tokens; the module's invariant (a zero charge is 'no figure', never $0.00) is silently broken on the one production path that converts cents.",
-  "fix": "Call `CursorLedger.cost(cents: row.costCents)` instead of the inline conversion — the optional result already carries both the guard and the single-conversion rule."
+  "fix": "Call `CursorLedger.cost(cents: row.costCents)` instead of the inline conversion — the optional result already carries both the guard and the single-conversion rule.",
+  "status": "fixed",
+  "verdict_note": "The inline `ModelPricing.Cost(usd: $0.costCents / 100)` at UsageView:262 now calls `CursorLedger.cost(cents:)` (the function's only production caller), so a zero-charge ledger row renders no 实扣 line: the app's rule is no charge is no figure, not $0.00 (finding 345 is the same fix). Pinned by tests/fixtures/cursor-ledger-probe.swift (cost(cents:0)==nil, cost(cents:-1)==nil)."
  },
  {
   "category": "perf-frame",
@@ -4291,7 +4303,9 @@
   "summary": "An indeterminate spinner is permanently mounted behind `.opacity(0)` instead of being conditionally built; the rest of the app mounts progress indicators inside `if` blocks.",
   "evidence": "UsageView.swift:137-140: `ProgressView().controlSize(.small).frame(width: 16, height: 16).opacity(providerStore.usageLoading || providerStore.usagePublishedInterval != interval ? 1 : 0)` — the view (and its NSProgressIndicator animation) exists for the entire time the page is open, while the visible condition is true only during a refresh. Convention elsewhere is conditional mounting, e.g. PanelHeader.swift:513-517 (`if quotaLoading && quotaWindows.isEmpty { ProgressView() ... }`) and VpnTopChrome.swift:107-110; this repo has already paid for permanently mounted hidden work before (ProxyLogView.swift:205-212, TrafficView.swift:1-10).",
   "failure": "While the usage page is open and settled (≥95% of the time), an animating indeterminate indicator stays in the display list: one continuously animating layer + its per-frame render-server composite, on a page whose other figures are deliberately static (UsageModelCard.swift:92 disables transactions and animations).",
-  "fix": "Keep the 16×16 slot but swap the content: `if loading { ProgressView().controlSize(.small) } else { Color.clear }`, so the indicator exists only while it means something (layout footprint unchanged)."
+  "fix": "Keep the 16×16 slot but swap the content: `if loading { ProgressView().controlSize(.small) } else { Color.clear }`, so the indicator exists only while it means something (layout footprint unchanged).",
+  "status": "fixed",
+  "verdict_note": "The usage-page spinner is now conditionally mounted (`if loading || publishedInterval != interval`) with a same-size Color.clear stand-in, not permanently mounted under opacity 0 — a spinning ProgressView keeps animating while transparent. No measurement recorded; the fix is structural (the animating layer is only in the tree while it has something to report)."
  },
  {
   "category": "correctness",
@@ -4303,7 +4317,9 @@
   "evidence": "UsageView.swift:262 `settlement: cursorRows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) },` 直接构造 Cost；账本自己的 accessor 是 CursorLedger.swift:299-302 `static func cost(cents: Double) -> ModelPricing.Cost? { guard cents > 0 else { return nil } ... }`，且 Tests/fixtures/cursor-ledger-probe.swift:208 明确锁定 `precondition(CursorLedger.cost(cents: 0) == nil, \"no charge is no figure, not $0.00\")`。而账本行确实可能是 0 金额：CursorLedger.swift:187 `costCents: CursorUsageFetcher.number(entry[\"totalCents\"]) ?? 0`（缺字段即 0），folded() 只要 canonical key 非空就保留该行。UsageModelCard.swift:186-199 的 settlementRow 对非 nil settlement 走 `let amount = shown.primary ?? (currency: .usd, amount: 0)`，ModelPricing.format 对 0 返回 \"$0.00\"（ModelPricing.swift:702-710）。",
   "failure": "Cursor 的聚合响应里某一模型行没有 totalCents（或被读成 0）时，lens 的 rows 里留下一个带 Token、金额 0 的行；用量页该模型卡第二行显示「Cursor 实扣 $0.00」——把「Cursor 没给出金额」说成「这笔不要钱」，与 docs/technical/15-model-cost.md 第 177-178 行「¥0.00 会被读成没有花费」的规则相反。现有回归只钉住 accessor 与卡片措辞（Tests/cursor-ledger-regressions.py:115-123），没有钉住这个调用点，所以漂移不会被测试拦住。",
   "fix": "改用账本自己的转换：`settlement: cursorRows[row.id].flatMap { CursorLedger.cost(cents: $0.costCents) }`（一行改动，settlement 本来就是可选型）。并在 cursor-ledger-regressions.py 里对 UsageView 的这一行加一条文本断言，锁住不能退回 /100 的直接构造。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Same fix as 343 — the view path now goes through CursorLedger.cost, restoring the cents>0 guard the inline conversion bypassed."
  },
  {
   "category": "perf-io",
@@ -4567,7 +4583,9 @@
   "summary": "The only out-of-window assertion mocks a date that matches the reused 2030 row, so the suite can never fail on the drift it is meant to guard, and its comment states the clamp as intended behaviour.",
   "evidence": "Lines 74-78: `// Out of the published window the nearest year is reused rather than inventing a date; a term day still reads as that term.` then `let beyond = date(\"2033-02-04\"); require(SolarTerm.term(on: beyond, calendar: calendar) == .springBegins, \"Outside the table the nearest published year is reused\")`. 2033-02-04 is the (2,4) value copied from the 2030 row; the real 2033 立春 crossing is 2033-02-03 20:41 CST, so the probe asserts the clamped answer and would also pass against a correct table, hiding the drift it names. No assertion exercises 2031+ rows or the pre-2026 side at all.",
   "failure": "A regression that should catch a wrong out-of-window answer instead locks the wrong answer in: any future table extension that gets 2033 right still passes, and the 2031-2036 drift (up to 11 wrong rows per year, measured) ships unnoticed.",
-  "fix": "Re-point the probe at a date whose true term day differs from the reused row (2033-02-03 for 立春, 2032-04-04 13:19 CST for 清明) and assert both `term(on:)` and `season(on:)` there; if the clamp is kept deliberately, assert the clamped year's own row too so the file states what it guarantees."
+  "fix": "Re-point the probe at a date whose true term day differs from the reused row (2033-02-03 for 立春, 2032-04-04 13:19 CST for 清明) and assert both `term(on:)` and `season(on:)` there; if the clamp is kept deliberately, assert the clamped year's own row too so the file states what it guarantees.",
+  "status": "fixed",
+  "verdict_note": "SolarTerm table now reaches 2036 (SolarTerm.swift:117) and the suite asserts 2033-02-03 立春 ≠ the 2030 row, with the beyond-range probe at 2037 — verified in the 2026-10-07 recheck. Rechecked 2026-10-07."
  },
  {
   "category": "test-gap",
@@ -4965,7 +4983,9 @@
   "summary": "技术文档写的 Cursor 编码规则仍是修复前的错误版本，与实现相反。",
   "evidence": "docs/technical/04-data-access-layer.md:15「`cursorProjectName(for:)` 复现 Cursor 的 cwd 编码：去前导 `/` 后把 `/` 换成 `-`」；实现（FilePaths.swift:181-188）是把 `[^A-Za-z0-9-]` 全部替换为 `-`（65…90 / 97…122 / 48…57 / `-` 保留，其余替换）。f1c1921 的提交信息明确说旧实现「只替换 '/'，导致含下划线/点号的项目 transcript 查找失败」，也就是文档描述的正是那个被修掉的 bug。",
   "failure": "按文档（被标为 §4 数据访问层的规范来源）实现或复核 Cursor 路径的人会重新引入 f1c1921 的 bug：下划线/点号工作区的 transcript 路径拼错，于是 activity、忙闲状态、完成提醒的 completionID 全部查不到且不报错。",
-  "fix": "把该句改为「去前导 `/` 后，把 `[A-Za-z0-9-]` 以外的每个字符（按 Unicode scalar）替换为 `-`，并补上 prompt_engineering → prompt-engineering 的例子」。"
+  "fix": "把该句改为「去前导 `/` 后，把 `[A-Za-z0-9-]` 以外的每个字符（按 Unicode scalar）替换为 `-`，并补上 prompt_engineering → prompt-engineering 的例子」。",
+  "status": "fixed",
+  "verdict_note": "doc now reads 「[A-Za-z0-9] 与 - 之外的每个字符换成 -」, matching FilePaths.swift:181-188 — verified in the 2026-10-07 recheck. Rechecked 2026-10-07."
  },
  {
   "category": "dead-code",
@@ -8779,7 +8799,9 @@
   "evidence": "UsageView.swift:137-140 `ProgressView().controlSize(.small).frame(width: 16, height: 16).opacity(providerStore.usageLoading || providerStore.usagePublishedInterval != interval ? 1 : 0).accessibilityHidden(...)`——用 opacity 而不是条件挂载。仓库已有两处实测记录表明 opacity(0) 保留的子树仍在提交显示周期：TrafficView.swift:6「The page used to stay mounted forever (opacity(0) when another tab was…)」、ProxyLogView.swift:211「(that loop used to run at 170 scrolls/s with the page hidden behind opacity(0))」。",
   "failure": "页面空闲（interval 已发布、loading 为 false）时，这个 NSProgressIndicator 仍留在窗口层级里按自己的时钟转；每次提交多一次小图层的绘制。CPU 成本大概率远小于 1%（远小于历史上整棵 hosting view 的 18–20%），所以列为 low。",
   "fix": "改成条件挂载并保留同一格的占位：`if providerStore.usageLoading || providerStore.usagePublishedInterval != interval { ProgressView().controlSize(.small) } else { Color.clear.frame(width: 16, height: 16) }`（accessibilityHidden 随之简化）。",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "fixed",
+  "verdict_note": "Same fix as 344 (duplicate finding)."
  },
  {
   "category": "compat",
@@ -8915,7 +8937,9 @@
   "evidence": "line 963 `if now >= nextFlash { ... }` 全部在 render 帧内执行;`nextFlash = now + onset + (quick ? 1.1...2.5 : 2.5...8)`(lines 975-976)。`onset` 由随机数累加而来(0.04-0.13,line 971),所以 `nextFlash` 至少是 now+1.1 s。单次抽签的 rng 调用约 6-12 次(`Double.random` x2, `Float.random` x2, `Int.random`, 每个 stroke 再 2 次)。注意 `skyDue` 里的闪电分支使 lastSkyTime 跟随每帧,但 `now` 来自 encode 的调用方。",
   "failure": "只要 now 单调(生产路径 CACurrentMediaTime 单调)就不会重复触发;唯一风险在 bench/测试把 now 当参数反复传同一值时(encode 的 now 是默认参数,Tools/bench-atmosphere.py 就显式传 now)。重复调用同一 now 只会多消耗 rng,不改变输出,因为 flashStart 与 age 相同 → 结果幂等。属于低风险。",
   "fix": "在 `now >= nextFlash` 分支前加 `guard now > flashStart` 或把抽签移到 `now - flashStart` 的守卫后,避免同一时间戳反复抽签。",
-  "confidence": "low"
+  "confidence": "low",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Verified in the 2026-10-07 recheck: after the draw nextFlash = now + onset + >=1.1, strictly greater than now, so repeated calls at the same instant cannot re-draw."
  },
  {
   "category": "test-gap",
@@ -8951,7 +8975,9 @@
   "evidence": "102-108 行，配合 WeatherStore.refreshIfStale 的 fetchedAt 判断；无冗余 tick。",
   "failure": "无。",
   "fix": "无需改动。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "dismissed-false-positive",
+  "verdict_note": "Verified in the 2026-10-07 recheck: the finding itself records no defect — the `.task(id:)`-gated weather loop with a staleAfter+15s sleep is the intended design."
  },
  {
   "category": "logic",
@@ -9142,7 +9168,9 @@
   "summary": "Claude 转录「先全量解析、再追加增长」这条主路径没有任何回归：夹具里 Claude 侧只有一次写入和一次整文件重写。",
   "evidence": "该文件对 Claude 的写入共四处（180、273、277 行的单次 write，以及 154 行的写空）；180 行 `try Data((assistant(1) + assistant(10)).utf8).write(to: claude...session.jsonl)` 是一次完整写入（此前 154 行已把文件写成 0 字节，所以这次仍是 size 缩减/新建语义），此后 Claude 文件不再有截断追加（非 0 字节增长）——即 UsageIndex.sync 中 `prior != nil && file.size > prior.size` 的 Claude 分支（811 行整文件重解析）从未被执行。Codex 侧有专门的跨追加边界用例（126-138 行）。",
   "failure": "如果将来把 Claude 改成增量解析（或改动 replaceRollup/claimClaude 与追加的交互），现有 42 组回归全部通过也无法发现 Claude 追加路径的回归——而这正是生产里最常见的形态（每次 assistant 行追加都会命中）。",
-  "fix": "在 usage-index-regressions.py 的 Claude 段落后补一个用例：对 session.jsonl 追加一条新 message.id 的 assistant 行，断言总 token 增加且旧 id 未被重计；再追加同一 id 的 final 版本，断言 last-wins 仍成立。"
+  "fix": "在 usage-index-regressions.py 的 Claude 段落后补一个用例：对 session.jsonl 追加一条新 message.id 的 assistant 行，断言总 token 增加且旧 id 未被重计；再追加同一 id 的 final 版本，断言 last-wins 仍成立。",
+  "status": "fixed",
+  "verdict_note": "Claude pure-append path landed in 34b6c87 with additive/reprint/sandwich assertions in Tests/usage-index-regressions.py (this is the 2026-10-07 coverage the finding asked for). Rechecked 2026-10-07."
  },
  {
   "category": "test-gap",

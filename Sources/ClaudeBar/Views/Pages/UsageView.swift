@@ -134,10 +134,17 @@ struct UsageView: View {
                         }) {
                             Image(systemName: "arrow.clockwise").frame(width: 26, height: 26)
                         }.buttonStyle(.plain).help("重新统计本周期用量").accessibilityLabel("重新统计本周期用量")
-                        ProgressView().controlSize(.small)
-                            .frame(width: 16, height: 16)
-                            .opacity(providerStore.usageLoading || providerStore.usagePublishedInterval != interval ? 1 : 0)
-                            .accessibilityHidden(!providerStore.usageLoading && providerStore.usagePublishedInterval == interval)
+                        // Mounted only while it can show: a spinning
+                        // `ProgressView` keeps its indicator animating even
+                        // under opacity 0, i.e. a permanently-animating layer
+                        // on the usage page with nothing to report. The frame
+                        // stays either way so the row does not shift.
+                        if providerStore.usageLoading || providerStore.usagePublishedInterval != interval {
+                            ProgressView().controlSize(.small)
+                                .frame(width: 16, height: 16)
+                        } else {
+                            Color.clear.frame(width: 16, height: 16)
+                        }
                     }.foregroundColor(Theme.textPrimary)
                     if showCustomDatePicker {
                         DatePicker("日期", selection: $providerStore.usageReferenceDate, displayedComponents: [.date])
@@ -259,7 +266,11 @@ struct UsageView: View {
                             stat: row.displayed,
                             slices: slices,
                             costLine: row.costLine,
-                            settlement: cursorRows[row.id].map { ModelPricing.Cost(usd: $0.costCents / 100) },
+                            // Through `CursorLedger.cost` so a zero-charge row
+                            // renders no 实扣 line at all — the app's rule is
+                            // "no charge is no figure, not $0.00" — and the
+                            // cents→Cost conversion has one owner.
+                            settlement: cursorRows[row.id].flatMap { CursorLedger.cost(cents: $0.costCents) },
                             settlementWindow: row.cursor == nil ? nil : renderedModelRequest?.cursorWindowLabel,
                             cursorStat: row.hasLocal ? row.cursor : nil,
                             cursorOnly: !row.hasLocal
