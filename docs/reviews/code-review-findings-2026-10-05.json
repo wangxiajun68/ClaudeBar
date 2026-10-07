@@ -2674,7 +2674,9 @@
   "summary": "`.animation(_:value:)` 挂在 ZStack 上，隐藏的节点面板（含 .transition、.shadow、clipShape）也在事务范围内 —— 打开/关闭面板时整棵 VPN 子树所有属性变化都会动画，而 .shadow 是 display-list filter。",
   "evidence": "L28-109: `.animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: nodesOpen)` 修饰的是包含 `VStack`（概览 + 订阅 + 流量日志）的 `ZStack`；L104 的节点面板阴影 `.shadow(color: .black.opacity(0.12), radius: 24, x: -8, y: 8)` 就在同一子树。docs/reviews/card-shadow-regressions.py 第 8-20 行记录同类 `.shadow` 替换为 LayerShadow 的实测收益 383→741 帧/6 s；docs/reviews/performance-frame-source-2026-10-05.md 也记 VPNView 冷切换最慢一次 4.087 ms。",
   "failure": "打开/关闭节点抽屉的 220 ms 内，每一个显示周期都重跑包含该阴影的显示列表；滚动节点列表时若与打开动画重叠，掉帧比静态成本高一个量级（同一子树被当作一个 compositing unit）。",
-  "fix": "把 `.animation` 下移到只包裹真正在动的节点面板（或改在 `Button { nodesOpen.toggle() }` 处用 withAnimation 包住状态写入），并把 L104 的 `.shadow` 换成 `LayerShadow(radius: 24, y: 8, opacity: 0.12, cornerRadius: 18, surface: Theme.cardSurface)`。"
+  "fix": "把 `.animation` 下移到只包裹真正在动的节点面板（或改在 `Button { nodesOpen.toggle() }` 处用 withAnimation 包住状态写入），并把 L104 的 `.shadow` 换成 `LayerShadow(radius: 24, y: 8, opacity: 0.12, cornerRadius: 18, surface: Theme.cardSurface)`。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the ZStack-level .animation(value: nodesOpen) is gone; the transaction is opened at the three writers (open button, browse callback, closeNodes) with the same reduceMotion gate, and the node panel’s drop shadow is now a LayerShadow (Core Animation shadowPath, same trade TileSurface documents) instead of a SwiftUI display-list shadow inside the slide."
  },
  {
   "category": "perf-frame",
@@ -2698,7 +2700,9 @@
   "summary": "速率与累计读数用了 RollingNumberText（默认 rolls: true），而 VpnLiveRates 的发布节奏是 4 Hz 上限 —— 每 250 ms 打开一次数字滚动事务，违反 Interaction.swift 里「超过 1 Hz 的读数必须 rolls: false」的规则。",
   "evidence": "VPNView.swift:826 `.rollingNumber(\"\\\\(value)\")` 与 L794/797 `VpnFormat.rate(rates.speedDown)`；VpnLiveRates.swift:24-26 `/// 4 Hz ceiling … private static let minInterval: TimeInterval = 0.25`，L65-72 每次 flush 都写 `speedDown`/`speedUp` 并 `appendHistory`。Interaction.swift:435-444 明确要求 `rolls: false` 用于「a value fed at >1 Hz」，注释举的例子正是资源条上的读数；ResourceStrip.swift:267 已按该规则写成 `RollingNumberText(hero, rolls: false)`。",
   "failure": "VPN 运行且页面可见时，速率条每秒最多 4 次、每次 200 ms 的数字滚动动画；动画事务期间每个显示周期都重跑 strip 子树的 layout/display list，滚动整个右侧日志区时与滚动手势抢帧。",
-  "fix": "把 L826 换成 `RollingNumberText(value, rolls: false)`（或 `Text(value)`），与 ResourceStrip 的做法一致；保留 `RollingNumberText` 只用于低频读数（如节点延迟）。"
+  "fix": "把 L826 换成 `RollingNumberText(value, rolls: false)`（或 `Text(value)`），与 ResourceStrip 的做法一致；保留 `RollingNumberText` 只用于低频读数（如节点延迟）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: VPNTrafficStrip’s compactStat renders RollingNumberText(..., rolls: false) — VpnLiveRates publishes at up to 4 Hz and the interaction rules reserve the rolling transaction for ≤1 Hz figures."
  },
  {
   "category": "perf-frame",

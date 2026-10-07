@@ -62,7 +62,9 @@ struct VPNView: View {
                         ScrollView {
                             VStack(alignment: .leading, spacing: Theme.Space.s12) {
                                 overview
-                                VpnSubscriptionSection(onBrowse: { nodesOpen = true })
+                                VpnSubscriptionSection(onBrowse: {
+                                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { nodesOpen = true }
+                                })
                                     .padding(Theme.Space.s12)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .vpnSurface()
@@ -100,15 +102,26 @@ struct VPNView: View {
                     nodeGroup
                         .frame(width: min(720, max(280, geometry.size.width - 32)))
                         .frame(maxHeight: .infinity)
-                        .background(Theme.cardSurface)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.hairline))
-                        .shadow(color: .black.opacity(0.12), radius: 24, x: -8, y: 8)
+                        // The card's drop rides Core Animation with a
+                        // `shadowPath` (the same trade `TileSurface` documents:
+                        // a SwiftUI `.shadow` here is a display-list filter over
+                        // the panel's whole subtree, and the panel opens with a
+                        // transition, so every frame of the slide re-ran it).
+                        .background {
+                            LayerShadow(radius: 24, y: 8, opacity: 0.12,
+                                        cornerRadius: 18, surface: Theme.cardSurface)
+                        }
                         .padding(12)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: nodesOpen)
+            // The transaction is opened at the two writers instead of hanging
+            // on the ZStack: `.animation(value: nodesOpen)` animated *every*
+            // property change in the whole subtree for as long as the
+            // transaction lasted — the two always-alive workspaces included
+            // (finding 208).
         }
         .scrollHoverGate()
         .background(Theme.bgPrimary)
@@ -195,7 +208,9 @@ struct VPNView: View {
             HairlineDivider()
             VPNTrafficStrip()
             HairlineDivider()
-            Button { nodesOpen = true } label: {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { nodesOpen = true }
+            } label: {
                 VStack(alignment: .leading, spacing: Theme.Space.s8) {
                     activeNodeSummary
                     HStack(spacing: Theme.Space.s8) {
@@ -499,7 +514,7 @@ struct VPNView: View {
     }
 
     private func closeNodes() {
-        nodesOpen = false
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { nodesOpen = false }
         nodeQuery = ""
         nodeError = nil
     }
@@ -837,7 +852,11 @@ private struct VPNTrafficStrip: View {
             Text(label)
                 .font(Theme.Font.micro)
                 .foregroundColor(Theme.textTertiary())
-            RollingNumberText(value)
+            // `rolls: false`: `VpnLiveRates` publishes on a 4 Hz ceiling, and
+            // the interaction rules reserve the rolling transaction for
+            // figures at or below 1 Hz — a rate readout that rolls opens a
+            // fresh animation per tick (finding 210).
+            RollingNumberText(value, rolls: false)
                 .font(.system(size: 15, weight: .medium, design: .rounded).monospacedDigit())
                 .foregroundColor(tint)
                 .lineLimit(1)
