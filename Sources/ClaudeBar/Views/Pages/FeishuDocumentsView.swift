@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct FeishuDocumentsView: View {
     var navigationWidth: CGFloat = 0
@@ -45,7 +44,16 @@ struct FeishuDocumentsView: View {
             } catch { }
         }
         .onChange(of: store.selected?.id) { _, _ in tab = "正文"; showSource = false; componentFailure = nil }
-        .onChange(of: store.activeDraftID) { _, _ in draftPreview = true; titleFocused = store.activeDraft?.isNew == true }
+        .onChange(of: store.activeDraftID) { _, id in
+            // Only a *new* draft (or a switch to a draft) resets to the
+            // preview. Saving clears activeDraftID in the store, and the old
+            // unconditional reset then forced the just-saved document out of
+            // its editor back into the reader — the save flipped the mode the
+            // user was in (finding 508).
+            guard id != nil else { return }
+            draftPreview = true
+            titleFocused = store.activeDraft?.isNew == true
+        }
         // The outline exists only for the source pane's left rail: the reader
         // renders its own headings and never reads `draftHeadings`. Keying the
         // task on the text alone made every keystroke in the reader re-parse
@@ -71,7 +79,19 @@ struct FeishuDocumentsView: View {
                 draftLocated = prepared.0
                 draftHeadings = prepared.1
                 draftOutlineText = text
-            } catch { }
+            } catch is CancellationError {
+                // Re-keyed to newer text or the view went away — the newer
+                // task owns the outline state now.
+            } catch {
+                // A real parse failure: clear rather than leaving the previous
+                // text's headings under a panel that claims to describe this
+                // one. The stale state was invisible-in-place but wrong
+                // (finding 511): `draftOutlineText` no longer matches `text`,
+                // and the outline rail would list another document's sections.
+                draftHeadings = []
+                draftLocated = []
+                draftOutlineText = nil
+            }
         }
         .onChange(of: tab) { _, value in if value != "正文" { store.loadAuxiliary(value) } }
         .sheet(item: $operation) { request in
@@ -626,34 +646,6 @@ private final class FeishuTextScrollView: NSScrollView {
         super.layout()
         guard let text = documentView as? NSTextView else { return }
         text.setFrameSize(NSSize(width: contentSize.width, height: max(contentSize.height, text.frame.height)))
-    }
-}
-
-private struct FeishuDocumentReader: NSViewRepresentable {
-    let content: String
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = FeishuTextScrollView()
-        scroll.hasVerticalScroller = true; scroll.drawsBackground = false
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
-        text.isEditable = false; text.isSelectable = true; text.drawsBackground = false
-        text.isRichText = false; text.textContainerInset = NSSize(width: 22, height: 20)
-        text.autoresizingMask = [.width]; text.isVerticallyResizable = true; text.isHorizontallyResizable = false
-        text.minSize = .zero; text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        text.layoutManager?.allowsNonContiguousLayout = true
-        text.textContainer?.widthTracksTextView = true
-        text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        scroll.documentView = text
-        updateNSView(scroll, context: context)
-        return scroll
-    }
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let text = scroll.documentView as? NSTextView else { return }
-        if text.string != content {
-            text.string = content
-            text.scrollRangeToVisible(NSRange(location: 0, length: 0))
-        }
-        text.font = .systemFont(ofSize: 14)
-        text.textColor = Theme.isDark ? .white : .labelColor
     }
 }
 

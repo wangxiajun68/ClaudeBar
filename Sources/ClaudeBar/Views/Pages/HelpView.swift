@@ -174,6 +174,12 @@ struct HelpView: View {
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // Switching articles must start at the top: the ScrollView is the
+            // same instance across a selection change, so its offset carried
+            // over and a long previous article left the next one opened
+            // mid-page (finding 520; same treatment Feishu's reader gives its
+            // document).
+            .id(entry.id)
             .scrollHoverGate()
         } else {
             StandbyEmptyState(label: "没有匹配的条目")

@@ -141,7 +141,12 @@ struct SessionsView: View {
             icon: "cursorarrow.motionlines",
             count: alive.count,
             active: active,
-            mark: .cursor
+            mark: .cursor,
+            // Cursor's own colors, matching the popup's Cursor section and the
+            // card's violet — the page used to hard-code the Claude tint for
+            // every section (finding 524).
+            tint: Theme.cursor,
+            ink: Theme.Ink.cursor
         ) {
             if alive.isEmpty {
                 emptyHint("暂无 Cursor 会话")
@@ -196,7 +201,9 @@ struct SessionsView: View {
             agentCount: agents,
             activeAgentCount: activeAgents,
             // Codex's own knot in the well: the section *is* the client.
-            brand: kind.brand
+            brand: kind.brand,
+            tint: Theme.external,
+            ink: Theme.Ink.success
         ) {
             if tree.isEmpty {
                 emptyHint("暂无 \(kind.displayName) 会话")
@@ -234,10 +241,12 @@ struct SessionsView: View {
                                             agentCount: Int = 0, activeAgentCount: Int = 0,
                                             brand: Bool? = nil,
                                             mark: ProductBrandMark.Brand? = nil,
+                                            tint: Color = Theme.claude,
+                                            ink: Color = Theme.Ink.claude,
                                             @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            SectionHeader(icon: icon, title: title, brand: brand, mark: mark, tint: Theme.claude,
-                          ink: Theme.Ink.claude,
+            SectionHeader(icon: icon, title: title, brand: brand, mark: mark, tint: tint,
+                          ink: ink,
                           count: count, activeCount: active,
                           // Sessions and the agents they spawned are different
                           // things, so they get different pills rather than one
