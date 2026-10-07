@@ -6409,7 +6409,9 @@
   "line": 48,
   "severity": "low",
   "summary": "保存成功后（activeDraftID 被清空）会把 draftPreview 重置为 true，正在用整篇 Markdown 源码编辑的用户被强行切回排版预览。",
-  "symbol": "onChange(of: store.activeDraftID)"
+  "symbol": "onChange(of: store.activeDraftID)",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the activeDraftID onChange only resets draftPreview/titleFocused when the new id is non-nil; saving (which clears activeDraftID in the store) no longer flips the user out of the editor into the reader."
  },
  {
   "category": "duplication",
@@ -6443,7 +6445,9 @@
   "summary": "大纲解析抛错时被 catch {} 吞掉且不清空旧状态：draftHeadings/draftLocated 保持上一版文本的结果，目录面板展示与当前正文不符的标题且点击全部静默失效",
   "evidence": "FeishuDocumentsView.swift:49-68 `.task(id: store.activeDraft?.text) { ... let worker = Task.detached ... { let located = try DocumentMarkup.locatedBlocks(text) ... }; ... draftLocated = prepared.0; draftHeadings = prepared.1; draftOutlineText = text } catch { }` —— 只有 >512KB 的 guard（第 53-56 行）会 `draftHeadings = []; draftLocated = []; draftOutlineText = nil`；解析抛错走的是空 catch。抛错来源真实存在：Sources/ClaudeBar/Models/DocumentMarkup.swift:329 `guard count <= 20_000, stack.count <= 64 else { throw CocoaError(.fileReadTooLarge) }`（飞书导出正文可含大量 HTML 片段，草稿上限 8MB 远大于此）。",
   "failure": "草稿正文包含超过 2 万个 HTML 标签（或 64 层嵌套）时（例如从飞书取回的表格密集文档、用户粘贴的大段 HTML）：解析抛 CocoaError 被吞掉，目录仍显示上一版文本解析出的旧标题；点击任意标题时第 384-388 行守卫 `draftOutlineText == draft.text` 不成立，跳转静默无反应，用户看到的是一个“活的”但完全不可用的目录，也没有任何错误提示。",
-  "fix": "在 catch 中与 >512KB 分支同样清空 `draftHeadings/draftLocated/draftOutlineText`（并可选地置一条 notice/error），区分 `is CancellationError` 与解析失败。"
+  "fix": "在 catch 中与 >512KB 分支同样清空 `draftHeadings/draftLocated/draftOutlineText`（并可选地置一条 notice/error），区分 `is CancellationError` 与解析失败。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the outline task now distinguishes cancellation (leave the newer task’s state) from a real parse failure, which clears draftHeadings/draftLocated/draftOutlineText instead of leaving the previous text’s outline under this one."
  },
  {
   "category": "logic",
@@ -6463,7 +6467,9 @@
   "summary": "import UniformTypeIdentifiers 未使用：该文件没有任何 UTType 引用（选择器在 FeishuOperationSheet 里用的是 NSOpenPanel 默认类型）",
   "evidence": "`grep -n \"UTType\\|UniformTypeIdentifiers\" FeishuDocumentsView.swift` 只命中第 3 行 `import UniformTypeIdentifiers`；文件内的面板/粘贴相关调用只有 NSPasteboard（318/362/473/539 行）与 NSWorkspace（75 行），均不需要该模块。",
   "failure": "无运行时后果；但它是 `Tools/prune-build.py` 类清理与依赖图分析的噪音，也提示这里曾经存在过一个基于 UTType 的文件类型过滤路径已被移除。",
-  "fix": "删除第 3 行 import。"
+  "fix": "删除第 3 行 import。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: import UniformTypeIdentifiers removed (no UTType reference in the file)."
  },
  {
   "category": "dead-code",
@@ -6542,7 +6548,9 @@
   "summary": "切换文章时 ScrollView 不重置：长文章滚动后选择短文章，滚动位置被钳制到底部，新文章从中间开始读。同仓 Feishu 阅读器用 `.id(doc.id)` 显式重置。",
   "evidence": "第 146-182 行 reader 的 `ScrollView` 没有任何 `.id(...)`/`scrollPosition`（全文件 grep `\\.id(` 只命中第 23 行注释）；对照 `Sources/ClaudeBar/Views/Pages/FeishuDocumentsView.swift:251` `reader(...).id(doc.id)` —— 同一「目录+阅读器」结构在别处就是靠 id 重置滚动。`selected` 是 `@State`（第 29 行），切文章只改状态、不重建滚动容器。",
   "failure": "读到长文章第 3000 行 → 点目录里的短文章 → 内容高度骤降，SwiftUI 钳制 contentOffset 到新的最大值（底部），读者看到的是文章结尾而非标题，必须手动滚回顶部。",
-  "fix": "给 reader 的 ScrollView（或外层 VStack）加 `.id(selected)`；或加 `.defaultScrollAnchor(.top)`。"
+  "fix": "给 reader 的 ScrollView（或外层 VStack）加 `.id(selected)`；或加 `.defaultScrollAnchor(.top)`。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: the HelpView reader ScrollView carries .id(entry.id), so switching articles starts at the top (same treatment as Feishu’s reader)."
  },
  {
   "category": "perf-cpu",
@@ -6589,7 +6597,9 @@
   "summary": "三个 family 的区段头共用一段硬编码 Claude 蓝：Codex/Cursor 区段的 GlyphWell 底色、计数胶囊与 running 点都是蓝的，而同一区段的卡片和 popup 的同一区段用的是各自 family 色。",
   "evidence": "SessionsView.swift:242 `SectionHeader(icon: icon, title: title, brand: brand, mark: mark, tint: Theme.claude, ink: Theme.Ink.claude, ...)` 是 sectionContainer 的唯一实现，Claude(:95)、Cursor(:142-148 传 `mark: .cursor`)、Codex(:189-202 传 `brand: kind.brand`) 都走它。它下方的卡片却是 family 色：SessionTileFull :348 `Theme.claude`、CursorTileFull :634 `Theme.cursor`、ExternalSessionTile/GridCard `Theme.external`(:727/:921)。popup 对同样两个区段传的是 family 色：SessionsPanel.swift:37-38 `tint: Theme.cursor, ink: Theme.Ink.cursor, mark: .cursor`，:72-73 `tint: Theme.external, ink: Theme.Ink.success, brand: kind.brand`。SectionHeader.swift:5-7 明确 `tint` 是形状色给 glyph well/dot、`ink` 给计数文本。",
   "failure": "打开会话页：Codex 区段头用 Claude 蓝的 well 框住 Codex 的白色绳结标记、忙碌胶囊也是蓝字（`tint: activeCount > 0 ? tint : ...; ink: activeCount > 0 ? (ink ?? tint)`，SectionHeader.swift:93-97），紧邻其下的卡片却是绿色；同一区段在菜单栏 popup 里是绿色。两个表面把同一客户端画成两种身份色。",
-  "fix": "把 family 色变成参数：sectionContainer 增加 `tint`/`ink`（默认 Theme.claude/Ink.claude），Claude 调用点不动，Cursor 传 Theme.cursor/Ink.cursor，externalSection 传 Theme.external/Ink.success，与 SessionsPanel 对齐。"
+  "fix": "把 family 色变成参数：sectionContainer 增加 `tint`/`ink`（默认 Theme.claude/Ink.claude），Claude 调用点不动，Cursor 传 Theme.cursor/Ink.cursor，externalSection 传 Theme.external/Ink.success，与 SessionsPanel 对齐。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: sectionContainer takes tint/ink parameters (default Claude); the Cursor section passes Theme.cursor/Ink.cursor and external sections Theme.external/Ink.success, matching the popup’s family colors."
  },
  {
   "category": "duplication",
