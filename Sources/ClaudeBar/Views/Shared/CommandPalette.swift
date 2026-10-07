@@ -198,16 +198,26 @@ struct CommandPalette: View {
     // MARK: Results
 
     private var resultsList: some View {
-        ScrollView {
-            if #available(macOS 26.0, *) {
-                GlassEffectContainer(spacing: 2) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                if #available(macOS 26.0, *) {
+                    GlassEffectContainer(spacing: 2) {
+                        resultsStack
+                    }
+                } else {
                     resultsStack
                 }
-            } else {
-                resultsStack
+            }
+            .frame(maxHeight: 360)
+            // Arrow-key selection must stay visible: the list holds up to ~40
+            // rows in a 360pt viewport, and Return fires whatever `selection`
+            // names — without this, the highlight could sit below the fold and
+            // Return would activate a row the user cannot see (finding 221).
+            .onChange(of: selection) { _, id in
+                guard let id else { return }
+                withAnimation(Theme.Animation.roll) { proxy.scrollTo(id, anchor: .center) }
             }
         }
-        .frame(maxHeight: 360)
     }
 
     private var resultsStack: some View {

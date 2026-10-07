@@ -2828,7 +2828,9 @@
   "summary": "Every arrow-keypress re-creates all N `CommandRow` values because the `isSelected` bool and the row's action closure are passed directly into the row, so the row can never be proven unchanged.",
   "evidence": "Line 191-195: `ForEach(filtered) { item in CommandRow(item: item, isSelected: selection == item.id) { select(item) } }`. `CommandRow` (line 290-294) stores `let item: CommandItem; let isSelected: Bool; let action: () -> Void` - a non-diffable closure - so a change to `selection` (line 137 `selection = items[next].id`) changes every row's value. Rows are not `.equatable()` anywhere, and no child is split into an equatable static part; each row re-runs `AppGlyph` (303), two `RoundedRectangle` fills (300-304, 327-329) and the `symbolEffect` branch (317-322).",
   "failure": "30-60 palette items (9 pages + live sessions + every provider) -> 30-60 `CommandRow` builds per arrow key, plus the same again for the LazyVStack's re-evaluation; walking the list with 20 keypresses is ~600-1200 row rebuilds and their text/shape nodes for a change that touches two rows.",
-  "fix": "Keep the ForEach row identity stable: pass `selectedID: String?` and `id: String` and let the row compare ids itself (or wrap the row's static content in an `.equatable()` subview) so only the previously and newly selected rows are rebuilt."
+  "fix": "Keep the ForEach row identity stable: pass `selectedID: String?` and `id: String` and let the row compare ids itself (or wrap the row's static content in an `.equatable()` subview) so only the previously and newly selected rows are rebuilt.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): CommandItem is Equatable and CommandRow is an Equatable view used with \"\".equatable()\", comparing item + isSelected only (closure deliberately not compared, same rule as TrafficRow); an arrow keypress now rebuilds only the two rows whose highlight moved."
  },
  {
   "category": "logic",
@@ -2840,7 +2842,9 @@
   "summary": "Arrow-key selection can move off-screen with no scroll-into-view, so Return can fire a row the user cannot see.",
   "evidence": "`moveSelection` (132-138) only writes `selection`; `resultsList` (176-186) is a plain `ScrollView { LazyVStack { ForEach(filtered) ... } }` capped at `.frame(maxHeight: 360)` with no `ScrollViewReader`, `scrollTo`, or `scrollPosition` anywhere in the file (grep for ScrollViewReader/scrollPosition over Sources returns hits only in SkillMarkdownPreview, ProviderControls, ProxyLogView, VpnDomainLogSection, VPNView). Rows are ~46pt tall (padding 8+8 plus a 30pt glyph well, line 324-325), so ~7 rows fit in the 360pt viewport.",
   "failure": "With a typical provider list (dozens of rows) the 8th down-arrow moves the selection below the fold; the highlight is invisible and Return (`fireSelected`, 272-278) opens whatever is now selected - the user sees nothing move and gets a page/provider editor for a row they never looked at.",
-  "fix": "Wrap the results stack in a `ScrollViewReader` and call `proxy.scrollTo(selection, anchor: .center)` from `moveSelection` (rows already carry `CommandItem.id` via `ForEach(filtered)`), or use `.scrollPosition(id:)` keyed on `selection`."
+  "fix": "Wrap the results stack in a `ScrollViewReader` and call `proxy.scrollTo(selection, anchor: .center)` from `moveSelection` (rows already carry `CommandItem.id` via `ForEach(filtered)`), or use `.scrollPosition(id:)` keyed on `selection`.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9 + follow-up): the results list is wrapped in a ScrollViewReader and an .onChange(of: selection) scrolls the new selection into view with proxy.scrollTo(id, anchor: .center) under Theme.Animation.roll; Return can no longer fire an unseen row. command-palette-reopen suite still passes."
  },
  {
   "category": "perf-frame",
@@ -2852,7 +2856,9 @@
   "summary": "`.animation(_:value: isPresented)` sits on the whole palette group, so every display cycle while the entrance/exit transaction is in flight re-runs the hosting view's layout and display list - and the transition additionally scales the whole 460pt subtree.",
   "evidence": "Line 122 `.animation(Theme.Animation.smooth, value: isPresented)` is attached outside the `if isPresented` (line 83), i.e. on the Group, and the spread subtree carries `.transition(.scale(scale: 0.92).combined(with: .opacity))` (line 109) plus `.shadowCard(radius: 24, y: 12, opacity: 0.12)` (105, two `.shadow` filters) and a 460pt frame (96). The repo's own measured rule (Views/Shared/Interaction.swift:330-343, `Tests/inflight-animation-regressions.py:1-17`): while a transaction is in flight, `+[NSAnimationContext runAnimationGroup:]` inside `NSHostingView.layout()` makes every display cycle re-run the whole hosting view's layout + display list.",
   "failure": "Each ⌘K open/close runs a 0.20 s `Theme.Animation.smooth` transaction (Theme.Animation.smooth = 0.20 s, Theme.swift:340) with the main window's whole page below the overlay - ~12-24 frames of full-window layout per toggle, with the search field, instrument well and rows composited through a 0.92 scale transform (glyph re-rasterisation) instead of a plain fade.",
-  "fix": "Drop the group-level `.animation(_:value:)` and open the transaction at the two writers instead (`dismiss()` already uses `withAnimation(Theme.Animation.bouncy)`, line 281); wrap the `showCommandPalette.toggle()` open path in `withAnimation`. Keep `.opacity` for the fade and let the scale ride only if it is wanted."
+  "fix": "Drop the group-level `.animation(_:value:)` and open the transaction at the two writers instead (`dismiss()` already uses `withAnimation(Theme.Animation.bouncy)`, line 281); wrap the `showCommandPalette.toggle()` open path in `withAnimation`. Keep `.opacity` for the fade and let the scale ride only if it is wanted.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): the group-level \".animation(value: isPresented)\" is gone; the open transaction lives at the writer (withAnimation around showCommandPalette.toggle() in MainWindowView), matching dismiss() which already animated at its own writer. No in-flight transaction re-runs the palette subtree layout per display cycle."
  },
  {
   "category": "perf-cpu",
@@ -2864,7 +2870,9 @@
   "summary": "The store-change publisher is constructed inside `body`, so every body pass allocates 13 `Published`-derived publisher chains and re-installs the subscription - and the palette's body passes on every keystroke.",
   "evidence": "Line 126: `.onReceive(Publishers.MergeMany(providerStore.viewChanges([.configuration, .sessions])))`. `ProviderStore.viewChanges` (Models/ScopedStoreObservation.swift:109-132) allocates a fresh `AnyPublisher` per field for 13 fields and wraps them in `MergeMany` on every call; the result is not `Equatable`, so `.onReceive` cannot dedupe and re-subscribes. This is the only view-level use of `viewChanges` in the repo (grep: the only other caller is `StoreInvalidation.connect`, ScopedStoreObservation.swift:12-31, which deliberately guards re-connection with an owner `ObjectIdentifier` so the subscription is reused).",
   "failure": "Every `query` character, every selection move (`selection`/`filtered` are `@State`) and every `refreshItems()` re-evaluates `body` and rebuilds the 13-publisher chain plus a new `MergeMany` subscription object and drops the old one: typing a 10-character query = 10 full resubscriptions of a 13-upstream merge into the store, on top of the string work.",
-  "fix": "Hoist the trigger out of `body`: the palette already reads the canonical store through `@ProviderState`, which owns the owner-keyed `StoreInvalidation`; either use its invalidation signal, or store the merged publisher once in `@State` (or subscribe in `.task`/`.onChange(of: isPresented)` and cancel on close)."
+  "fix": "Hoist the trigger out of `body`: the palette already reads the canonical store through `@ProviderState`, which owns the owner-keyed `StoreInvalidation`; either use its invalidation signal, or store the merged publisher once in `@State` (or subscribe in `.task`/`.onChange(of: isPresented)` and cancel on close).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): the MergeMany store publication is subscribed once in \".task\" into @State storeChanges (AnyCancellable) instead of being constructed in body; body passes (every keystroke) no longer allocate the 13-publisher chain. The closed-palette drop stays inside the sink, so the reopen refresh semantics are unchanged (command-palette-reopen suite passes)."
  },
  {
   "category": "correctness",
@@ -2876,7 +2884,9 @@
   "summary": "Cursor 卡片的上下文数字用填充色当文字色，且与同值的页面磁贴、隔壁 Claude 卡片已经漂移。",
   "evidence": "第 18-23 行 `accentColor` 返回 `Theme.cursorAccent` / `Theme.statusWarning` / `Theme.statusError`，第 52 行用它绘制 13pt 的 `contextLabel`（\"68%\"）。而 Theme.swift 第 81-82 行明文规定 `Use Theme.x for anything that is shape, Theme.Ink.x for anything that is text or a glyph`，并注明这些原始色在浅色画布上只有 1.8–3.4:1。同一数值在会话页的 Cursor 磁贴用 `Theme.contextInk(session.contextRatio)`（SessionsView.swift:571），popup 里隔壁的 Claude 卡片用 `ctxColor = Theme.contextInk(ratio)`（SessionCardView.swift:18）——三处只有一个不用 Ink。",
   "failure": "浅色主题下，Cursor 会话到达 88% 上下文时，popup 卡片把这个数字画成原始 violet（warn/critical 时是 amber/coral），对比度约 3:1，低于 AA 4.5:1；也就是在上下文告警本应最醒目的时刻，它是 popup 三个会话卡片里唯一不可读的一个。",
-  "fix": "第 18-23 行改为与页面磁贴一致的 `Theme.contextInk(ratio)`（或按级换 `Theme.Ink.cursor` / `Ink.warning` / `Ink.error` 保住紫色语义）。"
+  "fix": "第 18-23 行改为与页面磁贴一致的 `Theme.contextInk(ratio)`（或按级换 `Theme.Ink.cursor` / `Ink.warning` / `Ink.error` 保住紫色语义）。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): the context figure uses the Theme.Ink ladder of its band — .ok→Theme.Ink.cursor (keeping Cursor violet), .warn→Ink.warning, .critical→Ink.error; the raw fills measured ~1.8–3:1 on the ice canvas."
  },
  {
   "category": "correctness",
@@ -2888,7 +2898,8 @@
   "evidence": "CursorSessionMonitor.swift:235-236 `let pendingDecision = (obj[\"hasPendingPlan\"] as? Bool) == true || (obj[\"hasBlockingPendingActions\"] as? Bool) == true`; CursorSessionMonitor.swift:62 `var isWaiting: Bool { hasPendingDecision }`; CursorSessionCardView.swift:99-101 `private var statusLine: String { if isWaiting { return \"等待你确认计划\" } ... }`. The same literal is re-spelled at DashboardView.swift:244, SessionsView.swift:585, ProviderStore.swift:1320, IslandLiveModel.swift:333, NotificationService.swift:120. The repo's own audit already flags this: docs/reviews/island-session-monitor-audit-2026-10-01.md §12 '[P2] Cursor 等待类型被混为计划确认 ... 所有等待显示“等待你确认计划”。一般阻塞操作不一定是计划确认。'",
   "failure": "A Cursor composer with hasBlockingPendingActions=true and hasPendingPlan absent (a tool/permission-style block, not a plan) → the popup card, the dashboard row, the notification banner and the island all say 等待你确认计划 for a decision that is not a plan; the user looks for an 应用/拒绝 prompt that does not exist. Also: because the text is a literal at each surface, fixing one of the five sites leaves the other four disagreeing.",
   "fix": "Add `var waitingReason: String` to CursorSessionInfo (plan flag → \"等待你确认计划\", blocking flag → e.g. \"有待处理的操作\"), read it in statusLine (`if isWaiting { return session.waitingReason }`), and have the other four sites read the same property so the wording lives in one place.",
-  "confidence": "high"
+  "confidence": "high",
+  "recheck_note": "Deferred structural half: the waiting literal still merges the two park flags, but the discrepancy is now documented at the call sites and tracked as a separate work item; no wording change this session (other surfaces re-spell the same literal, changing one alone would diverge)."
  },
  {
   "category": "correctness",
@@ -2900,7 +2911,9 @@
   "evidence": "Lines 18-24: `case .ok: return Theme.cursorAccent; case .warn: return Theme.statusWarning; case .critical: return Theme.statusError`, applied at line 52 `.foregroundColor(accentColor)` to `RollingNumberText(session.contextLabel)`; line 77 `.foregroundColor(isWaiting ? Theme.statusWarning : ...)` on `Text(statusLine)`. `Theme.statusWarning = Color(hex: 0xFF9F0A)` is byte-identical to `Theme.chartAmber`, which Theme.swift:75 documents as measuring 1.84:1 on the light canvas ('Painted as glyphs on the ice canvas they measure 1.8–3.4:1 (`claude` 3.37 · `chartGreen` 1.99 · `chartAmber` 1.84 · `statusIdle` 2.92)'), and Theme.swift:80-82 states the rule: `Theme.x` for shape, `Theme.Ink.x` for text or a glyph. The same slot on the sibling cards uses the Ink ladder: SessionCardView.swift:18 `private var ctxColor: Color { Theme.contextInk(ratio) }`, SessionsView.swift:977 and DashboardView.swift:316 also use `Theme.contextInk` for the Cursor session's context label.",
   "failure": "A Cursor session climbs past 75 % context or parks on the user → the card's context percentage and its activity/等待 line are drawn at ~1.84:1 (amber) on the white card, i.e. the two lines that matter most at that moment are the least legible on the page, while the identical reading on the sessions page and the dashboard is dark enough to read.",
   "fix": "Map the already-computed `Theme.ContextLevel` onto ink hues: `.ok → Theme.Ink.cursor`, `.warn → Theme.Ink.warning`, `.critical → Theme.Ink.error`, and use `Theme.Ink.warning` for the parked status line at line 77.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): the parked status line uses Theme.Ink.warning (was Theme.statusWarning), so it and the context figure both sit on the Ink ladder that sibling surfaces use."
  },
  {
   "category": "dead-code",
@@ -2912,7 +2925,9 @@
   "evidence": "Declared at line 7 `enum Kind { case sparkles, sweep, orbit, pulse, scan, conveyor, arc }`, implemented at lines 206-213 (`case .scan:` — CAGradientLayer + `motion(\"transform.translation.x\", from: -24, to: 24, ...)`). `grep -rn \"DecorativeMotion(\" Sources Tools` returns only 6 call sites: .pulse (HardwareDetailPanel.swift:237), .sparkles (UiverseKit.swift:125), .sweep (UiverseKit.swift:131), .orbit (UiverseKit.swift:149), .conveyor (UiverseSurfaces.swift:505), .arc (IslandComponents.swift:125) — no .scan. The only other references are the exhaustive test list at Tests/rendering-regressions.py:106 and the stale doc line docs/technical/09-file-index.md:53.",
   "failure": "Nothing observable — this is unmaintained surface area: the branch is exercised only by Tests/rendering-regressions.py:106, so a reader looking for 'where does the scan effect live' finds an effect no screen can show, and edits to it (or to any shared helper it uses) get compile/test coverage that no user path needs; the doc index advertises it as a live effect.",
   "fix": "Delete `case scan` and its eight-line branch, drop the `scan` entries at Tests/rendering-regressions.py:106/111 and docs/technical/09-file-index.md:53, or wire a real call site if the effect is wanted.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): \"case .scan\" and its gradient-layer branch are deleted; Tests/rendering-regressions.py no longer lists it (6 effects) and docs/technical/09-file-index.md updated. Suite passes."
  },
  {
   "category": "state",
@@ -2923,7 +2938,9 @@
   "summary": "「正在读取磁盘容量…」在磁盘读取真实失败时会永久停留，因为 bootDisk() 失败返回 (used:0,total:1) 与「尚未采样」共用同一形状",
   "evidence": "let total = sampler.host.diskTotal（第 8 行）；if total <= 1 { Text(\"正在读取磁盘容量…\") }（第 17-18 行）。ProcessSampler.HostStats.diskTotal 默认值为 1（ProcessSampler.swift:109），且采样前磁盘缓存为空时 `let disk = diskSample ?? (used: 0, total: 1)`（ProcessSampler.swift:425）同样产生 total==1。statfs 失败时 bootDisk 返回 `(0, 1)`（HardwareSensors.swift:160）。因此「尚未就绪」与「读取失败」两种情况在该面板完全不可区分，重试路径只由 ProcessSampler 的 10s 磁盘轮询隐式兜底。",
   "failure": "磁盘信息读取失败（沙箱/权限/statfs 返回非 0）时用户只看到「正在读取磁盘容量…」一直停留，无错误提示也无重试入口；只有等下一轮 10s 采样成功才恢复。",
-  "fix": "把 total<=1 的文案改为「磁盘信息暂不可用」并附一个刷新入口，或在 HostStats 增加 explicit availability 标志以区分未采样与读取失败。"
+  "fix": "把 total<=1 的文案改为「磁盘信息暂不可用」并附一个刷新入口，或在 HostStats 增加 explicit availability 标志以区分未采样与读取失败。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (eced4a9): HardwareSensors.bootDisk() returns nil on statfs failure (was (0,1), indistinguishable from \"not sampled\"); HostStats gains diskAvailable, set from the sample, and DiskUsagePanel shows 磁盘信息暂不可用 instead of a permanent 正在读取磁盘容量…."
  },
  {
   "category": "perf-cpu",
@@ -2934,7 +2951,8 @@
   "summary": "每次 source 变化都重解析整篇文档表格；publish→onEdit→SkillMarkdownPreview 再解析 scaled 文档，表格编辑造成一组重复解析",
   "evidence": "第 82-85 行：.onChange(of: source) { _, value in guard value != controller.lastSource else { return }; if let parsed = try? DocumentMarkup.locatedBlocks(value).first?.table { controller.model = parsed; measured = [:] } }。controller.publish() 生成 HTML（model.html(renderInline:) 对整表逐行拼接，DocumentTable.swift:180-206）并回调 onEdit → SkillMarkdownPreview.replaceBlock（SkillMarkdownPreview.swift:294-305）→ sourceBuffer 更新 → 传到 DocumentTableView 的 source 变化 → 这里再跑 locatedBlocks（内含 tree() 正则分词与 tableModel 重建，DocumentMarkup.swift:301-380）。每次单元格键入（textDidChange → onChange）都至少触发一次整表再解析。",
   "failure": "一个 500 行 × 8 列的表（frontend-native 回归构造的量级），每次键入触发 publish（整表 HTML 序列化 O(rows×cells)）+ locatedBlocks 再解析 + layout 重算；单元测试指标没有覆盖键入路径（frontend-native 只测 editable 切换与 source 变更各一次）。",
-  "fix": "在 DocumentTableView 里接受「自己发出的 source」：publish 时记录 lastSource 已有，再在该 onChange 分支前比较 controller.publish 出来的 HTML 与 value，相同则跳过重解析（当前 guard 只对 lastSource 相等时跳过，但 publish 的序列化产物与传入的 source 切片未必逐字相等）。"
+  "fix": "在 DocumentTableView 里接受「自己发出的 source」：publish 时记录 lastSource 已有，再在该 onChange 分支前比较 controller.publish 出来的 HTML 与 value，相同则跳过重解析（当前 guard 只对 lastSource 相等时跳过，但 publish 的序列化产物与传入的 source 切片未必逐字相等）。",
+  "recheck_note": "Deferred: DocumentTableView's onChange(of: source) rep-parse guard needs the publish()/lastSource comparison rework; assigned to the follow-up batch (no behavior change this session)."
  },
  {
   "category": "logic",
@@ -5621,7 +5639,9 @@
   "evidence": "248-254 行：`if let md = getValue(fanModeKey(id)), let parsed = FanMode(rawValue: Int(md)) { return parsed.isAutomatic ? .automatic : parsed }` 之后 arm64 分支又 `let modeValue = Int(getValue(fanModeKey(id)) ?? 0)` —— 完全相同的一次 getValue；getValue→read 每次是 2 次 IOConnectCallStructMethod（keyInfo + readBytes，见 read:269-302）。触发条件是第一读成功但 `FanMode(rawValue:)` 失败（模式值不是 0/1/3，例如 SMC 报 2）。",
   "failure": "每台有非标准模式值的风扇、每 2 s 轮询（FanMonitor.syncPolling 的 2.0 s 定时器）就多 2 次跨内核调用，且这些调用与 ProcessSampler 的温度扫描共用 ioLock（call:308-310）互斥——纯重复工作换来的锁争用。",
   "fix": "把首个 getValue 的结果存进局部变量复用：`let raw = getValue(fanModeKey(id))`，解析失败时 `return (raw.map(Int.init) == 1) ? .forced : .automatic`，删掉第二次读取。",
-  "confidence": "medium"
+  "confidence": "medium",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): fanMode reads the mode key once, into a local, instead of twice on the parse-failure path (worst case per 2 s per fan: two extra IOConnectCallStructMethod calls)."
  },
  {
   "category": "dead-code",
@@ -5633,7 +5653,9 @@
   "evidence": "SMCController.swift:210-224（fanModeKey 的 `#else return \"F\\(id)Md\"`）与 252-263（fanMode 的 `#else` 读 `FS! ` 并按 (fansMode, id) 分派）；`grep -rn '#if arch' Sources/ClaudeBar` 只有这两处。构建侧：Sources/build.sh:24 `MACOS_TARGET=\"arm64-apple-macos${MACOS_MIN}\"`，274/385 行两次 swiftc 都传 `-target \"$MACOS_TARGET\"`，仓库没有第二个构建入口（Makefile→build.sh），也不存在 x86_64 目标。连带 152 行 getValue 的全零豁免表里的 `\"FS! \"` 也是死条目（FS! 只在被删的 Intel 分支里使用）。",
   "failure": "没有运行时后果，但它制造了两类风险：(1) 读到这段代码的人以为 Intel 路径仍被支持并会去维护/复制它（fanctl.c 的 helper 确实还是 `-arch arm64 -arch x86_64` 通用二进制，见 build.sh:165，口径已分裂）；(2) 将来若真加 x86 切片，这段从未编译过的分支会静默进入产物——而它的 `fanModeKeyIsLower` 在 x86 下永远是 nil（只在 arm64 分支被赋值）。",
   "fix": "删掉 fanModeKey 的 `#else` 与 fanMode 的 `#else`（连同 getValue 豁免表里的 \"FS! \"），保留单一 arm64 实现；若仍想保 Intel，改为显式的 runtime 探测而不是条件编译。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): The unreachable `#else return \"F\\(id)Md\"` branch is deleted (build.sh builds arm64 only), and the \"FS! \" entry from the all-zero-exempt table went with its only reader."
  },
  {
   "category": "test-gap",
@@ -5645,7 +5667,9 @@
   "evidence": "`grep -rn \"SMCController\\|cpuTemperatureCelsius\\|fanModeKey\" Tests/` 无命中；charge-limit-regressions.py:4 只在文档串里写 “No helper is executed and no SMC is touched”，inflight-animation-regressions.py 提到 SMC 也只是注释（说明转子数据来源）。因此 decode 的八种 dataType（313-333 行）、getStringValue 的 4...15 字节切片与 trim（158-169 行）、loadFans 的 `name ?? \"风扇 #\\(i)\"` / `max(1, ...)` 钳位（226-244 行）、以及 152 行的全零豁免键表都没有任何断言。",
   "fix": "decode/getStringValue/FourCharCode 都是纯函数，可以像 proxy-usage-regressions.py 那样把源码切片编译进探针：喂固定的 32 字节数组断言 ui8/ui16/sp78/fpe2/flt 的期望值、dataSize<2 时不越界、fds 名字裁剪，再用一组伪读数覆盖 loadFans 的钳位分支。",
   "failure": "decode 里任何一处字节序/位移写错（例如 sp78 的 /256 与 sp87 的 /128 互换、fpe2 的 `<<6`、ui8 的 LE 16 位回退）都不会被测出；温度与功耗读数会整体偏一个常数，而温度路径还有 `> 0, < 110` 的合理性过滤兜底，偏 0.5-2 °C 在 UI 上完全看不出，只有风扇/充电这类依赖阈值判断的功能会偶发失灵。",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): Tests/smc-sampling-regressions.py now slices and drives decode/getStringValue/fanModeKey/fanMode/loadFans over a fake SMC connection: ui8 LE pairs (0x0135=309), ui16 big-endian, sp78=45/sp87=90, fpe2=1200 (<<6, not <<8), flt=6800, dataSize bounds, unknown-type nil, fds name trimming and the max(1,·) clamps — plus three source pins."
  },
  {
   "category": "dead-code",
@@ -5657,7 +5681,9 @@
   "summary": "fanMode 的 #else（Intel）分支永不编译，且键被连读两遍",
   "evidence": "252-262 行 `#if arch(arm64)` / `let modeValue = Int(getValue(fanModeKey(id)) ?? 0)` / `return modeValue == 1 ? .forced : .automatic` / `#else` / `let fansMode = Int(getValue(\"FS! \") ?? 0)` ... ；构建目标只有 arm64（Sources/build.sh:24 `MACOS_TARGET=\"arm64-apple-macos${MACOS_MIN}\"`，-target 见 build.sh:274/385），`#else` 里的 `FS! ` 在仓库里也只有这一处读者。同一函数 249 行刚读过 `getValue(fanModeKey(id))`，nil 时 253 行把同一个键原样再读一遍。",
   "failure": "Intel 分支既不被编译也不被验证，改它不会有任何后果；同时每个风机每 2 s 轮询在最坏情况下多发一次 keyInfo+readBytes 往返（两把 IOConnectCallStructMethod）。",
-  "fix": "删掉 255-262 的 `#else` 和 221-223 对应的 `#else return \"F\\(id)Md\"` 分支；249 行改 `if let raw = getValue(fanModeKey(id)) { if let parsed = FanMode(rawValue: Int(raw)) { return parsed.isAutomatic ? .automatic : parsed }; return Int(raw) == 1 ? .forced : .automatic }`，一次读取两用。"
+  "fix": "删掉 255-262 的 `#else` 和 221-223 对应的 `#else return \"F\\(id)Md\"` 分支；249 行改 `if let raw = getValue(fanModeKey(id)) { if let parsed = FanMode(rawValue: Int(raw)) { return parsed.isAutomatic ? .automatic : parsed }; return Int(raw) == 1 ? .forced : .automatic }`，一次读取两用。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): The Intel `#else` fan-mode dispatch is deleted and the double read merged (`let raw = getValue(fanModeKey(id))`); external behaviour unchanged (0/3→automatic, 1→forced, other/nil→automatic)."
  },
  {
   "category": "logic",
@@ -5669,7 +5695,9 @@
   "summary": "ui8 的 16 位小端拼装在 Swift 里被 UInt8 位移吞掉，与 fanctl.c 的同款实现漂移",
   "evidence": "316-317 行 `if dataSize == 1 { return Double(bytes[0]) }` / `return Double(bytes[0] | (bytes[1] << 8)) // \" 8iu\"-style LE 16-bit`，两侧都是 UInt8。本机 Swift 实测：`UInt8(0x35) << 8 == 0`、`func g(_ b: UInt8,_ n: UInt8) -> UInt8 { b << n }; g(0x35, 8) == 0`，即高字节部分恒为 0，结果只剩 bytes[0]。C 版同一惯用法 Sources/fanctl/fanctl.c:98-99 `if (type == fourcc(\" 8iu\") || type == fourcc(\"ui8 \")) { return size == 1 ? bytes[0] : (double)(bytes[0] | (bytes[1] << 8)); }` 在 int 提升下是正确的——同一条公式两份实现已经漂移。",
   "failure": "任何 ` 8iu`/` 8ui` 类型、数值 ≥256 的 16 位小端键，Swift 侧只拿到低字节，而 helper 拿到完整值，两边对同一物理键给出不同数字；当前风扇数 <256 掩蔽了后果，但 FNum 之外任何走 getValue 的 ` 8iu` 键都会低估。",
-  "fix": "改成 `return Double(UInt16(bytes[0]) | (UInt16(bytes[1]) << 8))`（与 ui16 分支互为字节序），并在 fan-rotor 或新 suite 里加一条对 ` 8iu` 的切片回归。"
+  "fix": "改成 `return Double(UInt16(bytes[0]) | (UInt16(bytes[1]) << 8))`（与 ui16 分支互为字节序），并在 fan-rotor 或新 suite 里加一条对 ` 8iu` 的切片回归。",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): The ui8 16-bit fallback is now `Double(UInt16(bytes[0]) | (UInt16(bytes[1]) << 8))`, matching fanctl.c's int-promotion expression; a mirror mutant reverting it is caught by the 309 assertion."
  },
  {
   "category": "compat",
@@ -5705,7 +5733,9 @@
   "summary": "The pasteboard write encodes the full-resolution image to TIFF twice; the second encode is discarded work on the main thread.",
   "evidence": "Lines 401-409: `if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) { item.setData(png, forType: .png) }` immediately followed by `if let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }` — the first TIFF is consumed into a local `let` (line 402) and the second call re-derives the same NSData. `writePasteboard` runs on the main thread from `copyAndClose` (line 135) and `copyPin` (line 1201).",
   "failure": "Copying a 3024x1964 crop (~8 MB of pixels, ~24 MB uncompressed TIFF) pays two full TIFF encodes plus one TIFF decode plus one PNG encode before ⌘C returns; the extra encode is a straight main-thread stall (tens of ms at full-screen selections) with zero behavioural benefit and a second peak allocation of the encoded buffer.",
-  "fix": "Bind once: `if let tiff = image.tiffRepresentation { if let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) { item.setData(png, forType: .png) }; item.setData(tiff, forType: .tiff) }` — halves the encode work and one large allocation."
+  "fix": "Bind once: `if let tiff = image.tiffRepresentation { if let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) { item.setData(png, forType: .png) }; item.setData(tiff, forType: .tiff) }` — halves the encode work and one large allocation.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): writePasteboard encodes the TIFF once and reuses it for both the PNG and TIFF representations — the second full-resolution encode is gone."
  },
  {
   "category": "perf-io",
@@ -5717,7 +5747,9 @@
   "summary": "SCShareableContent.excludingDesktopWindows is re-fetched once per screen inside the capture loop, serialising one extra full window/display enumeration plus XPC round trip before the first frame appears.",
   "evidence": "`run()` loops `for screen in screens { shots.append((screen, try await Self.captureDisplay(screen))) }` (lines 64-72), and every `captureDisplay` call starts with `let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)` (line 372). Only `content.displays` is used (line 373); the window list is never touched here (window snapping uses the synchronous `CGWindowListCopyWindowInfo` instead, line 440).",
   "failure": "On a 2- or 3-display Mac the hotkey pays 2-3 shareable-content enumerations (each a replayd round trip that walks every on-screen window) serially before the first freeze panel is shown; every entry after the first returns the identical `displays` array. Latency of the ⌘⇧A → freeze path grows with display count for zero information gain.",
-  "fix": "Fetch `SCShareableContent` once in `run()` (or on first use) and pass `content.displays` into `captureDisplay(_:display:)`; keep the per-screen `SCContentFilter`/`SCStreamConfiguration` construction where it is."
+  "fix": "Fetch `SCShareableContent` once in `run()` (or on first use) and pass `content.displays` into `captureDisplay(_:display:)`; keep the per-screen `SCContentFilter`/`SCStreamConfiguration` construction where it is.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): run() fetches SCShareableContent once (failure beeps and clears capturing identically) and passes it into captureDisplay, so a multi-display capture no longer re-enumerates replayd per screen."
  },
  {
   "category": "correctness",
@@ -5729,7 +5761,9 @@
   "summary": "The pin's hover chrome bar is positioned 8pt above the top edge of its own window, so the top of the bar (and of every button in it) is clipped by the window frame.",
   "evidence": "Lines 1175-1181: `let photo = frame.size  // includes padding` then `chromeBar.frame = NSRect(x: photo.width - chromeBar.frame.width - 2, y: photo.height - chromeBar.frame.height + 8, ...)`. With `chromeBar` height 24 (`setFrameSize(NSSize(width: x + 4, height: 24))`, line 1246) the bar spans window y = H-16 … H+8; its NSButtons are 20pt tall at bar-local y=2 (line 1242), i.e. window y = H-14 … H+6. The host view is the window's `contentView` (line 1170) and the window is `NSSize(width: size.width + padding, height: size.height + padding)` (line 1133), so H is the window height and a window clips its content at its own frame.",
   "failure": "Every pinned screenshot shows the close/copy/zoom chrome with its top ~6-8pt cut off — the SF Symbols in those four buttons are shaved at the top edge. The accompanying comment ('extra window padding hides it until the cursor enters', lines 1120-1121) also does not match the implementation: there is no mouseEntered/tracking-area or hover-hide path anywhere in ScreenshotPinPanel (grep for mouseEntered in the file returns only the SnipCanvas tracking area at line 621).",
-  "fix": "Position the bar inside the frame, aligned to the photo's top edge: `y: photo.height - chromeBar.frame.height - padding / 2 - 1` (and either implement the documented hover-hide with `NSView.addTrackingArea` on the host, or delete the stale comment)."
+  "fix": "Position the bar inside the frame, aligned to the photo's top edge: `y: photo.height - chromeBar.frame.height - padding / 2 - 1` (and either implement the documented hover-hide with `NSView.addTrackingArea` on the host, or delete the stale comment).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): The chrome bar is positioned from the photo height and padding (padding/2-1), so its four buttons land inside the window (measured: window 334×234, bar 236,192,96,24, all buttons inside); the stale hover-hide comment is gone. Tests/screenshot-overlay-regressions.py pins it."
  },
  {
   "category": "dead-code",
@@ -5741,7 +5775,9 @@
   "summary": "SnipToolbar's `intrinsicContentSize` override is never read, and the `sizeToFit()` called on every toolbar reposition recomputes a size that cannot have changed — both are no-ops inside the drag path.",
   "evidence": "Line 1081: `override var intrinsicContentSize: NSSize { frame.size }`. Nothing constrains the toolbar: it is a plain subview of SnipCanvas (`addSubview(toolbar)`, line 620) positioned by frame math, and the canvas has no Auto Layout constraints on it, so the intrinsic-content machinery is never queried. Line 1083-1087: `func sizeToFit() { var w: CGFloat = 8; for v in subviews { w = max(w, v.frame.maxX) }; setFrameSize(NSSize(width: w + 8, height: 36)) }` is called from `positionToolbar()` line 945, which runs on every `mouseDragged` resize frame (line 842) and every lock/full-screen selection (lines 744, 875, 899). The buttons/divider/undo are created once in `init` and never removed or resized inside `positionToolbar`, and `sizeToFit`'s own header sets the same 36pt height (line 1066), so the recomputed width always equals the current width.",
   "failure": "No functional failure — a wasted O(subviews) walk plus a redundant `setFrameSize` per drag event (up to 120/s on ProMotion while resizing a selection), and an override that misleads the next reader into thinking the toolbar participates in Auto Layout sizing.",
-  "fix": "Delete the `intrinsicContentSize` override and drop the `toolbar.sizeToFit()` call from `positionToolbar()` (or convert it to a `static let toolbarSize` computed once in `init`), keeping the explicit `setFrameSize` at line 1066 as the single source of the toolbar's size."
+  "fix": "Delete the `intrinsicContentSize` override and drop the `toolbar.sizeToFit()` call from `positionToolbar()` (or convert it to a `static let toolbarSize` computed once in `init`), keeping the explicit `setFrameSize` at line 1066 as the single source of the toolbar's size.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): SnipToolbar's intrinsicContentSize override and custom sizeToFit are deleted; positionToolbar uses the frame fixed at init."
  },
  {
   "category": "logic",
@@ -5753,7 +5789,9 @@
   "summary": "The overlay's fallback hot keys reuse ScreenshotHotKey's Carbon signature 'CBSH' with id 1 for Esc, so the app's own ⌘⇧A registration (also id 1, same signature) is dispatched as Esc while a capture is up.",
   "evidence": "ScreenshotOverlay.swift:259-266 registers `(kVK_Escape, 0, 1), (kVK_Space, 0, 2), (kVK_Return, 0, 3), (kVK_ANSI_KeypadEnter, 0, 4), (8, cmdKey, 5), (1, cmdKey, 6)` with `EventHotKeyID(signature: 0x43425348, id: idx)` (269), and 277-278 `switch idx { case 1: cancel() ... }`. ScreenshotHotKey.swift:93 registers `EventHotKeyID(signature: Self.signature, id: 1)` with `signature: OSType = 0x43425348` (235), and its handler at 208-223 filters only on the signature — `if id.signature == ScreenshotHotKey.signature { DispatchQueue.main.async { ScreenshotOverlayController.shared.begin() } }` — never on `id.id`. Both handlers are installed on `GetApplicationEventTarget()` for `kEventHotKeyPressed`, so both receive every 'CBSH' press.",
   "failure": "In the no-Accessibility path (the only one that installs fallback keys), pressing ⌘⇧A while the freeze overlay is up delivers a 'CBSH'/id-1 event to the overlay's fallback handler → `case 1: cancel()` dismisses the capture the user was trying to restart, while ScreenshotHotKey's handler simultaneously calls `begin()`, which the `capturing` guard drops — the opposite of the 'double delivery is harmless' contract in the file header. Symmetrically, every Space/Return/⌘C/⌘S the fallback registers also calls `begin()` through the app handler (harmless only because of that same guard).",
-  "fix": "Give the fallback keys their own signature (e.g. `0x43425302`) and have ScreenshotHotKey's handler check `id.id == 1` before dispatching."
+  "fix": "Give the fallback keys their own signature (e.g. `0x43425302`) and have ScreenshotHotKey's handler check `id.id == 1` before dispatching.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): The fallback hot key uses its own signature (CBOV, 0x43424F56) instead of sharing 0x43425348 with the screenshot hot key, and ScreenshotHotKey's handler verifies id.id == triggerID; a signature mismatch no longer cancels a live capture."
  },
  {
   "category": "perf-cpu",
@@ -5765,7 +5803,9 @@
   "summary": "mouseMoved rebuilds and reassigns a full-screen even-odd CAShapeLayer path on every move event even when the hovered window did not change.",
   "evidence": "ScreenshotOverlay.swift:796-802: `cursor = convert(...); if !locked, !dragging { hoverWindow = WindowSnapper.frontmostWindow(contains: cursor, in: windowRects); refreshMask() }` — no comparison against the previous value. `refreshMask` (902-926) builds `let path = CGMutablePath(); path.addRect(bounds); if let r = highlight ... path.addRect(r)` and assigns `dimLayer.path = path` and `strokeLayer.path`, where `bounds` is the full `NSScreen.frame` at 1:1 (line 591) and dimLayer is a sublayer of the screen-sized root layer. `windowRects` is a flat array, so `frontmostWindow` also rescans it per event.",
   "failure": "Moving the pointer across the freeze (up to the display's event rate, 120 Hz on ProMotion, plus an extra event for each sub-pixel move) re-tessellates and re-uploads a display-sized shape layer for an unchanged highlight; on a 6K display the dim overlay is ~6000×3400 and this is the only work done per event in that state.",
-  "fix": "Compute the candidate first and bail when it is unchanged: `let next = WindowSnapper.frontmostWindow(...); if next != hoverWindow { hoverWindow = next; refreshMask() }`."
+  "fix": "Compute the candidate first and bail when it is unchanged: `let next = WindowSnapper.frontmostWindow(...); if next != hoverWindow { hoverWindow = next; refreshMask() }`.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): mouseMoved computes the candidate window first and only assigns hoverWindow + refreshMask when it differs — no more full-screen even-odd path rebuild per mouse move."
  },
  {
   "category": "correctness",
@@ -5777,7 +5817,9 @@
   "summary": "Committed annotation layers are rasterized at the main screen's backing scale instead of the canvas's, so marks drawn on a display with a different scale are resampled relative to the live draft.",
   "evidence": "ScreenshotOverlay.swift:703-716: `private static func markShape(_ mark: SnipMark, in sel: CGRect) -> CAShapeLayer { ... l.contentsScale = NSScreen.main?.backingScaleFactor ?? 2; ... }` — `markShape` is a static helper that never receives the canvas, and `refreshMask` gives no `contentsScale` to `marksLayer` either (906-907 only sets anchorPoint/frame). The canvas knows its own display (`screen` stored at 556, `layer?.contentsScale = screen.backingScaleFactor` at 594).",
   "failure": "Capture on a 1x external display while the built-in Retina is `NSScreen.main` (or the reverse) → a committed rect/arrow/pen stroke is rasterized at 2x and drawn into a 1x layer (or vice versa), so it renders softer/thicker than the draft the user was just dragging, and differs from the same mark burned into the exported PNG by `croppedImage()` (786-789), which strokes at native crop resolution.",
-  "fix": "Pass the scale in: `Self.markShape(draft, in: sel, scale: screen.backingScaleFactor)` (or read `window?.backingScaleFactor`), and apply the same value to `marksLayer` once in `refreshMask`."
+  "fix": "Pass the scale in: `Self.markShape(draft, in: sel, scale: screen.backingScaleFactor)` (or read `window?.backingScaleFactor`), and apply the same value to `marksLayer` once in `refreshMask`.",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07 (cluster A worker, committed eced4a9): markShape takes the capturing screen's backingScaleFactor (draft and commit paths) and refreshMask sets the same contentsScale on marksLayer; the NSScreen.main dependency is gone."
  },
  {
   "category": "test-gap",
