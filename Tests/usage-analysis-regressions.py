@@ -31,6 +31,20 @@ usage_stats = (root / 'Sources/ClaudeBar/Utils/UsageStats.swift').read_text()
 start = usage_stats.index('    static func heatmapDays(')
 end = usage_stats.index('    /// The date interval covered', start)
 source += '\nenum UsageHeatmapData {\n' + usage_stats[start:end] + '}\n'
+# 169/643: the formatting section is below the heatmap slice — `formatContext`'s
+# rounding band and the token thresholds had no coverage anywhere (every other
+# suite stubs `UsageStats` down to `String(n)`). The real functions are sliced
+# in (`enum TokenMagnitude` is compiled once, module-wide), so a boundary edit
+# fails here. `formatTokens(_:)` itself (which reads AppPreferences) stays out.
+_magnitude = (root / 'Sources/ClaudeBar/Utils/TokenMagnitude.swift').read_text()
+_start = _magnitude.index('enum TokenMagnitude {')
+source += '\n' + _magnitude[_start:] + '\n'
+_context = usage_stats.index('    /// Context-window sizes on session tiles')
+# The slice runs to EOF, whose last line closes `struct UsageStats` — drop it
+# so the wrapping enum is balanced.
+_context_body = usage_stats[_context:].rstrip()
+assert _context_body.endswith('}')
+source += 'enum UsageStatsFormatting {\n' + _context_body[:-1] + '}\n'
 popup = (root / 'Sources/ClaudeBar/Views/Popup/UsagePanel.swift').read_text()
 page = (root / 'Sources/ClaudeBar/Views/Pages/UsageView.swift').read_text()
 analytics = (root / 'Sources/ClaudeBar/Views/Shared/UsageAnalytics.swift').read_text()
@@ -165,6 +179,30 @@ source += r'''
         precondition(all.calendarRows.count == 366 && all.calendarMaximum == 7 && all.temporalTotal == 8)
         precondition(UsageAnalysis.quantile([], fraction: 0.95) == 0 && UsageAnalysis.quantile([9], fraction: 0.95) == 9)
         precondition(UsageAnalysis.share(1, of: 10_000) == "<0.1%" && UsageAnalysis.share(0, of: 0) == "0%")
+
+        // 169/643: the formatting boundaries, measured on the production code.
+        // `formatContext`'s documentation names three cases and the 0.05 band
+        // between rounding and one decimal is the one an edit drifts; the
+        // token thresholds are already pinned per style in widget-tint, and
+        // are re-asserted here only where this suite now compiles them.
+        precondition(UsageStatsFormatting.formatContext(800) == "800")
+        precondition(UsageStatsFormatting.formatContext(999) == "999")
+        precondition(UsageStatsFormatting.formatContext(1_000) == "1k")
+        precondition(UsageStatsFormatting.formatContext(9_940) == "9.9k")
+        precondition(UsageStatsFormatting.formatContext(9_950) == "9.9k",
+                     "at exactly 0.05 from the integer the strict `<` sends it to the "
+                     + "decimal path: \(UsageStatsFormatting.formatContext(9_950))")
+        precondition(UsageStatsFormatting.formatContext(9_960) == "10k",
+                     "inside the 0.05 band it rounds to the integer")
+        precondition(UsageStatsFormatting.formatContext(15_950) == "16k",
+                     "above 10k the band still applies")
+        precondition(UsageStatsFormatting.formatContext(15_940_000) == "15940k",
+                     "integer k above 10k, never a decimal")
+        precondition(UsageStatsFormatting.formatContext(200_000) == "200k")
+        precondition(TokenMagnitude.format(999, style: "chinese") == "999"
+                     && TokenMagnitude.format(10_000, style: "chinese") == "1.0万"
+                     && TokenMagnitude.format(100_000_000, style: "chinese") == "1.0亿",
+                     "the token thresholds this suite compiles must match the doc table")
         print("PASS: production usage dates, totals, quantiles, cache rates, ECDF/Lorenz, time grains, calendar truncation and raincloud density eligibility/boundaries/mass")
     }
 }

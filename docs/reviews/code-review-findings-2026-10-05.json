@@ -2192,7 +2192,9 @@
   "evidence": "155-161 行：`if abs(k - k.rounded()) < 0.05 { return \"\\(Int(k.rounded()))k\" }`。对 k=15.95（15950 tokens）判 True → Int(16.0) 返回 “16k”，对 k=15.94（15940）→ 走 `%.1f` 返回 “15.9k”，即同一数量级出现 16k/15.9k 混排；k=9.95（9950）判 True → “10k”，与 `k >= 10` 分支输出一致但来源不同。测试侧：Tests/session-waiting-regressions.py:216、workflow-session-regressions.py:171、island-session-alert-regressions.py:196、session-scan-regressions.py:216、codex-session-regressions.py:63/192/236 全部用 `enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }` 桩掉；`grep -rn \"formatTokens\\|亿\\|万\" Tests/*.py` 只有 usage-analysis-regressions.py:30 把文本切开后不执行格式化函数。",
   "failure": "任何修改这两个函数（例如统一舍入口径、调整 万/亿 阈值）都没有测试能发现行为漂移；而它们直接进入菜单栏/灵动岛的常驻文本，以及 ProxyLogView 复制出的整篇日志（ProxyAccessLog.swift:116 `let f: (Int) -> String = UsageStats.formatTokens`）。",
   "fix": "在 Tests/usage-analysis-regressions.py 里把 UsageStats 整段编进探针（该文件已切片编译 UsageStats 的 heatmapDays，可同样引入 formatTokens/formatContext），对 999 / 1000 / 9999 / 10_000 / 99_999_999 / 100_000_000 与 context 9950 / 15940 / 15950 / 999_999 断言精确字符串。",
-  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session)."
+  "recheck_note": "Verifier recheck 2026-10-07: still present at HEAD; queued for the relevant cluster fix (not changed this session).",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: Tests/usage-analysis-regressions.py now compiles the production `formatContext` (plus `TokenMagnitude`, which `formatTokens` delegates to) and asserts the boundary table — 800/999/1_000/9_940/9_950/9_960/15_950/200_000/15_940_000 — including the strict `< 0.05` band edge (9.95 stays 9.9k; 9.96 rounds to 10k), measured against the real function."
  },
  {
   "category": "logic",
@@ -8233,7 +8235,9 @@
   "evidence": "Tests/usage-analysis-regressions.py:30-34 is the only suite that reads UsageStats.swift, and it slices exactly one method: `start = usage_stats.index('    static func heatmapDays(')` … `source += '\\nenum UsageHeatmapData {\\n' + usage_stats[start:end]`; the rest of the file is never compiled by any test. Grep over Tests/ for `formatTokens` / `formatContext` / `compactLabel` / `UsageStats.shift` hits only stubs that replace the enum (e.g. Tests/session-waiting-regressions.py:216 `'enum UsageStats { static func formatContext(_ n: Int) -> String { String(n) } }'`). The commit that fixed the timezone-cache bug (5c45f70 「时区缓存」) added Tests/vpn-format-regressions.py, which contains no `UsageStats` assertion at all. Meanwhile Sources/Widget/WidgetViews.swift:608-620 is a hand copy of `formatTokens` (the app and the widget are separate modules, so it cannot be shared) that no test compares against the original.",
   "failure": "A regression in the boundaries (e.g. changing `n >= 10_000` to `>`, or the `Int(round(...))` K-rounding, or dropping the zone from the formatter cache key) changes what every token figure in the app shows and neither the app suite nor the widget suite fails; the widget copy can drift from the app one silently, so the same number renders as 「12.3万」 in the popup and something else in the widget.",
   "fix": "Add a small slice test in usage-analysis-regressions.py (or a new suite) that compiles the whole UsageStats struct with a stubbed AppPreferences and asserts the documented boundary table (999/1_000/9_999/10_000/100_000_000 for both styles, formatContext 800/1_000/15_900/200_000, and the formatter cache returning a zh_CN formatter after `NSTimeZone.resetSystemTimeZone` changes the zone), plus one assertion that the widget literal branches match the app's outputs for the same inputs.",
-  "confidence": "high"
+  "confidence": "high",
+  "status": "fixed",
+  "verdict_note": "Fixed 2026-10-07: same suite change as 169 — UsageStats' formatting section is sliced and driven; the widget-side half of the boundary table was already pinned in widget-tint (14 magnitudes × styles), and both now fail on a threshold edit."
  },
  {
   "category": "dead-code",
