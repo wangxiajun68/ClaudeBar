@@ -8,6 +8,7 @@ struct SettingsView: View {
     @ObservedObject var prefs = AppPreferences.shared
     @ObservedObject private var permissions = PermissionCenter.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
+    @ObservedObject private var woodenFish = WoodenFishModel.shared
 
     @ObservedObject var state = SettingsState()
     @State private var fontBrowserExpanded = false
@@ -186,7 +187,36 @@ struct SettingsView: View {
                         .accessibilityLabel("继续会话的终端")
                 }
             }
-
+            SettingsGroup(title: "桌面木鱼", symbol: "hand.tap") {
+                SettingsToggleRow(title: "显示悬浮木鱼", caption: "点击木鱼积攒功德；拖动顶部把手移动。支持音效、自动敲击与位置记忆，性能模式下暂停。",
+                                  isOn: $woodenFish.enabled)
+                if woodenFish.enabled {
+                    SettingsDivider()
+                    SettingsToggleRow(title: "木鱼音效", caption: "轻脆的木质敲击声；静音时仍会累计功德。",
+                                      isOn: Binding(get: { !woodenFish.muted }, set: { woodenFish.muted = !$0 }))
+                    SettingsDivider()
+                    SettingsRow(title: "音量") {
+                        Slider(value: $woodenFish.volume, in: 0...1)
+                            .frame(width: 150).disabled(woodenFish.muted)
+                            .accessibilityLabel("木鱼音量")
+                        Text(woodenFish.volume.formatted(.percent.precision(.fractionLength(0))))
+                            .monospacedDigit().font(Theme.Font.bodySmall).frame(width: 38, alignment: .trailing)
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: "自动敲击间隔", caption: "在悬浮窗点击自动敲击开始；隐藏、休眠或切换性能模式会停止。") {
+                        Picker("自动敲击间隔", selection: $woodenFish.interval) {
+                            ForEach(WoodenFishModel.intervals, id: \.self) { interval in
+                                Text("\(interval.formatted()) 秒").tag(interval)
+                            }
+                        }.labelsHidden().frame(width: 100)
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: "悬浮窗大小") {
+                        SegmentedCapsule(items: WoodenFishSize.allCases, selection: woodenFish.size,
+                                         title: { $0.label }, onSelect: { woodenFish.size = $0 })
+                    }
+                }
+            }
         }
     }
 

@@ -148,7 +148,8 @@ struct ProvidersView: View {
             },
             onClearFilters: { query = ""; category = nil; configuredOnly = false },
             onSelect: { setupEntry = $0 },
-            onOpen: { connectionEdit = ProviderConnectionRoute(id: $0.id, isNew: false) }
+            onOpen: { connectionEdit = ProviderConnectionRoute(id: $0.id, isNew: false) },
+            onToggleCapture: { setCapture($0, enabled: $1) }
         )
         .equatable()
         // Not in the mount frame: `refreshBalance` flips `balanceLoading`
@@ -433,6 +434,15 @@ struct ProvidersView: View {
     private func activate(_ p: Provider, modelID: UUID) {
         if client == .claude { providerStore.activateModel(providerID: p.id, modelID: modelID) }
         else { codexStore.activate(providerID: p.id, modelID: modelID) }
+    }
+    /// The card's 抓包 switch, and the editor's 「记录请求报文」 toggle, write the
+    /// same fact. Both go through the stores' `setCaptureEnabled`, which owns
+    /// the side effects (re-publish the widget snapshot, push the twin profile,
+    /// and — when the row is live — rewrite the client config through the local
+    /// proxy so capture actually takes effect without a re-activation).
+    private func setCapture(_ p: Provider, enabled: Bool) {
+        if client == .claude { providerStore.setCaptureEnabled(providerID: p.id, enabled: enabled) }
+        else { codexStore.setCaptureEnabled(providerID: p.id, enabled: enabled) }
     }
     private func saveSetup(_ draft: ProviderSetupDraft) -> String? {
         if let error = draft.validationError { return error }

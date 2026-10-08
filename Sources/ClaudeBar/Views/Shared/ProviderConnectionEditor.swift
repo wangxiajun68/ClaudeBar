@@ -168,12 +168,6 @@ struct ProviderConnectionEditor: View {
             ProviderFormField("配置名称") { TextField("供应商名称", text: $draft.name) }
             ProviderFormField("API Key") { APIKeyField(text: $draft.apiKey, localEndpoint: ProviderCatalogEntry.isLocalEndpoint(draft.baseURL)) }
             ProviderFormField("接口地址") { TextField("https://…", text: $draft.baseURL) }
-            Toggle("记录请求报文", isOn: $draft.captureEnabled)
-                .toggleStyle(.instrument)
-                .font(Theme.Font.bodySmall)
-                .help("打开后这个供应商的请求会写进「流量」页的抓包；正文只留在本机")
-            Text("开启抓包后，\(client.title) 经这个供应商的请求会带着完整对话写进「流量」页——按供应商分开记，换供应商不影响另一家的记录。")
-                .font(Theme.Font.caption).foregroundStyle(Theme.textSecondary)
         }
     }
 

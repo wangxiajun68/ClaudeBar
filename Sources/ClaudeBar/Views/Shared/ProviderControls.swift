@@ -372,3 +372,44 @@ struct ProviderActivationControl: View {
         .help(target.map { "激活 " + $0.0.name + " / " + $0.1.name } ?? "请先配置地址、Key 和模型")
     }
 }
+
+/// The provider card's 抓包 switch: the same fact the editor's
+/// 「记录请求报文」 toggle writes, lifted onto the card beside 配置 for a saved
+/// connection.
+///
+/// The value is **not** held locally. `captureEnabled` lives on the saved
+/// `Provider` / `CodexProvider` and reaches the card through the same published
+/// providers the rest of the card reads, so there is one source of truth:
+/// flipping it here, in the editor, or from the CLI (`providers capture`)
+/// always redraws the same card. A `@State` copy would let the card and its
+/// own editor disagree the moment either wrote.
+///
+/// The glyph carries both facts at a glance (colour = on/off, slashed mark =
+/// off) and the wording mirrors the editor's toggle, because this is the same
+/// setting said in two places rather than a second one.
+struct ProviderCaptureControl: View {
+    let enabled: Bool
+    let providerName: String
+    let onToggle: (Bool) -> Void
+
+    private var tint: Color { enabled ? Theme.Ink.success : Theme.textSecondary }
+
+    var body: some View {
+        Button { onToggle(!enabled) } label: {
+            Label(enabled ? "抓包" : "未抓包", systemImage: enabled ? "dot.radiowaves.left.and.right" : "dot.radiowaves.left.and.right.slash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(enabled ? 0.14 : 0.07)))
+                .overlay(Capsule().strokeBorder(tint.opacity(enabled ? 0.30 : 0.14), lineWidth: 0.75))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(enabled
+              ? "正在记录 \(providerName) 的请求报文，写进「流量」页；点一下关闭"
+              : "记录 \(providerName) 的请求报文：打开后这个供应商的请求会带着完整对话写进「流量」页，正文只留在本机")
+        .accessibilityLabel("记录请求报文")
+        .accessibilityValue(enabled ? "开启" : "关闭")
+    }
+}

@@ -237,6 +237,7 @@ class ProviderStore: ObservableObject {
         hasSettingsFile = FileManager.default.fileExists(atPath: FilePaths.settingsFile.path)
         currentEnv = SettingsManager.readSettings()
         loadProviders()
+        healCrossClientCapture()
         if let peer {
             ProviderProfileSync.reconcile(claude: self, codex: peer)
         }
@@ -762,6 +763,29 @@ class ProviderStore: ObservableObject {
             }
             saveProviders()
             break
+        }
+    }
+
+    /// 抓包开关被旧版本跨客户端同步过，这里把 Claude Code 一侧拉回一致。
+    ///
+    /// 抓包是每个客户端各自的开关，但旧版本把同一个 profile 的 `captureEnabled`
+    /// 当成共享字段推送：在 Codex 卡片开抓包会点亮 CC 的开关，还可能经
+    /// `ProviderProfileSync.rewriteClaude` 把 `settings.json` 改写成 loopback
+    /// 并把真实 key 换成代理 token。判断依据全部取自 CC 自己的配置文件，因此幂等、
+    /// 不需要额外的 UserDefaults 标记（同 `CodexProviderStore.clearLegacyMaxReasoning`）。
+    /// 只修 CC 一侧：Codex 抓包本来就要走代理。
+    private func healCrossClientCapture() {
+        guard let active = activeProvider, let model = active.activeModel else { return }
+        let usesProxy = LocalProxyAddress.isLoopback(currentEnv?.ANTHROPIC_BASE_URL ?? "")
+        if usesProxy, !active.captureEnabled {
+            // 开关没开却留着 loopback 地址：Codex 抓包带过来的残留。重写回厂商
+            // 真实地址与真实 key（`buildEnv` 在 capture 为 false 时即写真实值）。
+            activateModel(providerID: active.id, modelID: model.id)
+        } else if !usesProxy, active.captureEnabled {
+            // 开关是被抄过来的、并未真正生效：清掉，别让卡片显示成抓包中。
+            guard let index = providers.firstIndex(where: { $0.id == active.id }) else { return }
+            providers[index].captureEnabled = false
+            if !saveProviders() { providers[index].captureEnabled = true }
         }
     }
 

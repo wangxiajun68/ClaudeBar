@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var mainWindowController: MainWindowController?
     private var notchIslandController: NotchIslandController?
+    private var woodenFishController: WoodenFishController?
     private var providerStore: ProviderStore?
     private var codexProviderStore: CodexProviderStore?
     /// A widget tap that arrived before the menu-bar controller existed (see
@@ -139,6 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if performance {
             ScreenshotHotKey.shared.stop()
             ScreenshotOverlayController.shared.stopForPerformanceMode()
+            woodenFishController?.stop()
+            woodenFishController = nil
             mainWindowController?.teardown()
             mainWindowController = nil
             notchIslandController?.stop()
@@ -165,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mainWindowController = main
             main.showWindow()
             ScreenshotHotKey.shared.startIfEnabled()
+            let woodenFish = WoodenFishController()
+            woodenFish.start(); woodenFishController = woodenFish
         }
         providerStore?.publishCLISnapshot()
     }
@@ -328,6 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cliControlServer.stop()
         mainWindowController?.teardown()
         notchIslandController?.stop()
+        woodenFishController?.stop()
         menuBarController?.teardown()
         cliSnapshotTimer?.invalidate()
         cliSnapshotTimer = nil

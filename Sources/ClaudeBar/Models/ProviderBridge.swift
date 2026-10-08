@@ -11,6 +11,10 @@ import Foundation
 /// OpenAI Chat/Responses. Host-specific rewrites are the known pairs from
 /// this machine's live configs (Zhipu, DashScope, OpenRouter, DeepSeek,
 /// Aibox). Everything else uses the generic strip-/anthropic + `/v1` rules.
+///
+/// The 抓包 switch is **not** part of the shared contract: it routes one
+/// client through the local proxy, so it stays on the side that owns it and
+/// never crosses here.
 enum ProviderBridge {
 
     struct ImportResult: Equatable {
@@ -65,7 +69,6 @@ enum ProviderBridge {
             disableResponseStorage: true,
             models: models,
             activeModelID: activeID,
-            captureEnabled: source.captureEnabled,
             profileID: source.profileID,
             catalogID: source.catalogID)
     }
@@ -83,7 +86,6 @@ enum ProviderBridge {
             baseURL: url,
             models: models,
             activeModelID: activeID,
-            captureEnabled: source.captureEnabled,
             profileID: source.profileID,
             catalogID: source.catalogID)
     }

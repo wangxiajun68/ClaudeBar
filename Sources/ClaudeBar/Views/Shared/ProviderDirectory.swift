@@ -21,6 +21,7 @@ struct ProviderDirectoryHost: View, Equatable {
     let onClearFilters: () -> Void
     let onSelect: (ProviderCatalogEntry) -> Void
     let onOpen: (Provider) -> Void
+    let onToggleCapture: (Provider, Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.model == rhs.model }
 
@@ -29,7 +30,8 @@ struct ProviderDirectoryHost: View, Equatable {
             client: model.client, providers: model.providers, activeID: model.activeID,
             selectedID: model.selectedID, query: model.query, category: model.category,
             configuredOnly: model.configuredOnly, onActivate: onActivate, onUseOfficial: onUseOfficial,
-            onClearFilters: onClearFilters, onSelect: onSelect, onOpen: onOpen, balances: model.balances)
+            onClearFilters: onClearFilters, onSelect: onSelect, onOpen: onOpen,
+            onToggleCapture: onToggleCapture, balances: model.balances)
     }
 }
 
@@ -47,6 +49,7 @@ struct ProviderCatalogBrowser: View {
     let onClearFilters: () -> Void
     let onSelect: (ProviderCatalogEntry) -> Void
     let onOpen: (Provider) -> Void
+    let onToggleCapture: (Provider, Bool) -> Void
     var balances: [UUID: String] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -196,7 +199,8 @@ struct ProviderCatalogBrowser: View {
                                     ForEach(items) { row in
                                         ProviderDirectoryCard(entry: row.entry, client: client, connections: row.connections,
                                             activeID: activeID, selectedID: selectedID, balances: balances,
-                                            onAdd: { onSelect(row.entry) }, onOpen: onOpen, onActivate: onActivate)
+                                            onAdd: { onSelect(row.entry) }, onOpen: onOpen, onActivate: onActivate,
+                                            onToggleCapture: onToggleCapture)
                                     }
                                 }
                             }
@@ -260,12 +264,14 @@ struct ProviderCatalogBrowser: View {
         } else if let id = pinned.entryID, let entry = ProviderCatalogEntry.entry(id: id) {
             ProviderDirectoryCard(entry: entry, client: client, connections: layout.saved(entry),
                 activeID: activeID, selectedID: selectedID, balances: balances,
-                onAdd: { onSelect(entry) }, onOpen: onOpen, onActivate: onActivate)
+                onAdd: { onSelect(entry) }, onOpen: onOpen, onActivate: onActivate,
+                onToggleCapture: onToggleCapture)
         } else if let id = pinned.customID, let provider = layout.custom.first(where: { $0.id == id }) {
             CustomProviderDirectoryCard(provider: provider, active: true,
                 selected: provider.id == selectedID, balance: balances[provider.id],
                 onOpen: { onOpen(provider) },
-                onActivate: { onActivate(provider, $0) })
+                onActivate: { onActivate(provider, $0) },
+                onToggleCapture: { onToggleCapture(provider, $0) })
         }
     }
 
@@ -279,7 +285,8 @@ struct ProviderCatalogBrowser: View {
                     CustomProviderDirectoryCard(provider: provider, active: provider.id == activeID,
                         selected: provider.id == selectedID, balance: balances[provider.id],
                         onOpen: { onOpen(provider) },
-                        onActivate: { onActivate(provider, $0) })
+                        onActivate: { onActivate(provider, $0) },
+                        onToggleCapture: { onToggleCapture(provider, $0) })
                 }
             }
         }
@@ -396,6 +403,7 @@ private struct ProviderDirectoryCard: View {
     let onAdd: () -> Void
     let onOpen: (Provider) -> Void
     let onActivate: (Provider, UUID) -> Void
+    let onToggleCapture: (Provider, Bool) -> Void
 
     private var primary: Provider? {
         connections.first { $0.id == activeID } ?? connections.first { ProviderCardState.isReady($0) } ?? connections.first
@@ -431,6 +439,7 @@ private struct ProviderDirectoryCard: View {
                 if let provider = primary {
                     Button { onOpen(provider) } label: { Label("配置", systemImage: "slider.horizontal.3") }
                         .buttonStyle(ProviderActionStyle())
+                    ProviderCaptureControl(enabled: provider.captureEnabled, providerName: provider.name) { onToggleCapture(provider, $0) }
                     Menu {
                         Button("添加配置", action: onAdd).disabled(entry.endpoint(for: client) == nil)
                         ForEach(connections) { item in
@@ -470,6 +479,7 @@ private struct CustomProviderDirectoryCard: View {
     var balance: String? = nil
     let onOpen: () -> Void
     let onActivate: (UUID) -> Void
+    let onToggleCapture: (Bool) -> Void
 
     private var state: ProviderCardState {
         ProviderCardState.isReady(provider) ? (active ? .active : .ready) : .incomplete
@@ -492,9 +502,10 @@ private struct CustomProviderDirectoryCard: View {
                 Spacer()
                 RollingNumberText("\(provider.models.count) 个模型").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
             }.frame(height: 22)
-            HStack {
+            HStack(spacing: 8) {
                 Button(action: onOpen) { Label("配置", systemImage: "slider.horizontal.3") }
                     .buttonStyle(ProviderActionStyle())
+                ProviderCaptureControl(enabled: provider.captureEnabled, providerName: provider.name, onToggle: onToggleCapture)
                 Spacer(minLength: 0)
                 ProviderActivationControl(providers: [provider], activeID: active ? provider.id : nil, choice: modelChoice,
                                           onActivate: { _, modelID in onActivate(modelID) })

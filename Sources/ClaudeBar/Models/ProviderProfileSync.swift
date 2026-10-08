@@ -1,8 +1,10 @@
 import Foundation
 
 /// One configuration, two clients. Name, key, and models travel together.
-/// Each client keeps the base URL from its own vendor endpoint, and each
-/// client keeps its own active provider.
+/// Each client keeps the base URL from its own vendor endpoint, its own
+/// active provider, and its own 抓包 switch: capture routes a client through
+/// the local proxy, so turning it on for Codex must not touch Claude Code's
+/// config (or the other way round).
 @MainActor
 enum ProviderProfileSync {
     private static var applying = false
@@ -246,7 +248,8 @@ enum ProviderProfileSync {
                                   entry: ProviderCatalogEntry?, creating: Bool) {
         twin.name = source.name
         twin.apiKey = source.authToken
-        twin.captureEnabled = source.captureEnabled
+        // 抓包是每个客户端各自的开关: 不随 twin 同步。见
+        // `Tests/capture-isolation-regressions.py`。
         twin.profileID = source.profileID
         if twin.catalogID == nil { twin.catalogID = source.catalogID ?? entry?.id }
         if creating, let endpoint = entry?.codex {
@@ -270,7 +273,7 @@ enum ProviderProfileSync {
                                    entry: ProviderCatalogEntry?, creating: Bool) {
         twin.name = source.name
         twin.authToken = source.apiKey
-        twin.captureEnabled = source.captureEnabled
+        // 抓包是每个客户端各自的开关: 不随 twin 同步。
         twin.profileID = source.profileID
         if twin.catalogID == nil { twin.catalogID = source.catalogID ?? entry?.id }
         if creating, let endpoint = entry?.claude {

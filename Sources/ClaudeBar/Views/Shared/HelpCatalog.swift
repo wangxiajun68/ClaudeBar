@@ -297,10 +297,11 @@ enum HelpCatalog {
                 .para("默认只记路由元数据（谁、哪条路径、多大、多久、什么状态码）。要在「流量」页看到完整对话、工具调用、图片与原始 SSE，需要打开抓包："),
                 .bullets([
                     "「设置 → 本地代理 → 第三方接入 → 记录第三方流量」管的是非 CC / Codex 客户端发来的请求",
-                    "CC / Codex 自己的请求在「模型」页编辑对应供应商，打开「记录请求报文」",
+                    "CC / Codex 自己的请求在「模型」页对应供应商卡片上打开「抓包」（卡片上的报文按钮；旧版在配置里的「记录请求报文」已移到这里）",
                     "抓包数据落在 `~/Library/Application Support/ClaudeBar/logs/`（媒体文件）与 `proxy-capture.db`（请求正文）",
                 ]),
                 .para("抓包很大时可以随时关掉抓包——关掉不影响转发。"),
+                .para("抓包按客户端独立：CC 与 Codex 各自的卡片管自己的抓包，在 Codex 卡片打开不会改动 Claude Code 的配置或开关，反之亦然。"),
             ],
             keywords: "流量 traffic 抓包 capture 日志 log sse sqlite jsonl"
         ),
