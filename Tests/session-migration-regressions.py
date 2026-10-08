@@ -126,6 +126,17 @@ func mustFail(_ body: () throws -> Void) {
     (work/'Main.swift').write_text(r'''
 import Foundation
 import SQLite3
+func precondition(_ condition: @autoclosure () -> Bool, _ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) {
+    if !condition() {
+        FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+        exit(1)
+    }
+}
+func preconditionFailure(_ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) -> Never {
+    FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+    exit(1)
+}
+
 @main struct Regression {
     @MainActor static func main() async throws {
         let cwd = CommandLine.arguments[2], facts = CommandLine.arguments[3]

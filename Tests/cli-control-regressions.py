@@ -8,6 +8,17 @@ root = Path(__file__).resolve().parents[1]
 fixtures = r'''
 import Foundation
 import Darwin
+func precondition(_ condition: @autoclosure () -> Bool, _ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) {
+    if !condition() {
+        FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+        exit(1)
+    }
+}
+func preconditionFailure(_ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) -> Never {
+    FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+    exit(1)
+}
+
 struct TestModel { var id = UUID(); var name: String }
 struct TestProvider {
     var id = UUID(); var name: String; var models: [TestModel]
@@ -28,10 +39,17 @@ struct TestProvider {
 }
 @MainActor final class CodexProviderStore: ProviderStore {
     var proxyRunning = false; var proxyIsRequiredByCaptureOrBridge = false; var delay = false
+    var activationStarted = false
+    private var activationWaiter: CheckedContinuation<Void, Never>?
     func activateForCLI(providerID: UUID, modelID: UUID) async throws {
-        if delay { try await Task.sleep(for: .milliseconds(150)) }
+        if delay {
+            activationStarted = true
+            await withCheckedContinuation { activationWaiter = $0 }
+            activationStarted = false
+        }
         try Task.checkCancellation(); activateModel(providerID: providerID, modelID: modelID)
     }
+    func releaseActivation() { activationWaiter?.resume(); activationWaiter = nil }
     func startProxy() -> Bool { proxyRunning = true; return true }
     func stopProxy() { proxyRunning = false }
 }
@@ -93,6 +111,11 @@ struct ConnectorRecord {
 }
 @MainActor final class WeatherStore { static let shared = WeatherStore(); var effects = 0; func refreshCityForCLI() { effects += 1 } }
 @main struct Regression {
+    @MainActor static func waitUntil(_ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(10)
+        while !condition(), Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        precondition(condition(), "Control fixture did not reach the expected state")
+    }
     @MainActor static func main() async throws {
         let store = ProviderStore(), codex = CodexProviderStore()
         let service = CLICommandService(store: store, codex: codex, presentation: {
@@ -131,9 +154,10 @@ struct ConnectorRecord {
         _ = await check("providers", ["use", "Alpha"], ok: false, agent: "cursor")
         codex.delay = true
         let pending = Task { await service.execute(request("models", ["use", "First"], agent: "codex")) }
-        try await Task.sleep(for: .milliseconds(20))
+        await waitUntil { codex.activationStarted }
         _ = await check("mode", ["status"])
         _ = await check("providers", ["official"], ok: false)
+        codex.releaseActivation()
         let pendingReply = await pending.value; precondition(pendingReply.ok)
         codex.delay = false
         _ = await check("mode", ["performance"]); precondition(AppPreferences.shared.performanceMode)
@@ -249,10 +273,12 @@ struct ConnectorRecord {
             do { _ = try CLIControl.send(.init(command: "providers", arguments: ["use", "Alpha"], agent: "codex"), to: socketURL); return false }
             catch { return true }
         }
-        try await Task.sleep(for: .milliseconds(30))
+        await waitUntil { codex.activationStarted }
         server.stop(); precondition(!FileManager.default.fileExists(atPath: socketURL.path))
+        codex.releaseActivation()
         let disconnected = await cancelled.value; precondition(disconnected)
-        try await Task.sleep(for: .milliseconds(180)); precondition(codex.activeProviderID == nil)
+        await waitUntil { !codex.activationStarted }
+        precondition(codex.activeProviderID == nil)
         try Data("not a socket".utf8).write(to: socketURL)
         do { try duplicate.start(at: socketURL) { await service.execute($0) }; preconditionFailure("Replaced a file") } catch {}
         let preserved = try String(contentsOf: socketURL, encoding: .utf8); precondition(preserved == "not a socket")
