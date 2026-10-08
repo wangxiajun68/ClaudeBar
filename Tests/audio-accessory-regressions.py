@@ -103,16 +103,16 @@ func failures(_ label: String, _ condition: Bool) -> Bool {
 // Log persistence and OSLogStore queries can take longer than a fixed sleep on
 // CI. Observe the marker through an independent fresh store before testing the
 // production cache; keep the window edge fixed so a slow query cannot drop it.
-func waitForLog(_ marker: String, since: Date) -> Bool {
+func waitForLog(_ marker: String, since: Date) -> LogSource.Entry? {
     let deadline = Date().addingTimeInterval(15)
     repeat {
         if let fresh = try? OSLogStore.local(),
-           LogSource.query(fresh, since: since.addingTimeInterval(-120))?.contains(where: { $0.message.contains(marker) }) == true {
-            return true
+           let entry = LogSource.query(fresh, since: since.addingTimeInterval(-120))?.first(where: { $0.message.contains(marker) }) {
+            return entry
         }
         Thread.sleep(forTimeInterval: 0.1)
     } while Date() < deadline
-    return false
+    return nil
 }
 
 @main struct Regression {
@@ -127,7 +127,7 @@ func waitForLog(_ marker: String, since: Date) -> Bool {
 
         let firstMarker = "one-" + UUID().uuidString
         probeLog.notice("\(firstMarker, privacy: .public)")
-        ok = failures("first marker must persist in a fresh log store", waitForLog(firstMarker, since: t0)) && ok
+        ok = failures("first marker must persist in a fresh log store", waitForLog(firstMarker, since: t0) != nil) && ok
 
         // Same window, inside the store's lifetime: reuse is correct and the
         // new entry is legitimately not part of this snapshot.
@@ -139,19 +139,33 @@ func waitForLog(_ marker: String, since: Date) -> Bool {
         // `lastLogReadAt`, so it crosses the store's build time. Rebuilding is
         // the only way the entry becomes visible.
         let advanced = LogSource.entries(since: Date())
-        let windowStart = (LogSource.storeBuiltAt ?? Date()).addingTimeInterval(0.001)
-        // Advance beyond the cached snapshot's edge, with a small timestamp
-        // margin for OSLog's clock conversion. Never derive the query cutoff
-        // from how long a store query or log persistence happened to take.
-        Thread.sleep(forTimeInterval: 0.1)
-        let secondMarker = "two-" + UUID().uuidString
-        probeLog.notice("\(secondMarker, privacy: .public)")
-        ok = failures("second marker must persist in a fresh log store", waitForLog(secondMarker, since: windowStart)) && ok
+        let cachedBuild = LogSource.storeBuiltAt ?? Date()
+        let markerDeadline = Date().addingTimeInterval(15)
+        var secondMarker = "", observed: LogSource.Entry?
+        // OSLog maps its continuous clock to dates; that mapping can differ
+        // from Date() on virtualized runners. Use a persisted record's own
+        // timestamp to establish a window strictly beyond the cached store.
+        repeat {
+            secondMarker = "two-" + UUID().uuidString
+            probeLog.notice("\(secondMarker, privacy: .public)")
+            observed = waitForLog(secondMarker, since: t0)
+            if let observed, observed.date.timeIntervalSince(cachedBuild) > 1 { break }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < markerDeadline
+        let windowStart = observed?.date.addingTimeInterval(-0.5) ?? cachedBuild
+        ok = failures("second marker must persist beyond the cached snapshot", observed != nil && windowStart > cachedBuild) && ok
         // Simulate a query/scheduler delay longer than the old one-second
         // window. The fixed edge must still include this exact marker.
         Thread.sleep(forTimeInterval: 1.2)
         let afterEntries = LogSource.entries(since: windowStart)
         let after = afterEntries?.count ?? -1
+        if afterEntries?.contains(where: { $0.message.contains(secondMarker) }) != true {
+            print("LOG_WINDOW", "cached", cachedBuild.timeIntervalSince1970,
+                  "edge", windowStart.timeIntervalSince1970,
+                  "marker", observed?.date.timeIntervalSince1970 ?? -1,
+                  "rebuilt", LogSource.storeBuiltAt?.timeIntervalSince1970 ?? -1,
+                  "returned", afterEntries?.map { $0.date.timeIntervalSince1970 } ?? [])
+        }
         ok = failures("an advanced window must see entries written after the last read",
                       afterEntries?.contains(where: { $0.message.contains(secondMarker) }) == true) && ok
         ok = failures("the window that was just read must not be empty at the new edge",
