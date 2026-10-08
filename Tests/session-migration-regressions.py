@@ -139,6 +139,25 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
 
 @main struct Regression {
     @MainActor static func main() async throws {
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--persist-blob" {
+            let storePath = CommandLine.arguments[2], blobID = CommandLine.arguments[3]
+            let blob = FileHandle.standardInput.readDataToEndOfFile()
+            try await Task.sleep(for: .milliseconds(150))
+            var writer: OpaquePointer?, stmt: OpaquePointer?
+            precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
+            defer { sqlite3_finalize(stmt); sqlite3_close(writer) }
+            // A retry can still hold a read transaction when this fixture's
+            // delayed write lands. Match the reader's bounded busy wait.
+            precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
+            precondition(sqlite3_prepare_v2(writer,"INSERT INTO blobs VALUES (?,?)",-1,&stmt,nil) == SQLITE_OK)
+            sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
+            _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
+            let writeResult = sqlite3_step(stmt)
+            let readOnly = sqlite3_db_readonly(writer, "main")
+            precondition(writeResult == SQLITE_DONE,
+                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer))), errno \(sqlite3_system_errno(writer)), readonly \(readOnly), exists \(FileManager.default.fileExists(atPath: storePath))")
+            return
+        }
         let cwd = CommandLine.arguments[2], facts = CommandLine.arguments[3]
         let sourceID = "ea7f9767-42bb-491a-b7e9-f6b8de1d7f10"
         let ccSource = MigrationSource(client: .claude, sessionID: sourceID, cwd: cwd, title: "Fixture")
@@ -540,24 +559,20 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
         let blob = try MigrationCursorHistory.value(db!,sql:"SELECT data FROM blobs WHERE id = ?",key:blobID)
         precondition(sqlite3_exec(db,"DELETE FROM blobs WHERE id = '" + blobID + "'",nil,nil,nil) == SQLITE_OK)
         sqlite3_close(db)
-        let storePath = c.nativePath
-        let delayedWrite = Task.detached {
-            try await Task.sleep(for: .milliseconds(150))
-            var writer: OpaquePointer?, stmt: OpaquePointer?
-            precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
-            defer { sqlite3_finalize(stmt); sqlite3_close(writer) }
-            // A retry can still hold a read transaction when this fixture's
-            // delayed write lands. Match the reader's bounded busy wait.
-            precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
-            precondition(sqlite3_prepare_v2(writer,"INSERT INTO blobs VALUES (?,?)",-1,&stmt,nil) == SQLITE_OK)
-            sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
-            _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
-            let writeResult = sqlite3_step(stmt)
-            precondition(writeResult == SQLITE_DONE,
-                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer)))")
-        }
-        let recoveredCursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
-        try await delayedWrite.value
+        // The producer is another process in real Cursor use. Keep the same
+        // compiled fixture as its private writer, then join both operations.
+        let delayedWrite = Process(), writerInput = Pipe()
+        delayedWrite.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        delayedWrite.arguments = ["--persist-blob", c.nativePath, blobID]
+        delayedWrite.standardInput = writerInput
+        try delayedWrite.run()
+        try writerInput.fileHandleForWriting.write(contentsOf: blob)
+        try writerInput.fileHandleForWriting.close()
+        let writerExit = Task.detached { delayedWrite.waitUntilExit(); return delayedWrite.terminationStatus }
+        let recovery = Task { try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource) }
+        let writeStatus = await writerExit.value
+        precondition(writeStatus == 0, "delayed producer exited with \(writeStatus)")
+        let recoveredCursor = try await recovery.value
         precondition(recoveredCursor.messages == cursor.messages)
         precondition(tryRecords(locations.records).count == 3)
         // Containment must remain stable after parent directories are created.
