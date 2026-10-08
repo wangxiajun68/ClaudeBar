@@ -48,6 +48,7 @@
 
 ### 内部
 
+- **发布回归稳定性**：CLI 控制测试通过开始/释放信号验证变更串行化与断连取消，风扇命令夹具等待实际结果而非固定延时；迁移测试的延迟 SQLite 写入使用有界忙等待，避免与读取事务竞争时立即失败；优化编译下的失败断言输出位置与原因，便于定位 CI 故障。
 - 新增 `cli` / `cli-control` / `module-performance` / `backend-performance` / `access-log-tail` / `ui-animation-performance` / `page-frontend` / `core-algorithms` 等源码切片回归，全部登记进 `Makefile`。
 - 新增多份审查文档与脱敏测量（`docs/reviews/`），覆盖模块、后端、UI 动效、正式版 Instruments 采样与逐页前端；`Tools/performance-inventory.py` 可按日期产出带源码哈希的入口清单。
 - `Tools/build-cache.py` 的指纹纳入共享 Swift 身份文件，构建脚本改动会使缓存失效。

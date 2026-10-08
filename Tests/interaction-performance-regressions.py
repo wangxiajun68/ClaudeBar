@@ -149,6 +149,17 @@ func benchmarkSSE() throws {
 '''
 probe = r'''
 import Darwin
+func precondition(_ condition: @autoclosure () -> Bool, _ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) {
+    if !condition() {
+        FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+        exit(1)
+    }
+}
+func preconditionFailure(_ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) -> Never {
+    FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+    exit(1)
+}
+
 POWER_STUB
 LOW_LOAD
 MARKDOWN
@@ -215,7 +226,7 @@ final class FixtureWindow: NSWindow {
         FanHelperInstaller.installed = true
         fan.fans = [FanInfo(id: 0)]
         fan.setMaxSpeed(0)
-        try await Task.sleep(for: .milliseconds(200))
+        await waitUntil { fan.tookFans }
         precondition(FanHelperInstaller.speeds == ["max0@6000"], "manual command must reach the helper")
         precondition(fan.fans[0].mode.isAutomatic, "fixture snapshot stays stale on purpose")
         fan.adoptSystemControlOnQuit()
@@ -232,7 +243,7 @@ final class FixtureWindow: NSWindow {
         let failing = FanFixture()
         failing.fans = [FanInfo(id: 0)]
         failing.setMaxSpeed(0)
-        try await Task.sleep(for: .milliseconds(200))
+        await waitUntil { failing.lastError != nil }
         precondition(!failing.tookFans, "a failed write must not create a quit duty")
         FanHelperInstaller.failSpeed = false
 

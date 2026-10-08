@@ -126,6 +126,17 @@ func mustFail(_ body: () throws -> Void) {
     (work/'Main.swift').write_text(r'''
 import Foundation
 import SQLite3
+func precondition(_ condition: @autoclosure () -> Bool, _ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) {
+    if !condition() {
+        FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+        exit(1)
+    }
+}
+func preconditionFailure(_ message: @autoclosure () -> String = "", file: StaticString = #fileID, line: UInt = #line) -> Never {
+    FileHandle.standardError.write(Data("FAIL \(file):\(line) \(message())\n".utf8))
+    exit(1)
+}
+
 @main struct Regression {
     @MainActor static func main() async throws {
         let cwd = CommandLine.arguments[2], facts = CommandLine.arguments[3]
@@ -533,10 +544,14 @@ import SQLite3
         DispatchQueue.global().asyncAfter(deadline:.now()+0.15) {
             var writer: OpaquePointer?, stmt: OpaquePointer?
             precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
+            // A retry can still hold a read transaction when this fixture's
+            // delayed write lands. Match the reader's bounded busy wait.
+            precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
             precondition(sqlite3_prepare_v2(writer,"INSERT INTO blobs VALUES (?,?)",-1,&stmt,nil) == SQLITE_OK)
             sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
             _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
-            precondition(sqlite3_step(stmt) == SQLITE_DONE)
+            let writeResult = sqlite3_step(stmt)
+            precondition(writeResult == SQLITE_DONE, "delayed blob write: SQLite code \(writeResult)")
             sqlite3_finalize(stmt);sqlite3_close(writer)
         }
         let recoveredCursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
