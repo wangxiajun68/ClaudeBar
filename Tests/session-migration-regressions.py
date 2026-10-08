@@ -541,9 +541,11 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
         precondition(sqlite3_exec(db,"DELETE FROM blobs WHERE id = '" + blobID + "'",nil,nil,nil) == SQLITE_OK)
         sqlite3_close(db)
         let storePath = c.nativePath
-        DispatchQueue.global().asyncAfter(deadline:.now()+0.15) {
+        let delayedWrite = Task.detached {
+            try await Task.sleep(for: .milliseconds(150))
             var writer: OpaquePointer?, stmt: OpaquePointer?
             precondition(sqlite3_open(storePath,&writer) == SQLITE_OK)
+            defer { sqlite3_finalize(stmt); sqlite3_close(writer) }
             // A retry can still hold a read transaction when this fixture's
             // delayed write lands. Match the reader's bounded busy wait.
             precondition(sqlite3_busy_timeout(writer, 2000) == SQLITE_OK)
@@ -551,10 +553,11 @@ func preconditionFailure(_ message: @autoclosure () -> String = "", file: Static
             sqlite3_bind_text(stmt,1,blobID,-1,SQLITE_TRANSIENT)
             _ = blob.withUnsafeBytes { sqlite3_bind_blob(stmt,2,$0.baseAddress,Int32($0.count),SQLITE_TRANSIENT) }
             let writeResult = sqlite3_step(stmt)
-            precondition(writeResult == SQLITE_DONE, "delayed blob write: SQLite code \(writeResult)")
-            sqlite3_finalize(stmt);sqlite3_close(writer)
+            precondition(writeResult == SQLITE_DONE,
+                         "delayed blob write: SQLite \(writeResult)/\(sqlite3_extended_errcode(writer)): \(String(cString: sqlite3_errmsg(writer)))")
         }
         let recoveredCursor = try await MigrationCursorHistory.cli(URL(fileURLWithPath:c.nativePath),source:c.targetSource)
+        try await delayedWrite.value
         precondition(recoveredCursor.messages == cursor.messages)
         precondition(tryRecords(locations.records).count == 3)
         // Containment must remain stable after parent directories are created.
